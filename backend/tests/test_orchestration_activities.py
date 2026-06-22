@@ -110,7 +110,7 @@ def test_publish_artifacts_core(wired, store, run_input):
     snap = next(k for k in store._data if k.startswith("snapshots/"))
     assert store.get(snap) == store.get(artifact.s3_key)
     assert Run.objects.get(id=run_input.run_id).status == Run.Status.COMPLETED
-    assert Approval.objects.get(run_id=run_input.run_id).decision == Approval.Decision.APPROVED
+    # The Approval decision is recorded by the gate service (T9), not publish.
 
 
 def test_transition_work_item_core(wired, run_input):
@@ -125,6 +125,4 @@ def test_reject_run_core(wired, run_input):
 
     assert Run.objects.get(id=run_input.run_id).status == Run.Status.REJECTED
     assert WorkItem.objects.get(id=run_input.work_item_id).state == WorkItem.State.IN_PROGRESS
-    approval = Approval.objects.get(run_id=run_input.run_id)
-    assert approval.decision == Approval.Decision.REJECTED
-    assert approval.comment == "needs more detail"
+    # Approval decision recorded by the gate service (T9), verified there.

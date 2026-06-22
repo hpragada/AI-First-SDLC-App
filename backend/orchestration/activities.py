@@ -174,9 +174,8 @@ def publish_artifacts_core(inp: AgentRunInput) -> dict:
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         run.status = Run.Status.COMPLETED
         run.save(update_fields=["status", "updated_at"])
-        Approval.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id).update(
-            decision=Approval.Decision.APPROVED, decided_at=_now()
-        )
+        # The Approval decision is recorded by the gate service (decide_gate, T9),
+        # not here — that path owns the approver + decided_at.
         tools.log_event(
             inp.tenant_id, "orchestrator", "artifacts.published", "run", inp.run_id,
             {"artifact_ids": published},
@@ -200,9 +199,7 @@ def reject_run_core(inp: AgentRunInput, comment: str) -> dict:
         run.status = Run.Status.REJECTED
         run.save(update_fields=["status", "updated_at"])
         tools.transition_work_item(inp.tenant_id, inp.work_item_id, WorkItem.State.IN_PROGRESS)
-        Approval.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id).update(
-            decision=Approval.Decision.REJECTED, decided_at=_now(), comment=comment
-        )
+        # Approval decision/comment recorded by the gate service (decide_gate, T9).
         tools.log_event(
             inp.tenant_id, "orchestrator", "run.rejected", "run", inp.run_id, {"comment": comment}
         )
