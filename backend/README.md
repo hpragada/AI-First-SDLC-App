@@ -11,3 +11,18 @@ Scaffolded in **P0-T1**. Code lands in later P0 tasks:
 | `manifest/` | Manifest Composer (Project Profile → AGENTS.md) + distilled `rules/` | P0-T7/T10a |
 
 Every model carries `tenant_id`; every table gets an RLS policy from its first migration (non-negotiable #6).
+
+## Local dev (virtualenv)
+
+The platform **runs in Docker** (backend/worker/mcp are containers). The project-local
+`.venv` at the repo root is for **local tooling only** — fast `pytest`/`ruff`/`mypy`,
+IDE type-checking, and the local planning runner — never a global install.
+
+```bash
+python -m venv .venv                          # once, at repo root
+./.venv/Scripts/python -m pip install -r backend/requirements-dev.txt   # Windows
+# source .venv/bin/activate                   # macOS/Linux
+```
+
+Pins in `requirements*.txt` are exact and verified to resolve. Containers install the
+same pins at build time, so local and in-container deps stay in lockstep.
