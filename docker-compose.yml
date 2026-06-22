@@ -107,7 +107,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-    command: ["python", "-m", "http.server", "8000"]   # placeholder until T2 wires ASGI
+    command: ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   worker:
     profiles: ["app"]

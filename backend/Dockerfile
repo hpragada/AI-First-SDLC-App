@@ -19,5 +19,4 @@ RUN pip install --upgrade pip && pip install -r requirements-dev.txt
 COPY . .
 
 EXPOSE 8000
-# Real entrypoint (ASGI server) is wired in P0-T2.
-CMD ["python", "-m", "http.server", "8000"]
+CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000"]
