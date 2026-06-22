@@ -1,0 +1,5 @@
+# Temporal dynamic config for local dev (auto-setup).
+# Minimal: rely on sane defaults. Add overrides here as needed.
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}

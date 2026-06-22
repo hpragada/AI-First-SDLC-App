@@ -1,0 +1,4 @@
+# Platform-State MCP server deps — exact pins (validated on first install, P0-T5).
+# The ONLY way agents read/write platform state (spec §2).
+mcp==1.2.0
+psycopg[binary]==3.2.3
