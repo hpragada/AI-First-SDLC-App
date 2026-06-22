@@ -14,6 +14,10 @@ extend-exclude = ["**/migrations/**"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# Migrated agent catalog is a wide data table — keep one row per line.
+"apps/registry/catalog.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.12"
 plugins = ["mypy_django_plugin.main"]
