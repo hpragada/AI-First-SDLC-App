@@ -1,0 +1,250 @@
+"""Temporal activities (spec §5). All DB/engine/S3 side effects live here, never in
+the workflow. Each activity is a thin @activity.defn wrapper over a sync *core* function
+that is directly unit-testable; cores are idempotent by run_id so Temporal retries are safe.
+
+`get_driver` / `get_object_store` are module-level factories so tests can swap in fakes.
+Every DB touch runs inside `tenant_context` so RLS scopes it when the worker connects as
+the non-superuser app role.
+"""
+from __future__ import annotations
+
+import asyncio
+import sys
+from datetime import UTC, datetime
+from decimal import Decimal
+from pathlib import Path
+
+from django.conf import settings
+from mcp_platform_state import tools
+from temporalio import activity
+
+from apps.gates.models import Approval
+from apps.registry.models import AgentSpec, Artifact
+from apps.runs.models import Run
+from apps.tenancy.context import tenant_context
+from apps.workitems.models import WorkItem
+from drivers import ClaudeDriver
+from manifest import compose_manifest
+from storage import content_hash, s3_from_settings
+
+from .types import AgentRunInput
+
+_PLATFORM_TOOL_NAMES = [
+    "get_context", "register_artifact", "update_artifact", "add_trace_edge", "log_event",
+    "list_work_items", "transition_work_item", "get_artifact", "list_artifacts", "detect_drift",
+]
+PLATFORM_TOOLS = [f"mcp__platform-state__{name}" for name in _PLATFORM_TOOL_NAMES]
+
+
+# ── injectable factories (tests monkeypatch these) ──────────────────
+def get_driver():
+    return ClaudeDriver()
+
+
+def get_object_store():
+    return s3_from_settings()
+
+
+def load_rules() -> str:
+    return ""  # distilled RULE-BEHAVIOR / RULE-EXECUTION wired in P0-T10a
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _mcp_servers(tenant_id: str) -> dict:
+    """Config the engine uses to launch the platform-state MCP server, with the tenant
+    bound from the control plane (the agent never passes a tenant)."""
+    repo_root = str(Path(__file__).resolve().parents[2])
+    return {
+        "platform-state": {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": ["-m", "mcp_platform_state.server"],
+            "env": {
+                "PLATFORM_TENANT_ID": str(tenant_id),
+                "DJANGO_SETTINGS_MODULE": "config.settings",
+                "DATABASE_URL": settings.DATABASES["default"].get("URL", ""),
+                "PYTHONPATH": repo_root,
+            },
+        }
+    }
+
+
+# ── cores (idempotent by run_id) ────────────────────────────────────
+def compose_manifest_core(inp: AgentRunInput) -> str:
+    with tenant_context(inp.tenant_id):
+        work_item = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
+        context = tools.get_context(inp.tenant_id, inp.project_id, inp.phase)
+        return compose_manifest(
+            context=context, work_item=tools._work_item(work_item),
+            phase=inp.phase, rules=load_rules(),
+        )
+
+
+_EXECUTED_STATES = {Run.Status.AWAITING_GATE, Run.Status.APPROVED, Run.Status.COMPLETED}
+
+
+def execute_agent_core(inp: AgentRunInput, manifest: str) -> dict:
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        existing = list(Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id))
+        if existing and run.status in _EXECUTED_STATES:
+            return {"artifact_ids": [str(a.id) for a in existing], "idempotent": True}
+        run.status = Run.Status.RUNNING
+        run.started_at = _now()
+        run.save(update_fields=["status", "started_at", "updated_at"])
+        agent_spec = AgentSpec.objects.get(id=inp.agent_spec_id, tenant_id=inp.tenant_id)
+        work_item = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
+
+    # Engine call is outside the tenant_context cursor (it may be long).
+    driver = get_driver()
+    result = asyncio.run(
+        driver.run_planning_task(
+            manifest=manifest, agent_spec=agent_spec,
+            mcp_servers=_mcp_servers(inp.tenant_id), allowed_tools=PLATFORM_TOOLS,
+            work_item=work_item,
+        )
+    )
+    body = result.outputs.get("result") or result.outputs.get("text") or ""
+    s3_key = f"drafts/{inp.tenant_id}/{inp.project_id}/{inp.run_id}/{inp.phase}.md"
+    get_object_store().put(s3_key, body)
+    digest = content_hash(body.encode("utf-8"))
+
+    artifact = tools.register_artifact(
+        inp.tenant_id, inp.project_id, inp.run_id, inp.phase, inp.phase,
+        "internal", digest, s3_key=s3_key,
+    )
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.status = Run.Status.AWAITING_GATE
+        run.cost_usd = Decimal(str(result.cost_usd))
+        run.outputs = {
+            "artifact_s3_key": s3_key, "content_hash": digest, "cost_usd": result.cost_usd,
+        }
+        run.ended_at = _now()
+        run.save(update_fields=["status", "cost_usd", "outputs", "ended_at", "updated_at"])
+        tools.log_event(
+            inp.tenant_id, "orchestrator", "run.executed", "run", inp.run_id,
+            {"artifact_id": artifact["id"]},
+        )
+    return {"artifact_ids": [artifact["id"]], "cost_usd": result.cost_usd}
+
+
+def open_gate_core(inp: AgentRunInput) -> str:
+    with tenant_context(inp.tenant_id):
+        approval, created = Approval.objects.get_or_create(
+            run_id=inp.run_id, gate_type=inp.gate_type, tenant_id=inp.tenant_id,
+            defaults={
+                "work_item_id": inp.work_item_id,
+                "required_role": inp.required_role,
+                "decision": Approval.Decision.PENDING,
+            },
+        )
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        if run.status != Run.Status.AWAITING_GATE:
+            run.status = Run.Status.AWAITING_GATE
+            run.save(update_fields=["status", "updated_at"])
+        if created:
+            tools.log_event(
+                inp.tenant_id, "orchestrator", "gate.opened", "approval", str(approval.id),
+                {"required_role": inp.required_role},
+            )
+    return str(approval.id)
+
+
+def publish_artifacts_core(inp: AgentRunInput) -> dict:
+    store = get_object_store()
+    published: list[str] = []
+    with tenant_context(inp.tenant_id):
+        for artifact in Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id):
+            if artifact.status != Artifact.Status.PUBLISHED:
+                if artifact.s3_key:
+                    snap = (
+                        f"snapshots/{inp.tenant_id}/{inp.project_id}/{inp.run_id}/"
+                        f"{artifact.phase}.v{artifact.version}.md"
+                    )
+                    store.copy(artifact.s3_key, snap)
+                tools.update_artifact(
+                    inp.tenant_id, str(artifact.id),
+                    status=Artifact.Status.PUBLISHED, sor=Artifact.SoR.INTERNAL,
+                )
+            published.append(str(artifact.id))
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.status = Run.Status.COMPLETED
+        run.save(update_fields=["status", "updated_at"])
+        Approval.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id).update(
+            decision=Approval.Decision.APPROVED, decided_at=_now()
+        )
+        tools.log_event(
+            inp.tenant_id, "orchestrator", "artifacts.published", "run", inp.run_id,
+            {"artifact_ids": published},
+        )
+    return {"published": published}
+
+
+def transition_work_item_core(inp: AgentRunInput, to_state: str) -> dict:
+    with tenant_context(inp.tenant_id):
+        tools.transition_work_item(inp.tenant_id, inp.work_item_id, to_state)
+        tools.log_event(
+            inp.tenant_id, "orchestrator", "workitem.transitioned", "work_item",
+            inp.work_item_id, {"to_state": to_state},
+        )
+    return {"work_item_id": inp.work_item_id, "state": to_state}
+
+
+def reject_run_core(inp: AgentRunInput, comment: str) -> dict:
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.status = Run.Status.REJECTED
+        run.save(update_fields=["status", "updated_at"])
+        tools.transition_work_item(inp.tenant_id, inp.work_item_id, WorkItem.State.IN_PROGRESS)
+        Approval.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id).update(
+            decision=Approval.Decision.REJECTED, decided_at=_now(), comment=comment
+        )
+        tools.log_event(
+            inp.tenant_id, "orchestrator", "run.rejected", "run", inp.run_id, {"comment": comment}
+        )
+    return {"status": "rejected"}
+
+
+# ── activity wrappers (sync → run in the worker's thread pool) ──────
+@activity.defn(name="compose_manifest")
+def compose_manifest_activity(inp: AgentRunInput) -> str:
+    return compose_manifest_core(inp)
+
+
+@activity.defn(name="execute_agent")
+def execute_agent_activity(inp: AgentRunInput, manifest: str) -> dict:
+    return execute_agent_core(inp, manifest)
+
+
+@activity.defn(name="open_gate")
+def open_gate_activity(inp: AgentRunInput) -> str:
+    return open_gate_core(inp)
+
+
+@activity.defn(name="publish_artifacts")
+def publish_artifacts_activity(inp: AgentRunInput) -> dict:
+    return publish_artifacts_core(inp)
+
+
+@activity.defn(name="transition_work_item")
+def transition_work_item_activity(inp: AgentRunInput, to_state: str) -> dict:
+    return transition_work_item_core(inp, to_state)
+
+
+@activity.defn(name="reject_run")
+def reject_run_activity(inp: AgentRunInput, comment: str) -> dict:
+    return reject_run_core(inp, comment)
+
+
+ALL_ACTIVITIES = [
+    compose_manifest_activity,
+    execute_agent_activity,
+    open_gate_activity,
+    publish_artifacts_activity,
+    transition_work_item_activity,
+    reject_run_activity,
+]

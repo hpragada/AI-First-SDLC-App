@@ -116,12 +116,18 @@ services:
     build:
       context: ./backend
     env_file: [.env]
+    environment:
+      # Repo root on the path so the worker can import mcp_platform_state.
+      PYTHONPATH: /repo
     depends_on:
-      - temporal
-      - backend
+      temporal:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     volumes:
-      - ./backend:/app
-    command: ["python", "-c", "print('temporal worker placeholder — wired in P0-T8')"]
+      - .:/repo
+    working_dir: /repo/backend
+    command: ["python", "-m", "orchestration.worker"]
 
   # NOTE: the Platform-State MCP server (P0-T5) is NOT a long-running service.
   # It reuses the Django ORM and is launched on-demand over stdio by the ClaudeDriver

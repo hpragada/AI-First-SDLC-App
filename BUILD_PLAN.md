@@ -23,7 +23,7 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 - [x] **P0-T5** Platform-State MCP server (spec §2): all tools, tenant-scoped, stdio. Integration test each tool.
 - [x] **P0-T6** ExecutionDriver interface + ClaudeDriver (planning) using `claude-agent-sdk` (spec §3). `run_build_task` raises NotImplementedError for now.
 - [x] **P0-T7** Manifest Composer (spec §4): get_context → AGENTS.md with section order + token budget.
-- [ ] **P0-T8** Temporal `AgentRunWorkflow` + activities (spec §5): compose → execute → gate(wait signal) → publish/transition. Idempotent by run_id.
+- [x] **P0-T8** Temporal `AgentRunWorkflow` + activities (spec §5): compose → execute → gate(wait signal) → publish/transition. Idempotent by run_id.
 - [ ] **P0-T9** Gate/Approval (spec §6): Approval model, signal on decision, role check.
 - [ ] **P0-T10a** **Rules migration** (`/legacy_suite/rules/` → `backend/manifest/rules/` + enforcement hooks) per `docs/AGENT_MIGRATION_SPEC.md` §4: distill prompt-rules into the manifest `# Rules` section; wire platform-enforced rules (8, 11, 12, 5) into the workflow.
 - [ ] **P0-T10b** **AgentSpec + command/settings migration scaffolding** per spec §5: seed AgentSpec registry from `/legacy_suite/settings.json`; build the phase-trigger pattern that replaces command files; normalize agent keys; fix known v6 inconsistencies.

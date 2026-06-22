@@ -117,6 +117,19 @@ APP_DB_PASSWORD = env("POSTGRES_APP_PASSWORD", default="sdlc_app_pw")
 # Session GUC that RLS policies compare tenant_id against.
 RLS_TENANT_SETTING = "app.tenant_id"
 
+# ─── Object store (artifact bodies) — provider-agnostic (ADR 0001) ──
+# S3_ENDPOINT_URL set => MinIO/local; empty => AWS S3 (IAM creds).
+S3_ENDPOINT_URL = env("S3_ENDPOINT_URL", default="")
+S3_REGION = env("S3_REGION", default="us-east-1")
+S3_ACCESS_KEY = env("S3_ACCESS_KEY", default="")
+S3_SECRET_KEY = env("S3_SECRET_KEY", default="")
+S3_BUCKET = env("S3_BUCKET", default="sdlc-artifacts")
+
+# ─── Temporal (durable execution — #8) ──────────────────────────────
+TEMPORAL_HOST = env("TEMPORAL_HOST", default="localhost:7233")
+TEMPORAL_NAMESPACE = env("TEMPORAL_NAMESPACE", default="default")
+TEMPORAL_TASK_QUEUE = env("TEMPORAL_TASK_QUEUE", default="sdlc-planning")
+
 # ─── Django REST Framework ──────────────────────────────────────────
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
