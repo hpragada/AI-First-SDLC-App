@@ -30,6 +30,7 @@ DJANGO_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",  # ArrayField + pg-specific lookups
 ]
 THIRD_PARTY_APPS = [
     "rest_framework",
@@ -83,7 +84,8 @@ ASGI_APPLICATION = "config.asgi.application"
 DATABASES = {
     "default": env.db(
         "DATABASE_URL",
-        default="postgres://sdlc_app:sdlc_app_pw@localhost:5432/sdlc_platform",
+        # Local-dev default points at the container's remapped host port (5433).
+        default="postgres://postgres:postgres@localhost:5433/sdlc_platform",
     )
 }
 
@@ -101,6 +103,9 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Custom user (email login, tenant-scoped). MUST be set before first migrate.
+AUTH_USER_MODEL = "tenancy.User"
 
 # ─── Django REST Framework ──────────────────────────────────────────
 REST_FRAMEWORK = {

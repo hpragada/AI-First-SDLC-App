@@ -22,7 +22,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-sdlc_platform}
     ports:
-      - "5432:5432"
+      # Host 5433 → container 5432, to avoid clashing with a native Postgres on 5432.
+      # In-container services still use postgres:5432 over the Docker network.
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

@@ -26,3 +26,22 @@ python -m venv .venv                          # once, at repo root
 
 Pins in `requirements*.txt` are exact and verified to resolve. Containers install the
 same pins at build time, so local and in-container deps stay in lockstep.
+
+### Database & migrations
+
+The Compose Postgres is published on host **port 5433** (container-internal is still
+`postgres:5432`) to avoid clashing with a native Postgres on 5432. Two ways to run
+DB-backed work:
+
+```bash
+# A) In-container (matches runtime; no host creds needed)
+docker compose exec -e DATABASE_URL=postgres://postgres:postgres@postgres:5432/sdlc_platform \
+  backend python manage.py migrate
+
+# B) Local venv against the remapped host port (e.g. fast pytest)
+cd backend
+DATABASE_URL=postgres://postgres:postgres@localhost:5433/sdlc_platform ../.venv/Scripts/python -m pytest
+```
+
+> Migrations are generated with **explicit app labels** (`makemigrations tenancy projects …`)
+> — a bare `makemigrations` can no-op before the migration packages exist.
