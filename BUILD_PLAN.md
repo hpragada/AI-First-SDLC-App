@@ -20,7 +20,7 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 - [x] **P0-T2** Django project + apps (`tenancy, projects, workitems, registry, ledger, runs, gates, integrations`). Wire DRF, settings, ASGI.
 - [x] **P0-T3** Models + migrations for all Phase 0 entities (spec §1). Add `tenant_id` to every table.
 - [x] **P0-T4** **RLS:** create non-superuser app DB role; RLS policies on every table; middleware/util that sets `app.tenant_id` per request and per Temporal activity. Test: tenant B cannot read tenant A's rows.
-- [ ] **P0-T5** Platform-State MCP server (spec §2): all tools, tenant-scoped, stdio. Integration test each tool.
+- [x] **P0-T5** Platform-State MCP server (spec §2): all tools, tenant-scoped, stdio. Integration test each tool.
 - [ ] **P0-T6** ExecutionDriver interface + ClaudeDriver (planning) using `claude-agent-sdk` (spec §3). `run_build_task` raises NotImplementedError for now.
 - [ ] **P0-T7** Manifest Composer (spec §4): get_context → AGENTS.md with section order + token budget.
 - [ ] **P0-T8** Temporal `AgentRunWorkflow` + activities (spec §5): compose → execute → gate(wait signal) → publish/transition. Idempotent by run_id.

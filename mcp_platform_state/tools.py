@@ -1,0 +1,245 @@
+"""Platform-State tool implementations (spec §2).
+
+Every tool is tenant-scoped two ways:
+  1. explicit `tenant_id=` filters on every query/write (works under any DB role), and
+  2. `tenant_context(tenant_id)` sets app.tenant_id so Postgres RLS is the backstop
+     when running as the non-superuser app role.
+
+These are plain functions (easily integration-tested); `server.py` exposes them as MCP
+tools and injects the tenant from the launch context.
+"""
+from __future__ import annotations
+
+from apps.ledger.models import Event
+from apps.projects.models import Project, Repository
+from apps.registry.models import Artifact, TraceEdge
+from apps.runs.models import Run
+from apps.tenancy.context import tenant_context
+from apps.workitems.models import WorkItem
+
+
+# ── serialization (JSON-safe dicts) ─────────────────────────────────
+def _dt(value):
+    return value.isoformat() if value else None
+
+
+def _artifact(a: Artifact) -> dict:
+    return {
+        "id": str(a.id),
+        "tenant_id": str(a.tenant_id),
+        "project_id": str(a.project_id),
+        "repo_id": str(a.repo_id) if a.repo_id else None,
+        "run_id": str(a.run_id) if a.run_id else None,
+        "phase": a.phase,
+        "type": a.type,
+        "status": a.status,
+        "sor": a.sor,
+        "external_ref": a.external_ref,
+        "s3_key": a.s3_key,
+        "content_hash": a.content_hash,
+        "version": a.version,
+        "created_at": _dt(a.created_at),
+        "updated_at": _dt(a.updated_at),
+    }
+
+
+def _work_item(w: WorkItem) -> dict:
+    return {
+        "id": str(w.id),
+        "tenant_id": str(w.tenant_id),
+        "project_id": str(w.project_id),
+        "repo_id": str(w.repo_id) if w.repo_id else None,
+        "feature_stream": w.feature_stream,
+        "type": w.type,
+        "state": w.state,
+        "parent_id": str(w.parent_id) if w.parent_id else None,
+        "depends_on": [str(x) for x in w.depends_on],
+        "assignee_id": str(w.assignee_id) if w.assignee_id else None,
+        "takeover_flag": w.takeover_flag,
+    }
+
+
+def _event(e: Event) -> dict:
+    return {
+        "id": str(e.id),
+        "actor": e.actor,
+        "action": e.action,
+        "target_type": e.target_type,
+        "target_id": str(e.target_id) if e.target_id else None,
+        "ts": _dt(e.ts),
+        "payload": e.payload,
+    }
+
+
+def _edge(edge: TraceEdge) -> dict:
+    return {
+        "id": str(edge.id),
+        "from_artifact_id": str(edge.from_artifact_id),
+        "to_artifact_id": str(edge.to_artifact_id),
+        "rel": edge.rel,
+    }
+
+
+def _profile(project: Project) -> dict:
+    p = getattr(project, "profile", None)
+    return {
+        "project_id": str(project.id),
+        "name": project.name,
+        "track": project.track,
+        "repo_topology": project.repo_topology,
+        "description": p.description if p else "",
+        "domain": p.domain if p else "",
+        "tech_stack": p.tech_stack if p else {},
+        "coding_standards": p.coding_standards if p else {},
+        "nfrs": p.nfrs if p else {},
+        "constraints": p.constraints if p else {},
+        "glossary": p.glossary if p else {},
+        "important_context": p.important_context if p else "",
+        "version": p.version if p else 0,
+    }
+
+
+# ── tools (spec §2 signatures; tenant_id is the bound scope) ─────────
+def get_context(tenant_id, project_id, phase, work_item_id=None) -> dict:
+    """Inputs the Manifest Composer renders. Knowledge retrieval is Phase 4 (stub [])."""
+    with tenant_context(tenant_id):
+        project = Project.objects.get(id=project_id, tenant_id=tenant_id)
+        artifacts = (
+            Artifact.objects.filter(tenant_id=tenant_id, project_id=project_id)
+            .order_by("-created_at")[:50]
+        )
+        events = Event.objects.filter(tenant_id=tenant_id).order_by("-ts")[:20]
+        return {
+            "profile": _profile(project),
+            "relevant_artifacts": [_artifact(a) for a in artifacts],
+            "recent_events": [_event(e) for e in events],
+            "retrieved_knowledge": [],  # Knowledge Index = Phase 4
+        }
+
+
+def register_artifact(
+    tenant_id, project_id, run_id, phase, type, sor,
+    content_hash, s3_key=None, external_ref=None, repo_id=None,
+) -> dict:
+    with tenant_context(tenant_id):
+        project = Project.objects.get(id=project_id, tenant_id=tenant_id)
+        run = Run.objects.get(id=run_id, tenant_id=tenant_id) if run_id else None
+        repo = (
+            Repository.objects.get(id=repo_id, tenant_id=tenant_id) if repo_id else None
+        )
+        if sor not in Artifact.SoR.values:
+            raise ValueError(f"invalid sor: {sor}")
+        artifact = Artifact.objects.create(
+            tenant_id=tenant_id,
+            project=project,
+            run=run,
+            repo=repo,
+            phase=phase,
+            type=type,
+            sor=sor,
+            content_hash=content_hash or "",
+            s3_key=s3_key or "",
+            external_ref=external_ref,
+        )
+        return _artifact(artifact)
+
+
+def update_artifact(
+    tenant_id, artifact_id, status=None, sor=None,
+    external_ref=None, content_hash=None, version=None,
+) -> dict:
+    with tenant_context(tenant_id):
+        artifact = Artifact.objects.get(id=artifact_id, tenant_id=tenant_id)
+        if status is not None:
+            if status not in Artifact.Status.values:
+                raise ValueError(f"invalid status: {status}")
+            artifact.status = status
+        if sor is not None:
+            if sor not in Artifact.SoR.values:
+                raise ValueError(f"invalid sor: {sor}")
+            artifact.sor = sor
+        if external_ref is not None:
+            artifact.external_ref = external_ref
+        if content_hash is not None:
+            artifact.content_hash = content_hash
+        if version is not None:
+            artifact.version = version
+        artifact.save()
+        return _artifact(artifact)
+
+
+def add_trace_edge(tenant_id, from_artifact_id, to_artifact_id, rel) -> dict:
+    with tenant_context(tenant_id):
+        if rel not in TraceEdge.Rel.values:
+            raise ValueError(f"invalid rel: {rel}")
+        # Validate both endpoints belong to the tenant.
+        Artifact.objects.get(id=from_artifact_id, tenant_id=tenant_id)
+        Artifact.objects.get(id=to_artifact_id, tenant_id=tenant_id)
+        edge = TraceEdge.objects.create(
+            tenant_id=tenant_id,
+            from_artifact_id=from_artifact_id,
+            to_artifact_id=to_artifact_id,
+            rel=rel,
+        )
+        return _edge(edge)
+
+
+def log_event(tenant_id, actor, action, target_type, target_id, payload=None) -> dict:
+    with tenant_context(tenant_id):
+        event = Event.objects.create(
+            tenant_id=tenant_id,
+            actor=actor,
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            payload=payload or {},
+        )
+        return _event(event)
+
+
+def list_work_items(tenant_id, project_id, state=None) -> list[dict]:
+    with tenant_context(tenant_id):
+        qs = WorkItem.objects.filter(tenant_id=tenant_id, project_id=project_id)
+        if state is not None:
+            if state not in WorkItem.State.values:
+                raise ValueError(f"invalid state: {state}")
+            qs = qs.filter(state=state)
+        return [_work_item(w) for w in qs.order_by("created_at")]
+
+
+def transition_work_item(tenant_id, work_item_id, to_state) -> dict:
+    with tenant_context(tenant_id):
+        if to_state not in WorkItem.State.values:
+            raise ValueError(f"invalid state: {to_state}")
+        work_item = WorkItem.objects.get(id=work_item_id, tenant_id=tenant_id)
+        work_item.state = to_state
+        work_item.save(update_fields=["state", "updated_at"])
+        return _work_item(work_item)
+
+
+def get_artifact(tenant_id, artifact_id) -> dict:
+    with tenant_context(tenant_id):
+        return _artifact(Artifact.objects.get(id=artifact_id, tenant_id=tenant_id))
+
+
+def list_artifacts(tenant_id, project_id, phase=None, status=None) -> list[dict]:
+    with tenant_context(tenant_id):
+        qs = Artifact.objects.filter(tenant_id=tenant_id, project_id=project_id)
+        if phase is not None:
+            qs = qs.filter(phase=phase)
+        if status is not None:
+            if status not in Artifact.Status.values:
+                raise ValueError(f"invalid status: {status}")
+            qs = qs.filter(status=status)
+        return [_artifact(a) for a in qs.order_by("-created_at")]
+
+
+def detect_drift(tenant_id, artifact_id) -> dict:
+    """P0 stub — always drift=False. Real comparison vs the SoR arrives in Phase 4."""
+    with tenant_context(tenant_id):
+        artifact = Artifact.objects.get(id=artifact_id, tenant_id=tenant_id)
+        return {
+            "drift": False,
+            "current_version": artifact.version,
+            "registered_version": artifact.version,
+        }

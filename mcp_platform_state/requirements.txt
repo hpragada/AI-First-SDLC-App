@@ -1,4 +1,8 @@
-# Platform-State MCP server deps — exact pins (validated on first install, P0-T5).
-# The ONLY way agents read/write platform state (spec §2).
-mcp==1.2.0
-psycopg[binary]==3.2.3
+# The Platform-State MCP server reuses the Django ORM and therefore runs inside the
+# BACKEND environment — it has no independent dependency set. All it needs is already
+# pinned in ../backend/requirements.txt (Django, psycopg, pgvector, and `mcp`).
+#
+# It is launched on-demand over stdio by the ClaudeDriver (P0-T6), as:
+#   PYTHONPATH=<repo-root> python -m mcp_platform_state.server
+#
+# (No standalone image is built in P0; see mcp_platform_state/README.md.)

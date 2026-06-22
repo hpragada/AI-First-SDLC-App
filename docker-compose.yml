@@ -123,15 +123,11 @@ services:
       - ./backend:/app
     command: ["python", "-c", "print('temporal worker placeholder — wired in P0-T8')"]
 
-  mcp-platform-state:
-    profiles: ["app"]
-    build:
-      context: ./mcp_platform_state
-    env_file: [.env]
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: ["python", "-c", "print('platform-state MCP placeholder — wired in P0-T5')"]
+  # NOTE: the Platform-State MCP server (P0-T5) is NOT a long-running service.
+  # It reuses the Django ORM and is launched on-demand over stdio by the ClaudeDriver
+  # (P0-T6) as a subprocess of the `worker`, via:
+  #   PYTHONPATH=<repo-root> python -m mcp_platform_state.server
+  # (Run inside the backend image, which already has Django + mcp.)
 
 volumes:
   pgdata:
