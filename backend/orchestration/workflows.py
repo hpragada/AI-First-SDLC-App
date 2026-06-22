@@ -37,6 +37,13 @@ class AgentRunWorkflow:
             "execute_agent", args=[inp, manifest],
             start_to_close_timeout=timedelta(minutes=30), retry_policy=_RETRY,
         )
+        # Rule 11 write-completeness gate-precondition: the phase must have registered its
+        # expected artifact before a human is asked to review. Deterministic -> no retry.
+        await workflow.execute_activity(
+            "verify_writes", args=[inp, [inp.phase]],
+            start_to_close_timeout=timedelta(minutes=1),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
         await workflow.execute_activity(
             "open_gate", inp,
             start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,

@@ -119,6 +119,9 @@ def _patch_cores(monkeypatch, calls):
 
     monkeypatch.setattr(activities, "compose_manifest_core", rec("compose", "# Project\nm"))
     monkeypatch.setattr(activities, "execute_agent_core", rec("execute", {"artifact_ids": ["a"]}))
+    monkeypatch.setattr(
+        activities, "verify_write_completeness_core", rec("verify", {"present": ["prd"]})
+    )
     monkeypatch.setattr(activities, "open_gate_core", rec("open", "ap"))
     monkeypatch.setattr(activities, "publish_artifacts_core", rec("publish", {"published": ["a"]}))
     monkeypatch.setattr(

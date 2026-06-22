@@ -25,9 +25,14 @@ from apps.tenancy.context import tenant_context
 from apps.workitems.models import WorkItem
 from drivers import ClaudeDriver
 from manifest import compose_manifest
+from manifest.rules import get_prompt_rules
 from storage import content_hash, s3_from_settings
 
 from .types import AgentRunInput
+
+
+class WriteCompletenessError(Exception):
+    """Rule 11: a run reached completion without registering an expected artifact."""
 
 _PLATFORM_TOOL_NAMES = [
     "get_context", "register_artifact", "update_artifact", "add_trace_edge", "log_event",
@@ -46,7 +51,8 @@ def get_object_store():
 
 
 def load_rules() -> str:
-    return ""  # distilled RULE-BEHAVIOR / RULE-EXECUTION wired in P0-T10a
+    # Distilled prompt-enforced rules (RULE-BEHAVIOR / RULE-EXECUTION), AGENT_MIGRATION_SPEC §4.
+    return get_prompt_rules()
 
 
 def _now() -> datetime:
@@ -206,6 +212,22 @@ def reject_run_core(inp: AgentRunInput, comment: str) -> dict:
     return {"status": "rejected"}
 
 
+def verify_write_completeness_core(inp: AgentRunInput, expected_types: list[str]) -> dict:
+    """Rule 11 (platform-enforced): before the gate opens, confirm the run actually
+    registered the artifacts its phase was supposed to produce."""
+    with tenant_context(inp.tenant_id):
+        present = set(
+            Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id)
+            .values_list("type", flat=True)
+        )
+    missing = [t for t in expected_types if t not in present]
+    if missing:
+        raise WriteCompletenessError(
+            f"run {inp.run_id} reached the gate without expected artifact types {missing}"
+        )
+    return {"present": sorted(present), "expected": list(expected_types)}
+
+
 # ── activity wrappers (sync → run in the worker's thread pool) ──────
 @activity.defn(name="compose_manifest")
 def compose_manifest_activity(inp: AgentRunInput) -> str:
@@ -237,6 +259,11 @@ def reject_run_activity(inp: AgentRunInput, comment: str) -> dict:
     return reject_run_core(inp, comment)
 
 
+@activity.defn(name="verify_writes")
+def verify_writes_activity(inp: AgentRunInput, expected_types: list[str]) -> dict:
+    return verify_write_completeness_core(inp, expected_types)
+
+
 ALL_ACTIVITIES = [
     compose_manifest_activity,
     execute_agent_activity,
@@ -244,4 +271,5 @@ ALL_ACTIVITIES = [
     publish_artifacts_activity,
     transition_work_item_activity,
     reject_run_activity,
+    verify_writes_activity,
 ]

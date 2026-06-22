@@ -36,6 +36,10 @@ def _patch_cores(monkeypatch, calls):
 
     monkeypatch.setattr(activities, "compose_manifest_core", rec("compose", "# Project\nm"))
     monkeypatch.setattr(activities, "execute_agent_core", rec("execute", {"artifact_ids": ["a1"]}))
+    monkeypatch.setattr(
+        activities, "verify_write_completeness_core",
+        rec("verify", {"present": ["prd"], "expected": ["prd"]}),
+    )
     monkeypatch.setattr(activities, "open_gate_core", rec("open", "appr1"))
     monkeypatch.setattr(activities, "publish_artifacts_core", rec("publish", {"published": ["a1"]}))
     monkeypatch.setattr(
@@ -80,10 +84,10 @@ async def _drive(monkeypatch, decision: str):
 async def test_workflow_approved_path(monkeypatch):
     result, calls = await _drive(monkeypatch, "approved")
     assert result["status"] == "completed"
-    assert calls == ["compose", "execute", "open", "publish", "transition"]
+    assert calls == ["compose", "execute", "verify", "open", "publish", "transition"]
 
 
 async def test_workflow_rejected_path(monkeypatch):
     result, calls = await _drive(monkeypatch, "rejected")
     assert result["status"] == "rejected"
-    assert calls == ["compose", "execute", "open", "reject"]
+    assert calls == ["compose", "execute", "verify", "open", "reject"]
