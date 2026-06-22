@@ -39,9 +39,9 @@ Commit: `git add -A && git commit -m "Bootstrap: docs + CLAUDE.md + build plan +
 ## 2. Open in Claude Code and orient it
 From the repo root: `claude`. Then give it this first message verbatim:
 
-> Read `CLAUDE.md`, then `docs/PHASE_0_BUILD_SPEC.md`, then `docs/AGENT_MIGRATION_SPEC.md`, then `BUILD_PLAN.md`. Then list the files in `legacy_suite/agents/`. Summarize back to me: the 11 non-negotiables, the Phase 0 goal, the P0 task list, and — in your own words — how our existing agents/rules/commands get migrated (what's reused verbatim vs rewritten). Do not write any code yet — confirm your understanding first.
+> Read `CLAUDE.md`, then `docs/PHASE_0_BUILD_SPEC.md`, then `docs/AGENT_MIGRATION_SPEC.md`, then `BUILD_PLAN.md`. Then list the files in `legacy_suite/agents/`. Summarize back to me: the 11 non-negotiables, the Phase 0 goal, the P0 task list, and — in your own words — how our existing agents get migrated using the **75/15/10 buckets**: which content is the ~75% reasoning kept verbatim, which is the ~15% data references that get rerouted, and (critically) **where those references live**. Do not write any code yet — confirm your understanding first.
 
-Verify its summary matches the docs, **especially that it understands the agent bodies are reused verbatim and only the I/O contract changes.** This catches misreads before any code exists.
+Verify its summary matches the docs. The **make-or-break check:** it must say that the **~15% data references are scattered throughout the agent — including inside Process steps — not confined to a top/bottom section**, and that a migrated agent still naming a local file (`tasks.md`, `requirements.md`, `docs/...`) is a FAILED migration. If it describes the 15% as just a "Context Loading header + Post-Phase Writes footer," correct it now — that misread is what would silently break the agents at runtime.
 
 ## 3. Build Phase 0, one task at a time
 Drive it task by task (don't say "build everything"). For each task:
