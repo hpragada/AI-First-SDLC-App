@@ -56,8 +56,9 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    # NOTE (P0-T4): a tenant-context middleware that sets `app.tenant_id` on the
-    # DB session for RLS will be inserted here.
+    # Sets `app.tenant_id` on the DB session so RLS scopes every query (#6).
+    # After AuthenticationMiddleware so request.user (and its tenant) is resolved.
+    "apps.tenancy.middleware.TenantContextMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -106,6 +107,15 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Custom user (email login, tenant-scoped). MUST be set before first migrate.
 AUTH_USER_MODEL = "tenancy.User"
+
+# Non-superuser app DB role (RLS applies to it). Migrations run as the privileged
+# role in DATABASE_URL; the running app/worker connect as this role. The P0-T4 RLS
+# migration creates it (idempotently) and grants/policies key off it.
+APP_DB_USER = env("POSTGRES_APP_USER", default="sdlc_app")
+APP_DB_PASSWORD = env("POSTGRES_APP_PASSWORD", default="sdlc_app_pw")
+
+# Session GUC that RLS policies compare tenant_id against.
+RLS_TENANT_SETTING = "app.tenant_id"
 
 # ─── Django REST Framework ──────────────────────────────────────────
 REST_FRAMEWORK = {

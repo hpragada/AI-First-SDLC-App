@@ -45,3 +45,13 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5433/sdlc_platform ../.venv/
 
 > Migrations are generated with **explicit app labels** (`makemigrations tenancy projects …`)
 > — a bare `makemigrations` can no-op before the migration packages exist.
+
+### RLS role split (#6)
+
+Two roles, on purpose:
+- **Migrations** run as the **privileged** role (the `DATABASE_URL` superuser) — it does
+  DDL and bypasses RLS.
+- The **app + worker** connect as the non-superuser **`sdlc_app`** role, which RLS applies
+  to. Every tenant-scoped query needs `app.tenant_id` set first — the request middleware
+  (`apps.tenancy.middleware`) and Temporal activities (P0-T8) do this via
+  `apps.tenancy.context.tenant_context`. Unset context fails closed (matches no rows).
