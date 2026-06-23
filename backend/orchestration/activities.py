@@ -229,39 +229,51 @@ def verify_write_completeness_core(inp: AgentRunInput, expected_types: list[str]
 
 
 # ── activity wrappers (sync → run in the worker's thread pool) ──────
+# Activities run in worker threads with no request/response cycle, so close the
+# thread's Django connection at the boundary — otherwise long-running workers (and
+# multi-activity tests) leak a DB connection per thread. Reopened lazily next use.
+def _boundary(core, *args):
+    from django.db import connection
+
+    try:
+        return core(*args)
+    finally:
+        connection.close()
+
+
 @activity.defn(name="compose_manifest")
 def compose_manifest_activity(inp: AgentRunInput) -> str:
-    return compose_manifest_core(inp)
+    return _boundary(compose_manifest_core, inp)
 
 
 @activity.defn(name="execute_agent")
 def execute_agent_activity(inp: AgentRunInput, manifest: str) -> dict:
-    return execute_agent_core(inp, manifest)
+    return _boundary(execute_agent_core, inp, manifest)
 
 
 @activity.defn(name="open_gate")
 def open_gate_activity(inp: AgentRunInput) -> str:
-    return open_gate_core(inp)
+    return _boundary(open_gate_core, inp)
 
 
 @activity.defn(name="publish_artifacts")
 def publish_artifacts_activity(inp: AgentRunInput) -> dict:
-    return publish_artifacts_core(inp)
+    return _boundary(publish_artifacts_core, inp)
 
 
 @activity.defn(name="transition_work_item")
 def transition_work_item_activity(inp: AgentRunInput, to_state: str) -> dict:
-    return transition_work_item_core(inp, to_state)
+    return _boundary(transition_work_item_core, inp, to_state)
 
 
 @activity.defn(name="reject_run")
 def reject_run_activity(inp: AgentRunInput, comment: str) -> dict:
-    return reject_run_core(inp, comment)
+    return _boundary(reject_run_core, inp, comment)
 
 
 @activity.defn(name="verify_writes")
 def verify_writes_activity(inp: AgentRunInput, expected_types: list[str]) -> dict:
-    return verify_write_completeness_core(inp, expected_types)
+    return _boundary(verify_write_completeness_core, inp, expected_types)
 
 
 ALL_ACTIVITIES = [

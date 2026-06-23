@@ -31,7 +31,7 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 - [x] **P0-T11** REST API: create tenant/project/profile, list/trigger work items, list runs/artifacts/events, decide gates.
 - [x] **P0-T12** Minimal React UI: project create, Project Profile editor, phase console (trigger + run timeline), gate-approval screen, artifact view, traceability view.
 - [x] **P0-T13** Seed script (demo tenant/project/profile/agentspecs) + `make dev`.
-- [ ] **P0-T14** **Acceptance slice** (spec §8): ideation→requirements→prd→architecture run end-to-end, gated, `sor=internal`, traceability shown, RLS verified. Demo + tests green.
+- [x] **P0-T14** **Acceptance slice** (spec §8): ideation→requirements→prd→architecture run end-to-end, gated, `sor=internal`, traceability shown, RLS verified. Demo + tests green.
 
 ## Phase 1 — Atlassian SoR + Brownfield-lite
 - [ ] Generate `docs/PHASE_1_BUILD_SPEC.md` from the blueprint.
