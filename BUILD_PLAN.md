@@ -15,7 +15,7 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 
 ---
 
-## Phase 0 — Platform Spine  ← START HERE
+## Phase 0 — Platform Spine  ✅ COMPLETE
 - [x] **P0-T1** Scaffold repo per CLAUDE.md structure: `backend/`, `mcp_platform_state/`, `agents/`, `frontend/`, `runner/`, `docs/`. Add `docker-compose.yml` (postgres+pgvector, temporal, minio), `.env.example`, `Makefile`, lockfiles, `.gitignore`.
 - [x] **P0-T2** Django project + apps (`tenancy, projects, workitems, registry, ledger, runs, gates, integrations`). Wire DRF, settings, ASGI.
 - [x] **P0-T3** Models + migrations for all Phase 0 entities (spec §1). Add `tenant_id` to every table.
@@ -33,8 +33,8 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 - [x] **P0-T13** Seed script (demo tenant/project/profile/agentspecs) + `make dev`.
 - [x] **P0-T14** **Acceptance slice** (spec §8): ideation→requirements→prd→architecture run end-to-end, gated, `sor=internal`, traceability shown, RLS verified. Demo + tests green.
 
-## Phase 1 — Atlassian SoR + Brownfield-lite
-- [ ] Generate `docs/PHASE_1_BUILD_SPEC.md` from the blueprint.
+## Phase 1 — Atlassian SoR + Brownfield-lite  ← CURRENT
+- [x] Generate `docs/PHASE_1_BUILD_SPEC.md` from the blueprint.
 - [ ] DocStore connector (Confluence read/write via Atlassian Rovo MCP, headless auth).
 - [ ] TaskTracker connector (Jira: epics/stories/sprints, transitions, comments).
 - [ ] Capability abstraction layer (`docstore.*`, `tasktracker.*`) + connector selection per tenant.

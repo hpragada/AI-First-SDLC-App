@@ -2,7 +2,7 @@
 
 This repo builds a multi-tenant, web-delivered, **engine-agnostic agentic SDLC platform** (Django + React + Postgres) that operates clients' real tools-of-record (Confluence/Jira/Figma/Xray/Git) and runs the full lifecycle with human review gates.
 
-**Before writing any code, read `/docs/PHASE_0_BUILD_SPEC.md` for the current phase, and follow `/BUILD_PLAN.md` task by task.** The "why" lives in `/docs/SDLC_Platform_Master_Build_Blueprint.md`. Keep this file lean — detail belongs in `/docs`.
+**Before writing any code, read `/docs/PHASE_1_BUILD_SPEC.md` for the current phase, and follow `/BUILD_PLAN.md` task by task.** (Phase 0 is complete — `/docs/PHASE_0_BUILD_SPEC.md` is the finished-phase reference.) The "why" lives in `/docs/SDLC_Platform_Master_Build_Blueprint.md`. Keep this file lean — detail belongs in `/docs`.
 
 ---
 
@@ -74,7 +74,8 @@ make lint                       # ruff + mypy + eslint
 Runs locally via `docker compose up` + `make dev`; the phase's thin-slice demo works end-to-end; tests pass; `tenant_id`/RLS enforced; gates enforced; `/BUILD_PLAN.md` checkboxes updated; `/docs` updated if a decision changed.
 
 ## Reference docs
-- `/docs/PHASE_0_BUILD_SPEC.md` — build-grade contracts for the current phase (**read before coding**).
+- `/docs/PHASE_1_BUILD_SPEC.md` — build-grade contracts for the **current** phase (**read before coding**).
+- `/docs/PHASE_0_BUILD_SPEC.md` — Phase 0 contracts (complete; the spine this phase builds on).
 - `/docs/AGENT_MIGRATION_SPEC.md` — **how to migrate the `/legacy_suite/` agents, rules, commands (read before any agent task)**.
 - `/BUILD_PLAN.md` — the ordered task backlog across all phases (with legacy-suite coverage map).
 - `/docs/SDLC_Platform_Master_Build_Blueprint.md` — full architecture + concern→resolution ledger (the "why/what").
