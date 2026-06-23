@@ -80,6 +80,21 @@ def list_work_items(project_id: str, state: str | None = None) -> list[dict]:
 
 
 @server.tool()
+def create_work_item(
+    project_id: str,
+    type: str,
+    title: str,
+    description: str = "",
+    parent_id: str | None = None,
+    feature_stream: str = "",
+    depends_on: list[str] | None = None,
+) -> dict:
+    return tools.create_work_item(
+        _tenant(), project_id, type, title, description, parent_id, feature_stream, depends_on,
+    )
+
+
+@server.tool()
 def transition_work_item(work_item_id: str, to_state: str) -> dict:
     return tools.transition_work_item(_tenant(), work_item_id, to_state)
 

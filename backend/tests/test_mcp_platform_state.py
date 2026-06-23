@@ -2,7 +2,7 @@
 
 Exercises every tool against the real DB through the ORM the server uses, plus
 tenant scoping (a tool scoped to tenant A cannot see/affect tenant B) and the
-server wiring (all 10 tools registered).
+server wiring (all tools registered).
 """
 import asyncio
 
@@ -93,6 +93,20 @@ def test_list_and_transition_work_items(world):
     assert len(tools.list_work_items(t.id, project.id, state="in_progress")) == 1
 
 
+def test_create_work_item_proposes_hierarchy(world):
+    t, project = world["t"], world["project"]
+    epic = tools.create_work_item(t.id, project.id, "epic", "Checkout", "the checkout epic")
+    assert epic["type"] == "epic" and epic["state"] == "proposed" and epic["title"] == "Checkout"
+
+    story = tools.create_work_item(
+        t.id, project.id, "story", "Add to cart", "as a user…", parent_id=epic["id"]
+    )
+    assert story["state"] == "proposed" and story["parent_id"] == epic["id"]
+
+    with pytest.raises(ValueError):  # enum-validated
+        tools.create_work_item(t.id, project.id, "not_a_type", "x")
+
+
 # ── read / context / drift ──────────────────────────────────────────
 def test_get_context_shape(world):
     t, project, run = world["t"], world["project"], world["run"]
@@ -143,13 +157,13 @@ def test_tools_are_tenant_scoped(world):
 
 
 # ── server wiring ───────────────────────────────────────────────────
-def test_server_registers_all_ten_tools():
+def test_server_registers_all_tools():
     from mcp_platform_state import server
 
     registered = {t.name for t in asyncio.run(server.server.list_tools())}
     expected = {
         "get_context", "register_artifact", "update_artifact", "add_trace_edge",
-        "log_event", "list_work_items", "transition_work_item", "get_artifact",
-        "list_artifacts", "detect_drift",
+        "log_event", "list_work_items", "create_work_item", "transition_work_item",
+        "get_artifact", "list_artifacts", "detect_drift",
     }
     assert registered == expected

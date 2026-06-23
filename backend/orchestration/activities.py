@@ -36,7 +36,8 @@ class WriteCompletenessError(Exception):
 
 _PLATFORM_TOOL_NAMES = [
     "get_context", "register_artifact", "update_artifact", "add_trace_edge", "log_event",
-    "list_work_items", "transition_work_item", "get_artifact", "list_artifacts", "detect_drift",
+    "list_work_items", "create_work_item", "transition_work_item", "get_artifact",
+    "list_artifacts", "detect_drift",
 ]
 PLATFORM_TOOLS = [f"mcp__platform-state__{name}" for name in _PLATFORM_TOOL_NAMES]
 

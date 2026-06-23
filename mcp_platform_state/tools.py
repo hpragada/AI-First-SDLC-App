@@ -50,12 +50,15 @@ def _work_item(w: WorkItem) -> dict:
         "project_id": str(w.project_id),
         "repo_id": str(w.repo_id) if w.repo_id else None,
         "feature_stream": w.feature_stream,
+        "title": w.title,
+        "description": w.description,
         "type": w.type,
         "state": w.state,
         "parent_id": str(w.parent_id) if w.parent_id else None,
         "depends_on": [str(x) for x in w.depends_on],
         "assignee_id": str(w.assignee_id) if w.assignee_id else None,
         "takeover_flag": w.takeover_flag,
+        "external_ref": w.external_ref,
     }
 
 
@@ -205,6 +208,28 @@ def list_work_items(tenant_id, project_id, state=None) -> list[dict]:
                 raise ValueError(f"invalid state: {state}")
             qs = qs.filter(state=state)
         return [_work_item(w) for w in qs.order_by("created_at")]
+
+
+def create_work_item(
+    tenant_id, project_id, type, title, description="",
+    parent_id=None, feature_stream="", depends_on=None,
+) -> dict:
+    """Propose a WorkItem (state=proposed) — the backlog the Task-Breakdown agent emits.
+    Reconciliation later pushes proposed→accepted into the TaskTracker SoR (#5/B1)."""
+    with tenant_context(tenant_id):
+        if type not in WorkItem.Type.values:
+            raise ValueError(f"invalid type: {type}")
+        project = Project.objects.get(id=project_id, tenant_id=tenant_id)
+        parent = (
+            WorkItem.objects.get(id=parent_id, tenant_id=tenant_id) if parent_id else None
+        )
+        work_item = WorkItem.objects.create(
+            tenant_id=tenant_id, project=project, type=type, title=title,
+            description=description or "", feature_stream=feature_stream or "",
+            parent=parent, depends_on=depends_on or [],
+            state=WorkItem.State.PROPOSED,
+        )
+        return _work_item(work_item)
 
 
 def transition_work_item(tenant_id, work_item_id, to_state) -> dict:

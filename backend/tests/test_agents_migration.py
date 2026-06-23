@@ -37,6 +37,10 @@ _REASONING = {
     "04_architecture": [
         "Principal Solutions Architect", "C4 Model", "OWASP Top 10", "NFR-to-Architecture",
     ],
+    "06_task_breakdown": [
+        "Senior Tech Lead and Delivery Manager", "INVEST", "Critical Path Method",
+        "Definition of Done",
+    ],
 }
 _KEYS = list(_REASONING)
 
@@ -73,6 +77,17 @@ def test_references_rerouted_to_platform(key):
     assert "get_artifact" in body
     assert "# Relevant Artifacts" in body
     assert "# Rules" in body
+
+
+def test_task_breakdown_proposes_work_items_to_platform():
+    """06's output is rerouted to the platform backlog, not local files: it proposes the
+    epic→story→task hierarchy via create_work_item and registers a `backlog` artifact —
+    the reconciliation service later pushes the proposed items to the TaskTracker."""
+    body = _body("06_task_breakdown")
+    assert "create_work_item" in body
+    assert 'type="epic"' in body and 'type="story"' in body and 'type="task"' in body
+    assert "backlog" in body
+    assert "proposed" in body  # items are proposals awaiting the gate, not published issues
 
 
 @pytest.mark.django_db
