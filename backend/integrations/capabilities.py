@@ -1,14 +1,14 @@
 """Capability interfaces (the integration seam — non-negotiable #9).
 
-Callers depend on these Protocols, never on a vendor. `TaskTracker` + the per-tenant
-`get_capability(...)` selection factory arrive in the next Phase-1 tasks; `DocStore`
-is defined here for the Confluence connector to implement.
+Callers depend on these Protocols, never on a vendor. The per-tenant
+`get_capability(...)` selection factory arrives in the next Phase-1 task; `DocStore`
+(Confluence) and `TaskTracker` (Jira) are defined here for their connectors.
 """
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from .types import DocHit, DocPage, ExternalRef
+from .types import DocHit, DocPage, ExternalRef, Issue, IssueHit
 
 
 @runtime_checkable
@@ -26,3 +26,21 @@ class DocStore(Protocol):
     def get_page(self, *, page_ref: str) -> DocPage: ...
 
     def search(self, *, query: str, space: str | None = None) -> list[DocHit]: ...
+
+
+@runtime_checkable
+class TaskTracker(Protocol):
+    """Issue tracker system of record (Jira-shaped, vendor-free). `kind` is the issue
+    type name (Epic/Story/Task/Subtask); `parent_ref` is the parent issue key (an
+    epic for a story, a story for a subtask). The connector is bound to one project."""
+
+    def create_issue(self, *, kind: str, summary: str, description: str,
+                     parent_ref: str | None = None, fields: dict | None = None) -> ExternalRef: ...
+
+    def get_issue(self, *, issue_ref: str) -> Issue: ...
+
+    def transition_issue(self, *, issue_ref: str, to_state: str) -> Issue: ...
+
+    def add_comment(self, *, issue_ref: str, body: str) -> None: ...
+
+    def search(self, *, jql: str) -> list[IssueHit]: ...

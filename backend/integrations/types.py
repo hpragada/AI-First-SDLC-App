@@ -36,6 +36,26 @@ class DocHit:
     url: str
 
 
+@dataclass(frozen=True)
+class Issue:
+    """An issue read through a TaskTracker (read-through, not stored)."""
+
+    key: str
+    summary: str
+    status: str
+    issue_type: str
+    url: str
+    parent_ref: str | None = None
+
+
+@dataclass(frozen=True)
+class IssueHit:
+    """A search result from a TaskTracker."""
+
+    key: str
+    summary: str
+
+
 class CapabilityError(Exception):
     """A connector call failed. Carries the upstream status when there was one."""
 

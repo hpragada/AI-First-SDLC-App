@@ -36,7 +36,7 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 ## Phase 1 — Atlassian SoR + Brownfield-lite  ← CURRENT
 - [x] Generate `docs/PHASE_1_BUILD_SPEC.md` from the blueprint.
 - [x] DocStore connector (Confluence read/write; headless API-token REST per decision D1 — Rovo MCP stays the optional agent-side transport).
-- [ ] TaskTracker connector (Jira: epics/stories/sprints, transitions, comments).
+- [x] TaskTracker connector (Jira: epics/stories/subtasks, transitions, comments, search; headless API-token REST). Sprints deferred (decision D3).
 - [ ] Capability abstraction layer (`docstore.*`, `tasktracker.*`) + connector selection per tenant.
 - [ ] Artifact publish path to live SoR (gate→publish→pointer+version).
 - [ ] Traceability viewer (requirement→PRD→epic→story).
