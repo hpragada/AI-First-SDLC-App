@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
+from apps.integrations.models import IntegrationConnection
 from apps.projects.models import Project, ProjectProfile
 from apps.registry.catalog import seed_agent_specs
 from apps.registry.models import AgentSpec
@@ -48,6 +49,7 @@ class SeedResult:
     project_id: str
     work_item_id: str
     agent_spec_count: int
+    connection_count: int
     created: bool  # True if the tenant row was created on this run
 
 
@@ -91,8 +93,23 @@ def seed_demo() -> SeedResult:
         seed_agent_specs(tenant)
         spec_count = AgentSpec.objects.filter(tenant=tenant).count()
 
+        # Atlassian connectors for the demo tenant (creds resolve via .env settings).
+        from django.conf import settings
+
+        connections = [
+            ("docstore", "confluence", {"space_key": settings.CONFLUENCE_SPACE_KEY}),
+            ("tasktracker", "jira", {"project_key": settings.JIRA_PROJECT_KEY}),
+        ]
+        for capability, connector, scopes in connections:
+            IntegrationConnection.objects.update_or_create(
+                tenant=tenant, capability=capability, connector=connector,
+                defaults={"scopes": scopes, "token_ref": "settings:atlassian",
+                          "health": IntegrationConnection.Health.UNKNOWN},
+            )
+        connection_count = IntegrationConnection.objects.filter(tenant=tenant).count()
+
         return SeedResult(
             tenant_id=str(tenant.id), user_id=str(user.id), user_email=user.email,
             project_id=str(project.id), work_item_id=str(work_item.id),
-            agent_spec_count=spec_count, created=created,
+            agent_spec_count=spec_count, connection_count=connection_count, created=created,
         )

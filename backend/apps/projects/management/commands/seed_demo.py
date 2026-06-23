@@ -21,3 +21,4 @@ class Command(BaseCommand):
         self.stdout.write(f"  user_id     : {r.user_id}   (approver at gates)")
         self.stdout.write(f"  user_email  : {r.user_email} / {DEMO_USER_PASSWORD}")
         self.stdout.write(f"  agent_specs : {r.agent_spec_count}")
+        self.stdout.write(f"  connectors  : {r.connection_count}  (docstore→confluence, tasktracker→jira)")
