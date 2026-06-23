@@ -102,13 +102,18 @@ services:
     build:
       context: ./backend
     env_file: [.env]
+    environment:
+      # Repo root on the path so the API can import mcp_platform_state (the gate /
+      # trigger services log events through it), mirroring the worker.
+      PYTHONPATH: /repo
     depends_on:
       postgres:
         condition: service_healthy
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
+      - .:/repo
+    working_dir: /repo/backend
     command: ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   worker:

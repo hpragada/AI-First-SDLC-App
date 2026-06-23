@@ -1,7 +1,7 @@
-"""Root URL config. App routers are added as their REST surfaces land (P0-T11)."""
+"""Root URL config. The Phase-0 REST surface (P0-T11) is mounted under /api/."""
 from django.contrib import admin
 from django.http import HttpRequest, JsonResponse
-from django.urls import path
+from django.urls import include, path
 
 
 def health(_request: HttpRequest) -> JsonResponse:
@@ -12,4 +12,5 @@ def health(_request: HttpRequest) -> JsonResponse:
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/health/", health, name="health"),
+    path("api/", include("api.urls")),
 ]

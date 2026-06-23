@@ -13,6 +13,10 @@ class TenantContextMiddleware:
 
     def __call__(self, request):
         tenant_id = self._resolve_tenant(request)
+        # Expose the resolved tenant to views (None when unresolved) for explicit
+        # query scoping — defense-in-depth alongside RLS (which the local superuser
+        # connection bypasses).
+        request.tenant_id = tenant_id
         # No tenant resolved (e.g. health checks, pre-auth): don't touch the DB.
         if not tenant_id:
             return self.get_response(request)
