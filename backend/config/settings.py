@@ -143,6 +143,17 @@ CORS_ALLOWED_ORIGINS = env.list(
 )
 CORS_ALLOW_HEADERS = list(default_cors_headers) + ["x-tenant-id"]
 
+# ─── Atlassian (Phase 1 SoR — Confluence + Jira) ────────────────────
+# Headless control-plane auth = API token over REST (decision D1). The secret lives
+# in .env (gitignored); per-tenant IntegrationConnection.token_ref points at it. The
+# Rovo MCP stays the optional agent-runtime transport, not this connector's path.
+ATLASSIAN_SITE_URL = env("ATLASSIAN_SITE_URL", default="")
+ATLASSIAN_CLOUD_ID = env("ATLASSIAN_CLOUD_ID", default="")
+ATLASSIAN_EMAIL = env("ATLASSIAN_EMAIL", default="")
+ATLASSIAN_API_TOKEN = env("ATLASSIAN_API_TOKEN", default="")
+CONFLUENCE_SPACE_KEY = env("CONFLUENCE_SPACE_KEY", default="")
+JIRA_PROJECT_KEY = env("JIRA_PROJECT_KEY", default="")
+
 # ─── Django REST Framework ──────────────────────────────────────────
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
