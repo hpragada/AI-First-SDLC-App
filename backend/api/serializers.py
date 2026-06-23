@@ -10,6 +10,7 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from apps.gates.models import Approval
+from apps.integrations.models import SourceDocument
 from apps.ledger.models import Event
 from apps.projects.models import Project, ProjectProfile
 from apps.registry.models import Artifact, TraceEdge
@@ -121,3 +122,20 @@ class GateDecisionSerializer(serializers.Serializer):
     user_id = serializers.UUIDField()
     decision = serializers.ChoiceField(choices=["approved", "rejected"])
     comment = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+# ── Brownfield-lite onboarding ──────────────────────────────────────
+class SourceDocumentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SourceDocument
+        fields = [
+            "id", "project", "filename", "mime", "status",
+            "extracted_artifact_ids", "provenance", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class AdoptSerializer(serializers.Serializer):
+    """Input for the onboarding review gate. `user_id` must hold product_owner."""
+
+    user_id = serializers.UUIDField()

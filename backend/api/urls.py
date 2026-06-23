@@ -9,6 +9,7 @@ from .views import (
     EventViewSet,
     ProjectViewSet,
     RunViewSet,
+    SourceDocumentViewSet,
     TenantCreateView,
     TraceEdgeViewSet,
     WorkItemViewSet,
@@ -22,6 +23,7 @@ router.register("artifacts", ArtifactViewSet, basename="artifact")
 router.register("trace-edges", TraceEdgeViewSet, basename="traceedge")
 router.register("events", EventViewSet, basename="event")
 router.register("approvals", ApprovalViewSet, basename="approval")
+router.register("source-documents", SourceDocumentViewSet, basename="sourcedocument")
 
 urlpatterns = [
     path("tenants/", TenantCreateView.as_view(), name="tenant-create"),

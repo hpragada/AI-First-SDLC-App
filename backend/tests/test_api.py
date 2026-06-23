@@ -179,7 +179,9 @@ def test_traceability_endpoint_returns_nodes_and_edges(client, project):
         status="published", sor="confluence",
         external_ref={"sor": "confluence", "id": "123", "url": "https://x/wiki/123", "version": 1},
     )
-    TraceEdge.objects.create(tenant=project.tenant, from_artifact=req, to_artifact=prd, rel="derives")
+    TraceEdge.objects.create(
+        tenant=project.tenant, from_artifact=req, to_artifact=prd, rel="derives"
+    )
 
     resp = client.get(f"/api/projects/{project.id}/traceability/", **_hdr(project.tenant_id))
     assert resp.status_code == 200
@@ -245,6 +247,71 @@ def test_decide_gate_wrong_role_is_403(client, project, gate):
 def test_list_pending_approvals(client, project, gate):
     resp = client.get("/api/approvals/?decision=pending", **_hdr(project.tenant_id))
     assert [a["id"] for a in resp.data] == [str(gate["approval"].id)]
+
+
+# ── Brownfield-lite onboarding ──────────────────────────────────────
+def _docx_bytes():
+    import io
+
+    from docx import Document
+
+    doc = Document()
+    doc.add_heading("PRD", level=1)
+    doc.add_paragraph("The system shall let a user log in.")
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def test_source_document_upload_extract_and_adopt(client, project, monkeypatch):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from integrations import onboarding
+    from storage import InMemoryObjectStore
+
+    monkeypatch.setattr(onboarding, "_object_store", lambda injected: InMemoryObjectStore())
+    po = User.objects.create_user(email="po@x.test", name="PO", tenant=project.tenant, password="p")
+    Membership.objects.create(tenant=project.tenant, user=po, project=project, role="product_owner")
+
+    upload = SimpleUploadedFile(
+        "PRD.docx", _docx_bytes(),
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    up = client.post(
+        f"/api/projects/{project.id}/source-documents/",
+        {"file": upload, "artifact_type": "prd"}, format="multipart", **_hdr(project.tenant_id),
+    )
+    assert up.status_code == 201
+    sd_id, aid = up.data["source_document_id"], up.data["artifact_ids"][0]
+    assert Artifact.objects.get(id=aid).status == "draft"  # awaiting the review gate
+
+    listed = client.get(
+        f"/api/projects/{project.id}/source-documents/", **_hdr(project.tenant_id)
+    )
+    assert [s["id"] for s in listed.data] == [sd_id]
+
+    # Review gate: product_owner adopts → draft becomes published.
+    res = client.post(
+        f"/api/source-documents/{sd_id}/adopt/", {"user_id": str(po.id)},
+        format="json", **_hdr(project.tenant_id),
+    )
+    assert res.status_code == 200
+    assert Artifact.objects.get(id=aid).status == "published"
+
+
+def test_onboard_atlassian_endpoint(client, project, monkeypatch):
+    from api import views
+
+    monkeypatch.setattr(
+        views, "register_atlassian",
+        lambda **kw: {"registered_pages": ["a1"], "registered_issues": ["ST-1"]},
+    )
+    res = client.post(
+        f"/api/projects/{project.id}/onboard-atlassian/", {}, format="json",
+        **_hdr(project.tenant_id),
+    )
+    assert res.status_code == 200
+    assert res.data == {"registered_pages": ["a1"], "registered_issues": ["ST-1"]}
 
 
 # ── Tenant scoping ──────────────────────────────────────────────────

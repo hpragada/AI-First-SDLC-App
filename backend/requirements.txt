@@ -25,3 +25,8 @@ django-cors-headers==4.9.0
 
 # Markdown → HTML for publishing artifact bodies to Confluence (P1)
 markdown==3.10.2
+
+# Static-file extraction for brownfield-lite onboarding (Word/Excel/PDF → artifacts; P1)
+python-docx==1.2.0
+openpyxl==3.1.5
+pypdf==6.14.1

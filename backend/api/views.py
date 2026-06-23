@@ -16,15 +16,26 @@ from rest_framework.views import APIView
 
 from apps.gates.models import Approval
 from apps.gates.services import GateError, GateRoleError, decide_gate
+from apps.integrations.models import SourceDocument
 from apps.ledger.models import Event
 from apps.projects.models import Project
 from apps.registry.models import Artifact, TraceEdge
 from apps.runs.models import Run
 from apps.tenancy.services import create_tenant
 from apps.workitems.models import WorkItem
+from integrations.extract import ExtractionError
+from integrations.onboarding import (
+    OnboardingError,
+    OnboardingRoleError,
+    adopt_source_document,
+    ingest_source_document,
+    register_atlassian,
+)
+from integrations.types import CapabilityUnavailable
 from orchestration.trigger import TriggerError, trigger_phase
 
 from .serializers import (
+    AdoptSerializer,
     ApprovalSerializer,
     ArtifactSerializer,
     EventSerializer,
@@ -32,6 +43,7 @@ from .serializers import (
     ProjectProfileSerializer,
     ProjectSerializer,
     RunSerializer,
+    SourceDocumentSerializer,
     TenantSerializer,
     TraceEdgeSerializer,
     TriggerSerializer,
@@ -130,6 +142,63 @@ class ProjectViewSet(
             for e in edges
         ]
         return Response({"nodes": nodes, "edges": edge_list})
+
+    @action(detail=True, methods=["get", "post"], url_path="source-documents")
+    def source_documents(self, request, pk=None):
+        """GET list / POST upload a static file for brownfield-lite extraction (spec §6)."""
+        project = self.get_object()
+        if request.method == "GET":
+            qs = (
+                SourceDocument.objects
+                .filter(tenant_id=self.tenant_id, project=project).order_by("-created_at")
+            )
+            return Response(SourceDocumentSerializer(qs, many=True).data)
+
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise ValidationError({"file": "a multipart 'file' is required"})
+        try:
+            out = ingest_source_document(
+                tenant_id=self.tenant_id, project_id=str(project.id),
+                filename=upload.name, mime=upload.content_type or "", content=upload.read(),
+                artifact_type=request.data.get("artifact_type", "document"),
+            )
+        except ExtractionError as exc:
+            raise ValidationError({"file": str(exc)}) from exc
+        return Response(out, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="onboard-atlassian")
+    def onboard_atlassian(self, request, pk=None):
+        """Register-don't-recreate against the tenant's Confluence/Jira (spec §6)."""
+        project = self.get_object()
+        try:
+            out = register_atlassian(tenant_id=self.tenant_id, project_id=str(project.id))
+        except CapabilityUnavailable as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(out)
+
+
+# ── Source documents + onboarding review gate ───────────────────────
+class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
+    serializer_class = SourceDocumentSerializer
+    queryset = SourceDocument.objects.all().order_by("-created_at")
+
+    @action(detail=True, methods=["post"])
+    def adopt(self, request, pk=None):
+        """Review gate: a product_owner publishes the extracted draft artifacts."""
+        src = self.get_object()
+        ser = AdoptSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            out = adopt_source_document(
+                tenant_id=self.tenant_id, source_document_id=str(src.id),
+                user_id=str(ser.validated_data["user_id"]),
+            )
+        except OnboardingRoleError as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except OnboardingError as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(out)
 
 
 # ── WorkItems + phase trigger ───────────────────────────────────────

@@ -83,10 +83,15 @@ class AtlassianDocStore:
         self._rest.request("DELETE", f"/wiki/api/v2/pages/{page_ref}")
 
     def search(self, *, query: str, space: str | None = None) -> list[DocHit]:
-        cql = f'type=page and title ~ "{query}"'
+        # Empty query => list all pages in the space (used for brownfield discovery).
+        clauses = []
         if space:
-            cql = f'space="{space}" and ' + cql
-        data = self._rest.request("GET", "/wiki/rest/api/search", query={"cql": cql, "limit": 25})
+            clauses.append(f'space="{space}"')
+        clauses.append("type=page")
+        if query:
+            clauses.append(f'title ~ "{query}"')
+        cql = " and ".join(clauses)
+        data = self._rest.request("GET", "/wiki/rest/api/search", query={"cql": cql, "limit": 100})
         hits: list[DocHit] = []
         for entry in (data or {}).get("results", []):
             content = entry.get("content") or {}
