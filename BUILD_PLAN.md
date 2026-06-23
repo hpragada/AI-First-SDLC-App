@@ -30,7 +30,7 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 - [x] **P0-T10c** Migrate agents **01, 02, 03, 04** per `AGENT_MIGRATION_SPEC.md` §2–§3 + §8 checklist. **Preserve reasoning verbatim; reroute every data reference (incl. inside Process steps); pass the §8 reference sweep** (no leftover local paths). Store in `/agents/<key>/agent.md`; register AgentSpecs; add per-agent run tests that read inputs from the platform.
 - [x] **P0-T11** REST API: create tenant/project/profile, list/trigger work items, list runs/artifacts/events, decide gates.
 - [x] **P0-T12** Minimal React UI: project create, Project Profile editor, phase console (trigger + run timeline), gate-approval screen, artifact view, traceability view.
-- [ ] **P0-T13** Seed script (demo tenant/project/profile/agentspecs) + `make dev`.
+- [x] **P0-T13** Seed script (demo tenant/project/profile/agentspecs) + `make dev`.
 - [ ] **P0-T14** **Acceptance slice** (spec §8): ideation→requirements→prd→architecture run end-to-end, gated, `sor=internal`, traceability shown, RLS verified. Demo + tests green.
 
 ## Phase 1 — Atlassian SoR + Brownfield-lite

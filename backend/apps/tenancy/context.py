@@ -19,6 +19,13 @@ def set_current_tenant(tenant_id) -> None:
         cur.execute("SELECT set_config(%s, %s, false)", [_SETTING, value])
 
 
+def get_current_tenant() -> str:
+    """Read the current app.tenant_id GUC ('' when unset)."""
+    with connection.cursor() as cur:
+        cur.execute("SELECT current_setting(%s, true)", [_SETTING])
+        return cur.fetchone()[0] or ""
+
+
 def clear_current_tenant() -> None:
     """Reset app.tenant_id to empty (RLS then matches no rows — fail-closed)."""
     with connection.cursor() as cur:
@@ -27,9 +34,15 @@ def clear_current_tenant() -> None:
 
 @contextmanager
 def tenant_context(tenant_id):
-    """Scope a block of DB work to a tenant; always clears on exit."""
+    """Scope a block of DB work to a tenant, restoring the prior scope on exit.
+
+    Restoring (rather than blanket-clearing) makes the context re-entrant: a nested
+    `tenant_context` returns control to its caller's tenant instead of clobbering it
+    to empty. The outermost context restores to '' (fail-closed), as before.
+    """
+    previous = get_current_tenant()
     set_current_tenant(tenant_id)
     try:
         yield
     finally:
-        clear_current_tenant()
+        set_current_tenant(previous)

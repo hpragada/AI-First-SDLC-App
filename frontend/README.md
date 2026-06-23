@@ -13,6 +13,16 @@ pre-auth scoping mechanism).
 - **Traceability** — the provenance DAG (`from --rel--> to`), resolved to artifact phase/type.
 
 ## Run it
+The whole stack (infra + backend + worker + this UI) comes up with one command from
+the repo root:
+```bash
+make up && make migrate && make seed && make dev   # or ./make.ps1 <target> on Windows
+```
+`make seed` prints the demo **tenant id** (paste into the UI's X-Tenant-ID field) and a
+demo **user id / email** (`demo@demo.test`) that holds the gate roles. `make dev` serves
+this app at http://localhost:5173.
+
+To run just the UI against an already-running backend:
 ```bash
 npm install
 npm run dev      # Vite dev server on http://localhost:5173

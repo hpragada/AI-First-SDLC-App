@@ -134,6 +134,22 @@ services:
     working_dir: /repo/backend
     command: ["python", "-m", "orchestration.worker"]
 
+  frontend:
+    profiles: ["app"]
+    image: node:24-alpine
+    working_dir: /app
+    environment:
+      # Browser-side base URL (the host-mapped backend); CORS allows :5173.
+      VITE_API_BASE: http://localhost:8000/api
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      # Anonymous volume so the container keeps its own (linux) node_modules and
+      # doesn't clash with the host's platform-specific binaries (esbuild/rollup).
+      - /app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+
   # NOTE: the Platform-State MCP server (P0-T5) is NOT a long-running service.
   # It reuses the Django ORM and is launched on-demand over stdio by the ClaudeDriver
   # (P0-T6) as a subprocess of the `worker`, via:
