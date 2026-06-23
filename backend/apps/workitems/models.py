@@ -26,6 +26,9 @@ class WorkItem(TenantScopedModel):
         "projects.Repository", null=True, blank=True, on_delete=models.SET_NULL
     )
     feature_stream = models.CharField(max_length=255, blank=True)
+    # Issue-shaped fields so a proposed item can be reconciled into a SoR issue (P1).
+    title = models.CharField(max_length=512, blank=True)
+    description = models.TextField(blank=True)
     type = models.CharField(max_length=16, choices=Type.choices, default=Type.STORY)
     state = models.CharField(max_length=16, choices=State.choices, default=State.PROPOSED)
     parent = models.ForeignKey(
@@ -37,6 +40,8 @@ class WorkItem(TenantScopedModel):
         "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL
     )
     takeover_flag = models.BooleanField(default=False)
+    # Pointer to the SoR issue once reconciled (proposed→accepted), e.g. a Jira key (P1).
+    external_ref = models.JSONField(null=True, blank=True)
 
     def __str__(self) -> str:
         return f"{self.type}:{self.feature_stream or self.id}"

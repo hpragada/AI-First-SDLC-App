@@ -49,10 +49,12 @@ class WorkItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = WorkItem
         fields = [
-            "id", "project", "repo", "feature_stream", "type", "state",
-            "parent", "depends_on", "assignee", "takeover_flag", "created_at",
+            "id", "project", "repo", "feature_stream", "title", "description",
+            "type", "state", "parent", "depends_on", "assignee", "takeover_flag",
+            "external_ref", "created_at",
         ]
-        read_only_fields = ["id", "project", "state", "created_at"]
+        # external_ref is set by reconciliation (proposed→accepted), not by clients.
+        read_only_fields = ["id", "project", "state", "external_ref", "created_at"]
 
 
 class TriggerSerializer(serializers.Serializer):

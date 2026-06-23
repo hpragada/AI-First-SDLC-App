@@ -40,7 +40,7 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 - [x] Capability abstraction layer (`docstore.*`, `tasktracker.*`) + connector selection per tenant (`get_capability` over IntegrationConnection; demo tenant connections seeded).
 - [x] Artifact publish path to live SoR (gate→publish→pointer+version) — DocStore/Confluence; type→capability resolution; idempotent; internal fallback. (Backlog→Jira via reconciliation, next.)
 - [x] Traceability viewer (requirement→PRD→epic→story) — `GET /projects/{id}/traceability/` (nodes+edges with SoR deep-links) + React lineage tree.
-- [ ] Reconciliation service (proposed→accepted; idempotent, no dup of existing issues).
+- [x] Reconciliation service (proposed→accepted; idempotent, no dup of existing issues) — `reconcile_backlog` into Jira; external_ref idempotency + register-don't-recreate; epic→story→task order. WorkItem gained title/description/external_ref.
 - [ ] **Migrate agent 06 Task Breakdown** (→ Jira epics/stories/sprints) per migration spec.
 - [ ] Brownfield-lite onboarding (single-repo): register-don't-recreate against Atlassian + **static-file extraction** (Word/PDF/Excel → internal artifacts, provenance, review gate). *(Delivers the "onboard existing project with local docs OR MCP tool" path for single-repo.)*
 - [ ] Rate governor (queue/backoff/cache) v1.
