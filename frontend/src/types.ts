@@ -95,6 +95,29 @@ export interface TriggerResult {
   workflow_id: string;
 }
 
+// Traceability viewer (GET /projects/{id}/traceability/) — lineage graph.
+export interface TraceNode {
+  id: string;
+  kind: string; // "artifact"
+  phase: string;
+  type: string;
+  status: string;
+  sor: string;
+  external_ref: Record<string, unknown> | null;
+  url: string | null; // deep-link to the live SoR (Confluence page / Jira issue)
+}
+
+export interface TraceGraphEdge {
+  from: string;
+  to: string;
+  rel: string;
+}
+
+export interface TraceGraph {
+  nodes: TraceNode[];
+  edges: TraceGraphEdge[];
+}
+
 // The four planning phases migrated in P0 (the acceptance slice).
 export const PLANNING_PHASES: { key: string; label: string }[] = [
   { key: "01_ideation", label: "Ideation" },

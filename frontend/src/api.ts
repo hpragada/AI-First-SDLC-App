@@ -9,6 +9,7 @@ import type {
   Run,
   Tenant,
   TraceEdge,
+  TraceGraph,
   TriggerResult,
   WorkItem,
 } from "./types";
@@ -102,6 +103,8 @@ export const api = {
     req<Artifact[]>("GET", "/artifacts/", { tenantId, query: q }),
   listTraceEdges: (tenantId: string, projectId: string) =>
     req<TraceEdge[]>("GET", "/trace-edges/", { tenantId, query: { project: projectId } }),
+  getTraceability: (tenantId: string, projectId: string) =>
+    req<TraceGraph>("GET", `/projects/${projectId}/traceability/`, { tenantId }),
 
   // Gates.
   listApprovals: (tenantId: string, q: { decision?: string } = {}) =>

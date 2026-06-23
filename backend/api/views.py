@@ -107,6 +107,30 @@ class ProjectViewSet(
         code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         return Response(ProjectProfileSerializer(profile).data, status=code)
 
+    @action(detail=True, methods=["get"])
+    def traceability(self, request, pk=None):
+        """Lineage graph for the viewer (spec §5): artifact nodes + their TraceEdges,
+        each node carrying its SoR pointer/url so the UI can deep-link to the live
+        Confluence page / Jira issue. The requirement→PRD→epic→story chain walks these."""
+        project = self.get_object()
+        artifacts = Artifact.objects.filter(tenant_id=self.tenant_id, project=project)
+        nodes = []
+        for a in artifacts:
+            ext = a.external_ref or {}
+            nodes.append({
+                "id": str(a.id), "kind": "artifact", "phase": a.phase, "type": a.type,
+                "status": a.status, "sor": a.sor,
+                "external_ref": ext or None, "url": ext.get("url"),
+            })
+        edges = TraceEdge.objects.filter(
+            tenant_id=self.tenant_id, from_artifact__project=project
+        )
+        edge_list = [
+            {"from": str(e.from_artifact_id), "to": str(e.to_artifact_id), "rel": e.rel}
+            for e in edges
+        ]
+        return Response({"nodes": nodes, "edges": edge_list})
+
 
 # ── WorkItems + phase trigger ───────────────────────────────────────
 class WorkItemViewSet(

@@ -141,8 +141,9 @@ def test_jira_live_create_get_comment_transition_search_delete():
 
         # JQL search is index-backed (eventually consistent) — poll until the new
         # issue is indexed, so this verifies the real search endpoint without flaking.
+        # Jira's index can lag well past 30s, so give it a generous window.
         hits = []
-        for _ in range(15):
+        for _ in range(30):
             hits = tt.search(jql=f"key = {ref.id}")
             if hits:
                 break

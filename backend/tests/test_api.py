@@ -164,6 +164,36 @@ def test_list_runs_artifacts_events_edges(client, project):
     assert events.status_code == 200
 
 
+def test_traceability_endpoint_returns_nodes_and_edges(client, project):
+    run = Run.objects.create(
+        tenant=project.tenant, work_item=WorkItem.objects.create(
+            tenant=project.tenant, project=project, type=WorkItem.Type.STORY),
+        agent_spec=AgentSpec.objects.create(tenant=project.tenant, key="03_prd", body_ref="x"),
+    )
+    req = Artifact.objects.create(
+        tenant=project.tenant, project=project, run=run, phase="requirements",
+        type="requirements", status="published", sor="internal",
+    )
+    prd = Artifact.objects.create(
+        tenant=project.tenant, project=project, run=run, phase="prd", type="prd",
+        status="published", sor="confluence",
+        external_ref={"sor": "confluence", "id": "123", "url": "https://x/wiki/123", "version": 1},
+    )
+    TraceEdge.objects.create(tenant=project.tenant, from_artifact=req, to_artifact=prd, rel="derives")
+
+    resp = client.get(f"/api/projects/{project.id}/traceability/", **_hdr(project.tenant_id))
+    assert resp.status_code == 200
+    nodes = {n["id"]: n for n in resp.data["nodes"]}
+    assert set(nodes) == {str(req.id), str(prd.id)}
+    # The PRD node carries its live SoR deep-link.
+    assert nodes[str(prd.id)]["sor"] == "confluence"
+    assert nodes[str(prd.id)]["url"] == "https://x/wiki/123"
+    assert nodes[str(req.id)]["url"] is None
+    assert resp.data["edges"] == [
+        {"from": str(req.id), "to": str(prd.id), "rel": "derives"}
+    ]
+
+
 # ── Gate decision (real decide_gate, stubbed signal) ────────────────
 @pytest.fixture
 def gate(project, monkeypatch):

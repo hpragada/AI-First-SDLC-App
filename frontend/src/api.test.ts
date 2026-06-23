@@ -64,4 +64,12 @@ describe("api client", () => {
     stubFetch(404, { detail: "not found" });
     await expect(api.getProfile("t", "p1")).resolves.toBeNull();
   });
+
+  it("fetches the traceability graph for a project", async () => {
+    const f = stubFetch(200, { nodes: [], edges: [] });
+    await api.getTraceability("t", "p1");
+    const [url, opts] = f.mock.calls[0];
+    expect(url).toContain("/projects/p1/traceability/");
+    expect(opts.headers["X-Tenant-ID"]).toBe("t");
+  });
 });
