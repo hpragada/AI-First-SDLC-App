@@ -8,6 +8,7 @@ Postgres as a NON-superuser role so RLS policies apply (non-negotiable #6).
 from pathlib import Path
 
 import environ
+from corsheaders.defaults import default_headers as default_cors_headers
 
 # backend/  (this file is backend/config/settings.py)
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -34,6 +35,7 @@ DJANGO_APPS = [
 ]
 THIRD_PARTY_APPS = [
     "rest_framework",
+    "corsheaders",
 ]
 # Platform apps (control + state planes). Models land in P0-T3.
 LOCAL_APPS = [
@@ -50,6 +52,8 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # CORS must precede CommonMiddleware so it can answer browser preflights (#12-T12).
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -129,6 +133,15 @@ S3_BUCKET = env("S3_BUCKET", default="sdlc-artifacts")
 TEMPORAL_HOST = env("TEMPORAL_HOST", default="localhost:7233")
 TEMPORAL_NAMESPACE = env("TEMPORAL_NAMESPACE", default="default")
 TEMPORAL_TASK_QUEUE = env("TEMPORAL_TASK_QUEUE", default="sdlc-planning")
+
+# ─── CORS (React Experience plane → API) ────────────────────────────
+# The Vite dev server is a different origin than the API; allow it to call /api/
+# and to send the X-Tenant-ID scoping header. Tighten/extend via env in prod.
+CORS_ALLOWED_ORIGINS = env.list(
+    "CORS_ALLOWED_ORIGINS",
+    default=["http://localhost:5173", "http://127.0.0.1:5173"],
+)
+CORS_ALLOW_HEADERS = list(default_cors_headers) + ["x-tenant-id"]
 
 # ─── Django REST Framework ──────────────────────────────────────────
 REST_FRAMEWORK = {

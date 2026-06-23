@@ -19,3 +19,6 @@ mcp==1.2.0
 
 # Object store (artifact bodies in S3/MinIO)
 boto3==1.35.81
+
+# CORS for the React Experience plane (Vite dev server → API; P0-T12)
+django-cors-headers==4.9.0
