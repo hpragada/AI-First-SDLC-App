@@ -3,6 +3,8 @@
 Each core is exercised against the real DB with a fake driver + in-memory object store,
 covering the happy path, idempotency by run_id, and the approve/reject branches.
 """
+from types import SimpleNamespace
+
 import pytest
 
 from apps.gates.models import Approval
@@ -105,12 +107,51 @@ def test_publish_artifacts_core(wired, store, run_input):
     result = activities.publish_artifacts_core(run_input)
 
     artifact = Artifact.objects.get(id=result["published"][0])
+    # No connector configured for this tenant → internal SoR fallback (#B3).
     assert artifact.status == Artifact.Status.PUBLISHED and artifact.sor == Artifact.SoR.INTERNAL
     # Snapshot copied in the store.
     snap = next(k for k in store._data if k.startswith("snapshots/"))
     assert store.get(snap) == store.get(artifact.s3_key)
     assert Run.objects.get(id=run_input.run_id).status == Run.Status.COMPLETED
     # The Approval decision is recorded by the gate service (T9), not publish.
+
+
+class _FakeDocStore:
+    def __init__(self):
+        self.created: list[dict] = []
+
+    def create_page(self, *, space, title, body_html, parent_ref=None):
+        self.created.append({"space": space, "title": title, "body_html": body_html})
+        from integrations.types import ExternalRef
+        return ExternalRef(sor="confluence", id="PAGE-1",
+                           url="https://x.atlassian.net/wiki/PAGE-1", version=1)
+
+
+def test_publish_artifacts_core_pushes_to_docstore_when_connected(wired, store, run_input,
+                                                                  monkeypatch):
+    """A prd artifact with a docstore connector publishes to Confluence: sor + external_ref
+    are set from the returned pointer (gate→publish→pointer+version)."""
+    from integrations import publish
+
+    fake = _FakeDocStore()
+    monkeypatch.setattr(publish, "get_capability", lambda t, c: fake)
+    monkeypatch.setattr(publish, "get_connection",
+                        lambda t, c: SimpleNamespace(scopes={"space_key": "SDLC"}))
+
+    activities.execute_agent_core(run_input, manifest="# Project\nx")
+    activities.open_gate_core(run_input)
+    result = activities.publish_artifacts_core(run_input)
+
+    artifact = Artifact.objects.get(id=result["published"][0])
+    assert artifact.status == Artifact.Status.PUBLISHED
+    assert artifact.sor == Artifact.SoR.CONFLUENCE
+    assert artifact.external_ref["id"] == "PAGE-1"
+    assert artifact.external_ref["url"].endswith("/PAGE-1")
+    assert fake.created and "<h1>" in fake.created[0]["body_html"]  # markdown → HTML
+
+    # Idempotent: re-publish does not create a second page.
+    activities.publish_artifacts_core(run_input)
+    assert len(fake.created) == 1
 
 
 def test_transition_work_item_core(wired, run_input):

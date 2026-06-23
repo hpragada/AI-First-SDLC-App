@@ -51,25 +51,31 @@ def register_connector(
     _BUILDERS[(capability, connector)] = builder
 
 
-def get_capability(tenant_id, capability: str) -> DocStore | TaskTracker:
-    """Return the tenant's connector for a capability, or raise CapabilityUnavailable."""
+def get_connection(tenant_id, capability: str):
+    """The tenant's IntegrationConnection row for a capability (or None) — exposes
+    `scopes`/`token_ref`/`health` to callers that need config (e.g. the publish path)."""
     from apps.integrations.models import IntegrationConnection
     from apps.tenancy.context import tenant_context
 
     with tenant_context(tenant_id):
-        conn = (
+        return (
             IntegrationConnection.objects
             .filter(tenant_id=tenant_id, capability=capability)
             .order_by("-updated_at")
             .first()
         )
-        if conn is None:
-            raise CapabilityUnavailable(
-                f"no {capability!r} connector configured for tenant {tenant_id}"
-            )
-        builder = _BUILDERS.get((conn.capability, conn.connector))
-        if builder is None:
-            raise CapabilityError(
-                f"no connector registered for {conn.capability!r}:{conn.connector!r}"
-            )
-        return builder(conn)
+
+
+def get_capability(tenant_id, capability: str) -> DocStore | TaskTracker:
+    """Return the tenant's connector for a capability, or raise CapabilityUnavailable."""
+    conn = get_connection(tenant_id, capability)
+    if conn is None:
+        raise CapabilityUnavailable(
+            f"no {capability!r} connector configured for tenant {tenant_id}"
+        )
+    builder = _BUILDERS.get((conn.capability, conn.connector))
+    if builder is None:
+        raise CapabilityError(
+            f"no connector registered for {conn.capability!r}:{conn.connector!r}"
+        )
+    return builder(conn)

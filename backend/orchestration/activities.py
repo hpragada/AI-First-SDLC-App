@@ -161,22 +161,58 @@ def open_gate_core(inp: AgentRunInput) -> str:
 
 
 def publish_artifacts_core(inp: AgentRunInput) -> dict:
+    """On APPROVED: snapshot to S3, push to the live SoR where a connector is configured
+    (gate→publish→pointer+version, spec §3), else keep sor=internal. Idempotent — already
+    -published artifacts are skipped, and a docstore re-publish updates the same page."""
+    from apps.projects.models import Project
+    from integrations.publish import publish_to_docstore, resolve_capability
+    from integrations.types import CapabilityUnavailable
+
     store = get_object_store()
-    published: list[str] = []
     with tenant_context(inp.tenant_id):
-        for artifact in Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id):
-            if artifact.status != Artifact.Status.PUBLISHED:
-                if artifact.s3_key:
-                    snap = (
-                        f"snapshots/{inp.tenant_id}/{inp.project_id}/{inp.run_id}/"
-                        f"{artifact.phase}.v{artifact.version}.md"
-                    )
-                    store.copy(artifact.s3_key, snap)
-                tools.update_artifact(
-                    inp.tenant_id, str(artifact.id),
-                    status=Artifact.Status.PUBLISHED, sor=Artifact.SoR.INTERNAL,
-                )
+        project = Project.objects.get(id=inp.project_id, tenant_id=inp.tenant_id)
+        work_item = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
+        title_base = work_item.feature_stream or project.name
+        artifacts = list(Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id))
+
+    published: list[str] = []
+    for artifact in artifacts:
+        if artifact.status == Artifact.Status.PUBLISHED:
             published.append(str(artifact.id))
+            continue
+
+        if artifact.s3_key:  # immutable audit snapshot regardless of SoR
+            snap = (
+                f"snapshots/{inp.tenant_id}/{inp.project_id}/{inp.run_id}/"
+                f"{artifact.phase}.v{artifact.version}.md"
+            )
+            store.copy(artifact.s3_key, snap)
+
+        ref = None
+        if resolve_capability(artifact.type) == "docstore":
+            body_md = store.get(artifact.s3_key).decode("utf-8") if artifact.s3_key else ""
+            title = f"{title_base} — {artifact.phase.title()}"
+            try:
+                ref = publish_to_docstore(
+                    tenant_id=inp.tenant_id, artifact=artifact, body_md=body_md, title=title,
+                )
+            except CapabilityUnavailable:
+                ref = None  # no connector configured → internal SoR fallback (blueprint B3)
+
+        if ref is not None:
+            tools.update_artifact(
+                inp.tenant_id, str(artifact.id),
+                status=Artifact.Status.PUBLISHED, sor=ref.sor,
+                external_ref={"sor": ref.sor, "id": ref.id, "url": ref.url, "version": ref.version},
+            )
+        else:
+            tools.update_artifact(
+                inp.tenant_id, str(artifact.id),
+                status=Artifact.Status.PUBLISHED, sor=Artifact.SoR.INTERNAL,
+            )
+        published.append(str(artifact.id))
+
+    with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         run.status = Run.Status.COMPLETED
         run.save(update_fields=["status", "updated_at"])

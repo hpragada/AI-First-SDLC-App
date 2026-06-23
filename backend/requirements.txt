@@ -22,3 +22,6 @@ boto3==1.35.81
 
 # CORS for the React Experience plane (Vite dev server → API; P0-T12)
 django-cors-headers==4.9.0
+
+# Markdown → HTML for publishing artifact bodies to Confluence (P1)
+markdown==3.10.2

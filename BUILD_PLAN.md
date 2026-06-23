@@ -38,7 +38,7 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 - [x] DocStore connector (Confluence read/write; headless API-token REST per decision D1 — Rovo MCP stays the optional agent-side transport).
 - [x] TaskTracker connector (Jira: epics/stories/subtasks, transitions, comments, search; headless API-token REST). Sprints deferred (decision D3).
 - [x] Capability abstraction layer (`docstore.*`, `tasktracker.*`) + connector selection per tenant (`get_capability` over IntegrationConnection; demo tenant connections seeded).
-- [ ] Artifact publish path to live SoR (gate→publish→pointer+version).
+- [x] Artifact publish path to live SoR (gate→publish→pointer+version) — DocStore/Confluence; type→capability resolution; idempotent; internal fallback. (Backlog→Jira via reconciliation, next.)
 - [ ] Traceability viewer (requirement→PRD→epic→story).
 - [ ] Reconciliation service (proposed→accepted; idempotent, no dup of existing issues).
 - [ ] **Migrate agent 06 Task Breakdown** (→ Jira epics/stories/sprints) per migration spec.
