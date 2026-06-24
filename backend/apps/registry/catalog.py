@@ -48,7 +48,7 @@ AGENT_CATALOG: list[AgentDefinition] = [
     AgentDefinition("04_architecture", "architecture", "architecture", "04_architecture_agent.md", "P0", "architect"),
     AgentDefinition("05_ux_design", "ux-design", "ux_design", "05_ux_design_agent.md", "P3", "designer"),
     AgentDefinition("06_task_breakdown", "task-breakdown", "task_breakdown", "06_task_breakdown_agent.md", "P1", "tech_lead"),
-    AgentDefinition("07_implementation", "implement", "implementation", "07_implementation_agent.md", "P2", "engineer"),
+    AgentDefinition("07_implementation", "implement", "implementation", "07_implementation_agent.md", "P2", "tech_lead"),
     AgentDefinition("08_code_review", "code-review", "code_review", "08_code_review_agent.md", "P2", "reviewer"),
     AgentDefinition("09_testing", "test", "testing", "09_testing_agent.md", "P3", "qa_lead"),
     AgentDefinition("09b_test_automation", "test-automation", "test_automation", "09b_test_automation_agent.md", "P3", "qa_lead"),

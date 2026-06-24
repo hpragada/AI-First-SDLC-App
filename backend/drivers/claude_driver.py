@@ -181,3 +181,42 @@ class ClaudeDriver:
             "Register your outputs with the platform-state tools. Do NOT run git or open a "
             "pull request — the platform commits, pushes, and opens the PR after your run."
         )
+
+    # ── code review (Phase 2 — read-only, server-side; D2) ──────────
+    async def run_review_task(
+        self,
+        *,
+        manifest: str,
+        agent_spec: AgentSpec,
+        mcp_servers: dict,
+        allowed_tools: list[str],
+        work_item: WorkItem,
+    ) -> RunResult:
+        """Run the migrated Code Review agent (08) over a PR. Read-only and server-side — it
+        reasons over the diff carried in the manifest and reads context via the platform-state
+        tools; it never edits code, runs git, or merges (the platform owns those). The result
+        carries the agent's structured findings, parsed by the review provider."""
+        workdir = self._prepare_workdir(work_item)
+        (workdir / "AGENTS.md").write_text(manifest, encoding="utf-8")
+
+        options = ClaudeAgentOptions(
+            system_prompt=self._body_loader(agent_spec),
+            mcp_servers=mcp_servers,
+            allowed_tools=allowed_tools,
+            cwd=str(workdir),
+            model=(agent_spec.recommended_model or None),
+            permission_mode=self._permission_mode,
+        )
+        prompt = self._build_review_prompt(agent_spec, work_item)
+        return await self._consume(prompt, options)
+
+    @staticmethod
+    def _build_review_prompt(agent_spec: AgentSpec, work_item: WorkItem) -> str:
+        return (
+            f"Review the pull request for WorkItem {work_item.id} across all eleven dimensions. "
+            "Your composed manifest is in AGENTS.md in the working directory and includes the "
+            "'# Pull Request Under Review' diff; fetch any referenced artifacts with the "
+            "platform-state tools. Do NOT modify code, run git, or merge — you only produce "
+            "findings. Emit your full review, then exactly one fenced json block of structured "
+            "findings (rem, severity, title, file, line) as your instructions specify."
+        )

@@ -61,3 +61,13 @@ class ExecutionDriver(Protocol):
         allowed_tools: list[str],
         work_item: WorkItem,
     ) -> RunResult: ...
+
+    async def run_review_task(
+        self,
+        *,
+        manifest: str,
+        agent_spec: AgentSpec,
+        mcp_servers: dict,
+        allowed_tools: list[str],
+        work_item: WorkItem,
+    ) -> RunResult: ...

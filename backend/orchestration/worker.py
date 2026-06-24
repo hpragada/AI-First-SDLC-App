@@ -26,9 +26,15 @@ async def _run() -> None:
     from temporalio.worker import Worker
 
     from . import activities
-    from .build_activities import BUILD_ACTIVITIES
+    from .build_activities import BUILD_ACTIVITIES, set_review_provider
     from .build_workflow import BuildWorkflow
+    from .review_provider import build_default_provider
     from .workflows import AgentRunWorkflow
+
+    # Wire the migrated Code Review agent (08) into the 07<->08 remediation loop (§6). Tests
+    # that script the reviewer override this via set_review_provider; the default stub stands
+    # in only when nothing is registered.
+    set_review_provider(build_default_provider())
 
     client = await Client.connect(settings.TEMPORAL_HOST, namespace=settings.TEMPORAL_NAMESPACE)
     with ThreadPoolExecutor(max_workers=8) as executor:
