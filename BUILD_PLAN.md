@@ -47,16 +47,17 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 - [x] Slice: greenfield PRD→Confluence + backlog→Jira + implement-by-issue-key; brownfield onboard from Word/Excel or existing Jira. `tests/test_acceptance_phase1.py` — **live greenfield** (PRD publishes to Confluence only on the post-gate publish step, read-through + idempotent re-publish; proposed backlog reconciles into Jira epics/stories, idempotent; live get-issue-by-key + transition round-trips to the ledger; traceability API shows requirements→PRD→backlog with Confluence deep-link; RLS isolation) and **offline brownfield** (Word PRD + Excel backlog → gated adoption with provenance; register-don't-recreate, no duplicates). Self-cleaning; skips greenfield without creds. **Phase 1 complete.**
 
 ## Phase 2 — Build Execution  ← CURRENT
-- [x] Generate `docs/PHASE_2_BUILD_SPEC.md` from the blueprint (CodeHost seam, build-runner provisioning + `run_build_task`, Temporal build saga, 07↔08 remediation loop, injection guardrails, webhook reconciliation, acceptance; decisions D1–D7).
-- [ ] CodeHost connector (GitHub: branches/PRs/status/webhooks).
-- [ ] Build runners + provisioning (toolchains, private registries, test DB, secrets inject); ClaudeDriver `run_build_task`.
-- [ ] Temporal build sagas (long-running, compensation, dead-letter).
+- [x] Generate `docs/PHASE_2_BUILD_SPEC.md` from the blueprint. **Execution model decided (D1–D10):** **local-companion runner only** (developer's machine), **managed git-worktree** edit surface (run/test locally before PR), platform owns the PR/merge SoR surface, **split gate roles** (07→`tech_lead`, 08/merge→`reviewer`), **light repo-per-WorkItem** multi-repo now (full multi-repo → P4).
+- [ ] CodeHost connector (GitHub: branches/PRs/status/webhooks; headless REST per D1; idempotent PR/branch; rate-governed) + `IntegrationConnection(codehost→github)` per repo.
+- [ ] Data-model deltas: populate `Repository` (N per project), add `WorkItem.repo` (light multi-repo) + `WorkItem.takeover`, `RunnerEnrollment`, `WebhookDelivery`; `code`/`code_review`/`test_report` artifact types. RLS on every new table.
+- [ ] Local-companion runner: enrollment/auth (`RunnerEnrollment`), managed **git-worktree** provisioning (toolchain/test-DB/secrets inject), **remote Platform-State serving** (tenant binding + RLS stay server-side), `ClaudeDriver.run_build_task` scoped to the worktree.
+- [ ] Temporal `BuildWorkflow` saga (dispatch-to-companion + await; retries/idempotency/dead-letter/compensation; offline-runner → takeover).
 - [ ] Build phases (implementation/review/test) with the 07↔08 remediation loop preserved.
-- [ ] **Migrate agents 07 Implementation + 08 Code Review** (preserve REM-C/REM-W remediation loop as WorkItem sub-tasks + TraceEdges; migration spec §6).
-- [ ] **Migrate agents 11 CI/CD + 12 Deployment** (pipeline + release artifacts). *(See spec §7 note — 11/12 placement is adjustable.)*
-- [ ] Secret scanning + egress allowlist (initial injection guardrails).
-- [ ] Human takeover + Git-webhook commit reconciliation.
-- [ ] Slice: WorkItem→PR→CI with a recovered mid-run failure.
+- [ ] **Migrate agents 07 Implementation + 08 Code Review** (preserve REM-C/REM-W remediation loop as child WorkItems + TraceEdges; migration spec §6; gate roles `tech_lead`/`reviewer`).
+- [ ] **Migrate agents 11 CI/CD + 12 Deployment** (pipeline + release artifacts) — **after** the 07/08 core (D5; placement adjustable).
+- [ ] Secret scanning + egress allowlist + per-phase tool allowlist (injection guardrails v1; developer-trusted runner — full sandbox is P5).
+- [ ] Human takeover + signed Git-webhook commit reconciliation (the primary collaboration path in companion mode).
+- [ ] Slice: WorkItem→worktree→local build→PR→CI→review→remediation→**reviewer merge gate**→merge, with a recovered mid-run failure; webhook reconcile of a human commit; light multi-repo (two repos, one project).
 
 ## Phase 3 — Design & Test Loops
 - [ ] DesignSource (Figma read; write beta) + Design-System/tokens artifact + Code Connect.
