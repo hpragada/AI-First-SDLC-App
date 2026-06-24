@@ -70,12 +70,55 @@ class BuildWorkflow:
             )
             return {"status": "build_failed", "run_id": inp.run_id}
 
-        # Open the draft PR + the merge gate. On exhausted retries → compensate (dead-letter).
+        # Open the draft PR, run the 07<->08 remediation loop, then the merge gate. On
+        # exhausted retries → compensate (dead-letter).
         try:
             await workflow.execute_activity(
                 "open_build_pr", args=[inp, report],
                 start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
             )
+
+            # Build phases (§5): review → remediate → re-review until no blocking findings.
+            cycle = 0
+            while True:
+                review = await workflow.execute_activity(
+                    "run_code_review", inp,
+                    start_to_close_timeout=timedelta(minutes=10), retry_policy=_RETRY,
+                )
+                if review["open_blocking"] == 0:
+                    break
+                cycle += 1
+                if cycle > inp.max_remediation_cycles:
+                    await workflow.execute_activity(
+                        "mark_build_failed", args=[inp, "remediation cycles exhausted"],
+                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_COMPENSATE,
+                    )
+                    return {"status": "remediation_exhausted", "run_id": inp.run_id}
+                # Implementation re-runs in remediation mode on the same branch; await report.
+                await workflow.execute_activity(
+                    "dispatch_remediation", inp,
+                    start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
+                )
+                self._report = None
+                try:
+                    await workflow.wait_condition(
+                        lambda: self._report is not None,
+                        timeout=timedelta(seconds=inp.report_timeout_seconds),
+                    )
+                except TimeoutError:
+                    await workflow.execute_activity(
+                        "mark_takeover", inp,
+                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                    )
+                    return {"status": "takeover", "run_id": inp.run_id}
+                if self._report.status != "ok":
+                    await workflow.execute_activity(
+                        "mark_build_failed",
+                        args=[inp, self._report.message or "remediation build failed"],
+                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                    )
+                    return {"status": "build_failed", "run_id": inp.run_id}
+
             await workflow.execute_activity(
                 "open_merge_gate", inp,
                 start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,

@@ -9,7 +9,7 @@ import pytest
 
 from apps.gates.models import Approval
 from apps.projects.models import Project, ProjectProfile
-from apps.registry.models import AgentSpec, Artifact
+from apps.registry.models import AgentSpec, Artifact, TraceEdge
 from apps.runs.models import Run
 from apps.tenancy.models import Tenant
 from apps.workitems.models import WorkItem
@@ -132,3 +132,66 @@ def test_build_failed_returns_workitem_to_in_progress(world):
     world.run.refresh_from_db()
     assert world.run.status == Run.Status.FAILED
     assert world.wi.state == WorkItem.State.IN_PROGRESS
+
+
+# ── code review + remediation loop (07<->08) ────────────────────────
+class _ScriptedReviewer:
+    """Returns successive finding lists per review call (last one repeats)."""
+
+    def __init__(self, scripts):
+        self._scripts = list(scripts)
+        self._i = 0
+
+    def review(self, inp, pr_ref):
+        out = self._scripts[min(self._i, len(self._scripts) - 1)]
+        self._i += 1
+        return out
+
+
+def _open_pr(world, monkeypatch):
+    _use_fake_codehost(monkeypatch, _FakeCodeHost())
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+
+def test_review_opens_remediation_child_then_resolves_it(world, monkeypatch):
+    _open_pr(world, monkeypatch)
+    reviewer = _ScriptedReviewer([
+        [ba.Finding(rem="REM-C1", severity="critical", title="SQLi", file="db.py", line=10)],
+        [],   # second review: the finding is gone (fixed by the remediation build)
+    ])
+    monkeypatch.setattr(ba, "get_review_provider", lambda: reviewer)
+
+    first = ba.run_code_review_core(_inp(world))
+    assert first["open_blocking"] == 1
+    child = WorkItem.objects.get(parent_id=world.wi.id, type=WorkItem.Type.TASK)
+    assert child.external_ref["rem"] == "REM-C1" and child.state == WorkItem.State.IN_PROGRESS
+    review_art = Artifact.objects.get(run_id=world.run.id, type="code_review")
+    assert TraceEdge.objects.filter(from_artifact=review_art, rel="tests").exists()
+
+    second = ba.run_code_review_core(_inp(world))
+    assert second["open_blocking"] == 0
+    child.refresh_from_db()
+    assert child.state == WorkItem.State.DONE        # resolved → closed
+
+
+def test_review_suggestions_are_non_blocking(world, monkeypatch):
+    _open_pr(world, monkeypatch)
+    monkeypatch.setattr(ba, "get_review_provider", lambda: _ScriptedReviewer([
+        [ba.Finding(rem="REM-S1", severity="suggestion", title="rename var")],
+    ]))
+    out = ba.run_code_review_core(_inp(world))
+    assert out["findings"] == 1 and out["open_blocking"] == 0   # REM-S never blocks
+    assert not WorkItem.objects.filter(parent_id=world.wi.id, type=WorkItem.Type.TASK).exists()
+
+
+def test_dispatch_remediation_briefs_the_open_items(world, monkeypatch):
+    _open_pr(world, monkeypatch)
+    monkeypatch.setattr(ba, "get_review_provider", lambda: _ScriptedReviewer([
+        [ba.Finding(rem="REM-W1", severity="warning", title="naming")],
+    ]))
+    ba.run_code_review_core(_inp(world))
+    out = ba.dispatch_remediation_core(_inp(world))
+    assert out["items"] == 1
+    world.run.refresh_from_db()
+    assert world.run.inputs["remediation"]["items"][0]["rem"] == "REM-W1"
+    assert world.run.status == Run.Status.RUNNING

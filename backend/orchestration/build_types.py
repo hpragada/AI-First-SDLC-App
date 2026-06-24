@@ -23,6 +23,8 @@ class BuildInput:
     required_role: str = "reviewer"      # D6: the merge gate is a reviewer's call
     # If the companion (a laptop) never reports within this window, park for takeover.
     report_timeout_seconds: int = 7200
+    # 07<->08 remediation loop: cap re-review cycles before escalating (§5).
+    max_remediation_cycles: int = 3
 
 
 @dataclass

@@ -5,7 +5,9 @@ touches Git — the platform opens/merges the PR (D2).
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+import hashlib
+import json
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from mcp_platform_state import tools
@@ -199,6 +201,128 @@ def reject_build_core(inp: BuildInput, comment: str) -> dict:
     return {"status": "rejected"}
 
 
+# ── code review + remediation loop (07<->08, build phases §5) ───────
+@dataclass
+class Finding:
+    """One code-review finding. REM-C/REM-W are blocking (become remediation child
+    WorkItems); REM-S (suggestion) is non-blocking and excluded from the loop."""
+
+    rem: str                 # "REM-C1" | "REM-W1" | "REM-S1"
+    severity: str            # "critical" | "warning" | "suggestion"
+    title: str = ""
+    file: str = ""
+    line: int = 0
+
+
+class _NoFindingsReviewProvider:
+    """Default reviewer until agent 08 is migrated (§8): finds nothing, so the loop passes
+    straight to the merge gate. The real 08 review (eleven dimensions, REM classification)
+    plugs in here via `set_review_provider` — the loop machinery does not change."""
+
+    def review(self, inp: BuildInput, pr_ref: str) -> list:
+        return []
+
+
+_REVIEW_PROVIDER = _NoFindingsReviewProvider()
+
+
+def get_review_provider():
+    return _REVIEW_PROVIDER
+
+
+def set_review_provider(provider) -> None:
+    """Wire the reviewer (the migrated 08 agent in §8; a scripted stub in tests)."""
+    global _REVIEW_PROVIDER
+    _REVIEW_PROVIDER = provider
+
+
+_BLOCKING = {"critical", "warning"}
+
+
+def run_code_review_core(inp: BuildInput) -> dict:
+    """Review the PR (08), record a `code_review` artifact, and reconcile **remediation
+    child WorkItems** (one per REM-C/REM-W): open new findings, close resolved ones. Returns
+    the count of open blocking findings — the loop continues while it is > 0."""
+    code = _code_artifact(inp)
+    if code is None or not code.external_ref:
+        raise RuntimeError(f"no PR to review for run {inp.run_id}")
+    pr_ref = f"{code.external_ref['repo']}#{code.external_ref['number']}"
+
+    findings = list(get_review_provider().review(inp, pr_ref))
+    blocking = {f.rem: f for f in findings if f.severity in _BLOCKING}
+    digest = hashlib.sha256(
+        json.dumps([asdict(f) for f in findings], sort_keys=True).encode()
+    ).hexdigest()
+
+    with tenant_context(inp.tenant_id):
+        review_art = Artifact.objects.filter(
+            run_id=inp.run_id, tenant_id=inp.tenant_id, type="code_review").first()
+    if review_art is None:
+        created = tools.register_artifact(
+            inp.tenant_id, inp.project_id, inp.run_id, inp.phase, "code_review", "internal",
+            content_hash=digest)
+        review_art_id = created["id"]
+        tools.add_trace_edge(inp.tenant_id, review_art_id, str(code.id), "tests")
+    else:
+        tools.update_artifact(inp.tenant_id, str(review_art.id), content_hash=digest)
+        review_art_id = str(review_art.id)
+
+    with tenant_context(inp.tenant_id):
+        story = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
+        children = WorkItem.objects.filter(
+            tenant_id=inp.tenant_id, parent_id=inp.work_item_id, type=WorkItem.Type.TASK)
+        existing = {(c.external_ref or {}).get("rem"): c for c in children
+                    if (c.external_ref or {}).get("rem")}
+        # Close remediation items whose finding is gone (resolved by the last build).
+        for rem, child in existing.items():
+            if rem not in blocking and child.state != WorkItem.State.DONE:
+                child.state = WorkItem.State.DONE
+                child.save(update_fields=["state", "updated_at"])
+                tools.log_event(inp.tenant_id, "code_review", "remediation.resolved",
+                                "work_item", str(child.id), {"rem": rem})
+        # Open (or reopen) a child WorkItem for each current blocking finding.
+        for rem, finding in blocking.items():
+            child = existing.get(rem)
+            if child is None:
+                child = WorkItem.objects.create(
+                    tenant_id=inp.tenant_id, project_id=inp.project_id,
+                    type=WorkItem.Type.TASK, parent=story, title=finding.title or rem,
+                    state=WorkItem.State.IN_PROGRESS,
+                    external_ref={"rem": rem, "severity": finding.severity,
+                                  "file": finding.file, "line": finding.line},
+                )
+                tools.log_event(inp.tenant_id, "code_review", "remediation.opened",
+                                "work_item", str(child.id),
+                                {"rem": rem, "severity": finding.severity})
+            elif child.state == WorkItem.State.DONE:
+                child.state = WorkItem.State.IN_PROGRESS
+                child.save(update_fields=["state", "updated_at"])
+        tools.log_event(inp.tenant_id, "orchestrator", "build.reviewed", "run", inp.run_id,
+                        {"findings": len(findings), "blocking": len(blocking)})
+    return {"open_blocking": len(blocking), "findings": len(findings),
+            "review_artifact_id": review_art_id}
+
+
+def dispatch_remediation_core(inp: BuildInput) -> dict:
+    """Send the open remediation items (the REM brief) back to the companion and mark the
+    run running again — the 07 agent re-runs in remediation mode against them."""
+    with tenant_context(inp.tenant_id):
+        open_items = WorkItem.objects.filter(
+            tenant_id=inp.tenant_id, parent_id=inp.work_item_id, type=WorkItem.Type.TASK,
+            state=WorkItem.State.IN_PROGRESS)
+        brief = [{"rem": (c.external_ref or {}).get("rem"), "title": c.title,
+                  "severity": (c.external_ref or {}).get("severity"),
+                  "file": (c.external_ref or {}).get("file"),
+                  "line": (c.external_ref or {}).get("line")} for c in open_items]
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.inputs = {**(run.inputs or {}), "remediation": {"items": brief}}
+        run.status = Run.Status.RUNNING
+        run.save(update_fields=["inputs", "status", "updated_at"])
+        tools.log_event(inp.tenant_id, "orchestrator", "build.remediation_dispatched", "run",
+                        inp.run_id, {"items": len(brief)})
+    return {"dispatched": True, "items": len(brief)}
+
+
 # ── activity wrappers (close the DB connection at the boundary) ─────
 @activity.defn(name="dispatch_build")
 def dispatch_build_activity(inp: BuildInput) -> dict:
@@ -213,6 +337,16 @@ def open_build_pr_activity(inp: BuildInput, report: BuildReport) -> dict:
 @activity.defn(name="open_merge_gate")
 def open_merge_gate_activity(inp: BuildInput) -> str:
     return _boundary(open_merge_gate_core, inp)
+
+
+@activity.defn(name="run_code_review")
+def run_code_review_activity(inp: BuildInput) -> dict:
+    return _boundary(run_code_review_core, inp)
+
+
+@activity.defn(name="dispatch_remediation")
+def dispatch_remediation_activity(inp: BuildInput) -> dict:
+    return _boundary(dispatch_remediation_core, inp)
 
 
 @activity.defn(name="merge_build_pr")
@@ -243,6 +377,8 @@ def reject_build_activity(inp: BuildInput, comment: str) -> dict:
 BUILD_ACTIVITIES = [
     dispatch_build_activity,
     open_build_pr_activity,
+    run_code_review_activity,
+    dispatch_remediation_activity,
     open_merge_gate_activity,
     merge_build_pr_activity,
     transition_build_work_item_activity,

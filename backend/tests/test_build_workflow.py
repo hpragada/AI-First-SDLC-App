@@ -75,6 +75,15 @@ def _pending_merge_approval(run_id):
         connection.close()
 
 
+def _remediation_dispatched(run_id):
+    from django.db import connection
+
+    try:
+        return "remediation" in (Run.objects.get(id=run_id).inputs or {})
+    finally:
+        connection.close()
+
+
 def _approve(tenant_id, approval_id, user_id):
     from django.db import connection
 
@@ -170,6 +179,52 @@ def test_build_workflow_happy_path(monkeypatch):
     assert run.status == Run.Status.COMPLETED and wi.state == WorkItem.State.DONE
     art = Artifact.objects.get(run_id=run.id, type="code")
     assert art.status == Artifact.Status.PUBLISHED and art.external_ref["number"] == 7
+
+
+@pytest.mark.django_db(transaction=True)
+def test_build_workflow_remediation_loop(monkeypatch):
+    """Review finds a critical → remediation build → re-review clean → merge gate → merged."""
+    _skip_if_no_temporal(monkeypatch)
+    monkeypatch.setattr("integrations.registry.get_capability", lambda tid, cap: _FakeCodeHost())
+
+    from orchestration import build_activities as ba
+
+    scripts = [[ba.Finding(rem="REM-C1", severity="critical", title="bug")], []]
+    state = {"i": 0}
+
+    class _Rev:
+        def review(self, inp, pr_ref):
+            out = scripts[min(state["i"], len(scripts) - 1)]
+            state["i"] += 1
+            return out
+
+    monkeypatch.setattr(ba, "get_review_provider", lambda: _Rev())
+    tenant, _project, wi, run, reviewer, inp = _seed()
+
+    async def _drive():
+        client = await _temporal_client()
+        task_queue = f"build-{uuid.uuid4()}"
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            async with await _worker_ctx(client, task_queue, executor):
+                handle = await client.start_workflow(
+                    BuildWorkflow.run, inp, id=f"build-run-{run.id}", task_queue=task_queue,
+                )
+                await _poll(lambda: _run_status(str(run.id)) == Run.Status.RUNNING)
+                await handle.signal("build_reported", BuildReport(
+                    status="ok", branch="feature/ST-1", head_sha="abc"))
+                # Review #1 finds a critical → remediation dispatched; report the fix.
+                await _poll(lambda: _remediation_dispatched(str(run.id)))
+                await handle.signal("build_reported", BuildReport(
+                    status="ok", branch="feature/ST-1", head_sha="def"))
+                # Review #2 is clean → merge gate.
+                approval_id = await _poll(lambda: _pending_merge_approval(str(run.id)))
+                await asyncio.to_thread(_approve, str(tenant.id), approval_id, str(reviewer.id))
+                return await handle.result()
+
+    result = asyncio.run(_drive())
+    assert result["status"] == "completed"
+    child = WorkItem.objects.get(parent_id=wi.id, type=WorkItem.Type.TASK)
+    assert child.external_ref["rem"] == "REM-C1" and child.state == WorkItem.State.DONE
 
 
 @pytest.mark.django_db(transaction=True)
