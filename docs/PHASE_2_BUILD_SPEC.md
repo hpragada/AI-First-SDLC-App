@@ -57,7 +57,7 @@ class PullRequestRef:  # persisted into Artifact.external_ref / WorkItem.externa
 ```
 
 - **Connector selection per tenant:** `get_capability(tenant_id, "codehost") -> CodeHost` over `IntegrationConnection(capability="codehost", connector="github", scopes={"repo": "...", "default_base": "develop"}, token_ref, health)`. No connection ⇒ `CapabilityUnavailable` (a build cannot proceed without a CodeHost — surfaced, not silently skipped).
-- **Default connector (D1 — recommend, mirrors Phase-1 D1):** `GithubCodeHost` over the **GitHub REST API**, headless per-tenant (GitHub App installation token **or** PAT) via `token_ref` indirection (the Phase-5 vault seam). The GitHub **MCP** stays the *optional agent-side* transport; the platform's control-plane writes go through this connector. Interface identical either way.
+- **Default connector (D1 — LOCKED, mirrors Phase-1 D1):** `GithubCodeHost` over the **GitHub REST API**, headless per-tenant (GitHub App installation token **or** PAT) via `token_ref` indirection (the Phase-5 vault seam). The GitHub **MCP** stays the *optional agent-side* transport; the platform's control-plane writes go through this connector. Interface identical either way.
 - **Idempotency / register-don't-recreate (B1):** `ensure_branch`/`open_pull_request` are idempotent — an existing branch/PR for the same head is returned, never duplicated. Reconciling an existing repo registers PRs/branches as pointers, creating nothing (the §7 webhook path is the live-update half).
 - **The platform owns Git side-effects, not the engine (#2):** branch push + PR open/merge/status are **control-plane activities** calling `CodeHost`. The build agent writes code into its workspace and runs tests; it does **not** shell `gh`/`git push` or call GitHub directly (D2). This keeps gates in the control plane and behaviour identical across engines.
 
@@ -112,7 +112,7 @@ The loop is the product's intelligence; it is **reused, not reinvented**. Mappin
 - **Implementation (07)** runs in the build runner (§3) and **proposes** a change: code in the workspace + tests (target **≥90% new-line coverage**, verbatim), Conventional-Commit messages, `feature/<key>-slug → <default_base>`. Its legacy **Human Gates** (session-start, architecture-deviation, new-dependency, destructive-migration, task-completion) become **control-plane Approvals** (no "reply APPROVED" in prose; the §8 sweep enforces this). Track-awareness (Greenfield / UI-Modernization / Legacy-Transformation / Microservices) is preserved verbatim.
 - **Code Review (08)** reviews the PR across its **eleven dimensions** (verbatim), reading scope via `codehost.list_pr_files`/`get_file` (read-through), and emits a `code_review` artifact + structured findings **REM-C (critical) / REM-W (warning) / REM-S (suggestion)**. Its **Remediation Gate** (Options A/B/C) is the control-plane gate that drives the loop.
 - **Remediation loop:** each **REM-C/REM-W** becomes a **child WorkItem** (`type="remediation"`, §2). **Implementation re-runs in Remediation Mode** (skips session-start gate; resolves criticals then warnings; REM-S excluded), then the **Re-Review Protocol** runs a **targeted** re-review of only the changed files. The loop repeats until the review resolves to **APPROVED / APPROVED WITH CONDITIONS** (legacy "Option C") — represented as the merge-gate Approval being grantable. Only then does §4 proceed to **merge**.
-- **Gate roles (D6 — recommend):** implementation task-completion gate → **`tech_lead`** (consistent with migrated agent 06); code-review remediation/merge gate → **`tech_lead`**. Confirm before coding the AgentSpec seed.
+- **Gate roles (D6 — LOCKED: split reviewer/tech_lead):** implementation task-completion gate → **`tech_lead`** (consistent with migrated agent 06); code-review remediation gate + **merge gate** → a distinct **`reviewer`** role (segregation of duties — the reviewer/approver of a change is not its implementer's lead). Seed both roles in the AgentSpec/membership catalog.
 - **§8 reference sweep must pass** for both agents (no `TASKS.md`/`docs/…`/`CLAUDE.md`/"reply APPROVED"): inputs reroute — backlog/acceptance-criteria → the **accepted WorkItem** + `get_context()`; architecture/UX/intelligence → `get_artifact()`; CLAUDE.md → the rendered **AGENTS.md**; outputs reroute — code/PR → the **control-plane CodeHost step**, findings → the `code_review` artifact + remediation child WorkItems, phase advance → the **Approval**. Store at `/agents/07_implementation/agent.md` and `/agents/08_code_review/agent.md`; add per-agent run tests (read inputs from the platform; produce the expected artifacts/sub-work; open the `tech_lead` gate).
 
 ---
@@ -152,11 +152,14 @@ Same **75 / 15 / 10** discipline + **§8 sweep** that gated agents 01–04, 06.
 
 ---
 
-## 10. Open decisions to confirm (before coding the affected task)
-- **D1 — CodeHost transport:** headless **GitHub REST** for control-plane writes (recommend, parity with Phase-1 D1) vs GitHub MCP. Interface identical either way; MCP stays the optional agent-side transport.
-- **D2 — Who performs Git side-effects:** the **platform control plane** via `CodeHost` (recommend — gates in control plane, #2) vs the agent shelling `git`/`gh`. Recommend platform; agent only edits the workspace + runs tests.
-- **D3 — Sandbox depth in v1:** local container isolation + **egress allowlist + secret scanning** (recommend) now; **gVisor/Firecracker + no-prod-net** deferred to Phase 5 Cloud-Migration.
-- **D4 — Gated SoR write for code = PR merge:** branch push + draft PR are *staging*; the **merge** is the gate-then-write (recommend/confirm).
-- **D5 — 11/12 placement:** CI status round-trip in P2 now; **migrate agents 11/12 after** the 07/08 core (adjustable to a later P2 slice or P3).
-- **D6 — Gate roles:** 07 task-completion + 08 remediation/merge → **`tech_lead`** (recommend; confirm vs a distinct `reviewer` role).
-- **D7 — Test DB / toolchain source:** provisioning reads toolchain + test-DB needs from the **Project Profile/Repository** record (recommend) vs a per-repo manifest file (the manifest-file route is P4 multi-repo).
+## 10. Decisions (D1–D7)
+**LOCKED (confirmed):**
+- **D1 — CodeHost transport: headless GitHub REST.** Per-tenant GitHub App-installation token / PAT over REST, rate-governed — parity with Phase-1 Atlassian connectors. The platform is a *server-side, multi-tenant, headless* caller (not a local `gh` CLI as in Claude Code itself); GitHub MCP stays the optional agent-side transport. Interface identical either way.
+- **D2 — Git side-effects performed by the platform control plane** via `CodeHost`. The agent only edits its workspace + runs tests; the platform commits/pushes/opens/merges PRs (gates in control plane, #2).
+- **D5 — 11/12 after the 07/08 core.** Wire CI status round-trip in this slice; migrate agents 11/12 once implementation↔review↔merge is green.
+- **D6 — Split gate roles:** 07 task-completion → `tech_lead`; 08 remediation + merge → a distinct **`reviewer`** role (segregation of duties).
+
+**Recommended defaults (proceeding unless overridden):**
+- **D3 — Sandbox depth v1:** local container isolation + **egress allowlist + secret scanning** now; **gVisor/Firecracker + no-prod-net** deferred to Phase 5 Cloud-Migration.
+- **D4 — Gated SoR write for code = PR merge:** branch push + draft PR are *staging*; the **merge** is the gate-then-write.
+- **D7 — Toolchain/test-DB source:** provisioning reads needs from the **Project Profile/Repository** record; the per-repo manifest-file route is P4 (multi-repo).
