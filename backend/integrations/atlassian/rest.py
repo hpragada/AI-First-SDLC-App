@@ -36,6 +36,11 @@ def _urllib_transport(method: str, url: str, headers: dict, body: object | None)
         return exc.code, parsed
 
 
+# Public default network path. The rate governor wraps this single choke point
+# (per tenant+capability) before it reaches a connector; see `integrations/rate_governor.py`.
+default_transport: Transport = _urllib_transport
+
+
 class AtlassianRest:
     """Authenticated JSON client. `path` is relative to the site root."""
 

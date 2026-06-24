@@ -154,6 +154,17 @@ ATLASSIAN_API_TOKEN = env("ATLASSIAN_API_TOKEN", default="")
 CONFLUENCE_SPACE_KEY = env("CONFLUENCE_SPACE_KEY", default="")
 JIRA_PROJECT_KEY = env("JIRA_PROJECT_KEY", default="")
 
+# ─── Rate governor v1 (per-tenant connector I/O — spec §7 / PG18) ───
+# Wraps every connector call (the single network choke point) with a per-(tenant,
+# capability) token bucket, 429/5xx backoff, and a short-TTL read cache. Conservative
+# defaults keep us well under Atlassian Cloud limits; tune per deployment via env.
+RATE_GOVERNOR_RATE = env.float("RATE_GOVERNOR_RATE", default=5.0)            # tokens/sec
+RATE_GOVERNOR_CAPACITY = env.float("RATE_GOVERNOR_CAPACITY", default=10.0)   # burst
+RATE_GOVERNOR_MAX_ATTEMPTS = env.int("RATE_GOVERNOR_MAX_ATTEMPTS", default=5)
+RATE_GOVERNOR_BASE_DELAY = env.float("RATE_GOVERNOR_BASE_DELAY", default=0.5)
+RATE_GOVERNOR_MAX_DELAY = env.float("RATE_GOVERNOR_MAX_DELAY", default=8.0)
+RATE_GOVERNOR_CACHE_TTL = env.float("RATE_GOVERNOR_CACHE_TTL", default=5.0)  # 0 disables
+
 # ─── Django REST Framework ──────────────────────────────────────────
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [

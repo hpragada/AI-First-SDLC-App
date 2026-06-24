@@ -43,7 +43,7 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 - [x] Reconciliation service (proposed→accepted; idempotent, no dup of existing issues) — `reconcile_backlog` into Jira; external_ref idempotency + register-don't-recreate; epic→story→task order. WorkItem gained title/description/external_ref.
 - [x] **Migrate agent 06 Task Breakdown** — reasoning verbatim, §8-clean; output rerouted to proposed WorkItems (new `create_work_item` MCP tool) + `backlog`/`sprint_plan`/`definition_of_done`/`dependency_map` artifacts; reconciliation publishes to Jira on approval. (Jira sprints deferred — D3.)
 - [x] Brownfield-lite onboarding (single-repo): register-don't-recreate against Atlassian + **static-file extraction** (Word/PDF/Excel → internal artifacts, provenance, review gate). SourceDocument model (RLS) + extraction adapters + onboarding service + API; static-file adopt is product_owner-gated.
-- [ ] Rate governor (queue/backoff/cache) v1.
+- [x] Rate governor (queue/backoff/cache) v1 — per-`(tenant, capability)` token bucket + 429/5xx full-jitter backoff + short-TTL read cache (GET/HEAD), injected at connector-build time so it's the single choke point all connector I/O routes through; settings-tunable; de-flakes live Atlassian runs.
 - [ ] Slice: greenfield PRD→Confluence + backlog→Jira + implement-by-issue-key; brownfield onboard from Word/Excel or existing Jira.
 
 ## Phase 2 — Build Execution

@@ -112,11 +112,14 @@ Two ingest modes, both ending at a **review gate** before adoption (no silent ad
 
 ## 7. Rate governor v1 (per-tenant queue/backoff/cache — PG18)
 
-`backend/integrations/rate_governor.py` wraps **every** connector call:
-- **Token bucket per `(tenant, capability)`** (configurable rate); serialize bursts.
-- **Backoff/retry** on 429/5xx with jittered exponential backoff + a max-attempts cap.
-- **Short-TTL read cache** for `get_*`/`search` (idempotent reads) keyed by `(tenant, capability, request)`.
-- It is the single choke point the capability layer (§1) routes through — connectors never call the network directly.
+`backend/integrations/rate_governor.py` wraps **every** connector call. It decorates the
+`Transport` callable (the sole network path in `atlassian/rest.py`) and is injected at
+connector-build time by `registry.get_capability`, so every per-tenant connector is governed
+automatically. Buckets/caches are process-global, shared per `(tenant, capability)`:
+- **Token bucket per `(tenant, capability)`** (configurable rate; defaults in settings); serialize bursts.
+- **Backoff/retry** on 429/5xx with full-jitter exponential backoff + a max-attempts cap; on exhaustion the last response is surfaced so the connector raises `CapabilityError` as before. Non-retryable 4xx pass straight through.
+- **Short-TTL read cache** keyed by `(tenant, capability, method, url, body)`, scoped to **safe HTTP methods (GET/HEAD)** — covers `get_*` and Confluence search; only successful responses are cached. (Jira `search` is a POST in v1 and is rate-limited/backed-off but not cached — safe-by-construction, avoiding any chance of caching a write.)
+- It is the single choke point the capability layer (§1) routes through — connectors never call the network directly. Time/sleep/randomness are injectable for deterministic tests.
 
 ---
 

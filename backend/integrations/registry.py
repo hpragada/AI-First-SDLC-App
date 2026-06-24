@@ -27,14 +27,22 @@ def _atlassian_config(token_ref: str) -> AtlassianConfig:
 
 
 def _build_confluence(conn) -> DocStore:
-    return AtlassianDocStore(_atlassian_config(conn.token_ref))
+    from .rate_governor import governed_transport
+
+    transport = governed_transport(conn.tenant_id, conn.capability)
+    return AtlassianDocStore(_atlassian_config(conn.token_ref), transport=transport)
 
 
 def _build_jira(conn) -> TaskTracker:
     from django.conf import settings
 
+    from .rate_governor import governed_transport
+
     project = (conn.scopes or {}).get("project_key") or settings.JIRA_PROJECT_KEY
-    return AtlassianTaskTracker(_atlassian_config(conn.token_ref), project=project)
+    transport = governed_transport(conn.tenant_id, conn.capability)
+    return AtlassianTaskTracker(
+        _atlassian_config(conn.token_ref), project=project, transport=transport
+    )
 
 
 # (capability, connector) -> builder. The single place vendors are wired (#9);
