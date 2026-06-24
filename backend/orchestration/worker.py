@@ -26,6 +26,8 @@ async def _run() -> None:
     from temporalio.worker import Worker
 
     from . import activities
+    from .build_activities import BUILD_ACTIVITIES
+    from .build_workflow import BuildWorkflow
     from .workflows import AgentRunWorkflow
 
     client = await Client.connect(settings.TEMPORAL_HOST, namespace=settings.TEMPORAL_NAMESPACE)
@@ -33,8 +35,8 @@ async def _run() -> None:
         worker = Worker(
             client,
             task_queue=settings.TEMPORAL_TASK_QUEUE,
-            workflows=[AgentRunWorkflow],
-            activities=activities.ALL_ACTIVITIES,
+            workflows=[AgentRunWorkflow, BuildWorkflow],
+            activities=activities.ALL_ACTIVITIES + BUILD_ACTIVITIES,
             activity_executor=executor,
         )
         await worker.run()

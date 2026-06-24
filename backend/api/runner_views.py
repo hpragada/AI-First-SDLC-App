@@ -18,7 +18,9 @@ from rest_framework.views import APIView
 
 from apps.projects.models import Project
 from apps.runs.enrollment import authenticate_runner, enroll_runner, revoke_runner
-from apps.runs.models import RunnerEnrollment
+from apps.runs.models import Run, RunnerEnrollment
+from apps.tenancy.context import tenant_context
+from orchestration.build_report import BuildReportError, report_build
 
 # Build-phase platform-state tool allowlist (no detect_drift, no planning-only tools).
 _BUILD_STATE_TOOLS = {
@@ -121,3 +123,48 @@ class RunnerStateView(APIView):
             return None
         token = auth[len("Runner "):].strip()
         return authenticate_runner(tenant_id=request.headers.get("X-Tenant-ID"), token=token)
+
+
+class RunnerBuildFetchView(APIView):
+    """GET /api/runner/builds/<run_id>/ — the companion fetches its dispatched BuildTask
+    (manifest + agent body). The companion fills in its own runner token before running."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def get(self, request, run_id):
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        with tenant_context(str(runner.tenant_id)):
+            run = Run.objects.filter(id=run_id, tenant_id=runner.tenant_id).first()
+        if run is None:
+            return Response({"detail": "run not found"}, status=status.HTTP_404_NOT_FOUND)
+        payload = (run.inputs or {}).get("build_task")
+        if not payload:
+            return Response({"detail": "no build task dispatched"},
+                            status=status.HTTP_409_CONFLICT)
+        return Response(payload)
+
+
+class RunnerBuildReportView(APIView):
+    """POST /api/runner/builds/<run_id>/report/ — the companion reports its build result;
+    resumes the BuildWorkflow via the build_reported signal."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request, run_id):
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        args = request.data if isinstance(request.data, dict) else {}
+        try:
+            out = report_build(tenant_id=str(runner.tenant_id), run_id=str(run_id), report=args)
+        except Run.DoesNotExist:
+            return Response({"detail": "run not found"}, status=status.HTTP_404_NOT_FOUND)
+        except BuildReportError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(out)

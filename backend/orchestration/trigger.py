@@ -94,3 +94,80 @@ def trigger_phase(
 
     workflow_starter(workflow_id, inp)
     return TriggerResult(run_id=str(run.id), workflow_id=workflow_id)
+
+
+def _default_build_starter(workflow_id: str, inp) -> None:
+    import asyncio
+
+    from django.conf import settings
+    from temporalio.client import Client
+
+    from .build_workflow import BuildWorkflow
+
+    async def _start() -> None:
+        client = await Client.connect(
+            settings.TEMPORAL_HOST, namespace=settings.TEMPORAL_NAMESPACE
+        )
+        await client.start_workflow(
+            BuildWorkflow.run, inp, id=workflow_id, task_queue=settings.TEMPORAL_TASK_QUEUE
+        )
+
+    asyncio.run(_start())
+
+
+def trigger_build(
+    *,
+    tenant_id: str,
+    project_id: str,
+    work_item_id: str,
+    agent_key: str = "07_implementation",
+    repo: str | None = None,
+    base: str | None = None,
+    work_item_key: str | None = None,
+    required_role: str = "reviewer",
+    workflow_starter=None,
+) -> TriggerResult:
+    """Start a BuildWorkflow for a WorkItem (resolves repo/base from its Repository)."""
+    from .build_types import BuildInput
+
+    workflow_starter = workflow_starter or _default_build_starter
+
+    with tenant_context(tenant_id):
+        spec = (
+            AgentSpec.objects.filter(tenant_id=tenant_id, key=agent_key)
+            .order_by("-semver").first()
+        )
+        if spec is None:
+            raise TriggerError(f"no AgentSpec registered for key {agent_key!r}")
+        work_item = WorkItem.objects.select_related("repo").get(
+            id=work_item_id, tenant_id=tenant_id
+        )
+        repo = repo or (work_item.repo.name if work_item.repo else None)
+        base = base or (work_item.repo.default_base if work_item.repo else "main")
+        if not repo:
+            raise TriggerError("work item has no target repository (set WorkItem.repo)")
+        work_item_key = (
+            work_item_key or (work_item.external_ref or {}).get("id")
+            or f"WI-{str(work_item.id)[:8]}"
+        )
+        run = Run.objects.create(
+            tenant_id=tenant_id, work_item=work_item, agent_spec=spec,
+            engine=spec.recommended_engine, model=spec.recommended_model,
+            prompt_version=spec.prompt_version, status=Run.Status.PENDING,
+        )
+        workflow_id = f"build-run-{run.id}"
+        run.temporal_workflow_id = workflow_id
+        run.save(update_fields=["temporal_workflow_id", "updated_at"])
+
+        inp = BuildInput(
+            run_id=str(run.id), tenant_id=str(tenant_id), project_id=str(project_id),
+            work_item_id=str(work_item_id), agent_spec_id=str(spec.id),
+            work_item_key=work_item_key, repo=repo, base=base, required_role=required_role,
+        )
+        tools.log_event(
+            tenant_id, "platform", "build.triggered", "run", str(run.id),
+            {"workflow_id": workflow_id, "repo": repo, "work_item_key": work_item_key},
+        )
+
+    workflow_starter(workflow_id, inp)
+    return TriggerResult(run_id=str(run.id), workflow_id=workflow_id)

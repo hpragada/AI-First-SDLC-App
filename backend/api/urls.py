@@ -3,7 +3,13 @@ APIView (it runs before any tenant context exists)."""
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .runner_views import RunnerEnrollmentView, RunnerRevokeView, RunnerStateView
+from .runner_views import (
+    RunnerBuildFetchView,
+    RunnerBuildReportView,
+    RunnerEnrollmentView,
+    RunnerRevokeView,
+    RunnerStateView,
+)
 from .views import (
     ApprovalViewSet,
     ArtifactViewSet,
@@ -32,5 +38,8 @@ urlpatterns = [
     path("runners/", RunnerEnrollmentView.as_view(), name="runner-enroll"),
     path("runners/<uuid:pk>/revoke/", RunnerRevokeView.as_view(), name="runner-revoke"),
     path("runner/state/<str:tool>/", RunnerStateView.as_view(), name="runner-state"),
+    path("runner/builds/<uuid:run_id>/", RunnerBuildFetchView.as_view(), name="runner-build-fetch"),
+    path("runner/builds/<uuid:run_id>/report/", RunnerBuildReportView.as_view(),
+         name="runner-build-report"),
     path("", include(router.urls)),
 ]

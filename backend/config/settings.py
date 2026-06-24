@@ -164,6 +164,10 @@ GITHUB_REPO = env("GITHUB_REPO", default="")            # "owner/name" (demo/def
 GITHUB_DEFAULT_BASE = env("GITHUB_DEFAULT_BASE", default="develop")
 GITHUB_WEBHOOK_SECRET = env("GITHUB_WEBHOOK_SECRET", default="")  # used in P2 webhook task
 
+# Base URL the local-companion runner uses to reach the platform (remote Platform-State +
+# build fetch/report). The dev machine connects outbound to this.
+PLATFORM_API_URL = env("PLATFORM_API_URL", default="http://localhost:8000")
+
 # ─── Rate governor v1 (per-tenant connector I/O — spec §7 / PG18) ───
 # Wraps every connector call (the single network choke point) with a per-(tenant,
 # capability) token bucket, 429/5xx backoff, and a short-TTL read cache. Conservative
