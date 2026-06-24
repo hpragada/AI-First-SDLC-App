@@ -4,11 +4,9 @@ Pure unit tests: an injected fake `query_fn` yields real SDK message objects, so
 message->RunResult mapping, options construction and AGENTS.md writing are verified
 without the network or a DB.
 """
-from pathlib import Path
 from types import SimpleNamespace
 
 import claude_agent_sdk
-import pytest
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
 from drivers import ArtifactDraft, ClaudeDriver, ExecutionDriver, RunResult
@@ -103,17 +101,34 @@ async def test_run_planning_task_maps_stream_and_writes_manifest(tmp_path):
     assert "wi-123" in captured["prompt"]
 
 
-async def test_run_build_task_not_implemented():
-    driver = ClaudeDriver(query_fn=_fake_query_factory([], {}), body_loader=lambda s: "b")
-    with pytest.raises(NotImplementedError):
-        await driver.run_build_task(
-            manifest="m",
-            agent_spec=_spec(),
-            repo_workspace=Path("."),
-            mcp_servers={},
-            allowed_tools=[],
-            work_item=SimpleNamespace(id="x"),
-        )
+async def test_run_build_task_runs_in_worktree_and_writes_manifest(tmp_path):
+    captured: dict = {}
+    driver = ClaudeDriver(
+        query_fn=_fake_query_factory(_messages(), captured),
+        body_loader=lambda spec: "BUILD BODY",
+    )
+    workspace = tmp_path / "wt-ST-1"
+    workspace.mkdir()
+    result = await driver.run_build_task(
+        manifest="# Build manifest",
+        agent_spec=_spec(phase_label="implementation", key="07_impl"),
+        repo_workspace=workspace,
+        mcp_servers={"platform-state": {"command": "python"}},
+        allowed_tools=["Read", "Write", "Bash", "mcp__platform-state__register_artifact"],
+        work_item=SimpleNamespace(id="wi-9", feature_stream="ST-1"),
+    )
+
+    assert isinstance(result, RunResult) and result.cost_usd == 0.0123
+    # Manifest goes to .sdlc/ (excluded from the diff), never the worktree root.
+    assert (workspace / ".sdlc" / "AGENTS.md").read_text() == "# Build manifest"
+    assert not (workspace / "AGENTS.md").exists()
+
+    opts = captured["options"]
+    assert opts.cwd == str(workspace)          # the agent runs in the worktree
+    assert opts.system_prompt == "BUILD BODY"
+    assert "Bash" in opts.allowed_tools
+    # The build prompt forbids git/PR — the platform does that (D2).
+    assert ".sdlc/AGENTS.md" in captured["prompt"] and "Do NOT run git" in captured["prompt"]
 
 
 def test_claude_driver_satisfies_protocol():

@@ -1,0 +1,123 @@
+"""Local-companion runner API (Phase-2 §3).
+
+Two surfaces:
+1. **Enrollment** (`/api/runners/…`, tenant-scoped via X-Tenant-ID like every P0 route):
+   a developer enrolls a companion and gets a one-time token; can list/revoke.
+2. **Remote Platform-State serving** (`/api/runner/state/<tool>/`, Runner-token auth): the
+   build agent on the dev machine calls the platform-state tools over HTTP — **no DB on the
+   dev machine**. The tenant is taken from the authenticated enrollment (server-side), never
+   from the request body, so RLS scoping stays on the platform (#6). Only the build-phase
+   tool subset is exposed (per-phase allowlist, PG12).
+"""
+from __future__ import annotations
+
+from mcp_platform_state import tools
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.projects.models import Project
+from apps.runs.enrollment import authenticate_runner, enroll_runner, revoke_runner
+from apps.runs.models import RunnerEnrollment
+
+# Build-phase platform-state tool allowlist (no detect_drift, no planning-only tools).
+_BUILD_STATE_TOOLS = {
+    "get_context": tools.get_context,
+    "get_artifact": tools.get_artifact,
+    "list_artifacts": tools.list_artifacts,
+    "register_artifact": tools.register_artifact,
+    "update_artifact": tools.update_artifact,
+    "add_trace_edge": tools.add_trace_edge,
+    "log_event": tools.log_event,
+    "list_work_items": tools.list_work_items,
+    "create_work_item": tools.create_work_item,
+    "transition_work_item": tools.transition_work_item,
+}
+
+
+def _tenant_id(request) -> str:
+    tid = getattr(request, "tenant_id", None)
+    if not tid:
+        from rest_framework.exceptions import ParseError
+
+        raise ParseError("X-Tenant-ID header is required.")
+    return str(tid)
+
+
+def _serialize(e: RunnerEnrollment) -> dict:
+    return {
+        "id": str(e.id), "project_id": str(e.project_id), "label": e.label,
+        "repos": e.repos, "status": e.status,
+        "developer_id": str(e.developer_id) if e.developer_id else None,
+        "last_seen": e.last_seen.isoformat() if e.last_seen else None,
+    }
+
+
+class RunnerEnrollmentView(APIView):
+    """GET list / POST enroll a local-companion runner for this tenant."""
+
+    def get(self, request):
+        tenant_id = _tenant_id(request)
+        qs = RunnerEnrollment.objects.filter(tenant_id=tenant_id).order_by("-created_at")
+        return Response([_serialize(e) for e in qs])
+
+    def post(self, request):
+        tenant_id = _tenant_id(request)
+        project_id = request.data.get("project_id")
+        if not project_id:
+            return Response({"project_id": "required"}, status=status.HTTP_400_BAD_REQUEST)
+        # Validate the project is in this tenant (scoped read).
+        if not Project.objects.filter(id=project_id, tenant_id=tenant_id).exists():
+            return Response({"project_id": "not found in tenant"},
+                            status=status.HTTP_404_NOT_FOUND)
+        enrollment, token = enroll_runner(
+            tenant_id=tenant_id, project_id=project_id,
+            developer_id=request.data.get("developer_id"),
+            label=request.data.get("label", ""), repos=request.data.get("repos") or [],
+        )
+        body = _serialize(enrollment)
+        body["token"] = token  # shown once — the companion stores it; only its hash persists
+        return Response(body, status=status.HTTP_201_CREATED)
+
+
+class RunnerRevokeView(APIView):
+    """POST /api/runners/{id}/revoke/ — stop a companion's token from authenticating."""
+
+    def post(self, request, pk):
+        tenant_id = _tenant_id(request)
+        if not revoke_runner(tenant_id=tenant_id, enrollment_id=pk):
+            return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"id": str(pk), "status": "revoked"})
+
+
+class RunnerStateView(APIView):
+    """POST /api/runner/state/<tool>/ — a build agent's platform-state call, Runner-token
+    authenticated. The tenant is the enrollment's (server-side), not from the body."""
+
+    authentication_classes: list = []   # Runner-token auth is handled explicitly below
+    permission_classes: list = []
+
+    def post(self, request, tool):
+        runner = self._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        fn = _BUILD_STATE_TOOLS.get(tool)
+        if fn is None:
+            return Response({"detail": f"tool '{tool}' is not in the build allowlist"},
+                            status=status.HTTP_403_FORBIDDEN)
+        args = request.data if isinstance(request.data, dict) else {}
+        try:
+            result = fn(str(runner.tenant_id), **args)   # tenant bound server-side
+        except TypeError as exc:
+            return Response({"detail": f"bad arguments: {exc}"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({"result": result})
+
+    @staticmethod
+    def _resolve_runner(request):
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Runner "):
+            return None
+        token = auth[len("Runner "):].strip()
+        return authenticate_runner(tenant_id=request.headers.get("X-Tenant-ID"), token=token)

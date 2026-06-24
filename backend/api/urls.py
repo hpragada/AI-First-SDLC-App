@@ -3,6 +3,7 @@ APIView (it runs before any tenant context exists)."""
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from .runner_views import RunnerEnrollmentView, RunnerRevokeView, RunnerStateView
 from .views import (
     ApprovalViewSet,
     ArtifactViewSet,
@@ -27,5 +28,9 @@ router.register("source-documents", SourceDocumentViewSet, basename="sourcedocum
 
 urlpatterns = [
     path("tenants/", TenantCreateView.as_view(), name="tenant-create"),
+    # Local-companion runner (Phase 2): enrollment (tenant-scoped) + remote Platform-State.
+    path("runners/", RunnerEnrollmentView.as_view(), name="runner-enroll"),
+    path("runners/<uuid:pk>/revoke/", RunnerRevokeView.as_view(), name="runner-revoke"),
+    path("runner/state/<str:tool>/", RunnerStateView.as_view(), name="runner-state"),
     path("", include(router.urls)),
 ]

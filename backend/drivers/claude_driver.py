@@ -87,7 +87,11 @@ class ClaudeDriver:
             permission_mode=self._permission_mode,
         )
         prompt = self._build_prompt(agent_spec, work_item)
+        return await self._consume(prompt, options)
 
+    async def _consume(self, prompt: str, options: ClaudeAgentOptions) -> RunResult:
+        """Run the engine and map its message stream to a RunResult (shared by planning and
+        build). Artifacts the agent registered are observed via the register_artifact tool."""
         raw_messages: list[Any] = []
         text_parts: list[str] = []
         artifacts: list[ArtifactDraft] = []
@@ -147,4 +151,33 @@ class ClaudeDriver:
         allowed_tools: list[str],
         work_item: WorkItem,
     ) -> RunResult:
-        raise NotImplementedError("run_build_task is implemented in Phase 2 (P0 is planning-only).")
+        """Run the build agent against a git **worktree** (the companion provisions it; D9).
+        The composed manifest is written to `.sdlc/AGENTS.md` (kept out of the diff by the
+        worktree's local exclude) and the agent works in `repo_workspace`. The agent edits +
+        tests; it never runs git — the platform commits/pushes/opens the PR (D2)."""
+        repo_workspace = Path(repo_workspace)
+        sdlc = repo_workspace / ".sdlc"
+        sdlc.mkdir(parents=True, exist_ok=True)
+        (sdlc / "AGENTS.md").write_text(manifest, encoding="utf-8")
+
+        options = ClaudeAgentOptions(
+            system_prompt=self._body_loader(agent_spec),
+            mcp_servers=mcp_servers,
+            allowed_tools=allowed_tools,
+            cwd=str(repo_workspace),
+            model=(agent_spec.recommended_model or None),
+            permission_mode=self._permission_mode,
+        )
+        prompt = self._build_build_prompt(agent_spec, work_item)
+        return await self._consume(prompt, options)
+
+    @staticmethod
+    def _build_build_prompt(agent_spec: AgentSpec, work_item: WorkItem) -> str:
+        phase = getattr(agent_spec, "phase_label", "") or getattr(agent_spec, "key", "")
+        return (
+            f"Execute the '{phase}' phase for WorkItem {work_item.id} in the current git "
+            "worktree (your working directory). Your composed project manifest is in "
+            ".sdlc/AGENTS.md. Implement the change with full tests and run them locally. "
+            "Register your outputs with the platform-state tools. Do NOT run git or open a "
+            "pull request — the platform commits, pushes, and opens the PR after your run."
+        )
