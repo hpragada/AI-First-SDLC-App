@@ -1,0 +1,165 @@
+"""Signed Git-webhook ingestion + reconciliation (Phase-2 §7).
+
+The **primary collaboration path in companion mode**: a developer works the worktree branch by
+hand (or after a takeover) and pushes; GitHub posts a **signed** webhook the platform verifies,
+**dedups** (WebhookDelivery), and **reconciles** into platform state — register-don't-recreate:
+human commits update the `code` Artifact's `external_ref.sha` pointer and log an Event; they
+never overwrite the artifact or duplicate it. Bodies are read-through (#3) — the diff lives in
+git, the platform keeps pointers/provenance. (P4 live drift gates build on this; P2 only
+reconciles.)
+
+Reconcilers handled: `push` (sha pointer), `pull_request` (merged/closed → WorkItem), `status`
+(CI round-trips into the ledger).
+"""
+from __future__ import annotations
+
+import hashlib
+import hmac
+
+from mcp_platform_state import tools
+
+from apps.tenancy.context import tenant_context
+
+PROVIDER = "github"
+
+
+def verify_github_signature(secret: str, body: bytes, signature_header: str | None) -> bool:
+    """Constant-time HMAC-SHA256 of GitHub's `X-Hub-Signature-256` over the **raw** body.
+    A missing secret or a malformed/absent header is a verification failure (never trusted)."""
+    if not secret or not signature_header or not signature_header.startswith("sha256="):
+        return False
+    digest = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(f"sha256={digest}", signature_header)
+
+
+def _branch(ref: str) -> str:
+    return ref.split("refs/heads/", 1)[-1] if ref else ""
+
+
+def reconcile_github(*, tenant_id: str, event: str, delivery_id: str, payload: dict) -> dict:
+    """Idempotent ingest: dedup by `delivery_id` (a redelivery is a no-op), then reconcile.
+    The WebhookDelivery row is the dedup ledger; the Event Ledger records what changed."""
+    from apps.integrations.models import WebhookDelivery
+
+    with tenant_context(tenant_id):
+        delivery, created = WebhookDelivery.objects.get_or_create(
+            tenant_id=tenant_id, provider=PROVIDER, delivery_id=delivery_id or "",
+            defaults={"event": event},
+        )
+    if not created:
+        return {"status": "duplicate", "event": delivery.event, "delivery_id": delivery_id}
+
+    handler = _HANDLERS.get(event)
+    if handler is None:
+        _set_status(tenant_id, delivery.id, WebhookDelivery.Status.IGNORED)
+        return {"status": "ignored", "event": event}
+
+    try:
+        result = handler(tenant_id, payload or {})
+    except Exception:
+        try:
+            _set_status(tenant_id, delivery.id, WebhookDelivery.Status.FAILED)
+        except Exception:  # noqa: BLE001 — never mask the original handler error
+            pass
+        raise
+    _set_status(tenant_id, delivery.id, WebhookDelivery.Status.PROCESSED)
+    return {"status": "processed", "event": event, **result}
+
+
+def _set_status(tenant_id, delivery_id, status) -> None:
+    from apps.integrations.models import WebhookDelivery
+
+    with tenant_context(tenant_id):
+        WebhookDelivery.objects.filter(id=delivery_id, tenant_id=tenant_id).update(status=status)
+
+
+def _code_artifacts(tenant_id, *, head=None, number=None, repo=None) -> list:
+    """The `code` artifacts (PR pointers) matching a branch head and/or PR number for a repo."""
+    from apps.registry.models import Artifact
+
+    with tenant_context(tenant_id):
+        qs = Artifact.objects.filter(tenant_id=tenant_id, type="code")
+        if head is not None:
+            qs = qs.filter(external_ref__head=head)
+        if number is not None:
+            qs = qs.filter(external_ref__number=number)
+        if repo:
+            qs = qs.filter(external_ref__repo=repo)
+        return list(qs)
+
+
+def _reconcile_push(tenant_id: str, payload: dict) -> dict:
+    """A human commit on the worktree branch → update the `code` pointer's sha (don't recreate)."""
+    branch = _branch(payload.get("ref", ""))
+    after = payload.get("after", "")
+    repo = (payload.get("repository") or {}).get("full_name", "")
+    updated = []
+    for artifact in _code_artifacts(tenant_id, head=branch, repo=repo):
+        ext = dict(artifact.external_ref or {})
+        ext["sha"] = after                      # pointer moves; the artifact is not duplicated
+        tools.update_artifact(tenant_id, str(artifact.id), external_ref=ext, content_hash=after)
+        updated.append(str(artifact.id))
+    # Event.target_id is a UUID; the branch/sha live in the payload (git identifiers, #3).
+    tools.log_event(
+        tenant_id, "webhook", "webhook.push_reconciled", "branch", None,
+        {"repo": repo, "branch": branch, "sha": after, "artifacts": updated,
+         "commits": len(payload.get("commits") or [])},
+    )
+    return {"reconciled": len(updated), "branch": branch, "sha": after}
+
+
+def _reconcile_pull_request(tenant_id: str, payload: dict) -> dict:
+    """A human-merged/closed PR → transition the WorkItem (merge is the gated SoR write; a
+    developer merging by hand is reconciled the same way the saga's merge would be)."""
+    from apps.registry.models import Artifact
+    from apps.runs.models import Run
+    from apps.workitems.models import WorkItem
+
+    action = payload.get("action", "")
+    pr = payload.get("pull_request") or {}
+    number = pr.get("number")
+    merged = bool(pr.get("merged") or pr.get("merged_at"))
+    repo = (payload.get("repository") or {}).get("full_name", "")
+
+    artifacts = _code_artifacts(tenant_id, number=number, repo=repo)
+    if not artifacts:
+        tools.log_event(tenant_id, "webhook", "webhook.pr_unmatched", "pull_request",
+                        str(number), {"repo": repo, "action": action})
+        return {"reconciled": 0, "action": action, "number": number}
+
+    work_items: list[str] = []
+    for artifact in artifacts:
+        if action == "closed" and merged:
+            tools.update_artifact(tenant_id, str(artifact.id), status=Artifact.Status.PUBLISHED)
+            with tenant_context(tenant_id):
+                run = Run.objects.filter(id=artifact.run_id, tenant_id=tenant_id).first()
+            if run is not None:
+                tools.transition_work_item(tenant_id, str(run.work_item_id), WorkItem.State.DONE)
+                work_items.append(str(run.work_item_id))
+
+    name = ("webhook.pr_merged" if (action == "closed" and merged)
+            else "webhook.pr_closed" if action == "closed" else "webhook.pr_event")
+    tools.log_event(tenant_id, "webhook", name, "work_item",
+                    work_items[0] if work_items else None,
+                    {"repo": repo, "number": number, "action": action, "merged": merged,
+                     "work_items": work_items})
+    return {"reconciled": len(artifacts), "action": action, "merged": merged,
+            "work_items": work_items}
+
+
+def _reconcile_status(tenant_id: str, payload: dict) -> dict:
+    """A CI commit-status round-trips into the Event Ledger (the platform tracks, never runs CI)."""
+    sha = payload.get("sha", "")
+    state = payload.get("state", "")
+    context = payload.get("context", "")
+    repo = (payload.get("repository") or {}).get("full_name", "")
+    tools.log_event(tenant_id, "webhook", "webhook.ci_status", "commit", None,
+                    {"repo": repo, "sha": sha, "state": state, "context": context})
+    return {"sha": sha, "state": state, "context": context}
+
+
+_HANDLERS = {
+    "push": _reconcile_push,
+    "pull_request": _reconcile_pull_request,
+    "status": _reconcile_status,
+}

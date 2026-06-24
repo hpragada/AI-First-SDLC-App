@@ -21,6 +21,7 @@ from .views import (
     TraceEdgeViewSet,
     WorkItemViewSet,
 )
+from .webhook_views import GithubWebhookView
 
 router = DefaultRouter()
 router.register("projects", ProjectViewSet, basename="project")
@@ -41,5 +42,7 @@ urlpatterns = [
     path("runner/builds/<uuid:run_id>/", RunnerBuildFetchView.as_view(), name="runner-build-fetch"),
     path("runner/builds/<uuid:run_id>/report/", RunnerBuildReportView.as_view(),
          name="runner-build-report"),
+    # Signed Git-webhook ingestion (Phase 2 §7) — tenant in the path, signature-authenticated.
+    path("webhooks/github/<uuid:tenant_id>/", GithubWebhookView.as_view(), name="github-webhook"),
     path("", include(router.urls)),
 ]

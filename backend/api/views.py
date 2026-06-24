@@ -32,6 +32,7 @@ from integrations.onboarding import (
     register_atlassian,
 )
 from integrations.types import CapabilityUnavailable
+from orchestration.takeover import TakeoverError, release_takeover, request_takeover
 from orchestration.trigger import TriggerError, trigger_phase
 
 from .serializers import (
@@ -249,6 +250,28 @@ class WorkItemViewSet(
             {"run_id": result.run_id, "workflow_id": result.workflow_id},
             status=status.HTTP_202_ACCEPTED,
         )
+
+    @action(detail=True, methods=["post"], url_path="take-over")
+    def take_over(self, request, pk=None):
+        """Human takeover (PG10, §7): the developer takes this WorkItem over to hand-work the
+        worktree branch; automation pauses and their commits reconcile via the GitHub webhook.
+        `release=true` hands it back to automation."""
+        work_item = self.get_object()
+        try:
+            if request.data.get("release"):
+                out = release_takeover(
+                    tenant_id=self.tenant_id, work_item_id=str(work_item.id),
+                    actor=request.data.get("actor", "developer"),
+                )
+            else:
+                out = request_takeover(
+                    tenant_id=self.tenant_id, work_item_id=str(work_item.id),
+                    actor=request.data.get("actor", "developer"),
+                    reason=request.data.get("reason", ""),
+                )
+        except TakeoverError as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(out)
 
 
 # ── Runs (read-only) ────────────────────────────────────────────────
