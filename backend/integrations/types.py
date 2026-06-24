@@ -56,6 +56,53 @@ class IssueHit:
     summary: str
 
 
+@dataclass(frozen=True)
+class BranchRef:
+    """A branch read through a CodeHost (read-through, not stored)."""
+
+    repo: str            # "owner/name"
+    name: str
+    sha: str
+    url: str = ""
+
+
+@dataclass(frozen=True)
+class PullRequestRef:
+    """Pointer to a pull request — persisted into Artifact/WorkItem.external_ref
+    (pointer, not body: #1/#3). `pr_ref` is the connector-stable handle "owner/name#N"."""
+
+    sor: str = "git"     # SoR.GIT
+    repo: str = ""       # "owner/name"
+    number: int = 0
+    head: str = ""       # branch
+    url: str = ""
+    sha: str | None = None
+
+    @property
+    def pr_ref(self) -> str:
+        return f"{self.repo}#{self.number}"
+
+
+@dataclass(frozen=True)
+class PullRequest:
+    """A pull request read through a CodeHost (read-through, live)."""
+
+    repo: str
+    number: int
+    title: str
+    state: str           # "open" | "closed"
+    head: str
+    base: str
+    url: str
+    sha: str | None = None
+    merged: bool = False
+    draft: bool = False
+
+    @property
+    def pr_ref(self) -> str:
+        return f"{self.repo}#{self.number}"
+
+
 class CapabilityError(Exception):
     """A connector call failed. Carries the upstream status when there was one."""
 

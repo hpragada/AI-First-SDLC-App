@@ -253,7 +253,7 @@ def test_get_capability_injects_governed_transport(db, monkeypatch):
         calls.append((method, url))
         return 200, {"results": []}
 
-    monkeypatch.setattr("integrations.atlassian.rest.default_transport", base)
+    monkeypatch.setattr("integrations.transport.default_transport", base)
     tenant = Tenant.objects.create(name="Acme")
     IntegrationConnection.objects.create(
         tenant=tenant, capability="docstore", connector="confluence",

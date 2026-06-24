@@ -154,6 +154,16 @@ ATLASSIAN_API_TOKEN = env("ATLASSIAN_API_TOKEN", default="")
 CONFLUENCE_SPACE_KEY = env("CONFLUENCE_SPACE_KEY", default="")
 JIRA_PROJECT_KEY = env("JIRA_PROJECT_KEY", default="")
 
+# ─── GitHub (Phase 2 CodeHost SoR) ──────────────────────────────────
+# Headless control-plane auth = App-installation token / PAT over REST (decision D1).
+# The secret lives in .env (gitignored); per-tenant IntegrationConnection.token_ref points
+# at it. The GitHub MCP stays the optional agent-runtime transport, not this path.
+GITHUB_API_URL = env("GITHUB_API_URL", default="https://api.github.com")
+GITHUB_TOKEN = env("GITHUB_TOKEN", default="")
+GITHUB_REPO = env("GITHUB_REPO", default="")            # "owner/name" (demo/default)
+GITHUB_DEFAULT_BASE = env("GITHUB_DEFAULT_BASE", default="develop")
+GITHUB_WEBHOOK_SECRET = env("GITHUB_WEBHOOK_SECRET", default="")  # used in P2 webhook task
+
 # ─── Rate governor v1 (per-tenant connector I/O — spec §7 / PG18) ───
 # Wraps every connector call (the single network choke point) with a per-(tenant,
 # capability) token bucket, 429/5xx backoff, and a short-TTL read cache. Conservative

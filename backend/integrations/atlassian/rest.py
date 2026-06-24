@@ -1,44 +1,20 @@
 """Thin REST transport for Atlassian Cloud (Confluence + Jira share auth/host).
 
-The transport is injectable so connectors are unit-testable without the network; the
-default uses urllib. (The Phase-1 rate governor will later wrap this single choke
-point — connectors never build their own sockets.)
+The transport is injectable so connectors are unit-testable without the network and so
+the rate governor can wrap one choke point per (tenant, capability). The generic urllib
+transport now lives in `integrations.transport` (shared with the GitHub connector);
+re-exported here so existing imports (`from .rest import Transport`) keep working.
 """
 from __future__ import annotations
 
-import json
-import urllib.error
 import urllib.parse
-import urllib.request
-from collections.abc import Callable
 
+from integrations.transport import Transport, default_transport
 from integrations.types import CapabilityError
 
 from .config import AtlassianConfig
 
-# transport(method, url, headers, body) -> (status, parsed_json_or_None)
-Transport = Callable[[str, str, dict, object | None], "tuple[int, object]"]
-
-
-def _urllib_transport(method: str, url: str, headers: dict, body: object | None):
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-            return resp.status, (json.loads(raw) if raw else None)
-    except urllib.error.HTTPError as exc:
-        raw = exc.read()
-        try:
-            parsed = json.loads(raw) if raw else None
-        except ValueError:
-            parsed = raw.decode("utf-8", "replace")
-        return exc.code, parsed
-
-
-# Public default network path. The rate governor wraps this single choke point
-# (per tenant+capability) before it reaches a connector; see `integrations/rate_governor.py`.
-default_transport: Transport = _urllib_transport
+__all__ = ["AtlassianRest", "Transport", "default_transport"]
 
 
 class AtlassianRest:
@@ -46,7 +22,7 @@ class AtlassianRest:
 
     def __init__(self, config: AtlassianConfig, transport: Transport | None = None):
         self._cfg = config
-        self._transport = transport or _urllib_transport
+        self._transport = transport or default_transport
 
     def request(self, method: str, path: str, *, body: object | None = None,
                 query: dict | None = None) -> object:

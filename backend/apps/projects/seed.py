@@ -97,13 +97,19 @@ def seed_demo() -> SeedResult:
         from django.conf import settings
 
         connections = [
-            ("docstore", "confluence", {"space_key": settings.CONFLUENCE_SPACE_KEY}),
-            ("tasktracker", "jira", {"project_key": settings.JIRA_PROJECT_KEY}),
+            ("docstore", "confluence", {"space_key": settings.CONFLUENCE_SPACE_KEY},
+             "settings:atlassian"),
+            ("tasktracker", "jira", {"project_key": settings.JIRA_PROJECT_KEY},
+             "settings:atlassian"),
+            # CodeHost (Phase 2) — repo scope is per-connection; creds resolve via .env.
+            ("codehost", "github",
+             {"repo": settings.GITHUB_REPO, "default_base": settings.GITHUB_DEFAULT_BASE},
+             "settings:github"),
         ]
-        for capability, connector, scopes in connections:
+        for capability, connector, scopes, token_ref in connections:
             IntegrationConnection.objects.update_or_create(
                 tenant=tenant, capability=capability, connector=connector,
-                defaults={"scopes": scopes, "token_ref": "settings:atlassian",
+                defaults={"scopes": scopes, "token_ref": token_ref,
                           "health": IntegrationConnection.Health.UNKNOWN},
             )
         connection_count = IntegrationConnection.objects.filter(tenant=tenant).count()

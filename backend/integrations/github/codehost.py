@@ -1,0 +1,148 @@
+"""GithubCodeHost — the CodeHost capability over GitHub Cloud (REST v3).
+
+Owns the PR/merge/status/comment surface (branches are pushed by git in the runner's
+worktree, Phase-2 D2). Returns vendor-free BranchRef/PullRequestRef/PullRequest so callers
+stay GitHub-unaware (#9). Pointers only — bodies are read through, never copied (#1/#3).
+`open_pull_request` is idempotent: an existing open PR for the head is returned, not
+duplicated (register-don't-recreate, B1). `pr_ref` is the stable handle "owner/name#N".
+"""
+from __future__ import annotations
+
+import base64
+
+from integrations.types import (
+    BranchRef,
+    CapabilityError,
+    PullRequest,
+    PullRequestRef,
+)
+
+from .config import GithubConfig
+from .rest import GithubRest
+
+_SOR = "git"
+
+
+def _split_pr_ref(pr_ref: str) -> tuple[str, int]:
+    """"owner/name#123" -> ("owner/name", 123)."""
+    repo, _, number = pr_ref.rpartition("#")
+    if not repo or not number.isdigit():
+        raise CapabilityError(f"malformed pr_ref: {pr_ref!r} (expected 'owner/name#N')")
+    return repo, int(number)
+
+
+class GithubCodeHost:
+    def __init__(self, config: GithubConfig, default_repo: str = "", transport=None):
+        self._cfg = config
+        self._default_repo = default_repo
+        self._rest = GithubRest(config, transport)
+
+    def _repo(self, repo: str | None) -> str:
+        repo = repo or self._default_repo
+        if not repo:
+            raise CapabilityError("no repo specified and no default_repo configured")
+        return repo
+
+    def _pr(self, repo: str, data: dict) -> PullRequest:
+        head = (data.get("head") or {})
+        base = (data.get("base") or {})
+        return PullRequest(
+            repo=repo, number=int(data["number"]), title=data.get("title", ""),
+            state=data.get("state", ""), head=head.get("ref", ""), base=base.get("ref", ""),
+            url=data.get("html_url", ""), sha=head.get("sha"),
+            merged=bool(data.get("merged") or data.get("merged_at")),
+            draft=bool(data.get("draft")),
+        )
+
+    # ── CodeHost capability ─────────────────────────────────────────
+    def get_branch(self, *, repo: str | None = None, name: str) -> BranchRef | None:
+        repo = self._repo(repo)
+        try:
+            data = self._rest.request("GET", f"/repos/{repo}/branches/{name}")
+        except CapabilityError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        sha = ((data or {}).get("commit") or {}).get("sha", "")
+        return BranchRef(repo=repo, name=name, sha=sha,
+                         url=f"{_html_base(repo)}/tree/{name}")
+
+    def open_pull_request(self, *, repo: str | None = None, head: str, base: str,
+                          title: str, body: str, draft: bool = True) -> PullRequestRef:
+        repo = self._repo(repo)
+        owner = repo.split("/", 1)[0]
+        existing = self._rest.request(
+            "GET", f"/repos/{repo}/pulls",
+            query={"head": f"{owner}:{head}", "state": "open", "per_page": 1},
+        )
+        if existing:  # register-don't-recreate
+            return self._ref(repo, existing[0])
+        data = self._rest.request(
+            "POST", f"/repos/{repo}/pulls",
+            body={"title": title, "head": head, "base": base, "body": body, "draft": draft},
+        )
+        return self._ref(repo, data)
+
+    def get_pull_request(self, *, pr_ref: str) -> PullRequest:
+        repo, number = _split_pr_ref(pr_ref)
+        data = self._rest.request("GET", f"/repos/{repo}/pulls/{number}")
+        return self._pr(repo, data)
+
+    def list_pr_files(self, *, pr_ref: str) -> list[str]:
+        repo, number = _split_pr_ref(pr_ref)
+        data = self._rest.request(
+            "GET", f"/repos/{repo}/pulls/{number}/files", query={"per_page": 100}
+        )
+        return [f["filename"] for f in (data or [])]
+
+    def set_commit_status(self, *, repo: str | None = None, sha: str, state: str,
+                          context: str, description: str = "",
+                          target_url: str | None = None) -> None:
+        repo = self._repo(repo)
+        self._rest.request(
+            "POST", f"/repos/{repo}/statuses/{sha}",
+            body={"state": state, "context": context, "description": description,
+                  "target_url": target_url},
+        )
+
+    def add_pr_comment(self, *, pr_ref: str, body: str) -> None:
+        repo, number = _split_pr_ref(pr_ref)
+        self._rest.request(
+            "POST", f"/repos/{repo}/issues/{number}/comments", body={"body": body}
+        )
+
+    def merge_pull_request(self, *, pr_ref: str, method: str = "squash") -> PullRequest:
+        repo, number = _split_pr_ref(pr_ref)
+        self._rest.request(
+            "PUT", f"/repos/{repo}/pulls/{number}/merge", body={"merge_method": method}
+        )
+        return self.get_pull_request(pr_ref=pr_ref)
+
+    def get_file(self, *, repo: str | None = None, path: str, ref: str) -> str:
+        repo = self._repo(repo)
+        data = self._rest.request(
+            "GET", f"/repos/{repo}/contents/{path}", query={"ref": ref}
+        )
+        raw = (data or {}).get("content", "")
+        return base64.b64decode(raw).decode("utf-8", "replace") if raw else ""
+
+    # ── test-cleanup helpers (not part of the capability) ───────────
+    def close_pull_request(self, *, pr_ref: str) -> None:
+        repo, number = _split_pr_ref(pr_ref)
+        self._rest.request("PATCH", f"/repos/{repo}/pulls/{number}", body={"state": "closed"})
+
+    def delete_ref(self, *, repo: str | None = None, branch: str) -> None:
+        repo = self._repo(repo)
+        self._rest.request("DELETE", f"/repos/{repo}/git/refs/heads/{branch}")
+
+    # ── internals ───────────────────────────────────────────────────
+    def _ref(self, repo: str, data: dict) -> PullRequestRef:
+        head = (data.get("head") or {})
+        return PullRequestRef(
+            sor=_SOR, repo=repo, number=int(data["number"]), head=head.get("ref", ""),
+            url=data.get("html_url", ""), sha=head.get("sha"),
+        )
+
+
+def _html_base(repo: str) -> str:
+    return f"https://github.com/{repo}"

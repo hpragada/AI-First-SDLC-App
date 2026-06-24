@@ -8,7 +8,16 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from .types import DocHit, DocPage, ExternalRef, Issue, IssueHit
+from .types import (
+    BranchRef,
+    DocHit,
+    DocPage,
+    ExternalRef,
+    Issue,
+    IssueHit,
+    PullRequest,
+    PullRequestRef,
+)
 
 
 @runtime_checkable
@@ -44,3 +53,34 @@ class TaskTracker(Protocol):
     def add_comment(self, *, issue_ref: str, body: str) -> None: ...
 
     def search(self, *, jql: str) -> list[IssueHit]: ...
+
+
+@runtime_checkable
+class CodeHost(Protocol):
+    """Code host system of record (GitHub-shaped, vendor-free). Branches are pushed by
+    git in the build runner's worktree (Phase-2 D2); this capability owns the
+    PR/merge/status/webhook surface. `pr_ref` is the stable handle "owner/name#N".
+    Read-through: PR/branch/file bodies are fetched live, never copied into state."""
+
+    def get_branch(self, *, repo: str, name: str) -> BranchRef | None: ...
+
+    def open_pull_request(self, *, repo: str, head: str, base: str, title: str,
+                          body: str, draft: bool = True) -> PullRequestRef:
+        """Open a PR for `head` (idempotent — an existing open PR for the head is
+        returned, never duplicated: register-don't-recreate)."""
+        ...
+
+    def get_pull_request(self, *, pr_ref: str) -> PullRequest: ...
+
+    def list_pr_files(self, *, pr_ref: str) -> list[str]: ...
+
+    def set_commit_status(self, *, repo: str, sha: str, state: str, context: str,
+                          description: str = "", target_url: str | None = None) -> None: ...
+
+    def add_pr_comment(self, *, pr_ref: str, body: str) -> None: ...
+
+    def merge_pull_request(self, *, pr_ref: str, method: str = "squash") -> PullRequest:
+        """Merge a PR — the gated SoR write for code (#5/#8); call only post-approval."""
+        ...
+
+    def get_file(self, *, repo: str, path: str, ref: str) -> str: ...

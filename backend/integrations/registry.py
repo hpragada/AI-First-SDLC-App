@@ -16,7 +16,7 @@ from collections.abc import Callable
 from .atlassian.config import AtlassianConfig
 from .atlassian.docstore import AtlassianDocStore
 from .atlassian.tasktracker import AtlassianTaskTracker
-from .capabilities import DocStore, TaskTracker
+from .capabilities import CodeHost, DocStore, TaskTracker
 from .types import CapabilityError, CapabilityUnavailable
 
 
@@ -45,11 +45,24 @@ def _build_jira(conn) -> TaskTracker:
     )
 
 
+def _build_github(conn) -> CodeHost:
+    from django.conf import settings
+
+    from .github.codehost import GithubCodeHost
+    from .github.config import GithubConfig
+    from .rate_governor import governed_transport
+
+    repo = (conn.scopes or {}).get("repo") or settings.GITHUB_REPO
+    transport = governed_transport(conn.tenant_id, conn.capability)
+    return GithubCodeHost(GithubConfig.from_settings(), default_repo=repo, transport=transport)
+
+
 # (capability, connector) -> builder. The single place vendors are wired (#9);
 # extend via register_connector for new vendors without touching callers.
 _BUILDERS: dict[tuple[str, str], Callable[[object], object]] = {
     ("docstore", "confluence"): _build_confluence,
     ("tasktracker", "jira"): _build_jira,
+    ("codehost", "github"): _build_github,
 }
 
 
@@ -74,7 +87,7 @@ def get_connection(tenant_id, capability: str):
         )
 
 
-def get_capability(tenant_id, capability: str) -> DocStore | TaskTracker:
+def get_capability(tenant_id, capability: str) -> DocStore | TaskTracker | CodeHost:
     """Return the tenant's connector for a capability, or raise CapabilityUnavailable."""
     conn = get_connection(tenant_id, capability)
     if conn is None:

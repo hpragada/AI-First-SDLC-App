@@ -184,7 +184,7 @@ def governed_transport(tenant_id, capability: str, base: Transport | None = None
     """The Transport a connector should use: `base` (default urllib) wrapped with this
     tenant+capability's bucket/backoff/cache. This is the §7 choke point wiring."""
     if base is None:
-        from .atlassian.rest import default_transport
+        from .transport import default_transport
 
         base = default_transport
     return get_governor(tenant_id, capability).wrap(base)
