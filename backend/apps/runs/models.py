@@ -1,4 +1,5 @@
 """Runs: each agent run = a Temporal workflow (non-negotiable #8)."""
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
 from apps.base import TenantScopedModel
@@ -33,3 +34,30 @@ class Run(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"run:{self.id} ({self.status})"
+
+
+class RunnerEnrollment(TenantScopedModel):
+    """A developer-machine local-companion runner enrolled with the platform (Phase-2 §3).
+
+    Scopes a companion to a tenant+project+repos; the companion connects *outbound* and
+    authenticates with an enrollment token whose hash is stored here (never the secret —
+    the token_ref/vault seam). RLS keeps a tenant's enrollments isolated."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        REVOKED = "revoked", "Revoked"
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="runner_enrollments"
+    )
+    developer = models.ForeignKey(
+        "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL
+    )
+    label = models.CharField(max_length=255, blank=True)       # the dev's machine label
+    enroll_token_hash = models.CharField(max_length=128, blank=True)
+    repos = ArrayField(models.CharField(max_length=512), default=list, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+    last_seen = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"runner:{self.label or self.id} ({self.status})"

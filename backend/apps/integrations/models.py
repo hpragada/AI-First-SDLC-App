@@ -47,3 +47,31 @@ class IntegrationConnection(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"{self.capability}:{self.connector}"
+
+
+class WebhookDelivery(TenantScopedModel):
+    """Idempotent webhook-ingest ledger (Phase-2 §7). Dedups a provider's redeliveries by
+    `delivery_id`; the Event Ledger records the actual reconciliation. The payload body is
+    not stored — only what's needed to dedup/route (#3). RLS isolates per tenant."""
+
+    class Status(models.TextChoices):
+        RECEIVED = "received", "Received"
+        PROCESSED = "processed", "Processed"
+        IGNORED = "ignored", "Ignored"
+        FAILED = "failed", "Failed"
+
+    provider = models.CharField(max_length=64)        # "github"
+    delivery_id = models.CharField(max_length=255)    # e.g. X-GitHub-Delivery
+    event = models.CharField(max_length=128)          # "pull_request" | "push" | "status"
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.RECEIVED)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "provider", "delivery_id"],
+                name="uniq_tenant_webhook_delivery",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.provider}:{self.event}:{self.delivery_id}"

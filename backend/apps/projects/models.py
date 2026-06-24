@@ -45,10 +45,18 @@ class ProjectProfile(TenantScopedModel):
 
 
 class Repository(TenantScopedModel):
+    """A code repo a project targets. Light multi-repo (Phase 2): N per project, each with
+    its own base branch + CodeHost connector. Full multi-repo (cross-repo DAG) is P4."""
+
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="repositories")
-    role = models.CharField(max_length=64)
+    name = models.CharField(max_length=512, blank=True)        # "owner/name"
+    default_base = models.CharField(max_length=255, default="main")
+    connector = models.CharField(max_length=64, blank=True)    # e.g. "github"
+    role = models.CharField(max_length=64, blank=True)         # frontend/backend/service
     code_host_ref = models.CharField(max_length=512, blank=True)
+    scopes = models.JSONField(default=dict, blank=True)
     stack_overrides = models.JSONField(default=dict, blank=True)
+    provenance = models.JSONField(default=dict, blank=True)    # onboarding origin
 
     def __str__(self) -> str:
-        return f"{self.project_id}:{self.role}"
+        return self.name or f"{self.project_id}:{self.role}"
