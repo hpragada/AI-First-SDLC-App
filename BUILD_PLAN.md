@@ -33,7 +33,7 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 - [x] **P0-T13** Seed script (demo tenant/project/profile/agentspecs) + `make dev`.
 - [x] **P0-T14** **Acceptance slice** (spec §8): ideation→requirements→prd→architecture run end-to-end, gated, `sor=internal`, traceability shown, RLS verified. Demo + tests green.
 
-## Phase 1 — Atlassian SoR + Brownfield-lite  ← CURRENT
+## Phase 1 — Atlassian SoR + Brownfield-lite  ✅ COMPLETE
 - [x] Generate `docs/PHASE_1_BUILD_SPEC.md` from the blueprint.
 - [x] DocStore connector (Confluence read/write; headless API-token REST per decision D1 — Rovo MCP stays the optional agent-side transport).
 - [x] TaskTracker connector (Jira: epics/stories/subtasks, transitions, comments, search; headless API-token REST). Sprints deferred (decision D3).
@@ -44,9 +44,9 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 - [x] **Migrate agent 06 Task Breakdown** — reasoning verbatim, §8-clean; output rerouted to proposed WorkItems (new `create_work_item` MCP tool) + `backlog`/`sprint_plan`/`definition_of_done`/`dependency_map` artifacts; reconciliation publishes to Jira on approval. (Jira sprints deferred — D3.)
 - [x] Brownfield-lite onboarding (single-repo): register-don't-recreate against Atlassian + **static-file extraction** (Word/PDF/Excel → internal artifacts, provenance, review gate). SourceDocument model (RLS) + extraction adapters + onboarding service + API; static-file adopt is product_owner-gated.
 - [x] Rate governor (queue/backoff/cache) v1 — per-`(tenant, capability)` token bucket + 429/5xx full-jitter backoff + short-TTL read cache (GET/HEAD), injected at connector-build time so it's the single choke point all connector I/O routes through; settings-tunable; de-flakes live Atlassian runs.
-- [ ] Slice: greenfield PRD→Confluence + backlog→Jira + implement-by-issue-key; brownfield onboard from Word/Excel or existing Jira.
+- [x] Slice: greenfield PRD→Confluence + backlog→Jira + implement-by-issue-key; brownfield onboard from Word/Excel or existing Jira. `tests/test_acceptance_phase1.py` — **live greenfield** (PRD publishes to Confluence only on the post-gate publish step, read-through + idempotent re-publish; proposed backlog reconciles into Jira epics/stories, idempotent; live get-issue-by-key + transition round-trips to the ledger; traceability API shows requirements→PRD→backlog with Confluence deep-link; RLS isolation) and **offline brownfield** (Word PRD + Excel backlog → gated adoption with provenance; register-don't-recreate, no duplicates). Self-cleaning; skips greenfield without creds. **Phase 1 complete.**
 
-## Phase 2 — Build Execution
+## Phase 2 — Build Execution  ← CURRENT
 - [ ] CodeHost connector (GitHub: branches/PRs/status/webhooks).
 - [ ] Build runners + provisioning (toolchains, private registries, test DB, secrets inject); ClaudeDriver `run_build_task`.
 - [ ] Temporal build sagas (long-running, compensation, dead-letter).
