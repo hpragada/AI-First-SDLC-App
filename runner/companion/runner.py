@@ -12,9 +12,15 @@ from __future__ import annotations
 import os
 import sys
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from .guardrails import (
+    EgressPolicy,
+    assert_phase_allowlist,
+    check_command_egress,
+    scan_worktree,
+)
 from .worktree import changed_files, provision_worktree, teardown_worktree
 
 # The build-phase platform-state tools (must match the server-side allowlist).
@@ -51,6 +57,7 @@ class BuildTask:
     runner_token: str = ""
     secrets: dict = field(default_factory=dict)   # injected as env, never written to repo
     provisioning_commands: list = field(default_factory=list)  # toolchain/test-db setup hooks
+    extra_allowed_hosts: list = field(default_factory=list)  # declared registries (egress §6)
 
 
 @dataclass
@@ -104,25 +111,32 @@ def inject_environment(task: BuildTask):
                 os.environ[k] = old
 
 
-def run_provisioning(worktree: Path, task: BuildTask) -> None:
+def run_provisioning(worktree: Path, task: BuildTask, policy: EgressPolicy) -> None:
     """Run optional toolchain/test-DB setup commands inside the worktree (a documented hook;
-    actual installs are environment-specific)."""
+    actual installs are environment-specific). Each command's explicit URLs are checked against
+    the egress allowlist first — a denied host blocks the build before anything runs (§6)."""
     import subprocess
 
     for cmd in task.provisioning_commands:
+        check_command_egress(cmd, policy)
         subprocess.run(cmd, cwd=str(worktree), shell=isinstance(cmd, str), check=True)
 
 
 async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
                     keep_worktree: bool = False) -> dict:
-    """Provision → environment → run the build agent in the worktree → collect → teardown."""
+    """Provision → environment → run the build agent in the worktree → **scan for secrets** →
+    collect → teardown. Guardrails v1 (§6): the per-phase allowlist is asserted (PG12), the
+    egress allowlist gates provisioning, and the changed files are secret-scanned before the
+    branch is reported pushable — a hit returns `status="secret_blocked"` and nothing is pushed."""
+    assert_phase_allowlist(BUILD_ALLOWED_TOOLS, allowed=BUILD_ALLOWED_TOOLS)  # PG12
+    policy = EgressPolicy.for_task(task)
     branch = f"feature/{task.work_item_key}"
     worktree = provision_worktree(
         repo_path=repo_path, branch=branch, base=task.base,
         worktree_path=Path(worktrees_root) / task.work_item_key,
     )
     try:
-        run_provisioning(worktree, task)
+        run_provisioning(worktree, task, policy)
         with inject_environment(task):
             result = await driver.run_build_task(
                 manifest=task.manifest,
@@ -132,12 +146,35 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
                 allowed_tools=BUILD_ALLOWED_TOOLS,
                 work_item=_WorkItemShim(task.work_item_id, task.work_item_key),
             )
-        return {
+        files = changed_files(worktree)
+        secret_findings = scan_worktree(worktree)
+        out = {
             "run_id": task.run_id, "branch": branch, "worktree": str(worktree),
-            "changed_files": changed_files(worktree),
+            "changed_files": files,
             "cost_usd": getattr(result, "cost_usd", 0.0),
             "outputs": getattr(result, "outputs", {}),
+            "egress_allowed_hosts": sorted(policy.allowed_hosts),
         }
+        if secret_findings:
+            # PG14: block the push/PR. Report the redacted findings; the branch is never pushed.
+            out["status"] = "secret_blocked"
+            out["secret_findings"] = [asdict(f) for f in secret_findings]
+        else:
+            out["status"] = "ok"
+        return out
     finally:
         if not keep_worktree:
             teardown_worktree(repo_path=repo_path, worktree_path=worktree)
+
+
+def to_build_report(result: dict) -> dict:
+    """Map a `run_build` result to the BuildReport payload the platform's report API consumes.
+    A secret-scan block becomes a **failed** build (the saga dead-letters it → Event logged,
+    WorkItem returned to in_progress, triage opened) — secrets never reach the PR."""
+    if result.get("status") == "secret_blocked":
+        n = len(result.get("secret_findings", []))
+        return {"status": "failed", "branch": result.get("branch", ""),
+                "message": f"secret scan blocked the push: {n} finding(s) — see run events"}
+    return {"status": "ok", "branch": result.get("branch", ""),
+            "head_sha": result.get("head_sha", ""),
+            "changed_files": result.get("changed_files", [])}
