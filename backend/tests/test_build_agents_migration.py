@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from apps.projects.models import Project, ProjectProfile
-from apps.registry.catalog import get_by_key
+from apps.registry.catalog import get_by_key, seed_agent_specs
 from apps.registry.models import AgentSpec, Artifact, TraceEdge
 from apps.runs.models import Run
 from apps.tenancy.models import Tenant
@@ -22,10 +22,11 @@ from integrations.types import PullRequest, PullRequestRef
 from orchestration import build_activities as ba
 from orchestration.build_types import BuildInput, BuildReport
 from orchestration.review_provider import AgentReviewProvider, parse_findings
+from orchestration.trigger import trigger_build, trigger_phase
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENTS = _REPO_ROOT / "agents"
-_KEYS = ["07_implementation", "08_code_review"]
+_KEYS = ["07_implementation", "08_code_review", "11_cicd", "12_deployment"]
 
 # §8 forbidden tokens — any hit is a failed migration (same gate as the planning agents).
 _FORBIDDEN = [
@@ -43,6 +44,14 @@ _REASONING = {
     "08_code_review": [
         "Principal Engineer", "OWASP Top 10", "A03 — Injection", "N+1", "WCAG", "DORA",
         "CRITICAL", "WARNING", "SUGGESTION", "APPROVED WITH CONDITIONS", "eleven dimensions",
+    ],
+    "11_cicd": [
+        "Senior DevOps/Platform Engineer", "multi-stage", "non-root", "Jenkins",
+        "Coverage Gate", "Declarative",
+    ],
+    "12_deployment": [
+        "Senior Release Manager", "Site Reliability Engineer", "Blue-Green Deployment",
+        "Canary Release", "readiness checklist", "30 minutes", "rollback",
     ],
 }
 
@@ -101,6 +110,66 @@ def test_08_reroutes_to_codehost_and_structured_findings():
 def test_d6_gate_roles():
     assert get_by_key("07_implementation").gate_role == "tech_lead"
     assert get_by_key("08_code_review").gate_role == "reviewer"
+
+
+# ── 11 CI/CD + 12 Deployment migration (pipeline + release artifacts) ─
+def test_11_reroutes_pipeline_to_worktree_and_artifacts():
+    body = _body("11_cicd")
+    assert "get_artifact" in body and "register_artifact" in body
+    assert "worktree" in body                       # pipeline files are code in the worktree
+    for art in ["pipeline_config", "cicd_architecture", "secrets_manifest"]:
+        assert art in body, f"11 missing rerouted artifact type {art!r}"
+    # D2: the engine never performs Git side-effects
+    for forbidden in ["git push", "gh pr create", "git checkout"]:
+        assert forbidden not in body, f"11 still drives git: {forbidden!r}"
+
+
+def test_12_reroutes_release_outputs_to_artifacts():
+    body = _body("12_deployment")
+    assert "get_artifact" in body and "register_artifact" in body
+    for art in ["release_notes", "rollback_runbook", "deployment_log"]:
+        assert art in body, f"12 missing rerouted artifact type {art!r}"
+    # the production deploy is a gated control-plane action, not a unilateral engine command
+    assert "gate" in body.lower()
+    assert "git log" not in body
+
+
+def test_devops_gate_roles():
+    assert get_by_key("11_cicd").gate_role == "devops"
+    assert get_by_key("12_deployment").gate_role == "devops"
+
+
+@pytest.mark.django_db
+def test_cicd_rides_build_path_with_devops_gate():
+    """11 produces pipeline *code* → it rides the build path (worktree → PR → devops merge)."""
+    t = Tenant.objects.create(name="Acme")
+    seed_agent_specs(t)
+    p = Project.objects.create(tenant=t, name="App")
+    wi = WorkItem.objects.create(tenant=t, project=p, type=WorkItem.Type.STORY)
+
+    calls = []
+    trigger_build(
+        tenant_id=str(t.id), project_id=str(p.id), work_item_id=str(wi.id),
+        agent_key="11_cicd", repo="acme/api", base="main", required_role="devops",
+        workflow_starter=lambda wf, inp: calls.append(inp),
+    )
+    assert calls and calls[0].required_role == "devops"
+
+
+@pytest.mark.django_db
+def test_deployment_rides_phase_path_with_devops_gate():
+    """12 produces release artifacts → it rides the agent-run path; gate role from spec §7."""
+    t = Tenant.objects.create(name="Acme")
+    seed_agent_specs(t)
+    p = Project.objects.create(tenant=t, name="App")
+    wi = WorkItem.objects.create(tenant=t, project=p, type=WorkItem.Type.STORY)
+
+    calls = []
+    trigger_phase(
+        tenant_id=str(t.id), project_id=str(p.id), work_item_id=str(wi.id),
+        agent_key="12_deployment", workflow_starter=lambda wf, inp: calls.append(inp),
+    )
+    assert calls and calls[0].required_role == "devops" and calls[0].phase == "deployment"
 
 
 # ── AgentReviewProvider: structured-verdict parsing ─────────────────
