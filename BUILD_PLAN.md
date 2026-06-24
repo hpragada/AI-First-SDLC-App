@@ -47,6 +47,7 @@ After **Phase 2**, a user can run a **greenfield** project end-to-end (idea → 
 - [x] Slice: greenfield PRD→Confluence + backlog→Jira + implement-by-issue-key; brownfield onboard from Word/Excel or existing Jira. `tests/test_acceptance_phase1.py` — **live greenfield** (PRD publishes to Confluence only on the post-gate publish step, read-through + idempotent re-publish; proposed backlog reconciles into Jira epics/stories, idempotent; live get-issue-by-key + transition round-trips to the ledger; traceability API shows requirements→PRD→backlog with Confluence deep-link; RLS isolation) and **offline brownfield** (Word PRD + Excel backlog → gated adoption with provenance; register-don't-recreate, no duplicates). Self-cleaning; skips greenfield without creds. **Phase 1 complete.**
 
 ## Phase 2 — Build Execution  ← CURRENT
+- [x] Generate `docs/PHASE_2_BUILD_SPEC.md` from the blueprint (CodeHost seam, build-runner provisioning + `run_build_task`, Temporal build saga, 07↔08 remediation loop, injection guardrails, webhook reconciliation, acceptance; decisions D1–D7).
 - [ ] CodeHost connector (GitHub: branches/PRs/status/webhooks).
 - [ ] Build runners + provisioning (toolchains, private registries, test DB, secrets inject); ClaudeDriver `run_build_task`.
 - [ ] Temporal build sagas (long-running, compensation, dead-letter).
