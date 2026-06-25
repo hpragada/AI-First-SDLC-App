@@ -25,7 +25,7 @@ from orchestration.types import AgentRunInput
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENTS = _REPO_ROOT / "agents"
-_KEYS = ["05_ux_design"]
+_KEYS = ["05_ux_design", "09_testing", "09b_test_automation"]
 
 # §8 forbidden tokens — any hit is a failed migration (same gate as every other agent).
 _FORBIDDEN = [
@@ -39,6 +39,15 @@ _REASONING = {
         "Senior UX/UI Designer and Design Systems Architect", "Double Diamond",
         "Atomic Design", "Cognitive Walkthrough", "WCAG 2.1 AA", "Nielsen Norman",
         "a wireframe without states is not a wireframe", "Loading State Classification",
+    ],
+    "09_testing": [
+        "Lead QA Engineer and Test Automation Architect", "test to break, not to pass",
+        "Test Pyramid", "IEEE 829", "Requirements Traceability Coverage Map",
+        "warm-up ramp", "axe-core", "WCAG 2.1 AA", "OWASP",
+    ],
+    "09b_test_automation": [
+        "Senior Test Automation Engineer", "never guess a locator", "Page Object Model",
+        "Playwright MCP", "DismissCookieBanner", "getByRole", "BasePage",
     ],
 }
 
@@ -86,16 +95,54 @@ def test_05_reroutes_to_designsource_and_artifacts():
     assert "Reply APPROVED" not in body
 
 
-def test_designer_gate_role():
+def test_09_reroutes_to_testmgmt_and_platform():
+    body = _body("09_testing")
+    # inputs rerouted to the manifest + platform reads + the worktree (code under test)
+    assert "get_artifact" in body
+    assert "# Relevant Artifacts" in body and "# Rules" in body
+    assert "worktree" in body
+    # outputs rerouted: test cases/results → platform artifacts + the TestMgmt SoR
+    assert "register_artifact" in body and "add_trace_edge" in body
+    assert "testmgmt.create_test" in body and "testmgmt.import_results" in body
+    for art in ["test_plan", "test_case", "test_report"]:
+        assert art in body, f"09 missing rerouted artifact type {art!r}"
+    # the platform's flaky-quarantine + defect-loopback replace the local DEFECT-LOG
+    assert "defect loopback" in body and "quarantine" in body.lower()
+    # no human-gate / slash-command glue survives (sweep also catches "reply approved")
+    assert "/sdlc:security" not in body and "Reply APPROVED" not in body
+
+
+def test_09b_preserves_playwright_pom_and_reroutes():
+    body = _body("09b_test_automation")
+    # the locator-discovery IP is preserved verbatim
+    assert "Playwright MCP" in body and "Page Object Model" in body
+    assert "mcp__playwright__browser_navigate" in body
+    assert "mcp__playwright__browser_snapshot" in body
+    assert "never guess a locator" in body
+    # inputs rerouted to the platform; scripts are code written into the worktree
+    assert "get_artifact" in body and "testmgmt.get_test" in body
+    assert "worktree" in body
+    assert "register_artifact" in body
+    # the engine never touches Git — the platform commits/pushes/opens the PR (D2)
+    for forbidden in ["git push", "gh pr create", "git checkout"]:
+        assert forbidden not in body, f"09b still drives git: {forbidden!r}"
+    # the interactive TC-selection / human-gate glue is replaced by platform assignment
+    assert "Reply APPROVED" not in body and "STOP HERE" not in body
+
+
+def test_qa_and_designer_gate_roles():
     assert get_by_key("05_ux_design").gate_role == "designer"
+    assert get_by_key("09_testing").gate_role == "qa_lead"
+    assert get_by_key("09b_test_automation").gate_role == "qa_lead"
 
 
 @pytest.mark.django_db
-def test_seeded_agentspec_resolves_to_migrated_body():
+@pytest.mark.parametrize("key", _KEYS)
+def test_seeded_agentspec_resolves_to_migrated_body(key):
     t = Tenant.objects.create(name="Acme")
     seed_agent_specs(t)
-    spec = AgentSpec.objects.get(tenant=t, key="05_ux_design")
-    assert spec.body_ref == "agents/05_ux_design/agent.md"
+    spec = AgentSpec.objects.get(tenant=t, key=key)
+    assert spec.body_ref == f"agents/{key}/agent.md"
     assert (_REPO_ROOT / spec.body_ref).is_file()
 
 
