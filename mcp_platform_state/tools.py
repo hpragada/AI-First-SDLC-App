@@ -97,6 +97,7 @@ def _profile(project: Project) -> dict:
         "nfrs": p.nfrs if p else {},
         "constraints": p.constraints if p else {},
         "glossary": p.glossary if p else {},
+        "theme": p.theme if p else {},
         "important_context": p.important_context if p else "",
         "version": p.version if p else 0,
     }

@@ -23,6 +23,10 @@ class Approval(TenantScopedModel):
         max_length=16, choices=Decision.choices, default=Decision.PENDING
     )
     comment = models.TextField(blank=True)
+    # Gate conditions a control-plane checklist must satisfy before APPROVED (#2/#5, D6):
+    # the a11y/WCAG gate seeds the WCAG 2.1 AA criteria here; a required-but-unsatisfied
+    # condition blocks approval. Each item: {key, label, required, satisfied}.
+    conditions = models.JSONField(default=list, blank=True)
     decided_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self) -> str:

@@ -29,6 +29,29 @@ class GateRoleError(GateError):
     """Deciding user lacks the gate's required Membership role."""
 
 
+class GateConditionsError(GateError):
+    """A required gate condition (e.g. a WCAG 2.1 AA criterion) is not yet satisfied."""
+
+
+def _merge_conditions(existing: list, updates: list | None) -> list:
+    """Fold the reviewer's `satisfied` updates (keyed by `key`) into the gate's conditions.
+    Unknown keys are appended; reasoning/labels on existing items are preserved."""
+    merged = [dict(c) for c in (existing or [])]
+    by_key = {c.get("key"): c for c in merged}
+    for upd in updates or []:
+        key = upd.get("key")
+        if key in by_key:
+            if "satisfied" in upd:
+                by_key[key]["satisfied"] = bool(upd["satisfied"])
+        else:
+            merged.append({
+                "key": key, "label": upd.get("label", ""),
+                "required": bool(upd.get("required", True)),
+                "satisfied": bool(upd.get("satisfied", False)),
+            })
+    return merged
+
+
 def _default_signal_sender(
     workflow_id: str, decision: str, approver_id: str | None, comment: str
 ) -> None:
@@ -58,9 +81,13 @@ def decide_gate(
     user_id: str,
     decision: str,
     comment: str = "",
+    conditions: list | None = None,
     signal_sender=None,
 ) -> dict:
-    """Record a gate decision (after role check) and signal the workflow to resume."""
+    """Record a gate decision (after role check + condition check) and signal the workflow
+    to resume. `conditions` carries the reviewer's `satisfied` updates for the gate's
+    checklist (e.g. the WCAG 2.1 AA criteria on the design gate); an APPROVED decision is
+    rejected while any *required* condition is unsatisfied (D6)."""
     if decision not in _VALID_DECISIONS:
         raise GateError(f"invalid decision: {decision!r}")
     signal_sender = signal_sender or _default_signal_sender
@@ -84,6 +111,18 @@ def decide_gate(
                 f"user {user_id} lacks role '{approval.required_role}' for this gate"
             )
 
+        # Fold in the reviewer's checklist updates, then enforce required conditions on APPROVE.
+        approval.conditions = _merge_conditions(approval.conditions, conditions)
+        if decision == "approved":
+            unmet = [
+                c.get("key") for c in (approval.conditions or [])
+                if c.get("required") and not c.get("satisfied")
+            ]
+            if unmet:
+                raise GateConditionsError(
+                    f"cannot approve: {len(unmet)} required gate condition(s) unmet: {unmet}"
+                )
+
         workflow_id = approval.run.temporal_workflow_id
         if not workflow_id:
             raise GateError("run has no temporal_workflow_id; cannot resume the workflow")
@@ -94,7 +133,8 @@ def decide_gate(
         approval.approver_id = user_id
         approval.comment = comment
         approval.decided_at = datetime.now(UTC)
-        approval.save(update_fields=["decision", "approver", "comment", "decided_at", "updated_at"])
+        approval.save(update_fields=["decision", "approver", "comment", "conditions",
+                                     "decided_at", "updated_at"])
 
         tools.log_event(
             tenant_id, f"user:{user_id}", "gate.decided", "approval", str(approval.id),
@@ -105,6 +145,7 @@ def decide_gate(
             "decision": approval.decision,
             "approver_id": user_id,
             "comment": comment,
+            "conditions": approval.conditions,
         }
 
     # Signal outside the tenant_context cursor.

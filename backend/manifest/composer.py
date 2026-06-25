@@ -65,7 +65,9 @@ def _render_project(profile: dict, budget: TokenBudget) -> str:
     ]
     if profile.get("description"):
         lines.append(f"- description: {profile['description']}")
-    for key in ("tech_stack", "coding_standards", "nfrs", "constraints", "glossary"):
+    # `theme` flows verbatim (PG23/D10): per-tenant tokens + responsive breakpoints, so
+    # design/implementation agents honor one theme without a per-tenant code fork.
+    for key in ("tech_stack", "coding_standards", "nfrs", "constraints", "glossary", "theme"):
         value = profile.get(key)
         if value:
             lines.append(_json_block(key, value))

@@ -40,6 +40,10 @@ class ProjectProfile(TenantScopedModel):
     nfrs = models.JSONField(default=dict, blank=True)
     constraints = models.JSONField(default=dict, blank=True)
     glossary = models.JSONField(default=dict, blank=True)
+    # Per-tenant theming (PG23/D10): design tokens + responsive breakpoints + brand, flowed
+    # verbatim into the rendered manifest so design/implementation agents honor one theme —
+    # no per-tenant code fork. e.g. {"brand","tokens":{...},"breakpoints":[375,768,1440]}.
+    theme = models.JSONField(default=dict, blank=True)
     important_context = models.TextField(blank=True)
     version = models.IntegerField(default=1)
 

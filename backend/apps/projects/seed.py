@@ -38,6 +38,16 @@ _PROFILE_DEFAULTS = {
         "Goal: take one idea through ideation → requirements → PRD → architecture, "
         "each gated by a human, with all state in the platform and artifact drafts in S3."
     ),
+    # Per-tenant theming (PG23/D10): tokens + responsive breakpoints flow into the manifest.
+    "theme": {
+        "brand": "default",
+        "tokens": {
+            "primary-action": "#2563eb",
+            "surface": "#ffffff",
+            "neutral-900": "#0f172a",
+        },
+        "breakpoints": [375, 768, 1440],
+    },
 }
 
 

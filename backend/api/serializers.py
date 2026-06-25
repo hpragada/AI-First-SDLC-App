@@ -122,6 +122,11 @@ class GateDecisionSerializer(serializers.Serializer):
     user_id = serializers.UUIDField()
     decision = serializers.ChoiceField(choices=["approved", "rejected"])
     comment = serializers.CharField(required=False, allow_blank=True, default="")
+    # Reviewer's gate-checklist updates (e.g. WCAG criteria marked satisfied on the design
+    # gate); a required-but-unsatisfied condition blocks an APPROVED decision (D6).
+    conditions = serializers.ListField(
+        child=serializers.DictField(), required=False, default=list
+    )
 
 
 # ── Brownfield-lite onboarding ──────────────────────────────────────

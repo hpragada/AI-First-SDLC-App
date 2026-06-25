@@ -357,6 +357,7 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
                 user_id=str(ser.validated_data["user_id"]),
                 decision=ser.validated_data["decision"],
                 comment=ser.validated_data["comment"],
+                conditions=ser.validated_data.get("conditions"),
             )
         except GateRoleError as exc:
             raise PermissionDenied(str(exc)) from exc

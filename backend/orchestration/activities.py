@@ -140,6 +140,8 @@ def execute_agent_core(inp: AgentRunInput, manifest: str) -> dict:
 
 
 def open_gate_core(inp: AgentRunInput) -> str:
+    from apps.gates.wcag import conditions_for_phase
+
     with tenant_context(inp.tenant_id):
         approval, created = Approval.objects.get_or_create(
             run_id=inp.run_id, gate_type=inp.gate_type, tenant_id=inp.tenant_id,
@@ -147,6 +149,8 @@ def open_gate_core(inp: AgentRunInput) -> str:
                 "work_item_id": inp.work_item_id,
                 "required_role": inp.required_role,
                 "decision": Approval.Decision.PENDING,
+                # a11y/WCAG gate (D6): the design phase's gate carries the WCAG checklist.
+                "conditions": conditions_for_phase(inp.phase),
             },
         )
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
