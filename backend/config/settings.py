@@ -48,6 +48,7 @@ LOCAL_APPS = [
     "apps.gates",
     "apps.integrations",
     "apps.quality",
+    "apps.knowledge",
 ]
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
@@ -182,6 +183,19 @@ XRAY_API_URL = env("XRAY_API_URL", default="https://xray.cloud.getxray.app")
 XRAY_CLIENT_ID = env("XRAY_CLIENT_ID", default="")
 XRAY_CLIENT_SECRET = env("XRAY_CLIENT_SECRET", default="")
 XRAY_PROJECT_KEY = env("XRAY_PROJECT_KEY", default="")  # demo/default test project
+
+# ─── Knowledge Index embeddings (Phase 4 §2 / D3) ───────────────────
+# Retrieval works with ZERO keys (the BM25 baseline). An optional provider sharpens ranking.
+# EMBEDDING_DIM is provider-driven and baked into the KnowledgeChunk column at migration time:
+# 1536 fits Gemini (gemini-embedding-001); set 1024 for Voyage (voyage-code-3) and re-migrate.
+EMBEDDING_PROVIDER = env("EMBEDDING_PROVIDER", default="null")   # null | voyage | gemini
+EMBEDDING_DIM = env.int("EMBEDDING_DIM", default=1536)
+VOYAGE_API_URL = env("VOYAGE_API_URL", default="https://api.voyageai.com")
+VOYAGE_API_KEY = env("VOYAGE_API_KEY", default="")
+VOYAGE_MODEL = env("VOYAGE_MODEL", default="voyage-code-3")
+GEMINI_API_URL = env("GEMINI_API_URL", default="https://generativelanguage.googleapis.com")
+GEMINI_API_KEY = env("GEMINI_API_KEY", default="")
+GEMINI_MODEL = env("GEMINI_MODEL", default="gemini-embedding-001")
 
 # Base URL the local-companion runner uses to reach the platform (remote Platform-State +
 # build fetch/report). The dev machine connects outbound to this.

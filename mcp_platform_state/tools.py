@@ -105,7 +105,7 @@ def _profile(project: Project) -> dict:
 
 # ── tools (spec §2 signatures; tenant_id is the bound scope) ─────────
 def get_context(tenant_id, project_id, phase, work_item_id=None) -> dict:
-    """Inputs the Manifest Composer renders. Knowledge retrieval is Phase 4 (stub [])."""
+    """Inputs the Manifest Composer renders, incl. Knowledge-Index retrieval (Phase 4)."""
     with tenant_context(tenant_id):
         project = Project.objects.get(id=project_id, tenant_id=tenant_id)
         artifacts = (
@@ -113,12 +113,30 @@ def get_context(tenant_id, project_id, phase, work_item_id=None) -> dict:
             .order_by("-created_at")[:50]
         )
         events = Event.objects.filter(tenant_id=tenant_id).order_by("-ts")[:20]
+        wi = (
+            WorkItem.objects.filter(id=work_item_id, tenant_id=tenant_id).first()
+            if work_item_id else None
+        )
+        repo_id = wi.repo_id if wi else None
+        query = " ".join(filter(None, [phase, getattr(wi, "title", ""),
+                                       getattr(wi, "description", "")]))
         return {
             "profile": _profile(project),
             "relevant_artifacts": [_artifact(a) for a in artifacts],
             "recent_events": [_event(e) for e in events],
-            "retrieved_knowledge": [],  # Knowledge Index = Phase 4
+            "retrieved_knowledge": _retrieve_knowledge(tenant_id, project_id, query, repo_id),
         }
+
+
+def _retrieve_knowledge(tenant_id, project_id, query, repo_id) -> list[dict]:
+    """Knowledge-Index retrieval (Phase 4). Best-effort: a retrieval hiccup never breaks
+    context composition (the manifest just renders no retrieved knowledge)."""
+    try:
+        from apps.knowledge.index import retrieve
+
+        return retrieve(tenant_id, project_id=project_id, query=query, repo=repo_id, k=8)
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def register_artifact(
