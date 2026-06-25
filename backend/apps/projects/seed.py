@@ -121,6 +121,8 @@ def seed_demo() -> SeedResult:
             # TestMgmt (Phase 3) — Xray project scope; creds resolve via .env.
             ("testmgmt", "xray",
              {"project_key": settings.XRAY_PROJECT_KEY}, "settings:xray"),
+            # CodeIntel (Phase 4) — built-in SOTA analyzer (no creds); Repowise is optional.
+            ("codeintel", "builtin", {}, "builtin"),
         ]
         for capability, connector, scopes, token_ref in connections:
             IntegrationConnection.objects.update_or_create(

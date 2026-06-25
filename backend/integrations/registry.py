@@ -16,7 +16,7 @@ from collections.abc import Callable
 from .atlassian.config import AtlassianConfig
 from .atlassian.docstore import AtlassianDocStore
 from .atlassian.tasktracker import AtlassianTaskTracker
-from .capabilities import CodeHost, DesignSource, DocStore, TaskTracker, TestMgmt
+from .capabilities import CodeHost, CodeIntel, DesignSource, DocStore, TaskTracker, TestMgmt
 from .types import CapabilityError, CapabilityUnavailable
 
 
@@ -83,6 +83,14 @@ def _build_xray(conn) -> TestMgmt:
     return XrayTestMgmt(XrayConfig.from_settings(), project=project, transport=transport)
 
 
+def _build_builtin_codeintel(conn) -> CodeIntel:
+    # The built-in SOTA analyzer (D1) — no creds, local compute (git + filesystem), so no
+    # transport/governor. Repowise is the optional connector behind the same capability.
+    from .codeintel.builtin import BuiltinCodeIntel
+
+    return BuiltinCodeIntel()
+
+
 # (capability, connector) -> builder. The single place vendors are wired (#9);
 # extend via register_connector for new vendors without touching callers.
 _BUILDERS: dict[tuple[str, str], Callable[[object], object]] = {
@@ -91,6 +99,7 @@ _BUILDERS: dict[tuple[str, str], Callable[[object], object]] = {
     ("codehost", "github"): _build_github,
     ("designsource", "figma"): _build_figma,
     ("testmgmt", "xray"): _build_xray,
+    ("codeintel", "builtin"): _build_builtin_codeintel,
 }
 
 
@@ -117,7 +126,7 @@ def get_connection(tenant_id, capability: str):
 
 def get_capability(
     tenant_id, capability: str
-) -> DocStore | TaskTracker | CodeHost | DesignSource | TestMgmt:
+) -> DocStore | TaskTracker | CodeHost | DesignSource | TestMgmt | CodeIntel:
     """Return the tenant's connector for a capability, or raise CapabilityUnavailable."""
     conn = get_connection(tenant_id, capability)
     if conn is None:

@@ -204,6 +204,19 @@ class TestExecutionImport:
     execution_ref: str | None = None
 
 
+@dataclass(frozen=True)
+class IntelIndex:
+    """Summary of a CodeIntel indexing pass (pointer/summary, never copied source: #1/#3).
+    The full layered analysis is registered as code-intel artifacts + Knowledge-Index chunks."""
+
+    repo: str
+    indexed_at: str
+    file_count: int
+    languages: dict          # {".py": 12, ".ts": 5, ...}
+    commits: int
+    hotspots: int
+
+
 class CapabilityError(Exception):
     """A connector call failed. Carries the upstream status when there was one."""
 
