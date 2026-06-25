@@ -25,7 +25,7 @@ from orchestration.types import AgentRunInput
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENTS = _REPO_ROOT / "agents"
-_KEYS = ["05_ux_design", "09_testing", "09b_test_automation"]
+_KEYS = ["05_ux_design", "09_testing", "09b_test_automation", "10_security"]
 
 # §8 forbidden tokens — any hit is a failed migration (same gate as every other agent).
 _FORBIDDEN = [
@@ -48,6 +48,11 @@ _REASONING = {
     "09b_test_automation": [
         "Senior Test Automation Engineer", "never guess a locator", "Page Object Model",
         "Playwright MCP", "DismissCookieBanner", "getByRole", "BasePage",
+    ],
+    "10_security": [
+        "Senior Application Security Engineer", "think like an attacker first",
+        "OWASP Top 10", "STRIDE", "CVSS 3.1", "SLSA", "Data Flow Diagram",
+        "CWE", "least privilege",
     ],
 }
 
@@ -130,10 +135,29 @@ def test_09b_preserves_playwright_pom_and_reroutes():
     assert "Reply APPROVED" not in body and "STOP HERE" not in body
 
 
-def test_qa_and_designer_gate_roles():
+def test_10_reroutes_to_worktree_and_security_artifacts():
+    body = _body("10_security")
+    # inputs rerouted to the manifest + the worktree (the code/deps under review)
+    assert "get_artifact" in body
+    assert "# Relevant Artifacts" in body and "# Rules" in body
+    assert "worktree" in body
+    # outputs rerouted to platform artifacts (no "Write These Files")
+    assert "register_artifact" in body
+    for art in ["security_review", "security_finding", "threat_model", "sbom"]:
+        assert art in body, f"10 missing rerouted artifact type {art!r}"
+    # the SOTA quality bar is preserved verbatim
+    assert "STRIDE" in body and "OWASP Top 10" in body and "CVSS 3.1" in body
+    # criticals/highs ride the platform defect loopback (D8); standalone — no merge-gate glue
+    assert "defect loopback" in body
+    # no human-gate / slash-command glue survives
+    assert "/sdlc:cicd" not in body and "Reply APPROVED" not in body
+
+
+def test_qa_designer_and_security_gate_roles():
     assert get_by_key("05_ux_design").gate_role == "designer"
     assert get_by_key("09_testing").gate_role == "qa_lead"
     assert get_by_key("09b_test_automation").gate_role == "qa_lead"
+    assert get_by_key("10_security").gate_role == "security_engineer"
 
 
 @pytest.mark.django_db

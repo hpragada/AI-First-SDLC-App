@@ -93,6 +93,34 @@ def test_flaky_test_is_quarantined_and_does_not_open_a_defect(world):
     assert not WorkItem.objects.filter(parent_id=story.id, type=WorkItem.Type.DEFECT).exists()
 
 
+# ── security defect loopback (D8) ───────────────────────────────────
+def test_record_security_findings_opens_then_closes_defects(world):
+    t, p, story = world["t"], world["p"], world["story"]
+    out = services.record_security_findings(
+        tenant_id=t.id, project_id=p.id, work_item_id=story.id,
+        findings=[{"id": "SEC-001", "severity": "critical", "title": "SQLi"},
+                  {"id": "SEC-002", "severity": "high", "title": "missing authz"},
+                  {"id": "SEC-003", "severity": "medium", "title": "verbose error"}],
+    )
+    assert out["blocking"] == ["SEC-001", "SEC-002"]            # medium is not blocking
+    assert len(out["opened"]) == 2
+    defects = WorkItem.objects.filter(parent_id=story.id, type=WorkItem.Type.DEFECT)
+    assert defects.count() == 2
+    crit = defects.get(external_ref__finding="SEC-001")
+    assert crit.external_ref["kind"] == "security" and crit.external_ref["defect"] == "DEF-SEC-001"
+    assert crit.state == WorkItem.State.IN_PROGRESS
+
+    # Re-run with the critical resolved → that defect closes; the high stays open.
+    out2 = services.record_security_findings(
+        tenant_id=t.id, project_id=p.id, work_item_id=story.id,
+        findings=[{"id": "SEC-002", "severity": "high", "title": "missing authz"}],
+    )
+    assert len(out2["closed"]) == 1
+    crit.refresh_from_db()
+    assert crit.state == WorkItem.State.DONE
+    assert defects.count() == 2                                # no duplicates
+
+
 # ── test-impact selection v1 (traceability graph) ───────────────────
 def test_select_impacted_tests_walks_the_traceability_graph(world):
     t, p, run = world["t"], world["p"], world["run"]

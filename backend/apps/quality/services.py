@@ -227,6 +227,60 @@ def _reconcile_defects(tenant_id, project_id, work_item_id, failing: set[str],
     return opened, closed
 
 
+_SECURITY_BLOCKING = {"critical", "high"}
+
+
+def record_security_findings(
+    *, tenant_id, project_id, work_item_id, findings: list, review_artifact_id=None,
+) -> dict:
+    """Security defect loopback (D8): open a `defect` child WorkItem for each open Critical/High
+    `security_finding` and close those now resolved — the same open/close reconciliation as the
+    test loop, keyed by finding id and scoped to security defects so it never touches test
+    defects. Criticals/Highs must clear before the security gate is grantable.
+
+    `findings`: [{id, severity, title, ...}]. Standalone — does not reopen the P2 build saga."""
+    blocking = {
+        f["id"]: f for f in findings
+        if str(f.get("severity", "")).lower() in _SECURITY_BLOCKING and f.get("id")
+    }
+    opened, closed = [], []
+    with tenant_context(tenant_id):
+        story = WorkItem.objects.get(id=work_item_id, tenant_id=tenant_id)
+        children = WorkItem.objects.filter(
+            tenant_id=tenant_id, parent_id=work_item_id, type=WorkItem.Type.DEFECT)
+        # Only security defects (external_ref.finding); test defects (test_ref) are untouched.
+        existing = {(c.external_ref or {}).get("finding"): c for c in children
+                    if (c.external_ref or {}).get("finding")}
+        for fid, child in existing.items():
+            if fid not in blocking and child.state != WorkItem.State.DONE:
+                child.state = WorkItem.State.DONE
+                child.save(update_fields=["state", "updated_at"])
+                tools.log_event(tenant_id, "security", "security.defect.resolved", "work_item",
+                                str(child.id), {"finding": fid})
+                closed.append(str(child.id))
+        for fid in sorted(blocking):
+            finding = blocking[fid]
+            child = existing.get(fid)
+            if child is None:
+                child = WorkItem.objects.create(
+                    tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.DEFECT,
+                    parent=story, title=f"Security: {finding.get('title') or fid}",
+                    state=WorkItem.State.IN_PROGRESS,
+                    external_ref={"defect": f"DEF-{fid}", "finding": fid, "kind": "security",
+                                  "severity": str(finding.get("severity", "")).lower(),
+                                  "security_review": review_artifact_id},
+                )
+                tools.log_event(tenant_id, "security", "security.defect.opened", "work_item",
+                                str(child.id), {"finding": fid,
+                                                "severity": finding.get("severity")})
+                opened.append(str(child.id))
+            elif child.state == WorkItem.State.DONE:
+                child.state = WorkItem.State.IN_PROGRESS
+                child.save(update_fields=["state", "updated_at"])
+                opened.append(str(child.id))
+    return {"opened": opened, "closed": closed, "blocking": sorted(blocking)}
+
+
 def select_impacted_tests(tenant_id, *, code_artifact_id: str) -> list[str]:
     """Test-impact selection v1 (D9): the `test_case` artifacts covering a changed `code`
     artifact, found by walking the traceability graph — directly linked tests plus tests that
