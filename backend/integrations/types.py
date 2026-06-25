@@ -156,6 +156,54 @@ class DesignSpec:
     payload: dict
 
 
+@dataclass(frozen=True)
+class TestStep:
+    """One step of a test case (read-through / authored, not stored as platform state)."""
+
+    __test__ = False  # not a pytest test class
+    action: str
+    data: str = ""
+    expected: str = ""
+
+
+@dataclass(frozen=True)
+class TestCase:
+    """A test read through a TestMgmt (read-through, not stored). `key` is the SoR issue
+    key (e.g. an Xray Test issue "PROJ-123")."""
+
+    __test__ = False  # not a pytest test class
+    key: str
+    summary: str
+    steps: list[TestStep]
+    status: str
+    url: str
+
+
+@dataclass(frozen=True)
+class TestResult:
+    """A single test's outcome in an execution. `status` is PASS | FAIL | SKIP (the
+    vendor-free form; the connector maps it to the SoR's status names)."""
+
+    __test__ = False  # not a pytest test class
+    test_ref: str
+    status: str
+    evidence: str = ""
+
+
+@dataclass(frozen=True)
+class TestExecutionImport:
+    """A test execution to import into the TestMgmt SoR. `execution_ref` (when set — a prior
+    execution key) makes the import idempotent: re-importing updates that execution rather
+    than creating a duplicate (register-don't-recreate)."""
+
+    __test__ = False  # not a pytest test class
+    project: str
+    work_item_ref: str
+    results: list[TestResult]
+    summary: str = ""
+    execution_ref: str | None = None
+
+
 class CapabilityError(Exception):
     """A connector call failed. Carries the upstream status when there was one."""
 

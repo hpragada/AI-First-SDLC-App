@@ -10,6 +10,9 @@ class WorkItem(TenantScopedModel):
         EPIC = "epic", "Epic"
         STORY = "story", "Story"
         TASK = "task", "Task"
+        # A defect raised by the test/quality loop — a first-class child of the story it
+        # regresses (the defect-loopback DAG sub-work, P3 D5).
+        DEFECT = "defect", "Defect"
 
     class State(models.TextChoices):
         PROPOSED = "proposed", "Proposed"

@@ -47,6 +47,7 @@ LOCAL_APPS = [
     "apps.runs",
     "apps.gates",
     "apps.integrations",
+    "apps.quality",
 ]
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
@@ -172,6 +173,15 @@ GITHUB_WEBHOOK_SECRET = env("GITHUB_WEBHOOK_SECRET", default="")  # used in P2 w
 FIGMA_API_URL = env("FIGMA_API_URL", default="https://api.figma.com")
 FIGMA_TOKEN = env("FIGMA_TOKEN", default="")
 FIGMA_FILE_KEY = env("FIGMA_FILE_KEY", default="")      # demo/default design file
+
+# ─── Xray (Phase 3 TestMgmt SoR) ────────────────────────────────────
+# Headless per-tenant auth (D3): Xray Cloud issues a bearer from client_id/client_secret;
+# the secret lives in .env (gitignored), per-tenant IntegrationConnection.token_ref points
+# at it. Rate-governed like every other connector. The Xray MCP stays optional agent-side.
+XRAY_API_URL = env("XRAY_API_URL", default="https://xray.cloud.getxray.app")
+XRAY_CLIENT_ID = env("XRAY_CLIENT_ID", default="")
+XRAY_CLIENT_SECRET = env("XRAY_CLIENT_SECRET", default="")
+XRAY_PROJECT_KEY = env("XRAY_PROJECT_KEY", default="")  # demo/default test project
 
 # Base URL the local-companion runner uses to reach the platform (remote Platform-State +
 # build fetch/report). The dev machine connects outbound to this.

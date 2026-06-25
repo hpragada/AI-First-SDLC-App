@@ -22,6 +22,9 @@ from .types import (
     IssueHit,
     PullRequest,
     PullRequestRef,
+    TestCase,
+    TestExecutionImport,
+    TestStep,
 )
 
 
@@ -114,3 +117,27 @@ class DesignSource(Protocol):
     def generate_figma_design(self, *, file_key: str, spec: DesignSpec) -> DesignRef:
         """Code-to-canvas write (PG22) — DEFERRED SEAM (D2): beta + Full seat, later."""
         ...
+
+
+@runtime_checkable
+class TestMgmt(Protocol):
+    # NB: no `__test__ = False` here — on a runtime_checkable Protocol it becomes a required
+    # member and breaks isinstance(). pytest's "cannot collect" note on this class is benign.
+    """Test-management system of record (Xray-shaped, vendor-free). Tests + executions live
+    in the SoR; the platform persists only pointers + a `test_report` artifact (#1/#3)."""
+
+    def create_test(self, *, project: str, summary: str, steps: list[TestStep],
+                    fields: dict | None = None) -> ExternalRef:
+        """Author a test case (idempotent by summary — an existing test is returned)."""
+        ...
+
+    def get_test(self, *, test_ref: str) -> TestCase: ...                          # read-through
+
+    def import_results(self, *, execution: TestExecutionImport) -> ExternalRef:
+        """Import an execution's results (idempotent: `execution.execution_ref` updates the
+        same execution rather than duplicating — register-don't-recreate)."""
+        ...
+
+    def link_defect(self, *, test_ref: str, defect_ref: str) -> None: ...          # test↔defect
+
+    def search(self, *, jql: str) -> list[IssueHit]: ...

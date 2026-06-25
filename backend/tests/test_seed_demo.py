@@ -29,13 +29,14 @@ def test_seed_demo_creates_full_slice():
     )
     assert {"product_owner", "architect"} <= roles
 
-    assert r.connection_count == 4
+    assert r.connection_count == 5
     caps = set(
         IntegrationConnection.objects.filter(tenant_id=DEMO_TENANT_ID)
         .values_list("capability", "connector")
     )
     assert caps == {("docstore", "confluence"), ("tasktracker", "jira"),
-                    ("codehost", "github"), ("designsource", "figma")}
+                    ("codehost", "github"), ("designsource", "figma"),
+                    ("testmgmt", "xray")}
 
 
 @pytest.mark.django_db
@@ -56,4 +57,4 @@ def test_seed_demo_is_idempotent():
     assert WorkItem.objects.filter(id=first.work_item_id).count() == 1
     assert AgentSpec.objects.filter(tenant_id=DEMO_TENANT_ID).count() == len(AGENT_CATALOG)
     assert Membership.objects.filter(user_id=first.user_id).count() == 2
-    assert IntegrationConnection.objects.filter(tenant_id=DEMO_TENANT_ID).count() == 4
+    assert IntegrationConnection.objects.filter(tenant_id=DEMO_TENANT_ID).count() == 5

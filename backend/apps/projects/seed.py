@@ -118,6 +118,9 @@ def seed_demo() -> SeedResult:
             # DesignSource (Phase 3) — Figma file_key scope; creds resolve via .env.
             ("designsource", "figma",
              {"file_key": settings.FIGMA_FILE_KEY}, "settings:figma"),
+            # TestMgmt (Phase 3) — Xray project scope; creds resolve via .env.
+            ("testmgmt", "xray",
+             {"project_key": settings.XRAY_PROJECT_KEY}, "settings:xray"),
         ]
         for capability, connector, scopes, token_ref in connections:
             IntegrationConnection.objects.update_or_create(
