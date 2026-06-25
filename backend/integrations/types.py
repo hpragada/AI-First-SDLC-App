@@ -103,6 +103,59 @@ class PullRequest:
         return f"{self.repo}#{self.number}"
 
 
+@dataclass(frozen=True)
+class DesignToken:
+    """A design variable read through a DesignSource (read-through, not stored).
+    `kind` is one of color/type/spacing/radius/elevation/flag; `ref` is the source
+    variable id, kept for the Code Connect mapping and the deferred canvas round-trip."""
+
+    name: str
+    kind: str            # "color" | "type" | "spacing" | "radius" | "elevation" | "flag"
+    value: str           # resolved value (hex / px / token expr)
+    ref: str | None = None
+
+
+@dataclass(frozen=True)
+class ComponentRef:
+    """A design-system component published in a design file (Code Connect source)."""
+
+    key: str             # Figma component key
+    name: str
+    node_id: str
+    url: str = ""
+
+
+@dataclass(frozen=True)
+class DesignContext:
+    """The current design read through a DesignSource — structural pointers only,
+    never a copied design body (#3). `frames` are {node_id, name, type} summaries."""
+
+    file_key: str
+    name: str
+    frames: list[dict]
+    url: str = ""
+
+
+@dataclass(frozen=True)
+class DesignRef:
+    """Pointer to a design object in a DesignSource — persisted into
+    `Artifact.external_ref` (pointer, not body: #1/#3)."""
+
+    sor: str = "figma"   # SoR.FIGMA
+    file_key: str = ""
+    node_id: str | None = None
+    url: str = ""
+    version: int | None = None
+
+
+@dataclass(frozen=True)
+class DesignSpec:
+    """Input to the deferred code-to-canvas write seam (`generate_figma_design`, D2)."""
+
+    name: str
+    payload: dict
+
+
 class CapabilityError(Exception):
     """A connector call failed. Carries the upstream status when there was one."""
 

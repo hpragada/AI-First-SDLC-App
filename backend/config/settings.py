@@ -164,6 +164,15 @@ GITHUB_REPO = env("GITHUB_REPO", default="")            # "owner/name" (demo/def
 GITHUB_DEFAULT_BASE = env("GITHUB_DEFAULT_BASE", default="develop")
 GITHUB_WEBHOOK_SECRET = env("GITHUB_WEBHOOK_SECRET", default="")  # used in P2 webhook task
 
+# ─── Figma (Phase 3 DesignSource SoR) ───────────────────────────────
+# Headless, per-tenant read-as-SoR (D1): a Figma PAT over REST (X-Figma-Token). The secret
+# lives in .env (gitignored); per-tenant IntegrationConnection.token_ref points at it. The
+# Figma MCP stays the optional agent-runtime transport, not this path. Canvas write (PG22)
+# is a deferred seam (D2) — no write creds needed in v1.
+FIGMA_API_URL = env("FIGMA_API_URL", default="https://api.figma.com")
+FIGMA_TOKEN = env("FIGMA_TOKEN", default="")
+FIGMA_FILE_KEY = env("FIGMA_FILE_KEY", default="")      # demo/default design file
+
 # Base URL the local-companion runner uses to reach the platform (remote Platform-State +
 # build fetch/report). The dev machine connects outbound to this.
 PLATFORM_API_URL = env("PLATFORM_API_URL", default="http://localhost:8000")

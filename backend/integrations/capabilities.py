@@ -10,6 +10,11 @@ from typing import Protocol, runtime_checkable
 
 from .types import (
     BranchRef,
+    ComponentRef,
+    DesignContext,
+    DesignRef,
+    DesignSpec,
+    DesignToken,
     DocHit,
     DocPage,
     ExternalRef,
@@ -84,3 +89,28 @@ class CodeHost(Protocol):
         ...
 
     def get_file(self, *, repo: str, path: str, ref: str) -> str: ...
+
+
+@runtime_checkable
+class DesignSource(Protocol):
+    """Design system of record (Figma-shaped, vendor-free). Read-as-SoR is the primary
+    mode (G3): the platform consumes the client's *current* design at run time and never
+    copies design bodies into state — pointers/tokens only (#1/#3). Write (canvas
+    round-trip) is a deferred Phase-3 seam (D2)."""
+
+    def get_design_context(self, *, file_key: str,
+                           node_id: str | None = None) -> DesignContext:
+        """The current design — structural frame pointers, read-through (live)."""
+        ...
+
+    def get_variable_defs(self, *, file_key: str) -> list[DesignToken]:
+        """The design tokens (color/type/spacing/radius/elevation) from variables."""
+        ...
+
+    def list_components(self, *, file_key: str) -> list[ComponentRef]:
+        """The published components — the Code Connect mapping source (PG20)."""
+        ...
+
+    def generate_figma_design(self, *, file_key: str, spec: DesignSpec) -> DesignRef:
+        """Code-to-canvas write (PG22) — DEFERRED SEAM (D2): beta + Full seat, later."""
+        ...

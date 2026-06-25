@@ -105,6 +105,9 @@ def seed_demo() -> SeedResult:
             ("codehost", "github",
              {"repo": settings.GITHUB_REPO, "default_base": settings.GITHUB_DEFAULT_BASE},
              "settings:github"),
+            # DesignSource (Phase 3) — Figma file_key scope; creds resolve via .env.
+            ("designsource", "figma",
+             {"file_key": settings.FIGMA_FILE_KEY}, "settings:figma"),
         ]
         for capability, connector, scopes, token_ref in connections:
             IntegrationConnection.objects.update_or_create(

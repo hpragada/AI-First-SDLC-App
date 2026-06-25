@@ -16,7 +16,7 @@ from collections.abc import Callable
 from .atlassian.config import AtlassianConfig
 from .atlassian.docstore import AtlassianDocStore
 from .atlassian.tasktracker import AtlassianTaskTracker
-from .capabilities import CodeHost, DocStore, TaskTracker
+from .capabilities import CodeHost, DesignSource, DocStore, TaskTracker
 from .types import CapabilityError, CapabilityUnavailable
 
 
@@ -57,12 +57,27 @@ def _build_github(conn) -> CodeHost:
     return GithubCodeHost(GithubConfig.from_settings(), default_repo=repo, transport=transport)
 
 
+def _build_figma(conn) -> DesignSource:
+    from django.conf import settings
+
+    from .figma.config import FigmaConfig
+    from .figma.designsource import FigmaDesignSource
+    from .rate_governor import governed_transport
+
+    file_key = (conn.scopes or {}).get("file_key") or settings.FIGMA_FILE_KEY
+    transport = governed_transport(conn.tenant_id, conn.capability)
+    return FigmaDesignSource(
+        FigmaConfig.from_settings(), default_file_key=file_key, transport=transport
+    )
+
+
 # (capability, connector) -> builder. The single place vendors are wired (#9);
 # extend via register_connector for new vendors without touching callers.
 _BUILDERS: dict[tuple[str, str], Callable[[object], object]] = {
     ("docstore", "confluence"): _build_confluence,
     ("tasktracker", "jira"): _build_jira,
     ("codehost", "github"): _build_github,
+    ("designsource", "figma"): _build_figma,
 }
 
 
@@ -87,7 +102,7 @@ def get_connection(tenant_id, capability: str):
         )
 
 
-def get_capability(tenant_id, capability: str) -> DocStore | TaskTracker | CodeHost:
+def get_capability(tenant_id, capability: str) -> DocStore | TaskTracker | CodeHost | DesignSource:
     """Return the tenant's connector for a capability, or raise CapabilityUnavailable."""
     conn = get_connection(tenant_id, capability)
     if conn is None:
