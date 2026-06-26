@@ -5,8 +5,8 @@ reference rerouted to the platform (engine -> the codeintel.* capability; output
 registered artifacts + the Knowledge Index; codebase -> the companion worktree; Human Gate
 removed), the §8 sweep clean, gate roles correct, and the AgentSpec resolves.
 
-Covers 00c Intelligent Context Extractor and 00 Onboarding; 00b Context Bridge is appended
-as its migration task lands. (00d Snapshot is retired — see the test below.)
+Covers 00c Intelligent Context Extractor, 00 Onboarding, and 00b Context Bridge.
+(00d Snapshot is retired — see the test below.)
 """
 from pathlib import Path
 
@@ -18,7 +18,7 @@ from apps.tenancy.models import Tenant
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENTS = _REPO_ROOT / "agents"
-_KEYS = ["00c_intelligent_context_extractor", "00_onboarding"]
+_KEYS = ["00c_intelligent_context_extractor", "00_onboarding", "00b_context_bridge"]
 
 _FORBIDDEN = [
     ".md", "docs/", "claude.md", "tasks.md", "reply approved", "/sdlc:",
@@ -34,6 +34,10 @@ _REASONING = {
         "Senior Technical Programme Manager", "BABOK v3", "IEEE 830",
         "Working Effectively with Legacy Code", "characterisation test",
         "Fidelity to Source",
+    ],
+    "00b_context_bridge": [
+        "Principal Integration Architect", "OpenAPI Specification 3.1", "contract mismatch",
+        "Data Transfer Object", "Semantic Versioning 2.0.0", "ground truth from code",
     ],
 }
 
@@ -100,6 +104,28 @@ def test_00_reroutes_to_sors_intel_and_gap_report():
 
 def test_00_gate_role_is_product_owner():
     assert get_by_key("00_onboarding").gate_role == "product_owner"
+
+
+def test_00b_reroutes_to_api_contract_artifact_and_read_through():
+    body = _body("00b_context_bridge")
+    # the copied bridge file is replaced by a versioned registry artifact (M2/D4)
+    assert "api_contract" in body and "CONTEXT-BRIDGE" not in body
+    assert "register_artifact" in body and "semver" in body.lower()
+    # Import is replaced by read-through + a cross-repo implements edge
+    assert "read-through" in body.lower() and "get_artifact" in body
+    assert "add_trace_edge" in body and "implements" in body
+    # extraction rerouted to the worktree + code-intel, inputs from the platform
+    assert "worktree" in body and "codeintel" in body
+    assert "# Relevant Artifacts" in body and "# Rules" in body
+    assert "Knowledge Index" in body
+    # version bump is the drift signal; no copied-file / human-gate glue survives
+    assert "drift" in body.lower()
+    assert "Reply APPROVED" not in body and "Human Gate" not in body
+    assert "STOP." not in body and "Next command" not in body
+
+
+def test_00b_gate_role_is_architect():
+    assert get_by_key("00b_context_bridge").gate_role == "architect"
 
 
 def test_00d_snapshot_is_retired():
