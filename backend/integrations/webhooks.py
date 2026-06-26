@@ -105,7 +105,17 @@ def _reconcile_push(tenant_id: str, payload: dict) -> dict:
         {"repo": repo, "branch": branch, "sha": after, "artifacts": updated,
          "commits": len(payload.get("commits") or [])},
     )
-    return {"reconciled": len(updated), "branch": branch, "sha": after}
+    # P4 live drift (D6): a push past a registered contract's source_commit opens a drift gate.
+    # Best-effort — a detection hiccup never fails the (already-succeeded) pointer reconcile.
+    drifts: list[str] = []
+    try:
+        from .drift import detect_push_contract_drift
+
+        drifts = [d["drift_id"] for d in detect_push_contract_drift(
+            tenant_id=tenant_id, repo=repo, head_sha=after) if d.get("drift")]
+    except Exception:  # noqa: BLE001
+        drifts = []
+    return {"reconciled": len(updated), "branch": branch, "sha": after, "drift_records": drifts}
 
 
 def _reconcile_pull_request(tenant_id: str, payload: dict) -> dict:

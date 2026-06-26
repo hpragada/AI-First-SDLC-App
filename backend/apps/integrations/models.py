@@ -2,7 +2,7 @@
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
-from apps.base import TenantScopedModel
+from apps.base import Role, TenantScopedModel
 
 
 class SourceDocument(TenantScopedModel):
@@ -75,3 +75,42 @@ class WebhookDelivery(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"{self.provider}:{self.event}:{self.delivery_id}"
+
+
+class DriftRecord(TenantScopedModel):
+    """Live drift on a registered artifact (Phase-4 §6 / D6) — the `Approval`-analog for
+    **run-less** changes. Opened when an `api_contract` diverges (contract drift) or a SoR
+    artifact's external content changed since we indexed it (pointer/hash drift). Carries the
+    **change-impact** set computed from the traceability graph, and is decided by a control-
+    plane gate (`decide_drift`): **architect** for contract, **tech_lead** for pointer/hash.
+    Nothing is silently applied to a system of record — accept reconciles, reject flags revert.
+    """
+
+    class Kind(models.TextChoices):
+        CONTRACT = "contract", "Contract"
+        POINTER_HASH = "pointer_hash", "Pointer/Hash"
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        ACCEPTED = "accepted", "Accepted"
+        REJECTED = "rejected", "Rejected"
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="drift_records"
+    )
+    artifact = models.ForeignKey(
+        "registry.Artifact", on_delete=models.CASCADE, related_name="drift_records"
+    )
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    required_role = models.CharField(max_length=32, choices=Role.choices)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN)
+    detail = models.JSONField(default=dict, blank=True)      # hashes / semver / source
+    impacted = models.JSONField(default=list, blank=True)    # change-impact (traceability)
+    decided_by = models.ForeignKey(
+        "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    comment = models.TextField(blank=True)
+
+    def __str__(self) -> str:
+        return f"drift:{self.kind}:{self.artifact_id} ({self.status})"
