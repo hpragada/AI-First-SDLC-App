@@ -183,8 +183,8 @@ def cover():
     gap(40)
     meta = [
         ["Prepared for", "The Engineering Team — EdvenSoft"],
-        ["Scope", "Phases 0–3 (complete &amp; tested); Phase 4 next"],
-        ["Document", "Goal &amp; overview · phase build descriptions · hands-on local testing guide · setup &amp; credentials"],
+        ["Scope", "Phases 0–4 (complete &amp; tested); Phase 5 next"],
+        ["Document", "Goal &amp; overview · phase build descriptions · what works today end-to-end · hands-on local testing guide · setup &amp; credentials"],
         ["Date", date.today().strftime("%B %d, %Y")],
         ["Source of truth", "/CLAUDE.md · /BUILD_PLAN.md · /docs/*"],
     ]
@@ -322,9 +322,9 @@ def section_1():
 
 def section_2():
     story.append(Paragraph("", BODY))
-    h1("2. The Build, Phase by Phase (Phases 0–3)")
+    h1("2. The Build, Phase by Phase (Phases 0–4)")
     lead("Each phase below lists the concrete components that were built and explains what each "
-         "one does in everyday language. Phases 0, 1, 2 and 3 are complete and tested.")
+         "one does in everyday language. Phases 0 through 4 are complete and tested.")
 
     # ---- Phase 0 ----
     h2("2.1 Phase 0 — The Platform Spine")
@@ -481,6 +481,65 @@ def section_2():
             "traced defect that closes on a clean re-run -> a standalone security review -> a "
             "companion-local preview env. Verified end-to-end, with the full platform suite green "
             "across all phases.", ok=True)
+
+    # ---- Phase 4 ----
+    h2("2.5 Phase 4 — Brownfield-Full &amp; Multi-Repo")
+    p("<b>Goal:</b> the client front door. Onboard an <i>existing</i> project — any number of "
+      "repositories — understand its code, <b>resume the lifecycle from the middle</b> instead "
+      "of starting over, and keep cross-repo API contracts honest with <b>live drift "
+      "detection</b>. This is the entry point most real clients will use.")
+    table([
+        ["Component", "What it is / does"],
+        ["CodeIntel capability + built-in analyzer", "A fixed 8-tool <tt>codeintel.*</tt> surface "
+         "with a <b>built-in SOTA analyzer</b> (no license needed): git/Tornhill <b>hotspots</b> "
+         "(churn × complexity), a dependency graph with <b>PageRank</b> + communities, dead-code "
+         "and complexity, and decision archaeology. It runs in the <b>companion worktree</b> on a "
+         "real clone; the platform stores only the index + artifacts, <b>never the source</b>. "
+         "Repowise (or another engine) plugs in behind the same seam."],
+        ["Knowledge Index", "An RLS-aware chunk store with an always-on, <b>zero-cost keyword "
+         "(BM25) baseline</b> plus an optional embedding seam (Voyage / Gemini). It feeds the "
+         "manifest's retrieved-knowledge section and is <b>project-wide shared memory</b> across "
+         "all of a project's repos."],
+        ["Agent 00c — Intelligent Context Extractor", "Migrated: turns a raw codebase into five "
+         "intelligence layers (dependency graph, git analytics, dead code, decisions, health) "
+         "registered as platform artifacts + indexed into the Knowledge Index. <tt>tech_lead</tt> "
+         "gate."],
+        ["Agent 00 — Onboarding (full)", "The brownfield front door: <b>discover</b> across the "
+         "connected systems of record + code-intel, <b>register</b> what already exists "
+         "(register-don't-recreate), <b>reconcile</b>, detect the <b>gaps</b>, and emit a "
+         "<b>gap report</b> that assesses every lifecycle phase Complete/Partial/Missing and "
+         "names the correct <b>resume phase</b>. <tt>product_owner</tt> gate."],
+        ["Agent 00b -> API-Contract artifact", "Cross-repo contracts as a <b>versioned "
+         "<tt>api_contract</tt> registry artifact</b> (read-through, never a copied file): the "
+         "provider repo exports it (semver-bumped); consumer repos read the current version at "
+         "run time and record an <tt>implements</tt> edge. <tt>architect</tt> gate. (Agent 00d "
+         "Snapshot is retired — continuity is now the database + durable runs.)"],
+        ["Multi-repo project model + per-repo manifest", "One project owns <b>N repositories</b> "
+         "(frontend/backend/service); topology reconciles to single/split/multi. The composed "
+         "manifest is <b>scoped per repo</b> (that repo's artifacts + project-shared ones + the "
+         "shared contract), while the registry, traceability, and Knowledge Index stay "
+         "<b>project-wide shared memory</b>."],
+        ["Cross-repo DAG edges", "Dependencies that span repositories: <tt>implements</tt> "
+         "traceability edges across repos + <tt>WorkItem.depends_on</tt> — the basis for "
+         "cross-repo change-impact."],
+        ["Live drift detection + drift gate", "Two detectors: <b>contract drift</b> (an "
+         "<tt>api_contract</tt> diverges from its consumers) and <b>pointer/hash drift</b> (a SoR "
+         "artifact's external content changed since we indexed it). On detection the platform "
+         "writes a <b>DriftRecord</b>, computes <b>change-impact via the traceability graph</b> "
+         "(every downstream consumer/repo), and opens a <tt>decide_drift</tt> gate — "
+         "<tt>architect</tt> for contract, <tt>tech_lead</tt> for pointer/hash. <b>Accept</b> "
+         "re-indexes; <b>reject</b> flags for revert; nothing is silently written to a system of "
+         "record. The signed Git push webhook is the live trigger (built on the Phase-2 "
+         "reconcile)."],
+    ], [4.4 * cm, 12.0 * cm])
+    callout("Phase 4 slice",
+            "Onboard a <b>split FE/BE</b> project -> register-don't-recreate + the built-in "
+            "code-intel running for real in a companion worktree -> a <b>gap report</b> with a "
+            "resume phase -> the backend exports an <tt>api_contract</tt>, the frontend reads it "
+            "read-through and records a cross-repo <tt>implements</tt> edge -> <b>resume "
+            "mid-pipeline</b> triggers the next phase to its gate -> a <b>contract change opens a "
+            "drift gate</b> whose change-impact <b>spans both repos</b>, decided by the architect. "
+            "Verified end-to-end; the full platform suite is green across all phases.", ok=True)
 
 
 def section_3():
@@ -719,9 +778,123 @@ def section_4():
             "</tt> -> <tt>make migrate</tt> -> <tt>make seed</tt> -> <tt>make dev</tt> -> open "
             "<tt>http://localhost:5173</tt> and run a phase through its gate.", ok=True)
     gap(8)
-    p("<i>This document describes Phases 0–3 (complete and tested). The next milestone is Phase 4 "
-      "— Brownfield-Full &amp; Multi-Repo (CodeIntel, full onboarding, the API-Contract artifact, "
-      "cross-repo dependency graph, and live drift detection).</i>", LEAD)
+    p("<i>This document describes Phases 0–4 (complete and tested). Section 5 is an explicit "
+      "test-through inventory of what works today. The next milestone is Phase 5 — Enterprise "
+      "Hardening &amp; Cloud Migration (RBAC + segregation of duties, secrets vault, "
+      "prompt-injection hardening, immutable audit/compliance, the eval harness, and the cloud "
+      "runner fleet).</i>", LEAD)
+
+
+def section_5():
+    story.append(PageBreak())
+    h1("5. What Works Today, End-to-End")
+    lead("A plain, honest inventory of what the team can run and watch work <i>right now</i>, "
+         "end-to-end — and exactly how to test each. Everything here is exercised by the "
+         "automated acceptance suite (currently <b>423 passing, 3 skipped</b> — the 3 skips are "
+         "external-SaaS live round-trips that need credentials) and is reproducible by hand.")
+    callout("Two tiers — pick what you can run",
+            "The <b>Core</b> tier runs <b>fully offline</b> with zero external accounts (it uses "
+            "the internal source of truth, a local git repo, and — for live agent runs — only an "
+            "<tt>ANTHROPIC_API_KEY</tt>). The <b>Live</b> tier adds the real systems of record "
+            "(Atlassian, GitHub, Figma, Xray) and is entirely optional; each connector is "
+            "independent. No step depends on a connector you haven't configured.", ok=True)
+
+    h2("5.1 Capabilities working today")
+    table([
+        ["Capability (phase)", "Tier", "Test it by"],
+        ["Greenfield planning: idea -> requirements -> PRD -> architecture, each human-gated "
+         "(P0)", "Core", "Browser Part B (Section 3.2): trigger each phase, approve its gate, "
+         "watch artifacts publish and the lineage build."],
+        ["Durable runs, gate-then-publish, tenant isolation, provenance/cost (P0)", "Core",
+         "Section 3.4: Temporal UI (restart the worker mid-run), the Artifacts tab "
+         "(draft->published only on approval), a second tenant seeing nothing."],
+        ["Atlassian as SoR: PRD -> Confluence page, backlog -> Jira issues, traceability "
+         "deep-links (P1)", "Live", "Section 3.3 Atlassian: approve the PRD/backlog gates and see "
+         "the live page/issues; Traceability tab deep-links to them."],
+        ["Brownfield-lite onboarding: adopt static Word/PDF/Excel + existing Atlassian "
+         "(register-don't-recreate) (P1)", "Live / Core", "POST a document to "
+         "<tt>/api/source-documents/</tt> -> extracted, gated artifacts; re-running registers no "
+         "duplicates."],
+        ["Build execution: WorkItem -> companion worktree -> local build/test -> draft PR -> "
+         "review -> remediation -> merge gate -> merge (P2)", "Live", "Section 3.3 GitHub: enroll "
+         "the companion, run a task, approve the merge gate; the BuildWorkflow is visible in the "
+         "Temporal UI."],
+        ["Human takeover + signed-webhook reconcile of hand commits/PRs/CI (P2)", "Live",
+         "Push a commit to the feature branch; the artifact's sha pointer moves with no "
+         "duplicate; CI status round-trips into the ledger."],
+        ["Design read-as-SoR (Figma) + the WCAG accessibility gate (P3)", "Live / Core",
+         "Section 3.3 Figma for the live read; the WCAG gate blocks approval until every required "
+         "criterion is satisfied (control-plane, observable on any design gate)."],
+        ["Test -> Xray + a failing test opens a linked, traced defect that auto-closes (P3)",
+         "Live / Core", "Section 3.3 Xray for the live import; the defect-loopback + flaky "
+         "quarantine + test-impact selection run on internal state too."],
+        ["Standalone security review + SBOM, criticals open defects (P3)", "Core", "Run the "
+         "security phase; Critical/High findings open defect WorkItems and block the gate until "
+         "resolved."],
+        ["Code intelligence: the built-in analyzer (hotspots, dependency graph, dead code) (P4)",
+         "Core", "Runs on any local git clone in a companion worktree — see 5.2; the platform "
+         "stores only the intelligence artifacts + Knowledge-Index chunks, never the source."],
+        ["Brownfield-full onboarding: discover -> register -> reconcile -> gap report -> resume "
+         "phase (P4)", "Core", "See 5.2 — produces a gap report assessing every phase and naming "
+         "the resume point; hands off to the same pipeline."],
+        ["Multi-repo: one project, N repos, per-repo manifest scoping (P4)", "Core", "Onboard a "
+         "split project; each repo's run sees its own + project-shared artifacts + the shared "
+         "contract, while the registry/Knowledge-Index stay project-wide."],
+        ["API-Contract: versioned <tt>api_contract</tt>, read-through, cross-repo "
+         "<tt>implements</tt> edges (P4)", "Core", "Export from the provider repo, read it "
+         "read-through from a consumer, record the cross-repo edge — see 5.2."],
+        ["Live drift detection: contract + pointer/hash -> DriftRecord + change-impact + "
+         "decide_drift gate (P4)", "Core / Live", "Bump a contract or push past its source commit "
+         "(signed webhook) -> a drift gate opens with cross-repo change-impact; architect/tech_lead "
+         "decides — see 5.2."],
+    ], [7.4 * cm, 2.0 * cm, 7.0 * cm])
+
+    h2("5.2 Exercising the Phase-4 brownfield / multi-repo flow")
+    p("The Phase-4 capabilities are control-plane services and migrated agents (the onboarding "
+      "front-door UI is a later phase), so today they are driven through the API / a short "
+      "Django shell and observed in Postgres, the Event ledger, and the Temporal UI. The "
+      "fastest way to watch the whole slice end-to-end is the acceptance test, which is "
+      "self-contained and self-cleaning:")
+    code("# the headline Phase-4 slice, end-to-end (uses a real temp git repo; no external creds)\n"
+         "cd backend && pytest tests/test_acceptance_phase4.py -v\n"
+         "#   onboard split FE/BE -> built-in code-intel in a worktree -> gap report + resume\n"
+         "#   -> api_contract export + read-through + cross-repo implements edge\n"
+         "#   -> contract change opens a drift gate spanning both repos (architect decides)")
+    p("To drive it by hand against the running platform, the same service calls are available "
+      "(each is tenant-scoped and gated):")
+    bullets([
+        "<b>Onboard &amp; gap report:</b> register existing Atlassian/static docs "
+        "(register-don't-recreate), run the built-in analyzer on a local clone, then build the "
+        "gap report — it assesses every lifecycle phase and names the resume phase.",
+        "<b>API-Contract:</b> export a versioned <tt>api_contract</tt> from the provider repo; a "
+        "consumer reads the current version <i>read-through</i> and records an <tt>implements</tt> "
+        "edge (a real cross-repo link in the traceability graph).",
+        "<b>Resume mid-pipeline:</b> trigger the phase the gap report recommends — onboarding "
+        "hands straight to the normal phase pipeline and its gate.",
+        "<b>Drift:</b> bump the contract (or push past its source commit through the signed "
+        "webhook); a <b>DriftRecord</b> opens with change-impact across every consuming repo, and "
+        "the architect/tech_lead decides it — accept re-indexes, reject flags for revert.",
+    ])
+
+    h2("5.3 The end-to-end test-through checklist")
+    callout("Run this top to bottom — no hiccups expected",
+            "<b>Core (offline, no external accounts):</b> (1) <tt>docker compose up -d</tt> -> "
+            "infra healthy; (2) <tt>make migrate</tt> + <tt>make seed</tt> succeed; (3) "
+            "<tt>make dev</tt> -> the UI loads and all five tabs work; (4) trigger a planning "
+            "phase -> it runs to <tt>completed</tt> through its gate and publishes an artifact; "
+            "(5) Traceability shows the lineage; (6) the Temporal UI shows the durable workflow "
+            "(restart the worker mid-run and it resumes); (7) MinIO shows the artifact body; (8) "
+            "a second tenant sees nothing (RLS); (9) <tt>pytest tests/test_acceptance_phase4.py</tt> "
+            "is green — brownfield onboarding, multi-repo, API-contract, and drift gates all pass. "
+            "<br/><br/><b>Live (optional, each independent):</b> (10) a PRD reaches Confluence and "
+            "a backlog reaches Jira; (11) a companion build reaches a GitHub PR and merges on the "
+            "gate; (12) the design phase reads the current Figma; (13) tests reach Xray and a "
+            "failing one opens a linked defect; (14) a push past a contract's commit opens a drift "
+            "gate. The whole automated suite: <b>423 passed, 3 skipped</b>.", ok=True)
+    p("If any Core step misbehaves, it is almost always environment, not the platform: check "
+      "Docker Desktop is running (a “Socket is not connected” on :5433 means it stopped), that "
+      "migrations ran as the <tt>postgres</tt> superuser, and that <tt>ANTHROPIC_API_KEY</tt> is "
+      "set for live agent runs. See Section 4.4.")
 
 
 # ── doc template with TOC + bookmarks + footer ──────────────────────
@@ -779,6 +952,7 @@ def build():
     section_2()
     section_3()
     section_4()
+    section_5()
 
     doc.multiBuild(story)
     print(f"wrote {OUT}  ({OUT.stat().st_size // 1024} KB)")
