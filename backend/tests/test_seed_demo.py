@@ -4,7 +4,7 @@ import pytest
 from apps.integrations.models import IntegrationConnection
 from apps.projects.models import Project, ProjectProfile
 from apps.projects.seed import DEMO_TENANT_ID, seed_demo
-from apps.registry.catalog import AGENT_CATALOG
+from apps.registry.catalog import ACTIVE_AGENT_CATALOG
 from apps.registry.models import AgentSpec
 from apps.tenancy.models import Membership, Tenant, User
 from apps.workitems.models import WorkItem
@@ -16,7 +16,7 @@ def test_seed_demo_creates_full_slice():
     assert r.created is True
     assert r.tenant_id == str(DEMO_TENANT_ID)
     assert Tenant.objects.filter(id=DEMO_TENANT_ID).exists()
-    assert r.agent_spec_count == len(AGENT_CATALOG)
+    assert r.agent_spec_count == len(ACTIVE_AGENT_CATALOG)  # retired 00d not seeded
 
     project = Project.objects.get(id=r.project_id)
     assert project.track == Project.Track.GREENFIELD
@@ -55,6 +55,7 @@ def test_seed_demo_is_idempotent():
     assert Project.objects.filter(id=first.project_id).count() == 1
     assert ProjectProfile.objects.filter(project_id=first.project_id).count() == 1
     assert WorkItem.objects.filter(id=first.work_item_id).count() == 1
-    assert AgentSpec.objects.filter(tenant_id=DEMO_TENANT_ID).count() == len(AGENT_CATALOG)
+    assert AgentSpec.objects.filter(tenant_id=DEMO_TENANT_ID).count() == \
+        len(ACTIVE_AGENT_CATALOG)
     assert Membership.objects.filter(user_id=first.user_id).count() == 2
     assert IntegrationConnection.objects.filter(tenant_id=DEMO_TENANT_ID).count() == 6

@@ -6,6 +6,7 @@ import pytest
 
 from apps.projects.models import Project
 from apps.registry.catalog import (
+    ACTIVE_AGENT_CATALOG,
     AGENT_CATALOG,
     get_by_command,
     seed_agent_specs,
@@ -54,7 +55,9 @@ def test_seed_agent_specs_is_idempotent():
     t = Tenant.objects.create(name="Acme")
     seed_agent_specs(t)
     seed_agent_specs(t)  # upsert, no duplicates
-    assert AgentSpec.objects.filter(tenant=t).count() == len(AGENT_CATALOG)
+    # Only active agents are seeded; retired ones (00d, D8) are excluded.
+    assert AgentSpec.objects.filter(tenant=t).count() == len(ACTIVE_AGENT_CATALOG)
+    assert not AgentSpec.objects.filter(tenant=t, key="00d_context_snapshot").exists()
     prd = AgentSpec.objects.get(tenant=t, key="03_prd")
     assert prd.body_ref == "agents/03_prd/agent.md"
     assert prd.recommended_engine == "claude"

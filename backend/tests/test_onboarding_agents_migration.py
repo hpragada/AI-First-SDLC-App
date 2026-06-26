@@ -130,8 +130,21 @@ def test_00b_gate_role_is_architect():
 
 def test_00d_snapshot_is_retired():
     """00d Snapshot is retired (continuity = platform DB + Temporal resumable runs, D8):
-    no agent body is authored for it."""
+    no agent body is authored, the catalog flags it retired, and it is never seeded."""
+    from apps.registry.catalog import is_retired
+
     assert not (_AGENTS / "00d_context_snapshot" / "agent.md").exists()
+    assert get_by_key("00d_context_snapshot").retired is True
+    assert is_retired("00d_context_snapshot") is True
+    # the live agents are not flagged retired
+    assert all(not get_by_key(k).retired for k in _KEYS)
+
+
+@pytest.mark.django_db
+def test_retired_agent_is_not_seeded():
+    t = Tenant.objects.create(name="Acme")
+    seed_agent_specs(t)
+    assert not AgentSpec.objects.filter(tenant=t, key="00d_context_snapshot").exists()
 
 
 @pytest.mark.django_db

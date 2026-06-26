@@ -34,6 +34,7 @@ class AgentDefinition:
     gate_role: str  # required Membership role at the gate (spec §7)
     recommended_model: str = DEFAULT_MODEL
     recommended_engine: str = DEFAULT_ENGINE
+    retired: bool = False  # D8: 00d Snapshot — no migrated body; not seeded/triggered
 
     @property
     def body_ref(self) -> str:
@@ -59,8 +60,16 @@ AGENT_CATALOG: list[AgentDefinition] = [
     AgentDefinition("00_onboarding", "onboard", "onboarding", "00_onboarding_agent.md", "P4", "product_owner"),
     AgentDefinition("00b_context_bridge", "context-bridge", "context_bridge", "00b_context_bridge_agent.md", "P4", "architect"),
     AgentDefinition("00c_intelligent_context_extractor", "analyze", "context_extraction", "00c_intelligent_context_extractor_agent.md", "P4", "tech_lead"),
-    AgentDefinition("00d_context_snapshot", "snapshot", "context_snapshot", "00d_context_snapshot_agent.md", "P4", "tech_lead"),
+    # 00d Context Snapshot — RETIRED (spec §6 / D8 LOCKED): session continuity is now the
+    # platform DB (WorkItem state, Approvals, the Events ledger, the registry) + Temporal
+    # resumable runs. The legacy agent only captured state into a snapshot file + a context
+    # header; it makes no inferences and reconciles nothing — there is no unique logic to
+    # migrate. No body is authored; it is not seeded as an AgentSpec nor exposed as a trigger.
+    AgentDefinition("00d_context_snapshot", "snapshot", "context_snapshot", "00d_context_snapshot_agent.md", "P4", "tech_lead", retired=True),
 ]
+
+#: Catalog entries the platform actually seeds + triggers (retired agents excluded).
+ACTIVE_AGENT_CATALOG: list[AgentDefinition] = [d for d in AGENT_CATALOG if not d.retired]
 
 _BY_KEY = {d.key: d for d in AGENT_CATALOG}
 _BY_COMMAND = {d.command: d for d in AGENT_CATALOG}
@@ -80,6 +89,12 @@ def gate_role_for(key: str) -> str:
     return definition.gate_role if definition else "product_owner"
 
 
+def is_retired(key: str) -> bool:
+    """True if the agent is retired (D8: 00d) — no migrated body, never seeded/triggered."""
+    definition = _BY_KEY.get(key)
+    return bool(definition and definition.retired)
+
+
 def seed_agent_specs(tenant, *, semver: str = "1.0.0", prompt_version: str = "v6-migrated"):
     """Upsert an AgentSpec row per catalog entry for a tenant (idempotent)."""
     from apps.registry.models import AgentSpec
@@ -87,7 +102,7 @@ def seed_agent_specs(tenant, *, semver: str = "1.0.0", prompt_version: str = "v6
 
     specs = []
     with tenant_context(tenant.pk):
-        for d in AGENT_CATALOG:
+        for d in ACTIVE_AGENT_CATALOG:  # retired agents (00d) are not seeded
             spec, _ = AgentSpec.objects.update_or_create(
                 tenant=tenant, key=d.key, semver=semver,
                 defaults={
