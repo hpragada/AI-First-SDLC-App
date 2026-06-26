@@ -109,13 +109,28 @@ def execute_agent_core(inp: AgentRunInput, manifest: str) -> dict:
 
     # Engine call is outside the tenant_context cursor (it may be long).
     driver = get_driver()
-    result = asyncio.run(
-        driver.run_planning_task(
-            manifest=manifest, agent_spec=agent_spec,
-            mcp_servers=_mcp_servers(inp.tenant_id), allowed_tools=PLATFORM_TOOLS,
-            work_item=work_item,
+    try:
+        result = asyncio.run(
+            driver.run_planning_task(
+                manifest=manifest, agent_spec=agent_spec,
+                mcp_servers=_mcp_servers(inp.tenant_id), allowed_tools=PLATFORM_TOOLS,
+                work_item=work_item,
+            )
         )
-    )
+    except Exception as exc:
+        error_message = str(exc)
+        with tenant_context(inp.tenant_id):
+            run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+            run.status = Run.Status.FAILED
+            run.ended_at = _now()
+            run.outputs = {**(run.outputs or {}), "error": error_message}
+            run.save(update_fields=["status", "outputs", "ended_at", "updated_at"])
+            tools.log_event(
+                inp.tenant_id, "orchestrator", "run.failed", "run", inp.run_id,
+                {"error": error_message},
+            )
+        raise
+
     body = result.outputs.get("result") or result.outputs.get("text") or ""
     s3_key = f"drafts/{inp.tenant_id}/{inp.project_id}/{inp.run_id}/{inp.phase}.md"
     get_object_store().put(s3_key, body)

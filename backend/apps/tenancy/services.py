@@ -10,6 +10,7 @@ context set by `TenantContextMiddleware`.
 """
 from __future__ import annotations
 
+from apps.registry.catalog import seed_agent_specs
 from apps.tenancy.context import tenant_context
 from apps.tenancy.models import Tenant
 
@@ -23,4 +24,8 @@ def create_tenant(*, name: str, config: dict | None = None,
     tenant.tenant_id = tenant.id
     with tenant_context(tenant.id):
         tenant.save(force_insert=True)
+
+    # New tenants need the agent registry seeded so phase triggers like 01_ideation
+    # are available immediately after tenant creation.
+    seed_agent_specs(tenant)
     return tenant

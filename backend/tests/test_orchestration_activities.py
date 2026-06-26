@@ -90,6 +90,21 @@ def test_execute_agent_core_is_idempotent(wired, run_input):
     assert Artifact.objects.filter(run_id=run_input.run_id).count() == 1  # no duplicate
 
 
+def test_execute_agent_core_marks_run_failed_on_engine_error(monkeypatch, run_input):
+    class BrokenDriver:
+        async def run_planning_task(self, **kwargs):
+            raise RuntimeError("Claude Code not found")
+
+    monkeypatch.setattr(activities, "get_driver", lambda: BrokenDriver())
+
+    with pytest.raises(RuntimeError, match="Claude Code not found"):
+        activities.execute_agent_core(run_input, manifest="# Project\nx")
+
+    run = Run.objects.get(id=run_input.run_id)
+    assert run.status == Run.Status.FAILED
+    assert run.outputs["error"] == "Claude Code not found"
+
+
 def test_open_gate_core_creates_pending_and_is_idempotent(wired, run_input):
     activities.execute_agent_core(run_input, manifest="# Project\nx")
     approval_id = activities.open_gate_core(run_input)

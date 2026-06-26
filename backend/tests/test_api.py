@@ -44,7 +44,10 @@ def test_create_tenant(client, db):
     resp = client.post("/api/tenants/", {"name": "NewCo"}, format="json")
     assert resp.status_code == 201
     assert resp.data["name"] == "NewCo"
-    assert Tenant.objects.filter(id=resp.data["id"], name="NewCo").exists()
+    tenant = Tenant.objects.get(id=resp.data["id"], name="NewCo")
+    assert Tenant.objects.filter(id=tenant.id, name="NewCo").exists()
+    assert AgentSpec.objects.filter(tenant=tenant).count() > 0
+    assert AgentSpec.objects.filter(tenant=tenant, key="01_ideation").exists()
 
 
 # ── Projects + profile ──────────────────────────────────────────────

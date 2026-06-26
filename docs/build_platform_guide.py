@@ -324,7 +324,10 @@ def section_2():
     story.append(Paragraph("", BODY))
     h1("2. The Build, Phase by Phase (Phases 0–4)")
     lead("Each phase below lists the concrete components that were built and explains what each "
-         "one does in everyday language. Phases 0 through 4 are complete and tested.")
+         "one does in everyday language, and closes with a <b>capstone slice</b> — the thin "
+         "end-to-end demo that proves the phase works. (For a real, straight-through test pass — "
+         "greenfield and brownfield — see the two journeys in <b>Section 5</b>.) Phases 0 through "
+         "4 are complete and tested.")
 
     # ---- Phase 0 ----
     h2("2.1 Phase 0 — The Platform Spine")
@@ -363,7 +366,7 @@ def section_2():
          "migrated by the 75/15/10 rule, plus the rules and per-agent triggers that replace the "
          "old slash commands."],
     ], [4.4 * cm, 12.0 * cm])
-    callout("Phase 0 slice",
+    callout("Phase 0 — capstone slice (what this phase proves)",
             "Run ideation -> requirements -> PRD -> architecture fully on platform state; "
             "artifacts registered as drafts in object storage; every step gated by a human; runs "
             "attributed; the manifest rendered per run. (This is exactly what you will click "
@@ -436,7 +439,7 @@ def section_2():
          "their reasoning (Clean Code/TDD, the eleven review dimensions, the Jenkins/Actions "
          "templates, blue-green/canary releases) preserved verbatim."],
     ], [4.4 * cm, 12.0 * cm])
-    callout("Phase 2 slice (the stop-and-dogfood MVP)",
+    callout("Phase 2 — capstone slice (the stop-and-dogfood MVP)",
             "WorkItem -> companion worktree -> local build/test -> PR -> CI status -> review -> "
             "remediation -> reviewer merge gate -> merge, with a forced mid-run failure recovered "
             "idempotently, a human commit reconciled via webhook, and two repos in one project "
@@ -475,7 +478,7 @@ def section_2():
          "Test Automation (Playwright-MCP locator discovery + Page Object Model preserved), and "
          "Security (the nine review tracks + SBOM, with criticals opening defects)."],
     ], [4.4 * cm, 12.0 * cm])
-    callout("Phase 3 slice",
+    callout("Phase 3 — capstone slice (what this phase proves)",
             "Design produced and gated through the WCAG checklist -> implementation reads the "
             "current design -> tests author to Xray and results import -> a failing test opens a "
             "traced defect that closes on a clean re-run -> a standalone security review -> a "
@@ -532,7 +535,7 @@ def section_2():
          "record. The signed Git push webhook is the live trigger (built on the Phase-2 "
          "reconcile)."],
     ], [4.4 * cm, 12.0 * cm])
-    callout("Phase 4 slice",
+    callout("Phase 4 — capstone slice (what this phase proves)",
             "Onboard a <b>split FE/BE</b> project -> register-don't-recreate + the built-in "
             "code-intel running for real in a companion worktree -> a <b>gap report</b> with a "
             "resume phase -> the backend exports an <tt>api_contract</tt>, the frontend reads it "

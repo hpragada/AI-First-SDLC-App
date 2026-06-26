@@ -4,6 +4,7 @@ Pure unit tests: an injected fake `query_fn` yields real SDK message objects, so
 message->RunResult mapping, options construction and AGENTS.md writing are verified
 without the network or a DB.
 """
+from pathlib import Path
 from types import SimpleNamespace
 
 import claude_agent_sdk
@@ -97,7 +98,7 @@ async def test_run_planning_task_maps_stream_and_writes_manifest(tmp_path):
     assert opts.allowed_tools == ["mcp__platform-state__get_context"]
     assert opts.mcp_servers == {"platform-state": {"command": "python"}}
     assert opts.model == "claude-opus-4-8"
-    assert opts.permission_mode == "bypassPermissions"
+    assert opts.permission_mode == "default"
     assert "wi-123" in captured["prompt"]
 
 
@@ -139,6 +140,12 @@ def test_claude_driver_satisfies_protocol():
 def test_default_query_fn_is_the_sdk():
     # Business logic must reach the engine only through the driver, using the real SDK.
     assert ClaudeDriver()._query is claude_agent_sdk.query
+
+
+def test_claude_driver_honors_cli_path_env(monkeypatch):
+    monkeypatch.setenv("CLAUDE_CLI_PATH", "/usr/local/bin/claude")
+    driver = ClaudeDriver(query_fn=_fake_query_factory([], {}), body_loader=lambda s: "b")
+    assert driver._cli_path == Path("/usr/local/bin/claude")
 
 
 def test_body_loader_reads_body_ref(tmp_path):

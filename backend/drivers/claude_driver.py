@@ -7,6 +7,7 @@ without the network. `run_build_task` is Phase 2.
 """
 from __future__ import annotations
 
+import os
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -20,6 +21,7 @@ from claude_agent_sdk import (
     TextBlock,
     ToolUseBlock,
 )
+from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from .base import ArtifactDraft, RunResult
 
@@ -40,15 +42,25 @@ class ClaudeDriver:
         body_loader: Callable[[Any], str] | None = None,
         repo_root: Path | str | None = None,
         workdir_base: Path | str | None = None,
-        permission_mode: str = "bypassPermissions",
+        permission_mode: str = "default",
+        cli_path: str | Path | None = None,
     ) -> None:
         # Default to the real SDK; tests inject a fake async generator.
         self._query = query_fn or claude_agent_sdk.query
         self._body_loader = body_loader or self._read_body_file
         self._repo_root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
         self._workdir_base = Path(workdir_base) if workdir_base else None
+        self._cli_path = (
+            Path(cli_path)
+            if cli_path
+            else Path(os.environ["CLAUDE_CLI_PATH"])
+            if os.environ.get("CLAUDE_CLI_PATH")
+            else None
+        )
         # Engine has no human in the loop — gates are control-plane (#2). Tools are still
         # whitelisted via allowed_tools, so only platform-state tools can run.
+        # Use default CLI permission handling in container/root environments to avoid
+        # Claude Code rejecting bypassPermissions under sudo/root.
         self._permission_mode = permission_mode
 
     # ── body resolution ────────────────────────────────────────────
@@ -97,8 +109,11 @@ class ClaudeDriver:
         artifacts: list[ArtifactDraft] = []
         cost_usd = 0.0
         final_result: str | None = None
+        transport = None
+        if self._cli_path:
+            transport = SubprocessCLITransport(prompt=prompt, options=options, cli_path=str(self._cli_path))
 
-        async for message in self._query(prompt=prompt, options=options):
+        async for message in self._query(prompt=prompt, options=options, transport=transport):
             raw_messages.append(message)
             if isinstance(message, AssistantMessage):
                 for block in message.content:
