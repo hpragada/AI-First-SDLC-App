@@ -83,6 +83,19 @@ def _edge(edge: TraceEdge) -> dict:
     }
 
 
+def _repo(r: Repository) -> dict:
+    """The repository a run targets — its identity, role, base branch, and per-repo stack
+    overrides. Rendered into the manifest's `# Repository` section (per-repo scoping, D5)."""
+    return {
+        "repo_id": str(r.id),
+        "name": r.name,
+        "role": r.role,
+        "default_base": r.default_base,
+        "connector": r.connector,
+        "stack_overrides": r.stack_overrides or {},
+    }
+
+
 def _profile(project: Project) -> dict:
     p = getattr(project, "profile", None)
     return {
@@ -104,37 +117,58 @@ def _profile(project: Project) -> dict:
 
 
 # ── tools (spec §2 signatures; tenant_id is the bound scope) ─────────
-def get_context(tenant_id, project_id, phase, work_item_id=None) -> dict:
-    """Inputs the Manifest Composer renders, incl. Knowledge-Index retrieval (Phase 4)."""
+def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -> dict:
+    """Inputs the Manifest Composer renders, incl. Knowledge-Index retrieval (Phase 4).
+
+    **Per-repo scoping (D5).** When the run targets a repo (explicit `repo_id`, else the work
+    item's repo), `relevant_artifacts` is scoped to that repo: its own artifacts **+** the
+    repo-agnostic project-level ones (no repo) **+** the shared cross-repo `api_contract`
+    (always in scope, whatever repo authored it). The registry, traceability, and the
+    Knowledge Index stay **project-scoped shared memory across repos** — knowledge retrieval
+    is project-wide, never siloed per repo. Single-repo / repo-less runs are unchanged.
+    """
+    from django.db.models import Q
+
     with tenant_context(tenant_id):
         project = Project.objects.get(id=project_id, tenant_id=tenant_id)
-        artifacts = (
-            Artifact.objects.filter(tenant_id=tenant_id, project_id=project_id)
-            .order_by("-created_at")[:50]
-        )
-        events = Event.objects.filter(tenant_id=tenant_id).order_by("-ts")[:20]
         wi = (
             WorkItem.objects.filter(id=work_item_id, tenant_id=tenant_id).first()
             if work_item_id else None
         )
-        repo_id = wi.repo_id if wi else None
+        scope_repo_id = repo_id or (wi.repo_id if wi else None)
+        repo = (
+            Repository.objects.filter(id=scope_repo_id, tenant_id=tenant_id).first()
+            if scope_repo_id else None
+        )
+
+        artifacts_qs = Artifact.objects.filter(tenant_id=tenant_id, project_id=project_id)
+        if repo is not None:
+            # this repo + repo-agnostic project artifacts + the shared cross-repo contract
+            artifacts_qs = artifacts_qs.filter(
+                Q(repo_id=repo.id) | Q(repo_id__isnull=True) | Q(type="api_contract")
+            )
+        artifacts = artifacts_qs.order_by("-created_at")[:50]
+        events = Event.objects.filter(tenant_id=tenant_id).order_by("-ts")[:20]
         query = " ".join(filter(None, [phase, getattr(wi, "title", ""),
                                        getattr(wi, "description", "")]))
         return {
             "profile": _profile(project),
+            "repo": _repo(repo) if repo is not None else None,
+            # Knowledge Index = project-scoped shared memory (D5) — retrieve across all repos.
             "relevant_artifacts": [_artifact(a) for a in artifacts],
             "recent_events": [_event(e) for e in events],
-            "retrieved_knowledge": _retrieve_knowledge(tenant_id, project_id, query, repo_id),
+            "retrieved_knowledge": _retrieve_knowledge(tenant_id, project_id, query),
         }
 
 
-def _retrieve_knowledge(tenant_id, project_id, query, repo_id) -> list[dict]:
-    """Knowledge-Index retrieval (Phase 4). Best-effort: a retrieval hiccup never breaks
-    context composition (the manifest just renders no retrieved knowledge)."""
+def _retrieve_knowledge(tenant_id, project_id, query) -> list[dict]:
+    """Knowledge-Index retrieval (Phase 4) — **project-scoped shared memory across repos**
+    (D5), so a run in one repo can still retrieve another repo's knowledge + the shared
+    contract. Best-effort: a retrieval hiccup never breaks context composition."""
     try:
         from apps.knowledge.index import retrieve
 
-        return retrieve(tenant_id, project_id=project_id, query=query, repo=repo_id, k=8)
+        return retrieve(tenant_id, project_id=project_id, query=query, k=8)
     except Exception:  # noqa: BLE001
         return []
 

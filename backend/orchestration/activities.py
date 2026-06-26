@@ -83,7 +83,9 @@ def _mcp_servers(tenant_id: str) -> dict:
 def compose_manifest_core(inp: AgentRunInput) -> str:
     with tenant_context(inp.tenant_id):
         work_item = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
-        context = tools.get_context(inp.tenant_id, inp.project_id, inp.phase)
+        # Pass the work item so context scopes per-repo when it targets one (D5).
+        context = tools.get_context(
+            inp.tenant_id, inp.project_id, inp.phase, work_item_id=inp.work_item_id)
         return compose_manifest(
             context=context, work_item=tools._work_item(work_item),
             phase=inp.phase, rules=load_rules(),

@@ -5,8 +5,13 @@ with a FIXED section order and a per-section token budget (prefer retrieval over
 the whole profile). Pure: dicts in, markdown string out — written per run, discarded after.
 
 Section order (locked):
-  # Project → # Important Context → # Current Work Item → # Relevant Artifacts
-  → # Recent Events → # Retrieved Knowledge → # Rules
+  # Project → [# Repository] → # Important Context → # Current Work Item
+  → # Relevant Artifacts → # Recent Events → # Retrieved Knowledge → # Rules
+
+`# Repository` is rendered only for a repo-scoped run (multi-repo, D5) — it names the repo
+this run targets, its role, base branch, and per-repo stack overrides; the artifacts below are
+already scoped to it (its own + project-shared + the cross-repo contract), while the registry
+and Knowledge Index remain project-wide shared memory.
 """
 from __future__ import annotations
 
@@ -72,6 +77,23 @@ def _render_project(profile: dict, budget: TokenBudget) -> str:
         if value:
             lines.append(_json_block(key, value))
     return _section("Project", "\n".join(lines), budget.project)
+
+
+def _render_repository(repo: dict, budget: TokenBudget) -> str:
+    """Per-repo scoping (D5): which repo this run targets + its role/base/overrides."""
+    lines = [
+        f"- name: {repo.get('name', '')}",
+        f"- role: {repo.get('role', '')}",
+        f"- default_base: {repo.get('default_base', '')}",
+        f"- repo_id: {repo.get('repo_id', '')}",
+        "",
+        "Artifacts below are scoped to this repo (its own + project-shared + the cross-repo "
+        "`api_contract`). The registry, traceability, and Knowledge Index are project-wide "
+        "shared memory across all repos.",
+    ]
+    if repo.get("stack_overrides"):
+        lines.append(_json_block("stack_overrides", repo["stack_overrides"]))
+    return _section("Repository", "\n".join(lines), budget.project)
 
 
 def _render_important_context(profile: dict, budget: TokenBudget) -> str:
@@ -164,8 +186,11 @@ def compose_manifest(
     """Render the composed AGENTS.md. `context` is a `get_context()` result."""
     budget = budget or TokenBudget()
     profile = context.get("profile") or {}
-    sections = [
-        _render_project(profile, budget),
+    repo = context.get("repo")
+    sections = [_render_project(profile, budget)]
+    if repo:  # only for a repo-scoped (multi-repo) run — single-repo manifests omit it
+        sections.append(_render_repository(repo, budget))
+    sections += [
         _render_important_context(profile, budget),
         _render_work_item(work_item, phase, budget),
         _render_artifacts(context.get("relevant_artifacts") or [], budget),

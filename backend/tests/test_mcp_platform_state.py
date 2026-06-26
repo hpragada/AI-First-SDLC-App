@@ -116,7 +116,9 @@ def test_get_context_shape(world):
     tools.log_event(t.id, "system", "phase.started", "work_item", str(world["wi"].id), {})
 
     ctx = tools.get_context(t.id, project.id, phase="prd")
-    assert set(ctx) == {"profile", "relevant_artifacts", "recent_events", "retrieved_knowledge"}
+    assert set(ctx) == {"profile", "repo", "relevant_artifacts", "recent_events",
+                        "retrieved_knowledge"}
+    assert ctx["repo"] is None  # repo-less run → no per-repo scoping (D5)
     assert ctx["profile"]["important_context"] == "ctx" and ctx["profile"]["version"] == 2
     assert len(ctx["relevant_artifacts"]) == 1
     assert len(ctx["recent_events"]) == 1
