@@ -3,16 +3,18 @@ Atlassian register-don't-recreate."""
 import io
 
 import pytest
+from mcp_platform_state import tools
 
 from apps.integrations.models import SourceDocument
 from apps.projects.models import Project
-from apps.registry.models import Artifact
+from apps.registry.models import Artifact, TraceEdge
 from apps.tenancy.models import Membership, Tenant, User
 from apps.workitems.models import WorkItem
 from integrations.extract import ExtractionError
 from integrations.onboarding import (
     OnboardingRoleError,
     adopt_source_document,
+    build_gap_report,
     ingest_source_document,
     register_atlassian,
 )
@@ -158,6 +160,66 @@ def test_register_atlassian_indexes_pointers_idempotently(world):
     assert again == {"registered_pages": [], "registered_issues": []}
     assert Artifact.objects.filter(project=world["project"], sor="confluence").count() == 2
     assert WorkItem.objects.filter(project=world["project"]).count() == 2
+
+
+# ── full onboarding: reconcile → gap report → resume (D7) ───────────
+def _published(world, type_):
+    art = tools.register_artifact(
+        str(world["t"].id), str(world["project"].id), None,
+        phase="onboarding", type=type_, sor="internal", content_hash="h")
+    tools.update_artifact(str(world["t"].id), art["id"], status="published")
+    return art["id"]
+
+
+def _draft(world, type_):
+    return tools.register_artifact(
+        str(world["t"].id), str(world["project"].id), None,
+        phase="onboarding", type=type_, sor="internal", content_hash="h")["id"]
+
+
+def test_gap_report_empty_project_resumes_at_ideation(world):
+    out = build_gap_report(tenant_id=str(world["t"].id), project_id=str(world["project"].id),
+                           object_store=world["store"])
+    assert out["resume_phase"] == "ideation"
+    assert out["blockers"] == ["ideation"]
+    assert all(p["status"] == "missing" for p in out["phases"])
+    # the report itself is a DRAFT internal artifact (published only on the gate, #5)
+    report = Artifact.objects.get(id=out["gap_report_id"])
+    assert report.type == "gap_report" and report.sor == "internal"
+    assert report.status == Artifact.Status.DRAFT
+    assert report.external_ref["resume_phase"] == "ideation"
+
+
+def test_gap_report_picks_first_incomplete_phase_and_links_evidence(world):
+    ideation = _published(world, "ideation")
+    requirements = _published(world, "requirements")
+    prd = _published(world, "prd")
+    architecture = _draft(world, "architecture")           # registered, not yet adopted
+
+    out = build_gap_report(tenant_id=str(world["t"].id), project_id=str(world["project"].id),
+                           object_store=world["store"])
+    status = {p["phase"]: p["status"] for p in out["phases"]}
+    assert status["prd"] == "complete" and status["architecture"] == "partial"
+    assert out["resume_phase"] == "architecture"           # first non-complete phase
+    assert out["blockers"] == []                            # nothing Missing up to the resume
+
+    # the gap report derives from every evidence artifact it weighed
+    edges = {str(e.to_artifact_id) for e in TraceEdge.objects.filter(
+        from_artifact_id=out["gap_report_id"])}
+    assert edges == {ideation, requirements, prd, architecture}
+
+
+def test_gap_report_intel_marks_implementation_assessed(world):
+    tools.register_artifact(str(world["t"].id), str(world["project"].id), None,
+                            phase="onboarding", type="codebase_intelligence",
+                            sor="internal", content_hash="h")
+    out = build_gap_report(tenant_id=str(world["t"].id), project_id=str(world["project"].id),
+                           object_store=world["store"])
+    assert out["intel_present"] is True
+    status = {p["phase"]: p["status"] for p in out["phases"]}
+    # code exists (intelligence proves it) → Implementation is assessed Complete, not Missing
+    assert status["implementation"] == "complete"
+    assert out["resume_phase"] == "ideation"               # docs still missing up front
 
 
 # ── live Atlassian discovery (read-only; runs only with creds) ──────

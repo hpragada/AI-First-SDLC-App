@@ -8,6 +8,13 @@ onto the platform two ways, register-don't-recreate:
 2. **Atlassian register-don't-recreate:** discover existing Confluence pages + Jira issues
    and register *pointers* (never create) — they're already the live SoR, so they're
    indexed as published artifacts / accepted work items. Idempotent by external_ref.
+
+**Full onboarding gap report (Phase 4 §5 / D7):** after discovery has registered what exists
+(via the two paths above) and 00c has produced code intelligence, `build_gap_report` does the
+**reconcile → gap-detect → report** step the 00 agent reasons over: it assesses each lifecycle
+phase Complete / Partial / Missing from the registered artifacts + code-intel + work items,
+picks the **resume phase**, and registers a *draft* `gap_report` artifact (published only on the
+product_owner gate, #5). Gap-*fill* generation is then the normal phase agents, each gated.
 """
 from __future__ import annotations
 
@@ -187,3 +194,132 @@ def register_atlassian(*, tenant_id, project_id, docstore=None, tasktracker=None
         registered_issues.append(hit.key)
 
     return {"registered_pages": registered_pages, "registered_issues": registered_issues}
+
+
+# ── full onboarding: reconcile → gap report → resume (D7) ────────────
+# The lifecycle, in order, with the registered artifact types that evidence each phase.
+# Resume = the first phase that is not Complete; the report names what is missing before it.
+_LIFECYCLE: list[tuple[str, str, tuple[str, ...]]] = [
+    ("ideation", "1. Ideation", ("ideation",)),
+    ("requirements", "2. Requirements", ("requirements",)),
+    ("prd", "3. PRD", ("prd",)),
+    ("architecture", "4. Architecture",
+     ("architecture", "adr", "data_model", "api_spec", "tech_stack", "security_architecture")),
+    ("ux_design", "5. UX Design",
+     ("ux_design", "user_journey", "wireframe", "design_system", "accessibility")),
+    ("task_breakdown", "6. Task Breakdown", ("task_breakdown",)),
+    ("implementation", "7. Implementation", ("code",)),
+    ("code_review", "8. Code Review", ("code_review",)),
+    ("testing", "9. Testing & QA", ("test_case", "test_report")),
+    ("security", "10. Security",
+     ("security_review", "security_finding", "threat_model", "sbom")),
+    ("cicd", "11. CI/CD", ("cicd", "pipeline")),
+    ("deployment", "12. Deployment", ("deployment", "release")),
+]
+_BACKLOG_TYPES = ("epic", "story", "task")
+
+
+def _assess_phase(phase, types, by_type, *, has_backlog, intel_present):
+    """Complete / Partial / Missing for one lifecycle phase, with its evidence artifacts.
+
+    Published artifacts (or strong non-artifact evidence) → Complete; only drafts → Partial
+    (registered, not yet adopted); nothing → Missing. Two phases carry non-document evidence
+    the legacy agent assesses rather than generates: Task Breakdown from the accepted backlog,
+    Implementation from the code itself (code intelligence proves the codebase exists)."""
+    evidence = [a for t in types for a in by_type.get(t, [])]
+    published = [a for a in evidence if a.status == "published"]
+    strong = (phase == "task_breakdown" and has_backlog) or \
+             (phase == "implementation" and intel_present)
+    weak = (phase == "implementation" and intel_present)  # code exists but unverified vs docs
+    if published or strong:
+        status = "complete"
+    elif evidence or weak:
+        status = "partial"
+    else:
+        status = "missing"
+    return status, evidence
+
+
+def build_gap_report(*, tenant_id, project_id, object_store=None) -> dict:
+    """Reconcile what onboarding discovered into a **gap report** (D7) and pick the resume
+    phase. Assesses every lifecycle phase from the registered artifacts + code-intel + work
+    items, then registers a *draft* `gap_report` artifact (published on the product_owner
+    gate, #5) linked to the evidence it weighed. Builds on `register_atlassian` /
+    `ingest_source_document` / 00c — it never re-creates content, only reports on it."""
+    from apps.projects.models import Project
+    from apps.registry.models import Artifact
+    from apps.tenancy.context import tenant_context
+    from apps.workitems.models import WorkItem
+    from storage import content_hash
+
+    store = _object_store(object_store)
+    with tenant_context(tenant_id):
+        Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
+        artifacts = list(
+            Artifact.objects.filter(tenant_id=tenant_id, project_id=project_id)
+            .exclude(type="gap_report")  # don't assess prior reports as evidence
+        )
+        work_items = list(WorkItem.objects.filter(tenant_id=tenant_id, project_id=project_id))
+
+    by_type: dict[str, list] = {}
+    for a in artifacts:
+        by_type.setdefault(a.type, []).append(a)
+    has_backlog = any(w.type in _BACKLOG_TYPES for w in work_items)
+    intel_present = bool(by_type.get("codebase_intelligence"))
+
+    phases: list[dict] = []
+    evidence_ids: list[str] = []
+    for phase, label, types in _LIFECYCLE:
+        status, evidence = _assess_phase(
+            phase, types, by_type, has_backlog=has_backlog, intel_present=intel_present)
+        phases.append({"phase": phase, "label": label, "status": status,
+                       "evidence_count": len(evidence)})
+        evidence_ids.extend(str(a.id) for a in evidence)
+
+    resume = next((p["phase"] for p in phases if p["status"] != "complete"), "done")
+    resume_label = next((p["label"] for p in phases if p["phase"] == resume), "Pipeline complete")
+    # Blockers: phases still Missing at or before the resume point — they gate forward progress.
+    resume_idx = next((i for i, p in enumerate(phases) if p["phase"] == resume), len(phases))
+    blockers = [p["phase"] for p in phases[: resume_idx + 1] if p["status"] == "missing"]
+
+    body = _render_gap_report(phases, resume_label, blockers, intel_present)
+    body_key = f"onboarding/{tenant_id}/{project_id}/gap_report.md"
+    store.put(body_key, body)
+    report = tools.register_artifact(
+        tenant_id, project_id, None, phase="onboarding", type="gap_report",
+        sor="internal", content_hash=content_hash(body.encode("utf-8")), s3_key=body_key,
+        external_ref={"source": "onboarding", "resume_phase": resume,
+                      "phases": [{"phase": p["phase"], "status": p["status"]} for p in phases],
+                      "blockers": blockers, "intel_present": intel_present},
+    )
+    # The report derives from the evidence it weighed (dedup; cap to keep the graph sane).
+    for aid in list(dict.fromkeys(evidence_ids))[:200]:
+        tools.add_trace_edge(tenant_id, report["id"], aid, "derives")
+    tools.log_event(tenant_id, "onboarding", "gap_report.built", "artifact", report["id"],
+                    {"resume_phase": resume, "blockers": blockers})
+    return {"gap_report_id": report["id"], "resume_phase": resume, "phases": phases,
+            "blockers": blockers, "intel_present": intel_present}
+
+
+def _render_gap_report(phases, resume_label, blockers, intel_present) -> str:
+    icon = {"complete": "Complete", "partial": "Partial", "missing": "Missing"}
+    lines = [
+        "# Onboarding Gap Report",
+        "",
+        "> Generated by the Onboarding Agent — what existed, what was registered, "
+        "and what is still missing before the pipeline resumes.",
+        "",
+        f"**Code intelligence:** {'available' if intel_present else 'not run'}",
+        f"**Recommended resume phase:** {resume_label}",
+        "",
+        "## Phase Completion Assessment",
+        "",
+        "| Phase | Status | Evidence |",
+        "|-------|--------|----------|",
+    ]
+    lines += [f"| {p['label']} | {icon[p['status']]} | {p['evidence_count']} artifact(s) |"
+              for p in phases]
+    lines += ["", "## Blockers (resolve before resuming)", ""]
+    lines += ([f"- **{b}** — no evidence found; generate via its phase agent (gated) "
+               "or provide the source." for b in blockers] or ["- None."])
+    return "\n".join(lines) + "\n"
