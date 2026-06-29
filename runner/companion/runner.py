@@ -23,11 +23,13 @@ from .guardrails import (
 )
 from .worktree import changed_files, provision_worktree, teardown_worktree
 
-# The build-phase platform-state tools (must match the server-side allowlist).
+# The build-phase platform-state tools the companion exposes to the engine. `ask_human` is
+# the interactive-clarification channel (req #2) — served by dedicated runner endpoints, not
+# the generic state route, but still an mcp__platform-state__ tool the engine must be allowed.
 BUILD_STATE_TOOLS = [
     "get_context", "get_artifact", "list_artifacts", "register_artifact",
     "update_artifact", "add_trace_edge", "log_event", "list_work_items",
-    "create_work_item", "transition_work_item",
+    "create_work_item", "transition_work_item", "ask_human",
 ]
 # Filesystem + shell for editing/testing the worktree; platform-state over MCP.
 # Deliberately NO CodeHost and no networked tools — the platform owns Git side-effects (D2).
@@ -89,6 +91,9 @@ def build_mcp_servers(task: BuildTask, *, repo_root: str | None = None) -> dict:
                 "RUNNER_API_URL": task.api_url,
                 "RUNNER_TOKEN": task.runner_token,
                 "RUNNER_TENANT_ID": task.tenant_id,
+                # Identify the run/phase a clarification belongs to (the agent never passes them).
+                "RUNNER_RUN_ID": task.run_id,
+                "RUNNER_PHASE": task.phase,
                 "PYTHONPATH": root,
             },
         }

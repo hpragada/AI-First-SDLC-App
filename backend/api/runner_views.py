@@ -148,6 +148,62 @@ class RunnerBuildFetchView(APIView):
         return Response(payload)
 
 
+class RunnerClarificationCreateView(APIView):
+    """POST /api/runner/clarifications/ — an agent (via its `ask_human` tool) opens a
+    clarification for its run. Runner-token authenticated; tenant bound from the enrollment
+    (never the body). Idempotent by question signature, so a re-ask reuses the same one."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request):
+        from apps.clarifications.services import create_clarification
+
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        data = request.data if isinstance(request.data, dict) else {}
+        run_id = data.get("run_id")
+        if not run_id:
+            return Response({"detail": "run_id is required"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = create_clarification(
+                tenant_id=str(runner.tenant_id), run_id=str(run_id),
+                questions=data.get("questions") or [], context=data.get("context", ""),
+                phase=data.get("phase", ""), signature=data.get("signature", ""),
+            )
+        except Run.DoesNotExist:
+            return Response({"detail": "run not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(result, status=status.HTTP_201_CREATED)
+
+
+class RunnerClarificationPollView(APIView):
+    """GET /api/runner/clarifications/<id>/ — the companion polls its clarification until the
+    human answers it in the web app. While polling, the agent is idle on the open tool call,
+    so no engine cost accrues during the wait."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def get(self, request, clarification_id):
+        from apps.clarifications.models import Clarification
+        from apps.clarifications.services import get_clarification
+
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        try:
+            result = get_clarification(
+                tenant_id=str(runner.tenant_id), clarification_id=str(clarification_id))
+        except Clarification.DoesNotExist:
+            return Response({"detail": "clarification not found"},
+                            status=status.HTTP_404_NOT_FOUND)
+        return Response(result)
+
+
 class RunnerBuildReportView(APIView):
     """POST /api/runner/builds/<run_id>/report/ — the companion reports its build result;
     resumes the BuildWorkflow via the build_reported signal."""

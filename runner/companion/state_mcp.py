@@ -11,10 +11,18 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
+from runner.companion.clarify import ClarificationClient
+from runner.companion.clarify import ask_human as _ask_human
 from runner.companion.state_client import RemoteStateClient
 
 
-def build_server(client: RemoteStateClient) -> FastMCP:
+def build_server(
+    client: RemoteStateClient,
+    *,
+    clarify_client: ClarificationClient | None = None,
+    run_id: str = "",
+    phase: str = "",
+) -> FastMCP:
     server = FastMCP("platform-state")
 
     @server.tool()
@@ -73,6 +81,18 @@ def build_server(client: RemoteStateClient) -> FastMCP:
     def transition_work_item(work_item_id: str, to_state: str) -> dict:
         return client.call("transition_work_item", work_item_id=work_item_id, to_state=to_state)
 
+    @server.tool()
+    def ask_human(questions: list, context: str = "") -> dict:
+        """Ask the human one or more questions and BLOCK until they answer in the web app,
+        then continue. Use this whenever you are missing information you need to proceed (a
+        context gap, a decision between options, a pre-gate confirmation) — do NOT guess.
+        While you wait, no cost is incurred. Each question: {id, text, kind: "text"|"choice"
+        |"confirm", options?: [...], required?: bool}. Returns answers keyed by question id."""
+        if clarify_client is None:
+            raise RuntimeError("ask_human is not configured (no clarification client)")
+        return _ask_human(clarify_client, run_id=run_id, questions=questions,
+                          context=context, phase=phase)
+
     return server
 
 
@@ -84,8 +104,22 @@ def _client_from_env() -> RemoteStateClient:
     )
 
 
+def _clarify_client_from_env() -> ClarificationClient:
+    return ClarificationClient(
+        api_url=os.environ["RUNNER_API_URL"],
+        tenant_id=os.environ["RUNNER_TENANT_ID"],
+        token=os.environ["RUNNER_TOKEN"],
+    )
+
+
 def main() -> None:
-    build_server(_client_from_env()).run()  # stdio transport
+    # run_id/phase identify which run a clarification belongs to (the agent never passes them).
+    build_server(
+        _client_from_env(),
+        clarify_client=_clarify_client_from_env(),
+        run_id=os.environ.get("RUNNER_RUN_ID", ""),
+        phase=os.environ.get("RUNNER_PHASE", ""),
+    ).run()  # stdio transport
 
 
 if __name__ == "__main__":

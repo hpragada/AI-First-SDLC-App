@@ -6,6 +6,8 @@ from rest_framework.routers import DefaultRouter
 from .runner_views import (
     RunnerBuildFetchView,
     RunnerBuildReportView,
+    RunnerClarificationCreateView,
+    RunnerClarificationPollView,
     RunnerEnrollmentView,
     RunnerRevokeView,
     RunnerStateView,
@@ -44,6 +46,11 @@ urlpatterns = [
     path("runner/builds/<uuid:run_id>/", RunnerBuildFetchView.as_view(), name="runner-build-fetch"),
     path("runner/builds/<uuid:run_id>/report/", RunnerBuildReportView.as_view(),
          name="runner-build-report"),
+    # Interactive Q&A (req #2): an agent opens a clarification + the companion polls it.
+    path("runner/clarifications/", RunnerClarificationCreateView.as_view(),
+         name="runner-clarification-create"),
+    path("runner/clarifications/<uuid:clarification_id>/", RunnerClarificationPollView.as_view(),
+         name="runner-clarification-poll"),
     # Signed Git-webhook ingestion (Phase 2 §7) — tenant in the path, signature-authenticated.
     path("webhooks/github/<uuid:tenant_id>/", GithubWebhookView.as_view(), name="github-webhook"),
     path("", include(router.urls)),

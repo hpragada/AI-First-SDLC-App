@@ -1,21 +1,88 @@
-"""Clarification answer service (req #2).
+"""Clarification services (req #2).
 
-A human answers a pending Clarification in the web app. Unlike a gate (which needs a
-specific role), answering a clarification only requires the user be a **member of the
-project** — they are supplying missing context, not authorizing a system-of-record write.
-We validate that every *required* question has an answer, record it, and log the event. No
-Temporal signal is sent: the agent is blocked on the `ask_human` tool, whose companion-side
-handler is polling for this answer and resumes the moment the status flips to ANSWERED.
+An agent **asks** via `create_clarification` (from its `ask_human` tool, proxied over the
+runner seam); the companion then polls `get_clarification` until it is answered. A human
+**answers** via `answer_clarification` (the web app). Unlike a gate (which needs a specific
+role), answering only requires the user be a **member of the project** — they are supplying
+missing context, not authorizing a system-of-record write. No Temporal signal is sent: the
+agent is blocked on the `ask_human` tool, whose companion-side handler is polling for this
+answer and resumes the moment the status flips to ANSWERED (the model is idle on the open
+tool call while it waits, so no cost accrues).
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime
 
 from mcp_platform_state import tools
 
 from apps.clarifications.models import Clarification
+from apps.runs.models import Run
 from apps.tenancy.context import tenant_context
 from apps.tenancy.models import Membership
+
+
+def question_signature(questions: list) -> str:
+    """Stable hash of the question set, so a re-asked (re-dispatched) clarification reuses an
+    existing one instead of creating a duplicate. Order-independent on the question id."""
+    norm = sorted(
+        (
+            {
+                "id": q.get("id"),
+                "text": q.get("text", ""),
+                "kind": q.get("kind", "text"),
+                "required": bool(q.get("required", True)),
+                "options": q.get("options"),
+            }
+            for q in (questions or [])
+        ),
+        key=lambda q: str(q["id"]),
+    )
+    return hashlib.sha256(json.dumps(norm, sort_keys=True).encode()).hexdigest()
+
+
+def _serialize(clar: Clarification) -> dict:
+    return {
+        "id": str(clar.id), "status": clar.status, "answers": clar.answers,
+        "questions": clar.questions, "phase": clar.phase, "context": clar.context,
+    }
+
+
+def create_clarification(
+    *, tenant_id: str, run_id: str, questions: list, context: str = "",
+    phase: str = "", signature: str = "",
+) -> dict:
+    """Create (or reuse) a clarification for a run. **Idempotent by (run, signature)**: an
+    existing clarification with the same question set — whether still pending or already
+    answered — is returned as-is, so a re-asked question is never duplicated and an
+    already-answered one returns its answer immediately (crash-recovery / re-dispatch)."""
+    sig = signature or question_signature(questions)
+    with tenant_context(tenant_id):
+        run = Run.objects.select_related("work_item").get(id=run_id, tenant_id=tenant_id)
+        existing = (
+            Clarification.objects
+            .filter(tenant_id=tenant_id, run_id=run_id, signature=sig)
+            .order_by("created_at").first()
+        )
+        if existing is not None:
+            return _serialize(existing)
+        clar = Clarification.objects.create(
+            tenant_id=tenant_id, run=run, work_item=run.work_item, phase=phase,
+            questions=list(questions or []), context=context, signature=sig,
+        )
+        tools.log_event(
+            tenant_id, "agent", "clarification.asked", "clarification", str(clar.id),
+            {"run": str(run_id), "questions": [q.get("id") for q in (questions or [])]},
+        )
+        return _serialize(clar)
+
+
+def get_clarification(*, tenant_id: str, clarification_id: str) -> dict:
+    """Read a clarification's current status + answers (the companion's poll)."""
+    with tenant_context(tenant_id):
+        clar = Clarification.objects.get(id=clarification_id, tenant_id=tenant_id)
+        return _serialize(clar)
 
 
 class ClarificationError(Exception):

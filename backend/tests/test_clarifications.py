@@ -17,6 +17,9 @@ from apps.clarifications.services import (
     ClarificationError,
     ClarificationRoleError,
     answer_clarification,
+    create_clarification,
+    get_clarification,
+    question_signature,
 )
 from apps.ledger.models import Event
 from apps.projects.models import Project
@@ -49,8 +52,9 @@ def world(db):
         questions=_QUESTIONS, context="context gap before drafting the PRD",
     )
     return {
-        "tenant_id": str(t.id), "clar_id": str(clar.id), "wi_id": str(wi.id),
-        "run_id": str(run.id), "member_id": str(member.id), "outsider_id": str(outsider.id),
+        "tenant_id": str(t.id), "project_id": str(project.id), "clar_id": str(clar.id),
+        "wi_id": str(wi.id), "run_id": str(run.id),
+        "member_id": str(member.id), "outsider_id": str(outsider.id),
     }
 
 
@@ -188,6 +192,97 @@ def _make_clarification(tenant: Tenant) -> None:
         tenant=tenant, key=f"03_prd_{uuid.uuid4().hex[:8]}", body_ref="x")
     run = Run.objects.create(tenant=tenant, work_item=wi, agent_spec=spec)
     Clarification.objects.create(tenant=tenant, run=run, work_item=wi, questions=_QUESTIONS)
+
+
+# ── create / get services (the agent's ask channel) ────────────────
+_NEW_QS = [{"id": "framework", "text": "React or Vue?", "kind": "choice",
+            "options": ["react", "vue"], "required": True}]
+
+
+def test_create_clarification_opens_pending(world):
+    result = create_clarification(
+        tenant_id=world["tenant_id"], run_id=world["run_id"], questions=_NEW_QS,
+        context="pick the FE framework", phase="architecture",
+    )
+    assert result["status"] == Clarification.Status.PENDING
+    clar = Clarification.objects.get(id=result["id"])
+    assert clar.phase == "architecture" and clar.signature == question_signature(_NEW_QS)
+    assert str(clar.work_item_id) == world["wi_id"]  # derived from the run
+
+
+def test_create_clarification_idempotent_by_signature(world):
+    a = create_clarification(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                             questions=_NEW_QS)
+    b = create_clarification(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                             questions=_NEW_QS)
+    assert a["id"] == b["id"]  # same question set -> same clarification, not a duplicate
+
+
+def test_create_clarification_returns_answer_when_already_answered(world):
+    created = create_clarification(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                                   questions=_NEW_QS)
+    answer_clarification(tenant_id=world["tenant_id"], clarification_id=created["id"],
+                         user_id=world["member_id"], answers={"framework": "react"})
+    # Re-ask (e.g. a re-dispatched run) -> the answered clarification comes straight back.
+    again = create_clarification(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                                 questions=_NEW_QS)
+    assert again["id"] == created["id"]
+    assert again["status"] == Clarification.Status.ANSWERED
+    assert again["answers"] == {"framework": "react"}
+
+
+def test_get_clarification_reports_status_and_answers(world):
+    state = get_clarification(tenant_id=world["tenant_id"], clarification_id=world["clar_id"])
+    assert state["status"] == Clarification.Status.PENDING and state["answers"] == {}
+
+
+# ── runner endpoints (companion ask + poll, Runner-token auth) ──────
+def _enroll(client, tenant_id, project_id):
+    r = client.post("/api/runners/", {"project_id": project_id, "label": "l"},
+                    format="json", **_hdr(tenant_id))
+    assert r.status_code == 201, r.content
+    return r.json()["token"]
+
+
+def test_runner_create_and_poll_roundtrip(world):
+    client = APIClient()
+    token = _enroll(client, world["tenant_id"], world["project_id"])
+    auth = {"HTTP_AUTHORIZATION": f"Runner {token}", **_hdr(world["tenant_id"])}
+
+    created = client.post("/api/runner/clarifications/",
+                          {"run_id": world["run_id"], "questions": _NEW_QS,
+                           "context": "pick FE", "phase": "architecture"},
+                          format="json", **auth)
+    assert created.status_code == 201, created.content
+    cid = created.json()["id"]
+    assert created.json()["status"] == Clarification.Status.PENDING
+
+    polled = client.get(f"/api/runner/clarifications/{cid}/", **auth)
+    assert polled.status_code == 200 and polled.json()["status"] == Clarification.Status.PENDING
+
+    # A human answers in the web app; the companion's next poll sees it.
+    answer_clarification(tenant_id=world["tenant_id"], clarification_id=cid,
+                         user_id=world["member_id"], answers={"framework": "react"})
+    polled2 = client.get(f"/api/runner/clarifications/{cid}/", **auth)
+    assert polled2.json()["status"] == Clarification.Status.ANSWERED
+    assert polled2.json()["answers"] == {"framework": "react"}
+
+
+def test_runner_create_requires_token(world):
+    client = APIClient()
+    r = client.post("/api/runner/clarifications/",
+                    {"run_id": world["run_id"], "questions": _NEW_QS},
+                    format="json", **_hdr(world["tenant_id"]))  # no Runner token
+    assert r.status_code == 401
+
+
+def test_runner_create_missing_run_id_400(world):
+    client = APIClient()
+    token = _enroll(client, world["tenant_id"], world["project_id"])
+    auth = {"HTTP_AUTHORIZATION": f"Runner {token}", **_hdr(world["tenant_id"])}
+    r = client.post("/api/runner/clarifications/", {"questions": _NEW_QS},
+                    format="json", **auth)
+    assert r.status_code == 400
 
 
 @pytest.mark.django_db(transaction=True)
