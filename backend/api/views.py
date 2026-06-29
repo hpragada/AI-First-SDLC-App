@@ -244,6 +244,7 @@ class WorkItemViewSet(
         ser = TriggerSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         try:
+            user_id = ser.validated_data.get("user_id")
             result = trigger_phase(
                 tenant_id=self.tenant_id,
                 project_id=str(work_item.project_id),
@@ -251,6 +252,7 @@ class WorkItemViewSet(
                 agent_key=ser.validated_data["agent_key"],
                 gate_type=ser.validated_data["gate_type"],
                 required_role=ser.validated_data["required_role"],
+                triggered_by=str(user_id) if user_id else None,
             )
         except TriggerError as exc:
             raise ValidationError({"agent_key": str(exc)}) from exc

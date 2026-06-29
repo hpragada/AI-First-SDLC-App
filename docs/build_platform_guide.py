@@ -552,10 +552,14 @@ def section_3():
          "store. It is not about unit tests. Follow Part A to get the core running with zero "
          "external accounts; Part C adds the optional live connectors.")
     callout("Before you start",
-            "Complete the prerequisites and credentials in <b>Section 4</b> first (Docker "
-            "Desktop running, <tt>.env</tt> created, and — for live AI runs — an "
-            "<tt>ANTHROPIC_API_KEY</tt>). On Windows without <tt>make</tt>, use the shim "
-            "<tt>./make.ps1 &lt;target&gt;</tt> in place of <tt>make &lt;target&gt;</tt>.")
+            "Complete the prerequisites in <b>Section 4</b> first (Docker Desktop running, "
+            "<tt>.env</tt> created). <b>Agents run on your own Claude Code</b> (req #1): every "
+            "phase — planning, build, and review — executes on the machine running the "
+            "<b>companion</b> daemon, using your <b>logged-in local <tt>claude</tt></b> (your "
+            "subscription), <b>not</b> an API key. So instead of setting <tt>ANTHROPIC_API_KEY</tt>, "
+            "you log in once (<tt>claude</tt> / <tt>claude setup-token</tt>) and run the companion "
+            "(Step 4). A server-side <tt>ANTHROPIC_API_KEY</tt> path still exists as a headless/CI "
+            "fallback only. On Windows without <tt>make</tt>, use <tt>./make.ps1 &lt;target&gt;</tt>.")
 
     h2("3.1 Part A — Bring up the platform (no external accounts needed)")
     h3("Step 1 — Start the infrastructure")
@@ -584,31 +588,53 @@ def section_3():
     code("curl http://localhost:8000/api/projects/ -H \"X-Tenant-ID: <demo-tenant-id>\"\n"
          "# -> JSON list including the seeded demo project")
 
+    h3("Step 4 — Run your local companion (so phases execute on YOUR Claude Code)")
+    p("Every phase the platform dispatches runs on the machine running the companion, against "
+      "your logged-in <tt>claude</tt> — no API key. Log in once, enroll this machine for your "
+      "user, then leave the daemon running:")
+    code("# 1) log Claude Code in once (interactive, or a long-lived token for headless):\n"
+         "claude            # sign in to your subscription   (or: claude setup-token)\n\n"
+         "# 2) enroll this machine for YOUR user (prints a one-time token):\n"
+         "python -m runner.companion enroll --api-url http://localhost:8000 \\\n"
+         "    --tenant $TENANT --project $PROJECT --label my-laptop --developer-id $USER\n\n"
+         "# 3) run the headless daemon — it claims your dispatched phases and runs them locally:\n"
+         "python -m runner.companion serve --api-url http://localhost:8000 \\\n"
+         "    --tenant $TENANT --token <enrollment-token>   # add --repo-path/--worktrees for builds")
+    p("<b>What you should see:</b> the daemon logs that it preflighted <tt>claude</tt> on PATH "
+      "(and dropped any <tt>ANTHROPIC_API_KEY</tt> so your subscription is used), then idles "
+      "polling for work. When you trigger a phase (next), it claims and runs it; an agent that "
+      "needs input surfaces a question on the <b>Clarifications</b> tab and waits at no cost.")
+
     h2("3.2 Part B — Drive the planning slice in the browser (Phase 0 end-to-end)")
     p("This is the core, no-external-accounts workflow. Open <tt>http://localhost:5173</tt> and "
-      "work left to right through the five tabs.")
-    callout("Cost note",
-            "Triggering a phase runs the <b>real Claude agent</b> via the ClaudeDriver, so it "
-            "needs a valid <tt>ANTHROPIC_API_KEY</tt> in <tt>.env</tt> and incurs a small API "
-            "cost per run. To keep cost minimal, trigger a single phase (Ideation) first; that is "
-            "enough to see the whole gate -> publish -> traceability loop.")
+      "work left to right through the tabs. With your companion from Step 4 running, each "
+      "triggered phase executes on your local Claude Code.")
+    callout("Cost &amp; interaction note",
+            "Phases run on your <b>local Claude Code subscription</b> via the companion — there is "
+            "no per-call API charge and no <tt>ANTHROPIC_API_KEY</tt> needed. If an agent needs "
+            "information it cannot find, it asks on the <b>Clarifications</b> tab and <b>pauses at "
+            "zero cost</b> until you answer (the model is idle while it waits) — then continues in "
+            "the same session. To see the whole loop quickly, trigger a single phase (Ideation).")
     table([
         ["Tab / action", "What to do", "What you should see (the proof)"],
         ["Tenant + Project bar", "Create or select a tenant, then a project (the seeded demo is "
-         "fine).", "The five tabs unlock."],
+         "fine).", "The tabs unlock."],
         ["1. Project Profile", "Fill description, tech stack, important context; Save.", "A new "
          "profile version is saved; it becomes the agent's context next run."],
         ["2. Phase Console", "Add a WorkItem (a feature stream), then click <b>Ideation</b>.",
-         "A Run appears in the Run Timeline and moves <tt>running -> awaiting_gate</tt> as you "
-         "poll. In the Temporal UI (:8080) a new <tt>AgentRunWorkflow</tt> is visible and "
-         "<i>waiting</i> at the gate."],
-        ["3. Gate Approvals", "Find the pending approval; approve it as a user holding the "
+         "A Run appears in the Run Timeline and moves <tt>running -> awaiting_gate</tt> as your "
+         "companion executes it. In the Temporal UI (:8080) a new <tt>AgentRunWorkflow</tt> is "
+         "visible. A <b>“needs answer”</b> badge appears if the agent asks a question."],
+        ["3. Clarifications", "If a run shows “needs answer”, open this tab, answer the "
+         "question(s), and Send.", "The agent resumes in the same session (it was paused at zero "
+         "cost); the badge clears."],
+        ["4. Gate Approvals", "Find the pending approval; approve it as a user holding the "
          "required role.", "The run resumes to <tt>completed</tt>; the workflow finishes in the "
          "Temporal UI."],
-        ["4. Artifacts", "Look at the ideation artifact.", "Its status flips <tt>draft -> "
+        ["5. Artifacts", "Look at the ideation artifact.", "Its status flips <tt>draft -> "
          "published</tt>; its body is stored in MinIO (visible in the :9001 console under "
          "<tt>drafts/</tt> and <tt>snapshots/</tt>)."],
-        ["5. Traceability", "Open the lineage view.", "A graph of artifacts and their "
+        ["6. Traceability", "Open the lineage view.", "A graph of artifacts and their "
          "<tt>derives/tests/...</tt> edges; once external SoRs are connected, nodes deep-link to "
          "the live Confluence/Jira items."],
     ], [3.4 * cm, 5.6 * cm, 7.4 * cm])
@@ -678,7 +704,7 @@ def section_3():
          "immutable post-approval snapshots — the registry holds only pointers + hashes."],
     ], [4.0 * cm, 12.4 * cm])
     callout("“Everything works” checklist",
-            "(1) infra healthy; (2) migrate + seed succeed; (3) UI loads and the five tabs work; "
+            "(1) infra healthy; (2) migrate + seed succeed; (3) UI loads and the tabs work; "
             "(4) a planning phase runs to <tt>completed</tt> through its gate and publishes an "
             "artifact; (5) traceability shows the lineage; (6) the Temporal UI shows the durable "
             "workflow; (7) MinIO shows the artifact body; (8) optional: a live PRD reaches "
@@ -790,208 +816,228 @@ def section_4():
 
 def section_5():
     story.append(PageBreak())
-    h1("5. End-to-End Testing — Two Full Journeys")
-    lead("This section is for an engineer running a real, straight-through test pass with the "
-         "live credentials configured — not slice by slice. Each journey runs the whole lifecycle "
-         "end to end: <b>Journey A</b> takes a brand-new (greenfield) project from an idea to a "
-         "merged, tested change; <b>Journey B</b> onboards an existing (brownfield) project and "
-         "resumes it from the middle. Complete <b>Section 3</b> (bring-up) once first, then follow "
-         "the preflight below.")
-    callout("Conventions used in every command",
-            "All API calls carry <tt>-H \"X-Tenant-ID: $TENANT\"</tt> (the only exception is "
-            "creating a tenant). Human gates are shown as a browser action on the <b>Gate "
-            "Approvals</b> tab, with the equivalent <tt>POST /approvals/{id}/decide/</tt> next to "
-            "it. A gate decision must be made by a user who <b>holds the gate's role</b> on the "
-            "project — the preflight grants the demo user every role so one person can approve the "
-            "whole run. Phase-4 brownfield services have no dedicated UI yet, so Journey B uses a "
-            "few <tt>manage.py shell</tt> calls (clearly marked) alongside the REST routes.")
+    h1("5. End-to-End Testing — Scenario Playbook")
+    lead("This section is a hands-on playbook for an engineer to test the platform across the "
+         "scenarios that matter, <b>each built from scratch</b> — you create your own tenant, "
+         "user, project and companion; nothing here uses the seeded demo tenant. Do <b>Section "
+         "3</b> bring-up once, then the shared <b>5.1 preflight</b>, then run whichever scenarios "
+         "you need. Each scenario lists every step and whether it is done in the <b>UI</b> or via "
+         "the <b>API</b> (used only where no UI exists yet).")
+    callout("Two ground rules for every scenario",
+            "(1) <b>From scratch:</b> you create the tenant/user/project yourself — do not use the "
+            "seed demo tenant. (2) <b>Agents run on your Claude Code:</b> every phase executes on "
+            "your machine via the <b>companion</b> daemon using your logged-in <tt>claude</tt> (no "
+            "API key); you only ever click and type in the web app. API calls carry "
+            "<tt>-H \"X-Tenant-ID: $TENANT\"</tt> (tenant-create is the one exception).")
 
-    h2("5.1 Preflight (live mode) — do this once")
-    p("Put the live credentials in <tt>.env</tt> (see Section 4.2: Atlassian, GitHub, Figma, "
-      "Xray, plus <tt>ANTHROPIC_API_KEY</tt>), then re-seed so the demo tenant picks up the "
-      "connectors, and restart the app:")
-    code("cp .env.example .env          # then fill the live values from Section 4.2\n"
-         "docker compose up -d          # infra: postgres:5433, temporal:7233/8080, minio:9001\n"
-         "make migrate && make seed     # seed attaches the connectors to the demo tenant\n"
-         "make dev                      # API :8000, React UI :5173, Temporal worker")
-    p("Set a few shell variables and grant the seeded demo user every gate role (so a single "
-      "approver can pass every gate in the run):")
+    h2("5.1 Preflight — build your own world (shared by all scenarios)")
+    p("<b>Step 1 (UI/infra).</b> Bring the stack up once (Section 3.1): <tt>docker compose up -d</tt> "
+      "-> <tt>make migrate</tt> -> <tt>make dev</tt>. You do <b>not</b> run <tt>make seed</tt> — you "
+      "are building everything yourself.")
+    p("<b>Step 2 (API) — create your tenant.</b> Creating a tenant also seeds that tenant's agent "
+      "specs (all phases), so it is immediately usable:")
     code("export API=http://localhost:8000/api\n"
-         "export TENANT=00000000-0000-0000-0000-0000000000d1   # the seeded demo tenant\n"
-         "export H=\"-H X-Tenant-ID:$TENANT -H Content-Type:application/json\"\n"
-         "# the demo user (demo@demo.test) seeds with product_owner+architect; add the rest:\n"
-         "docker compose exec backend python manage.py shell -c \"\\\n"
-         "from apps.tenancy.models import Membership, User; from apps.projects.models import "
-         "Project;\\\n"
-         "u=User.objects.get(email='demo@demo.test');\\\n"
-         "[Membership.objects.get_or_create(tenant_id=p.tenant_id,user=u,project=p,role=r) \\\n"
-         " for p in Project.objects.all() \\\n"
-         " for r in ['product_owner','architect','designer','tech_lead','reviewer','qa_lead',"
-         "'security_engineer','devops']]\"")
-    callout("Get the demo user id for gate decisions",
-            "<tt>curl -s $API/../ &nbsp;</tt> &mdash; the gate-decision body needs the approver's "
-            "<tt>user_id</tt>. Fetch it once: <tt>docker compose exec backend python manage.py "
-            "shell -c \"from apps.tenancy.models import User; "
-            "print(User.objects.get(email='demo@demo.test').id)\"</tt> and export it as "
-            "<tt>USER</tt>.")
-
-    h2("5.2 Journey A — Greenfield (new project, full lifecycle)")
-    p("A new project from scratch, idea through a merged + tested change. Steps 1–3 create the "
-      "project, its profile, and a work item; copy the returned ids into the shell variables.")
-    code("# 1) create a greenfield project\n"
-         "curl -s $H -X POST $API/projects/ -d '{\"name\":\"Acme Shop\",\"track\":\"greenfield\"}'\n"
-         "export PROJECT=<id-from-response>\n\n"
-         "# 2) set the project profile (becomes the agents' context)\n"
-         "curl -s $H -X PUT $API/projects/$PROJECT/profile/ -d '{\"description\":\"A web shop\","
-         "\"tech_stack\":{\"backend\":\"Django\",\"frontend\":\"React\"},"
-         "\"important_context\":\"Web-first, desktop primary.\"}'\n\n"
-         "# 3) create a feature WorkItem\n"
-         "curl -s $H -X POST $API/work-items/ -d '{\"project\":\"'$PROJECT'\","
-         "\"type\":\"story\",\"feature_stream\":\"checkout\",\"title\":\"Guest checkout\"}'\n"
-         "export WI=<id-from-response>")
-    p("Now walk the lifecycle. Each phase is the <i>same</i> two moves — <b>trigger</b> the agent "
-      "on the work item, then <b>approve</b> its gate — so the pattern is shown once and the "
-      "per-phase agent keys, gate roles, and live proofs follow in the table:")
-    code("# the repeating pattern (run once per phase, substituting AGENT below):\n"
-         "curl -s $H -X POST $API/work-items/$WI/trigger/ -d '{\"agent_key\":\"01_ideation\"}'\n"
-         "#   -> 202 with a run_id; the run moves running -> awaiting_gate\n"
-         "curl -s $H \"$API/runs/?work_item=$WI\"            # watch status; also Temporal UI :8080\n"
-         "curl -s $H \"$API/approvals/?decision=pending&work_item=$WI\"   # get the approval id\n"
-         "curl -s $H -X POST $API/approvals/<approval-id>/decide/ \\\n"
-         "     -d '{\"user_id\":\"'$USER'\",\"decision\":\"approved\"}'   # or the Gate Approvals tab")
-    table([
-        ["#", "Phase — <tt>agent_key</tt>", "Gate role", "What you should see (the live proof)"],
-        ["1", "Ideation — <tt>01_ideation</tt>", "product_owner", "Run completes; an "
-         "<tt>ideation</tt> artifact flips draft -> published (Artifacts tab / MinIO body)."],
-        ["2", "Requirements — <tt>02_requirements</tt>", "product_owner", "A "
-         "<tt>requirements</tt> artifact published; Traceability shows it derives from ideation."],
-        ["3", "PRD — <tt>03_prd</tt>", "product_owner", "<b>A Confluence page is created</b> on "
-         "approval; the artifact's <tt>external_ref.url</tt> and the Traceability node deep-link "
-         "to it."],
-        ["4", "Architecture — <tt>04_architecture</tt>", "architect", "An <tt>architecture</tt> "
-         "(+ ADR/data-model/api-spec) artifact set published."],
-        ["5", "UX Design — <tt>05_ux_design</tt>", "designer", "<b>Reads your live Figma</b> "
-         "(tokens/components); the <b>WCAG gate</b> blocks approval until every required criterion "
-         "is satisfied (send them in the decide call's <tt>conditions</tt>, or tick them in the "
-         "UI)."],
-        ["6", "Task Breakdown — <tt>06_task_breakdown</tt>", "tech_lead", "<b>Epics/stories appear "
-         "in Jira</b> on approval; child WorkItems are created and Traceability links story -> "
-         "requirement."],
-        ["7", "Implementation — <tt>07_implementation</tt>", "tech_lead", "Runs on the "
-         "<b>companion</b> (next code block) -> a <b>draft PR opens on GitHub</b>; the "
-         "BuildWorkflow is visible in the Temporal UI."],
-        ["8", "Code Review — <tt>08_code_review</tt>", "reviewer", "Review findings become child "
-         "WorkItems; the 07 &lt;-&gt; 08 remediation loop re-runs until clean."],
-        ["9", "Testing — <tt>09_testing</tt> (+ <tt>09b_test_automation</tt>)", "qa_lead",
-         "<b>Tests author to Xray + results import</b>; a failing test opens a linked, traced "
-         "defect WorkItem that closes on a clean re-run."],
-        ["10", "Security — <tt>10_security</tt>", "security_engineer", "A security review + "
-         "<b>SBOM</b>; any Critical/High finding opens a defect and blocks the gate until "
-         "resolved."],
-        ["11", "Merge", "reviewer", "Approve the <b>reviewer merge gate</b> -> the GitHub PR "
-         "<b>merges</b>; the WorkItem moves to <tt>done</tt>."],
-        ["12", "CI/CD + Deploy — <tt>11_cicd</tt>, <tt>12_deployment</tt>", "devops", "Pipeline "
-         "config + a release/deployment artifact are produced (real cloud deploy is Phase 5)."],
-    ], [0.7 * cm, 4.7 * cm, 3.0 * cm, 8.0 * cm])
-    p("<b>The build step (phase 7), on your machine.</b> After triggering "
-      "<tt>07_implementation</tt>, run the companion against your real clone — it works in a "
-      "platform-managed worktree branch, builds/tests locally, and opens the PR:")
-    code("# enroll this machine once (prints a one-time token)\n"
+         "curl -s -X POST $API/tenants/ -H Content-Type:application/json -d '{\"name\":\"My Co\"}'\n"
+         "export TENANT=<id-from-response>\n"
+         "export H=\"-H X-Tenant-ID:$TENANT -H Content-Type:application/json\"")
+    p("<b>Step 3 (API/shell) — create your user and grant the gate roles.</b> There is no user-"
+      "admin UI yet, so create the user + memberships once via a marked shell call, and capture "
+      "the user id (used to answer clarifications and decide gates):")
+    code("docker compose exec backend python manage.py shell -c \"\\\n"
+         "from apps.tenancy.models import User, Membership; from apps.projects.models import Project;\\\n"
+         "u,_=User.objects.get_or_create(email='me@myco.test', tenant_id='$TENANT',"
+         " defaults={'name':'Me'});\\\n"
+         "u.set_password('pw'); u.save(); print('USER', u.id)\"\n"
+         "export USER=<id-printed-above>\n"
+         "# (after you create a project in each scenario, grant every gate role on it:)\n"
+         "# docker compose exec backend python manage.py shell -c \"...Membership.get_or_create(\n"
+         "#   tenant_id='$TENANT', user_id='$USER', project_id='$PROJECT', role=r) for r in [...]\"")
+    p("<b>Step 4 (CLI) — log in Claude Code and run your companion.</b> This is what makes phases "
+      "run on your machine. Do it once per scenario's project (or pass several repos):")
+    code("claude            # sign in to your subscription   (or: claude setup-token for headless)\n"
          "python -m runner.companion enroll --api-url http://localhost:8000 \\\n"
-         "    --tenant $TENANT --project $PROJECT --label my-laptop --repos owner/name\n\n"
-         "# fetch the assigned build task for the run, then execute it in a managed worktree\n"
-         "curl -s $H \"$API/runner/builds/<run_id>/\" > task.json\n"
-         "python -m runner.companion run --task task.json \\\n"
-         "    --repo-path ~/repos/your-clone --worktrees ~/sdlc")
-    callout("Greenfield journey — done",
-            "You have taken a brand-new project idea -> requirements -> <b>PRD in Confluence</b> "
-            "-> architecture -> <b>UX from live Figma + WCAG gate</b> -> <b>backlog in Jira</b> -> "
-            "<b>a built, reviewed GitHub PR</b> -> <b>tests in Xray with a linked defect</b> -> a "
-            "security review -> <b>merge</b> -> CI/CD + deploy artifacts. Every transition was "
-            "human-gated and recorded in the Event ledger and Run timeline.", ok=True)
+         "    --tenant $TENANT --project $PROJECT --label my-laptop --developer-id $USER\n"
+         "#   -> prints a one-time enrollment token; then leave the daemon running:\n"
+         "python -m runner.companion serve --api-url http://localhost:8000 \\\n"
+         "    --tenant $TENANT --token <enrollment-token>      # add --repo-path/--worktrees for builds")
+    callout("How a gate or a question is handled (the same in every scenario)",
+            "When a run reaches a human gate it appears on the <b>Gate Approvals</b> tab — approve "
+            "as <tt>$USER</tt> (who must hold that gate's role). If an agent needs information it "
+            "posts a question on the <b>Clarifications</b> tab and the run shows <b>“needs "
+            "answer”</b> in the Phase Console; answer it and the run continues at no extra cost. "
+            "API equivalents: <tt>POST /approvals/{id}/decide/</tt> and "
+            "<tt>POST /clarifications/{id}/answer/</tt>.")
 
-    h2("5.3 Journey B — Brownfield (existing project, resume mid-pipeline)")
-    p("Onboard a real existing project, let the platform tell you where to resume, then carry on. "
-      "The Phase-4 onboarding / API-contract / drift services have no dedicated UI yet, so this "
-      "journey mixes the REST routes that exist with a few marked <tt>manage.py shell</tt> calls; "
-      "the human gates are still approved in the browser. (The single self-contained proof of the "
-      "whole flow is <tt>pytest tests/test_acceptance_phase4.py -v</tt>.)")
-    code("# 1) create a brownfield project, then register its repositories (one or many)\n"
-         "curl -s $H -X POST $API/projects/ -d '{\"name\":\"Legacy Shop\",\"track\":\"brownfield\"}'\n"
-         "export PROJECT=<id-from-response>\n"
+    h2("5.2 Scenario 1 — Greenfield, NO external integrations")
+    p("Prove the full <b>planning/doc lifecycle</b> with everything kept internal — no Confluence/"
+      "Jira/Figma/Xray. Artifacts publish to the platform's internal store (bodies in MinIO).")
+    bullets([
+        "<b>(API) Create the project:</b> <tt>curl -s $H -X POST $API/projects/ -d "
+        "'{\"name\":\"Acme Shop\",\"track\":\"greenfield\"}'</tt> -> <tt>export PROJECT=&lt;id&gt;</tt>. "
+        "Then grant roles (5.1 Step 3) and enroll+serve the companion (5.1 Step 4).",
+        "<b>(UI) Project Profile tab:</b> fill description, tech stack, important context; Save.",
+        "<b>(UI) Phase Console tab:</b> add a WorkItem (feature stream), then trigger phases in "
+        "order: <b>Ideation -> Requirements -> PRD -> Architecture</b> (and 05/06 if you wish). "
+        "Each runs on your companion.",
+        "<b>(UI) Clarifications tab:</b> if a phase shows “needs answer”, answer it -> the run "
+        "resumes in the same session.",
+        "<b>(UI) Gate Approvals tab:</b> approve each phase's gate as <tt>$USER</tt> -> the run "
+        "completes and its artifact flips <tt>draft -> published</tt>.",
+        "<b>(UI) Artifacts + Traceability tabs:</b> see each artifact (body in the MinIO console "
+        ":9001) and the lineage graph (<tt>derives</tt> edges) — all <tt>sor=internal</tt>.",
+    ])
+    callout("Scenario 1 proof",
+            "A greenfield project went idea -> requirements -> PRD -> architecture entirely on "
+            "your local Claude Code, each phase human-gated, every artifact published internally "
+            "with full lineage — and <b>zero external accounts</b>. (The build/merge + live-SoR "
+            "phases are Scenario 2.)", ok=True)
+
+    h2("5.3 Scenario 2 — Greenfield, WITH external integrations")
+    p("Same lifecycle as Scenario 1, but real systems of record: PRD -> Confluence, backlog -> "
+      "Jira, UX from live Figma, build -> a GitHub PR, tests -> Xray. Set the credentials in "
+      "<tt>.env</tt> (Section 4.2) and <b>attach the connectors to YOUR tenant</b> (the seed does "
+      "this only for the demo tenant), then restart <tt>make dev</tt>:")
+    code("# attach connectors to your from-scratch tenant (creds resolve from .env):\n"
+         "docker compose exec backend python manage.py shell -c \"\\\n"
+         "from django.conf import settings as s; from apps.integrations.models import "
+         "IntegrationConnection as C;\\\n"
+         "rows=[('docstore','confluence',{'space_key':s.CONFLUENCE_SPACE_KEY}),\\\n"
+         "      ('tasktracker','jira',{'project_key':s.JIRA_PROJECT_KEY}),\\\n"
+         "      ('codehost','github',{'repo':s.GITHUB_REPO,'default_base':s.GITHUB_DEFAULT_BASE}),\\\n"
+         "      ('designsource','figma',{'file_key':s.FIGMA_FILE_KEY}),\\\n"
+         "      ('testmgmt','xray',{'project_key':s.XRAY_PROJECT_KEY}),('codeintel','builtin',{})];\\\n"
+         "[C.objects.update_or_create(tenant_id='$TENANT',capability=c,connector=n,"
+         "defaults={'scopes':sc}) for c,n,sc in rows]\"")
+    p("Now run the lifecycle exactly as Scenario 1 (UI Phase Console + Clarifications + Gate "
+      "Approvals). The same two moves per phase — <b>trigger</b>, then <b>approve</b> — now also "
+      "write to the live tools. Per-phase agent keys, gate roles, and the live proof:")
+    table([
+        ["Phase — <tt>agent_key</tt>", "Gate role", "Live proof on approval"],
+        ["PRD — <tt>03_prd</tt>", "product_owner", "A <b>Confluence page</b> is created; the "
+         "artifact's <tt>external_ref.url</tt> + the Traceability node deep-link to it."],
+        ["UX Design — <tt>05_ux_design</tt>", "designer", "Reads your <b>live Figma</b> tokens/"
+         "components; the <b>WCAG gate</b> blocks approval until every required criterion is ticked."],
+        ["Task Breakdown — <tt>06_task_breakdown</tt>", "tech_lead", "<b>Epics/stories appear in "
+         "Jira</b>; child WorkItems + story-&gt;requirement trace links are created."],
+        ["Implementation — <tt>07_implementation</tt>", "tech_lead", "Runs on your companion "
+         "worktree -> a <b>draft PR opens on GitHub</b> (start the companion with "
+         "<tt>--repo-path/--worktrees</tt>)."],
+        ["Code Review — <tt>08_code_review</tt>", "reviewer", "Runs on your companion; findings "
+         "become child WorkItems; the 07&lt;-&gt;08 loop re-runs until clean."],
+        ["Testing — <tt>09_testing</tt>", "qa_lead", "<b>Tests author to Xray</b> + results "
+         "import; a failing test opens a linked, traced defect that closes on a clean re-run."],
+        ["Merge", "reviewer", "Approve the merge gate -> the <b>GitHub PR merges</b>; the "
+         "WorkItem moves to <tt>done</tt>."],
+    ], [5.6 * cm, 2.8 * cm, 8.0 * cm])
+    callout("Scenario 2 proof",
+            "The same greenfield run now produced a <b>Confluence PRD</b>, a <b>Jira backlog</b>, "
+            "<b>UX from live Figma</b> behind a WCAG gate, a <b>merged GitHub PR</b>, and <b>Xray "
+            "tests with a linked defect</b> — each gated, each on your local Claude Code.", ok=True)
+
+    h2("5.4 Scenario 3 — Brownfield, uploaded resources only (no external tools)")
+    p("Onboard an existing project using only what you <b>upload</b> — no Confluence/Jira. The "
+      "platform assesses what exists and tells you which phase to resume. Brownfield onboarding "
+      "services have no dedicated UI yet, so the onboarding steps are API/shell; gates are "
+      "approved in the UI. <b>Test onboarding at different stages</b> by varying what you provide:")
+    bullets([
+        "<b>(API) Create the brownfield project</b> + grant roles + enroll/serve the companion "
+        "(5.1): <tt>curl -s $H -X POST $API/projects/ -d '{\"name\":\"Legacy Shop\","
+        "\"track\":\"brownfield\"}'</tt>.",
+        "<b>(API) Upload static resources:</b> <tt>curl -s -H \"X-Tenant-ID:$TENANT\" -F "
+        "file=@./old-spec.docx $API/projects/$PROJECT/source-documents/</tt> (repeat for .xlsx/"
+        ".pdf). Each is extracted into reviewable draft artifacts.",
+        "<b>(UI) Adopt them behind a gate:</b> approve adoption — or "
+        "<tt>POST /source-documents/{id}/adopt/ {\"user_id\":\"$USER\"}</tt>.",
+        "<b>(shell) Optional code intelligence</b> on a local clone (built-in analyzer; the "
+        "platform stores the analysis + index, never your source): run "
+        "<tt>BuiltinCodeIntel().index(workspace=...)</tt> + <tt>tools.register_artifact(...)</tt> "
+        "(see the snippet in 5.5).",
+        "<b>(shell) Gap report -> resume phase:</b> <tt>build_gap_report(tenant_id=$TENANT,"
+        "project_id=$PROJECT)</tt> returns <tt>resume_phase</tt> + the blocking gaps.",
+        "<b>(UI) Resume mid-pipeline:</b> trigger the phase it named (e.g. <tt>04_architecture</tt>) "
+        "on a WorkItem and approve its gate — onboarding hands straight into the normal pipeline.",
+    ])
+    callout("Onboarding at different stages — vary the inputs",
+            "<b>Empty</b> (upload nothing) -> the gap report resumes at <tt>ideation</tt>. "
+            "<b>Partial</b> (upload a requirements doc only) -> it resumes at <tt>prd</tt>/"
+            "<tt>architecture</tt>. <b>Mature</b> (docs + code intelligence) -> it assesses "
+            "implementation/testing as present and resumes later. Run the gap report after each "
+            "upload to watch the resume point move.")
+
+    h2("5.5 Scenario 4 — Brownfield, WITH external tools")
+    p("As Scenario 3, plus live tools: register the project's <b>existing</b> Confluence/Jira "
+      "(register-don't-recreate — no duplicates), and exercise the multi-repo API-contract + "
+      "live drift gate. Attach connectors to your tenant (5.3 snippet) first.")
+    code("# 1) (shell) register repos (multi-repo) + (API) register existing Confluence/Jira\n"
          "docker compose exec backend python manage.py shell -c \"\\\n"
          "from apps.projects.repos import add_repository as A;\\\n"
-         "print(A(tenant_id='$TENANT',project_id='$PROJECT',name='owner/web',role='frontend'));\\\n"
-         "print(A(tenant_id='$TENANT',project_id='$PROJECT',name='owner/api',role='backend'))\"\n"
-         "#   -> repo_topology reconciles to split/multi")
-    code("# 2) code intelligence (00c): run the built-in analyzer on your clone, register it,\n"
-         "#    and index it into the Knowledge Index (platform stores intel + chunks, not source)\n"
-         "docker compose exec backend python manage.py shell -c \"\\\n"
-         "from integrations.codeintel.builtin import BuiltinCodeIntel;\\\n"
-         "from mcp_platform_state import tools; from apps.knowledge.index import index_artifact;\\\n"
-         "idx=BuiltinCodeIntel().index(workspace='/path/to/your/clone', repo='owner/api');\\\n"
-         "print(idx.file_count, idx.commits, idx.hotspots);\\\n"
-         "a=tools.register_artifact('$TENANT','$PROJECT',None,'context_extraction',"
-         "'codebase_intelligence','internal','h');\\\n"
-         "index_artifact(tenant_id='$TENANT',project_id='$PROJECT',artifact_id=a['id'],"
-         "text='backend exposes GET /users')\"")
-    code("# 3) register what already exists (register-don't-recreate) + adopt static docs\n"
-         "curl -s $H -X POST $API/projects/$PROJECT/onboard-atlassian/   # existing Confluence/Jira\n"
-         "curl -s -H \"X-Tenant-ID:$TENANT\" -F file=@./old-spec.docx \\\n"
-         "     $API/projects/$PROJECT/source-documents/                  # extract -> draft\n"
-         "curl -s $H -X POST $API/source-documents/<id>/adopt/ -d '{\"user_id\":\"'$USER'\"}'  # gate")
-    code("# 4) gap report -> the resume phase; 5) cross-repo API-contract read-through\n"
+         "A(tenant_id='$TENANT',project_id='$PROJECT',name='owner/web',role='frontend');\\\n"
+         "A(tenant_id='$TENANT',project_id='$PROJECT',name='owner/api',role='backend')\"\n"
+         "curl -s $H -X POST $API/projects/$PROJECT/onboard-atlassian/   # existing items, deduped\n\n"
+         "# 2) (shell) code intel on a clone -> gap report -> versioned API contract (read-through)\n"
          "docker compose exec backend python manage.py shell -c \"\\\n"
          "from integrations.onboarding import build_gap_report;\\\n"
-         "from integrations.api_contract import export_api_contract, read_api_contract, "
-         "record_implements;\\\n"
-         "r=build_gap_report(tenant_id='$TENANT',project_id='$PROJECT');\\\n"
-         "print('RESUME PHASE ->', r['resume_phase'], '| gaps:', r['blockers']);\\\n"
+         "from integrations.api_contract import export_api_contract, read_api_contract;\\\n"
+         "print('RESUME ->', build_gap_report(tenant_id='$TENANT',project_id='$PROJECT')"
+         "['resume_phase']);\\\n"
          "c=export_api_contract(tenant_id='$TENANT',project_id='$PROJECT',body='GET /users',"
-         "source_commit='abc123');\\\n"
-         "print('contract', c['semver']);\\\n"
-         "print('read-through', read_api_contract(tenant_id='$TENANT',project_id='$PROJECT')"
-         "['external_ref']['semver'])\"")
-    p("<b>6) Resume mid-pipeline.</b> Trigger the phase the gap report named (e.g. if it says "
-      "<tt>architecture</tt>, trigger <tt>04_architecture</tt> on a work item) and approve its "
-      "gate in the browser — onboarding has handed straight to the same pipeline Journey A used.")
-    code("curl -s $H -X POST $API/work-items/$WI/trigger/ -d '{\"agent_key\":\"04_architecture\"}'\n"
-         "#   then approve the architect gate (Gate Approvals tab / the decide call from 5.2)")
-    code("# 7) contract change -> a drift gate with cross-repo change-impact -> architect decides\n"
+         "source_commit='abc123'); print('contract', c['semver'])\"")
+    code("# 3) (shell) breaking contract change -> drift gate with cross-repo impact -> architect decides\n"
          "docker compose exec backend python manage.py shell -c \"\\\n"
          "from integrations.api_contract import export_api_contract;\\\n"
-         "from integrations.drift import detect_contract_drift, open_drift_records, decide_drift;\\\n"
+         "from integrations.drift import detect_contract_drift, decide_drift;\\\n"
          "b=export_api_contract(tenant_id='$TENANT',project_id='$PROJECT',"
-         "body='GET /users (v2 breaking)',change='major');\\\n"
+         "body='GET /users (v2)',change='major');\\\n"
          "d=detect_contract_drift(tenant_id='$TENANT',contract_artifact_id=b['artifact_id'],"
          "new_semver='2.0.0');\\\n"
-         "print('impacted repos/artifacts ->', d['impacted']);\\\n"
+         "print('impacted ->', d['impacted']);\\\n"
          "print(decide_drift(tenant_id='$TENANT',drift_id=d['drift_id'],user_id='$USER',"
          "decision='accept'))\"\n"
-         "#   (or trigger it live: push to the provider repo so the signed GitHub webhook fires)")
-    callout("Brownfield journey — done",
-            "You onboarded an existing multi-repo project, indexed its code, registered its "
-            "existing Confluence/Jira + static docs without duplicates, got a <b>gap report with "
-            "a resume phase</b>, exported a <b>versioned API contract read across repos</b>, "
-            "<b>resumed mid-pipeline</b> into the normal gated flow, and watched a <b>contract "
-            "change open a drift gate</b> whose impact spanned both repos. Re-running any "
-            "register step adds nothing (register-don't-recreate).", ok=True)
+         "#   live alternative: push to the provider repo so the signed GitHub webhook opens the drift gate")
+    p("<b>(UI) Resume mid-pipeline</b> at the gap-report phase and continue exactly as Scenario 2 "
+      "(phases run on your companion; PRD/backlog/PR/tests hit the live tools).")
+    callout("Scenario 4 proof",
+            "An existing multi-repo project was onboarded with its real Confluence/Jira "
+            "registered (no duplicates) and its code indexed, produced a <b>gap report + resume "
+            "phase</b>, exported a <b>versioned API contract read across repos</b>, and a "
+            "<b>breaking change opened a drift gate</b> whose impact spanned both repos.", ok=True)
 
-    h2("5.4 If something stalls")
+    h2("5.6 Scenario 5 — Interactive clarifications &amp; offline takeover (cross-cutting)")
+    p("These prove the two Phase-4.5 guarantees directly and apply on top of any scenario above.")
+    bullets([
+        "<b>Zero-cost clarification (UI):</b> trigger any phase; if the agent asks, the Phase "
+        "Console shows <b>“needs answer”</b> and the run sits idle (your <tt>claude</tt> is not "
+        "generating, so nothing is billed). Answer on the <b>Clarifications</b> tab -> the run "
+        "resumes in the same session.",
+        "<b>Durability (no re-ask):</b> stop the companion (<tt>Ctrl-C</tt>) while a clarification "
+        "is answered but the phase hasn't reported, then re-trigger the phase — the agent reuses "
+        "your earlier answer (folded into its manifest) instead of asking again.",
+        "<b>Offline takeover:</b> stop the companion, trigger a phase, and leave it; after the "
+        "report timeout the run parks the WorkItem for <b>human takeover</b> (Run status "
+        "<tt>failed</tt> + a takeover flag) rather than hanging — restart the companion to resume "
+        "normal operation.",
+        "<b>Local engine, not the API (verify):</b> the companion log shows it dropped "
+        "<tt>ANTHROPIC_API_KEY</tt> and used <tt>claude</tt> on PATH; usage shows on your Claude "
+        "subscription, not an API bill.",
+    ])
+
+    h2("5.7 If something stalls")
     p("Almost always it is the environment, not the platform. Quick checks:")
     bullets([
         "<b>Infra down:</b> a “Socket is not connected” on :5433 means Docker Desktop stopped — "
         "start it and <tt>docker compose up -d</tt> again.",
         "<b>Migrations:</b> if <tt>make migrate</tt> errors on an ALTER, run it with the "
         "<tt>postgres</tt> superuser DSN (Section 4.4).",
-        "<b>No agent output / 500 on trigger:</b> <tt>ANTHROPIC_API_KEY</tt> is missing or the "
-        "model id is wrong (Section 4.2).",
-        "<b>Live SoR step does nothing:</b> the connector creds aren't set, or you didn't "
-        "<tt>make seed</tt> after adding them — reseed and restart <tt>make dev</tt>.",
-        "<b>Gate won't approve (403):</b> the <tt>user_id</tt> doesn't hold that gate's role on "
-        "the project — re-run the role-grant snippet in 5.1.",
-        "<b>Full automated proof anytime:</b> <tt>cd backend &amp;&amp; pytest -q</tt> "
-        "(<b>423 passed, 3 skipped</b>; the 3 skips are external-SaaS live round-trips).",
+        "<b>Phase never runs / stays pending:</b> your <b>companion isn't running</b> or isn't "
+        "enrolled for <tt>$USER</tt> — check <tt>serve</tt> is up and you triggered with your "
+        "<tt>user_id</tt>; confirm <tt>claude</tt> is logged in on that machine.",
+        "<b>Live SoR step does nothing:</b> the connector row isn't attached to <i>your</i> tenant "
+        "(run the 5.3 snippet) or the creds aren't in <tt>.env</tt>; restart <tt>make dev</tt>.",
+        "<b>Gate won't approve (403):</b> <tt>$USER</tt> doesn't hold that gate's role on the "
+        "project — re-run the role-grant in 5.1 Step 3.",
+        "<b>Full automated proof anytime:</b> <tt>cd backend &amp;&amp; pytest -q</tt> — including "
+        "<tt>tests/test_acceptance_phase45.py</tt> (the local-execution + clarification loop) and "
+        "<tt>tests/test_acceptance_phase4.py</tt> (brownfield/multi-repo).",
     ])
 
 

@@ -24,7 +24,8 @@ from .runner import BuildTask, run_build
 def _enroll(args) -> int:
     url = args.api_url.rstrip("/") + "/api/runners/"
     body = json.dumps({"project_id": args.project, "label": args.label,
-                       "repos": args.repos or []}).encode()
+                       "repos": args.repos or [],
+                       "developer_id": args.developer_id}).encode()
     req = urllib.request.Request(
         url, data=body, method="POST",
         headers={"Content-Type": "application/json", "X-Tenant-ID": args.tenant},
@@ -71,6 +72,8 @@ def main(argv=None) -> int:
     e.add_argument("--project", required=True)
     e.add_argument("--label", default="")
     e.add_argument("--repos", nargs="*", default=[])
+    e.add_argument("--developer-id", default=None,
+                   help="route this enrollment's phases to a specific platform user")
     e.set_defaults(func=_enroll)
 
     s = sub.add_parser("serve")

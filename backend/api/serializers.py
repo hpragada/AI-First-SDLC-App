@@ -65,6 +65,10 @@ class TriggerSerializer(serializers.Serializer):
     agent_key = serializers.CharField()
     gate_type = serializers.CharField(required=False, default="phase_gate")
     required_role = serializers.CharField(required=False, allow_null=True, default=None)
+    # The triggering user (pre-auth). Routes the run to their enrolled local companion
+    # (req #1 — execution_mode resolves to "companion" when they have one); omit for the
+    # server-side fallback.
+    user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
 
 
 # ── Run ─────────────────────────────────────────────────────────────
