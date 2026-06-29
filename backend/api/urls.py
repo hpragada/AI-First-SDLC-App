@@ -9,8 +9,11 @@ from .runner_views import (
     RunnerClarificationCreateView,
     RunnerClarificationPollView,
     RunnerEnrollmentView,
+    RunnerPhaseFetchView,
+    RunnerPhaseReportView,
     RunnerRevokeView,
     RunnerStateView,
+    RunnerWorkClaimView,
 )
 from .views import (
     ApprovalViewSet,
@@ -51,6 +54,12 @@ urlpatterns = [
          name="runner-clarification-create"),
     path("runner/clarifications/<uuid:clarification_id>/", RunnerClarificationPollView.as_view(),
          name="runner-clarification-poll"),
+    # Companion phase execution (req #1): claim work, fetch the phase task, report the result.
+    path("runner/work/", RunnerWorkClaimView.as_view(), name="runner-work-claim"),
+    path("runner/phases/<uuid:run_id>/", RunnerPhaseFetchView.as_view(),
+         name="runner-phase-fetch"),
+    path("runner/phases/<uuid:run_id>/report/", RunnerPhaseReportView.as_view(),
+         name="runner-phase-report"),
     # Signed Git-webhook ingestion (Phase 2 §7) — tenant in the path, signature-authenticated.
     path("webhooks/github/<uuid:tenant_id>/", GithubWebhookView.as_view(), name="github-webhook"),
     path("", include(router.urls)),

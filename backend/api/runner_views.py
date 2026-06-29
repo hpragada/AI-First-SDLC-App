@@ -204,6 +204,89 @@ class RunnerClarificationPollView(APIView):
         return Response(result)
 
 
+class RunnerWorkClaimView(APIView):
+    """GET /api/runner/work/ — the companion daemon claims the next phase/build task dispatched
+    to its enrollment. Atomically flips the run's dispatch to `claimed` (skip-locked so two
+    daemons never grab the same run), returns `{kind, run_id, payload}`, or 204 when idle."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def get(self, request):
+        from django.db import transaction
+
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        tid = str(runner.tenant_id)
+        with tenant_context(tid), transaction.atomic():
+            run = (
+                Run.objects.select_for_update(skip_locked=True)
+                .filter(tenant_id=tid, inputs__dispatch__status="pending",
+                        inputs__dispatch__enrollment_id=str(runner.id))
+                .order_by("created_at").first()
+            )
+            if run is None:
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            inputs = dict(run.inputs or {})
+            dispatch = dict(inputs.get("dispatch") or {})
+            dispatch["status"] = "claimed"
+            inputs["dispatch"] = dispatch
+            run.inputs = inputs
+            run.save(update_fields=["inputs", "updated_at"])
+            payload = inputs.get("phase_task") or inputs.get("build_task") or {}
+            return Response({"kind": dispatch.get("kind", "plan"),
+                             "run_id": str(run.id), "payload": payload})
+
+
+class RunnerPhaseFetchView(APIView):
+    """GET /api/runner/phases/<run_id>/ — the companion fetches its dispatched phase task
+    (manifest + agent body), mirroring the build fetch."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def get(self, request, run_id):
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        with tenant_context(str(runner.tenant_id)):
+            run = Run.objects.filter(id=run_id, tenant_id=runner.tenant_id).first()
+        if run is None:
+            return Response({"detail": "run not found"}, status=status.HTTP_404_NOT_FOUND)
+        payload = (run.inputs or {}).get("phase_task")
+        if not payload:
+            return Response({"detail": "no phase task dispatched"},
+                            status=status.HTTP_409_CONFLICT)
+        return Response(payload)
+
+
+class RunnerPhaseReportView(APIView):
+    """POST /api/runner/phases/<run_id>/report/ — the companion reports its phase result;
+    resumes the AgentRunWorkflow via the phase_reported signal."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request, run_id):
+        from orchestration.phase_report import PhaseReportError, report_phase
+
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        args = request.data if isinstance(request.data, dict) else {}
+        try:
+            out = report_phase(tenant_id=str(runner.tenant_id), run_id=str(run_id), report=args)
+        except Run.DoesNotExist:
+            return Response({"detail": "run not found"}, status=status.HTTP_404_NOT_FOUND)
+        except PhaseReportError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(out)
+
+
 class RunnerBuildReportView(APIView):
     """POST /api/runner/builds/<run_id>/report/ — the companion reports its build result;
     resumes the BuildWorkflow via the build_reported signal."""

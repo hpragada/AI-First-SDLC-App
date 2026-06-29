@@ -60,6 +60,25 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _load_agent_body(agent_spec_id: str, tenant_id: str) -> tuple[str, str]:
+    """Read the migrated agent's body (+ model) to ship to the companion. Tolerant — an
+    absent body is empty, not fatal. (Mirror of the build path's loader; kept local to avoid
+    importing build_activities, which imports this module.)"""
+    with tenant_context(tenant_id):
+        spec = AgentSpec.objects.filter(id=agent_spec_id, tenant_id=tenant_id).first()
+        body_ref = spec.body_ref if spec else ""
+        model = spec.recommended_model if spec else ""
+    if not body_ref:
+        return "", model
+    path = Path(body_ref)
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parents[2] / body_ref
+    try:
+        return path.read_text(encoding="utf-8"), model
+    except OSError:
+        return "", model
+
+
 def _mcp_servers(tenant_id: str) -> dict:
     """Config the engine uses to launch the platform-state MCP server, with the tenant
     bound from the control plane (the agent never passes a tenant)."""
@@ -286,6 +305,101 @@ def verify_write_completeness_core(inp: AgentRunInput, expected_types: list[str]
     return {"present": sorted(present), "expected": list(expected_types)}
 
 
+# ── companion execution of planning/review (req #1) ─────────────────
+# These mirror the build saga's dispatch→report seam for planning: the platform composes
+# the manifest, dispatches a self-contained task the companion fetches and runs LOCALLY (the
+# client's own logged-in Claude Code, no API key), then registers the reported result. State
+# (S3 body + registry pointer) stays server-side. Used only when execution_mode == "companion".
+def dispatch_phase_core(inp: AgentRunInput, manifest: str) -> dict:
+    """Stash the self-contained phase task (manifest + agent body) for the companion to claim
+    + run, and mark the run dispatched. Idempotent by run_id."""
+    from django.conf import settings
+
+    agent_body, model = _load_agent_body(inp.agent_spec_id, inp.tenant_id)
+    payload = {
+        "run_id": inp.run_id, "tenant_id": inp.tenant_id, "project_id": inp.project_id,
+        "work_item_id": inp.work_item_id, "phase": inp.phase, "kind": "plan",
+        "manifest": manifest, "agent_body": agent_body, "model": model,
+        "api_url": getattr(settings, "PLATFORM_API_URL", ""),
+    }
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.inputs = {
+            **(run.inputs or {}),
+            "phase_task": payload,
+            "dispatch": {"kind": "plan", "enrollment_id": inp.enrollment_id,
+                         "status": "pending"},
+        }
+        if run.status not in (Run.Status.RUNNING, Run.Status.AWAITING_GATE,
+                              Run.Status.COMPLETED):
+            run.status = Run.Status.RUNNING
+            run.started_at = run.started_at or _now()
+        run.save(update_fields=["inputs", "status", "started_at", "updated_at"])
+        tools.log_event(inp.tenant_id, "orchestrator", "phase.dispatched", "run", inp.run_id,
+                        {"phase": inp.phase, "enrollment_id": inp.enrollment_id})
+    return {"dispatched": True}
+
+
+def register_phase_result_core(inp: AgentRunInput, report) -> dict:
+    """Register the companion's reported phase result: write the body to S3, register the
+    draft artifact (pointer), record cost, clear the dispatch claim. Idempotent — an existing
+    artifact for this run/phase is reused (safe Temporal retries)."""
+    with tenant_context(inp.tenant_id):
+        existing = Artifact.objects.filter(
+            run_id=inp.run_id, tenant_id=inp.tenant_id, type=inp.phase).first()
+    if existing is not None:
+        return {"artifact_ids": [str(existing.id)], "idempotent": True}
+
+    body = getattr(report, "body", "") or ""
+    cost = float(getattr(report, "cost_usd", 0.0) or 0.0)
+    s3_key = f"drafts/{inp.tenant_id}/{inp.project_id}/{inp.run_id}/{inp.phase}.md"
+    get_object_store().put(s3_key, body)
+    digest = content_hash(body.encode("utf-8"))
+    artifact = tools.register_artifact(
+        inp.tenant_id, inp.project_id, inp.run_id, inp.phase, inp.phase,
+        "internal", digest, s3_key=s3_key,
+    )
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.cost_usd = Decimal(str(cost))
+        run.outputs = {"artifact_s3_key": s3_key, "content_hash": digest, "cost_usd": cost}
+        dispatch = dict((run.inputs or {}).get("dispatch") or {})
+        if dispatch:
+            dispatch["status"] = "reported"
+            run.inputs = {**(run.inputs or {}), "dispatch": dispatch}
+        run.save(update_fields=["cost_usd", "outputs", "inputs", "updated_at"])
+        tools.log_event(inp.tenant_id, "orchestrator", "run.executed", "run", inp.run_id,
+                        {"artifact_id": artifact["id"]})
+    return {"artifact_ids": [artifact["id"]], "cost_usd": cost}
+
+
+def mark_phase_takeover_core(inp: AgentRunInput) -> dict:
+    """Offline-companion path: the companion never reported → park the WorkItem for human
+    takeover and flag the run failed (never silently hang). Mirrors the build takeover."""
+    with tenant_context(inp.tenant_id):
+        WorkItem.objects.filter(id=inp.work_item_id, tenant_id=inp.tenant_id).update(
+            takeover_flag=True)
+        Run.objects.filter(id=inp.run_id, tenant_id=inp.tenant_id).update(
+            status=Run.Status.FAILED)
+        tools.log_event(inp.tenant_id, "orchestrator", "phase.takeover", "run", inp.run_id,
+                        {"reason": "companion offline / no report before timeout"})
+    return {"status": "takeover"}
+
+
+def fail_run_core(inp: AgentRunInput, reason: str) -> dict:
+    """A companion reported a failed phase → flag the run failed (the body, if any, is on the
+    report). Mirrors the execute_agent failure path."""
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.status = Run.Status.FAILED
+        run.ended_at = _now()
+        run.outputs = {**(run.outputs or {}), "error": reason}
+        run.save(update_fields=["status", "outputs", "ended_at", "updated_at"])
+        tools.log_event(inp.tenant_id, "orchestrator", "run.failed", "run", inp.run_id,
+                        {"error": reason})
+    return {"status": "failed"}
+
+
 # ── activity wrappers (sync → run in the worker's thread pool) ──────
 # Activities run in worker threads with no request/response cycle, so close the
 # thread's Django connection at the boundary — otherwise long-running workers (and
@@ -334,6 +448,26 @@ def verify_writes_activity(inp: AgentRunInput, expected_types: list[str]) -> dic
     return _boundary(verify_write_completeness_core, inp, expected_types)
 
 
+@activity.defn(name="dispatch_phase")
+def dispatch_phase_activity(inp: AgentRunInput, manifest: str) -> dict:
+    return _boundary(dispatch_phase_core, inp, manifest)
+
+
+@activity.defn(name="register_phase_result")
+def register_phase_result_activity(inp: AgentRunInput, report) -> dict:
+    return _boundary(register_phase_result_core, inp, report)
+
+
+@activity.defn(name="mark_phase_takeover")
+def mark_phase_takeover_activity(inp: AgentRunInput) -> dict:
+    return _boundary(mark_phase_takeover_core, inp)
+
+
+@activity.defn(name="fail_run")
+def fail_run_activity(inp: AgentRunInput, reason: str) -> dict:
+    return _boundary(fail_run_core, inp, reason)
+
+
 ALL_ACTIVITIES = [
     compose_manifest_activity,
     execute_agent_activity,
@@ -342,4 +476,8 @@ ALL_ACTIVITIES = [
     transition_work_item_activity,
     reject_run_activity,
     verify_writes_activity,
+    dispatch_phase_activity,
+    register_phase_result_activity,
+    mark_phase_takeover_activity,
+    fail_run_activity,
 ]

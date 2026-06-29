@@ -48,6 +48,22 @@ def _default_workflow_starter(workflow_id: str, inp: AgentRunInput) -> None:
     asyncio.run(_start())
 
 
+def _resolve_enrollment(tenant_id, project_id, user_id):
+    """The triggering user's active companion for this project (req #1 — run on their own
+    local Claude Code). None ⇒ no companion enrolled ⇒ server fallback."""
+    from apps.runs.models import RunnerEnrollment
+
+    if not user_id:
+        return None
+    return (
+        RunnerEnrollment.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, developer_id=user_id,
+            status=RunnerEnrollment.Status.ACTIVE,
+        )
+        .order_by("-created_at").first()
+    )
+
+
 def trigger_phase(
     *,
     tenant_id: str,
@@ -56,9 +72,13 @@ def trigger_phase(
     agent_key: str,
     gate_type: str = "phase_gate",
     required_role: str | None = None,
+    triggered_by: str | None = None,
+    execution_mode: str | None = None,
     workflow_starter=None,
 ) -> TriggerResult:
-    """Start an agent run for a work item and kick off its Temporal workflow."""
+    """Start an agent run for a work item and kick off its Temporal workflow. The phase runs
+    on the triggering user's enrolled local companion when one exists (`execution_mode`
+    auto-resolves to "companion"), else server-side (the CI/test fallback)."""
     workflow_starter = workflow_starter or _default_workflow_starter
 
     with tenant_context(tenant_id):
@@ -73,10 +93,13 @@ def trigger_phase(
 
         phase = spec.phase_label or agent_key
         role = required_role or gate_role_for(agent_key)
+        enrollment = _resolve_enrollment(tenant_id, project_id, triggered_by)
+        mode = execution_mode or ("companion" if enrollment is not None else "server")
         run = Run.objects.create(
             tenant_id=tenant_id, work_item=work_item, agent_spec=spec,
             engine=spec.recommended_engine, model=spec.recommended_model,
             prompt_version=spec.prompt_version, status=Run.Status.PENDING,
+            triggered_by_id=triggered_by,
         )
         workflow_id = f"agent-run-{run.id}"
         run.temporal_workflow_id = workflow_id
@@ -85,11 +108,12 @@ def trigger_phase(
         inp = AgentRunInput(
             run_id=str(run.id), tenant_id=str(tenant_id), project_id=str(project_id),
             work_item_id=str(work_item_id), agent_spec_id=str(spec.id), phase=phase,
-            gate_type=gate_type, required_role=role,
+            gate_type=gate_type, required_role=role, execution_mode=mode,
+            enrollment_id=str(enrollment.id) if enrollment is not None else None,
         )
         tools.log_event(
             tenant_id, "platform", "run.triggered", "run", str(run.id),
-            {"agent_key": agent_key, "workflow_id": workflow_id},
+            {"agent_key": agent_key, "workflow_id": workflow_id, "execution_mode": mode},
         )
 
     workflow_starter(workflow_id, inp)

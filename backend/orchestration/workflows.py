@@ -9,7 +9,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
-    from .types import AgentRunInput, GateDecision
+    from .types import AgentRunInput, GateDecision, PhaseReport
 
 _RETRY = RetryPolicy(maximum_attempts=3)
 
@@ -18,14 +18,21 @@ _RETRY = RetryPolicy(maximum_attempts=3)
 class AgentRunWorkflow:
     def __init__(self) -> None:
         self._decision: GateDecision | None = None
+        self._report: PhaseReport | None = None
 
     @workflow.signal(name="gate_decision")
     def gate_decision(self, decision: GateDecision) -> None:
         self._decision = decision
 
+    @workflow.signal(name="phase_reported")
+    def phase_reported(self, report: PhaseReport) -> None:
+        self._report = report
+
     @workflow.query(name="status")
     def status(self) -> str:
-        return "decided" if self._decision is not None else "awaiting_gate"
+        if self._decision is not None:
+            return "decided"
+        return "awaiting_gate" if self._report is not None else "running"
 
     @workflow.run
     async def run(self, inp: AgentRunInput) -> dict:
@@ -33,10 +40,42 @@ class AgentRunWorkflow:
             "compose_manifest", inp,
             start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
         )
-        await workflow.execute_activity(
-            "execute_agent", args=[inp, manifest],
-            start_to_close_timeout=timedelta(minutes=30), retry_policy=_RETRY,
-        )
+
+        if inp.execution_mode == "companion":
+            # Run on the user's enrolled local Claude Code: dispatch, then wait for the
+            # companion's report (human-paced if it asks clarifications). Offline → takeover.
+            await workflow.execute_activity(
+                "dispatch_phase", args=[inp, manifest],
+                start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
+            )
+            try:
+                await workflow.wait_condition(
+                    lambda: self._report is not None,
+                    timeout=timedelta(seconds=inp.report_timeout_seconds),
+                )
+            except TimeoutError:
+                await workflow.execute_activity(
+                    "mark_phase_takeover", inp,
+                    start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                )
+                return {"status": "takeover", "run_id": inp.run_id}
+            report = self._report
+            if report.status != "ok":
+                await workflow.execute_activity(
+                    "fail_run", args=[inp, report.message or "phase reported failed"],
+                    start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                )
+                return {"status": "phase_failed", "run_id": inp.run_id}
+            await workflow.execute_activity(
+                "register_phase_result", args=[inp, report],
+                start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
+            )
+        else:
+            # Server-side fallback (CI/tests/headless): run the engine in the worker.
+            await workflow.execute_activity(
+                "execute_agent", args=[inp, manifest],
+                start_to_close_timeout=timedelta(minutes=30), retry_policy=_RETRY,
+            )
         # Rule 11 write-completeness gate-precondition: the phase must have registered its
         # expected artifact before a human is asked to review. Deterministic -> no retry.
         await workflow.execute_activity(

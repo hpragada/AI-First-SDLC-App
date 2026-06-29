@@ -21,6 +21,11 @@ class Run(TenantScopedModel):
     agent_spec = models.ForeignKey(
         "registry.AgentSpec", on_delete=models.PROTECT, related_name="runs"
     )
+    # Who triggered this run (the web-app user). Used to route the run to that user's enrolled
+    # local companion (req #1 — every phase runs on the client's own Claude Code).
+    triggered_by = models.ForeignKey(
+        "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
     engine = models.CharField(max_length=32, default="claude")
     model = models.CharField(max_length=64, blank=True)
     prompt_version = models.CharField(max_length=64, blank=True)
