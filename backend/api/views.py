@@ -14,6 +14,12 @@ from rest_framework.exceptions import ParseError, PermissionDenied, ValidationEr
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.clarifications.models import Clarification
+from apps.clarifications.services import (
+    ClarificationError,
+    ClarificationRoleError,
+    answer_clarification,
+)
 from apps.gates.models import Approval
 from apps.gates.services import GateError, GateRoleError, decide_gate
 from apps.integrations.models import SourceDocument
@@ -39,6 +45,8 @@ from .serializers import (
     AdoptSerializer,
     ApprovalSerializer,
     ArtifactSerializer,
+    ClarificationAnswerSerializer,
+    ClarificationSerializer,
     EventSerializer,
     GateDecisionSerializer,
     ProjectProfileSerializer,
@@ -362,5 +370,44 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         except GateRoleError as exc:
             raise PermissionDenied(str(exc)) from exc
         except GateError as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(result, status=status.HTTP_200_OK)
+
+
+# ── Clarifications + answer (interactive Q&A — req #2) ───────────────
+class ClarificationViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
+    """List clarifications (filter by status/run/work_item) and answer a pending one. A
+    pending Clarification blocks the agent on its `ask_human` tool call (model idle → no
+    cost); answering here records the answer and the companion's poll resumes the run."""
+
+    serializer_class = ClarificationSerializer
+    queryset = Clarification.objects.all().order_by("-created_at")
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        for field in ("status", "run", "work_item"):
+            value = self.request.query_params.get(field)
+            if value:
+                qs = qs.filter(**{("run_id" if field == "run" else
+                                   "work_item_id" if field == "work_item" else field): value})
+        return qs
+
+    @action(detail=True, methods=["post"])
+    def answer(self, request, pk=None):
+        """Answer a pending clarification: project-membership check → required-answer check
+        → record. The blocked agent resumes in the same session."""
+        clarification = self.get_object()
+        ser = ClarificationAnswerSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            result = answer_clarification(
+                tenant_id=self.tenant_id,
+                clarification_id=str(clarification.id),
+                user_id=str(ser.validated_data["user_id"]),
+                answers=ser.validated_data.get("answers") or {},
+            )
+        except ClarificationRoleError as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except ClarificationError as exc:
             raise ValidationError(str(exc)) from exc
         return Response(result, status=status.HTTP_200_OK)

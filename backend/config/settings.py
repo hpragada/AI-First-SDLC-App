@@ -46,6 +46,7 @@ LOCAL_APPS = [
     "apps.ledger",
     "apps.runs",
     "apps.gates",
+    "apps.clarifications",
     "apps.integrations",
     "apps.quality",
     "apps.knowledge",

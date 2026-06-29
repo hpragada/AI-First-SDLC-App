@@ -13,6 +13,7 @@ from .runner_views import (
 from .views import (
     ApprovalViewSet,
     ArtifactViewSet,
+    ClarificationViewSet,
     EventViewSet,
     ProjectViewSet,
     RunViewSet,
@@ -31,6 +32,7 @@ router.register("artifacts", ArtifactViewSet, basename="artifact")
 router.register("trace-edges", TraceEdgeViewSet, basename="traceedge")
 router.register("events", EventViewSet, basename="event")
 router.register("approvals", ApprovalViewSet, basename="approval")
+router.register("clarifications", ClarificationViewSet, basename="clarification")
 router.register("source-documents", SourceDocumentViewSet, basename="sourcedocument")
 
 urlpatterns = [

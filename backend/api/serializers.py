@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from apps.clarifications.models import Clarification
 from apps.gates.models import Approval
 from apps.integrations.models import SourceDocument
 from apps.ledger.models import Event
@@ -127,6 +128,25 @@ class GateDecisionSerializer(serializers.Serializer):
     conditions = serializers.ListField(
         child=serializers.DictField(), required=False, default=list
     )
+
+
+# ── Clarification / interactive Q&A (req #2) ────────────────────────
+class ClarificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Clarification
+        fields = [
+            "id", "run", "work_item", "phase", "status", "questions", "answers",
+            "context", "answered_by", "answered_at", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class ClarificationAnswerSerializer(serializers.Serializer):
+    """Input for answering a clarification. `user_id` (a project member) stands in until
+    real auth; `answers` maps each question id to the human's answer."""
+
+    user_id = serializers.UUIDField()
+    answers = serializers.DictField(required=False, default=dict)
 
 
 # ── Brownfield-lite onboarding ──────────────────────────────────────
