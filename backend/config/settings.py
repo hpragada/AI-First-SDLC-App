@@ -5,6 +5,7 @@ Config is read from the environment (12-factor). Locally, values come from the
 repo-root `.env`; in Docker they are injected via `env_file`. The app connects to
 Postgres as a NON-superuser role so RLS policies apply (non-negotiable #6).
 """
+import sys
 from pathlib import Path
 
 import environ
@@ -12,6 +13,14 @@ from corsheaders.defaults import default_headers as default_cors_headers
 
 # backend/  (this file is backend/config/settings.py)
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# The Platform-State MCP package (`mcp_platform_state/`) lives at the repo root, a sibling of
+# backend/. Put the repo root on sys.path so it imports under ANY entrypoint (runserver, asgi/
+# uvicorn, gunicorn, shell, migrate) — not just the Temporal worker and pytest, which add it
+# themselves. Without this, `python manage.py runserver` fails importing mcp_platform_state.
+_REPO_ROOT = BASE_DIR.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 env = environ.Env(DJANGO_DEBUG=(bool, True))
 # Local dev: load repo-root .env if present (Docker injects env directly).
