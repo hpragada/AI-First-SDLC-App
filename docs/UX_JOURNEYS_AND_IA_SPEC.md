@@ -201,12 +201,30 @@ Standard. Login lands on Dashboard; logout clears session. Reset = email link �
 
 ## 6. Journeys — The lifecycle (the core daily loop)
 
-### J11 — Create a work item & see its lifecycle
+### 6.0 The mental model designers MUST get right: two tiers + a fan-out (READ FIRST)
+A work item is **the unit a phase runs on** — and that unit lives at **different granularities** at different points in the pipeline. **A work item does NOT mean "a thing that replays the entire SDLC."** Most work items only ever traverse a *slice* of the lifecycle. There are two tiers, joined by one fan-out point:
+
+| Tier | Phases | Granularity | Driven by | Shape |
+|---|---|---|---|---|
+| **Tier 1 — Plan** | Ideation → Requirements → PRD → Architecture → UX → **Task Breakdown** | the **project / release / epic** (one pass) | product_owner, architect, designer | mostly **linear**, each gated |
+| **Tier 2 — Build** | Implementation → Review → Testing → Deploy/Merge | the **individual task / story / defect** (many, in parallel) | engineer, reviewer, qa_lead | **parallel + loops** |
+
+- **Task Breakdown is the fan-out:** it decomposes the approved plan into **N task work items** (the stories/tasks pushed to Jira). *That is where the granular work items are born.* Everything upstream is project/epic-level; everything downstream is per-task.
+- **Phases are user-triggered one at a time** (the platform never auto-advances) — but they are **not stateless**: each phase consumes the *approved* output of an earlier one (PRD reads Requirements; Implementation reads Tasks + Architecture; Review reads the code; a failing Test spawns a Defect). The work item's **lifecycle is the state model** that (a) confirms the inputs exist, (b) enforces the gate, (c) records provenance — it is **not** a forced wizard.
+- **Why a DAG, not a list:** parallel tasks (fan-out), **loops** (review↔implementation, test→defect), **child work items** (remediations, defects), and **cross-task/cross-repo dependencies** (`depends_on`/`implements`) make this a directed graph of work items, each with its own (sub)lifecycle — non-negotiable #4.
+
+**Design consequence (the thing the rail must encode):** the lifecycle rail is **type-adaptive** — it shows *only the phases applicable to that work item's level*. A task-level item must **not** render Ideation/PRD as "Waiting" (it was never their job); that misread is exactly what to avoid.
+
+### J11 — Create a work item & see its (type-adaptive) lifecycle
 **Actor:** any member. **Entry:** Work Items.
-1. **Work Items board/list** — grouped by state; each card shows feature stream, type, current phase, and any **"needs you"** flags.
-2. **New work item** — type (story/…), feature stream.
-3. **Work item detail** — the **lifecycle rail**: the phase sequence (Ideation → Requirements → PRD → Architecture → UX → Tasks → Build → Review → Test → Merge) with each step's state (not started / running / needs answer / awaiting gate / published). This is the heart of "where is this work."
-**States:** empty project (no work items → "create your first"), per-phase states on the rail.
+1. **Work Items board/list** — the board columns are **phases**; cards are work items, **filterable/groupable by level** (Epics vs Tasks vs Defects) so the two tiers don't visually collide. Each card shows title, type, current phase, parent (if a child), and any **"needs you"** flags.
+2. **New work item** — type (epic / feature / story / task / defect), feature stream, optional parent. (Most *task*-level items are created automatically by **Task Breakdown**, not by hand — see J16.)
+3. **Work item detail — the type-adaptive lifecycle rail:**
+   - **Epic / Feature** → the **plan-tier** rail (Ideation → Requirements → PRD → Architecture → UX → Task Breakdown) **plus a "Child tasks" section** listing the work items it fanned out into.
+   - **Task / Story** → the **build-tier** rail (Implementation → Review → Test → Deploy/Merge) **only** — never the plan phases — plus a link to its **parent epic** and any **child defects/remediations**.
+   - **Defect / Remediation** → its minimal rail (Fix → Review → Test) + a link to the **parent** that spawned it.
+   Each step shows its state (not started / running / needs answer / awaiting gate / published), and the rail must be able to depict **loops** (review↔fix) and **child branches**, not just a straight line.
+**States:** empty project (no work items → "create your first"); per-phase states on the rail; child-items list (empty until Task Breakdown runs); parent backlink on child items.
 
 ### J12 — Trigger a phase (runs on the operator's companion)
 **Actor:** the operator (their companion executes it). **Entry:** Work item detail → a phase on the rail → "Run", or Phases tab.
@@ -235,13 +253,17 @@ Standard. Login lands on Dashboard; logout clears session. Reset = email link �
 A specialization of J14. The decision panel includes a **required-criteria checklist** (e.g., each WCAG criterion). **Approve is disabled until all required items are ticked.** Each item can carry a note. This makes "quality gate" tangible rather than a blind approve.
 **States:** partially-ticked (approve disabled, show remaining count), all-ticked (approve enabled).
 
-### J16 — Build / review / test / merge (the engineering tail)
-Same trigger→gate pattern as J12/J14, surfaced on the same lifecycle rail, with phase-specific outcomes the UI must show:
+### J16 — Build tier: the per-task engineering loop (Implementation → Review → Test → Merge)
+**This is Tier 2 (per §6.0): it operates on *individual task work items*, in parallel, with loops** — not on the project.
+
+**Fan-out first (where the build tier's work items come from):** approving the **Task Breakdown** gate (a Tier-1, epic-level phase) **creates N task work items** and (if Jira is connected) pushes them to the backlog. The breakdown result screen reads as *"Created N task work items"* with links; each new task appears on the board in the **Implementation** column under its parent epic. The operator then **picks one task at a time** and works it through the build rail — exactly the intended flow.
+
+Same trigger→gate pattern as J12/J14, surfaced on **the task's** lifecycle rail, with phase-specific outcomes the UI must show:
 - **Implementation (07):** runs on the operator's companion **worktree** → a **draft PR** opens on the code host; the run links to the PR.
-- **Code review (08):** runs on companion; findings become **child work items**; the 07↔08 loop re-runs until clean — the rail shows the loop.
-- **Testing (09):** authors tests to test-management; a failing test opens a **linked, traced defect** that closes on a clean re-run.
-- **Merge gate:** reviewer approves → PR merges → work item → **done**.
-**Design need:** the lifecycle rail must represent **loops and child work items**, not just a straight line (non-negotiable #4).
+- **Code review (08):** runs on companion; findings become **child remediation work items**; the **07↔08 loop** re-runs until clean — the rail shows the loop, not a straight line.
+- **Testing (09):** authors tests to test-management (Xray); a failing test opens a **linked, traced defect child work item** that closes on a clean re-run.
+- **Merge gate:** reviewer approves → PR merges → the **task** work item → **done** (its parent epic advances only when its children complete).
+**Design need:** the rail must represent **loops and child work items** (remediations, defects) and the **parent-epic backlink**, not a straight line (non-negotiable #4). A task item shows **only** these build phases — never the plan phases (§6.0).
 
 ---
 
