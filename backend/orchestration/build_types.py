@@ -25,6 +25,9 @@ class BuildInput:
     report_timeout_seconds: int = 7200
     # 07<->08 remediation loop: cap re-review cycles before escalating (§5).
     max_remediation_cycles: int = 3
+    # Which enrolled companion to dispatch to (the triggering user's), so the build is
+    # claimable via /api/runner/work/ like a planning phase (req #1).
+    enrollment_id: str | None = None
 
 
 @dataclass

@@ -149,9 +149,11 @@ def trigger_build(
     base: str | None = None,
     work_item_key: str | None = None,
     required_role: str = "reviewer",
+    triggered_by: str | None = None,
     workflow_starter=None,
 ) -> TriggerResult:
-    """Start a BuildWorkflow for a WorkItem (resolves repo/base from its Repository)."""
+    """Start a BuildWorkflow for a WorkItem (resolves repo/base from its Repository). The build
+    runs on the triggering user's enrolled companion (claimable via /api/runner/work/)."""
     from .build_types import BuildInput
 
     workflow_starter = workflow_starter or _default_build_starter
@@ -174,10 +176,12 @@ def trigger_build(
             work_item_key or (work_item.external_ref or {}).get("id")
             or f"WI-{str(work_item.id)[:8]}"
         )
+        enrollment = _resolve_enrollment(tenant_id, project_id, triggered_by)
         run = Run.objects.create(
             tenant_id=tenant_id, work_item=work_item, agent_spec=spec,
             engine=spec.recommended_engine, model=spec.recommended_model,
             prompt_version=spec.prompt_version, status=Run.Status.PENDING,
+            triggered_by_id=triggered_by,
         )
         workflow_id = f"build-run-{run.id}"
         run.temporal_workflow_id = workflow_id
@@ -187,6 +191,7 @@ def trigger_build(
             run_id=str(run.id), tenant_id=str(tenant_id), project_id=str(project_id),
             work_item_id=str(work_item_id), agent_spec_id=str(spec.id),
             work_item_key=work_item_key, repo=repo, base=base, required_role=required_role,
+            enrollment_id=str(enrollment.id) if enrollment is not None else None,
         )
         tools.log_event(
             tenant_id, "platform", "build.triggered", "run", str(run.id),

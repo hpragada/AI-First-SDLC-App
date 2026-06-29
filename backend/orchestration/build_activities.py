@@ -60,7 +60,14 @@ def dispatch_build_core(inp: BuildInput) -> dict:
     }
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
-        run.inputs = {**(run.inputs or {}), "build_task": payload}
+        run.inputs = {
+            **(run.inputs or {}),
+            "build_task": payload,
+            # Claim block so the companion daemon can pull this build via /api/runner/work/
+            # (same seam as planning); the manual /builds/<run>/ fetch still works too.
+            "dispatch": {"kind": "build", "enrollment_id": inp.enrollment_id,
+                         "status": "pending"},
+        }
         if run.status not in (Run.Status.RUNNING, Run.Status.AWAITING_GATE, Run.Status.COMPLETED):
             run.status = Run.Status.RUNNING
         run.save(update_fields=["inputs", "status", "updated_at"])

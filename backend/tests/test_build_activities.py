@@ -76,6 +76,13 @@ def test_dispatch_assembles_payload_and_marks_running(world):
     assert payload["manifest"]                       # composed manifest shipped to the companion
 
 
+def test_dispatch_sets_claim_block_for_companion(world):
+    ba.dispatch_build_core(_inp(world, enrollment_id="enr-9"))
+    world.run.refresh_from_db()
+    assert world.run.inputs["dispatch"] == {
+        "kind": "build", "enrollment_id": "enr-9", "status": "pending"}
+
+
 def test_open_pr_registers_code_pointer_and_is_idempotent(world, monkeypatch):
     fake = _FakeCodeHost()
     _use_fake_codehost(monkeypatch, fake)

@@ -1,11 +1,14 @@
-"""Companion CLI: enroll a runner, or run a build task.
+"""Companion CLI: enroll a runner, serve as a daemon, or run a single build task.
 
     python -m runner.companion enroll --api-url URL --tenant T --project P --label laptop
-    python -m runner.companion run --task task.json --repo-path ~/repos/api --worktrees ~/sdlc
+    python -m runner.companion serve  --api-url URL --tenant T --token TOK \
+                                      [--repo-path ~/repos/api --worktrees ~/sdlc]
+    python -m runner.companion run    --task task.json --repo-path ~/repos/api --worktrees ~/sdlc
 
-`enroll` calls the platform's enrollment API and prints the one-time token. `run` loads a
-BuildTask JSON and drives `run_build` with the real ClaudeDriver (imported lazily so the CLI
-only needs the engine SDK when actually running a build).
+`enroll` returns the one-time token. `serve` is the headless background process: it claims
+phases dispatched to this enrollment and runs them on the **local logged-in Claude Code**
+(no API key), so the user does everything in the web app. `run` drives a single BuildTask
+(kept for local/manual runs). The ClaudeDriver is imported lazily.
 """
 from __future__ import annotations
 
@@ -46,6 +49,18 @@ def _run(args) -> int:
     return 0
 
 
+def _serve(args) -> int:
+    from .daemon import CompanionDaemon
+
+    daemon = CompanionDaemon(
+        api_url=args.api_url, tenant_id=args.tenant, token=args.token,
+        repo_path=args.repo_path, worktrees_root=args.worktrees,
+        poll_interval=args.poll_interval,
+    )
+    daemon.serve()
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="runner.companion")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -57,6 +72,15 @@ def main(argv=None) -> int:
     e.add_argument("--label", default="")
     e.add_argument("--repos", nargs="*", default=[])
     e.set_defaults(func=_enroll)
+
+    s = sub.add_parser("serve")
+    s.add_argument("--api-url", required=True)
+    s.add_argument("--tenant", required=True)
+    s.add_argument("--token", required=True)
+    s.add_argument("--repo-path", default=None)
+    s.add_argument("--worktrees", default=None)
+    s.add_argument("--poll-interval", type=float, default=5.0)
+    s.set_defaults(func=_serve)
 
     r = sub.add_parser("run")
     r.add_argument("--task", required=True)
