@@ -16,13 +16,23 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from typing import TYPE_CHECKING
 
+from mcp_platform_state import tools
+
 from apps.registry.models import AgentSpec
+from apps.runs.models import Run
 from apps.tenancy.context import tenant_context
 from apps.workitems.models import WorkItem
 
-from .activities import PLATFORM_TOOLS, _mcp_servers, compose_manifest_core, get_driver
+from .activities import (
+    PLATFORM_TOOLS,
+    _load_agent_body,
+    _mcp_servers,
+    compose_manifest_core,
+    get_driver,
+)
 from .build_activities import Finding
 from .types import AgentRunInput
 
@@ -153,3 +163,95 @@ def _default_get_capability(tenant_id: str, capability: str):
 
 def build_default_provider() -> AgentReviewProvider:
     return AgentReviewProvider()
+
+
+# ── review-as-dispatch (run 08 on the user's companion — req #1) ────
+def dispatch_review_task(inp, *, manifest: str, agent_body: str, model: str = "") -> None:
+    """Stash the review task (PR-diff manifest + 08 body) and a `dispatch` claim block so the
+    companion pulls it via /api/runner/work/, and clear any prior cycle's review body."""
+    from django.conf import settings
+
+    payload = {
+        "run_id": inp.run_id, "tenant_id": inp.tenant_id, "project_id": inp.project_id,
+        "work_item_id": inp.work_item_id, "phase": _REVIEW_PHASE, "kind": "review",
+        "manifest": manifest, "agent_body": agent_body, "model": model,
+        "api_url": getattr(settings, "PLATFORM_API_URL", ""),
+    }
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        inputs = dict(run.inputs or {})
+        inputs["review_task"] = payload
+        inputs["dispatch"] = {"kind": "review", "status": "pending",
+                              "enrollment_id": getattr(inp, "enrollment_id", None)}
+        outputs = dict(run.outputs or {})
+        outputs.pop("review_body", None)
+        run.inputs, run.outputs = inputs, outputs
+        run.save(update_fields=["inputs", "outputs", "updated_at"])
+        tools.log_event(inp.tenant_id, "orchestrator", "review.dispatched", "run", inp.run_id, {})
+
+
+def poll_review_body(inp, *, sleep, poll_interval: float, timeout: float) -> str | None:
+    """Poll the run for the companion's posted review body. Returns None on timeout (treated
+    as no findings — the human merge gate still applies, so the build never hangs)."""
+    waited = 0.0
+    while True:
+        with tenant_context(inp.tenant_id):
+            run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+            body = (run.outputs or {}).get("review_body")
+        if body is not None:
+            return body
+        if waited >= timeout:
+            with tenant_context(inp.tenant_id):
+                tools.log_event(inp.tenant_id, "orchestrator", "review.timeout", "run",
+                                inp.run_id, {})
+            return None
+        sleep(poll_interval)
+        waited += poll_interval
+
+
+def record_review_report(*, tenant_id, run_id, body, status="ok") -> dict:
+    """The companion posts its 08 verdict here; the provider's poll picks it up + parses it."""
+    with tenant_context(tenant_id):
+        run = Run.objects.get(id=run_id, tenant_id=tenant_id)
+        run.outputs = {**(run.outputs or {}), "review_body": body or "", "review_status": status}
+        run.save(update_fields=["outputs", "updated_at"])
+        tools.log_event(tenant_id, "companion", "review.reported", "run", str(run_id),
+                        {"status": status})
+    return {"run_id": str(run_id), "recorded": True}
+
+
+class CompanionReviewProvider:
+    """The 08 review run on the user's enrolled companion (local Claude Code), not the server.
+    Builds the same PR-diff manifest as AgentReviewProvider, dispatches it, then polls for the
+    findings the companion posts back — review's counterpart of running planning/build locally."""
+
+    def __init__(self, *, get_capability=None, compose_manifest=None, dispatch=None, poll=None,
+                 poll_interval: float = 3.0, timeout: float = 480.0, sleep=None) -> None:
+        self._manifest = AgentReviewProvider(
+            get_capability=get_capability, compose_manifest=compose_manifest)
+        self._dispatch = dispatch or dispatch_review_task
+        self._poll = poll or poll_review_body
+        self._poll_interval = poll_interval
+        self._timeout = timeout
+        self._sleep = sleep or time.sleep
+
+    def review(self, inp: BuildInput, pr_ref: str) -> list[Finding]:
+        with tenant_context(inp.tenant_id):
+            spec = (
+                AgentSpec.objects.filter(tenant_id=inp.tenant_id, key=_REVIEW_AGENT_KEY)
+                .order_by("-semver").first()
+            )
+        if spec is None:
+            return []  # 08 not seeded → no findings (loop falls through to the merge gate)
+        manifest = self._manifest._build_review_manifest(inp, pr_ref)
+        agent_body, model = _load_agent_body(str(spec.id), inp.tenant_id)
+        self._dispatch(inp, manifest=manifest, agent_body=agent_body, model=model)
+        body = self._poll(inp, sleep=self._sleep, poll_interval=self._poll_interval,
+                          timeout=self._timeout)
+        if body is None:
+            return []
+        return parse_findings(body)
+
+
+def build_companion_provider() -> CompanionReviewProvider:
+    return CompanionReviewProvider()

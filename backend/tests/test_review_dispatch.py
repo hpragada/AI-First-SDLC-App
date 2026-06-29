@@ -1,0 +1,179 @@
+"""Review-as-dispatch (req #1): the 08 review runs on the user's companion, not the server.
+
+Covers the dispatch + poll + report-endpoint round trip and the CompanionReviewProvider, and
+proves the companion provider still feeds the existing 07<->08 remediation loop unchanged.
+"""
+from types import SimpleNamespace
+
+import pytest
+from rest_framework.test import APIClient
+
+from apps.projects.models import Project, ProjectProfile
+from apps.registry.models import AgentSpec
+from apps.runs.enrollment import enroll_runner
+from apps.runs.models import Run
+from apps.tenancy.models import Tenant
+from apps.workitems.models import WorkItem
+from integrations.types import PullRequest, PullRequestRef
+from orchestration import build_activities as ba
+from orchestration.build_types import BuildInput, BuildReport
+from orchestration.review_provider import (
+    CompanionReviewProvider,
+    dispatch_review_task,
+    poll_review_body,
+    record_review_report,
+)
+
+_VERDICT = (
+    '```json\n{"status":"CHANGES_REQUIRED","findings":['
+    '{"rem":"REM-C1","severity":"critical","title":"SQLi","file":"db.py","line":10},'
+    '{"rem":"REM-S1","severity":"suggestion","title":"rename","file":"db.py","line":2}'
+    ']}\n```'
+)
+
+
+class _FakeCodeHost:
+    def open_pull_request(self, *, repo, head, base, title, body, draft=True):
+        return PullRequestRef(sor="git", repo=repo, number=7, head=head,
+                              url=f"https://github.com/{repo}/pull/7", sha="abc")
+
+    def get_pull_request(self, *, pr_ref):
+        repo, number = pr_ref.split("#")
+        return PullRequest(repo=repo, number=int(number), title="t", state="open",
+                           head="feature/ST-1", base="main", url="u", sha="abc")
+
+    def list_pr_files(self, *, pr_ref):
+        return ["db.py"]
+
+    def get_file(self, *, repo, path, ref):
+        return "def q(): ...  # pretend code"
+
+    def set_commit_status(self, **kw):
+        pass
+
+
+@pytest.fixture
+def world(db):
+    t = Tenant.objects.create(name="Acme")
+    p = Project.objects.create(tenant=t, name="App")
+    ProjectProfile.objects.create(tenant=t, project=p, important_context="Ship it.")
+    wi = WorkItem.objects.create(tenant=t, project=p, type=WorkItem.Type.STORY, title="Add login",
+                                 state=WorkItem.State.ACCEPTED, feature_stream="ST-1")
+    impl = AgentSpec.objects.create(tenant=t, key="07_implementation", body_ref="",
+                                    recommended_model="claude-x", phase_label="implementation")
+    AgentSpec.objects.create(tenant=t, key="08_code_review",
+                             body_ref="agents/08_code_review/agent.md",
+                             recommended_model="claude-x", phase_label="code_review")
+    enrollment, token = enroll_runner(tenant_id=str(t.id), project_id=str(p.id), label="l")
+    run = Run.objects.create(tenant=t, work_item=wi, agent_spec=impl, engine="claude",
+                             status=Run.Status.PENDING)
+    return SimpleNamespace(t=t, p=p, wi=wi, spec=impl, run=run,
+                           enrollment=enrollment, token=token)
+
+
+def _inp(world, enrollment_id=None):
+    return BuildInput(run_id=str(world.run.id), tenant_id=str(world.t.id),
+                      project_id=str(world.p.id), work_item_id=str(world.wi.id),
+                      agent_spec_id=str(world.spec.id), work_item_key="ST-1", repo="acme/api",
+                      base="main", enrollment_id=enrollment_id)
+
+
+# ── dispatch / poll / report (server side) ──────────────────────────
+def test_dispatch_review_task_sets_block_and_clears_prior_body(world):
+    world.run.outputs = {"review_body": "stale"}
+    world.run.save(update_fields=["outputs"])
+    dispatch_review_task(_inp(world, enrollment_id=str(world.enrollment.id)),
+                         manifest="# PR diff", agent_body="08 BODY", model="claude-x")
+    world.run.refresh_from_db()
+    assert world.run.inputs["review_task"]["manifest"] == "# PR diff"
+    assert world.run.inputs["review_task"]["kind"] == "review"
+    assert world.run.inputs["dispatch"] == {
+        "kind": "review", "enrollment_id": str(world.enrollment.id), "status": "pending"}
+    assert "review_body" not in world.run.outputs   # prior cycle's body cleared
+
+
+def test_poll_returns_body_else_none(world):
+    inp = _inp(world)
+    assert poll_review_body(inp, sleep=lambda _s: None, poll_interval=1, timeout=0) is None
+    world.run.outputs = {"review_body": _VERDICT}
+    world.run.save(update_fields=["outputs"])
+    assert poll_review_body(inp, sleep=lambda _s: None, poll_interval=1, timeout=0) == _VERDICT
+
+
+def test_record_review_report_stores_body(world):
+    record_review_report(tenant_id=str(world.t.id), run_id=str(world.run.id), body=_VERDICT)
+    world.run.refresh_from_db()
+    assert world.run.outputs["review_body"] == _VERDICT
+
+
+# ── CompanionReviewProvider ─────────────────────────────────────────
+def test_companion_provider_dispatches_and_parses(world):
+    captured = {}
+    prov = CompanionReviewProvider(
+        get_capability=lambda tid, cap: _FakeCodeHost(),
+        compose_manifest=lambda inp: "# Project\nAcme\n",
+        dispatch=lambda inp, **kw: captured.update(kw),
+        poll=lambda inp, **kw: _VERDICT,
+    )
+    findings = prov.review(_inp(world), "acme/api#7")
+    assert [f.rem for f in findings] == ["REM-C1", "REM-S1"]
+    assert "# Pull Request Under Review" in captured["manifest"]   # PR diff shipped to companion
+
+
+def test_companion_provider_timeout_returns_empty(world):
+    prov = CompanionReviewProvider(
+        get_capability=lambda tid, cap: _FakeCodeHost(),
+        compose_manifest=lambda inp: "# Project\n",
+        dispatch=lambda inp, **kw: None, poll=lambda inp, **kw: None,
+    )
+    assert prov.review(_inp(world), "acme/api#7") == []
+
+
+def test_companion_provider_no_08_returns_empty(world):
+    AgentSpec.objects.filter(tenant=world.t, key="08_code_review").delete()
+
+    def _no_dispatch(inp, **kw):
+        raise AssertionError("must not dispatch when 08 is not seeded")
+
+    prov = CompanionReviewProvider(dispatch=_no_dispatch, poll=lambda inp, **kw: _VERDICT)
+    assert prov.review(_inp(world), "acme/api#7") == []
+
+
+def test_companion_provider_feeds_remediation_loop(world, monkeypatch):
+    """The companion verdict → blocking finding → remediation child WorkItem, exactly as the
+    server-side provider did — the loop machinery is unchanged, only where 08 runs."""
+    fake = _FakeCodeHost()
+    monkeypatch.setattr("integrations.registry.get_capability", lambda tid, cap: fake)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+    prov = CompanionReviewProvider(
+        get_capability=lambda tid, cap: fake, compose_manifest=lambda inp: "# Project\n",
+        dispatch=lambda inp, **kw: None, poll=lambda inp, **kw: _VERDICT,
+    )
+    monkeypatch.setattr(ba, "get_review_provider", lambda: prov)
+    out = ba.run_code_review_core(_inp(world))
+    assert out["open_blocking"] == 1 and out["findings"] == 2
+    child = WorkItem.objects.get(parent_id=world.wi.id, type=WorkItem.Type.TASK)
+    assert child.external_ref["rem"] == "REM-C1"
+
+
+# ── runner endpoints (claim review + post verdict) ──────────────────
+def _auth(world):
+    return {"HTTP_AUTHORIZATION": f"Runner {world.token}", "HTTP_X_TENANT_ID": str(world.t.id)}
+
+
+def test_work_claim_returns_review_task(world):
+    dispatch_review_task(_inp(world, enrollment_id=str(world.enrollment.id)),
+                         manifest="# PR diff", agent_body="08 BODY")
+    r = APIClient().get("/api/runner/work/", **_auth(world))
+    assert r.status_code == 200
+    assert r.json()["kind"] == "review"
+    assert r.json()["payload"]["manifest"] == "# PR diff"
+
+
+def test_review_report_endpoint_stores_verdict(world):
+    r = APIClient().post(f"/api/runner/reviews/{world.run.id}/report/",
+                         {"status": "ok", "body": _VERDICT}, format="json", **_auth(world))
+    assert r.status_code == 200 and r.json()["recorded"] is True
+    world.run.refresh_from_db()
+    assert world.run.outputs["review_body"] == _VERDICT

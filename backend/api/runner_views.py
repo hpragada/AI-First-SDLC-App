@@ -235,9 +235,11 @@ class RunnerWorkClaimView(APIView):
             inputs["dispatch"] = dispatch
             run.inputs = inputs
             run.save(update_fields=["inputs", "updated_at"])
-            payload = inputs.get("phase_task") or inputs.get("build_task") or {}
-            return Response({"kind": dispatch.get("kind", "plan"),
-                             "run_id": str(run.id), "payload": payload})
+            kind = dispatch.get("kind", "plan")
+            key = {"plan": "phase_task", "review": "review_task",
+                   "build": "build_task"}.get(kind, "phase_task")
+            payload = inputs.get(key) or {}
+            return Response({"kind": kind, "run_id": str(run.id), "payload": payload})
 
 
 class RunnerPhaseFetchView(APIView):
@@ -284,6 +286,30 @@ class RunnerPhaseReportView(APIView):
             return Response({"detail": "run not found"}, status=status.HTTP_404_NOT_FOUND)
         except PhaseReportError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(out)
+
+
+class RunnerReviewReportView(APIView):
+    """POST /api/runner/reviews/<run_id>/report/ — the companion posts its 08 review verdict;
+    the server-side CompanionReviewProvider's poll picks it up and parses the findings."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request, run_id):
+        from orchestration.review_provider import record_review_report
+
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        args = request.data if isinstance(request.data, dict) else {}
+        try:
+            out = record_review_report(
+                tenant_id=str(runner.tenant_id), run_id=str(run_id),
+                body=args.get("body", ""), status=args.get("status", "ok"))
+        except Run.DoesNotExist:
+            return Response({"detail": "run not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(out)
 
 

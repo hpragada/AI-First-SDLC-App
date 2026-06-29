@@ -136,6 +136,10 @@ class CompanionDaemon:
         driver = self._driver_factory(payload.get("agent_body", ""))
         mcp = state_mcp_servers(api_url=self._base, tenant_id=self._tenant, token=self._token,
                                 run_id=run_id, phase=phase)
+        # Review posts its verdict to the review endpoint (findings); planning posts its draft
+        # body to the phase endpoint (becomes the artifact).
+        report_path = (f"/api/runner/reviews/{run_id}/report/" if review
+                       else f"/api/runner/phases/{run_id}/report/")
         runner = driver.run_review_task if review else driver.run_planning_task
         try:
             result = asyncio.run(runner(
@@ -144,12 +148,10 @@ class CompanionDaemon:
             ))
             outputs = getattr(result, "outputs", {}) or {}
             body = outputs.get("result") or outputs.get("text") or ""
-            self._report(f"/api/runner/phases/{run_id}/report/",
-                         {"status": "ok", "body": body,
-                          "cost_usd": getattr(result, "cost_usd", 0.0)})
+            self._report(report_path, {"status": "ok", "body": body,
+                                       "cost_usd": getattr(result, "cost_usd", 0.0)})
         except Exception as exc:  # noqa: BLE001 — report the failure so the run never hangs
-            self._report(f"/api/runner/phases/{run_id}/report/",
-                         {"status": "failed", "message": str(exc)})
+            self._report(report_path, {"status": "failed", "message": str(exc)})
 
     def _run_build(self, task: dict) -> None:
         if not (self._repo_path and self._worktrees_root):

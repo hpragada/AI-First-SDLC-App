@@ -11,6 +11,7 @@ from .runner_views import (
     RunnerEnrollmentView,
     RunnerPhaseFetchView,
     RunnerPhaseReportView,
+    RunnerReviewReportView,
     RunnerRevokeView,
     RunnerStateView,
     RunnerWorkClaimView,
@@ -60,6 +61,8 @@ urlpatterns = [
          name="runner-phase-fetch"),
     path("runner/phases/<uuid:run_id>/report/", RunnerPhaseReportView.as_view(),
          name="runner-phase-report"),
+    path("runner/reviews/<uuid:run_id>/report/", RunnerReviewReportView.as_view(),
+         name="runner-review-report"),
     # Signed Git-webhook ingestion (Phase 2 §7) — tenant in the path, signature-authenticated.
     path("webhooks/github/<uuid:tenant_id>/", GithubWebhookView.as_view(), name="github-webhook"),
     path("", include(router.urls)),
