@@ -95,6 +95,30 @@ export interface TriggerResult {
   workflow_id: string;
 }
 
+// Interactive clarifications (req #2): an agent's question, answered in the web app while
+// the run waits at zero cost. Mirrors backend/api/serializers.py ClarificationSerializer.
+export interface ClarificationQuestion {
+  id: string;
+  text: string;
+  kind?: "text" | "choice" | "confirm";
+  options?: string[];
+  required?: boolean;
+}
+
+export interface Clarification {
+  id: string;
+  run: string;
+  work_item: string;
+  phase: string;
+  status: string; // "pending" | "answered" | "cancelled"
+  questions: ClarificationQuestion[];
+  answers: Record<string, unknown>;
+  context: string;
+  answered_by: string | null;
+  answered_at: string | null;
+  created_at: string;
+}
+
 // Traceability viewer (GET /projects/{id}/traceability/) — lineage graph.
 export interface TraceNode {
   id: string;

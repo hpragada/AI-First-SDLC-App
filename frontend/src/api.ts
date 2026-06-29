@@ -4,6 +4,7 @@
 import type {
   Approval,
   Artifact,
+  Clarification,
   Project,
   ProjectProfile,
   Run,
@@ -114,4 +115,19 @@ export const api = {
     approvalId: string,
     body: { user_id: string; decision: "approved" | "rejected"; comment?: string },
   ) => req<Record<string, unknown>>("POST", `/approvals/${approvalId}/decide/`, { tenantId, body }),
+
+  // Clarifications (interactive Q&A — req #2): list pending and answer them in the web app.
+  listClarifications: (
+    tenantId: string,
+    q: { status?: string; work_item?: string; run?: string } = {},
+  ) => req<Clarification[]>("GET", "/clarifications/", { tenantId, query: q }),
+  answerClarification: (
+    tenantId: string,
+    clarificationId: string,
+    body: { user_id: string; answers: Record<string, unknown> },
+  ) =>
+    req<Record<string, unknown>>("POST", `/clarifications/${clarificationId}/answer/`, {
+      tenantId,
+      body,
+    }),
 };

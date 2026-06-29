@@ -16,6 +16,7 @@ export function PhaseConsole() {
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
+  const [needsAnswer, setNeedsAnswer] = useState<Set<string>>(new Set());
   const [stream, setStream] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -37,10 +38,16 @@ export function PhaseConsole() {
   const loadRuns = useCallback(async () => {
     if (!selected) {
       setRuns([]);
+      setNeedsAnswer(new Set());
       return;
     }
     try {
-      setRuns(await api.listRuns(tid, { work_item: selected }));
+      const [runList, pending] = await Promise.all([
+        api.listRuns(tid, { work_item: selected }),
+        api.listClarifications(tid, { status: "pending", work_item: selected }),
+      ]);
+      setRuns(runList);
+      setNeedsAnswer(new Set(pending.map((c) => c.run)));
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : String(e));
     }
@@ -148,6 +155,11 @@ export function PhaseConsole() {
                   <td className="mono">{r.id.slice(0, 8)}</td>
                   <td>
                     <StateBadge value={r.status} />
+                    {needsAnswer.has(r.id) && (
+                      <span className="badge" title="An agent is waiting for an answer on the Clarifications tab">
+                        ● needs answer
+                      </span>
+                    )}
                   </td>
                   <td className="muted">
                     {r.engine}

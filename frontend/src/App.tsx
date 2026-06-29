@@ -4,15 +4,17 @@ import { TenantProjectBar } from "./components/TenantProjectBar";
 import { ProfileEditor } from "./components/ProfileEditor";
 import { PhaseConsole } from "./components/PhaseConsole";
 import { Gates } from "./components/Gates";
+import { Clarifications } from "./components/Clarifications";
 import { Artifacts } from "./components/Artifacts";
 import { Traceability } from "./components/Traceability";
 import { useApp } from "./state";
 
-type Tab = "profile" | "console" | "gates" | "artifacts" | "trace";
+type Tab = "profile" | "console" | "clarifications" | "gates" | "artifacts" | "trace";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "profile", label: "Project Profile" },
   { id: "console", label: "Phase Console" },
+  { id: "clarifications", label: "Clarifications" },
   { id: "gates", label: "Gate Approvals" },
   { id: "artifacts", label: "Artifacts" },
   { id: "trace", label: "Traceability" },
@@ -50,6 +52,7 @@ export function App() {
 
           {tab === "profile" && <ProfileEditor />}
           {tab === "console" && <PhaseConsole />}
+          {tab === "clarifications" && <Clarifications />}
           {tab === "gates" && <Gates />}
           {tab === "artifacts" && <Artifacts />}
           {tab === "trace" && <Traceability />}

@@ -125,3 +125,13 @@ td.mono, .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; 
 .flex { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .spacer { flex: 1; }
 small.hint { color: var(--muted); font-size: 11px; }
+
+/* Clarification cards (interactive Q&A) */
+.card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+.field { margin: 10px 0; }
+.field label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
