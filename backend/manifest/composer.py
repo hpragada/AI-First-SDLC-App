@@ -6,7 +6,12 @@ the whole profile). Pure: dicts in, markdown string out — written per run, dis
 
 Section order (locked):
   # Project → [# Repository] → # Important Context → # Current Work Item
-  → # Relevant Artifacts → # Recent Events → # Retrieved Knowledge → # Rules
+  → [# Answered Clarifications] → # Relevant Artifacts → # Recent Events
+  → # Retrieved Knowledge → # Rules
+
+`# Answered Clarifications` is rendered only when the work item has answered clarifications —
+prior human answers to the agent's questions, replayed so a re-dispatched run reuses them
+instead of re-asking (req #2 durability).
 
 `# Repository` is rendered only for a repo-scoped run (multi-repo, D5) — it names the repo
 this run targets, its role, base branch, and per-repo stack overrides; the artifacts below are
@@ -35,8 +40,10 @@ class TokenBudget:
     recent_events: int = 600
     retrieved_knowledge: int = 1500
     rules: int = 1500
+    answered_clarifications: int = 1200
     max_artifacts: int = 20
     max_events: int = 15
+    max_clarifications: int = 20
 
 
 def estimate_tokens(text: str) -> int:
@@ -123,6 +130,28 @@ def _render_work_item(work_item: dict, phase: str, budget: TokenBudget) -> str:
     return _section("Current Work Item", "\n".join(lines), budget.current_work_item)
 
 
+def _render_clarifications(clarifications: list[dict], budget: TokenBudget) -> str:
+    """Prior human answers to the agent's questions (req #2 durability). Replayed so a
+    re-dispatched run reuses the answer instead of re-asking via `ask_human`."""
+    shown = clarifications[: budget.max_clarifications]
+    lines = [
+        "Questions you already asked were answered by a human — **use these answers; do "
+        "NOT ask them again**:",
+        "",
+    ]
+    for c in shown:
+        if c.get("context"):
+            lines.append(f"_{c['context']}_")
+        answers = c.get("answers") or {}
+        for q in c.get("questions") or []:
+            qid = q.get("id")
+            lines.append(f"- {q.get('text', qid)} → **{answers.get(qid, '—')}**")
+        lines.append("")
+    if len(clarifications) > len(shown):
+        lines.append(f"… {len(clarifications) - len(shown)} more not shown (budget).")
+    return _section("Answered Clarifications", "\n".join(lines), budget.answered_clarifications)
+
+
 def _render_artifacts(artifacts: list[dict], budget: TokenBudget) -> str:
     if not artifacts:
         return _section("Relevant Artifacts", "", budget.relevant_artifacts)
@@ -193,6 +222,11 @@ def compose_manifest(
     sections += [
         _render_important_context(profile, budget),
         _render_work_item(work_item, phase, budget),
+    ]
+    clarifications = context.get("answered_clarifications") or []
+    if clarifications:  # only when prior answers exist (req #2 durability) — else omitted
+        sections.append(_render_clarifications(clarifications, budget))
+    sections += [
         _render_artifacts(context.get("relevant_artifacts") or [], budget),
         _render_events(context.get("recent_events") or [], budget),
         _render_knowledge(context.get("retrieved_knowledge") or [], budget),

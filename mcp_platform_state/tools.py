@@ -10,6 +10,7 @@ tools and injects the tenant from the launch context.
 """
 from __future__ import annotations
 
+from apps.clarifications.models import Clarification
 from apps.ledger.models import Event
 from apps.projects.models import Project, Repository
 from apps.registry.models import Artifact, TraceEdge
@@ -96,6 +97,17 @@ def _repo(r: Repository) -> dict:
     }
 
 
+def _clarification(c: Clarification) -> dict:
+    """An answered clarification, replayed into the manifest so the agent reuses the human's
+    answer instead of re-asking (req #2 durability)."""
+    return {
+        "phase": c.phase,
+        "context": c.context,
+        "questions": c.questions,
+        "answers": c.answers,
+    }
+
+
 def _profile(project: Project) -> dict:
     p = getattr(project, "profile", None)
     return {
@@ -151,6 +163,15 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
         events = Event.objects.filter(tenant_id=tenant_id).order_by("-ts")[:20]
         query = " ".join(filter(None, [phase, getattr(wi, "title", ""),
                                        getattr(wi, "description", "")]))
+        # Answered clarifications for this work item are replayed into the manifest so a
+        # re-dispatched run (e.g. after a companion restart) never re-asks (req #2 durability).
+        answered = (
+            Clarification.objects.filter(
+                tenant_id=tenant_id, work_item_id=wi.id,
+                status=Clarification.Status.ANSWERED,
+            ).order_by("answered_at")
+            if wi is not None else []
+        )
         return {
             "profile": _profile(project),
             "repo": _repo(repo) if repo is not None else None,
@@ -158,6 +179,7 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
             "relevant_artifacts": [_artifact(a) for a in artifacts],
             "recent_events": [_event(e) for e in events],
             "retrieved_knowledge": _retrieve_knowledge(tenant_id, project_id, query),
+            "answered_clarifications": [_clarification(c) for c in answered],
         }
 
 

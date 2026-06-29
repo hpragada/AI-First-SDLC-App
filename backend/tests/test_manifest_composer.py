@@ -57,6 +57,26 @@ def test_fixed_section_order():
     assert positions == sorted(positions), "sections are out of the locked order"
 
 
+def test_answered_clarifications_rendered_when_present():
+    ctx = _context(answered_clarifications=[
+        {"phase": "prd", "context": "needed before drafting",
+         "questions": [{"id": "scope", "text": "MVP scope?"}],
+         "answers": {"scope": "auth only"}},
+    ])
+    md = compose_manifest(context=ctx, work_item=_work_item(), phase="prd")
+    assert "# Answered Clarifications" in md
+    assert "MVP scope?" in md and "auth only" in md
+    assert "do NOT ask them again" in md
+    # ordering: after Current Work Item, before Relevant Artifacts
+    assert md.find("# Current Work Item") < md.find("# Answered Clarifications") \
+        < md.find("# Relevant Artifacts")
+
+
+def test_answered_clarifications_omitted_when_none():
+    md = compose_manifest(context=_context(), work_item=_work_item(), phase="prd")
+    assert "# Answered Clarifications" not in md
+
+
 def test_important_context_is_verbatim():
     md = compose_manifest(context=_context(), work_item=_work_item(), phase="prd")
     assert "ALWAYS prefer retrieval. This is verbatim steering." in md

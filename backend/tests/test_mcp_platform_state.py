@@ -117,12 +117,35 @@ def test_get_context_shape(world):
 
     ctx = tools.get_context(t.id, project.id, phase="prd")
     assert set(ctx) == {"profile", "repo", "relevant_artifacts", "recent_events",
-                        "retrieved_knowledge"}
+                        "retrieved_knowledge", "answered_clarifications"}
     assert ctx["repo"] is None  # repo-less run → no per-repo scoping (D5)
     assert ctx["profile"]["important_context"] == "ctx" and ctx["profile"]["version"] == 2
     assert len(ctx["relevant_artifacts"]) == 1
     assert len(ctx["recent_events"]) == 1
     assert ctx["retrieved_knowledge"] == []  # Phase 4
+    assert ctx["answered_clarifications"] == []  # none asked yet
+
+
+def test_get_context_replays_answered_clarifications(world):
+    """A re-dispatched run sees prior human answers (req #2 durability); pending ones and
+    other work items' clarifications are excluded."""
+    from apps.clarifications.models import Clarification
+
+    t, project, wi, run = world["t"], world["project"], world["wi"], world["run"]
+    Clarification.objects.create(
+        tenant=t, run=run, work_item=wi, phase="prd",
+        questions=[{"id": "scope", "text": "MVP scope?"}], answers={"scope": "auth only"},
+        status=Clarification.Status.ANSWERED,
+    )
+    Clarification.objects.create(
+        tenant=t, run=run, work_item=wi, phase="prd",
+        questions=[{"id": "later", "text": "later?"}], status=Clarification.Status.PENDING,
+    )
+
+    ctx = tools.get_context(t.id, project.id, phase="prd", work_item_id=str(wi.id))
+    answered = ctx["answered_clarifications"]
+    assert len(answered) == 1
+    assert answered[0]["answers"] == {"scope": "auth only"}
 
 
 def test_detect_drift_is_stub(world):
