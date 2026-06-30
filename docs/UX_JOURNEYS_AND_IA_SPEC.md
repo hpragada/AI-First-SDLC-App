@@ -322,7 +322,7 @@ Same trigger→gate pattern as J12/J14, surfaced on **the task's** lifecycle rai
 
 ## 9. Product decisions (CONFIRMED by the team)
 
-All six are locked. The journeys above assume these resolutions.
+All eight are locked. The journeys above assume these resolutions.
 
 | # | Decision | **Confirmed resolution** |
 |---|---|---|
@@ -332,6 +332,8 @@ All six are locked. The journeys above assume these resolutions.
 | DECISION-4 | **Integration credential storage/entry.** | ✅ Write-only secret fields in a secure store; never echo values; "configured ✓" + test-connection. |
 | DECISION-5 | **Artifact preview source** (read-through endpoint). | ✅ Add a read-through preview endpoint (S3/SoR) — pointers only, no bodies in list payloads. |
 | DECISION-6 | **Adopt-behind-gate vs. simple adopt** for brownfield source docs. | ✅ Gate it (consistency with "nothing published without a gate"); allow a lightweight path for internal-only. |
+| DECISION-7 | **Persist the engine conversation** (run transcript / session view, S-33)? | ✅ **Yes — persist** agent turns + tool calls + Q&A in the DB, replayable **read-only** per run. **No retention window for now** (transcripts stay; a user-facing retention control is a later add). Implies a transcript store + read endpoint. |
+| DECISION-8 | **Explicit manual export/publish** (S-34) beyond gate-approval auto-publish? | ✅ **Yes — manual, gate-respecting publish**: a user can publish/re-publish a **gate-APPROVED** artifact to a chosen SoR target. Hard rule preserved — manual publish **never bypasses a gate** (non-negotiable #5). Implies a gate-respecting publish endpoint. |
 
 ---
 

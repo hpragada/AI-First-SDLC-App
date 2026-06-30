@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-25 · Source Documents — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad" style="max-width:880px">
+
+    <nav class="breadcrumb"><a href="S-24-onboarding-hub.html">Onboarding</a><span class="sep">›</span><span class="here">Source documents</span></nav>
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Source documents</h1>
+        <p class="page-head__sub">Upload existing specs and designs. We extract them into reviewable draft artifacts — adopt the good ones into the project.</p>
+      </div>
+    </div>
+
+    <!-- ============ Empty ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Empty</span>
+      <div class="dropzone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>
+        <div class="t-body u-strong">Drag &amp; drop documents</div>
+        <div class="t-sm u-muted">.docx · .pdf · .xlsx — or <a href="#">browse</a></div>
+      </div>
+    </div>
+
+    <!-- ============ Uploading ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Uploading &amp; extracting</span>
+      <div class="panel"><div class="panel__body--flush">
+        <div class="artifact-row">
+          <span class="artifact-row__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/></svg></span>
+          <div class="artifact-row__main"><div class="artifact-row__title">Billing-Spec-v4.docx</div><div class="artifact-row__meta">1.2 MB</div></div>
+          <span class="badge badge--running"><span class="status-dot"></span>Extracting…</span>
+        </div>
+        <div class="artifact-row">
+          <span class="artifact-row__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/></svg></span>
+          <div class="artifact-row__main"><div class="artifact-row__title">NFRs.xlsx</div><div class="artifact-row__meta">0.4 MB · uploading 80%</div></div>
+          <span class="badge badge--waiting"><span class="status-dot"></span>Uploading</span>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ============ Extracted · review ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Extracted · review draft</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Billing-Spec-v4.docx → draft</h2><span class="u-spacer"></span><span class="badge badge--info-hue"><span class="status-dot"></span>Extracted</span></div>
+        <div class="panel__body">
+          <div class="doc-preview prose" style="max-width:none">
+            <h1>Legacy Billing — Functional Specification</h1>
+            <h2>Invoicing</h2>
+            <p>Monthly invoice generation per account, with proration on plan changes…</p>
+            <ul><li>Net-30 terms</li><li>Multi-currency totals</li></ul>
+          </div>
+          <div class="gate-panel__actions" style="margin-top:var(--space-4)"><button class="btn btn--primary">Adopt as Requirements artifact</button><button class="btn btn--ghost">Discard</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Adopt pending gate ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Adopt pending gate</span>
+      <div class="card"><div class="card__body">
+        <div class="banner banner--warning"><span class="banner__icon">▲</span><div class="banner__body"><div class="banner__title">Adoption awaiting gate</div>Adopting publishes this as a project artifact, so it goes through a gate — like everything else. <a href="S-21-gates.html">Open gate ↗</a></div></div>
+        <div class="u-row" style="margin-top:var(--space-3)"><span class="t-sm u-body">Billing-Spec-v4 → Requirements</span><span class="u-spacer"></span><span class="badge badge--gate"><span class="status-dot"></span>Awaiting product_owner</span></div>
+      </div></div>
+    </div>
+
+    <!-- ============ Adopted ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Adopted</span>
+      <div class="panel"><div class="panel__body--flush">
+        <div class="artifact-row">
+          <span class="artifact-row__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M9 13l2 2 4-4"/></svg></span>
+          <div class="artifact-row__main"><div class="artifact-row__title">Legacy Billing Requirements</div><div class="artifact-row__meta">v1.0 · adopted from Billing-Spec-v4.docx</div></div>
+          <span class="badge badge--done"><span class="status-dot"></span>Adopted</span>
+          <a class="sor-chip sor-chip--confluence" href="S-29-artifact-preview.html"><span class="sor-chip__glyph">C</span>Confluence</a>
+          <button class="btn btn--ghost btn--sm">Preview</button>
+        </div>
+      </div></div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("onboarding", { project: "Legacy Billing" });</script>
+</body>
+</html>

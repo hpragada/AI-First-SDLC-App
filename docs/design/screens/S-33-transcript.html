@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-33 · Run Transcript — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <nav class="breadcrumb"><a href="S-18-phases-runs.html">Phases &amp; Runs</a><span class="sep">›</span><span class="here">Transcripts</span></nav>
+    <div class="page-head"><div class="page-head__titles"><h1 class="t-h1">Run transcripts</h1><p class="page-head__sub">Read-only replay of each run — agent turns, tool calls, and the Q&amp;A. Stored for provenance; never editable.</p></div></div>
+
+    <!-- ============ Runs list ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Runs list</span>
+      <div class="panel"><div class="panel__body--flush">
+        <table class="table table--in-panel">
+          <thead><tr><th>Run</th><th>Phase</th><th>Work item</th><th>Status</th><th>Turns</th><th>Cost</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="table__id">RUN-42</td><td class="table__primary">Architecture</td><td class="table__id">WI-492</td><td><span class="badge badge--done"><span class="status-dot"></span>Completed</span></td><td>14</td><td class="table__id">$0.31</td><td><button class="btn btn--ghost btn--sm">Open transcript</button></td></tr>
+            <tr><td class="table__id">RUN-41</td><td class="table__primary">PRD</td><td class="table__id">WI-492</td><td><span class="badge badge--done"><span class="status-dot"></span>Completed</span></td><td>22</td><td class="table__id">$0.18</td><td><button class="btn btn--ghost btn--sm">Open transcript</button></td></tr>
+            <tr><td class="table__id">RUN-39</td><td class="table__primary">Requirements</td><td class="table__id">WI-511</td><td><span class="badge badge--failed"><span class="status-dot"></span>Failed</span></td><td>6</td><td class="table__id">—</td><td><button class="btn btn--ghost btn--sm">Open transcript</button></td></tr>
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- ============ Transcript (read-only) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Transcript · read-only</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">RUN-42 · Architecture · WI-492</h2><span class="u-spacer"></span><span class="meta-item">Engine <strong>Claude · local</strong></span><span class="badge badge--done"><span class="status-dot"></span>Completed · $0.31</span></div>
+        <div class="panel__body">
+          <div class="transcript">
+            <div class="turn turn--agent"><span class="turn__role">Agent</span><div class="turn__body">Reading the approved PRD and security rules for the webhook integration…</div></div>
+            <div class="turn turn--tool"><span class="turn__role">Tool</span><div class="turn__body">docstore.read("PRD: Stripe Webhook Integration v1.2") → ok</div></div>
+            <div class="turn turn--tool"><span class="turn__role">Tool</span><div class="turn__body">designsource.list(project="Payment Gateway v2") → 3 files</div></div>
+            <div class="turn turn--agent"><span class="turn__role">Agent</span><div class="turn__body">I need one detail before drafting the sequence diagram.</div></div>
+            <div class="turn turn--human"><span class="turn__role">You</span><div class="turn__body">Q: "Which Confluence space should the spec publish to?" → answered <strong>PAY</strong><div class="turn__meta">Sarah Chen · 10:42 · run paused (no usage billed) for 6m</div></div></div>
+            <div class="turn turn--agent"><span class="turn__role">Agent</span><div class="turn__body">Generating the System Sequence Diagram and validating against security rules…</div></div>
+            <div class="turn turn--tool"><span class="turn__role">Tool</span><div class="turn__body">registry.register_artifact("System Sequence Diagram", phase="architecture", status="draft", v0.9) → ok</div></div>
+            <div class="turn turn--agent"><span class="turn__role">Agent</span><div class="turn__body">Run complete. Draft registered; awaiting Architecture gate.</div></div>
+          </div>
+          <div class="banner banner--info" style="margin-top:var(--space-4)"><span class="banner__icon">ℹ</span><div class="banner__body">Read-only replay — transcripts are stored for provenance and cannot be edited.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Empty ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Empty</span>
+      <div class="panel">
+        <div class="empty">
+          <svg class="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 6h-7M3 6h7M3 12h18M3 18h11"/><circle cx="17" cy="18" r="3"/></svg>
+          <div class="empty__title">No transcripts yet</div>
+          <div class="empty__text">Once you run a phase, its full session is captured here for read-only replay.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("runs");</script>
+</body>
+</html>

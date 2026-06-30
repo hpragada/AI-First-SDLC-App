@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-18 · Phases & Runs — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Phases &amp; Runs</h1>
+        <p class="page-head__sub">Trigger a phase for a work item — it runs on <strong>your</strong> companion — and watch every run here.</p>
+      </div>
+    </div>
+
+    <!-- ============ Companion online · triggerable ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Companion online · triggerable</span>
+      <div class="panel" style="margin-bottom:var(--space-5)">
+        <div class="panel__header"><h2 class="panel__title">Trigger a phase</h2></div>
+        <div class="panel__body u-stack">
+          <div class="u-row u-wrap">
+            <label class="field" style="margin-bottom:0;min-width:280px">
+              <span class="field__label">Work item</span>
+              <select class="select"><option>WI-492 · Stripe Webhook Integration (Epic)</option><option>WI-540 · Verify Stripe signing secret (Task)</option></select>
+            </label>
+            <span class="conn-status conn-status--connected" style="align-self:flex-end"><span class="status-dot" style="background:currentColor"></span>Companion ready — Sarah's MacBook</span>
+          </div>
+          <div>
+            <span class="field__label">Phases valid for this Epic</span>
+            <div class="phase-picker">
+              <button class="btn btn--secondary btn--sm" disabled>Ideation ✓</button>
+              <button class="btn btn--secondary btn--sm" disabled>Requirements ✓</button>
+              <button class="btn btn--secondary btn--sm" disabled>PRD ✓</button>
+              <button class="btn btn--primary btn--sm">Run Architecture</button>
+              <button class="btn btn--secondary btn--sm">UX Design</button>
+              <button class="btn btn--secondary btn--sm">Task Breakdown</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Runs</h2><span class="u-spacer"></span><span class="t-sm u-muted">WI-492</span></div>
+        <div class="panel__body--flush">
+          <table class="table table--in-panel">
+            <thead><tr><th>Run</th><th>Phase</th><th>Status</th><th>Engine / model</th><th>Cost</th><th>Workflow</th><th>Created</th></tr></thead>
+            <tbody>
+              <tr><td class="table__id">RUN-42</td><td class="table__primary">Architecture</td><td><span class="badge badge--gate"><span class="status-dot"></span>Awaiting gate</span></td><td>Claude · local</td><td class="table__id">$0.31</td><td class="table__id">wf-7c3a</td><td>just now</td></tr>
+              <tr><td class="table__id">RUN-41</td><td class="table__primary">PRD</td><td><span class="badge badge--done"><span class="status-dot"></span>Completed</span></td><td>Claude · local</td><td class="table__id">$0.18</td><td class="table__id">wf-6b21</td><td>1h ago</td></tr>
+              <tr><td class="table__id">RUN-38</td><td class="table__primary">Requirements</td><td><span class="badge badge--done"><span class="status-dot"></span>Completed</span></td><td>Claude · local</td><td class="table__id">$0.22</td><td class="table__id">wf-5a09</td><td>2d ago</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Companion offline · blocked ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Companion offline · triggering blocked</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Trigger a phase</h2></div>
+        <div class="panel__body u-stack">
+          <div class="banner banner--warning"><span class="banner__icon">⚠</span><div class="banner__body"><div class="banner__title">Your machine isn't connected</div>Phases can't run until your companion is online. <a href="S-06-connect-machine.html">Connect your machine ↗</a></div></div>
+          <div class="phase-picker" style="opacity:.5;pointer-events:none">
+            <button class="btn btn--primary btn--sm" aria-disabled="true">Run Architecture</button>
+            <button class="btn btn--secondary btn--sm" aria-disabled="true">UX Design</button>
+            <button class="btn btn--secondary btn--sm" aria-disabled="true">Task Breakdown</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ No runs yet ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">No runs yet</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Runs</h2><span class="u-spacer"></span><span class="t-sm u-muted">WI-508</span></div>
+        <div class="empty">
+          <svg class="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 5v14l11-7z"/></svg>
+          <div class="empty__title">No runs yet</div>
+          <div class="empty__text">Trigger the first phase for this work item to see runs appear here with live status and cost.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("runs");</script>
+</body>
+</html>

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-17 · Work Item — Defect — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <nav class="breadcrumb"><a href="S-14-work-items-board.html">Work Items</a><span class="sep">›</span><a href="S-16-work-item-task.html">WI-540</a><span class="sep">›</span><span class="here">WI-547</span></nav>
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Signature check rejects valid test events</h1>
+        <div class="meta-row" style="margin-top:var(--space-2)">
+          <span class="meta-item"><span class="chip badge--orange">Defect</span></span>
+          <span class="meta-item">Parent <a href="S-16-work-item-task.html"><strong>↖ WI-540 Verify Stripe signing secret</strong></a></span>
+          <span class="meta-item">From <strong>Testing run #61</strong></span>
+        </div>
+      </div>
+      <button class="btn btn--primary">Trigger Fix</button>
+    </div>
+
+    <!-- ============ Open ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Open</span>
+      <div class="grid grid--detail">
+        <div class="u-stack">
+          <div class="panel">
+            <div class="panel__header"><h2 class="panel__title">Lifecycle — Remediation</h2><span class="u-spacer"></span><span class="t-sm u-muted">minimal rail</span></div>
+            <div class="rail">
+              <div class="rail__node rail__node--current"><span class="rail__dot">●</span><span class="rail__label">Fix</span><span class="rail__state">Open</span></div>
+              <div class="rail__node rail__node--upcoming"><span class="rail__dot">2</span><span class="rail__label">Review</span><span class="rail__state">Upcoming</span></div>
+              <div class="rail__node rail__node--upcoming"><span class="rail__dot">3</span><span class="rail__label">Test</span><span class="rail__state">Upcoming</span></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel__header"><h2 class="panel__title">Originating finding</h2></div>
+            <div class="panel__body">
+              <div class="banner banner--danger"><span class="banner__icon">▲</span><div class="banner__body"><div class="banner__title">FAIL · webhook.signature.valid_test_event</div>Valid Stripe test-mode events are rejected by the signature check. Opened automatically from <a href="S-19-run-console.html">Testing run #61</a>, traced to the test case.</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="card"><div class="card__body">
+          <h3 class="t-h3" style="margin-bottom:var(--space-3)">At a glance</h3>
+          <dl class="kv" style="grid-template-columns:1fr auto">
+            <dt>Parent task</dt><dd>WI-540</dd>
+            <dt>Epic</dt><dd>WI-492</dd>
+            <dt>Severity</dt><dd>High</dd>
+            <dt>Status</dt><dd>Open</dd>
+          </dl>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Fixing ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Fixing</span>
+      <div class="panel" style="margin-bottom:var(--space-5)">
+        <div class="panel__header"><h2 class="panel__title">Lifecycle — Remediation</h2></div>
+        <div class="rail">
+          <div class="rail__node rail__node--running"><span class="rail__dot"></span><span class="rail__label">Fix</span><span class="rail__state">Running</span></div>
+          <div class="rail__node rail__node--upcoming"><span class="rail__dot">2</span><span class="rail__label">Review</span><span class="rail__state">Upcoming</span></div>
+          <div class="rail__node rail__node--upcoming"><span class="rail__dot">3</span><span class="rail__label">Test</span><span class="rail__state">Upcoming</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Run console · Fix</h2><span class="u-spacer"></span><span class="badge badge--running"><span class="status-dot"></span>Running on your companion</span></div>
+        <div class="panel__body">
+          <div class="console" role="log">
+            <div class="console__line"><span class="console__ts">15:02:10</span>Reproducing failing case… <span class="ok">[OK]</span></div>
+            <div class="console__line"><span class="console__ts">15:02:48</span>Patching signature tolerance for test-mode events… </div>
+            <div class="console__line"><span class="console__ts">15:03:21</span>Updating PR #218 <span class="console__cursor"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Closed on clean re-run ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Closed on clean re-run</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Lifecycle — Remediation</h2><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Closed</span></div>
+        <div class="rail">
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Fix</span><span class="rail__state">Patched</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Review</span><span class="rail__state">Clean</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Test</span><span class="rail__state">Passing</span></div>
+        </div>
+        <div class="panel__body" style="border-top:1px solid var(--border)">
+          <div class="banner banner--success"><span class="banner__icon">✓</span><div class="banner__body"><div class="banner__title">Defect closed automatically</div>Testing re-run #63 passed <code>webhook.signature.valid_test_event</code>. WI-540 is unblocked for the Merge gate.</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("work-items");</script>
+</body>
+</html>
