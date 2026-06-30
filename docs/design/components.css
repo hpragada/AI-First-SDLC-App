@@ -454,3 +454,89 @@
 .skeleton--title { height: 20px; width: 40%; }
 .skeleton--block { height: 80px; }
 @keyframes shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+
+/* ============================================================================
+   17. Batch-1 additions (compose from these — no one-off markup)
+   ========================================================================== */
+
+/* breadcrumb */
+.breadcrumb { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-sm); color: var(--text-muted); margin-bottom: var(--space-3); }
+.breadcrumb a { color: var(--text-muted); font-weight: 500; }
+.breadcrumb a:hover { color: var(--text-body); }
+.breadcrumb .sep { color: var(--text-faint); }
+.breadcrumb .here { color: var(--text-strong); font-weight: 600; }
+
+/* work-item meta row (created / owner / SoR ...) */
+.meta-row { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; font-size: var(--fs-sm); color: var(--text-muted); }
+.meta-item { display: inline-flex; align-items: center; gap: 6px; }
+.meta-item strong { color: var(--text-body); font-weight: 600; }
+
+/* key/value description block (profile, context) */
+.kv { display: grid; grid-template-columns: 160px 1fr; gap: var(--space-2) var(--space-4); }
+.kv dt { font-size: var(--fs-xs); font-weight: 600; letter-spacing: .2px; text-transform: uppercase; color: var(--text-muted); }
+.kv dd { font-size: var(--fs-sm); color: var(--text-body); margin: 0; }
+
+/* terminal command block (connect-your-machine Step B) */
+.cmd-block { background: var(--console-bg); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+.cmd-row { display: flex; align-items: center; gap: var(--space-3); }
+.cmd-row__text { flex: 1 1 auto; font-family: var(--font-mono); font-size: var(--fs-mono); line-height: var(--lh-mono); color: var(--console-fg); white-space: pre-wrap; word-break: break-all; }
+.cmd-row__text .prompt { color: var(--console-faint); user-select: none; }
+.cmd-copy { flex: none; background: rgba(255,255,255,.08); color: var(--text-on-navy); border: 0; border-radius: var(--radius-sm); padding: 4px 10px; font-size: var(--fs-xs); font-weight: 600; }
+.cmd-copy:hover { background: rgba(255,255,255,.16); }
+
+/* token reveal (shown once) */
+.token-reveal { display: flex; align-items: center; gap: var(--space-3); background: var(--bg-subtle); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: var(--space-3) var(--space-4); font-family: var(--font-mono); font-size: var(--fs-mono); color: var(--text-strong); }
+.token-reveal .u-spacer { flex: 1 1 auto; }
+
+/* vertical numbered stepper (onboarding hub stages, connect steps) */
+.vstep { display: flex; gap: var(--space-4); position: relative; padding-bottom: var(--space-5); }
+.vstep:not(:last-child)::before { content: ""; position: absolute; left: 15px; top: 34px; bottom: 0; width: 2px; background: var(--border); }
+.vstep__num { width: 32px; height: 32px; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: var(--fs-sm); font-weight: 700; background: var(--bg-surface); border: 2px solid var(--border-strong); color: var(--text-muted); z-index: 1; }
+.vstep__body { flex: 1 1 auto; min-width: 0; padding-top: 3px; }
+.vstep__title { font-size: var(--fs-h3); font-weight: 600; color: var(--text-strong); }
+.vstep__desc { font-size: var(--fs-sm); color: var(--text-muted); margin-top: 2px; }
+.vstep--done .vstep__num { background: var(--success); border-color: var(--success); color: #fff; }
+.vstep--done:not(:last-child)::before { background: var(--success); }
+.vstep--active .vstep__num { background: var(--brand-orange); border-color: var(--brand-orange-300); color: #fff; box-shadow: 0 0 0 4px var(--brand-orange-50); }
+.vstep--running .vstep__num { border-color: var(--info); color: var(--info); }
+
+/* connection status strip (waiting -> connected) */
+.conn-status { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); font-size: var(--fs-sm); font-weight: 600; border: 1px solid var(--border); }
+.conn-status--waiting { background: var(--info-bg); color: var(--info); border-color: transparent; }
+.conn-status--connected { background: var(--success-bg); color: var(--success); border-color: transparent; }
+.conn-status--offline { background: var(--danger-bg); color: var(--danger); border-color: transparent; }
+.conn-status .spinner { width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
+
+/* stat tile (dashboard health, gap report counts) */
+.tile { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); }
+.tile__num { font-size: var(--fs-display); line-height: 1.1; font-weight: 700; color: var(--text-strong); }
+.tile__label { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .3px; color: var(--text-muted); margin-top: var(--space-1); }
+.tile__sub { font-size: var(--fs-sm); color: var(--text-muted); margin-top: var(--space-1); }
+
+/* "needs me" todo row (dashboard) */
+.todo { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
+.todo:last-child { border-bottom: 0; }
+.todo__icon { width: 32px; height: 32px; flex: none; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; }
+.todo__icon--gate { background: var(--warning-bg); color: var(--warning); }
+.todo__icon--clar { background: var(--accent-purple-bg); color: var(--accent-purple); }
+.todo__icon--run { background: var(--info-bg); color: var(--info); }
+.todo__main { flex: 1 1 auto; min-width: 0; }
+.todo__title { font-size: var(--fs-body); font-weight: 600; color: var(--text-strong); }
+.todo__meta { font-size: var(--fs-xs); color: var(--text-muted); margin-top: 1px; }
+
+/* segmented toggle (board/list, view switches) */
+.segmented { display: inline-flex; background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 2px; }
+.segmented button { background: transparent; border: 0; padding: 5px 12px; border-radius: var(--radius-sm); font-size: var(--fs-sm); font-weight: 600; color: var(--text-muted); }
+.segmented button[aria-pressed="true"] { background: var(--bg-surface); color: var(--text-strong); box-shadow: var(--shadow-sm); }
+
+/* assessment status cell (gap report) */
+.assess { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 600; }
+.assess--complete { color: var(--success); }
+.assess--partial { color: var(--warning); }
+.assess--missing { color: var(--danger); }
+.row--resume { background: var(--brand-orange-50); }
+.row--resume td { border-bottom-color: var(--brand-orange-300); }
+
+/* upload dropzone (onboarding / source docs) */
+.dropzone { border: 2px dashed var(--border-strong); border-radius: var(--radius-md); background: var(--bg-subtle); padding: var(--space-7); text-align: center; color: var(--text-muted); display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+.dropzone svg { width: 32px; height: 32px; color: var(--text-faint); }

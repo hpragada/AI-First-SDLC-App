@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-24 · Onboarding Hub — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad" style="max-width:920px">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Onboarding — Legacy Billing</h1>
+        <p class="page-head__sub">Brownfield project. Let's assess what already exists, then resume the lifecycle at the right phase. We store analysis + pointers — never your source.</p>
+      </div>
+      <span class="badge badge--navy">Brownfield</span>
+    </div>
+
+    <!-- ============ Nothing done ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Nothing done · resume = Ideation</span>
+      <div class="card"><div class="card__body">
+        <div class="vstep vstep--active"><span class="vstep__num">1</span><div class="vstep__body"><div class="vstep__title">Upload resources</div><div class="vstep__desc">Drag in existing specs, PRDs, designs (.docx · .pdf · .xlsx).</div>
+          <div class="dropzone" style="margin-top:var(--space-3)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg><div class="t-body u-strong">Drag &amp; drop documents</div><div class="t-sm u-muted">or <a href="#">browse</a></div></div>
+        </div></div>
+        <div class="vstep"><span class="vstep__num">2</span><div class="vstep__body"><div class="vstep__title">Register existing tools</div><div class="vstep__desc">Link existing Confluence / Jira — register, don't recreate.</div></div></div>
+        <div class="vstep"><span class="vstep__num">3</span><div class="vstep__body"><div class="vstep__title">Index code</div><div class="vstep__desc">Point at a repo; built-in code intelligence indexes it.</div></div></div>
+        <div class="vstep"><span class="vstep__num">4</span><div class="vstep__body"><div class="vstep__title">Gap report</div><div class="vstep__desc">What exists, what's missing, and where to resume.</div></div></div>
+        <div class="vstep" style="padding-bottom:0"><span class="vstep__num">5</span><div class="vstep__body"><div class="vstep__title">Resume</div><div class="vstep__desc">Trigger the recommended phase and hand into the normal pipeline.</div></div></div>
+      </div></div>
+    </div>
+
+    <!-- ============ In progress ============ -->
+    <div class="state-block">
+      <span class="state-block__label">In progress · docs extracted · tools registered · indexing</span>
+      <div class="card"><div class="card__body">
+        <div class="vstep vstep--done"><span class="vstep__num">✓</span><div class="vstep__body"><div class="vstep__title">Upload resources</div><div class="vstep__desc">3 documents uploaded.</div>
+          <div class="u-row u-wrap" style="margin-top:var(--space-2)">
+            <span class="chip badge--done">Billing-Spec-v4.docx · extracted</span>
+            <span class="chip badge--done">NFRs.xlsx · extracted</span>
+            <span class="chip badge--running"><span class="status-dot" style="background:currentColor"></span>Vision.pdf · extracting…</span>
+          </div>
+        </div></div>
+        <div class="vstep vstep--done"><span class="vstep__num">✓</span><div class="vstep__body"><div class="vstep__title">Register existing tools</div><div class="vstep__desc">Confluence space <strong>BILL</strong> and Jira project <strong>BILL</strong> linked — <strong>found 32 existing Jira issues, linked</strong> (no duplicates created).</div></div></div>
+        <div class="vstep vstep--running"><span class="vstep__num">3</span><div class="vstep__body"><div class="vstep__title">Index code</div><div class="vstep__desc">Indexing acme/legacy-billing…</div>
+          <div class="conn-status conn-status--waiting" style="margin-top:var(--space-3);max-width:420px"><span class="spinner"></span>Indexing 1,284 files… 64%</div>
+        </div></div>
+        <div class="vstep"><span class="vstep__num">4</span><div class="vstep__body"><div class="vstep__title">Gap report</div><div class="vstep__desc">Runs once indexing completes.</div></div></div>
+        <div class="vstep" style="padding-bottom:0"><span class="vstep__num">5</span><div class="vstep__body"><div class="vstep__title">Resume</div><div class="vstep__desc">Available after the gap report.</div></div></div>
+      </div></div>
+    </div>
+
+    <!-- ============ Gap report ready ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Gap report ready · resume = Architecture</span>
+      <div class="card"><div class="card__body">
+        <div class="vstep vstep--done"><span class="vstep__num">✓</span><div class="vstep__body"><div class="vstep__title">Upload resources</div><div class="vstep__desc">3 documents adopted as draft artifacts.</div></div></div>
+        <div class="vstep vstep--done"><span class="vstep__num">✓</span><div class="vstep__body"><div class="vstep__title">Register existing tools</div><div class="vstep__desc">32 Jira issues linked.</div></div></div>
+        <div class="vstep vstep--done"><span class="vstep__num">✓</span><div class="vstep__body"><div class="vstep__title">Index code</div><div class="vstep__desc">1,284 files indexed.</div></div></div>
+        <div class="vstep vstep--done"><span class="vstep__num">✓</span><div class="vstep__body"><div class="vstep__title">Gap report</div><div class="vstep__desc">Ideation ✓ · Requirements ✓ · PRD ~Partial · Architecture ✗ missing.</div>
+          <div class="card--attention" style="margin-top:var(--space-3);max-width:520px"><div class="card__body">
+            <span class="gate-panel__role">Recommended resume point</span>
+            <h3 class="t-h3">Resume at: Architecture</h3>
+            <p class="t-sm u-body">Requirements are covered by your uploaded spec; the architecture phase has no evidence yet.</p>
+            <div class="gate-panel__actions"><a href="S-26-gap-report.html" class="btn btn--secondary">View full gap report</a></div>
+          </div></div>
+        </div></div>
+        <div class="vstep vstep--active" style="padding-bottom:0"><span class="vstep__num">5</span><div class="vstep__body"><div class="vstep__title">Resume</div><div class="vstep__desc">Trigger Architecture on a work item to enter the pipeline.</div>
+          <div class="gate-panel__actions" style="margin-top:var(--space-3)"><button class="btn btn--primary">Resume at Architecture</button><button class="btn btn--ghost">Re-run gap report</button></div>
+        </div></div>
+      </div></div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("onboarding", { project: "Legacy Billing" });</script>
+</body>
+</html>

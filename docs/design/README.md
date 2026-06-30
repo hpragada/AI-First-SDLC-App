@@ -141,7 +141,7 @@ you" (`.needs--clar/--gate`); `.status-dot`; `.avatar` (+ `--sm/--lg`, `.avatar-
 
 - **Batch 0 — Foundation** ✅ `design-system.css`, `components.css`, `shell.js`,
   `S-00-component-library.html`, `index.html`, `README.md`.
-- **Batch 1 — Signature screens:** S-14 board, S-15 epic, S-16 task, S-06 connect-machine,
+- **Batch 1 — Signature screens** ✅ S-14 board, S-15 epic, S-16 task, S-06 connect-machine,
   S-24 onboarding hub, S-26 gap report, S-31 dashboard.
 - **Batch 2 — Lifecycle / observability:** S-17, S-18, S-19, S-20, S-21, S-22, S-23, S-25,
   S-27, S-28, S-29, S-30.

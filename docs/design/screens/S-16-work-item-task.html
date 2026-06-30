@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-16 · Work Item — Task — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <!-- shared header (build-tier item) -->
+    <nav class="breadcrumb"><a href="S-14-work-items-board.html">Work Items</a><span class="sep">›</span><a href="S-15-work-item-epic.html">WI-492</a><span class="sep">›</span><span class="here">WI-540</span></nav>
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Verify Stripe signing secret</h1>
+        <div class="meta-row" style="margin-top:var(--space-2)">
+          <span class="meta-item"><span class="chip">Task</span></span>
+          <span class="meta-item">Parent <a href="S-15-work-item-epic.html"><strong>↖ WI-492 Stripe Webhook Integration</strong></a></span>
+          <span class="meta-item">Owner <strong>Dan Ortiz</strong></span>
+          <span class="meta-item"><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-15</span></span>
+        </div>
+      </div>
+      <span class="u-row-tight"><button class="btn btn--secondary">Edit</button><button class="btn btn--primary">Trigger phase</button></span>
+    </div>
+
+    <!-- ============ DEFAULT: review loop, test failed → defect child ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Default · Review↔Implementation loop · test failed</span>
+      <div class="panel" style="margin-bottom:var(--space-5)">
+        <div class="panel__header"><h2 class="panel__title">Lifecycle — Build tier</h2><span class="u-spacer"></span><span class="t-sm u-muted">Task · build phases only</span></div>
+        <span class="rail__loop">↺ Review ↔ Implementation loop ×2</span>
+        <div class="rail">
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Implementation</span><span class="rail__state">PR #218</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Review</span><span class="rail__state">Clean</span></div>
+          <div class="rail__node rail__node--failed"><span class="rail__dot">!</span><span class="rail__label">Test</span><span class="rail__state">Defect WI-547</span></div>
+          <div class="rail__node rail__node--upcoming"><span class="rail__dot">4</span><span class="rail__label">Merge</span><span class="rail__state">Upcoming</span></div>
+        </div>
+        <p class="rail__branch">⌐ Child defect: <a href="S-17-work-item-defect.html">WI-547 "Signature check rejects valid test events"</a> — closes on clean re-run.</p>
+      </div>
+
+      <div class="grid grid--detail">
+        <div class="u-stack">
+          <!-- linked PR card -->
+          <div class="panel">
+            <div class="panel__header"><h2 class="panel__title">Linked pull request</h2></div>
+            <div class="panel__body--flush">
+              <div class="artifact-row">
+                <span class="artifact-row__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a3 3 0 0 0-3 3H9M18 9V6"/><circle cx="18" cy="6" r="3"/></svg></span>
+                <div class="artifact-row__main"><div class="artifact-row__title">PR #218 · Verify Stripe signing secret</div><div class="artifact-row__meta">Open · acme/payments-api · base main</div></div>
+                <span class="badge badge--waiting"><span class="status-dot"></span>Open</span>
+                <a class="sor-chip sor-chip--github" href="#"><span class="sor-chip__glyph">G</span>GitHub</a>
+              </div>
+            </div>
+          </div>
+
+          <!-- child defects / remediations -->
+          <div class="panel">
+            <div class="panel__header"><h2 class="panel__title">Child defects &amp; remediations</h2></div>
+            <div class="panel__body--flush">
+              <div class="artifact-row">
+                <span class="artifact-row__icon" style="background:var(--danger-bg);color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg></span>
+                <div class="artifact-row__main"><div class="artifact-row__title">Signature check rejects valid test events</div><div class="artifact-row__meta">WI-547 · from Testing run #61</div></div>
+                <span class="badge badge--failed"><span class="status-dot"></span>Open</span>
+                <a href="S-17-work-item-defect.html" class="btn btn--ghost btn--sm">Open</a>
+              </div>
+            </div>
+          </div>
+
+          <!-- run console -->
+          <div class="panel">
+            <div class="panel__header"><h2 class="panel__title">Latest AI run · Testing</h2><span class="u-spacer"></span><a href="S-19-run-console.html" class="t-sm">View full run console ↗</a></div>
+            <div class="panel__body">
+              <div class="console" role="log">
+                <div class="console__line"><span class="console__ts">14:20:03</span>Authoring tests to Xray… <span class="ok">[OK]</span></div>
+                <div class="console__line"><span class="console__ts">14:21:10</span>Running suite (32 cases)… </div>
+                <div class="console__line"><span class="console__ts">14:21:48</span><span class="err">[FAIL] webhook.signature.valid_test_event</span></div>
+                <div class="console__line"><span class="console__ts">14:21:49</span><span class="info">Opened defect WI-547 (traced).</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="u-stack">
+          <div class="card"><div class="card__body">
+            <h3 class="t-h3" style="margin-bottom:var(--space-3)">At a glance</h3>
+            <dl class="kv" style="grid-template-columns:1fr auto">
+              <dt>Parent epic</dt><dd>WI-492</dd>
+              <dt>Phase</dt><dd>Test</dd>
+              <dt>PR</dt><dd>#218 open</dd>
+              <dt>Open defects</dt><dd>1</dd>
+            </dl>
+          </div></div>
+          <div class="card"><div class="card__body">
+            <h3 class="t-h3">Next step</h3>
+            <p class="t-sm u-body">Fix WI-547, then re-run Testing. A clean run closes the defect and unblocks the Merge gate.</p>
+          </div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Implementation running ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Implementation running</span>
+      <div class="panel" style="margin-bottom:var(--space-5)">
+        <div class="panel__header"><h2 class="panel__title">Lifecycle — Build tier</h2></div>
+        <div class="rail">
+          <div class="rail__node rail__node--running"><span class="rail__dot"></span><span class="rail__label">Implementation</span><span class="rail__state">Running</span></div>
+          <div class="rail__node rail__node--upcoming"><span class="rail__dot">2</span><span class="rail__label">Review</span><span class="rail__state">Upcoming</span></div>
+          <div class="rail__node rail__node--upcoming"><span class="rail__dot">3</span><span class="rail__label">Test</span><span class="rail__state">Upcoming</span></div>
+          <div class="rail__node rail__node--upcoming"><span class="rail__dot">4</span><span class="rail__label">Merge</span><span class="rail__state">Upcoming</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Run console</h2><span class="u-spacer"></span><span class="badge badge--running"><span class="status-dot"></span>Running on your companion</span></div>
+        <div class="panel__body">
+          <div class="console" role="log">
+            <div class="console__line"><span class="console__ts">09:15:02</span>Creating worktree on acme/payments-api… <span class="ok">[OK]</span></div>
+            <div class="console__line"><span class="console__ts">09:15:30</span>Implementing signature verification… </div>
+            <div class="console__line"><span class="console__ts">09:16:11</span>Opening draft PR… <span class="console__cursor"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Awaiting merge gate ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Awaiting merge gate</span>
+      <div class="grid grid--detail">
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Lifecycle — Build tier</h2></div>
+          <div class="rail">
+            <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Implementation</span><span class="rail__state">PR #218</span></div>
+            <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Review</span><span class="rail__state">Clean</span></div>
+            <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Test</span><span class="rail__state">Passing</span></div>
+            <div class="rail__node rail__node--current"><span class="rail__dot">●</span><span class="rail__label">Merge</span><span class="rail__state">Gate Pending</span></div>
+          </div>
+        </div>
+        <div class="card--attention gate-panel"><div class="card__body">
+          <span class="gate-panel__role">▲ Merge gate · required role: reviewer</span>
+          <h3 class="t-h3">PR #218 ready to merge</h3>
+          <p class="t-sm u-body">All checks pass. Approving merges the PR and completes this task.</p>
+          <div class="gate-panel__actions"><button class="btn btn--primary">Approve &amp; merge</button><button class="btn btn--secondary">Reject</button></div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Done ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Done</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Lifecycle — Build tier</h2><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Task complete</span></div>
+        <div class="rail">
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Implementation</span><span class="rail__state">PR #218</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Review</span><span class="rail__state">Clean</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Test</span><span class="rail__state">Passing</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Merge</span><span class="rail__state">Merged</span></div>
+        </div>
+        <div class="panel__body" style="border-top:1px solid var(--border)">
+          <div class="toast toast--success" style="box-shadow:none;max-width:none"><div><div class="toast__title">Merged to main</div><div class="toast__body">PR #218 merged · WI-540 done. Parent epic WI-492 advances when all children complete.</div></div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("work-items");</script>
+</body>
+</html>

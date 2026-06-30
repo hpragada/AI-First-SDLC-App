@@ -377,6 +377,85 @@
       </div>
     </section>
 
+    <!-- BATCH-1 ADDITIONS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Navigation &amp; meta · breadcrumb, meta-row, key/value</h2></div>
+      <div class="panel__body u-stack">
+        <nav class="breadcrumb"><a href="#">Work Items</a><span class="sep">›</span><span class="here">WI-492</span></nav>
+        <div class="meta-row">
+          <span class="meta-item">Created <strong>2d ago</strong></span>
+          <span class="meta-item">Owner <strong>Sarah Chen</strong></span>
+          <span class="meta-item"><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-14</span></span>
+        </div>
+        <dl class="kv">
+          <dt>Domain</dt><dd>Payments</dd>
+          <dt>Tech stack</dt><dd>Django, React, Postgres</dd>
+        </dl>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Connect-your-machine · token reveal, terminal block, status strip</h2></div>
+      <div class="panel__body u-stack">
+        <div class="token-reveal"><span>rnr_3f9a…b2</span><span class="u-spacer"></span><button class="cmd-copy">Copy</button></div>
+        <div class="cmd-block">
+          <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>claude</span><button class="cmd-copy">Copy</button></div>
+          <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>python -m runner.companion serve --token rnr_3f9a…b2</span><button class="cmd-copy">Copy</button></div>
+        </div>
+        <div class="conn-status conn-status--waiting"><span class="spinner"></span>Waiting for first check-in — run the command above…</div>
+        <div class="conn-status conn-status--connected"><span class="status-dot" style="background:currentColor"></span>Connected — Sarah's MacBook · last seen just now</div>
+        <div class="conn-status conn-status--offline"><span class="status-dot" style="background:currentColor"></span>Offline — last seen 5m ago · restart the daemon</div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Vertical stepper · onboarding stages / connect steps</h2></div>
+      <div class="panel__body">
+        <div class="vstep vstep--done"><span class="vstep__num">✓</span><div class="vstep__body"><div class="vstep__title">Upload resources</div><div class="vstep__desc">3 documents extracted into reviewable drafts.</div></div></div>
+        <div class="vstep vstep--running"><span class="vstep__num">2</span><div class="vstep__body"><div class="vstep__title">Index code</div><div class="vstep__desc">Indexing acme/payments-api…</div></div></div>
+        <div class="vstep"><span class="vstep__num">3</span><div class="vstep__body"><div class="vstep__title">Gap report</div><div class="vstep__desc">Runs once indexing completes.</div></div></div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Dashboard · stat tiles, "needs me" todos, segmented toggle, dropzone</h2></div>
+      <div class="panel__body u-stack">
+        <div class="u-row"><span class="t-label">View</span>
+          <span class="segmented"><button aria-pressed="true">Board</button><button>List</button></span>
+        </div>
+        <div class="grid grid--3">
+          <div class="tile"><div class="tile__num">2</div><div class="tile__label">Gates need you</div><div class="tile__sub">required role: architect, product_owner</div></div>
+          <div class="tile"><div class="tile__num">1</div><div class="tile__label">Question awaiting you</div><div class="tile__sub">WI-510 · Requirements</div></div>
+          <div class="tile"><div class="tile__num">3</div><div class="tile__label">My runs in flight</div><div class="tile__sub">1 running · 2 awaiting gate</div></div>
+        </div>
+        <div class="card"><div class="panel__body--flush">
+          <div class="todo"><span class="todo__icon todo__icon--gate">▲</span><div class="todo__main"><div class="todo__title">Architecture gate · WI-492 Stripe Webhook Integration</div><div class="todo__meta">required role: architect · Run #42</div></div><button class="btn btn--primary btn--sm">Review</button></div>
+          <div class="todo"><span class="todo__icon todo__icon--clar">?</span><div class="todo__main"><div class="todo__title">Question · WI-510 Analytics Dashboard PRD</div><div class="todo__meta">waiting 6m · $0 while waiting</div></div><button class="btn btn--secondary btn--sm">Answer</button></div>
+          <div class="todo"><span class="todo__icon todo__icon--run">▶</span><div class="todo__main"><div class="todo__title">Run #44 · UX Design running</div><div class="todo__meta">WI-487 Checkout Flow Redesign</div></div><button class="btn btn--ghost btn--sm">View</button></div>
+        </div></div>
+        <div class="dropzone">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 20h14"/></svg>
+          <div class="t-body u-strong">Drag &amp; drop documents</div>
+          <div class="t-sm u-muted">.docx · .pdf · .xlsx — or <a href="#">browse</a></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Gap report · assessment cells + resume row</h2></div>
+      <div class="panel__body--flush">
+        <table class="table table--in-panel">
+          <thead><tr><th>Lifecycle phase</th><th>Assessment</th><th>Evidence</th></tr></thead>
+          <tbody>
+            <tr><td class="table__primary">Ideation</td><td><span class="assess assess--complete">✓ Complete</span></td><td>Vision doc uploaded</td></tr>
+            <tr><td class="table__primary">Requirements</td><td><span class="assess assess--complete">✓ Complete</span></td><td>From uploaded spec</td></tr>
+            <tr><td class="table__primary">PRD</td><td><span class="assess assess--partial">~ Partial</span></td><td>Draft only, ungated</td></tr>
+            <tr class="row--resume"><td class="table__primary">Architecture</td><td><span class="assess assess--missing">✗ Missing</span></td><td><strong>Resume here</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
   </div>
 </main>
 <script src="../shell.js"></script>

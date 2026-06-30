@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-26 · Gap Report — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad" style="max-width:920px">
+
+    <nav class="breadcrumb"><a href="S-24-onboarding-hub.html">Onboarding</a><span class="sep">›</span><span class="here">Gap report</span></nav>
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Gap report — Legacy Billing</h1>
+        <p class="page-head__sub">What exists, what's missing, and the recommended phase to resume at. Re-run after each upload to watch the resume point move.</p>
+      </div>
+      <button class="btn btn--secondary">Re-run gap report</button>
+    </div>
+
+    <!-- ============ Partial (main sample) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Partial · resume = Architecture</span>
+      <div class="grid grid--detail">
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Lifecycle assessment</h2></div>
+          <div class="panel__body--flush">
+            <table class="table table--in-panel">
+              <thead><tr><th>Phase</th><th>Assessment</th><th>Evidence</th></tr></thead>
+              <tbody>
+                <tr><td class="table__primary">Ideation</td><td><span class="assess assess--complete">✓ Complete</span></td><td>Vision.pdf (adopted)</td></tr>
+                <tr><td class="table__primary">Requirements</td><td><span class="assess assess--complete">✓ Complete</span></td><td>Billing-Spec-v4.docx</td></tr>
+                <tr><td class="table__primary">PRD</td><td><span class="assess assess--partial">~ Partial</span></td><td>Draft only — ungated, missing NFR sign-off</td></tr>
+                <tr class="row--resume"><td class="table__primary">Architecture</td><td><span class="assess assess--missing">✗ Missing</span></td><td><strong>Resume here</strong> — no architecture evidence</td></tr>
+                <tr><td class="table__primary">UX Design</td><td><span class="assess assess--missing">✗ Missing</span></td><td>—</td></tr>
+                <tr><td class="table__primary">Task Breakdown</td><td><span class="assess assess--missing">✗ Missing</span></td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="u-stack">
+          <div class="card--attention"><div class="card__body">
+            <span class="gate-panel__role">Recommended resume point</span>
+            <h3 class="t-h3">Resume at: Architecture</h3>
+            <p class="t-sm u-body">Requirements are covered by your uploaded spec; architecture has no evidence yet.</p>
+            <div class="gate-panel__actions"><button class="btn btn--primary">Resume at Architecture</button></div>
+          </div></div>
+          <div class="card"><div class="card__body">
+            <h3 class="t-h3" style="margin-bottom:var(--space-3)">Blocking gaps</h3>
+            <ul class="u-stack" style="--space-4:8px">
+              <li class="u-row-tight"><span class="assess assess--missing">✗</span><span class="t-sm">No architecture artifact for the ledger reconciliation flow.</span></li>
+              <li class="u-row-tight"><span class="assess assess--partial">~</span><span class="t-sm">PRD not gate-approved — NFR sign-off missing.</span></li>
+            </ul>
+          </div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Empty (nothing uploaded) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Nothing provided · resume = Ideation</span>
+      <div class="grid grid--detail">
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Lifecycle assessment</h2></div>
+          <div class="panel__body--flush">
+            <table class="table table--in-panel">
+              <thead><tr><th>Phase</th><th>Assessment</th><th>Evidence</th></tr></thead>
+              <tbody>
+                <tr class="row--resume"><td class="table__primary">Ideation</td><td><span class="assess assess--missing">✗ Missing</span></td><td><strong>Resume here</strong> — start from scratch</td></tr>
+                <tr><td class="table__primary">Requirements</td><td><span class="assess assess--missing">✗ Missing</span></td><td>—</td></tr>
+                <tr><td class="table__primary">PRD</td><td><span class="assess assess--missing">✗ Missing</span></td><td>—</td></tr>
+                <tr><td class="table__primary">Architecture</td><td><span class="assess assess--missing">✗ Missing</span></td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card--attention"><div class="card__body">
+          <span class="gate-panel__role">Recommended resume point</span>
+          <h3 class="t-h3">Resume at: Ideation</h3>
+          <p class="t-sm u-body">Upload docs or index code to move the resume point forward.</p>
+          <div class="gate-panel__actions"><a href="S-24-onboarding-hub.html" class="btn btn--primary">Upload resources</a></div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Mature ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Mature · resume = Task Breakdown</span>
+      <div class="grid grid--detail">
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Lifecycle assessment</h2></div>
+          <div class="panel__body--flush">
+            <table class="table table--in-panel">
+              <thead><tr><th>Phase</th><th>Assessment</th><th>Evidence</th></tr></thead>
+              <tbody>
+                <tr><td class="table__primary">Ideation</td><td><span class="assess assess--complete">✓ Complete</span></td><td>Vision.pdf</td></tr>
+                <tr><td class="table__primary">Requirements</td><td><span class="assess assess--complete">✓ Complete</span></td><td>Billing-Spec-v4.docx</td></tr>
+                <tr><td class="table__primary">PRD</td><td><span class="assess assess--complete">✓ Complete</span></td><td>Confluence BILL-204</td></tr>
+                <tr><td class="table__primary">Architecture</td><td><span class="assess assess--complete">✓ Complete</span></td><td>Indexed code + ADRs</td></tr>
+                <tr class="row--resume"><td class="table__primary">Task Breakdown</td><td><span class="assess assess--partial">~ Partial</span></td><td><strong>Resume here</strong> — backlog not generated</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card--attention"><div class="card__body">
+          <span class="gate-panel__role">Recommended resume point</span>
+          <h3 class="t-h3">Resume at: Task Breakdown</h3>
+          <p class="t-sm u-body">Plan tier is well-covered — fan out into task work items.</p>
+          <div class="gate-panel__actions"><button class="btn btn--primary">Resume at Task Breakdown</button></div>
+        </div></div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("onboarding", { project: "Legacy Billing" });</script>
+</body>
+</html>
