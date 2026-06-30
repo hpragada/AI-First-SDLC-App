@@ -44,6 +44,7 @@ docs/           blueprint, continuation brief, per-phase build specs
 ```
 
 ## How we work (read this — it prevents drift)
+- **Parallel / multi-assistant execution:** read **`/AGENTS.md`** first — context read-order, task-claim protocol, work-stream + file-ownership rules, branch/PR/DoD. (Active phases: 4.7 backend + 4.8 UI; specs `/docs/PHASE_4.7_BUILD_SPEC.md` + `/docs/PHASE_4.8_BUILD_SPEC.md`; per-screen map `/docs/SCREEN_BUILD_MAP.md`.)
 - **Phase by phase, slice by slice.** Do the current phase's "thin vertical slice" end-to-end before adding breadth. Don't build Phase N+1 modules early.
 - **Implement contracts, don't re-decide them.** The build spec fixes schemas, interfaces, and tool signatures. If something is genuinely undecided, ask — don't silently invent.
 - **One task at a time from `/BUILD_PLAN.md`.** After each task: run it, write/pass a test, commit, tick the checkbox.
