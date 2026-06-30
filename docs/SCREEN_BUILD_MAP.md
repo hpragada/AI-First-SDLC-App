@@ -24,16 +24,16 @@ Legend — endpoints: `4.7-Tn` = Phase 4.7 task; `B` = Phase 4.8 bucket-B; `(exi
 | **S-11** Integrations grid | J9 | mixed · connection-failed · all-empty | CapCard(+vendor), Badge, Button | `GET /integrations/` (4.7-T6) | T3 |
 | **S-12** Connect capability | J9 | empty · filled · testing · success · fail | Drawer, Field, Banner, Badge | `POST/PATCH /integrations/`, `test-connection/` (4.7-T6) | T3 |
 | **S-13** Repositories | J10 | multi · add-form · single · duplicate · empty | Table, Chip, Field, Button | `…/repositories/` CRUD (4.7-T7) | T3 |
-| **S-14** Work Items board | J11 | board · list · tasks-filtered · empty | Board, WiCard, Chip, Segmented, Needs | `GET /work-items/` (+card deltas B) | T4 |
-| **S-15** Work Item — Epic | J11 | gate-pending · running+needs-answer · all-complete | Rail(plan), Panel, ArtifactRow, Console, GatePanel | `work-items/{id}/lifecycle/` (B), artifacts/runs (exists) | T4 |
-| **S-16** Work Item — Task | J16 | loop+test-failed · impl-running · merge-gate · done | Rail(build,loop,branch), ArtifactRow(PR), Console, GatePanel | `…/lifecycle/` (B) | T4 |
+| **S-14** Work Items board | J11 | board · list · tasks-filtered · empty | Board, WiCard, Chip, Segmented, Needs | `GET /work-items/` +`type`/`parent`/`phase` filters +card deltas (B), `GET /phases/` (B) | T4 |
+| **S-15** Work Item — Epic | J11 | gate-pending · running+needs-answer · all-complete | Rail(plan), Panel, ArtifactRow, Console, GatePanel | `work-items/{id}/lifecycle/` (B), `PATCH /work-items/{id}/` edit (B), artifacts/runs (exists) | T4 |
+| **S-16** Work Item — Task | J16 | loop+test-failed · impl-running · merge-gate · done | Rail(build,loop,branch), ArtifactRow(PR), Console, GatePanel | `…/lifecycle/` (B), `PATCH /work-items/{id}/` edit (B) | T4 |
 | **S-17** Work Item — Defect | J16 | open · fixing · closed | Rail(remediation), Banner, Console, Kv | `…/lifecycle/` (B) | T4 |
-| **S-18** Phases & Runs | J12 | online-triggerable · offline-blocked · no-runs | PhasePicker, Table, Banner, ConnStatus | `GET /runs/`, trigger (4.7-T5), `GET /runners/` (4.7-T11) | T4 |
+| **S-18** Phases & Runs | J12 | online-triggerable · offline-blocked · no-runs | PhasePicker, Table, Banner, ConnStatus | `GET /runs/`, `GET /phases/` (B), trigger (4.7-T5), `GET /runners/` (4.7-T11) | T4 |
 | **S-19** Run console | J12 | dispatched · running · needs-answer · awaiting-gate · completed · failed · parked | Console, Badge, Banner, MetaRow | `GET /runs/{id}/` (exists) | T4 |
 | **S-20** Clarifications | J13 | one(confirm) · multi · required-error · already-answered · cancelled · empty | ClarificationCard, Field, Check, Badge | `GET /clarifications/`, `answer/` (exists; actor 4.7-T5) | T4 |
 | **S-21** Gates | J14 | can-decide · cannot-decide · decided-history · empty | Table, GatePanel, Banner, Tabs | `GET /approvals/`, `decide/` (exists; actor 4.7-T5) | T4 |
 | **S-22** Criteria gate | J15 | none · partial · all-ticked · rejected | GatePanel, CriteriaList, CriteriaItem | `approvals/{id}/criteria/` + decide (B) | T4 |
-| **S-23** Task breakdown | J16 | pushed-to-jira · internal-only | Card, Banner, ArtifactRow, Tile | post-approval read of child work items (exists) | T4 |
+| **S-23** Task breakdown | J16 | pushed-to-jira · internal-only | Card, Banner, ArtifactRow, Tile | `GET /work-items/?parent=` child tasks (B), post-approval read (exists) | T4 |
 | **S-24** Onboarding hub | J17 | nothing-done · in-progress · gap-ready | Vstep, Dropzone, Banner, ConnStatus, CardAttention | `GET …/onboarding/`, `code-intel/`, `gap-report/` (4.7-T8) | T5 |
 | **S-25** Source documents | J17 | empty · uploading · extracted · adopt-gate · adopted | Dropzone, ArtifactRow, DocPreview, Banner | upload + `adopt/` (exists), hub (4.7-T8) | T5 |
 | **S-26** Gap report | J17 | partial · empty · mature | Table, Assess, CardAttention, Button | `GET …/gap-report/` (4.7-T8) | T5 |
