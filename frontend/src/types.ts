@@ -394,3 +394,138 @@ export interface RunEvent {
   message: string;
   ts: string;
 }
+
+// ── Phase 4.8 T5 — brownfield onboarding + observability (4.7 T8/T9/T10 + bucket B) ──
+
+// Onboarding hub (S-24, 4.7-T8).
+export interface OnboardingDoc {
+  id: string;
+  name: string;
+  size_bytes: number;
+  status: "uploading" | "extracting" | "extracted" | "adopted";
+  progress?: number;
+}
+
+export interface OnboardingRegister {
+  docstore_space?: string;
+  tasktracker_project?: string;
+  linked_issues?: number;
+}
+
+export interface OnboardingHub {
+  upload: OnboardingDoc[];
+  adopt: OnboardingDoc[];
+  register: OnboardingRegister;
+  index: { status: "not_started" | "running" | "done"; files_indexed?: number; total_files?: number };
+  gap: { ready: boolean; resume_phase?: string };
+}
+
+// Gap report (S-26, 4.7-T8).
+export interface GapPhaseAssessment {
+  phase: string;
+  assessment: "complete" | "partial" | "missing";
+  evidence: string;
+}
+
+export interface GapReport {
+  phases: GapPhaseAssessment[];
+  resume_phase: string;
+  blocking: string[];
+}
+
+// API contracts & drift (S-27, 4.7-T9).
+export interface ApiContract {
+  artifact_id: string;
+  name: string;
+  version: string;
+  provider_repo: string;
+  status: string;
+}
+
+export interface DriftImpact {
+  node: string;
+  repo_id: string;
+}
+
+export interface DriftRecord {
+  id: string;
+  kind: string;
+  required_role: string;
+  detail: string;
+  impacted: DriftImpact[];
+}
+
+// Artifact preview read-through (S-29, 4.7-T10, DECISION-5).
+export interface ArtifactVersion {
+  version: string;
+  status: string;
+  by: string;
+  when: string;
+}
+
+export interface ArtifactPreview {
+  body: string | null;
+  content_type: string;
+  status: string;
+  version: string;
+  versions: ArtifactVersion[];
+  sor_link?: string;
+}
+
+// Run transcript (S-33, new — DECISION-7).
+export interface TranscriptTurn {
+  role: "agent" | "tool" | "human";
+  body: string;
+  meta?: string;
+}
+
+export interface RunTranscript {
+  run_id: string;
+  phase: string;
+  engine: string;
+  cost: string | null;
+  turns: TranscriptTurn[];
+}
+
+// Manual gate-respecting publish (S-34, new — DECISION-8).
+export interface PublishResult {
+  status: string;
+  sor_link?: string;
+}
+
+// Dashboard rollup (S-31, bucket B).
+export interface DashboardGateItem {
+  approval_id: string;
+  gate: string;
+  work_item: string;
+  role: string;
+}
+
+export interface DashboardClarificationItem {
+  id: string;
+  work_item: string;
+  question: string;
+  waiting_s: number;
+}
+
+export interface DashboardRunItem {
+  run_id: string;
+  phase: string;
+  work_item: string;
+  status: string;
+}
+
+export interface DashboardRollup {
+  needs_me: {
+    gates: DashboardGateItem[];
+    clarifications: DashboardClarificationItem[];
+    my_runs: DashboardRunItem[];
+  };
+  health: {
+    work_items: number;
+    phases_in_progress: number;
+    awaiting_gate: number;
+    published_week: number;
+  };
+  recent_publishes: { title: string }[];
+}

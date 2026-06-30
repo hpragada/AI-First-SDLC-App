@@ -4,18 +4,25 @@
 import type {
   AcceptInviteRequest,
   AdminUser,
+  ApiContract,
   Approval,
   Artifact,
+  ArtifactPreview,
   Clarification,
   CurrentUser,
+  DashboardRollup,
+  DriftRecord,
+  GapReport,
   GateCriteria,
   Integration,
   Invitation,
   Lifecycle,
   LoginRequest,
+  OnboardingHub,
   PhaseCatalog,
   Project,
   ProjectProfile,
+  PublishResult,
   Repository,
   ResetRequest,
   RoleCoverage,
@@ -23,6 +30,7 @@ import type {
   RunEvent,
   Runner,
   RunnerToken,
+  RunTranscript,
   SignupRequest,
   Tenant,
   TestConnectionResult,
@@ -253,4 +261,47 @@ export const api = {
       tenantId,
       body,
     }),
+
+  // Phase 4.8 T5 — brownfield onboarding (4.7 T8). Session-derived tenant.
+  getOnboardingHub: (projectId: string) =>
+    req<OnboardingHub>("GET", `/projects/${projectId}/onboarding/`),
+  startCodeIntel: (projectId: string, repoId: string) =>
+    req<Record<string, unknown>>("POST", `/projects/${projectId}/code-intel/`, {
+      body: { repo_id: repoId },
+    }),
+  runGapReport: (projectId: string) =>
+    req<Record<string, unknown>>("POST", `/projects/${projectId}/gap-report/`),
+  getGapReport: (projectId: string) =>
+    req<GapReport>("GET", `/projects/${projectId}/gap-report/`),
+
+  // Phase 4.8 T5 — API contracts & drift (4.7 T9).
+  listApiContracts: (projectId: string) =>
+    req<ApiContract[]>("GET", `/projects/${projectId}/api-contracts/`),
+  getApiContract: (projectId: string, artifactId: string) =>
+    req<ApiContract>("GET", `/projects/${projectId}/api-contracts/${artifactId}/`),
+  listDrift: (projectId: string) => req<DriftRecord[]>("GET", `/projects/${projectId}/drift/`),
+  decideDrift: (driftId: string, body: { decision: "accept" | "reject"; comment?: string }) =>
+    req<Record<string, unknown>>("POST", `/drift/${driftId}/decide/`, { body }),
+
+  // Phase 4.8 T5 — artifact preview read-through (4.7 T10, DECISION-5).
+  getArtifactPreview: (artifactId: string) =>
+    req<ArtifactPreview>("GET", `/artifacts/${artifactId}/preview/`),
+
+  // Phase 4.8 T5 — run transcript (new, DECISION-7). Read-only persisted conversation.
+  getRunTranscript: (tenantId: string, runId: string) =>
+    req<RunTranscript>("GET", `/runs/${runId}/transcript/`, { tenantId }),
+
+  // Phase 4.8 T5 — manual gate-respecting publish (new, DECISION-8). Never bypasses a gate.
+  publishArtifact: (
+    artifactId: string,
+    body: { target_capability: string; destination: string },
+  ) => req<PublishResult>("POST", `/artifacts/${artifactId}/publish/`, { body }),
+
+  // Phase 4.8 T5 — dashboard rollup (bucket B, S-31).
+  getDashboard: (projectId: string) =>
+    req<DashboardRollup>("GET", `/projects/${projectId}/dashboard/`),
+
+  // Offline takeover (S-32) — reuses GET /runners/ (4.7-T11) + existing take-over/.
+  takeOverRun: (tenantId: string, runId: string) =>
+    req<Record<string, unknown>>("POST", `/runs/${runId}/take-over/`, { tenantId }),
 };

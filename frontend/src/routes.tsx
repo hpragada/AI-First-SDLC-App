@@ -31,6 +31,19 @@ import {
   WorkItemsBoard,
 } from "./features/lifecycle";
 import { WorkItemDetail } from "./features/lifecycle/WorkItemDetail";
+import {
+  ArtifactPreviewScreen,
+  ArtifactsRegistry,
+  ContractsDrift,
+  Dashboard,
+  ExportPublish,
+  GapReportScreen,
+  OfflineTakeover,
+  OnboardingHub,
+  RunTranscriptScreen,
+  SourceDocuments,
+  TraceabilityView,
+} from "./features/observability";
 
 function RequireAuth() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -91,7 +104,7 @@ export function AppRoutes() {
 
       <Route element={<RequireAuth />}>
         <Route element={<AppShell />}>
-          <Route index element={<AppPlaceholder title="Workspace Dashboard" />} />
+          <Route index element={<Dashboard />} />
           <Route path="/work-items" element={<WorkItemsBoard />} />
           <Route path="/work-items/:id" element={<WorkItemDetail />} />
           <Route path="/work-items/:id/breakdown" element={<TaskBreakdown />} />
@@ -100,12 +113,15 @@ export function AppRoutes() {
           <Route path="/gates" element={<Gates />} />
           <Route path="/gates/:id/criteria" element={<CriteriaGate />} />
           <Route path="/clarifications" element={<Clarifications />} />
-          <Route path="/artifacts" element={<AppPlaceholder title="Artifacts" />} />
-          <Route path="/artifacts/:id" element={<AppPlaceholder title="Artifact Preview" />} />
-          <Route path="/traceability" element={<AppPlaceholder title="Traceability" />} />
+          <Route path="/artifacts" element={<ArtifactsRegistry />} />
+          <Route path="/artifacts/:id" element={<ArtifactPreviewScreen />} />
+          <Route path="/artifacts/:id/publish" element={<ExportPublish />} />
+          <Route path="/traceability" element={<TraceabilityView />} />
           <Route path="/profile" element={<ProjectProfileEditor />} />
           <Route path="/projects/new" element={<CreateProject />} />
-          <Route path="/onboarding" element={<AppPlaceholder title="Onboarding" />} />
+          <Route path="/onboarding" element={<OnboardingHub />} />
+          <Route path="/onboarding/documents" element={<SourceDocuments />} />
+          <Route path="/onboarding/gap-report" element={<GapReportScreen />} />
           <Route path="/integrations" element={<Integrations />} />
           <Route path="/integrations/:capability" element={<ConnectCapability />} />
           <Route path="/repositories" element={<Repositories />} />
@@ -114,9 +130,11 @@ export function AppRoutes() {
           <Route path="/admin/roles" element={<RolesMatrix />} />
           <Route path="/admin/*" element={<AppPlaceholder title="Workspace Admin" />} />
           <Route path="/connect" element={<ConnectMachine />} />
+          <Route path="/recovery" element={<OfflineTakeover />} />
           <Route path="/setup" element={<SetupChecklist />} />
-          <Route path="/transcripts" element={<AppPlaceholder title="Run Transcripts" />} />
-          <Route path="/contracts" element={<AppPlaceholder title="Contracts & Drift" />} />
+          <Route path="/transcripts" element={<RunTranscriptScreen />} />
+          <Route path="/transcripts/:id" element={<RunTranscriptScreen />} />
+          <Route path="/contracts" element={<ContractsDrift />} />
         </Route>
       </Route>
 

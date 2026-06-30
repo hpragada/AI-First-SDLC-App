@@ -426,7 +426,7 @@ export function Modal({ title, children, footer }: { title: ReactNode; children:
       <div className="modal__panel">
         <div className="modal__header">
           <h3 className="modal__title">{title}</h3>
-          <button className="modal__close" aria-label="Close">x</button>
+          <button className="modal__close" aria-label="Close">✕</button>
         </div>
         <div className="modal__body">{children}</div>
         {footer && <div className="modal__footer">{footer}</div>}
@@ -441,7 +441,7 @@ export function Drawer({ title, children, footer }: { title: ReactNode; children
       <div className="drawer__panel">
         <div className="drawer__header">
           <h3 className="drawer__title">{title}</h3>
-          <button className="modal__close" aria-label="Close">x</button>
+          <button className="modal__close" aria-label="Close">✕</button>
         </div>
         <div className="drawer__body">{children}</div>
         {footer && <div className="drawer__footer">{footer}</div>}
@@ -635,8 +635,8 @@ export function DiagramFrame({ children }: { children: ReactNode }) {
   return <div className="diagram-frame">{children}</div>;
 }
 
-export function GraphCanvas({ children }: { children: ReactNode }) {
-  return <div className="graph-canvas">{children}</div>;
+export function GraphCanvas({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+  return <div className="graph-canvas" style={style}>{children}</div>;
 }
 
 export function GraphLegend({ children }: { children: ReactNode }) {
@@ -675,10 +675,16 @@ export function Transcript({ children }: { children: ReactNode }) {
   return <div className="transcript">{children}</div>;
 }
 
+const TURN_LABEL: Record<"agent" | "tool" | "human", string> = {
+  agent: "Agent",
+  tool: "Tool",
+  human: "You",
+};
+
 export function Turn({ role, children }: { role: "agent" | "tool" | "human"; children: ReactNode }) {
   return (
     <div className={cx("turn", `turn--${role}`)}>
-      <span className="turn__role">{role === "human" ? "You" : role}</span>
+      <span className="turn__role">{TURN_LABEL[role]}</span>
       <div className="turn__body">{children}</div>
     </div>
   );
