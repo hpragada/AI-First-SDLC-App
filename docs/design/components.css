@@ -505,7 +505,8 @@
 .conn-status--waiting { background: var(--info-bg); color: var(--info); border-color: transparent; }
 .conn-status--connected { background: var(--success-bg); color: var(--success); border-color: transparent; }
 .conn-status--offline { background: var(--danger-bg); color: var(--danger); border-color: transparent; }
-.conn-status .spinner { width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
+.spinner { width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; display: inline-block; vertical-align: -2px; flex: none; }
+.conn-status .spinner { width: 16px; height: 16px; }
 
 /* stat tile (dashboard health, gap report counts) */
 .tile { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); }
@@ -642,3 +643,34 @@
 .save-state--dirty { color: var(--warning); }
 .save-state--saving { color: var(--info); }
 .save-state--saved { color: var(--success); }
+
+/* ============================================================================
+   20. Auth — unauthenticated split-panel (S-01..S-04; NO app shell)
+   ========================================================================== */
+.auth { display: flex; min-height: 560px; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-sm); background: var(--bg-surface); }
+.auth__brand { width: 42%; flex: none; background: var(--brand-navy-900); color: var(--text-on-navy); padding: var(--space-7); display: flex; flex-direction: column; }
+.auth__brand-logo { display: flex; align-items: center; gap: var(--space-2); }
+.auth__brand-mark { width: 0; height: 0; border-style: solid; border-width: 0 0 22px 22px; border-color: transparent transparent transparent var(--brand-orange); }
+.auth__brand-word { font-size: var(--fs-h1); font-weight: 700; color: #fff; }
+.auth__tagline { font-size: var(--fs-display); line-height: var(--lh-display); font-weight: 700; color: #fff; margin-top: auto; }
+.auth__sub { font-size: var(--fs-body); color: var(--text-on-navy); opacity: .85; margin-top: var(--space-3); }
+.auth__form { flex: 1 1 auto; padding: var(--space-7); display: flex; align-items: center; justify-content: center; }
+.auth-card { width: 100%; max-width: 360px; }
+.auth-card__title { font-size: var(--fs-h1); line-height: var(--lh-h1); font-weight: 700; color: var(--text-strong); }
+.auth-card__sub { font-size: var(--fs-sm); color: var(--text-muted); margin: var(--space-2) 0 var(--space-5); }
+.auth-card__foot { text-align: center; margin-top: var(--space-5); font-size: var(--fs-sm); color: var(--text-muted); }
+
+/* ============================================================================
+   21. Run transcript (S-33) — read-only replay of agent turns / tool calls / Q&A
+   ========================================================================== */
+.transcript { display: flex; flex-direction: column; gap: var(--space-3); }
+.turn { display: flex; gap: var(--space-3); }
+.turn__role { flex: none; width: 88px; font-size: var(--fs-xs); font-weight: 700; letter-spacing: .3px; text-transform: uppercase; padding-top: 4px; }
+.turn__body { flex: 1 1 auto; min-width: 0; background: var(--bg-surface); border: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: var(--radius-sm); padding: var(--space-3); font-size: var(--fs-sm); color: var(--text-body); }
+.turn__meta { font-size: var(--fs-xs); color: var(--text-faint); margin-top: var(--space-2); }
+.turn--agent .turn__role { color: var(--brand-navy-700); }
+.turn--agent .turn__body { border-left-color: var(--brand-navy-500); }
+.turn--tool  .turn__role { color: var(--info); }
+.turn--tool  .turn__body { border-left-color: var(--info); font-family: var(--font-mono); font-size: var(--fs-mono); line-height: var(--lh-mono); }
+.turn--human .turn__role { color: var(--accent-purple); }
+.turn--human .turn__body { border-left-color: var(--accent-purple); background: var(--accent-purple-bg); }

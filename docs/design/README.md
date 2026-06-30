@@ -146,8 +146,11 @@ you" (`.needs--clar/--gate`); `.status-dot`; `.avatar` (+ `--sm/--lg`, `.avatar-
 - **Batch 2 — Lifecycle / observability** ✅ S-17, S-18, S-19, S-20, S-21, S-22, S-23, S-25,
   S-27, S-28, S-29, S-30.
 - **Batch 3 — Setup & admin** ✅ S-05, S-07, S-08, S-09, S-10, S-11, S-12, S-13.
-- **Batch 4 — Auth (unauth):** S-01, S-02, S-03, S-04.
-- **Deferred:** S-33 transcript, S-34 export — stub only, pending product decisions.
+- **Batch 4 — Auth (unauth)** ✅ S-01, S-02, S-03, S-04.
+- **Decision-gated** ✅ S-33 transcript (DECISION-7), S-34 export/publish (DECISION-8) —
+  decisions locked, now **fully built**.
+
+**Gallery complete:** S-00 + S-01…S-34 all built = **35/35**.
 
 > These mockups define the **new** design target. Phase 4.8 replaces the current
 > `frontend/src/styles.css` (dark-blue) shell + tokens to match this gallery.

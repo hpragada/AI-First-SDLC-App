@@ -191,9 +191,9 @@
 
 ---
 
-## (Recommended additions — see open questions in the journeys)
-- **S-33 · Run transcript / session view** — *if the team approves persisting the engine conversation.* List of runs → per-run transcript (agent turns + tool calls + the Q&A) read-only. **Not built today; pending product decision.**
-- **S-34 · Explicit Export/Publish action** — *if the team wants a manual "publish to <SoR>" beyond gate-approval.* Modal: choose target space/project, confirm (still gate-respecting).
+## Decision-gated screens (now CONFIRMED — see journeys §9 DECISION-7/8)
+- **S-33 · Run transcript / session view** — ✅ **DECISION-7 locked (build).** List of runs → per-run transcript (agent turns + tool calls + the Q&A), read-only. Engine conversation is **persisted in the DB** (no retention window for now; user-facing retention is a later add). **States:** runs list, transcript (read-only), empty.
+- **S-34 · Explicit Export/Publish action** — ✅ **DECISION-8 locked (build).** Modal: choose target capability + destination, confirm. **Gate-respecting — only gate-APPROVED artifacts are publishable; never bypasses a gate. States:** choose target, publishing, success, blocked (not gate-approved).
 
 ---
 

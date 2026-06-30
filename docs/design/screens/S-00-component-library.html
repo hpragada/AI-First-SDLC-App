@@ -562,6 +562,42 @@
       </div>
     </section>
 
+    <!-- BATCH-4 ADDITIONS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Auth split-panel (unauthenticated — no app shell)</h2></div>
+      <div class="panel__body--flush">
+        <div class="auth">
+          <div class="auth__brand">
+            <div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div>
+            <div class="auth__tagline">Run your whole software lifecycle with AI — and human approval gates.</div>
+            <div class="auth__sub">Your trusted partner from idea to production.</div>
+          </div>
+          <div class="auth__form">
+            <div class="auth-card">
+              <h2 class="auth-card__title">Log in</h2>
+              <p class="auth-card__sub">Welcome back to Acme Corp.</p>
+              <label class="field"><span class="field__label">Work email</span><input class="input" value="sarah@acme.com"></label>
+              <label class="field"><span class="field__label">Password</span><input class="input" type="password" value="••••••••"></label>
+              <button class="btn btn--primary btn--block">Log in</button>
+              <div class="auth-card__foot"><a href="#">Forgot password?</a></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Run transcript · agent / tool / human turns (read-only)</h2></div>
+      <div class="panel__body">
+        <div class="transcript">
+          <div class="turn turn--agent"><span class="turn__role">Agent</span><div class="turn__body">Compiling requirements from the approved Requirements artifact…</div></div>
+          <div class="turn turn--tool"><span class="turn__role">Tool</span><div class="turn__body">docstore.read("PRD: Stripe Webhook Integration") → ok (4.1 KB)</div></div>
+          <div class="turn turn--human"><span class="turn__role">You</span><div class="turn__body">Answered "Target Confluence space?" → <strong>PAY</strong><div class="turn__meta">Sarah Chen · 10:42 · paused $0 while waiting</div></div></div>
+          <div class="turn turn--agent"><span class="turn__role">Agent</span><div class="turn__body">Run completed. Artifact registered as draft v0.9.</div></div>
+        </div>
+      </div>
+    </section>
+
   </div>
 </main>
 <script src="../shell.js"></script>
