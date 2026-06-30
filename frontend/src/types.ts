@@ -177,3 +177,89 @@ export interface LoginRequest {
   email: string;
   password: string;
 }
+
+// ── Phase 4.8 T2 — identity & onboarding (binds 4.7 T1–T4, T11) ──────────────
+export interface SignupRequest {
+  name: string;
+  email: string;
+  password: string;
+  org_name: string;
+}
+
+export interface AcceptInviteRequest {
+  token: string;
+  password: string;
+  name?: string;
+}
+
+export interface ResetRequest {
+  token: string;
+  password: string;
+}
+
+// Admin: users & invitations (S-07).
+export interface InvitationGrant {
+  project_id: string;
+  project_name?: string;
+  role: string;
+}
+
+export interface Invitation {
+  id: string;
+  email: string;
+  status: string; // "pending" | "revoked" | "accepted" | "expired"
+  expires_at: string;
+  grants: InvitationGrant[];
+}
+
+export interface AdminUserMembership {
+  project_id: string;
+  project_name: string;
+  role: string;
+}
+
+export interface AdminUser {
+  id: string;
+  name: string;
+  email: string;
+  status: string; // "active" | "invited"
+  is_tenant_admin: boolean;
+  memberships: AdminUserMembership[];
+}
+
+// Roles matrix + gate-role coverage (S-08).
+export interface RoleHolder {
+  user_id: string;
+  name: string;
+}
+
+export interface RoleCoverageRow {
+  role: string;
+  holders: RoleHolder[];
+  covered: boolean;
+  gate_blocked: boolean;
+  note?: string;
+}
+
+export interface RoleCoverage {
+  roles: RoleCoverageRow[];
+}
+
+// Companion enrollments (S-05 tick, S-06 connect-machine).
+export interface RunnerProject {
+  id: string;
+  name: string;
+}
+
+export interface Runner {
+  id: string;
+  machine: string;
+  last_seen: string | null;
+  online: boolean;
+  projects: RunnerProject[];
+}
+
+export interface RunnerToken {
+  id: string;
+  token: string; // shown once
+}

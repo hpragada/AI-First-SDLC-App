@@ -1,19 +1,19 @@
-import { useState, type FormEvent } from "react";
-import { Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 
 import { useAuth } from "./auth/AuthContext";
 import { AppShell } from "./components/AppShell";
 import { DevComponents } from "./components/dev/DevComponents";
+import { EmptyState, Panel, Skeleton } from "./components/ui";
 import {
-  AuthSplit,
-  Banner,
-  Button,
-  EmptyState,
-  Field,
-  Input,
-  Panel,
-  Skeleton,
-} from "./components/ui";
+  AcceptInvite,
+  ConnectMachine,
+  Login,
+  ResetPassword,
+  RolesMatrix,
+  Signup,
+  SetupChecklist,
+  UsersInvites,
+} from "./features/identity";
 
 function RequireAuth() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -44,67 +44,6 @@ function RedirectIfAuthed() {
   return <Outlet />;
 }
 
-function LoginPage() {
-  const { login } = useAuth();
-  const navigate = useNavigate();
-  const [email, setEmail] = useState("sarah@acme.com");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const onSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    try {
-      await login({ email, password });
-      navigate("/", { replace: true });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to log in.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <main className="canvas-pad">
-      <AuthSplit>
-        <form className="auth-card" onSubmit={onSubmit}>
-          <h1 className="auth-card__title">Log in</h1>
-          <p className="auth-card__sub">Welcome back to Acme Corp.</p>
-          {error && <Banner variant="danger">{error}</Banner>}
-          <Field label="Work email">
-            <Input type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
-          </Field>
-          <Field label="Password">
-            <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-          </Field>
-          <Button variant="primary" block disabled={submitting}>
-            {submitting ? "Logging in..." : "Log in"}
-          </Button>
-          <div className="auth-card__foot">
-            <a href="/reset">Forgot password?</a>
-          </div>
-        </form>
-      </AuthSplit>
-    </main>
-  );
-}
-
-function AuthPlaceholder({ title }: { title: string }) {
-  return (
-    <main className="canvas-pad">
-      <AuthSplit>
-        <div className="auth-card">
-          <h1 className="auth-card__title">{title}</h1>
-          <p className="auth-card__sub">This shell-less auth screen is reserved for the T2 implementation.</p>
-          <EmptyState title="Screen contract ready" text="T2 will render every labelled gallery state here." />
-        </div>
-      </AuthSplit>
-    </main>
-  );
-}
-
 function AppPlaceholder({ title }: { title: string }) {
   return (
     <main className="canvas-pad">
@@ -125,10 +64,10 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route element={<RedirectIfAuthed />}>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/signup" element={<AuthPlaceholder title="Sign up" />} />
-        <Route path="/accept-invite" element={<AuthPlaceholder title="Accept invite" />} />
-        <Route path="/reset" element={<AuthPlaceholder title="Reset password" />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/accept-invite" element={<AcceptInvite />} />
+        <Route path="/reset" element={<ResetPassword />} />
       </Route>
 
       <Route path="/dev/components" element={<DevComponents />} />
@@ -149,9 +88,12 @@ export function AppRoutes() {
           <Route path="/onboarding" element={<AppPlaceholder title="Onboarding" />} />
           <Route path="/integrations" element={<AppPlaceholder title="Integrations" />} />
           <Route path="/repositories" element={<AppPlaceholder title="Repositories" />} />
+          <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
+          <Route path="/admin/users" element={<UsersInvites />} />
+          <Route path="/admin/roles" element={<RolesMatrix />} />
           <Route path="/admin/*" element={<AppPlaceholder title="Workspace Admin" />} />
-          <Route path="/connect" element={<AppPlaceholder title="Connect Machine" />} />
-          <Route path="/setup" element={<AppPlaceholder title="Setup Checklist" />} />
+          <Route path="/connect" element={<ConnectMachine />} />
+          <Route path="/setup" element={<SetupChecklist />} />
           <Route path="/transcripts" element={<AppPlaceholder title="Run Transcripts" />} />
           <Route path="/contracts" element={<AppPlaceholder title="Contracts & Drift" />} />
         </Route>

@@ -2,14 +2,22 @@
 // `X-Tenant-ID` header (the pre-auth scoping mechanism); tenant-create is the one
 // call that doesn't. No business logic lives here — it mirrors the server surface.
 import type {
+  AcceptInviteRequest,
+  AdminUser,
   Approval,
   Artifact,
   Clarification,
   CurrentUser,
+  Invitation,
   LoginRequest,
   Project,
   ProjectProfile,
+  ResetRequest,
+  RoleCoverage,
   Run,
+  Runner,
+  RunnerToken,
+  SignupRequest,
   Tenant,
   TraceEdge,
   TraceGraph,
@@ -75,6 +83,38 @@ export const api = {
   me: () => req<CurrentUser>("GET", "/auth/me/"),
   login: (body: LoginRequest) => req<CurrentUser>("POST", "/auth/login/", { body }),
   logout: () => req<Record<string, never>>("POST", "/auth/logout/"),
+
+  // Phase 4.8 T2 — public auth (no session yet): signup, invite-accept, reset.
+  signup: (body: SignupRequest) => req<CurrentUser>("POST", "/auth/signup/", { body }),
+  acceptInvitation: (body: AcceptInviteRequest) =>
+    req<CurrentUser>("POST", "/auth/accept-invitation/", { body }),
+  requestReset: (email: string) =>
+    req<Record<string, never>>("POST", "/auth/request-reset/", { body: { email } }),
+  resetPassword: (body: ResetRequest) =>
+    req<Record<string, never>>("POST", "/auth/reset/", { body }),
+
+  // Phase 4.8 T2 — admin: users, invitations, memberships, role coverage (4.7 T3/T4).
+  listUsers: () => req<AdminUser[]>("GET", "/users/"),
+  createInvitation: (body: {
+    email: string;
+    name?: string;
+    grants?: { project_id: string; role: string }[];
+  }) => req<Invitation>("POST", "/invitations/", { body }),
+  resendInvitation: (id: string) =>
+    req<Record<string, unknown>>("POST", `/invitations/${id}/resend/`),
+  revokeInvitation: (id: string) =>
+    req<{ status: string }>("POST", `/invitations/${id}/revoke/`),
+  createMembership: (projectId: string, body: { user_id: string; role: string }) =>
+    req<Record<string, unknown>>("POST", `/projects/${projectId}/memberships/`, { body }),
+  deleteMembership: (projectId: string, membershipId: string) =>
+    req<void>("DELETE", `/projects/${projectId}/memberships/${membershipId}/`),
+  roleCoverage: (projectId: string) =>
+    req<RoleCoverage>("GET", `/projects/${projectId}/role-coverage/`),
+
+  // Phase 4.8 T2 — companion enrollments (4.7 T11). POST issues a one-time token.
+  listRunners: () => req<Runner[]>("GET", "/runners/"),
+  createRunner: (body: { projects: string[] }) =>
+    req<RunnerToken>("POST", "/runners/", { body }),
 
   // Tenants (bootstrap — no tenant context yet).
   createTenant: (name: string) => req<Tenant>("POST", "/tenants/", { body: { name } }),

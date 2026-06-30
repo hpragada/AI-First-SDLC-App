@@ -1,5 +1,6 @@
 import type {
   ButtonHTMLAttributes,
+  CSSProperties,
   HTMLAttributes,
   InputHTMLAttributes,
   LabelHTMLAttributes,
@@ -66,6 +67,7 @@ export function Field({
   required,
   children,
   className,
+  style,
 }: LabelHTMLAttributes<HTMLLabelElement> & {
   label: ReactNode;
   help?: ReactNode;
@@ -73,7 +75,7 @@ export function Field({
   required?: boolean;
 }) {
   return (
-    <label className={cx("field", Boolean(error) && "field--error", className)}>
+    <label className={cx("field", Boolean(error) && "field--error", className)} style={style}>
       <span className="field__label">
         {label}
         {required && <span className="req">*</span>}
@@ -202,8 +204,12 @@ export function Card({
   return <div className={cx(attention ? "card--attention" : "card", className)}>{children}</div>;
 }
 
-export function CardBody({ children, className }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cx("card__body", className)}>{children}</div>;
+export function CardBody({ children, className, style }: HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div className={cx("card__body", className)} style={style}>
+      {children}
+    </div>
+  );
 }
 
 export function Panel({
@@ -253,13 +259,17 @@ export function Tabs({
   );
 }
 
+type TableRow =
+  | ReactNode[]
+  | { cells: ReactNode[]; className?: string; style?: CSSProperties };
+
 export function Table({
   headers,
   rows,
   matrix,
 }: {
   headers: ReactNode[];
-  rows: ReactNode[][];
+  rows: TableRow[];
   matrix?: boolean;
 }) {
   return (
@@ -268,11 +278,16 @@ export function Table({
         <tr>{headers.map((head, index) => <th key={index}>{head}</th>)}</tr>
       </thead>
       <tbody>
-        {rows.map((row, rowIndex) => (
-          <tr key={rowIndex}>
-            {row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}
-          </tr>
-        ))}
+        {rows.map((row, rowIndex) => {
+          const cells = Array.isArray(row) ? row : row.cells;
+          const className = Array.isArray(row) ? undefined : row.className;
+          const style = Array.isArray(row) ? undefined : row.style;
+          return (
+            <tr key={rowIndex} className={className} style={style}>
+              {cells.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -588,7 +603,15 @@ export function GraphLegend({ children }: { children: ReactNode }) {
   return <div className="graph-legend">{children}</div>;
 }
 
-export function AuthSplit({ children }: { children: ReactNode }) {
+export function AuthSplit({
+  children,
+  tagline = "Run your whole software lifecycle with AI — and human approval gates.",
+  sub,
+}: {
+  children: ReactNode;
+  tagline?: ReactNode;
+  sub?: ReactNode;
+}) {
   return (
     <div className="auth">
       <div className="auth__brand">
@@ -596,12 +619,16 @@ export function AuthSplit({ children }: { children: ReactNode }) {
           <span className="auth__brand-mark" aria-hidden="true" />
           <span className="auth__brand-word">edvensoft</span>
         </div>
-        <div className="auth__tagline">Run your whole software lifecycle with AI and human approval gates.</div>
-        <div className="auth__sub">Your trusted partner from idea to production.</div>
+        <div className="auth__tagline">{tagline}</div>
+        {sub && <div className="auth__sub">{sub}</div>}
       </div>
       <div className="auth__form">{children}</div>
     </div>
   );
+}
+
+export function Spinner() {
+  return <span className="spinner" aria-hidden="true" />;
 }
 
 export function Transcript({ children }: { children: ReactNode }) {

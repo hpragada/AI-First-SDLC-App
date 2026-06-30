@@ -21,6 +21,9 @@ interface AuthContextValue {
   setSelectedProjectId: (projectId: string) => void;
   login: (body: LoginRequest) => Promise<void>;
   logout: () => Promise<void>;
+  // Re-seed the session after a public auth call that returns a CurrentUser
+  // (signup / accept-invitation) so the guard sees the new session immediately.
+  refresh: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -92,6 +95,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSelectedProjectIdRaw(projectId);
   }, []);
 
+  const refresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ["auth", "me"] });
+  }, [queryClient]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       currentUser,
@@ -102,11 +109,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSelectedProjectId,
       login,
       logout,
+      refresh,
     }),
     [
       currentUser,
       login,
       logout,
+      refresh,
       meQuery.isLoading,
       selectedProject,
       setSelectedProjectId,
