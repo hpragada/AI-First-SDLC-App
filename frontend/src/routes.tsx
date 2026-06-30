@@ -21,6 +21,16 @@ import {
   ProjectProfileEditor,
   Repositories,
 } from "./features/setup";
+import {
+  Clarifications,
+  CriteriaGate,
+  Gates,
+  PhasesAndRuns,
+  RunConsole,
+  TaskBreakdown,
+  WorkItemsBoard,
+} from "./features/lifecycle";
+import { WorkItemDetail } from "./features/lifecycle/WorkItemDetail";
 
 function RequireAuth() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -82,12 +92,14 @@ export function AppRoutes() {
       <Route element={<RequireAuth />}>
         <Route element={<AppShell />}>
           <Route index element={<AppPlaceholder title="Workspace Dashboard" />} />
-          <Route path="/work-items" element={<AppPlaceholder title="Work Items" />} />
-          <Route path="/work-items/:id" element={<AppPlaceholder title="Work Item Detail" />} />
-          <Route path="/runs" element={<AppPlaceholder title="Phases & Runs" />} />
-          <Route path="/runs/:id" element={<AppPlaceholder title="Run Console" />} />
-          <Route path="/gates" element={<AppPlaceholder title="Gates" />} />
-          <Route path="/clarifications" element={<AppPlaceholder title="Clarifications" />} />
+          <Route path="/work-items" element={<WorkItemsBoard />} />
+          <Route path="/work-items/:id" element={<WorkItemDetail />} />
+          <Route path="/work-items/:id/breakdown" element={<TaskBreakdown />} />
+          <Route path="/runs" element={<PhasesAndRuns />} />
+          <Route path="/runs/:id" element={<RunConsole />} />
+          <Route path="/gates" element={<Gates />} />
+          <Route path="/gates/:id/criteria" element={<CriteriaGate />} />
+          <Route path="/clarifications" element={<Clarifications />} />
           <Route path="/artifacts" element={<AppPlaceholder title="Artifacts" />} />
           <Route path="/artifacts/:id" element={<AppPlaceholder title="Artifact Preview" />} />
           <Route path="/traceability" element={<AppPlaceholder title="Traceability" />} />

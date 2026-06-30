@@ -317,7 +317,12 @@ export function LifecycleRail({
   loop,
   branch,
 }: {
-  nodes: Array<{ label: string; state: string; tone: "done" | "current" | "upcoming" | "running" | "failed"; mark: ReactNode }>;
+  nodes: Array<{
+    label: string;
+    state: string;
+    tone: "done" | "current" | "upcoming" | "running" | "needs" | "failed";
+    mark: ReactNode;
+  }>;
   loop?: ReactNode;
   branch?: ReactNode;
 }) {

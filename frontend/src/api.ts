@@ -8,15 +8,19 @@ import type {
   Artifact,
   Clarification,
   CurrentUser,
+  GateCriteria,
   Integration,
   Invitation,
+  Lifecycle,
   LoginRequest,
+  PhaseCatalog,
   Project,
   ProjectProfile,
   Repository,
   ResetRequest,
   RoleCoverage,
   Run,
+  RunEvent,
   Runner,
   RunnerToken,
   SignupRequest,
@@ -26,6 +30,7 @@ import type {
   TraceGraph,
   TriggerResult,
   WorkItem,
+  WorkItemCard,
 } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000/api";
@@ -167,22 +172,48 @@ export const api = {
     req<ProjectProfile>("PUT", `/projects/${projectId}/profile/`, { tenantId, body: patch }),
 
   // Work items + phase trigger.
-  listWorkItems: (tenantId: string, projectId: string, state?: string) =>
-    req<WorkItem[]>("GET", "/work-items/", { tenantId, query: { project: projectId, state } }),
+  listWorkItems: (
+    tenantId: string,
+    projectId: string,
+    opts: { state?: string; type?: string; parent?: string; phase?: string } = {},
+  ) =>
+    req<WorkItemCard[]>("GET", "/work-items/", {
+      tenantId,
+      query: { project: projectId, ...opts },
+    }),
   createWorkItem: (
     tenantId: string,
     projectId: string,
     data: { type: string; feature_stream?: string },
   ) => req<WorkItem>("POST", "/work-items/", { tenantId, body: { project: projectId, ...data } }),
+  getWorkItem: (tenantId: string, workItemId: string) =>
+    req<WorkItemCard>("GET", `/work-items/${workItemId}/`, { tenantId }),
+  patchWorkItem: (
+    tenantId: string,
+    workItemId: string,
+    patch: { title?: string; description?: string; type?: string },
+  ) => req<WorkItem>("PATCH", `/work-items/${workItemId}/`, { tenantId, body: patch }),
   triggerPhase: (tenantId: string, workItemId: string, agentKey: string) =>
     req<TriggerResult>("POST", `/work-items/${workItemId}/trigger/`, {
       tenantId,
       body: { agent_key: agentKey },
     }),
 
+  // Phase 4.8 T4 — lifecycle rail (bucket B; type-adaptive plan/build/remediation).
+  getLifecycle: (tenantId: string, workItemId: string) =>
+    req<Lifecycle>("GET", `/work-items/${workItemId}/lifecycle/`, { tenantId }),
+
+  // Phase 4.8 T4 — phase catalog (bucket B gap C). Tenant-agnostic static catalog.
+  listPhases: () => req<PhaseCatalog>("GET", "/phases/"),
+
   // Read planes.
   listRuns: (tenantId: string, q: { work_item?: string; project?: string }) =>
     req<Run[]>("GET", "/runs/", { tenantId, query: q }),
+  getRun: (tenantId: string, runId: string) => req<Run>("GET", `/runs/${runId}/`, { tenantId }),
+  // S-19 live console: no new endpoint — polls the run + its event stream (DECISION: confirmed
+  // in SCREEN_BUILD_MAP.md "Notes for builders").
+  listEvents: (tenantId: string, q: { target_type: string; target_id: string }) =>
+    req<RunEvent[]>("GET", "/events/", { tenantId, query: q }),
   listArtifacts: (tenantId: string, q: { project?: string; phase?: string; status?: string }) =>
     req<Artifact[]>("GET", "/artifacts/", { tenantId, query: q }),
   listTraceEdges: (tenantId: string, projectId: string) =>
@@ -196,8 +227,17 @@ export const api = {
   decideApproval: (
     tenantId: string,
     approvalId: string,
-    body: { user_id: string; decision: "approved" | "rejected"; comment?: string },
+    body: {
+      user_id?: string;
+      decision: "approved" | "rejected";
+      comment?: string;
+      satisfied?: Record<string, boolean>;
+    },
   ) => req<Record<string, unknown>>("POST", `/approvals/${approvalId}/decide/`, { tenantId, body }),
+
+  // Phase 4.8 T4 — generalized criteria-gate checklist (bucket B, S-22, DECISION-6).
+  getGateCriteria: (tenantId: string, approvalId: string) =>
+    req<GateCriteria>("GET", `/approvals/${approvalId}/criteria/`, { tenantId }),
 
   // Clarifications (interactive Q&A — req #2): list pending and answer them in the web app.
   listClarifications: (
@@ -207,7 +247,7 @@ export const api = {
   answerClarification: (
     tenantId: string,
     clarificationId: string,
-    body: { user_id: string; answers: Record<string, unknown> },
+    body: { user_id?: string; answers: Record<string, unknown> },
   ) =>
     req<Record<string, unknown>>("POST", `/clarifications/${clarificationId}/answer/`, {
       tenantId,

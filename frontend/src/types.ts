@@ -305,3 +305,92 @@ export interface Repository {
   status: string;
   is_default: boolean;
 }
+
+// ── Phase 4.8 T4 — lifecycle (bucket B + existing runs/artifacts/clarifications/approvals) ──
+
+// Work-item list card deltas + filters (gap B).
+export interface WorkItemCard extends WorkItem {
+  title?: string;
+  artifact_count?: number;
+  owner?: string;
+  parent?: string | null;
+  needs?: { clarification?: boolean; gate?: boolean; label?: string };
+}
+
+export type LifecycleNodeState =
+  | "not_started"
+  | "running"
+  | "needs_answer"
+  | "awaiting_gate"
+  | "done"
+  | "failed";
+
+export interface LifecycleNode {
+  phase: string;
+  label: string;
+  state: LifecycleNodeState;
+  run_id?: string;
+  triggerable: boolean;
+}
+
+export interface LifecycleLoop {
+  from: string;
+  to: string;
+  count: number;
+}
+
+export interface LifecycleChild {
+  id: string;
+  title: string;
+  type: string;
+  phase: string;
+}
+
+export interface Lifecycle {
+  tier: "plan" | "build" | "remediation";
+  nodes: LifecycleNode[];
+  loops: LifecycleLoop[];
+  children: LifecycleChild[];
+  parent?: { id: string; title: string };
+}
+
+// Phase catalog (gap C) — backs the S-18 trigger picker + board phase-columns.
+export interface PhaseCatalogEntry {
+  key: string;
+  label: string;
+  agent_key: string;
+  gate_role: string;
+}
+
+export interface PhaseCatalog {
+  plan: PhaseCatalogEntry[];
+  build: PhaseCatalogEntry[];
+  remediation: PhaseCatalogEntry[];
+}
+
+// Generalized criteria-gate checklist (S-22, DECISION-6).
+export interface GateCriterion {
+  id: string;
+  text: string;
+  required: boolean;
+  satisfied: boolean;
+  note?: string;
+}
+
+export interface GateCriteria {
+  criteria: GateCriterion[];
+  met: number;
+  total: number;
+  approve_enabled: boolean;
+}
+
+// S-19 live run console — no new endpoint, polls GET /runs/{id}/ + GET /events/
+// (target_type=run, target_id=<run>); see SCREEN_BUILD_MAP.md "Notes for builders".
+export interface RunEvent {
+  id: string;
+  target_type: string;
+  target_id: string;
+  kind: string; // "log" | "ok" | "warn" | "err" | "info"
+  message: string;
+  ts: string;
+}
