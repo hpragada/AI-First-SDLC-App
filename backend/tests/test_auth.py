@@ -5,9 +5,12 @@ superuser (RLS bypassed), so the explicit `tenant_id` scoping is what's under te
 here; RLS itself is covered by test_rls.py.
 """
 import pytest
-from rest_framework.test import APIClient
+from rest_framework.response import Response
+from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
+from rest_framework.views import APIView
 
 from apps.projects.models import Project
+from apps.tenancy.auth import IsTenantAdmin
 from apps.tenancy.models import Membership, Tenant, User
 
 
@@ -152,3 +155,71 @@ def test_session_authed_post_requires_csrf(user, project):
         HTTP_X_CSRFTOKEN=token,
     )
     assert with_token.status_code == 201
+
+
+# ── P4.7-T2: self-serve signup → new tenant + first admin ───────────
+def test_signup_creates_tenant_admin_and_session(client, db):
+    resp = client.post(
+        "/api/auth/signup/",
+        {
+            "name": "Sarah Chen",
+            "email": "founder@newco.com",
+            "password": "s3cret-pass!",
+            "org_name": "NewCo",
+        },
+        format="json",
+    )
+    assert resp.status_code == 201
+    assert resp.data["user"]["is_tenant_admin"] is True
+    assert resp.data["tenant"]["name"] == "NewCo"
+    # tenant + admin persisted
+    user = User.objects.get(email="founder@newco.com")
+    assert user.is_tenant_admin is True
+    assert user.tenant.name == "NewCo"
+    # session is live (me round-trips)
+    me = client.get("/api/auth/me/")
+    assert me.status_code == 200
+    assert me.data["user"]["is_tenant_admin"] is True
+
+
+def test_signup_duplicate_email_rejected(client, user):
+    resp = client.post(
+        "/api/auth/signup/",
+        {
+            "name": "Imposter",
+            "email": "sarah@acme.com",  # already exists (fixture)
+            "password": "another-pass!",
+            "org_name": "Imposter Inc",
+        },
+        format="json",
+    )
+    assert resp.status_code == 409
+    # no second tenant created
+    assert not Tenant.objects.filter(name="Imposter Inc").exists()
+
+
+class _AdminOnlyView(APIView):
+    permission_classes = [IsTenantAdmin]
+
+    def get(self, request):
+        return Response({"ok": True})
+
+
+def test_is_tenant_admin_permission_gates_admin_endpoints(user, tenant):
+    """The is_tenant_admin flag is the gate for admin endpoints: a non-admin gets 403,
+    a tenant-admin passes."""
+    factory = APIRequestFactory()
+    view = _AdminOnlyView.as_view()
+
+    # the fixture user is a normal member → 403
+    req = factory.get("/admin-only")
+    force_authenticate(req, user=user)
+    assert view(req).status_code == 403
+
+    admin = User.objects.create_user(
+        email="admin@acme.com", name="Admin", tenant=tenant,
+        password="p4ssw0rd!", is_tenant_admin=True,
+    )
+    req2 = factory.get("/admin-only")
+    force_authenticate(req2, user=admin)
+    assert view(req2).status_code == 200

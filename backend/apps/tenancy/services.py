@@ -10,9 +10,15 @@ context set by `TenantContextMiddleware`.
 """
 from __future__ import annotations
 
+from django.db import transaction
+
 from apps.registry.catalog import seed_agent_specs
 from apps.tenancy.context import tenant_context
-from apps.tenancy.models import Tenant
+from apps.tenancy.models import Tenant, User
+
+
+class SignupError(Exception):
+    """Self-serve signup was rejected (e.g. the email already exists)."""
 
 
 def create_tenant(*, name: str, config: dict | None = None,
@@ -29,3 +35,20 @@ def create_tenant(*, name: str, config: dict | None = None,
     # are available immediately after tenant creation.
     seed_agent_specs(tenant)
     return tenant
+
+
+def signup(*, name: str, email: str, password: str, org_name: str) -> User:
+    """Self-serve signup (DECISIONS 1 & 2): create a new Tenant + its first user as the
+    tenant-admin, atomically. The signer-up owns the workspace; everyone else joins by
+    invitation. Email is globally unique — a duplicate is rejected before any write.
+    """
+    if User.objects.filter(email__iexact=email).exists():
+        raise SignupError("An account with this email already exists.")
+    with transaction.atomic():
+        tenant = create_tenant(name=org_name)
+        with tenant_context(tenant.id):
+            user = User.objects.create_user(
+                email=email, name=name, tenant=tenant, password=password,
+                is_tenant_admin=True,
+            )
+    return user

@@ -49,6 +49,9 @@ class User(AbstractBaseUser, PermissionsMixin, UUIDModel):
     name = models.CharField(max_length=255)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
+    # Tenant-level admin (no project) — manages users/roles/integrations tenant-wide
+    # (DECISION-1). Set True for the first user created by self-serve signup (P4.7-T2).
+    is_tenant_admin = models.BooleanField(default=False)
 
     objects = UserManager()
 

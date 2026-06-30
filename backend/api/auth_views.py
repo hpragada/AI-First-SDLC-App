@@ -15,8 +15,31 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.tenancy.auth import serialize_me
+from apps.tenancy.services import SignupError, signup
 
-from .serializers import LoginSerializer
+from .serializers import LoginSerializer, SignupSerializer
+
+# The user created by signup wasn't returned by authenticate(), so login() needs the
+# backend named explicitly.
+_MODEL_BACKEND = "django.contrib.auth.backends.ModelBackend"
+
+
+class SignupView(APIView):
+    """POST /api/auth/signup — {name,email,password,org_name} → new tenant + first admin
+    (is_tenant_admin=True) + session (DECISIONS 1 & 2). CSRF-exempt (no session yet)."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request):
+        ser = SignupSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            user = signup(**ser.validated_data)
+        except SignupError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        login(request, user, backend=_MODEL_BACKEND)
+        return Response(serialize_me(user), status=status.HTTP_201_CREATED)
 
 
 class LoginView(APIView):
