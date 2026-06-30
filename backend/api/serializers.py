@@ -28,6 +28,16 @@ class TenantSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at"]
 
 
+# ── Auth (P4.7-T1 — server sessions, DECISION-3) ────────────────────
+class LoginSerializer(serializers.Serializer):
+    """Input for POST /api/auth/login."""
+
+    email = serializers.EmailField()
+    password = serializers.CharField(
+        style={"input_type": "password"}, trim_whitespace=False
+    )
+
+
 # ── Project + Profile ───────────────────────────────────────────────
 class ProjectSerializer(serializers.ModelSerializer):
     class Meta:

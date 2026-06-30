@@ -3,6 +3,7 @@ APIView (it runs before any tenant context exists)."""
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from .auth_views import LoginView, LogoutView, MeView
 from .runner_views import (
     RunnerBuildFetchView,
     RunnerBuildReportView,
@@ -43,6 +44,11 @@ router.register("source-documents", SourceDocumentViewSet, basename="sourcedocum
 
 urlpatterns = [
     path("tenants/", TenantCreateView.as_view(), name="tenant-create"),
+    # Server-session auth (P4.7-T1, DECISION-3). Tenant is resolved from the session
+    # user by TenantContextMiddleware; the runner-token path is untouched.
+    path("auth/login/", LoginView.as_view(), name="auth-login"),
+    path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
+    path("auth/me/", MeView.as_view(), name="auth-me"),
     # Local-companion runner (Phase 2): enrollment (tenant-scoped) + remote Platform-State.
     path("runners/", RunnerEnrollmentView.as_view(), name="runner-enroll"),
     path("runners/<uuid:pk>/revoke/", RunnerRevokeView.as_view(), name="runner-revoke"),
