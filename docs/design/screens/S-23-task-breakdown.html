@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-23 · Task Breakdown — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad" style="max-width:880px">
+
+    <nav class="breadcrumb"><a href="S-15-work-item-epic.html">WI-492</a><span class="sep">›</span><span class="here">Task Breakdown</span></nav>
+
+    <!-- ============ Pushed to Jira ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Pushed to Jira backlog</span>
+      <div class="card"><div class="card__body" style="text-align:center;padding:var(--space-7) var(--space-6)">
+        <div class="tile__num" style="color:var(--success)">6</div>
+        <h1 class="t-h1" style="margin-top:var(--space-2)">Created 6 task work items</h1>
+        <p class="t-body u-muted" style="margin-top:var(--space-2)">The approved plan for <strong>WI-492 Stripe Webhook Integration</strong> fanned out into the build tier. Each task starts in the Implementation column under this epic.</p>
+        <div class="banner banner--success" style="margin-top:var(--space-4);text-align:left"><span class="banner__icon">✓</span><div class="banner__body"><div class="banner__title">Pushed to Jira backlog</div>Created as STR-15…STR-20 under epic STR-14 — deep-linked below.</div></div>
+        <div class="gate-panel__actions" style="justify-content:center;margin-top:var(--space-4)"><a href="S-14-work-items-board.html" class="btn btn--primary">Go to board</a><a href="S-15-work-item-epic.html" class="btn btn--secondary">Back to epic</a></div>
+      </div></div>
+
+      <div class="panel" style="margin-top:var(--space-5)">
+        <div class="panel__header"><h2 class="panel__title">New task work items</h2></div>
+        <div class="panel__body--flush">
+          <div class="artifact-row"><div class="artifact-row__main"><div class="artifact-row__title">Verify Stripe signing secret</div><div class="artifact-row__meta">WI-540 · Implementation</div></div><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-15</span><a href="S-16-work-item-task.html" class="btn btn--ghost btn--sm">Open</a></div>
+          <div class="artifact-row"><div class="artifact-row__main"><div class="artifact-row__title">Persist webhook event log</div><div class="artifact-row__meta">WI-541 · Implementation</div></div><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-16</span><a href="S-16-work-item-task.html" class="btn btn--ghost btn--sm">Open</a></div>
+          <div class="artifact-row"><div class="artifact-row__main"><div class="artifact-row__title">Add idempotency key handling</div><div class="artifact-row__meta">WI-542 · Implementation</div></div><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-17</span><a href="S-16-work-item-task.html" class="btn btn--ghost btn--sm">Open</a></div>
+          <div class="artifact-row"><div class="artifact-row__main"><div class="artifact-row__title">Handle charge.dispute.created</div><div class="artifact-row__meta">WI-543 · Implementation</div></div><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-18</span><a href="S-16-work-item-task.html" class="btn btn--ghost btn--sm">Open</a></div>
+          <div class="artifact-row"><div class="artifact-row__main"><div class="artifact-row__title">Backfill reconciliation job</div><div class="artifact-row__meta">WI-544 · Implementation</div></div><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-19</span><a href="S-16-work-item-task.html" class="btn btn--ghost btn--sm">Open</a></div>
+          <div class="artifact-row"><div class="artifact-row__main"><div class="artifact-row__title">Wire webhook metrics &amp; alerts</div><div class="artifact-row__meta">WI-545 · Implementation</div></div><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-20</span><a href="S-16-work-item-task.html" class="btn btn--ghost btn--sm">Open</a></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Internal-only ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Internal-only · saved locally (Jira not connected)</span>
+      <div class="card"><div class="card__body" style="text-align:center;padding:var(--space-7) var(--space-6)">
+        <div class="tile__num" style="color:var(--success)">6</div>
+        <h1 class="t-h1" style="margin-top:var(--space-2)">Created 6 task work items</h1>
+        <div class="banner banner--info" style="margin-top:var(--space-4);text-align:left"><span class="banner__icon">ℹ</span><div class="banner__body"><div class="banner__title">Saved in the platform</div>Task tracker isn't connected, so these live in the platform only. Connect Jira to push them to a backlog.</div></div>
+        <div class="gate-panel__actions" style="justify-content:center;margin-top:var(--space-4)"><a href="S-14-work-items-board.html" class="btn btn--primary">Go to board</a><a href="S-11-integrations.html" class="btn btn--secondary">Connect a task tracker</a></div>
+      </div></div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("work-items");</script>
+</body>
+</html>

@@ -143,7 +143,7 @@ you" (`.needs--clar/--gate`); `.status-dot`; `.avatar` (+ `--sm/--lg`, `.avatar-
   `S-00-component-library.html`, `index.html`, `README.md`.
 - **Batch 1 — Signature screens** ✅ S-14 board, S-15 epic, S-16 task, S-06 connect-machine,
   S-24 onboarding hub, S-26 gap report, S-31 dashboard.
-- **Batch 2 — Lifecycle / observability:** S-17, S-18, S-19, S-20, S-21, S-22, S-23, S-25,
+- **Batch 2 — Lifecycle / observability** ✅ S-17, S-18, S-19, S-20, S-21, S-22, S-23, S-25,
   S-27, S-28, S-29, S-30.
 - **Batch 3 — Setup & admin:** S-05, S-07, S-08, S-09, S-10, S-11, S-12, S-13.
 - **Batch 4 — Auth (unauth):** S-01, S-02, S-03, S-04.

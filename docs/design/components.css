@@ -540,3 +540,50 @@
 /* upload dropzone (onboarding / source docs) */
 .dropzone { border: 2px dashed var(--border-strong); border-radius: var(--radius-md); background: var(--bg-subtle); padding: var(--space-7); text-align: center; color: var(--text-muted); display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
 .dropzone svg { width: 32px; height: 32px; color: var(--text-faint); }
+
+/* ============================================================================
+   18. Batch-2 additions
+   ========================================================================== */
+
+/* inline banner (offline / permission / read-only / drift notices) */
+.banner { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); border: 1px solid var(--border); border-left: 3px solid var(--text-muted); background: var(--bg-surface); font-size: var(--fs-sm); color: var(--text-body); }
+.banner__icon { flex: none; width: 20px; height: 20px; }
+.banner__body { flex: 1 1 auto; min-width: 0; }
+.banner__title { font-weight: 600; color: var(--text-strong); }
+.banner--info { border-left-color: var(--info); background: var(--info-bg); }
+.banner--warning { border-left-color: var(--warning); background: var(--warning-bg); }
+.banner--danger { border-left-color: var(--danger); background: var(--danger-bg); }
+.banner--success { border-left-color: var(--success); background: var(--success-bg); }
+.banner--purple { border-left-color: var(--accent-purple); background: var(--accent-purple-bg); }
+
+/* read-only artifact body (preview — never an editor) */
+.doc-preview { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-6); max-width: 760px; }
+.prose { color: var(--text-body); }
+.prose h1 { font-size: var(--fs-h1); line-height: var(--lh-h1); font-weight: 700; color: var(--text-strong); margin-bottom: var(--space-3); }
+.prose h2 { font-size: var(--fs-h2); line-height: var(--lh-h2); font-weight: 600; color: var(--text-strong); margin: var(--space-5) 0 var(--space-2); }
+.prose h3 { font-size: var(--fs-h3); line-height: var(--lh-h3); font-weight: 600; color: var(--text-strong); margin: var(--space-4) 0 var(--space-2); }
+.prose p { margin-bottom: var(--space-3); line-height: var(--lh-body); }
+.prose ul { list-style: disc; padding-left: var(--space-5); margin-bottom: var(--space-3); }
+.prose li { margin-bottom: 4px; }
+.prose code { background: var(--bg-subtle); padding: 1px 5px; border-radius: 4px; font-family: var(--font-mono); font-size: .92em; }
+
+/* diagram / image artifact placeholder */
+.diagram-frame { background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius-md); min-height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); color: var(--text-faint); }
+.diagram-frame svg { width: 40px; height: 40px; }
+
+/* version-history row */
+.version-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); font-size: var(--fs-sm); }
+.version-row:last-child { border-bottom: 0; }
+.version-row__tag { font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 600; color: var(--text-strong); flex: none; }
+
+/* traceability graph canvas + legend */
+.graph-canvas { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: auto; }
+.graph-legend { display: flex; gap: var(--space-4); flex-wrap: wrap; }
+.graph-legend__item { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-muted); }
+.graph-legend__dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+/* graph node (SVG <g>/<foreignObject> content uses these via inline style tokens) */
+.gnode { fill: var(--bg-surface); stroke: var(--border-strong); }
+.gedge { stroke: var(--border-strong); stroke-width: 1.5; fill: none; }
+
+/* trigger-phase button cluster (Phases & Runs) */
+.phase-picker { display: flex; flex-wrap: wrap; gap: var(--space-2); }

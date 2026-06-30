@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-27 · API Contracts & Drift — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">API Contracts &amp; Drift</h1>
+        <p class="page-head__sub">Versioned API contracts across repos. A breaking change opens a drift gate the <strong>architect</strong> decides — with cross-repo impact spelled out.</p>
+      </div>
+    </div>
+
+    <div class="tabs" style="margin-bottom:var(--space-5)"><button class="tab tab--active">Contracts</button><button class="tab">Drift queue (1)</button></div>
+
+    <!-- ============ Healthy ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Healthy · no drift</span>
+      <div class="panel"><div class="panel__body--flush">
+        <table class="table table--in-panel">
+          <thead><tr><th>Contract</th><th>Version</th><th>Provider repo</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="table__primary">Payments API</td><td class="table__id">v1.4.0</td><td class="table__id">acme/payments-api</td><td><span class="badge badge--done"><span class="status-dot"></span>Stable</span></td><td><a href="S-29-artifact-preview.html">View ↗</a></td></tr>
+            <tr><td class="table__primary">Ledger API</td><td class="table__id">v2.1.0</td><td class="table__id">acme/payments-api</td><td><span class="badge badge--done"><span class="status-dot"></span>Stable</span></td><td><a href="S-29-artifact-preview.html">View ↗</a></td></tr>
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- ============ Drift pending ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Drift pending · cross-repo impact</span>
+      <div class="grid grid--detail">
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Drift queue</h2></div>
+          <div class="panel__body--flush">
+            <table class="table table--in-panel">
+              <thead><tr><th>Contract</th><th>Change</th><th>Impact</th><th>Decider</th></tr></thead>
+              <tbody>
+                <tr style="background:var(--danger-bg)"><td class="table__primary">Payments API v2.0.0</td><td><span class="badge badge--failed"><span class="status-dot"></span>Breaking</span></td><td>3 consumers</td><td>Marcus Lee</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card--attention gate-panel"><div class="card__body">
+          <span class="gate-panel__role">▲ Drift gate · required role: architect</span>
+          <h3 class="t-h3">Payments API v2.0.0 — breaking change</h3>
+          <div class="banner banner--danger"><span class="banner__icon">▣</span><div class="banner__body"><div class="banner__title">Impacts acme/payments-web</div>Removes <code>POST /charges</code> body field <code>legacy_token</code> — <strong>3 consumers</strong> affected.</div></div>
+          <ul class="u-stack" style="--space-4:6px">
+            <li class="u-row-tight"><span class="assess assess--missing">✗</span><span class="t-sm">CheckoutForm.tsx · acme/payments-web</span></li>
+            <li class="u-row-tight"><span class="assess assess--missing">✗</span><span class="t-sm">PaymentService.ts · acme/payments-web</span></li>
+            <li class="u-row-tight"><span class="assess assess--missing">✗</span><span class="t-sm">RetryWorker.ts · acme/payments-web</span></li>
+          </ul>
+          <label class="field" style="margin-bottom:0"><span class="field__label">Decision comment</span><textarea class="textarea" placeholder="Why accept or reject this breaking change…"></textarea></label>
+          <div class="gate-panel__actions"><button class="btn btn--primary">Accept</button><button class="btn btn--danger">Reject</button></div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Wrong-role read-only ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Wrong role · read-only</span>
+      <div class="card gate-panel"><div class="card__body">
+        <span class="gate-panel__role" style="color:var(--text-muted)">Drift gate · Payments API v2.0.0</span>
+        <div class="banner banner--info"><span class="banner__icon">🔒</span><div class="banner__body"><div class="banner__title">Awaiting architect</div>Only the <strong>architect</strong> can decide drift. <strong>Marcus Lee</strong> can act.</div></div>
+        <div class="gate-panel__actions"><button class="btn btn--primary" disabled aria-disabled="true">Accept</button><button class="btn btn--secondary" disabled aria-disabled="true">Reject</button></div>
+      </div></div>
+    </div>
+
+    <!-- ============ Decided ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Decided</span>
+      <div class="card"><div class="card__body">
+        <div class="banner banner--success"><span class="banner__icon">✓</span><div class="banner__body"><div class="banner__title">Accepted by Marcus Lee</div>Payments API v2.0.0 accepted · remediation work items opened for the 3 impacted consumers in acme/payments-web.</div></div>
+      </div></div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("repositories");</script>
+</body>
+</html>

@@ -456,6 +456,54 @@
       </div>
     </section>
 
+    <!-- BATCH-2 ADDITIONS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Banners · offline / permission / read-only / drift</h2></div>
+      <div class="panel__body u-stack">
+        <div class="banner banner--warning"><span class="banner__icon">⚠</span><div class="banner__body"><div class="banner__title">Your machine isn't connected</div>Phases can't run until you connect your machine. <a href="S-06-connect-machine.html">Connect your machine ↗</a></div></div>
+        <div class="banner banner--info"><span class="banner__icon">🔒</span><div class="banner__body"><div class="banner__title">Read-only — awaiting architect</div>Only a user holding the <strong>architect</strong> role can decide this gate. Marcus Lee can act.</div></div>
+        <div class="banner banner--danger"><span class="banner__icon">▣</span><div class="banner__body"><div class="banner__title">Breaking change detected</div>Payments API v2.0.0 impacts acme/payments-web (3 consumers).</div></div>
+        <div class="banner banner--purple"><span class="banner__icon">⏸</span><div class="banner__body">Paused — no usage billed while waiting.</div></div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Artifact preview · read-only doc, diagram frame, version history</h2></div>
+      <div class="panel__body">
+        <div class="grid grid--2">
+          <div>
+            <div class="doc-preview prose">
+              <h1>PRD: Stripe Webhook Integration</h1>
+              <h2>Goal</h2>
+              <p>Reconcile asynchronous Stripe payment events into the gateway ledger with signature verification and idempotent processing.</p>
+              <ul><li>Charge succeeded / failed</li><li>Dispute created</li></ul>
+              <p>Endpoint must ack within <code>500ms</code>.</p>
+            </div>
+            <div class="diagram-frame" style="margin-top:var(--space-4)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg><span class="t-sm">System Sequence Diagram · Figma embed</span></div>
+          </div>
+          <div>
+            <h3 class="t-h3" style="margin-bottom:var(--space-2)">Version history</h3>
+            <div class="version-row"><span class="version-row__tag">v1.2</span><span class="t-sm u-strong">Current · Published</span><span class="u-spacer"></span><span class="t-xs u-muted">Sarah Chen · 2d ago</span></div>
+            <div class="version-row"><span class="version-row__tag">v1.1</span><span class="t-sm">Draft</span><span class="u-spacer"></span><span class="t-xs u-muted">AI run #41 · 3d ago</span></div>
+            <div class="version-row"><span class="version-row__tag">v1.0</span><span class="t-sm">Draft</span><span class="u-spacer"></span><span class="t-xs u-muted">AI run #38 · 4d ago</span></div>
+            <div class="banner banner--info" style="margin-top:var(--space-4)"><span class="banner__icon">ℹ</span><div class="banner__body">Bodies are read-through from the system-of-record — preview is never an editor.</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Traceability · graph legend</h2></div>
+      <div class="panel__body">
+        <div class="graph-legend">
+          <span class="graph-legend__item"><span class="graph-legend__dot" style="background:var(--success)"></span>Published</span>
+          <span class="graph-legend__item"><span class="graph-legend__dot" style="background:var(--warning)"></span>Pending gate</span>
+          <span class="graph-legend__item"><span class="graph-legend__dot" style="background:var(--info)"></span>Draft</span>
+          <span class="graph-legend__item"><span class="graph-legend__dot" style="background:var(--border-strong)"></span>derives / implements / tests</span>
+        </div>
+      </div>
+    </section>
+
   </div>
 </main>
 <script src="../shell.js"></script>
