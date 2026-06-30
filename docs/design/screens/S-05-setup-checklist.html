@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-05 · Setup Checklist — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad" style="max-width:880px">
+
+    <!-- ============ All incomplete (fresh) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">All incomplete · fresh workspace</span>
+      <div class="page-head">
+        <div class="page-head__titles">
+          <h1 class="t-display">Welcome to Acme Corp 👋</h1>
+          <p class="page-head__sub">Let's get your workspace ready. Four quick steps and you can run your first phase.</p>
+        </div>
+      </div>
+      <div class="u-stack">
+        <div class="card"><div class="card__body" style="display:flex;align-items:center;gap:var(--space-4)">
+          <span class="vstep__num">1</span>
+          <div style="flex:1 1 auto"><div class="t-h3">Create your first project</div><div class="t-sm u-muted">Greenfield or brownfield — this is where work items live.</div></div>
+          <button class="btn btn--primary">Create project</button>
+        </div></div>
+        <div class="card"><div class="card__body" style="display:flex;align-items:center;gap:var(--space-4)">
+          <span class="vstep__num">2</span>
+          <div style="flex:1 1 auto"><div class="t-h3">Connect your machine</div><div class="t-sm u-muted">Phases run on your computer using your Claude Code subscription.</div></div>
+          <a href="S-06-connect-machine.html" class="btn btn--secondary">Connect</a>
+        </div></div>
+        <div class="card"><div class="card__body" style="display:flex;align-items:center;gap:var(--space-4)">
+          <span class="vstep__num">3</span>
+          <div style="flex:1 1 auto"><div class="t-h3">Invite your team &amp; assign roles</div><div class="t-sm u-muted">So gates have someone to decide them.</div></div>
+          <a href="S-07-users-invites.html" class="btn btn--secondary">Invite team</a>
+        </div></div>
+        <div class="card"><div class="card__body" style="display:flex;align-items:center;gap:var(--space-4)">
+          <span class="vstep__num">4</span>
+          <div style="flex:1 1 auto"><div class="t-h3">Connect integrations <span class="t-xs u-muted">(optional)</span></div><div class="t-sm u-muted">Confluence, Jira, Figma, GitHub, Xray.</div></div>
+          <a href="S-11-integrations.html" class="btn btn--secondary">Connect</a>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Partial (2 done) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Partial · 2 of 4 done</span>
+      <div class="u-row" style="margin-bottom:var(--space-4)"><h2 class="t-h2">Setup · 2 of 4 complete</h2><span class="u-spacer"></span><span class="save-state save-state--saving">Almost there</span></div>
+      <div class="u-stack">
+        <div class="card"><div class="card__body" style="display:flex;align-items:center;gap:var(--space-4)">
+          <span class="vstep__num vstep__num--done">✓</span>
+          <div style="flex:1 1 auto"><div class="t-h3">Create your first project</div><div class="t-sm u-muted">Payment Gateway v2 created.</div></div>
+          <span class="badge badge--done"><span class="status-dot"></span>Done</span>
+        </div></div>
+        <div class="card"><div class="card__body" style="display:flex;align-items:center;gap:var(--space-4)">
+          <span class="vstep__num vstep__num--done">✓</span>
+          <div style="flex:1 1 auto"><div class="t-h3">Connect your machine</div><div class="t-sm u-muted">Sarah's MacBook connected.</div></div>
+          <span class="badge badge--done"><span class="status-dot"></span>Done</span>
+        </div></div>
+        <div class="card"><div class="card__body" style="display:flex;align-items:center;gap:var(--space-4)">
+          <span class="vstep__num vstep__num--active">3</span>
+          <div style="flex:1 1 auto"><div class="t-h3">Invite your team &amp; assign roles</div><div class="t-sm u-muted">So gates have someone to decide them.</div></div>
+          <a href="S-07-users-invites.html" class="btn btn--primary">Invite team</a>
+        </div></div>
+        <div class="card"><div class="card__body" style="display:flex;align-items:center;gap:var(--space-4)">
+          <span class="vstep__num">4</span>
+          <div style="flex:1 1 auto"><div class="t-h3">Connect integrations <span class="t-xs u-muted">(optional)</span></div></div>
+          <a href="S-11-integrations.html" class="btn btn--secondary">Connect</a>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ All complete (collapsed/dismiss) ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">All complete · collapses to dismiss</span>
+      <div class="card--attention"><div class="card__body" style="display:flex;align-items:center;gap:var(--space-4)">
+        <span class="vstep__num vstep__num--done">✓</span>
+        <div style="flex:1 1 auto"><div class="t-h3">Setup complete — you're ready to run phases</div><div class="t-sm u-body">All four steps done. This checklist won't show again.</div></div>
+        <a href="S-31-dashboard.html" class="btn btn--primary">Go to dashboard</a>
+        <button class="btn btn--ghost">Dismiss</button>
+      </div></div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("dashboard", { companion: "offline" });</script>
+</body>
+</html>

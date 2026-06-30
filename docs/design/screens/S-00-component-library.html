@@ -504,6 +504,64 @@
       </div>
     </section>
 
+    <!-- BATCH-3 ADDITIONS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Capability tiles · integrations grid</h2></div>
+      <div class="panel__body">
+        <div class="grid grid--3">
+          <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo cap-card__logo--confluence">C</span><div><div class="cap-card__cap">Documentation store</div><div class="cap-card__vendor">Confluence</div></div></div><div class="cap-card__foot"><span class="badge badge--done"><span class="status-dot"></span>Connected</span><span class="u-spacer"></span><button class="btn btn--ghost btn--sm">Manage</button></div></div>
+          <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo cap-card__logo--empty">X</span><div><div class="cap-card__cap">Test management</div><div class="cap-card__vendor">Not connected</div></div></div><div class="cap-card__foot"><span class="badge badge--queued"><span class="status-dot"></span>Not connected</span><span class="u-spacer"></span><button class="btn btn--primary btn--sm">Connect</button></div></div>
+          <div class="cap-card cap-card--failed"><div class="cap-card__head"><span class="cap-card__logo cap-card__logo--github">G</span><div><div class="cap-card__cap">Code host</div><div class="cap-card__vendor">GitHub</div></div></div><div class="cap-card__foot"><span class="badge badge--failed"><span class="status-dot"></span>Failed</span><span class="u-spacer"></span><button class="btn btn--secondary btn--sm">Fix</button></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Toggle switch &amp; save-state indicator</h2></div>
+      <div class="panel__body u-stack">
+        <div class="u-row u-wrap">
+          <label class="switch"><input type="checkbox" checked aria-label="On"><span class="switch__track"></span><span class="switch__thumb"></span></label>
+          <label class="switch"><input type="checkbox" aria-label="Off"><span class="switch__track"></span><span class="switch__thumb"></span></label>
+          <span class="t-sm u-muted">role on / off</span>
+        </div>
+        <div class="u-row u-wrap">
+          <span class="save-state save-state--saved">✓ Saved · v3</span>
+          <span class="save-state save-state--dirty">● Unsaved changes</span>
+          <span class="save-state save-state--saving">⟳ Saving…</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Right-side drawer</h2></div>
+      <div class="panel__body--flush">
+        <div class="drawer">
+          <div class="drawer__panel">
+            <div class="drawer__header"><h3 class="drawer__title">Invite teammate</h3><button class="modal__close" aria-label="Close">✕</button></div>
+            <div class="drawer__body">
+              <label class="field"><span class="field__label">Work email</span><input class="input" value="raj@acme.com"></label>
+              <label class="field"><span class="field__label">Initial project</span><select class="select"><option>Payment Gateway v2</option></select></label>
+              <label class="field" style="margin-bottom:0"><span class="field__label">Role</span><select class="select"><option>engineer</option></select></label>
+            </div>
+            <div class="drawer__footer"><button class="btn btn--secondary">Cancel</button><button class="btn btn--primary">Send invite</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Matrix table · toggle cells, sticky first column</h2></div>
+      <div class="panel__body--flush" style="overflow-x:auto">
+        <table class="table table--in-panel table--matrix">
+          <thead><tr><th>User</th><th>PO</th><th>Arch</th><th>Design</th><th>Reviewer</th></tr></thead>
+          <tbody>
+            <tr><td class="table__primary">Sarah Chen</td><td><label class="switch"><input type="checkbox" checked><span class="switch__track"></span><span class="switch__thumb"></span></label></td><td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td><td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td><td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td></tr>
+            <tr><td class="table__primary">Marcus Lee</td><td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td><td><label class="switch"><input type="checkbox" checked><span class="switch__track"></span><span class="switch__thumb"></span></label></td><td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td><td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
   </div>
 </main>
 <script src="../shell.js"></script>
