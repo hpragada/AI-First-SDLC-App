@@ -8,10 +8,12 @@ import type {
   Artifact,
   Clarification,
   CurrentUser,
+  Integration,
   Invitation,
   LoginRequest,
   Project,
   ProjectProfile,
+  Repository,
   ResetRequest,
   RoleCoverage,
   Run,
@@ -19,6 +21,7 @@ import type {
   RunnerToken,
   SignupRequest,
   Tenant,
+  TestConnectionResult,
   TraceEdge,
   TraceGraph,
   TriggerResult,
@@ -116,13 +119,42 @@ export const api = {
   createRunner: (body: { projects: string[] }) =>
     req<RunnerToken>("POST", "/runners/", { body }),
 
+  // Phase 4.8 T3 — integrations management + secret store (4.7 T6). Session-derived
+  // tenant; secrets are write-only and never appear in any response.
+  listIntegrations: () => req<Integration[]>("GET", "/integrations/"),
+  createIntegration: (body: {
+    capability: string;
+    vendor: string;
+    binding: Record<string, unknown>;
+    secrets: Record<string, unknown>;
+  }) => req<Integration>("POST", "/integrations/", { body }),
+  patchIntegration: (id: string, body: Partial<Record<string, unknown>>) =>
+    req<Integration>("PATCH", `/integrations/${id}/`, { body }),
+  deleteIntegration: (id: string) => req<void>("DELETE", `/integrations/${id}/`),
+  testIntegrationConnection: (id: string) =>
+    req<TestConnectionResult>("POST", `/integrations/${id}/test-connection/`),
+
+  // Phase 4.8 T3 — repositories (4.7 T7). Session-derived tenant; member-scoped reads,
+  // tech_lead/admin writes.
+  listRepositories: (projectId: string) =>
+    req<Repository[]>("GET", `/projects/${projectId}/repositories/`),
+  createRepository: (
+    projectId: string,
+    body: { name: string; role: string; base_branch: string },
+  ) => req<Repository>("POST", `/projects/${projectId}/repositories/`, { body }),
+  deleteRepository: (projectId: string, repoId: string) =>
+    req<void>("DELETE", `/projects/${projectId}/repositories/${repoId}/`),
+
   // Tenants (bootstrap — no tenant context yet).
   createTenant: (name: string) => req<Tenant>("POST", "/tenants/", { body: { name } }),
 
   // Projects + profile.
   listProjects: (tenantId: string) => req<Project[]>("GET", "/projects/", { tenantId }),
-  createProject: (tenantId: string, name: string) =>
-    req<Project>("POST", "/projects/", { tenantId, body: { name } }),
+  createProject: (
+    tenantId: string,
+    name: string,
+    opts?: { track?: string; repo_topology?: string },
+  ) => req<Project>("POST", "/projects/", { tenantId, body: { name, ...opts } }),
   getProfile: async (tenantId: string, projectId: string): Promise<ProjectProfile | null> => {
     try {
       return await req<ProjectProfile>("GET", `/projects/${projectId}/profile/`, { tenantId });

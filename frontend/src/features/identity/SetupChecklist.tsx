@@ -59,7 +59,7 @@ export function SetupChecklist({ forceView }: { forceView?: SetupView }) {
           : "Greenfield or brownfield — this is where work items live.",
         done: hasProject,
         action: (
-          <Link to="/onboarding" className="btn btn--primary">
+          <Link to="/projects/new" className="btn btn--primary">
             Create project
           </Link>
         ),

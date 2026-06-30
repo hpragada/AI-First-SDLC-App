@@ -14,6 +14,13 @@ import {
   SetupChecklist,
   UsersInvites,
 } from "./features/identity";
+import {
+  ConnectCapability,
+  CreateProject,
+  Integrations,
+  ProjectProfileEditor,
+  Repositories,
+} from "./features/setup";
 
 function RequireAuth() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -84,10 +91,12 @@ export function AppRoutes() {
           <Route path="/artifacts" element={<AppPlaceholder title="Artifacts" />} />
           <Route path="/artifacts/:id" element={<AppPlaceholder title="Artifact Preview" />} />
           <Route path="/traceability" element={<AppPlaceholder title="Traceability" />} />
-          <Route path="/profile" element={<AppPlaceholder title="Project Profile" />} />
+          <Route path="/profile" element={<ProjectProfileEditor />} />
+          <Route path="/projects/new" element={<CreateProject />} />
           <Route path="/onboarding" element={<AppPlaceholder title="Onboarding" />} />
-          <Route path="/integrations" element={<AppPlaceholder title="Integrations" />} />
-          <Route path="/repositories" element={<AppPlaceholder title="Repositories" />} />
+          <Route path="/integrations" element={<Integrations />} />
+          <Route path="/integrations/:capability" element={<ConnectCapability />} />
+          <Route path="/repositories" element={<Repositories />} />
           <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
           <Route path="/admin/users" element={<UsersInvites />} />
           <Route path="/admin/roles" element={<RolesMatrix />} />

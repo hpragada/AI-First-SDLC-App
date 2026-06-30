@@ -263,3 +263,45 @@ export interface RunnerToken {
   id: string;
   token: string; // shown once
 }
+
+// ── Phase 4.8 T3 — project setup (binds 4.7 T6/T7 + existing profile) ───────
+export interface CreateProjectRequest {
+  name: string;
+  track: "greenfield" | "brownfield";
+  repo_topology: "single" | "multi";
+}
+
+// Integrations grid + connect drawer (S-11/S-12, 4.7-T6).
+export type Capability =
+  | "docstore"
+  | "tasktracker"
+  | "designsource"
+  | "codehost"
+  | "testmgmt"
+  | "codeintel";
+
+export interface Integration {
+  id: string;
+  capability: Capability;
+  vendor: string;
+  status: "connected" | "not_connected" | "failed";
+  configured: boolean;
+  binding: Record<string, unknown>;
+  fail_reason?: string;
+}
+
+export interface TestConnectionResult {
+  ok: boolean;
+  detail: string;
+  fix_hint?: string;
+}
+
+// Repositories (S-13, 4.7-T7).
+export interface Repository {
+  id: string;
+  name: string;
+  role: string;
+  default_base: string;
+  status: string;
+  is_default: boolean;
+}

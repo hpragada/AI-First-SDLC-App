@@ -8,6 +8,7 @@ import type {
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
+import { Link as RouterLink } from "react-router-dom";
 
 type Variant =
   | "primary"
@@ -214,11 +215,13 @@ export function CardBody({ children, className, style }: HTMLAttributes<HTMLDivE
 
 export function Panel({
   title,
+  actions,
   children,
   flush,
   className,
 }: {
   title?: ReactNode;
+  actions?: ReactNode;
   children: ReactNode;
   flush?: boolean;
   className?: string;
@@ -228,6 +231,12 @@ export function Panel({
       {title && (
         <div className="panel__header">
           <h2 className="panel__title">{title}</h2>
+          {actions && (
+            <>
+              <span className="u-spacer" />
+              {actions}
+            </>
+          )}
         </div>
       )}
       <div className={flush ? "panel__body--flush" : "panel__body"}>{children}</div>
@@ -481,7 +490,19 @@ export function Segmented({ options, active }: { options: string[]; active: stri
   );
 }
 
-export function CapCard({ vendor, capability, status, failed }: { vendor: string; capability: string; status: ReactNode; failed?: boolean }) {
+export function CapCard({
+  vendor,
+  capability,
+  status,
+  failed,
+  children,
+}: {
+  vendor: string;
+  capability: string;
+  status: ReactNode;
+  failed?: boolean;
+  children?: ReactNode;
+}) {
   return (
     <div className={cx("cap-card", failed && "cap-card--failed")}>
       <div className="cap-card__head">
@@ -491,20 +512,34 @@ export function CapCard({ vendor, capability, status, failed }: { vendor: string
           <div className="cap-card__vendor">{vendor}</div>
         </div>
       </div>
+      {children}
       <div className="cap-card__foot">{status}</div>
     </div>
   );
 }
 
-export function Breadcrumb({ items }: { items: string[] }) {
+export function Breadcrumb({
+  items,
+}: {
+  items: Array<string | { label: string; href: string }>;
+}) {
   return (
     <nav className="breadcrumb">
-      {items.map((item, index) => (
-        <span key={item} className={index === items.length - 1 ? "here" : undefined}>
-          {index > 0 && <span className="sep">/</span>}
-          {item}
-        </span>
-      ))}
+      {items.map((item, index) => {
+        const label = typeof item === "string" ? item : item.label;
+        const href = typeof item === "string" ? undefined : item.href;
+        const last = index === items.length - 1;
+        return (
+          <span key={label}>
+            {index > 0 && <span className="sep">›</span>}
+            {!last && href ? (
+              <RouterLink to={href}>{label}</RouterLink>
+            ) : (
+              <span className="here">{label}</span>
+            )}
+          </span>
+        );
+      })}
     </nav>
   );
 }
