@@ -40,13 +40,18 @@ is the test for "can an assistant consume context and build."
 
 ## Claiming a task (so two people never collide)
 
-1. In a **tiny dedicated commit**, flip the task's box in `BUILD_PLAN.md` from `[ ]` to **`[~] (init/branch)`**
-   (e.g. `[~] (AK/feat-4.7-t6-integrations)`). Push it. That is your claim.
-2. **One task at a time.** Finish (merge) before claiming another.
-3. On merge, flip it to `[x]` with a one-line "what shipped" note (match the style of completed tasks).
+1. On the **phase branch**, in a **tiny dedicated commit**, flip the task's box in `BUILD_PLAN.md` from
+   `[ ]` to **`[~] (your-initials)`** (e.g. `[~] (AK)`). Push it. That is your claim — everyone pulls and sees it.
+2. **One task at a time.** Finish (committed + tests green) before claiming another.
+3. When done, flip it to `[x]` with a one-line "what shipped" note (match the style of completed tasks).
 4. If a task is already `[~]`, pick a different one — or coordinate with the owner.
 
 ## Work-streams & file ownership (the conflict-avoidance rules)
+
+**Each phase = one shared branch off `develop`** — `phase-4.7-backend` (all 4.7 tasks) and
+`phase-4.8-ui` (all 4.8 tasks). Several assistants work the **same** phase branch on **disjoint
+modules**, coordinating via the claim markers + the ownership rules below. The two phase branches are
+independent (backend vs UI), so the streams never collide.
 
 **Foundations land first (serialize only these):**
 - Backend: **4.7 T1 → T2** (auth core, then signup + `is_tenant_admin`/`CurrentUser`). T3–T11 depend on them.
@@ -69,7 +74,14 @@ front is what makes append-only safe — no shape renegotiation mid-stream.
 
 ## Branch / PR / Definition of Done
 
-- Branch **off `develop`**: `feat/<phase>-<task>-<slug>` (e.g. `feat/4.7-t6-integrations`). PR → `develop`.
+- **One shared branch per phase, created off `develop`:** `phase-4.7-backend` (all 4.7 tasks) and
+  `phase-4.8-ui` (all 4.8 tasks). All work for a phase commits to its phase branch; **PR the phase
+  branch → `develop`** at the phase milestone (or agreed checkpoints). The two branches are independent.
+- **Shared-branch discipline (many of us push to the same phase branch):** `git pull --rebase` before
+  you start *and* before every push; commit **small and often**; stay strictly inside your task-owned
+  module; touch shared/append-only files in their own tiny commits. A conflict almost always means two
+  people in one file — re-check ownership. (Optional: do a task on a short-lived local branch and merge
+  it into the phase branch — keeps the phase branch the single integration point that PRs to `develop`.)
 - **DoD:** matches the spec contract **and** (UI) every labelled state of the screen with visual parity;
   tests added (backend: service + REST + DB-level RLS for new tables; FE: each state renders + happy
   path); **`make test` / `make lint`** green (backend), **`npm run lint` + `tsc -b`** green (frontend);
