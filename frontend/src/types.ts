@@ -149,3 +149,31 @@ export const PLANNING_PHASES: { key: string; label: string }[] = [
   { key: "03_prd", label: "PRD" },
   { key: "04_architecture", label: "Architecture" },
 ];
+
+// Phase 4.8 auth/session surface. Tenant comes from the authenticated session;
+// memberships drive the project switcher and route guards.
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  is_tenant_admin?: boolean;
+}
+
+export interface Membership {
+  id: string;
+  project: string;
+  project_name: string;
+  role: string;
+}
+
+export interface CurrentUser {
+  user: User;
+  tenant: Tenant;
+  memberships: Membership[];
+  isAdmin: boolean;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}

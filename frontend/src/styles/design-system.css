@@ -1,0 +1,123 @@
+/* ============================================================================
+   Edvensoft AI-First SDLC — design-system.css
+   The ONE shared stylesheet: tokens (DESIGN_SYSTEM.md §9, verbatim) + spacing
+   + type tokens + base reset + typography. Link this FIRST on every screen.
+   Never hardcode a hex/size — only the tokens below.
+   ========================================================================== */
+
+:root {
+  /* ---- brand (verbatim from DESIGN_SYSTEM.md §9) ---- */
+  --brand-navy:#1E2A5A; --brand-navy-900:#15204A; --brand-navy-700:#1E2A5A;
+  --brand-navy-500:#33417A; --brand-navy-100:#E5E9F4;
+  --brand-orange:#F26F21; --brand-orange-600:#D95E15; --brand-orange-300:#FBA968;
+  --brand-orange-50:#FDF0E7;
+  /* ---- neutrals ---- */
+  --bg-app:#F4F6F9; --bg-surface:#FFFFFF; --bg-subtle:#EEF1F6;
+  --border:#E2E7EF; --border-strong:#CBD3E0;
+  --text-strong:#1B2440; --text-body:#3A4256; --text-muted:#6B7385;
+  --text-faint:#9AA1B1; --text-on-navy:#E8ECF7; --text-on-orange:#FFFFFF;
+  /* ---- semantic ---- */
+  --success:#1FA971; --success-bg:#E5F5EE;
+  --warning:#E0961B; --warning-bg:#FBF1DE;
+  --danger:#DC2626;  --danger-bg:#FCEAEA;
+  --info:#2563EB;    --info-bg:#E7EEFD;
+  --accent-purple:#7C5CD6; --accent-purple-bg:#EFEAFB;
+  /* ---- radius / shadow ---- */
+  --radius-sm:6px; --radius-md:10px; --radius-lg:14px; --radius-pill:999px;
+  --shadow-sm:0 1px 2px rgba(20,30,60,.06);
+  --shadow-md:0 4px 12px rgba(20,30,60,.08);
+  --shadow-lg:0 12px 32px rgba(20,30,60,.14);
+  /* ---- type families ---- */
+  --font-sans:Inter,"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+  --font-mono:"JetBrains Mono","SF Mono",ui-monospace,Menlo,Consolas,monospace;
+
+  /* ---- spacing scale (4px base; DESIGN_SYSTEM.md §4) ---- */
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px;
+  --space-6:24px; --space-7:32px; --space-8:40px; --space-9:48px;
+
+  /* ---- type scale (size / line-height / weight; DESIGN_SYSTEM.md §3) ---- */
+  --fs-display:28px; --lh-display:36px; --fw-display:700;
+  --fs-h1:22px; --lh-h1:30px; --fw-h1:700;
+  --fs-h2:18px; --lh-h2:26px; --fw-h2:600;
+  --fs-h3:15px; --lh-h3:22px; --fw-h3:600;
+  --fs-body:14px; --lh-body:21px;
+  --fs-sm:13px; --lh-sm:19px;
+  --fs-xs:12px; --lh-xs:16px;
+  --fs-mono:13px; --lh-mono:20px;
+
+  /* ---- layout dims (DESIGN_SYSTEM.md §4 shell) ---- */
+  --sidebar-w:240px;
+  --topbar-h:56px;
+  --content-max:1200px;
+
+  /* ---- console + overlay (DESIGN_SYSTEM.md §5 literals, tokenised here) ---- */
+  --console-bg:#10182B;
+  --console-fg:#E8ECF7;
+  --console-faint:#7C879E;
+  --scrim:rgba(20,30,60,.45);
+
+  /* ---- motion ---- */
+  --transition:120ms ease;
+  --focus-ring:0 0 0 3px var(--brand-orange-300);
+}
+
+/* ============================================================================
+   Reset
+   ========================================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text-body);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+h1, h2, h3, h4, p, figure { margin: 0; }
+ul, ol { margin: 0; padding: 0; list-style: none; }
+button { font-family: inherit; font-size: inherit; cursor: pointer; }
+a { color: var(--info); text-decoration: none; }
+a:hover { text-decoration: underline; }
+img, svg { display: block; }
+table { border-collapse: collapse; width: 100%; }
+code, pre, .mono { font-family: var(--font-mono); }
+
+/* Universal visible focus ring (DESIGN_SYSTEM.md §5/§7) */
+:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ============================================================================
+   Typography utilities (map 1:1 to the §3 type scale)
+   ========================================================================== */
+.t-display { font-size: var(--fs-display); line-height: var(--lh-display); font-weight: var(--fw-display); color: var(--text-strong); }
+.t-h1 { font-size: var(--fs-h1); line-height: var(--lh-h1); font-weight: var(--fw-h1); color: var(--text-strong); }
+.t-h2 { font-size: var(--fs-h2); line-height: var(--lh-h2); font-weight: var(--fw-h2); color: var(--text-strong); }
+.t-h3 { font-size: var(--fs-h3); line-height: var(--lh-h3); font-weight: var(--fw-h3); color: var(--text-strong); }
+.t-body { font-size: var(--fs-body); line-height: var(--lh-body); }
+.t-sm { font-size: var(--fs-sm); line-height: var(--lh-sm); }
+.t-xs { font-size: var(--fs-xs); line-height: var(--lh-xs); font-weight: 500; }
+.t-mono { font-family: var(--font-mono); font-size: var(--fs-mono); line-height: var(--lh-mono); }
+.t-label { font-size: var(--fs-xs); line-height: var(--lh-xs); font-weight: 600; letter-spacing: .3px; text-transform: uppercase; color: var(--text-muted); }
+
+/* Color helpers */
+.u-strong { color: var(--text-strong); }
+.u-body { color: var(--text-body); }
+.u-muted { color: var(--text-muted); }
+.u-faint { color: var(--text-faint); }
+.u-success { color: var(--success); }
+.u-warning { color: var(--warning); }
+.u-danger { color: var(--danger); }
+.u-info { color: var(--info); }
+.u-purple { color: var(--accent-purple); }
+
+/* Layout helpers used by stacked-state mockups */
+.u-stack > * + * { margin-top: var(--space-4); }
+.u-row { display: flex; align-items: center; gap: var(--space-3); }
+.u-row-tight { display: flex; align-items: center; gap: var(--space-2); }
+.u-spacer { flex: 1 1 auto; }
+.u-wrap { flex-wrap: wrap; }

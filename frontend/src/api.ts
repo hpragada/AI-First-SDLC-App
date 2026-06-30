@@ -5,6 +5,8 @@ import type {
   Approval,
   Artifact,
   Clarification,
+  CurrentUser,
+  LoginRequest,
   Project,
   ProjectProfile,
   Run,
@@ -51,6 +53,7 @@ async function req<T>(method: string, path: string, opts: ReqOpts = {}): Promise
   const res = await fetch(url, {
     method,
     headers,
+    credentials: "include",
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
 
@@ -59,12 +62,20 @@ async function req<T>(method: string, path: string, opts: ReqOpts = {}): Promise
   if (!res.ok) {
     const msg =
       (data && (data.detail || JSON.stringify(data))) || `${res.status} ${res.statusText}`;
+    if (res.status === 401) {
+      window.dispatchEvent(new CustomEvent("auth:unauthorized"));
+    }
     throw new ApiError(res.status, msg, data);
   }
   return data as T;
 }
 
 export const api = {
+  // Auth (Phase 4.8 foundation): session cookies; tenant is server-derived.
+  me: () => req<CurrentUser>("GET", "/auth/me/"),
+  login: (body: LoginRequest) => req<CurrentUser>("POST", "/auth/login/", { body }),
+  logout: () => req<Record<string, never>>("POST", "/auth/logout/"),
+
   // Tenants (bootstrap — no tenant context yet).
   createTenant: (name: string) => req<Tenant>("POST", "/tenants/", { body: { name } }),
 
