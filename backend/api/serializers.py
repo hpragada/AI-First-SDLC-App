@@ -220,9 +220,10 @@ class ApprovalSerializer(serializers.ModelSerializer):
 
 
 class GateDecisionSerializer(serializers.Serializer):
-    """Input for deciding a gate (spec §6). `user_id` stands in until real auth."""
+    """Input for deciding a gate (spec §6). `user_id` is the pre-auth/runner fallback only —
+    under a session the actor is the authenticated user and this is ignored (P4.7-T5)."""
 
-    user_id = serializers.UUIDField()
+    user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     decision = serializers.ChoiceField(choices=["approved", "rejected"])
     comment = serializers.CharField(required=False, allow_blank=True, default="")
     # Reviewer's gate-checklist updates (e.g. WCAG criteria marked satisfied on the design
@@ -244,10 +245,11 @@ class ClarificationSerializer(serializers.ModelSerializer):
 
 
 class ClarificationAnswerSerializer(serializers.Serializer):
-    """Input for answering a clarification. `user_id` (a project member) stands in until
-    real auth; `answers` maps each question id to the human's answer."""
+    """Input for answering a clarification. `user_id` is the pre-auth/runner fallback only —
+    under a session the actor is the authenticated user (P4.7-T5). `answers` maps each
+    question id to the human's answer."""
 
-    user_id = serializers.UUIDField()
+    user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     answers = serializers.DictField(required=False, default=dict)
 
 

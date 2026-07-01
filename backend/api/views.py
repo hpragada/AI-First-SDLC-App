@@ -27,7 +27,7 @@ from apps.ledger.models import Event
 from apps.projects.models import Project
 from apps.registry.models import Artifact, TraceEdge
 from apps.runs.models import Run
-from apps.tenancy.auth import IsTenantAdmin
+from apps.tenancy.auth import IsTenantAdmin, current_user
 from apps.tenancy.models import Invitation, Membership, Tenant, User
 from apps.tenancy.services import (
     InvitationError,
@@ -77,6 +77,17 @@ from .serializers import (
     TriggerSerializer,
     WorkItemSerializer,
 )
+
+
+def resolve_actor(request, body_user_id) -> str | None:
+    """The user acting on this request (P4.7-T5). Prefer the authenticated session user —
+    UI-driven `trigger`/`decide`/`answer` attribute to *that* user (and route phases to their
+    companion); the `user_id` body param is ignored under a session and kept only as the
+    pre-auth/runner/test fallback. Returns the id as a str, or None when neither is present."""
+    user = current_user(request)
+    if user is not None:
+        return str(user.id)
+    return str(body_user_id) if body_user_id else None
 
 
 class TenantScopedMixin:
@@ -399,7 +410,9 @@ class WorkItemViewSet(
         ser = TriggerSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         try:
-            user_id = ser.validated_data.get("user_id")
+            # Actor = the session user when present (routes the phase to *their* companion
+            # enrollment), else the pre-auth/runner `user_id` body param (T5).
+            triggered_by = resolve_actor(request, ser.validated_data.get("user_id"))
             result = trigger_phase(
                 tenant_id=self.tenant_id,
                 project_id=str(work_item.project_id),
@@ -407,7 +420,7 @@ class WorkItemViewSet(
                 agent_key=ser.validated_data["agent_key"],
                 gate_type=ser.validated_data["gate_type"],
                 required_role=ser.validated_data["required_role"],
-                triggered_by=str(user_id) if user_id else None,
+                triggered_by=triggered_by,
             )
         except TriggerError as exc:
             raise ValidationError({"agent_key": str(exc)}) from exc
@@ -515,11 +528,14 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         approval = self.get_object()
         ser = GateDecisionSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        user_id = resolve_actor(request, ser.validated_data.get("user_id"))
+        if user_id is None:
+            raise ValidationError({"user_id": "required when not authenticated"})
         try:
             result = decide_gate(
                 tenant_id=self.tenant_id,
                 approval_id=str(approval.id),
-                user_id=str(ser.validated_data["user_id"]),
+                user_id=user_id,
                 decision=ser.validated_data["decision"],
                 comment=ser.validated_data["comment"],
                 conditions=ser.validated_data.get("conditions"),
@@ -556,11 +572,14 @@ class ClarificationViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         clarification = self.get_object()
         ser = ClarificationAnswerSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        user_id = resolve_actor(request, ser.validated_data.get("user_id"))
+        if user_id is None:
+            raise ValidationError({"user_id": "required when not authenticated"})
         try:
             result = answer_clarification(
                 tenant_id=self.tenant_id,
                 clarification_id=str(clarification.id),
-                user_id=str(ser.validated_data["user_id"]),
+                user_id=user_id,
                 answers=ser.validated_data.get("answers") or {},
             )
         except ClarificationRoleError as exc:
