@@ -30,6 +30,11 @@ class SourceDocument(TenantScopedModel):
         return f"{self.filename} ({self.status})"
 
 
+# Connectors that need no per-tenant secret (built-in/local — P4.7-T6). Every other
+# connector is "configured" only once a secret has been stored.
+NO_SECRET_CONNECTORS = {"builtin"}
+
+
 class IntegrationConnection(TenantScopedModel):
     class Health(models.TextChoices):
         UNKNOWN = "unknown", "Unknown"
@@ -44,6 +49,15 @@ class IntegrationConnection(TenantScopedModel):
     health = models.CharField(
         max_length=16, choices=Health.choices, default=Health.UNKNOWN
     )
+    # Write-only secret store (P4.7-T6, DECISION-4): a Fernet blob (apps.integrations.crypto),
+    # never serialized back over the API. Empty string = no secret stored.
+    secret_encrypted = models.TextField(blank=True, default="")
+
+    @property
+    def is_configured(self) -> bool:
+        """Whether this connection has what it needs to be used — a stored secret, or none
+        required (e.g. the built-in CodeIntel connector)."""
+        return bool(self.secret_encrypted) or self.connector in NO_SECRET_CONNECTORS
 
     def __str__(self) -> str:
         return f"{self.capability}:{self.connector}"

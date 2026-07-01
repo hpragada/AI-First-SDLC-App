@@ -84,11 +84,28 @@ No other new tables — `IntegrationConnection`, `Repository`, `Membership`, `Ru
 Email via a **pluggable sender** (console backend in dev — no real-mail dependency).
 
 ### T4 — User & role management · *backs S-07 users table, S-08 roles matrix + coverage* (J6)
+**Two admin concepts (team decision, this phase):** *tenant-admin* = `User.is_tenant_admin` — tenant-wide,
+gates the admin REST surface, **can approve any gate in the tenant**, a tenant must always keep ≥1;
+*project-admin* = `Membership(role="admin")` — per-project, **can approve any gate on that project**. A
+phase gate is actionable when a holder of its required role **or** an admin (project- or tenant-) exists.
+| Method · Path | Req | Resp | Perm |
+|---|---|---|---|
 | `GET /api/users/` | — | `[{id,name,email,status,is_tenant_admin, memberships:[{project_id,project_name,role}]}]` | **admin** |
-| `POST /api/projects/{id}/memberships/` | `{user_id,role}` | `201` membership | admin; `409` last-admin/own-admin guards |
-| `DELETE /api/projects/{id}/memberships/{mid}` | — | `204` | admin; last-admin guard |
-| `GET /api/projects/{id}/role-coverage/` | — | `{roles:[{role,holders:[{user_id,name}], covered:bool, gate_blocked:bool, note?}]}` — flags uncovered **gate** roles (e.g. `reviewer` empty → `gate_blocked:true, note:"merge gate unactionable"`) | admin |
-> **Screen-complete:** S-08 renders the per-role coverage warning banner verbatim from `gate_blocked`+`note`.
+| `PATCH /api/users/{id}/` | `{is_tenant_admin}` | `200` `{id,name,email,is_tenant_admin}` | admin; **`409` last-admin guard** (can't demote the tenant's only admin — incl. your own) |
+| `GET /api/projects/{id}/memberships/` | — | `[{id,user_id,project,role,created_at}]` | admin |
+| `POST /api/projects/{id}/memberships/` | `{user_id,role}` | `201` membership (`role="admin"` → project-admin) | admin; `409` duplicate; `404` unknown user |
+| `DELETE /api/projects/{id}/memberships/{mid}/` | — | `204` | admin (no guard — the tenant-admin population is guarded on `PATCH /users/{id}`, not on project-role grants) |
+| `GET /api/projects/{id}/role-coverage/` | — | `{admin_fallback:bool, roles:[{role,holders:[{user_id,name}], covered:bool, gate_blocked:bool, note?}]}` | admin |
+> **Gate roles** are derived from the phase catalog (`registry.catalog.gate_roles()`), never hand-listed.
+> `covered` = a direct holder of the role exists. `gate_blocked` = gate role **and** not covered **and**
+> no `admin_fallback` (an admin — project or tenant — can approve any gate). `note`: when uncovered and no
+> fallback → `"{gate} unactionable — no {role}"` (e.g. `"merge gate unactionable — no reviewer"`); when
+> uncovered but a fallback exists → `"no {role} assigned — an admin can approve the {gate}"`.
+> **Screen-complete / S-08 UI implication:** the merged S-08 mockup shows the coverage gap as a hard red
+> "unactionable" even though *You* is an admin. Under the team's admin-approves-any-gate rule that gap is
+> **advisory** (an admin can approve) whenever `admin_fallback:true` — S-08 should render the milder
+> "admin can approve as fallback" state from `gate_blocked:false`+`note`, reserving the hard-red
+> "unactionable" banner for `gate_blocked:true` (no holder **and** no admin at all).
 
 ### T5 — Authn-aware trigger & decisions · *backs S-14/S-18 trigger, S-21 decide, S-20 answer* (req #1)
 No new routes — modify `WorkItem.trigger` / `approvals/{id}/decide` / `clarifications/{id}/answer` to use
@@ -103,34 +120,128 @@ the **session user** as actor (routes UI-triggered phases to *that user's* compa
 | `POST /api/integrations/{id}/test-connection/` | — | `{ok:bool, detail, fix_hint?}` | admin |
 > Capabilities: `docstore/tasktracker/codehost/designsource/testmgmt/codeintel`. **Secret never in any
 > response.** Replaces the shell-only `IntegrationConnection.update_or_create` (guide §5.3).
+> **Implementation notes:** one connection per `(tenant, capability)` — reconnecting to a different
+> vendor is a `PATCH`, a second `POST` for the same capability is `409`. `vendor`/`binding`/`status` are
+> the wire names for the existing `connector`/`scopes`/`health` columns (no DB rename); `secrets` is a
+> new encrypted column (`IntegrationConnection.secret_encrypted`, Fernet, key from
+> `INTEGRATIONS_SECRET_KEY`/falls back to `SECRET_KEY` — Phase 5 swaps in a vault). `test-connection`
+> checks the vendor is builder-registered (`integrations.registry.get_builder`) and a secret is stored
+> (or none is needed, e.g. `codeintel:builtin`) — it does **not** make a live network call yet (matches
+> `registry.py`'s existing "building a connector makes no network call" seam); real reachability is
+> Phase 5.
 
 ### T7 — Repositories · *backs S-13* (J10)
-| `GET /api/projects/{id}/repositories/` | — | `[{id,name,role,default_base,status,is_default}]` + project `repo_topology` | member |
+| `GET /api/projects/{id}/repositories/` | — | `{repo_topology, repositories:[{id,name,role,default_base,status,is_default}]}` | member |
 | `POST /api/projects/{id}/repositories/` | `{name,role,base_branch}` | `201`; reconciles topology (single/split/multi) | tech_lead/admin; `409` duplicate-by-name |
 | `DELETE /api/projects/{id}/repositories/{rid}` | — | `204`; reconciles topology | tech_lead/admin |
+| `POST /api/projects/{id}/repositories/{rid}/set-default/` | — | `200` `[{id,name,role,default_base,status,is_default}]` (full list) | tech_lead/admin |
 Reuse `apps/projects/repos.py` (`add_repository`/`repositories_for`); add remove + set-default.
+> **Implementation notes:** `is_default` is a new `Repository.is_default` column — the first repo
+> registered on a project is default until reassigned via `set-default`; removing the default repo
+> promotes the oldest remaining one so a non-empty project always has exactly one. `status` is
+> `"connected"`/`"unlinked"`, derived from the tenant's single `codehost` `IntegrationConnection`
+> (capabilities-not-vendors, T6) — tenant-wide, so every repo row in a project shares it (no
+> per-repo CodeHost config). `tech_lead/admin` = `Membership(role in {tech_lead, admin})` on this
+> project **or** `User.is_tenant_admin`, the same two-tier check as `gates.services.decide_gate`
+> (`apps.projects.repos.require_repo_manage_role`); reads use the (till-now-unused)
+> `IsAuthenticatedMember` permission. `GET` returns `{repo_topology, repositories}` — see the current
+> row shape above — because the topology chip renders next to the table (S-13), not just the rows.
 
 ### T8 — Brownfield onboarding · *backs S-24 hub, S-25 source docs, S-26 gap report* (J17)
 | `GET /api/projects/{id}/onboarding/` | — | hub state `{upload:[…], adopt:[…], register:{…}, index:{status}, gap:{ready,resume_phase?}}` | member |
-| `POST /api/projects/{id}/code-intel/` | `{repo_id}` | `202` (dispatch built-in analyzer → companion worktree; index stored, **source never copied**) | tech_lead/admin |
-| `POST /api/projects/{id}/gap-report/` | — | `202`/`200` build `build_gap_report` | member |
-| `GET /api/projects/{id}/gap-report/` | — | `{phases:[{phase,assessment:Complete/Partial/Missing,evidence}], resume_phase, blocking:[…]}` | member |
+| `POST /api/projects/{id}/code-intel/` | `{repo_id, index?, summary?}` | `202` `{artifact_id, repo_id, status:"indexed"}`; index stored, **source never copied** | tech_lead/admin |
+| `POST /api/projects/{id}/gap-report/` | — | `200` (rebuilds via `build_gap_report`, then returns the same shape as `GET`) | member |
+| `GET /api/projects/{id}/gap-report/` | — | `{phases:[{phase,assessment:Complete/Partial/Missing,evidence}], resume_phase, intel_present, blocking:[…]}`; `404` if none built yet | member |
 Existing source-doc `upload`+`adopt/` and `onboard-atlassian/` are surfaced in the hub payload.
+> **Implementation notes:** `POST .../code-intel/` **defers real companion-side dispatch**
+> (team decision) — the built-in analyzer (`integrations.codeintel.builtin.BuiltinCodeIntel`)
+> still only runs against a local `workspace` path (proven in `test_acceptance_phase4.py`
+> against a real temp git repo), and there is no existing mechanism to run it *from* the
+> server against a developer's machine: the only companion-dispatch pipeline (`Run` +
+> Temporal + `RunnerWorkClaimView`) requires a `WorkItem`+`AgentSpec` and only knows
+> `plan`/`review`/`build` kinds, and the migrated `00c_intelligent_context_extractor` agent body
+> references "codeintel"/"worktree" tools that aren't wired to any trigger yet. Building either
+> a proper agent-run integration or a new dispatch queue is real companion/daemon work, out of
+> scope for this backend-REST task. So for T8, `POST .../code-intel/` accepts an
+> **already-computed** result (`index`: file_count/commits/hotspots/languages;
+> `summary`: free text) and persists it as a `codebase_intelligence` artifact (never `code` —
+> #1/#3) + a Knowledge-Index chunk (`source="code_intel"`; always indexed, even with no
+> `summary` supplied, so a chunk always exists). Real dispatch (companion claims → runs
+> `BuiltinCodeIntel().index()` in its worktree → reports this same `{index, summary}` shape) is
+> a follow-up once the companion CLI's tool surface is built out.
+> `GET/POST .../gap-report/` share one wire shape (`read_gap_report`): POST rebuilds
+> (`build_gap_report`) then re-reads through, so there is one representation for the resource,
+> not two. `evidence` is light refs (`{artifact_id,type,sor,status}`, capped at 10/phase) — never
+> the artifact body. The onboarding hub's `register` also reports
+> `docstore_connected`/`tasktracker_connected` (from the T6 `IntegrationConnection`s) alongside
+> the counts implied by the base contract.
 
 ### T9 — API-contract & drift · *backs S-27* (J18)
 | `GET /api/projects/{id}/api-contracts/` | — | `[{artifact_id,name,version,provider_repo,status}]` | member |
-| `GET /api/projects/{id}/api-contracts/{aid}/` | — | read-through current/version body | member |
+| `GET /api/projects/{id}/api-contracts/{aid}/` | — | read-through current body `{artifact_id,semver,version,status,provider_repo_id,body}`; `404` unknown/wrong project | member |
 | `GET /api/projects/{id}/drift/` | — | open `DriftRecord` queue `[{id,kind,required_role,detail,impacted:[{node,repo_id}]}]` | member |
 | `POST /api/drift/{id}/decide/` | `{decision:accept/reject,comment?}` | `200` (`decide_drift`) | **architect/tech_lead**; `403` wrong role; idempotent once decided |
+> **Implementation notes:** `export_api_contract`/`_current()` (D4) register **exactly one**
+> versioned `api_contract` artifact per project — so the list endpoint returns `[]` or a single
+> row today; S-27's "Payments API" + "Ledger API" two-row mockup implies multiple named
+> contracts per project, which the current Phase-4 model doesn't support (a future
+> enhancement, not something this REST task silently reinvents). `name` maps from
+> `external_ref.target` (falls back to `"API Contract"`); `provider_repo` is the resolved repo
+> **name** (not id). The body read-through only ever has the **current** version — each
+> `export_api_contract` bump overwrites the same S3 key, so a superseded semver has no
+> separate snapshot to read (this is existing D4 behavior, not new for T9). `drift_queue`
+> reshapes `open_drift_records` to this contract (`drift_id`→`id`, `artifact_id`→`node` per
+> impacted entry); `decide_drift`'s role check + idempotent-once-decided behavior are reused
+> verbatim via the new top-level `DriftRecordViewSet` (`/api/drift/{id}/decide/`, mirroring
+> `ApprovalViewSet.decide`) — no new logic, only the REST wrapper.
 
 ### T10 — Artifact preview read-through · *backs S-28 list, S-29 preview* (J19, DECISION-5)
 | `GET /api/artifacts/{id}/preview/` | — | `{body, content_type, status, version, versions:[…], sor_link?}` — read-through from S3 (draft/snapshot) or SoR; **never an editor, never copied into the registry** | member; `404` missing-body |
 List payloads keep **pointers only** (no body) — unchanged.
 
+> **Implementation notes.** New `integrations/preview.py::read_artifact_preview` (no new
+> models — reuses `Artifact.s3_key`/`sor`/`external_ref`/`version` as-is), wrapped by
+> `ArtifactViewSet.preview` (`ArtifactViewSet` already existed, read-only; only the new
+> action is gated `IsAuthenticatedMember`, list/retrieve keep their existing default).
+> Three read-through paths by `sor`: **internal** (draft/staged, not pushed anywhere yet) →
+> the S3 body at `s3_key`, `content_type="text/markdown"`, no `sor_link`; **confluence**/
+> **jira** → live through `DocStore.get_page`/`TaskTracker.get_issue` (already documented
+> "read-through, not stored") — if the connector is unavailable or the call fails, degrades
+> gracefully to `body=""` + the stored `external_ref.url` as `sor_link` (S-29's "Preview
+> unavailable" state), rather than a 5xx; any other SoR (figma/xray/git/…) has no body
+> capability wired yet, so it's link-only the same way. `404` is reserved for "no body to
+> ever show" — unknown/cross-tenant artifact id, or an internal artifact whose `s3_key` was
+> never set — not a transient external-read failure.
+>
+> `versions` is every sibling `Artifact` row sharing `(project, phase, type)` — i.e. the
+> distinct registrations across runs/remediation loops — newest first, each with its own
+> `{artifact_id, version, status, run_id, created_at}`. **Known limitation** (same shape of
+> gap as T9's single-contract-per-project note): only the `api_contract` D4 pattern bumps
+> `version` on one row in place; every other artifact type registers a fresh row per run
+> with `version` defaulting to `1`, so today "versions" is a time-ordered list of revisions
+> rather than one artifact with a monotonically incrementing version counter — a real
+> per-artifact version history is a future model change (a version/snapshot table), not
+> something invented here.
+
 ### T11 — Companion status + connect · *backs S-05 checklist tick, S-06 connect-machine* (J5)
 | `GET /api/runners/` | — | caller's enrollments `[{id,machine,last_seen,online:bool,projects:[…]}]` (online derived from `last_seen`) | session |
 `POST /api/runners/` (issue) already exists — ensure it binds the enrollment to the **session user**
 (`developer_id`). Token issuance/`revoke` unchanged.
+
+> **Implementation notes.** No new models — `RunnerEnrollment` already carries `label`
+> (the machine name), `developer`, `last_seen`, `status`. New `apps/runs/enrollment.py::
+> list_developer_enrollments(tenant_id, developer_id)`: since one enrollment row exists **per
+> project** a machine is bound to (`project` is a required FK), it groups active rows by
+> `label` so one physical machine connected to several projects surfaces as a single entry
+> with `projects: [{project_id, project_name}, …]`; the representative `id`/`last_seen` is the
+> group's freshest row. `online` is `last_seen` within `ONLINE_THRESHOLD` (2 minutes — comfortably
+> above the companion daemon's default 5s poll interval); a never-seen enrollment is offline
+> with `last_seen: null`. A revoked enrollment simply drops out (already-existing `POST …/revoke/`
+> is unchanged). `RunnerEnrollmentView.get` is now `IsAuthenticatedMember`-gated and reshaped to
+> this session-scoped, grouped contract (previously an ungated, tenant-wide flat list — nothing
+> depended on that shape, grepped before changing it). `RunnerEnrollmentView.post` now resolves
+> `developer_id` from the session user first, falling back to the body value only when
+> unauthenticated (mirrors `resolve_actor`, T5) — existing pre-auth/test callers are unaffected.
 
 ### P4.7 slice
 A from-scratch acceptance test with **no shell/manage.py step**: signup → invite → accept+set-password →

@@ -3,6 +3,15 @@ APIView (it runs before any tenant context exists)."""
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from .auth_views import (
+    AcceptInvitationView,
+    LoginView,
+    LogoutView,
+    MeView,
+    RequestResetView,
+    ResetView,
+    SignupView,
+)
 from .runner_views import (
     RunnerBuildFetchView,
     RunnerBuildReportView,
@@ -20,12 +29,16 @@ from .views import (
     ApprovalViewSet,
     ArtifactViewSet,
     ClarificationViewSet,
+    DriftRecordViewSet,
     EventViewSet,
+    IntegrationViewSet,
+    InvitationViewSet,
     ProjectViewSet,
     RunViewSet,
     SourceDocumentViewSet,
     TenantCreateView,
     TraceEdgeViewSet,
+    UserViewSet,
     WorkItemViewSet,
 )
 from .webhook_views import GithubWebhookView
@@ -40,9 +53,23 @@ router.register("events", EventViewSet, basename="event")
 router.register("approvals", ApprovalViewSet, basename="approval")
 router.register("clarifications", ClarificationViewSet, basename="clarification")
 router.register("source-documents", SourceDocumentViewSet, basename="sourcedocument")
+router.register("invitations", InvitationViewSet, basename="invitation")
+router.register("users", UserViewSet, basename="user")
+router.register("integrations", IntegrationViewSet, basename="integration")
+router.register("drift", DriftRecordViewSet, basename="drift")
 
 urlpatterns = [
     path("tenants/", TenantCreateView.as_view(), name="tenant-create"),
+    # Server-session auth (P4.7-T1, DECISION-3). Tenant is resolved from the session
+    # user by TenantContextMiddleware; the runner-token path is untouched.
+    path("auth/signup/", SignupView.as_view(), name="auth-signup"),
+    path("auth/login/", LoginView.as_view(), name="auth-login"),
+    path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
+    path("auth/me/", MeView.as_view(), name="auth-me"),
+    # Invitation accept + password reset (P4.7-T3) — public, pre-auth (CSRF-exempt).
+    path("auth/accept-invitation/", AcceptInvitationView.as_view(), name="auth-accept-invitation"),
+    path("auth/request-reset/", RequestResetView.as_view(), name="auth-request-reset"),
+    path("auth/reset/", ResetView.as_view(), name="auth-reset"),
     # Local-companion runner (Phase 2): enrollment (tenant-scoped) + remote Platform-State.
     path("runners/", RunnerEnrollmentView.as_view(), name="runner-enroll"),
     path("runners/<uuid:pk>/revoke/", RunnerRevokeView.as_view(), name="runner-revoke"),

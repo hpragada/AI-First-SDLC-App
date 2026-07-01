@@ -109,6 +109,12 @@ def register_connector(
     _BUILDERS[(capability, connector)] = builder
 
 
+def get_builder(capability: str, connector: str) -> Callable[[object], object] | None:
+    """The registered builder for a (capability, connector) pair, or None if unregistered
+    (P4.7-T6 `test-connection` uses this to check a chosen vendor is actually wired)."""
+    return _BUILDERS.get((capability, connector))
+
+
 def get_connection(tenant_id, capability: str):
     """The tenant's IntegrationConnection row for a capability (or None) — exposes
     `scopes`/`token_ref`/`health` to callers that need config (e.g. the publish path)."""

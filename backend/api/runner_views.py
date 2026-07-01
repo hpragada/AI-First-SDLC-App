@@ -17,8 +17,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.projects.models import Project
-from apps.runs.enrollment import authenticate_runner, enroll_runner, revoke_runner
+from apps.runs.enrollment import (
+    authenticate_runner,
+    enroll_runner,
+    list_developer_enrollments,
+    revoke_runner,
+)
 from apps.runs.models import Run, RunnerEnrollment
+from apps.tenancy.auth import IsAuthenticatedMember, current_user
 from apps.tenancy.context import tenant_context
 from orchestration.build_report import BuildReportError, report_build
 
@@ -56,12 +62,20 @@ def _serialize(e: RunnerEnrollment) -> dict:
 
 
 class RunnerEnrollmentView(APIView):
-    """GET list / POST enroll a local-companion runner for this tenant."""
+    """GET the caller's companion enrollments (P4.7-T11, backs S-05/S-06) / POST enroll a
+    local-companion runner for this tenant."""
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [IsAuthenticatedMember()]
+        return super().get_permissions()
 
     def get(self, request):
         tenant_id = _tenant_id(request)
-        qs = RunnerEnrollment.objects.filter(tenant_id=tenant_id).order_by("-created_at")
-        return Response([_serialize(e) for e in qs])
+        user = current_user(request)
+        return Response(
+            list_developer_enrollments(tenant_id=tenant_id, developer_id=str(user.id))
+        )
 
     def post(self, request):
         tenant_id = _tenant_id(request)
@@ -72,9 +86,13 @@ class RunnerEnrollmentView(APIView):
         if not Project.objects.filter(id=project_id, tenant_id=tenant_id).exists():
             return Response({"project_id": "not found in tenant"},
                             status=status.HTTP_404_NOT_FOUND)
+        # The authenticated session user owns the enrollment; `developer_id` in the body is
+        # only the pre-auth/runner/test fallback (mirrors `resolve_actor`, P4.7-T5).
+        user = current_user(request)
+        developer_id = str(user.id) if user is not None else request.data.get("developer_id")
         enrollment, token = enroll_runner(
             tenant_id=tenant_id, project_id=project_id,
-            developer_id=request.data.get("developer_id"),
+            developer_id=developer_id,
             label=request.data.get("label", ""), repos=request.data.get("repos") or [],
         )
         body = _serialize(enrollment)

@@ -272,8 +272,12 @@ def build_gap_report(*, tenant_id, project_id, object_store=None) -> dict:
     for phase, label, types in _LIFECYCLE:
         status, evidence = _assess_phase(
             phase, types, by_type, has_backlog=has_backlog, intel_present=intel_present)
+        # Light refs (id/type/sor/status), capped — enough for the REST read-through (T8) to
+        # render "Evidence" without re-querying; never the artifact body.
+        refs = [{"artifact_id": str(a.id), "type": a.type, "sor": a.sor, "status": a.status}
+                for a in evidence[:10]]
         phases.append({"phase": phase, "label": label, "status": status,
-                       "evidence_count": len(evidence)})
+                       "evidence_count": len(evidence), "evidence": refs})
         evidence_ids.extend(str(a.id) for a in evidence)
 
     resume = next((p["phase"] for p in phases if p["status"] != "complete"), "done")
@@ -289,7 +293,8 @@ def build_gap_report(*, tenant_id, project_id, object_store=None) -> dict:
         tenant_id, project_id, None, phase="onboarding", type="gap_report",
         sor="internal", content_hash=content_hash(body.encode("utf-8")), s3_key=body_key,
         external_ref={"source": "onboarding", "resume_phase": resume,
-                      "phases": [{"phase": p["phase"], "status": p["status"]} for p in phases],
+                      "phases": [{"phase": p["phase"], "label": p["label"], "status": p["status"],
+                                 "evidence": p["evidence"]} for p in phases],
                       "blockers": blockers, "intel_present": intel_present},
     )
     # The report derives from the evidence it weighed (dedup; cap to keep the graph sane).
@@ -323,3 +328,127 @@ def _render_gap_report(phases, resume_label, blockers, intel_present) -> str:
     lines += ([f"- **{b}** — no evidence found; generate via its phase agent (gated) "
                "or provide the source." for b in blockers] or ["- None."])
     return "\n".join(lines) + "\n"
+
+
+# ── REST layer (P4.7-T8, backs S-24/S-25/S-26) ───────────────────────
+def read_gap_report(*, tenant_id, project_id) -> dict | None:
+    """Read-through the latest registered `gap_report` (S-26) — no recompute; `None` when
+    none has been built yet. `POST .../gap-report/` (`build_gap_report`) is what (re)builds
+    it; re-running after new evidence is registered is how the resume point moves."""
+    from apps.projects.models import Project
+    from apps.registry.models import Artifact
+    from apps.tenancy.context import tenant_context
+
+    with tenant_context(tenant_id):
+        Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
+        report = (
+            Artifact.objects.filter(tenant_id=tenant_id, project_id=project_id, type="gap_report")
+            .order_by("-created_at").first()
+        )
+    if report is None:
+        return None
+    ext = report.external_ref or {}
+    assessment = {"complete": "Complete", "partial": "Partial", "missing": "Missing"}
+    return {
+        "gap_report_id": str(report.id),
+        "resume_phase": ext.get("resume_phase"),
+        "intel_present": ext.get("intel_present", False),
+        "phases": [
+            {"phase": p["phase"], "assessment": assessment.get(p["status"], p["status"]),
+             "evidence": p.get("evidence", [])}
+            for p in ext.get("phases", [])
+        ],
+        "blocking": ext.get("blockers", []),
+    }
+
+
+def record_code_intel_index(*, tenant_id, project_id, repo_id, index=None, summary="",
+                            object_store=None) -> dict:
+    """Persist a code-intel analysis as a `codebase_intelligence` artifact + Knowledge-Index
+    chunk (S-24 step 3). The built-in analyzer runs in the companion worktree (D2); this call
+    persists an **already-computed** result — it never touches the source (#1/#3). Real
+    companion-side dispatch (claim → analyze → report) is deferred; see PHASE_4.7_BUILD_SPEC.md
+    T8 implementation notes."""
+    from apps.knowledge.index import index_artifact
+    from apps.projects.models import Project, Repository
+    from apps.tenancy.context import tenant_context
+    from storage import content_hash
+
+    index = index or {}
+    store = _object_store(object_store)
+    with tenant_context(tenant_id):
+        Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
+        repo = Repository.objects.get(id=repo_id, tenant_id=tenant_id, project_id=project_id)
+
+    text = summary.strip() if summary else f"Code intelligence index for {repo.name}."
+    body = _render_code_intel_summary(repo.name, index, text)
+    body_key = f"onboarding/{tenant_id}/{project_id}/code_intel/{repo.id}.md"
+    store.put(body_key, body)
+    artifact = tools.register_artifact(
+        tenant_id, project_id, None, phase="context_extraction", type="codebase_intelligence",
+        sor="internal", content_hash=content_hash(body.encode("utf-8")), s3_key=body_key,
+        external_ref={"source": "code_intel", "repo": repo.name, **index}, repo_id=str(repo.id),
+    )
+    index_artifact(tenant_id=tenant_id, project_id=project_id, artifact_id=artifact["id"],
+                   text=text, repo_id=str(repo.id), source="code_intel")
+    tools.log_event(tenant_id, "onboarding", "code_intel.indexed", "artifact", artifact["id"],
+                    {"repo_id": str(repo.id), "file_count": index.get("file_count")})
+    return {"artifact_id": artifact["id"], "repo_id": str(repo.id), "status": "indexed"}
+
+
+def _render_code_intel_summary(repo_name: str, index: dict, summary: str) -> str:
+    return "\n".join([
+        f"# Code Intelligence — {repo_name}", "", summary, "",
+        f"- files: {index.get('file_count', '—')}",
+        f"- commits: {index.get('commits', '—')}",
+        f"- hotspots: {index.get('hotspots', '—')}",
+        f"- languages: {index.get('languages', {})}",
+    ]) + "\n"
+
+
+def onboarding_hub(*, tenant_id, project_id) -> dict:
+    """Hub state across upload/adopt/register/index/gap (S-24) — the one read the onboarding
+    screen needs; every step's action already exists as its own endpoint."""
+    from apps.integrations.models import IntegrationConnection, SourceDocument
+    from apps.projects.models import Project
+    from apps.registry.models import Artifact
+    from apps.tenancy.context import tenant_context
+    from apps.workitems.models import WorkItem
+
+    with tenant_context(tenant_id):
+        Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
+        docs = list(SourceDocument.objects.filter(
+            tenant_id=tenant_id, project_id=project_id).order_by("-created_at"))
+        pages_registered = Artifact.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, sor="confluence").count()
+        issues_registered = sum(
+            1 for w in WorkItem.objects.filter(tenant_id=tenant_id, project_id=project_id)
+            if (w.external_ref or {}).get("sor") == "jira"
+        )
+        intel_artifact = Artifact.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, type="codebase_intelligence"
+        ).order_by("-created_at").first()
+        connected = {
+            cap: IntegrationConnection.objects.filter(
+                tenant_id=tenant_id, capability=cap).first()
+            for cap in ("docstore", "tasktracker")
+        }
+
+    gap = read_gap_report(tenant_id=tenant_id, project_id=project_id)
+    return {
+        "upload": [{"id": str(d.id), "filename": d.filename, "status": d.status} for d in docs],
+        "adopt": [{"id": str(d.id), "filename": d.filename}
+                 for d in docs if d.status == SourceDocument.Status.EXTRACTED],
+        "register": {
+            "docstore_connected": bool(
+                connected["docstore"] and connected["docstore"].is_configured),
+            "tasktracker_connected": bool(
+                connected["tasktracker"] and connected["tasktracker"].is_configured),
+            "pages_registered": pages_registered, "issues_registered": issues_registered,
+        },
+        "index": {
+            "status": "indexed" if intel_artifact else "not_started",
+            "artifact_id": str(intel_artifact.id) if intel_artifact else None,
+        },
+        "gap": {"ready": True, "resume_phase": gap["resume_phase"]} if gap else {"ready": False},
+    }

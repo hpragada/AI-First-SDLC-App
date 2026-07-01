@@ -153,7 +153,25 @@ CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
     default=["http://localhost:5173", "http://127.0.0.1:5173"],
 )
-CORS_ALLOW_HEADERS = list(default_cors_headers) + ["x-tenant-id"]
+CORS_ALLOW_HEADERS = list(default_cors_headers) + ["x-tenant-id", "x-csrftoken"]
+# Server-session auth (P4.7-T1): the SPA sends the session + CSRF cookies cross-origin,
+# so credentials must be allowed and the Vite origin trusted for CSRF.
+CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=list(CORS_ALLOWED_ORIGINS))
+
+# ─── Transactional email (P4.7-T3 invitations + password reset) ─────
+# The pluggable seam is EMAIL_BACKEND: console in dev (links print to the log — no real
+# mail dependency), a real SMTP/API backend in prod. FRONTEND_BASE_URL builds the accept /
+# reset links the SPA handles.
+EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="no-reply@sdlc.local")
+FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default="http://localhost:5173")
+
+# ─── Integrations secret store (P4.7-T6, DECISION-4) ────────────────
+# Encryption key for IntegrationConnection.secret_encrypted (apps.integrations.crypto).
+# Falls back to SECRET_KEY when unset — fine for dev; set a dedicated key in prod so
+# rotating SECRET_KEY doesn't also invalidate every stored integration secret.
+INTEGRATIONS_SECRET_KEY = env("INTEGRATIONS_SECRET_KEY", default="")
 
 # ─── Atlassian (Phase 1 SoR — Confluence + Jira) ────────────────────
 # Headless control-plane auth = API token over REST (decision D1). The secret lives
@@ -228,6 +246,12 @@ REST_FRAMEWORK = {
         "rest_framework.renderers.JSONRenderer",
         "rest_framework.renderers.BrowsableAPIRenderer",
     ],
-    # Permissions tighten in P0-T11 / RBAC (Phase 5).
+    # Server-session auth for the browser (P4.7-T1, DECISION-3). The runner-token + signed
+    # webhook views set their own authentication_classes, so they're unaffected.
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    # Still AllowAny by default; per-endpoint permissions (IsAuthenticatedMember /
+    # IsTenantAdmin) land with the admin endpoints in P4.7-T2+ / RBAC hardening (Phase 5).
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
 }

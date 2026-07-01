@@ -9,14 +9,15 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from apps.base import Role
 from apps.clarifications.models import Clarification
 from apps.gates.models import Approval
-from apps.integrations.models import SourceDocument
+from apps.integrations.models import DriftRecord, IntegrationConnection, SourceDocument
 from apps.ledger.models import Event
 from apps.projects.models import Project, ProjectProfile
 from apps.registry.models import Artifact, TraceEdge
 from apps.runs.models import Run
-from apps.tenancy.models import Tenant
+from apps.tenancy.models import Invitation, Membership, Tenant
 from apps.workitems.models import WorkItem
 
 
@@ -26,6 +27,177 @@ class TenantSerializer(serializers.ModelSerializer):
         model = Tenant
         fields = ["id", "name", "config", "model_routing", "created_at"]
         read_only_fields = ["id", "created_at"]
+
+
+# ── Auth (P4.7-T1/T2 — server sessions, DECISION-3) ─────────────────
+class LoginSerializer(serializers.Serializer):
+    """Input for POST /api/auth/login."""
+
+    email = serializers.EmailField()
+    password = serializers.CharField(
+        style={"input_type": "password"}, trim_whitespace=False
+    )
+
+
+class SignupSerializer(serializers.Serializer):
+    """Input for POST /api/auth/signup — creates a new tenant + its first admin."""
+
+    name = serializers.CharField(max_length=255)
+    email = serializers.EmailField()
+    password = serializers.CharField(
+        style={"input_type": "password"}, trim_whitespace=False, min_length=8
+    )
+    org_name = serializers.CharField(max_length=255)
+
+
+# ── Invitations + accept + reset (P4.7-T3) ──────────────────────────
+class GrantSerializer(serializers.Serializer):
+    """One queued membership on an invitation: a project + a role."""
+
+    project_id = serializers.UUIDField()
+    role = serializers.ChoiceField(choices=Role.choices)
+
+
+class InvitationCreateSerializer(serializers.Serializer):
+    """Input for POST /api/invitations/ (admin)."""
+
+    email = serializers.EmailField()
+    name = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
+    grants = GrantSerializer(many=True, required=False, default=list)
+
+
+class InvitationSerializer(serializers.ModelSerializer):
+    """Read shape for an invitation (never exposes the token/hash)."""
+
+    class Meta:
+        model = Invitation
+        fields = ["id", "email", "name", "status", "grants", "expires_at",
+                  "accepted_at", "created_at"]
+        read_only_fields = fields
+
+
+class AcceptInvitationSerializer(serializers.Serializer):
+    """Input for POST /api/auth/accept-invitation."""
+
+    token = serializers.CharField()
+    password = serializers.CharField(
+        style={"input_type": "password"}, trim_whitespace=False, min_length=8
+    )
+    name = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+
+class RequestResetSerializer(serializers.Serializer):
+    """Input for POST /api/auth/request-reset."""
+
+    email = serializers.EmailField()
+
+
+class ResetSerializer(serializers.Serializer):
+    """Input for POST /api/auth/reset."""
+
+    token = serializers.CharField()
+    password = serializers.CharField(
+        style={"input_type": "password"}, trim_whitespace=False, min_length=8
+    )
+
+
+# ── User & role management (P4.7-T4) ────────────────────────────────
+class MembershipSerializer(serializers.ModelSerializer):
+    """Read shape for a project-role grant."""
+
+    user_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = Membership
+        fields = ["id", "user_id", "project", "role", "created_at"]
+        read_only_fields = fields
+
+
+class MembershipCreateSerializer(serializers.Serializer):
+    """Input for POST /api/projects/{id}/memberships/ (admin) — grant a role to a user."""
+
+    user_id = serializers.UUIDField()
+    role = serializers.ChoiceField(choices=Role.choices)
+
+
+class TenantAdminSerializer(serializers.Serializer):
+    """Input for PATCH /api/users/{id}/ — flip the tenant-admin flag (admin)."""
+
+    is_tenant_admin = serializers.BooleanField()
+
+
+# ── Integrations + secret store (P4.7-T6, DECISION-4) ───────────────
+class IntegrationSerializer(serializers.ModelSerializer):
+    """Read shape for a connection (S-11 grid). Secret is never exposed — `configured` is the
+    only signal a secret has been stored."""
+
+    vendor = serializers.CharField(source="connector", read_only=True)
+    status = serializers.CharField(source="health", read_only=True)
+    binding = serializers.JSONField(source="scopes", read_only=True)
+    configured = serializers.BooleanField(source="is_configured", read_only=True)
+
+    class Meta:
+        model = IntegrationConnection
+        fields = ["id", "capability", "vendor", "status", "configured", "binding", "created_at"]
+        read_only_fields = fields
+
+
+class IntegrationCreateSerializer(serializers.Serializer):
+    """Input for POST /api/integrations/ (admin). `secrets` is write-only end-to-end — never
+    echoed back in any response."""
+
+    capability = serializers.CharField()
+    vendor = serializers.CharField()
+    binding = serializers.DictField(required=False, default=dict)
+    secrets = serializers.DictField(required=False, default=dict)
+
+
+class IntegrationUpdateSerializer(serializers.Serializer):
+    """Input for PATCH /api/integrations/{id}/ (admin). Every field is optional — only the
+    keys actually supplied are changed; omitting `secrets` leaves the stored credential
+    untouched (DECISION-4)."""
+
+    vendor = serializers.CharField(required=False)
+    binding = serializers.DictField(required=False)
+    secrets = serializers.DictField(required=False)
+
+
+# ── Repositories (P4.7-T7) ────────────────────────────────────────────
+class RepositoryCreateSerializer(serializers.Serializer):
+    """Input for POST /api/projects/{id}/repositories/ (tech_lead/admin)."""
+
+    name = serializers.CharField()
+    role = serializers.CharField(required=False, default="")
+    base_branch = serializers.CharField(required=False, default="main")
+
+
+# ── Brownfield onboarding (P4.7-T8) ───────────────────────────────────
+class CodeIntelIndexSerializer(serializers.Serializer):
+    """Input for POST /api/projects/{id}/code-intel/ (tech_lead/admin). `index`/`summary` carry
+    an **already-computed** analysis result — real companion-side dispatch is deferred (see
+    PHASE_4.7_BUILD_SPEC.md T8 implementation notes)."""
+
+    repo_id = serializers.CharField()
+    index = serializers.DictField(required=False, default=dict)
+    summary = serializers.CharField(required=False, default="", allow_blank=True)
+
+
+# ── API contracts & drift (P4.7-T9) ───────────────────────────────────
+class DriftRecordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DriftRecord
+        fields = ["id", "project", "artifact", "kind", "required_role", "status",
+                  "detail", "impacted", "decided_by", "decided_at", "comment", "created_at"]
+        read_only_fields = fields
+
+
+class DriftDecisionSerializer(serializers.Serializer):
+    """Input for POST /api/drift/{id}/decide/ — `user_id` is the pre-auth/runner fallback only
+    (P4.7-T5 actor resolution)."""
+
+    user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    decision = serializers.ChoiceField(choices=["accept", "reject"])
+    comment = serializers.CharField(required=False, allow_blank=True, default="")
 
 
 # ── Project + Profile ───────────────────────────────────────────────
@@ -122,9 +294,10 @@ class ApprovalSerializer(serializers.ModelSerializer):
 
 
 class GateDecisionSerializer(serializers.Serializer):
-    """Input for deciding a gate (spec §6). `user_id` stands in until real auth."""
+    """Input for deciding a gate (spec §6). `user_id` is the pre-auth/runner fallback only —
+    under a session the actor is the authenticated user and this is ignored (P4.7-T5)."""
 
-    user_id = serializers.UUIDField()
+    user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     decision = serializers.ChoiceField(choices=["approved", "rejected"])
     comment = serializers.CharField(required=False, allow_blank=True, default="")
     # Reviewer's gate-checklist updates (e.g. WCAG criteria marked satisfied on the design
@@ -146,10 +319,11 @@ class ClarificationSerializer(serializers.ModelSerializer):
 
 
 class ClarificationAnswerSerializer(serializers.Serializer):
-    """Input for answering a clarification. `user_id` (a project member) stands in until
-    real auth; `answers` maps each question id to the human's answer."""
+    """Input for answering a clarification. `user_id` is the pre-auth/runner fallback only —
+    under a session the actor is the authenticated user (P4.7-T5). `answers` maps each
+    question id to the human's answer."""
 
-    user_id = serializers.UUIDField()
+    user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     answers = serializers.DictField(required=False, default=dict)
 
 
