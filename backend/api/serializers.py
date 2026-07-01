@@ -12,7 +12,7 @@ from rest_framework import serializers
 from apps.base import Role
 from apps.clarifications.models import Clarification
 from apps.gates.models import Approval
-from apps.integrations.models import IntegrationConnection, SourceDocument
+from apps.integrations.models import DriftRecord, IntegrationConnection, SourceDocument
 from apps.ledger.models import Event
 from apps.projects.models import Project, ProjectProfile
 from apps.registry.models import Artifact, TraceEdge
@@ -180,6 +180,24 @@ class CodeIntelIndexSerializer(serializers.Serializer):
     repo_id = serializers.CharField()
     index = serializers.DictField(required=False, default=dict)
     summary = serializers.CharField(required=False, default="", allow_blank=True)
+
+
+# ── API contracts & drift (P4.7-T9) ───────────────────────────────────
+class DriftRecordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DriftRecord
+        fields = ["id", "project", "artifact", "kind", "required_role", "status",
+                  "detail", "impacted", "decided_by", "decided_at", "comment", "created_at"]
+        read_only_fields = fields
+
+
+class DriftDecisionSerializer(serializers.Serializer):
+    """Input for POST /api/drift/{id}/decide/ — `user_id` is the pre-auth/runner fallback only
+    (P4.7-T5 actor resolution)."""
+
+    user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    decision = serializers.ChoiceField(choices=["accept", "reject"])
+    comment = serializers.CharField(required=False, allow_blank=True, default="")
 
 
 # ── Project + Profile ───────────────────────────────────────────────

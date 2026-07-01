@@ -182,6 +182,53 @@ def cross_repo_dependents(*, tenant_id, contract_artifact_id) -> list[dict]:
                  "project_id": str(e.from_artifact.project_id)} for e in edges]
 
 
+# ── REST layer (P4.7-T9, backs S-27) ─────────────────────────────────
+def list_api_contracts(*, tenant_id, project_id) -> list[dict]:
+    """List view for S-27's Contracts tab. Today exactly one versioned `api_contract`
+    artifact exists per project (D4) — a project with none registered yet returns `[]`."""
+    from apps.projects.models import Repository
+    from apps.tenancy.context import tenant_context
+
+    cur = _current(tenant_id, project_id)
+    if cur is None:
+        return []
+    ref = cur.external_ref or {}
+    provider_repo_id = ref.get("provider_repo_id")
+    provider_repo = None
+    if provider_repo_id:
+        with tenant_context(tenant_id):
+            repo = Repository.objects.filter(id=provider_repo_id, tenant_id=tenant_id).first()
+        provider_repo = repo.name if repo else None
+    return [{
+        "artifact_id": str(cur.id), "name": ref.get("target") or "API Contract",
+        "version": cur.version, "semver": ref.get("semver"),
+        "provider_repo": provider_repo, "status": cur.status,
+    }]
+
+
+def read_api_contract_body(*, tenant_id, project_id, artifact_id, object_store=None) -> dict | None:
+    """Read-through the contract's rendered body (S-27 "View" → S-29 preview) from S3 — the
+    artifact row is a pointer + hash, never the body (#1/#3). Only the **current** body is ever
+    available: each version bump overwrites the same S3 key (D4), so a superseded semver has no
+    separate snapshot to read through. `None` when `artifact_id` isn't this project's contract."""
+    from apps.registry.models import Artifact
+    from apps.tenancy.context import tenant_context
+
+    store = _object_store(object_store)
+    with tenant_context(tenant_id):
+        art = Artifact.objects.filter(
+            id=artifact_id, tenant_id=tenant_id, project_id=project_id, type="api_contract"
+        ).first()
+    if art is None:
+        return None
+    ref = art.external_ref or {}
+    body = store.get(art.s3_key).decode("utf-8") if art.s3_key else ""
+    return {
+        "artifact_id": str(art.id), "semver": ref.get("semver"), "version": art.version,
+        "status": art.status, "provider_repo_id": ref.get("provider_repo_id"), "body": body,
+    }
+
+
 def add_work_item_dependency(*, tenant_id, work_item_id, depends_on_id) -> dict:
     """Record a cross-repo WorkItem dependency via `depends_on` (an edge across repo_id).
     Idempotent; validates both work items belong to the tenant."""

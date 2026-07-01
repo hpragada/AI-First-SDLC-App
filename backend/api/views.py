@@ -22,7 +22,7 @@ from apps.clarifications.services import (
 )
 from apps.gates.models import Approval
 from apps.gates.services import GateError, GateRoleError, decide_gate
-from apps.integrations.models import IntegrationConnection, SourceDocument
+from apps.integrations.models import DriftRecord, IntegrationConnection, SourceDocument
 from apps.integrations.services import (
     IntegrationError,
     create_integration,
@@ -57,6 +57,8 @@ from apps.tenancy.services import (
     set_tenant_admin,
 )
 from apps.workitems.models import WorkItem
+from integrations.api_contract import list_api_contracts, read_api_contract_body
+from integrations.drift import DriftError, DriftRoleError, decide_drift, drift_queue
 from integrations.extract import ExtractionError
 from integrations.onboarding import (
     OnboardingError,
@@ -80,6 +82,8 @@ from .serializers import (
     ClarificationAnswerSerializer,
     ClarificationSerializer,
     CodeIntelIndexSerializer,
+    DriftDecisionSerializer,
+    DriftRecordSerializer,
     EventSerializer,
     GateDecisionSerializer,
     IntegrationCreateSerializer,
@@ -165,6 +169,9 @@ class ProjectViewSet(
         # Brownfield onboarding (P4.7-T8): any authenticated member may read/build; code-intel
         # is further gated per-project (tech_lead/admin) inside the action itself.
         if self.action in {"onboarding", "code_intel", "gap_report"}:
+            return [IsAuthenticatedMember()]
+        # API contracts & drift (P4.7-T9): any authenticated member may read.
+        if self.action in {"api_contracts", "api_contract_detail", "drift"}:
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
@@ -346,6 +353,30 @@ class ProjectViewSet(
         # Re-read through the same shape GET returns — one representation for this resource.
         out = read_gap_report(tenant_id=self.tenant_id, project_id=str(project.id))
         return Response(out, status=status.HTTP_200_OK)
+
+    # ── API contracts & drift (P4.7-T9, backs S-27) ──────────────────
+    @action(detail=True, methods=["get"], url_path="api-contracts")
+    def api_contracts(self, request, pk=None):
+        """GET the project's registered API contract(s) (S-27 Contracts tab)."""
+        project = self.get_object()
+        return Response(list_api_contracts(tenant_id=self.tenant_id, project_id=str(project.id)))
+
+    @action(detail=True, methods=["get"], url_path=r"api-contracts/(?P<aid>[^/.]+)")
+    def api_contract_detail(self, request, pk=None, aid=None):
+        """GET the contract's current rendered body, read-through from S3 (S-27 → S-29)."""
+        project = self.get_object()
+        out = read_api_contract_body(
+            tenant_id=self.tenant_id, project_id=str(project.id), artifact_id=aid
+        )
+        if out is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        return Response(out)
+
+    @action(detail=True, methods=["get"])
+    def drift(self, request, pk=None):
+        """GET the open drift queue with cross-repo change-impact (S-27 Drift queue tab)."""
+        project = self.get_object()
+        return Response(drift_queue(tenant_id=self.tenant_id, project_id=str(project.id)))
 
     # ── Repositories (P4.7-T7, backs S-13) ───────────────────────────
     @action(detail=True, methods=["get", "post"])
@@ -738,6 +769,36 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         except GateRoleError as exc:
             raise PermissionDenied(str(exc)) from exc
         except GateError as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(result, status=status.HTTP_200_OK)
+
+
+# ── Drift (P4.7-T9, backs S-27) — the Approval-analog for run-less changes ──
+class DriftRecordViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
+    """Read + decide a drift record. Role check (the record's `required_role` — architect for
+    contract, tech_lead for pointer/hash — or idempotent once already decided) lives in
+    `decide_drift`, not here."""
+
+    serializer_class = DriftRecordSerializer
+    queryset = DriftRecord.objects.all().order_by("-created_at")
+
+    @action(detail=True, methods=["post"])
+    def decide(self, request, pk=None):
+        """Decide a drift gate (spec §6/D6): role check → record → reconcile-or-flag."""
+        rec = self.get_object()
+        ser = DriftDecisionSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        user_id = resolve_actor(request, ser.validated_data.get("user_id"))
+        if user_id is None:
+            raise ValidationError({"user_id": "required when not authenticated"})
+        try:
+            result = decide_drift(
+                tenant_id=self.tenant_id, drift_id=str(rec.id), user_id=user_id,
+                decision=ser.validated_data["decision"], comment=ser.validated_data["comment"],
+            )
+        except DriftRoleError as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except DriftError as exc:
             raise ValidationError(str(exc)) from exc
         return Response(result, status=status.HTTP_200_OK)
 

@@ -178,9 +178,22 @@ Existing source-doc `upload`+`adopt/` and `onboard-atlassian/` are surfaced in t
 
 ### T9 — API-contract & drift · *backs S-27* (J18)
 | `GET /api/projects/{id}/api-contracts/` | — | `[{artifact_id,name,version,provider_repo,status}]` | member |
-| `GET /api/projects/{id}/api-contracts/{aid}/` | — | read-through current/version body | member |
+| `GET /api/projects/{id}/api-contracts/{aid}/` | — | read-through current body `{artifact_id,semver,version,status,provider_repo_id,body}`; `404` unknown/wrong project | member |
 | `GET /api/projects/{id}/drift/` | — | open `DriftRecord` queue `[{id,kind,required_role,detail,impacted:[{node,repo_id}]}]` | member |
 | `POST /api/drift/{id}/decide/` | `{decision:accept/reject,comment?}` | `200` (`decide_drift`) | **architect/tech_lead**; `403` wrong role; idempotent once decided |
+> **Implementation notes:** `export_api_contract`/`_current()` (D4) register **exactly one**
+> versioned `api_contract` artifact per project — so the list endpoint returns `[]` or a single
+> row today; S-27's "Payments API" + "Ledger API" two-row mockup implies multiple named
+> contracts per project, which the current Phase-4 model doesn't support (a future
+> enhancement, not something this REST task silently reinvents). `name` maps from
+> `external_ref.target` (falls back to `"API Contract"`); `provider_repo` is the resolved repo
+> **name** (not id). The body read-through only ever has the **current** version — each
+> `export_api_contract` bump overwrites the same S3 key, so a superseded semver has no
+> separate snapshot to read (this is existing D4 behavior, not new for T9). `drift_queue`
+> reshapes `open_drift_records` to this contract (`drift_id`→`id`, `artifact_id`→`node` per
+> impacted entry); `decide_drift`'s role check + idempotent-once-decided behavior are reused
+> verbatim via the new top-level `DriftRecordViewSet` (`/api/drift/{id}/decide/`, mirroring
+> `ApprovalViewSet.decide`) — no new logic, only the REST wrapper.
 
 ### T10 — Artifact preview read-through · *backs S-28 list, S-29 preview* (J19, DECISION-5)
 | `GET /api/artifacts/{id}/preview/` | — | `{body, content_type, status, version, versions:[…], sor_link?}` — read-through from S3 (draft/snapshot) or SoR; **never an editor, never copied into the registry** | member; `404` missing-body |

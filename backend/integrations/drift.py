@@ -212,3 +212,18 @@ def open_drift_records(*, tenant_id, project_id) -> list[dict]:
                 tenant_id=tenant_id, project_id=project_id,
                 status=DriftRecord.Status.OPEN).order_by("-created_at")
         ]
+
+
+# ── REST layer (P4.7-T9, backs S-27) ─────────────────────────────────
+def drift_queue(*, tenant_id, project_id) -> list[dict]:
+    """The open drift queue (S-27 "Drift queue" tab), reshaped from `open_drift_records` to
+    the REST wire contract: `id` (not `drift_id`); each impacted consumer keyed `node`/`repo_id`
+    (the cross-repo change-impact set)."""
+    records = open_drift_records(tenant_id=tenant_id, project_id=project_id)
+    return [
+        {"id": r["drift_id"], "kind": r["kind"], "required_role": r["required_role"],
+         "detail": r["detail"],
+         "impacted": [{"node": i["artifact_id"], "repo_id": i["repo_id"], "type": i["type"]}
+                     for i in r["impacted"]]}
+        for r in records
+    ]

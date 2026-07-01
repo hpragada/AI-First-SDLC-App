@@ -29,6 +29,7 @@ from .views import (
     ApprovalViewSet,
     ArtifactViewSet,
     ClarificationViewSet,
+    DriftRecordViewSet,
     EventViewSet,
     IntegrationViewSet,
     InvitationViewSet,
@@ -55,6 +56,7 @@ router.register("source-documents", SourceDocumentViewSet, basename="sourcedocum
 router.register("invitations", InvitationViewSet, basename="invitation")
 router.register("users", UserViewSet, basename="user")
 router.register("integrations", IntegrationViewSet, basename="integration")
+router.register("drift", DriftRecordViewSet, basename="drift")
 
 urlpatterns = [
     path("tenants/", TenantCreateView.as_view(), name="tenant-create"),
