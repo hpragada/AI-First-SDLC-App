@@ -10,6 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from datetime import timedelta
+
+# A machine is "online" if any of its enrollments have called in within this window —
+# comfortably above the companion daemon's default 5s poll interval (P4.7-T11, backs S-05/S-06).
+ONLINE_THRESHOLD = timedelta(minutes=2)
 
 
 def _hash(token: str) -> str:
@@ -71,3 +76,51 @@ def revoke_runner(*, tenant_id, enrollment_id) -> bool:
             .update(status=RunnerEnrollment.Status.REVOKED)
         )
     return bool(changed)
+
+
+def list_developer_enrollments(*, tenant_id, developer_id) -> list[dict]:
+    """P4.7-T11 (backs S-05 checklist tick, S-06 connect-machine): the calling developer's
+    **active** enrollments, grouped by machine (`label`) — one `RunnerEnrollment` row exists
+    per project a machine is bound to, so a machine connected to several projects surfaces as
+    one entry with `projects: [...]`. `online` is derived from the freshest `last_seen` across
+    the group against `ONLINE_THRESHOLD`; a revoked enrollment (disconnected) simply drops out."""
+    from django.utils import timezone
+
+    from apps.runs.models import RunnerEnrollment
+    from apps.tenancy.context import tenant_context
+
+    with tenant_context(tenant_id):
+        rows = list(
+            RunnerEnrollment.objects
+            .filter(tenant_id=tenant_id, developer_id=developer_id,
+                    status=RunnerEnrollment.Status.ACTIVE)
+            .select_related("project")
+        )
+
+    groups: dict[str, dict] = {}
+    order: list[str] = []
+    for e in rows:
+        key = e.label or str(e.id)
+        if key not in groups:
+            groups[key] = {"id": str(e.id), "machine": e.label, "last_seen": e.last_seen,
+                           "projects": []}
+            order.append(key)
+        g = groups[key]
+        if e.last_seen and (g["last_seen"] is None or e.last_seen > g["last_seen"]):
+            g["last_seen"] = e.last_seen
+            g["id"] = str(e.id)  # representative row = the group's most recently active one
+        g["projects"].append({"project_id": str(e.project_id), "project_name": e.project.name})
+
+    now = timezone.now()
+    out = []
+    for key in order:
+        g = groups[key]
+        last_seen = g["last_seen"]
+        out.append({
+            "id": g["id"], "machine": g["machine"],
+            "last_seen": last_seen.isoformat() if last_seen else None,
+            "online": bool(last_seen and (now - last_seen) <= ONLINE_THRESHOLD),
+            "projects": g["projects"],
+        })
+    out.sort(key=lambda r: r["last_seen"] or "", reverse=True)
+    return out

@@ -228,6 +228,21 @@ List payloads keep **pointers only** (no body) — unchanged.
 `POST /api/runners/` (issue) already exists — ensure it binds the enrollment to the **session user**
 (`developer_id`). Token issuance/`revoke` unchanged.
 
+> **Implementation notes.** No new models — `RunnerEnrollment` already carries `label`
+> (the machine name), `developer`, `last_seen`, `status`. New `apps/runs/enrollment.py::
+> list_developer_enrollments(tenant_id, developer_id)`: since one enrollment row exists **per
+> project** a machine is bound to (`project` is a required FK), it groups active rows by
+> `label` so one physical machine connected to several projects surfaces as a single entry
+> with `projects: [{project_id, project_name}, …]`; the representative `id`/`last_seen` is the
+> group's freshest row. `online` is `last_seen` within `ONLINE_THRESHOLD` (2 minutes — comfortably
+> above the companion daemon's default 5s poll interval); a never-seen enrollment is offline
+> with `last_seen: null`. A revoked enrollment simply drops out (already-existing `POST …/revoke/`
+> is unchanged). `RunnerEnrollmentView.get` is now `IsAuthenticatedMember`-gated and reshaped to
+> this session-scoped, grouped contract (previously an ungated, tenant-wide flat list — nothing
+> depended on that shape, grepped before changing it). `RunnerEnrollmentView.post` now resolves
+> `developer_id` from the session user first, falling back to the body value only when
+> unauthenticated (mirrors `resolve_actor`, T5) — existing pre-auth/test callers are unaffected.
+
 ### P4.7 slice
 A from-scratch acceptance test with **no shell/manage.py step**: signup → invite → accept+set-password →
 grant gate roles → connect-machine status → create greenfield project → trigger a phase as the authed
