@@ -22,7 +22,13 @@ from apps.clarifications.services import (
 )
 from apps.gates.models import Approval
 from apps.gates.services import GateError, GateRoleError, decide_gate
-from apps.integrations.models import SourceDocument
+from apps.integrations.models import IntegrationConnection, SourceDocument
+from apps.integrations.services import (
+    IntegrationError,
+    create_integration,
+    test_integration_connection,
+    update_integration,
+)
 from apps.ledger.models import Event
 from apps.projects.models import Project
 from apps.registry.models import Artifact, TraceEdge
@@ -63,6 +69,9 @@ from .serializers import (
     ClarificationSerializer,
     EventSerializer,
     GateDecisionSerializer,
+    IntegrationCreateSerializer,
+    IntegrationSerializer,
+    IntegrationUpdateSerializer,
     InvitationCreateSerializer,
     InvitationSerializer,
     MembershipCreateSerializer,
@@ -374,6 +383,50 @@ class InvitationViewSet(
         except InvitationError as exc:
             raise ValidationError(str(exc)) from exc
         return Response(InvitationSerializer(invitation).data)
+
+
+# ── Integrations (admin — P4.7-T6) ──────────────────────────────────
+class IntegrationViewSet(
+    TenantScopedMixin,
+    mixins.CreateModelMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Admin CRUD over the tenant's per-capability connections (S-11 grid, S-12 drawer). One
+    connection per (tenant, capability). Secrets are write-only (DECISION-4): accepted on
+    create/update, never serialized back — responses expose `configured` only."""
+
+    permission_classes = [IsTenantAdmin]
+    serializer_class = IntegrationSerializer
+    queryset = IntegrationConnection.objects.all().order_by("capability")
+
+    def create(self, request, *args, **kwargs):
+        ser = IntegrationCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        tenant = Tenant.objects.get(id=self.tenant_id)
+        try:
+            conn = create_integration(tenant=tenant, **ser.validated_data)
+        except IntegrationError as exc:
+            return Response({"detail": str(exc)}, status=exc.status)
+        return Response(IntegrationSerializer(conn).data, status=status.HTTP_201_CREATED)
+
+    def partial_update(self, request, *args, **kwargs):
+        """PATCH — partial: only the fields actually supplied are changed (omitting `secrets`
+        leaves the stored credential untouched)."""
+        conn = self.get_object()
+        ser = IntegrationUpdateSerializer(data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        conn = update_integration(conn=conn, **ser.validated_data)
+        return Response(IntegrationSerializer(conn).data)
+
+    @action(detail=True, methods=["post"], url_path="test-connection")
+    def test_connection(self, request, pk=None):
+        """Validate the chosen vendor is wired + configured (no live network call yet — see
+        `apps.integrations.services.test_integration_connection`)."""
+        conn = self.get_object()
+        return Response(test_integration_connection(conn))
 
 
 # ── WorkItems + phase trigger ───────────────────────────────────────

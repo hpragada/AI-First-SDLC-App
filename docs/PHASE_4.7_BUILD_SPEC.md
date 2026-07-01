@@ -120,6 +120,15 @@ the **session user** as actor (routes UI-triggered phases to *that user's* compa
 | `POST /api/integrations/{id}/test-connection/` | — | `{ok:bool, detail, fix_hint?}` | admin |
 > Capabilities: `docstore/tasktracker/codehost/designsource/testmgmt/codeintel`. **Secret never in any
 > response.** Replaces the shell-only `IntegrationConnection.update_or_create` (guide §5.3).
+> **Implementation notes:** one connection per `(tenant, capability)` — reconnecting to a different
+> vendor is a `PATCH`, a second `POST` for the same capability is `409`. `vendor`/`binding`/`status` are
+> the wire names for the existing `connector`/`scopes`/`health` columns (no DB rename); `secrets` is a
+> new encrypted column (`IntegrationConnection.secret_encrypted`, Fernet, key from
+> `INTEGRATIONS_SECRET_KEY`/falls back to `SECRET_KEY` — Phase 5 swaps in a vault). `test-connection`
+> checks the vendor is builder-registered (`integrations.registry.get_builder`) and a secret is stored
+> (or none is needed, e.g. `codeintel:builtin`) — it does **not** make a live network call yet (matches
+> `registry.py`'s existing "building a connector makes no network call" seam); real reachability is
+> Phase 5.
 
 ### T7 — Repositories · *backs S-13* (J10)
 | `GET /api/projects/{id}/repositories/` | — | `[{id,name,role,default_base,status,is_default}]` + project `repo_topology` | member |

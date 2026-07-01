@@ -12,7 +12,7 @@ from rest_framework import serializers
 from apps.base import Role
 from apps.clarifications.models import Clarification
 from apps.gates.models import Approval
-from apps.integrations.models import SourceDocument
+from apps.integrations.models import IntegrationConnection, SourceDocument
 from apps.ledger.models import Event
 from apps.projects.models import Project, ProjectProfile
 from apps.registry.models import Artifact, TraceEdge
@@ -124,6 +124,42 @@ class TenantAdminSerializer(serializers.Serializer):
     """Input for PATCH /api/users/{id}/ — flip the tenant-admin flag (admin)."""
 
     is_tenant_admin = serializers.BooleanField()
+
+
+# ── Integrations + secret store (P4.7-T6, DECISION-4) ───────────────
+class IntegrationSerializer(serializers.ModelSerializer):
+    """Read shape for a connection (S-11 grid). Secret is never exposed — `configured` is the
+    only signal a secret has been stored."""
+
+    vendor = serializers.CharField(source="connector", read_only=True)
+    status = serializers.CharField(source="health", read_only=True)
+    binding = serializers.JSONField(source="scopes", read_only=True)
+    configured = serializers.BooleanField(source="is_configured", read_only=True)
+
+    class Meta:
+        model = IntegrationConnection
+        fields = ["id", "capability", "vendor", "status", "configured", "binding", "created_at"]
+        read_only_fields = fields
+
+
+class IntegrationCreateSerializer(serializers.Serializer):
+    """Input for POST /api/integrations/ (admin). `secrets` is write-only end-to-end — never
+    echoed back in any response."""
+
+    capability = serializers.CharField()
+    vendor = serializers.CharField()
+    binding = serializers.DictField(required=False, default=dict)
+    secrets = serializers.DictField(required=False, default=dict)
+
+
+class IntegrationUpdateSerializer(serializers.Serializer):
+    """Input for PATCH /api/integrations/{id}/ (admin). Every field is optional — only the
+    keys actually supplied are changed; omitting `secrets` leaves the stored credential
+    untouched (DECISION-4)."""
+
+    vendor = serializers.CharField(required=False)
+    binding = serializers.DictField(required=False)
+    secrets = serializers.DictField(required=False)
 
 
 # ── Project + Profile ───────────────────────────────────────────────

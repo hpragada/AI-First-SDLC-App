@@ -167,6 +167,12 @@ EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.console.
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="no-reply@sdlc.local")
 FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default="http://localhost:5173")
 
+# ─── Integrations secret store (P4.7-T6, DECISION-4) ────────────────
+# Encryption key for IntegrationConnection.secret_encrypted (apps.integrations.crypto).
+# Falls back to SECRET_KEY when unset — fine for dev; set a dedicated key in prod so
+# rotating SECRET_KEY doesn't also invalidate every stored integration secret.
+INTEGRATIONS_SECRET_KEY = env("INTEGRATIONS_SECRET_KEY", default="")
+
 # ─── Atlassian (Phase 1 SoR — Confluence + Jira) ────────────────────
 # Headless control-plane auth = API token over REST (decision D1). The secret lives
 # in .env (gitignored); per-tenant IntegrationConnection.token_ref points at it. The
