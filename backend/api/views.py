@@ -30,7 +30,7 @@ from apps.integrations.services import (
     update_integration,
 )
 from apps.ledger.models import Event
-from apps.projects.models import Project
+from apps.projects.models import Project, Repository
 from apps.projects.repos import (
     RepositoryError,
     add_repository,
@@ -62,7 +62,11 @@ from integrations.onboarding import (
     OnboardingError,
     OnboardingRoleError,
     adopt_source_document,
+    build_gap_report,
     ingest_source_document,
+    onboarding_hub,
+    read_gap_report,
+    record_code_intel_index,
     register_atlassian,
 )
 from integrations.types import CapabilityUnavailable
@@ -75,6 +79,7 @@ from .serializers import (
     ArtifactSerializer,
     ClarificationAnswerSerializer,
     ClarificationSerializer,
+    CodeIntelIndexSerializer,
     EventSerializer,
     GateDecisionSerializer,
     IntegrationCreateSerializer,
@@ -156,6 +161,10 @@ class ProjectViewSet(
         # Repositories (P4.7-T7): any authenticated member may read; add/remove/set-default
         # are further gated per-project (tech_lead/admin) inside the action itself.
         if self.action in {"repositories", "delete_repository", "set_repository_default"}:
+            return [IsAuthenticatedMember()]
+        # Brownfield onboarding (P4.7-T8): any authenticated member may read/build; code-intel
+        # is further gated per-project (tech_lead/admin) inside the action itself.
+        if self.action in {"onboarding", "code_intel", "gap_report"}:
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
@@ -290,6 +299,53 @@ class ProjectViewSet(
         except CapabilityUnavailable as exc:
             raise ValidationError(str(exc)) from exc
         return Response(out)
+
+    # ── Brownfield onboarding (P4.7-T8, backs S-24/S-25/S-26) ────────
+    @action(detail=True, methods=["get"])
+    def onboarding(self, request, pk=None):
+        """GET the onboarding hub state (S-24): upload/adopt/register/index/gap in one read."""
+        project = self.get_object()
+        return Response(onboarding_hub(tenant_id=self.tenant_id, project_id=str(project.id)))
+
+    @action(detail=True, methods=["post"], url_path="code-intel")
+    def code_intel(self, request, pk=None):
+        """POST — persist a code-intel analysis result as a `codebase_intelligence` artifact +
+        Knowledge-Index chunk (S-24 step 3; tech_lead/admin). Accepts an **already-computed**
+        result — real dispatch to the companion worktree is deferred (spec T8 notes)."""
+        project = self.get_object()
+        ser = CodeIntelIndexSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        actor = resolve_actor(request, request.data.get("user_id"))
+        try:
+            require_repo_manage_role(
+                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
+            )
+            out = record_code_intel_index(
+                tenant_id=self.tenant_id, project_id=str(project.id),
+                repo_id=ser.validated_data["repo_id"], index=ser.validated_data["index"],
+                summary=ser.validated_data["summary"],
+            )
+        except RepositoryError as exc:
+            return Response({"detail": str(exc)}, status=exc.status)
+        except Repository.DoesNotExist:
+            return Response({"detail": "unknown repository for this project"},
+                            status=status.HTTP_404_NOT_FOUND)
+        return Response(out, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=["get", "post"], url_path="gap-report")
+    def gap_report(self, request, pk=None):
+        """GET the latest gap report (read-through, no recompute; `404` if none built yet) /
+        POST to (re)build one from the currently registered evidence (S-26)."""
+        project = self.get_object()
+        if request.method == "GET":
+            out = read_gap_report(tenant_id=self.tenant_id, project_id=str(project.id))
+            if out is None:
+                return Response(status=status.HTTP_404_NOT_FOUND)
+            return Response(out)
+        build_gap_report(tenant_id=self.tenant_id, project_id=str(project.id))
+        # Re-read through the same shape GET returns — one representation for this resource.
+        out = read_gap_report(tenant_id=self.tenant_id, project_id=str(project.id))
+        return Response(out, status=status.HTTP_200_OK)
 
     # ── Repositories (P4.7-T7, backs S-13) ───────────────────────────
     @action(detail=True, methods=["get", "post"])

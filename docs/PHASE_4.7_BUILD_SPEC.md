@@ -149,10 +149,32 @@ Reuse `apps/projects/repos.py` (`add_repository`/`repositories_for`); add remove
 
 ### T8 — Brownfield onboarding · *backs S-24 hub, S-25 source docs, S-26 gap report* (J17)
 | `GET /api/projects/{id}/onboarding/` | — | hub state `{upload:[…], adopt:[…], register:{…}, index:{status}, gap:{ready,resume_phase?}}` | member |
-| `POST /api/projects/{id}/code-intel/` | `{repo_id}` | `202` (dispatch built-in analyzer → companion worktree; index stored, **source never copied**) | tech_lead/admin |
-| `POST /api/projects/{id}/gap-report/` | — | `202`/`200` build `build_gap_report` | member |
-| `GET /api/projects/{id}/gap-report/` | — | `{phases:[{phase,assessment:Complete/Partial/Missing,evidence}], resume_phase, blocking:[…]}` | member |
+| `POST /api/projects/{id}/code-intel/` | `{repo_id, index?, summary?}` | `202` `{artifact_id, repo_id, status:"indexed"}`; index stored, **source never copied** | tech_lead/admin |
+| `POST /api/projects/{id}/gap-report/` | — | `200` (rebuilds via `build_gap_report`, then returns the same shape as `GET`) | member |
+| `GET /api/projects/{id}/gap-report/` | — | `{phases:[{phase,assessment:Complete/Partial/Missing,evidence}], resume_phase, intel_present, blocking:[…]}`; `404` if none built yet | member |
 Existing source-doc `upload`+`adopt/` and `onboard-atlassian/` are surfaced in the hub payload.
+> **Implementation notes:** `POST .../code-intel/` **defers real companion-side dispatch**
+> (team decision) — the built-in analyzer (`integrations.codeintel.builtin.BuiltinCodeIntel`)
+> still only runs against a local `workspace` path (proven in `test_acceptance_phase4.py`
+> against a real temp git repo), and there is no existing mechanism to run it *from* the
+> server against a developer's machine: the only companion-dispatch pipeline (`Run` +
+> Temporal + `RunnerWorkClaimView`) requires a `WorkItem`+`AgentSpec` and only knows
+> `plan`/`review`/`build` kinds, and the migrated `00c_intelligent_context_extractor` agent body
+> references "codeintel"/"worktree" tools that aren't wired to any trigger yet. Building either
+> a proper agent-run integration or a new dispatch queue is real companion/daemon work, out of
+> scope for this backend-REST task. So for T8, `POST .../code-intel/` accepts an
+> **already-computed** result (`index`: file_count/commits/hotspots/languages;
+> `summary`: free text) and persists it as a `codebase_intelligence` artifact (never `code` —
+> #1/#3) + a Knowledge-Index chunk (`source="code_intel"`; always indexed, even with no
+> `summary` supplied, so a chunk always exists). Real dispatch (companion claims → runs
+> `BuiltinCodeIntel().index()` in its worktree → reports this same `{index, summary}` shape) is
+> a follow-up once the companion CLI's tool surface is built out.
+> `GET/POST .../gap-report/` share one wire shape (`read_gap_report`): POST rebuilds
+> (`build_gap_report`) then re-reads through, so there is one representation for the resource,
+> not two. `evidence` is light refs (`{artifact_id,type,sor,status}`, capped at 10/phase) — never
+> the artifact body. The onboarding hub's `register` also reports
+> `docstore_connected`/`tasktracker_connected` (from the T6 `IntegrationConnection`s) alongside
+> the counts implied by the base contract.
 
 ### T9 — API-contract & drift · *backs S-27* (J18)
 | `GET /api/projects/{id}/api-contracts/` | — | `[{artifact_id,name,version,provider_repo,status}]` | member |

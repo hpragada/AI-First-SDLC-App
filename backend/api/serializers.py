@@ -171,6 +171,17 @@ class RepositoryCreateSerializer(serializers.Serializer):
     base_branch = serializers.CharField(required=False, default="main")
 
 
+# ── Brownfield onboarding (P4.7-T8) ───────────────────────────────────
+class CodeIntelIndexSerializer(serializers.Serializer):
+    """Input for POST /api/projects/{id}/code-intel/ (tech_lead/admin). `index`/`summary` carry
+    an **already-computed** analysis result — real companion-side dispatch is deferred (see
+    PHASE_4.7_BUILD_SPEC.md T8 implementation notes)."""
+
+    repo_id = serializers.CharField()
+    index = serializers.DictField(required=False, default=dict)
+    summary = serializers.CharField(required=False, default="", allow_blank=True)
+
+
 # ── Project + Profile ───────────────────────────────────────────────
 class ProjectSerializer(serializers.ModelSerializer):
     class Meta:
