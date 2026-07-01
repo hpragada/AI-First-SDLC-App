@@ -84,11 +84,28 @@ No other new tables — `IntegrationConnection`, `Repository`, `Membership`, `Ru
 Email via a **pluggable sender** (console backend in dev — no real-mail dependency).
 
 ### T4 — User & role management · *backs S-07 users table, S-08 roles matrix + coverage* (J6)
+**Two admin concepts (team decision, this phase):** *tenant-admin* = `User.is_tenant_admin` — tenant-wide,
+gates the admin REST surface, **can approve any gate in the tenant**, a tenant must always keep ≥1;
+*project-admin* = `Membership(role="admin")` — per-project, **can approve any gate on that project**. A
+phase gate is actionable when a holder of its required role **or** an admin (project- or tenant-) exists.
+| Method · Path | Req | Resp | Perm |
+|---|---|---|---|
 | `GET /api/users/` | — | `[{id,name,email,status,is_tenant_admin, memberships:[{project_id,project_name,role}]}]` | **admin** |
-| `POST /api/projects/{id}/memberships/` | `{user_id,role}` | `201` membership | admin; `409` last-admin/own-admin guards |
-| `DELETE /api/projects/{id}/memberships/{mid}` | — | `204` | admin; last-admin guard |
-| `GET /api/projects/{id}/role-coverage/` | — | `{roles:[{role,holders:[{user_id,name}], covered:bool, gate_blocked:bool, note?}]}` — flags uncovered **gate** roles (e.g. `reviewer` empty → `gate_blocked:true, note:"merge gate unactionable"`) | admin |
-> **Screen-complete:** S-08 renders the per-role coverage warning banner verbatim from `gate_blocked`+`note`.
+| `PATCH /api/users/{id}/` | `{is_tenant_admin}` | `200` `{id,name,email,is_tenant_admin}` | admin; **`409` last-admin guard** (can't demote the tenant's only admin — incl. your own) |
+| `GET /api/projects/{id}/memberships/` | — | `[{id,user_id,project,role,created_at}]` | admin |
+| `POST /api/projects/{id}/memberships/` | `{user_id,role}` | `201` membership (`role="admin"` → project-admin) | admin; `409` duplicate; `404` unknown user |
+| `DELETE /api/projects/{id}/memberships/{mid}/` | — | `204` | admin (no guard — the tenant-admin population is guarded on `PATCH /users/{id}`, not on project-role grants) |
+| `GET /api/projects/{id}/role-coverage/` | — | `{admin_fallback:bool, roles:[{role,holders:[{user_id,name}], covered:bool, gate_blocked:bool, note?}]}` | admin |
+> **Gate roles** are derived from the phase catalog (`registry.catalog.gate_roles()`), never hand-listed.
+> `covered` = a direct holder of the role exists. `gate_blocked` = gate role **and** not covered **and**
+> no `admin_fallback` (an admin — project or tenant — can approve any gate). `note`: when uncovered and no
+> fallback → `"{gate} unactionable — no {role}"` (e.g. `"merge gate unactionable — no reviewer"`); when
+> uncovered but a fallback exists → `"no {role} assigned — an admin can approve the {gate}"`.
+> **Screen-complete / S-08 UI implication:** the merged S-08 mockup shows the coverage gap as a hard red
+> "unactionable" even though *You* is an admin. Under the team's admin-approves-any-gate rule that gap is
+> **advisory** (an admin can approve) whenever `admin_fallback:true` — S-08 should render the milder
+> "admin can approve as fallback" state from `gate_blocked:false`+`note`, reserving the hard-red
+> "unactionable" banner for `gate_blocked:true` (no holder **and** no admin at all).
 
 ### T5 — Authn-aware trigger & decisions · *backs S-14/S-18 trigger, S-21 decide, S-20 answer* (req #1)
 No new routes — modify `WorkItem.trigger` / `approvals/{id}/decide` / `clarifications/{id}/answer` to use

@@ -36,6 +36,7 @@ from .views import (
     SourceDocumentViewSet,
     TenantCreateView,
     TraceEdgeViewSet,
+    UserViewSet,
     WorkItemViewSet,
 )
 from .webhook_views import GithubWebhookView
@@ -51,6 +52,7 @@ router.register("approvals", ApprovalViewSet, basename="approval")
 router.register("clarifications", ClarificationViewSet, basename="clarification")
 router.register("source-documents", SourceDocumentViewSet, basename="sourcedocument")
 router.register("invitations", InvitationViewSet, basename="invitation")
+router.register("users", UserViewSet, basename="user")
 
 urlpatterns = [
     path("tenants/", TenantCreateView.as_view(), name="tenant-create"),

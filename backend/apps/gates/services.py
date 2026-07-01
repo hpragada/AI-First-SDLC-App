@@ -14,9 +14,10 @@ from datetime import UTC, datetime
 from django.conf import settings
 from mcp_platform_state import tools
 
+from apps.base import Role
 from apps.gates.models import Approval
 from apps.tenancy.context import tenant_context
-from apps.tenancy.models import Membership
+from apps.tenancy.models import Membership, User
 
 _VALID_DECISIONS = {"approved", "rejected"}
 
@@ -99,13 +100,19 @@ def decide_gate(
         if approval.decision != Approval.Decision.PENDING:
             raise GateError(f"approval already decided: {approval.decision}")
 
-        # Role check: the deciding user must hold the required role on this project.
+        # Role check: the deciding user must hold the required role on this project — OR be
+        # an admin who can approve any gate (project-admin = Membership(role="admin"), or
+        # tenant-admin = User.is_tenant_admin). Team decision (P4.7-T4).
         has_role = Membership.objects.filter(
             tenant_id=tenant_id,
             user_id=user_id,
             project_id=approval.work_item.project_id,
-            role=approval.required_role,
+            role__in=[approval.required_role, Role.ADMIN],
         ).exists()
+        if not has_role:
+            has_role = User.objects.filter(
+                id=user_id, tenant_id=tenant_id, is_tenant_admin=True
+            ).exists()
         if not has_role:
             raise GateRoleError(
                 f"user {user_id} lacks role '{approval.required_role}' for this gate"

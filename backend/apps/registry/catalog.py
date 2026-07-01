@@ -89,6 +89,19 @@ def gate_role_for(key: str) -> str:
     return definition.gate_role if definition else "product_owner"
 
 
+def gate_roles() -> list[str]:
+    """Distinct Membership roles that gate at least one active phase (first-seen order).
+
+    This is the truthful source for role-coverage (P4.7-T4): a project needs a holder of
+    each of these — or an admin fallback — for every gate to be actionable. Derived from the
+    catalog so it can never drift from the phases actually seeded/triggered."""
+    seen: list[str] = []
+    for d in ACTIVE_AGENT_CATALOG:
+        if d.gate_role not in seen:
+            seen.append(d.gate_role)
+    return seen
+
+
 def is_retired(key: str) -> bool:
     """True if the agent is retired (D8: 00d) — no migrated body, never seeded/triggered."""
     definition = _BY_KEY.get(key)

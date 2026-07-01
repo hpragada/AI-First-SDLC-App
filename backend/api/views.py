@@ -28,13 +28,19 @@ from apps.projects.models import Project
 from apps.registry.models import Artifact, TraceEdge
 from apps.runs.models import Run
 from apps.tenancy.auth import IsTenantAdmin
-from apps.tenancy.models import Invitation, Tenant
+from apps.tenancy.models import Invitation, Membership, Tenant, User
 from apps.tenancy.services import (
     InvitationError,
+    RoleError,
     create_invitation,
     create_tenant,
+    grant_membership,
+    list_tenant_users,
+    project_role_coverage,
     resend_invitation,
     revoke_invitation,
+    revoke_membership,
+    set_tenant_admin,
 )
 from apps.workitems.models import WorkItem
 from integrations.extract import ExtractionError
@@ -59,10 +65,13 @@ from .serializers import (
     GateDecisionSerializer,
     InvitationCreateSerializer,
     InvitationSerializer,
+    MembershipCreateSerializer,
+    MembershipSerializer,
     ProjectProfileSerializer,
     ProjectSerializer,
     RunSerializer,
     SourceDocumentSerializer,
+    TenantAdminSerializer,
     TenantSerializer,
     TraceEdgeSerializer,
     TriggerSerializer,
@@ -110,8 +119,61 @@ class ProjectViewSet(
     serializer_class = ProjectSerializer
     queryset = Project.objects.all().order_by("-created_at")
 
+    def get_permissions(self):
+        # Admin-only surfaces for user/role management (P4.7-T4). Everything else keeps the
+        # project viewset's default (AllowAny + tenant scoping / RLS).
+        if self.action in {"memberships", "delete_membership", "role_coverage"}:
+            return [IsTenantAdmin()]
+        return super().get_permissions()
+
     def perform_create(self, serializer):
         serializer.save(tenant_id=self.tenant_id)
+
+    @action(detail=True, methods=["get", "post"])
+    def memberships(self, request, pk=None):
+        """GET the project's role grants / POST a new one (admin). `role="admin"` grants a
+        project-admin who can approve any gate on this project (P4.7-T4)."""
+        project = self.get_object()
+        if request.method == "GET":
+            qs = Membership.objects.filter(
+                tenant_id=self.tenant_id, project=project
+            ).order_by("role")
+            return Response(MembershipSerializer(qs, many=True).data)
+
+        ser = MembershipCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            membership = grant_membership(
+                tenant=project.tenant, project=project,
+                user_id=str(ser.validated_data["user_id"]),
+                role=ser.validated_data["role"],
+            )
+        except RoleError as exc:
+            return Response({"detail": str(exc)}, status=exc.status)
+        return Response(
+            MembershipSerializer(membership).data, status=status.HTTP_201_CREATED
+        )
+
+    @action(detail=True, methods=["delete"],
+            url_path=r"memberships/(?P<mid>[^/.]+)")
+    def delete_membership(self, request, pk=None, mid=None):
+        """DELETE a project-role grant (admin). The tenant-admin population is guarded on the
+        user endpoint, not here — project-role grants carry no last-admin guard."""
+        project = self.get_object()
+        try:
+            revoke_membership(
+                tenant=project.tenant, project=project, membership_id=mid
+            )
+        except RoleError as exc:
+            return Response({"detail": str(exc)}, status=exc.status)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["get"], url_path="role-coverage")
+    def role_coverage(self, request, pk=None):
+        """Gate-role coverage for the project (S-08): per gate role → holders, covered,
+        gate_blocked (+ note), and whether an admin fallback exists (admin approves any gate)."""
+        project = self.get_object()
+        return Response(project_role_coverage(tenant=project.tenant, project=project))
 
     @action(detail=True, methods=["get", "put"])
     def profile(self, request, pk=None):
@@ -218,6 +280,38 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         except OnboardingError as exc:
             raise ValidationError(str(exc)) from exc
         return Response(out)
+
+
+# ── Users & tenant-admin (admin — P4.7-T4) ──────────────────────────
+class UserViewSet(TenantScopedMixin, viewsets.GenericViewSet):
+    """Admin surface for the tenant's users (S-07 table) + the tenant-admin toggle (S-08).
+    Roles per project are managed via `/projects/{id}/memberships/`; this is the tenant-wide
+    admin flag only."""
+
+    permission_classes = [IsTenantAdmin]
+    queryset = User.objects.all()
+
+    def list(self, request):
+        tenant = Tenant.objects.get(id=self.tenant_id)
+        return Response(list_tenant_users(tenant))
+
+    def partial_update(self, request, pk=None):
+        """PATCH /api/users/{id}/ {is_tenant_admin} — promote/demote. Guards the tenant's
+        last admin (409)."""
+        ser = TenantAdminSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        tenant = Tenant.objects.get(id=self.tenant_id)
+        try:
+            user = set_tenant_admin(
+                tenant=tenant, user_id=str(pk),
+                is_admin=ser.validated_data["is_tenant_admin"],
+            )
+        except RoleError as exc:
+            return Response({"detail": str(exc)}, status=exc.status)
+        return Response({
+            "id": str(user.id), "name": user.name, "email": user.email,
+            "is_tenant_admin": user.is_tenant_admin,
+        })
 
 
 # ── Invitations (admin — P4.7-T3) ───────────────────────────────────

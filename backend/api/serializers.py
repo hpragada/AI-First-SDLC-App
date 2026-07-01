@@ -17,7 +17,7 @@ from apps.ledger.models import Event
 from apps.projects.models import Project, ProjectProfile
 from apps.registry.models import Artifact, TraceEdge
 from apps.runs.models import Run
-from apps.tenancy.models import Invitation, Tenant
+from apps.tenancy.models import Invitation, Membership, Tenant
 from apps.workitems.models import WorkItem
 
 
@@ -99,6 +99,31 @@ class ResetSerializer(serializers.Serializer):
     password = serializers.CharField(
         style={"input_type": "password"}, trim_whitespace=False, min_length=8
     )
+
+
+# ── User & role management (P4.7-T4) ────────────────────────────────
+class MembershipSerializer(serializers.ModelSerializer):
+    """Read shape for a project-role grant."""
+
+    user_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = Membership
+        fields = ["id", "user_id", "project", "role", "created_at"]
+        read_only_fields = fields
+
+
+class MembershipCreateSerializer(serializers.Serializer):
+    """Input for POST /api/projects/{id}/memberships/ (admin) — grant a role to a user."""
+
+    user_id = serializers.UUIDField()
+    role = serializers.ChoiceField(choices=Role.choices)
+
+
+class TenantAdminSerializer(serializers.Serializer):
+    """Input for PATCH /api/users/{id}/ — flip the tenant-admin flag (admin)."""
+
+    is_tenant_admin = serializers.BooleanField()
 
 
 # ── Project + Profile ───────────────────────────────────────────────

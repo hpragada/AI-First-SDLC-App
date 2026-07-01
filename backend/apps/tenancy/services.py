@@ -17,7 +17,8 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
-from apps.registry.catalog import seed_agent_specs
+from apps.base import Role
+from apps.registry.catalog import gate_roles, seed_agent_specs
 from apps.tenancy.context import tenant_context
 from apps.tenancy.emails import send_invitation_email, send_password_reset_email
 from apps.tenancy.models import Invitation, Membership, Tenant, User
@@ -42,6 +43,15 @@ class InvitationError(Exception):
 
 class ResetError(Exception):
     """A password-reset token was invalid or expired (→ 410)."""
+
+
+class RoleError(Exception):
+    """A user/role-management operation was rejected. `status` maps to the HTTP code
+    (409 for guard/duplicate conflicts, 404 for unknown target)."""
+
+    def __init__(self, message: str, status: int = 409):
+        super().__init__(message)
+        self.status = status
 
 
 def _new_token() -> tuple[str, str]:
@@ -206,3 +216,140 @@ def reset_password(*, token: str, password: str) -> User:
             "password", "reset_token_hash", "reset_token_expires", "updated_at",
         ])
     return user
+
+
+# ── User & role management (P4.7-T4, J6) ────────────────────────────
+# Two admin concepts (team decision, this phase):
+#   • tenant-admin  = User.is_tenant_admin — tenant-wide; gates the admin REST surface;
+#     can approve any gate in the tenant; a tenant must always keep ≥1 (guarded here).
+#   • project-admin = Membership(role="admin") — per-project; can approve any gate on that
+#     project (enforced in gates.services.decide_gate). Managed by the membership endpoints.
+# A phase gate is therefore actionable when a holder of its required role OR an admin
+# (project- or tenant-) exists — the coverage report below encodes exactly that.
+_GATE_LABELS = {
+    "product_owner": "planning gate",
+    "architect": "architecture gate",
+    "designer": "UX gate",
+    "tech_lead": "build gate",
+    "reviewer": "merge gate",
+    "qa_lead": "testing gate",
+    "security_engineer": "security gate",
+    "devops": "deployment gate",
+}
+
+
+def _membership_summary(user: User) -> list[dict]:
+    return [
+        {"project_id": str(m.project_id), "project_name": m.project.name, "role": m.role}
+        for m in user.memberships.select_related("project").all()
+    ]
+
+
+def list_tenant_users(tenant) -> list[dict]:
+    """Every user in the tenant with their tenant-admin flag + per-project role grants
+    (S-07 users table). Pending invitations are a separate list (see `Invitation`)."""
+    users = (
+        User.objects.filter(tenant_id=tenant.id)
+        .order_by("name")
+        .prefetch_related("memberships__project")
+    )
+    return [
+        {
+            "id": str(u.id),
+            "name": u.name,
+            "email": u.email,
+            "status": "active" if u.is_active else "disabled",
+            "is_tenant_admin": u.is_tenant_admin,
+            "memberships": _membership_summary(u),
+        }
+        for u in users
+    ]
+
+
+def grant_membership(*, tenant, project, user_id: str, role: str) -> Membership:
+    """Grant `role` on `project` to a tenant user (S-08 matrix toggle-on). Idempotency guard:
+    a duplicate (user, project, role) is a 409. `role="admin"` grants project-admin."""
+    user = User.objects.filter(id=user_id, tenant_id=tenant.id).first()
+    if user is None:
+        raise RoleError("Unknown user for this tenant.", status=404)
+    if Membership.objects.filter(
+        tenant_id=tenant.id, user_id=user_id, project_id=project.id, role=role
+    ).exists():
+        raise RoleError("This user already holds that role on this project.", status=409)
+    return Membership.objects.create(
+        tenant=tenant, user=user, project=project, role=role
+    )
+
+
+def revoke_membership(*, tenant, project, membership_id: str) -> None:
+    """Remove a project-role grant (S-08 matrix toggle-off). The tenant-admin population is
+    protected on the is_tenant_admin toggle, not here — project-role grants carry no guard."""
+    membership = Membership.objects.filter(
+        id=membership_id, tenant_id=tenant.id, project_id=project.id
+    ).first()
+    if membership is None:
+        raise RoleError("Unknown membership for this project.", status=404)
+    membership.delete()
+
+
+def set_tenant_admin(*, tenant, user_id: str, is_admin: bool) -> User:
+    """Promote/demote a user's tenant-admin flag (S-08 'Admin' toggle). Guard: a tenant must
+    always keep at least one tenant-admin — demoting the last one (incl. your own, when
+    you're the last) is a 409."""
+    user = User.objects.filter(id=user_id, tenant_id=tenant.id).first()
+    if user is None:
+        raise RoleError("Unknown user for this tenant.", status=404)
+    if not is_admin and user.is_tenant_admin:
+        remaining = (
+            User.objects.filter(tenant_id=tenant.id, is_tenant_admin=True)
+            .exclude(id=user_id)
+            .exists()
+        )
+        if not remaining:
+            raise RoleError(
+                "This is the tenant's only admin — promote another member before "
+                "removing admin.",
+                status=409,
+            )
+    user.is_tenant_admin = is_admin
+    user.save(update_fields=["is_tenant_admin", "updated_at"])
+    return user
+
+
+def project_role_coverage(*, tenant, project) -> dict:
+    """Gate-role coverage for a project (S-08). For each role that gates a phase: its holders,
+    whether it's directly covered, and whether its gate is BLOCKED — i.e. no holder AND no
+    admin fallback (a project- or tenant-admin can approve any gate). `note` carries the
+    screen's warning copy; `admin_fallback` lets the UI distinguish a hard block from an
+    admin-covered gap."""
+    admin_fallback = (
+        Membership.objects.filter(
+            tenant_id=tenant.id, project_id=project.id, role=Role.ADMIN
+        ).exists()
+        or User.objects.filter(tenant_id=tenant.id, is_tenant_admin=True).exists()
+    )
+    rows = []
+    for role in gate_roles():
+        holders = [
+            {"user_id": str(m.user_id), "name": m.user.name}
+            for m in Membership.objects.filter(
+                tenant_id=tenant.id, project_id=project.id, role=role
+            ).select_related("user")
+        ]
+        covered = bool(holders)
+        gate_blocked = not covered and not admin_fallback
+        label = _GATE_LABELS.get(role, f"{role} gate")
+        if covered:
+            note = None
+        elif admin_fallback:
+            note = f"no {role} assigned — an admin can approve the {label}"
+        else:
+            note = f"{label} unactionable — no {role}"
+        rows.append({
+            "role": role,
+            "holders": holders,
+            "covered": covered,
+            "gate_blocked": gate_blocked,
+            "note": note,
+        })
+    return {"admin_fallback": admin_fallback, "roles": rows}
