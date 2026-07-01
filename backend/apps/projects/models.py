@@ -61,6 +61,9 @@ class Repository(TenantScopedModel):
     scopes = models.JSONField(default=dict, blank=True)
     stack_overrides = models.JSONField(default=dict, blank=True)
     provenance = models.JSONField(default=dict, blank=True)    # onboarding origin
+    # The repo build PRs target when a work item doesn't pin one (S-13 "Set default";
+    # P4.7-T7). The first repo registered on a project is default until reassigned.
+    is_default = models.BooleanField(default=False)
 
     def __str__(self) -> str:
         return self.name or f"{self.project_id}:{self.role}"

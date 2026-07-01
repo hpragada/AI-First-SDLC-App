@@ -31,9 +31,17 @@ from apps.integrations.services import (
 )
 from apps.ledger.models import Event
 from apps.projects.models import Project
+from apps.projects.repos import (
+    RepositoryError,
+    add_repository,
+    remove_repository,
+    repositories_for,
+    require_repo_manage_role,
+    set_default_repository,
+)
 from apps.registry.models import Artifact, TraceEdge
 from apps.runs.models import Run
-from apps.tenancy.auth import IsTenantAdmin, current_user
+from apps.tenancy.auth import IsAuthenticatedMember, IsTenantAdmin, current_user
 from apps.tenancy.models import Invitation, Membership, Tenant, User
 from apps.tenancy.services import (
     InvitationError,
@@ -78,6 +86,7 @@ from .serializers import (
     MembershipSerializer,
     ProjectProfileSerializer,
     ProjectSerializer,
+    RepositoryCreateSerializer,
     RunSerializer,
     SourceDocumentSerializer,
     TenantAdminSerializer,
@@ -144,6 +153,10 @@ class ProjectViewSet(
         # project viewset's default (AllowAny + tenant scoping / RLS).
         if self.action in {"memberships", "delete_membership", "role_coverage"}:
             return [IsTenantAdmin()]
+        # Repositories (P4.7-T7): any authenticated member may read; add/remove/set-default
+        # are further gated per-project (tech_lead/admin) inside the action itself.
+        if self.action in {"repositories", "delete_repository", "set_repository_default"}:
+            return [IsAuthenticatedMember()]
         return super().get_permissions()
 
     def perform_create(self, serializer):
@@ -277,6 +290,79 @@ class ProjectViewSet(
         except CapabilityUnavailable as exc:
             raise ValidationError(str(exc)) from exc
         return Response(out)
+
+    # ── Repositories (P4.7-T7, backs S-13) ───────────────────────────
+    @action(detail=True, methods=["get", "post"])
+    def repositories(self, request, pk=None):
+        """GET the project's repos + topology (any member) / POST to register one
+        (tech_lead/admin; `409` on a duplicate name)."""
+        project = self.get_object()
+        if request.method == "GET":
+            return Response({
+                "repo_topology": project.repo_topology,
+                "repositories": repositories_for(
+                    tenant_id=self.tenant_id, project_id=str(project.id)
+                ),
+            })
+
+        ser = RepositoryCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        actor = resolve_actor(request, request.data.get("user_id"))
+        try:
+            require_repo_manage_role(
+                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
+            )
+            result = add_repository(
+                tenant_id=self.tenant_id, project_id=str(project.id),
+                name=ser.validated_data["name"], role=ser.validated_data["role"],
+                default_base=ser.validated_data["base_branch"],
+            )
+        except RepositoryError as exc:
+            return Response({"detail": str(exc)}, status=exc.status)
+        if not result["created"]:
+            return Response(
+                {"detail": f"{ser.validated_data['name']} is already registered on this "
+                           f"project."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        rows = repositories_for(tenant_id=self.tenant_id, project_id=str(project.id))
+        created_row = next(r for r in rows if r["id"] == result["repository_id"])
+        return Response(created_row, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["delete"], url_path=r"repositories/(?P<rid>[^/.]+)")
+    def delete_repository(self, request, pk=None, rid=None):
+        """DELETE a repository (tech_lead/admin) — reconciles topology + default."""
+        project = self.get_object()
+        actor = resolve_actor(request, request.data.get("user_id"))
+        try:
+            require_repo_manage_role(
+                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
+            )
+            remove_repository(
+                tenant_id=self.tenant_id, project_id=str(project.id), repository_id=rid
+            )
+        except RepositoryError as exc:
+            return Response({"detail": str(exc)}, status=exc.status)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"],
+            url_path=r"repositories/(?P<rid>[^/.]+)/set-default")
+    def set_repository_default(self, request, pk=None, rid=None):
+        """POST to make this repo the project's default base (tech_lead/admin)."""
+        project = self.get_object()
+        actor = resolve_actor(request, request.data.get("user_id"))
+        try:
+            require_repo_manage_role(
+                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
+            )
+            set_default_repository(
+                tenant_id=self.tenant_id, project_id=str(project.id), repository_id=rid
+            )
+        except RepositoryError as exc:
+            return Response({"detail": str(exc)}, status=exc.status)
+        return Response(
+            repositories_for(tenant_id=self.tenant_id, project_id=str(project.id))
+        )
 
 
 # ── Source documents + onboarding review gate ───────────────────────

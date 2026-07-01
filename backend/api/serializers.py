@@ -162,6 +162,15 @@ class IntegrationUpdateSerializer(serializers.Serializer):
     secrets = serializers.DictField(required=False)
 
 
+# ── Repositories (P4.7-T7) ────────────────────────────────────────────
+class RepositoryCreateSerializer(serializers.Serializer):
+    """Input for POST /api/projects/{id}/repositories/ (tech_lead/admin)."""
+
+    name = serializers.CharField()
+    role = serializers.CharField(required=False, default="")
+    base_branch = serializers.CharField(required=False, default="main")
+
+
 # ── Project + Profile ───────────────────────────────────────────────
 class ProjectSerializer(serializers.ModelSerializer):
     class Meta:

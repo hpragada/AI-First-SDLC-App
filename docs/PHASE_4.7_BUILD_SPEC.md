@@ -131,10 +131,21 @@ the **session user** as actor (routes UI-triggered phases to *that user's* compa
 > Phase 5.
 
 ### T7 — Repositories · *backs S-13* (J10)
-| `GET /api/projects/{id}/repositories/` | — | `[{id,name,role,default_base,status,is_default}]` + project `repo_topology` | member |
+| `GET /api/projects/{id}/repositories/` | — | `{repo_topology, repositories:[{id,name,role,default_base,status,is_default}]}` | member |
 | `POST /api/projects/{id}/repositories/` | `{name,role,base_branch}` | `201`; reconciles topology (single/split/multi) | tech_lead/admin; `409` duplicate-by-name |
 | `DELETE /api/projects/{id}/repositories/{rid}` | — | `204`; reconciles topology | tech_lead/admin |
+| `POST /api/projects/{id}/repositories/{rid}/set-default/` | — | `200` `[{id,name,role,default_base,status,is_default}]` (full list) | tech_lead/admin |
 Reuse `apps/projects/repos.py` (`add_repository`/`repositories_for`); add remove + set-default.
+> **Implementation notes:** `is_default` is a new `Repository.is_default` column — the first repo
+> registered on a project is default until reassigned via `set-default`; removing the default repo
+> promotes the oldest remaining one so a non-empty project always has exactly one. `status` is
+> `"connected"`/`"unlinked"`, derived from the tenant's single `codehost` `IntegrationConnection`
+> (capabilities-not-vendors, T6) — tenant-wide, so every repo row in a project shares it (no
+> per-repo CodeHost config). `tech_lead/admin` = `Membership(role in {tech_lead, admin})` on this
+> project **or** `User.is_tenant_admin`, the same two-tier check as `gates.services.decide_gate`
+> (`apps.projects.repos.require_repo_manage_role`); reads use the (till-now-unused)
+> `IsAuthenticatedMember` permission. `GET` returns `{repo_topology, repositories}` — see the current
+> row shape above — because the topology chip renders next to the table (S-13), not just the rows.
 
 ### T8 — Brownfield onboarding · *backs S-24 hub, S-25 source docs, S-26 gap report* (J17)
 | `GET /api/projects/{id}/onboarding/` | — | hub state `{upload:[…], adopt:[…], register:{…}, index:{status}, gap:{ready,resume_phase?}}` | member |
