@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ParseError, PermissionDenied, ValidationError
+from rest_framework.exceptions import NotFound, ParseError, PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -71,6 +71,7 @@ from integrations.onboarding import (
     record_code_intel_index,
     register_atlassian,
 )
+from integrations.preview import read_artifact_preview
 from integrations.types import CapabilityUnavailable
 from orchestration.takeover import TakeoverError, release_takeover, request_takeover
 from orchestration.trigger import TriggerError, trigger_phase
@@ -699,6 +700,13 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = ArtifactSerializer
     queryset = Artifact.objects.all().order_by("-created_at")
 
+    def get_permissions(self):
+        # Preview (P4.7-T10) reads a body read-through — any authenticated member.
+        # List/retrieve keep the existing pointer-only default.
+        if self.action == "preview":
+            return [IsAuthenticatedMember()]
+        return super().get_permissions()
+
     def get_queryset(self):
         qs = super().get_queryset()
         for field in ("project", "phase", "status"):
@@ -706,6 +714,16 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             if value:
                 qs = qs.filter(**{("project_id" if field == "project" else field): value})
         return qs
+
+    @action(detail=True, methods=["get"])
+    def preview(self, request, pk=None):
+        """S-29: read-through body (S3 draft/snapshot or SoR), never an editor, never
+        copied into the registry (#1/#3). `404` when there's truly no body to show."""
+        artifact = self.get_object()
+        result = read_artifact_preview(tenant_id=self.tenant_id, artifact_id=str(artifact.id))
+        if result is None:
+            raise NotFound("artifact has no body to preview")
+        return Response(result, status=status.HTTP_200_OK)
 
 
 class TraceEdgeViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):

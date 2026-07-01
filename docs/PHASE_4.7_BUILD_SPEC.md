@@ -199,6 +199,30 @@ Existing source-doc `upload`+`adopt/` and `onboard-atlassian/` are surfaced in t
 | `GET /api/artifacts/{id}/preview/` | — | `{body, content_type, status, version, versions:[…], sor_link?}` — read-through from S3 (draft/snapshot) or SoR; **never an editor, never copied into the registry** | member; `404` missing-body |
 List payloads keep **pointers only** (no body) — unchanged.
 
+> **Implementation notes.** New `integrations/preview.py::read_artifact_preview` (no new
+> models — reuses `Artifact.s3_key`/`sor`/`external_ref`/`version` as-is), wrapped by
+> `ArtifactViewSet.preview` (`ArtifactViewSet` already existed, read-only; only the new
+> action is gated `IsAuthenticatedMember`, list/retrieve keep their existing default).
+> Three read-through paths by `sor`: **internal** (draft/staged, not pushed anywhere yet) →
+> the S3 body at `s3_key`, `content_type="text/markdown"`, no `sor_link`; **confluence**/
+> **jira** → live through `DocStore.get_page`/`TaskTracker.get_issue` (already documented
+> "read-through, not stored") — if the connector is unavailable or the call fails, degrades
+> gracefully to `body=""` + the stored `external_ref.url` as `sor_link` (S-29's "Preview
+> unavailable" state), rather than a 5xx; any other SoR (figma/xray/git/…) has no body
+> capability wired yet, so it's link-only the same way. `404` is reserved for "no body to
+> ever show" — unknown/cross-tenant artifact id, or an internal artifact whose `s3_key` was
+> never set — not a transient external-read failure.
+>
+> `versions` is every sibling `Artifact` row sharing `(project, phase, type)` — i.e. the
+> distinct registrations across runs/remediation loops — newest first, each with its own
+> `{artifact_id, version, status, run_id, created_at}`. **Known limitation** (same shape of
+> gap as T9's single-contract-per-project note): only the `api_contract` D4 pattern bumps
+> `version` on one row in place; every other artifact type registers a fresh row per run
+> with `version` defaulting to `1`, so today "versions" is a time-ordered list of revisions
+> rather than one artifact with a monotonically incrementing version counter — a real
+> per-artifact version history is a future model change (a version/snapshot table), not
+> something invented here.
+
 ### T11 — Companion status + connect · *backs S-05 checklist tick, S-06 connect-machine* (J5)
 | `GET /api/runners/` | — | caller's enrollments `[{id,machine,last_seen,online:bool,projects:[…]}]` (online derived from `last_seen`) | session |
 `POST /api/runners/` (issue) already exists — ensure it binds the enrollment to the **session user**
