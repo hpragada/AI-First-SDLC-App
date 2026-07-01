@@ -27,7 +27,15 @@ from apps.ledger.models import Event
 from apps.projects.models import Project
 from apps.registry.models import Artifact, TraceEdge
 from apps.runs.models import Run
-from apps.tenancy.services import create_tenant
+from apps.tenancy.auth import IsTenantAdmin
+from apps.tenancy.models import Invitation, Tenant
+from apps.tenancy.services import (
+    InvitationError,
+    create_invitation,
+    create_tenant,
+    resend_invitation,
+    revoke_invitation,
+)
 from apps.workitems.models import WorkItem
 from integrations.extract import ExtractionError
 from integrations.onboarding import (
@@ -49,6 +57,8 @@ from .serializers import (
     ClarificationSerializer,
     EventSerializer,
     GateDecisionSerializer,
+    InvitationCreateSerializer,
+    InvitationSerializer,
     ProjectProfileSerializer,
     ProjectSerializer,
     RunSerializer,
@@ -208,6 +218,57 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         except OnboardingError as exc:
             raise ValidationError(str(exc)) from exc
         return Response(out)
+
+
+# ── Invitations (admin — P4.7-T3) ───────────────────────────────────
+class InvitationViewSet(
+    TenantScopedMixin,
+    mixins.CreateModelMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Admin-managed tenant invitations. Create emails an accept link; resend rotates the
+    token; revoke disables it. The raw token is never returned in any payload."""
+
+    permission_classes = [IsTenantAdmin]
+    serializer_class = InvitationSerializer
+    queryset = Invitation.objects.all().order_by("-created_at")
+
+    def create(self, request, *args, **kwargs):
+        ser = InvitationCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        tenant = Tenant.objects.get(id=self.tenant_id)
+        try:
+            invitation, _raw = create_invitation(
+                tenant=tenant, invited_by=request.user,
+                email=ser.validated_data["email"],
+                name=ser.validated_data.get("name", ""),
+                grants=ser.validated_data.get("grants", []),
+            )
+        except InvitationError as exc:
+            raise ValidationError({"email": str(exc)}) from exc
+        return Response(
+            InvitationSerializer(invitation).data, status=status.HTTP_201_CREATED
+        )
+
+    @action(detail=True, methods=["post"])
+    def resend(self, request, pk=None):
+        invitation = self.get_object()
+        try:
+            resend_invitation(invitation)
+        except InvitationError as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(InvitationSerializer(invitation).data)
+
+    @action(detail=True, methods=["post"])
+    def revoke(self, request, pk=None):
+        invitation = self.get_object()
+        try:
+            revoke_invitation(invitation)
+        except InvitationError as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(InvitationSerializer(invitation).data)
 
 
 # ── WorkItems + phase trigger ───────────────────────────────────────

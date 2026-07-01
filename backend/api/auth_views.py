@@ -15,9 +15,23 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.tenancy.auth import serialize_me
-from apps.tenancy.services import SignupError, signup
+from apps.tenancy.services import (
+    InvitationError,
+    ResetError,
+    SignupError,
+    accept_invitation,
+    request_password_reset,
+    reset_password,
+    signup,
+)
 
-from .serializers import LoginSerializer, SignupSerializer
+from .serializers import (
+    AcceptInvitationSerializer,
+    LoginSerializer,
+    RequestResetSerializer,
+    ResetSerializer,
+    SignupSerializer,
+)
 
 # The user created by signup wasn't returned by authenticate(), so login() needs the
 # backend named explicitly.
@@ -65,6 +79,61 @@ class LoginView(APIView):
             )
         login(request, user)
         return Response(serialize_me(user))
+
+
+class AcceptInvitationView(APIView):
+    """POST /api/auth/accept-invitation — {token,password,name?} → creates the tenant User +
+    queued memberships + session. Public + CSRF-exempt (no session yet). 409 used / 410
+    expired-or-revoked / invalid."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request):
+        ser = AcceptInvitationSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            user = accept_invitation(
+                token=ser.validated_data["token"],
+                password=ser.validated_data["password"],
+                name=ser.validated_data.get("name") or None,
+            )
+        except InvitationError as exc:
+            return Response({"detail": str(exc)}, status=exc.status)
+        login(request, user, backend=_MODEL_BACKEND)
+        return Response(serialize_me(user))
+
+
+class RequestResetView(APIView):
+    """POST /api/auth/request-reset — {email} → always 200 (no account enumeration)."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request):
+        ser = RequestResetSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        request_password_reset(email=ser.validated_data["email"])
+        return Response(status=status.HTTP_200_OK)
+
+
+class ResetView(APIView):
+    """POST /api/auth/reset — {token,password} → sets the new password. 410 invalid/expired."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request):
+        ser = ResetSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            reset_password(
+                token=ser.validated_data["token"],
+                password=ser.validated_data["password"],
+            )
+        except ResetError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_410_GONE)
+        return Response(status=status.HTTP_200_OK)
 
 
 class LogoutView(APIView):

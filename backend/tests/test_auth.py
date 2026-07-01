@@ -9,9 +9,18 @@ from rest_framework.response import Response
 from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 from rest_framework.views import APIView
 
+from datetime import timedelta
+
+from django.utils import timezone
+
 from apps.projects.models import Project
 from apps.tenancy.auth import IsTenantAdmin
-from apps.tenancy.models import Membership, Tenant, User
+from apps.tenancy.models import Invitation, Membership, Tenant, User
+from apps.tenancy.services import (
+    create_invitation,
+    request_password_reset,
+    resend_invitation,
+)
 
 
 @pytest.fixture
@@ -27,6 +36,14 @@ def tenant(db):
 @pytest.fixture
 def project(tenant):
     return Project.objects.create(tenant=tenant, name="Payment Gateway v2")
+
+
+@pytest.fixture
+def admin(tenant):
+    return User.objects.create_user(
+        email="boss@acme.com", name="Boss", tenant=tenant,
+        password="admin-pass!", is_tenant_admin=True,
+    )
 
 
 @pytest.fixture
@@ -223,3 +240,176 @@ def test_is_tenant_admin_permission_gates_admin_endpoints(user, tenant):
     req2 = factory.get("/admin-only")
     force_authenticate(req2, user=admin)
     assert view(req2).status_code == 200
+
+
+# ── P4.7-T3: invitations ────────────────────────────────────────────
+def _login(client, email, password):
+    assert client.post(
+        "/api/auth/login/", {"email": email, "password": password}, format="json"
+    ).status_code == 200
+
+
+def test_admin_creates_invitation(client, admin, project):
+    _login(client, "boss@acme.com", "admin-pass!")
+    resp = client.post(
+        "/api/invitations/",
+        {
+            "email": "invitee@acme.com",
+            "name": "Invitee",
+            "grants": [{"project_id": str(project.id), "role": "engineer"}],
+        },
+        format="json",
+    )
+    assert resp.status_code == 201
+    assert resp.data["email"] == "invitee@acme.com"
+    assert resp.data["status"] == "pending"
+    # the token / hash never leak in any payload
+    assert "token" not in resp.data
+    assert "token_hash" not in resp.data
+    assert Invitation.objects.filter(email="invitee@acme.com", status="pending").exists()
+
+
+def test_non_admin_cannot_invite(client, user):
+    _login(client, "sarah@acme.com", "s3cret-pass!")  # a plain member
+    resp = client.post(
+        "/api/invitations/", {"email": "x@acme.com"}, format="json"
+    )
+    assert resp.status_code == 403
+
+
+def test_invitations_are_tenant_isolated(client, admin, tenant, project):
+    # an invitation in a different tenant must not show up in this admin's list
+    other = Tenant.objects.create(name="Globex")
+    create_invitation(tenant=other, invited_by=None, email="alien@globex.com")
+    create_invitation(tenant=tenant, invited_by=admin, email="local@acme.com")
+
+    _login(client, "boss@acme.com", "admin-pass!")
+    resp = client.get("/api/invitations/")
+    assert resp.status_code == 200
+    emails = {row["email"] for row in resp.data}
+    assert emails == {"local@acme.com"}
+
+
+# ── P4.7-T3: accept-invitation ──────────────────────────────────────
+def test_accept_invitation_creates_user_and_memberships(client, admin, project):
+    _inv, raw = create_invitation(
+        tenant=admin.tenant, invited_by=admin, email="newhire@acme.com",
+        grants=[{"project_id": str(project.id), "role": "engineer"}],
+    )
+    resp = client.post(
+        "/api/auth/accept-invitation/",
+        {"token": raw, "password": "brand-new-pass!"},
+        format="json",
+    )
+    assert resp.status_code == 200
+    assert resp.data["user"]["email"] == "newhire@acme.com"
+    assert resp.data["memberships"] == [
+        {
+            "project_id": str(project.id),
+            "project_name": project.name,
+            "role": "engineer",
+        }
+    ]
+    # user persisted + membership queued; session live
+    new_user = User.objects.get(email="newhire@acme.com")
+    assert Membership.objects.filter(user=new_user, project=project, role="engineer").exists()
+    assert client.get("/api/auth/me/").status_code == 200
+    # invitation is consumed
+    _inv.refresh_from_db()
+    assert _inv.status == "accepted"
+
+
+def test_accept_used_invitation_409(client, admin):
+    _inv, raw = create_invitation(tenant=admin.tenant, invited_by=admin, email="once@acme.com")
+    assert client.post(
+        "/api/auth/accept-invitation/", {"token": raw, "password": "first-pass!"},
+        format="json",
+    ).status_code == 200
+    # a second accept with the same token is rejected as used
+    second = client.post(
+        "/api/auth/accept-invitation/", {"token": raw, "password": "second-pass!"},
+        format="json",
+    )
+    assert second.status_code == 409
+
+
+def test_accept_revoked_invitation_410(client, admin):
+    inv, raw = create_invitation(tenant=admin.tenant, invited_by=admin, email="revoked@acme.com")
+    inv.status = "revoked"
+    inv.save(update_fields=["status"])
+    resp = client.post(
+        "/api/auth/accept-invitation/", {"token": raw, "password": "whatever!"},
+        format="json",
+    )
+    assert resp.status_code == 410
+
+
+def test_accept_expired_invitation_410(client, admin):
+    inv, raw = create_invitation(tenant=admin.tenant, invited_by=admin, email="expired@acme.com")
+    inv.expires_at = timezone.now() - timedelta(days=1)
+    inv.save(update_fields=["expires_at"])
+    resp = client.post(
+        "/api/auth/accept-invitation/", {"token": raw, "password": "whatever!"},
+        format="json",
+    )
+    assert resp.status_code == 410
+    inv.refresh_from_db()
+    assert inv.status == "expired"
+
+
+def test_resend_rotates_the_token(client, admin):
+    inv, old_raw = create_invitation(tenant=admin.tenant, invited_by=admin, email="rot@acme.com")
+    new_raw = resend_invitation(inv)
+    assert new_raw != old_raw
+    # the old token no longer works…
+    assert client.post(
+        "/api/auth/accept-invitation/", {"token": old_raw, "password": "pass-one!"},
+        format="json",
+    ).status_code == 410
+    # …the rotated one does
+    assert client.post(
+        "/api/auth/accept-invitation/", {"token": new_raw, "password": "pass-two!"},
+        format="json",
+    ).status_code == 200
+
+
+# ── P4.7-T3: password reset ─────────────────────────────────────────
+def test_request_reset_always_200_no_enumeration(client, user):
+    # unknown email → still 200 (no account enumeration)
+    assert client.post(
+        "/api/auth/request-reset/", {"email": "nobody@nowhere.com"}, format="json"
+    ).status_code == 200
+    # known email → 200
+    assert client.post(
+        "/api/auth/request-reset/", {"email": "sarah@acme.com"}, format="json"
+    ).status_code == 200
+
+
+def test_reset_password_roundtrip(client, user):
+    raw = request_password_reset(email="sarah@acme.com")
+    assert raw is not None
+    resp = client.post(
+        "/api/auth/reset/", {"token": raw, "password": "totally-new-pass!"}, format="json"
+    )
+    assert resp.status_code == 200
+    # the new password works, the old one no longer does
+    assert client.post(
+        "/api/auth/login/", {"email": "sarah@acme.com", "password": "totally-new-pass!"},
+        format="json",
+    ).status_code == 200
+    assert client.post(
+        "/api/auth/login/", {"email": "sarah@acme.com", "password": "s3cret-pass!"},
+        format="json",
+    ).status_code == 401
+    # token is single-use — replaying it fails
+    assert client.post(
+        "/api/auth/reset/", {"token": raw, "password": "again-pass!"}, format="json"
+    ).status_code == 410
+
+
+def test_reset_invalid_token_410(client, db):
+    resp = client.post(
+        "/api/auth/reset/", {"token": "not-a-real-token", "password": "whatever8!"},
+        format="json",
+    )
+    assert resp.status_code == 410

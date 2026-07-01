@@ -3,7 +3,15 @@ APIView (it runs before any tenant context exists)."""
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .auth_views import LoginView, LogoutView, MeView, SignupView
+from .auth_views import (
+    AcceptInvitationView,
+    LoginView,
+    LogoutView,
+    MeView,
+    RequestResetView,
+    ResetView,
+    SignupView,
+)
 from .runner_views import (
     RunnerBuildFetchView,
     RunnerBuildReportView,
@@ -22,6 +30,7 @@ from .views import (
     ArtifactViewSet,
     ClarificationViewSet,
     EventViewSet,
+    InvitationViewSet,
     ProjectViewSet,
     RunViewSet,
     SourceDocumentViewSet,
@@ -41,6 +50,7 @@ router.register("events", EventViewSet, basename="event")
 router.register("approvals", ApprovalViewSet, basename="approval")
 router.register("clarifications", ClarificationViewSet, basename="clarification")
 router.register("source-documents", SourceDocumentViewSet, basename="sourcedocument")
+router.register("invitations", InvitationViewSet, basename="invitation")
 
 urlpatterns = [
     path("tenants/", TenantCreateView.as_view(), name="tenant-create"),
@@ -50,6 +60,10 @@ urlpatterns = [
     path("auth/login/", LoginView.as_view(), name="auth-login"),
     path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
     path("auth/me/", MeView.as_view(), name="auth-me"),
+    # Invitation accept + password reset (P4.7-T3) — public, pre-auth (CSRF-exempt).
+    path("auth/accept-invitation/", AcceptInvitationView.as_view(), name="auth-accept-invitation"),
+    path("auth/request-reset/", RequestResetView.as_view(), name="auth-request-reset"),
+    path("auth/reset/", ResetView.as_view(), name="auth-reset"),
     # Local-companion runner (Phase 2): enrollment (tenant-scoped) + remote Platform-State.
     path("runners/", RunnerEnrollmentView.as_view(), name="runner-enroll"),
     path("runners/<uuid:pk>/revoke/", RunnerRevokeView.as_view(), name="runner-revoke"),

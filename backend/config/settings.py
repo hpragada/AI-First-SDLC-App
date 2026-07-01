@@ -159,6 +159,14 @@ CORS_ALLOW_HEADERS = list(default_cors_headers) + ["x-tenant-id", "x-csrftoken"]
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=list(CORS_ALLOWED_ORIGINS))
 
+# ─── Transactional email (P4.7-T3 invitations + password reset) ─────
+# The pluggable seam is EMAIL_BACKEND: console in dev (links print to the log — no real
+# mail dependency), a real SMTP/API backend in prod. FRONTEND_BASE_URL builds the accept /
+# reset links the SPA handles.
+EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="no-reply@sdlc.local")
+FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default="http://localhost:5173")
+
 # ─── Atlassian (Phase 1 SoR — Confluence + Jira) ────────────────────
 # Headless control-plane auth = API token over REST (decision D1). The secret lives
 # in .env (gitignored); per-tenant IntegrationConnection.token_ref points at it. The

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from apps.base import Role
 from apps.clarifications.models import Clarification
 from apps.gates.models import Approval
 from apps.integrations.models import SourceDocument
@@ -16,7 +17,7 @@ from apps.ledger.models import Event
 from apps.projects.models import Project, ProjectProfile
 from apps.registry.models import Artifact, TraceEdge
 from apps.runs.models import Run
-from apps.tenancy.models import Tenant
+from apps.tenancy.models import Invitation, Tenant
 from apps.workitems.models import WorkItem
 
 
@@ -47,6 +48,57 @@ class SignupSerializer(serializers.Serializer):
         style={"input_type": "password"}, trim_whitespace=False, min_length=8
     )
     org_name = serializers.CharField(max_length=255)
+
+
+# ── Invitations + accept + reset (P4.7-T3) ──────────────────────────
+class GrantSerializer(serializers.Serializer):
+    """One queued membership on an invitation: a project + a role."""
+
+    project_id = serializers.UUIDField()
+    role = serializers.ChoiceField(choices=Role.choices)
+
+
+class InvitationCreateSerializer(serializers.Serializer):
+    """Input for POST /api/invitations/ (admin)."""
+
+    email = serializers.EmailField()
+    name = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
+    grants = GrantSerializer(many=True, required=False, default=list)
+
+
+class InvitationSerializer(serializers.ModelSerializer):
+    """Read shape for an invitation (never exposes the token/hash)."""
+
+    class Meta:
+        model = Invitation
+        fields = ["id", "email", "name", "status", "grants", "expires_at",
+                  "accepted_at", "created_at"]
+        read_only_fields = fields
+
+
+class AcceptInvitationSerializer(serializers.Serializer):
+    """Input for POST /api/auth/accept-invitation."""
+
+    token = serializers.CharField()
+    password = serializers.CharField(
+        style={"input_type": "password"}, trim_whitespace=False, min_length=8
+    )
+    name = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+
+class RequestResetSerializer(serializers.Serializer):
+    """Input for POST /api/auth/request-reset."""
+
+    email = serializers.EmailField()
+
+
+class ResetSerializer(serializers.Serializer):
+    """Input for POST /api/auth/reset."""
+
+    token = serializers.CharField()
+    password = serializers.CharField(
+        style={"input_type": "password"}, trim_whitespace=False, min_length=8
+    )
 
 
 # ── Project + Profile ───────────────────────────────────────────────
