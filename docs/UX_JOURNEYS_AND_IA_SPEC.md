@@ -341,16 +341,20 @@ All eight are locked. The journeys above assume these resolutions.
 
 Already exist (wire UI only): tenant/project create, profile, work items, planning-phase trigger, clarifications create/answer, gates decide, artifacts/trace read, companion enroll (`POST /runners/`), source-doc upload+adopt, atlassian register, runner work/report seam.
 
-**Need new backend (REST/auth) to fully realize the journeys:**
-- Real **auth**: signup, login/logout, invitations, password reset, session (J1–J4).
-- **Tenant-admin** concept + **user/role management REST** (J6).
-- **Integrations management REST** + secure credentials + test-connection (J9).
-- **Repositories REST** (J10).
-- **Brownfield onboarding REST**: code-intel index trigger, **gap report**, resume (J17 d–f).
-- **API-contract / drift REST** (J18).
-- **Criteria-gate** data on approvals (J15).
-- **Artifact preview** read-through endpoint (J19).
-- Trigger must **carry the acting user** so phases route to *their* companion (req #1) — partially wired server-side; ensure the authenticated user is the actor.
+**Phase 4.7 backend status (updated after P4.7-T1…T11 + the acceptance slice):**
+- ✅ **Closed — Real auth**: signup, login/logout, invitations, password reset, session (J1–J4). *(P4.7-T1/T2/T3.)*
+- ✅ **Closed — Tenant-admin** concept + **user/role management REST** (J6). *(P4.7-T4; two-tier admin — tenant-admin + project-admin, both can approve any gate.)*
+- ✅ **Closed — Trigger carries the acting user** so phases route to *their* companion (req #1). *(P4.7-T5 — `resolve_actor`: the session user wins over any hand-entered `user_id`.)*
+- ✅ **Closed — Integrations management REST** + secure credentials + test-connection (J9). *(P4.7-T6.)*
+- ✅ **Closed — Repositories REST** (J10). *(P4.7-T7.)*
+- ✅ **Closed — Brownfield onboarding REST**: code-intel index trigger, **gap report**, resume (J17 d–f). *(P4.7-T8 — code-intel accepts an already-computed result; real companion-side dispatch is a documented follow-up, not a UI-facing gap.)*
+- ✅ **Closed — API-contract / drift REST** (J18). *(P4.7-T9 — single contract per project today; a mockup showing multiple named contracts per project exceeds the current model, noted as a future enhancement.)*
+- ✅ **Closed — Artifact preview** read-through endpoint (J19). *(P4.7-T10 — S3 for internal drafts, live through DocStore/TaskTracker for confluence/jira, link-only otherwise; "versions" is a time-ordered revision list, not yet a true incrementing per-artifact version counter.)*
+- ✅ **Closed — Companion status + connect surface** (J5). *(P4.7-T11 — `GET /api/runners/` returns the session user's enrollments grouped by machine with online/offline derived from `last_seen`.)*
+- ✅ **Proven end-to-end** by the P4.7 acceptance slice (`backend/tests/test_acceptance_phase47.py`): signup → invite → accept → grant gate role → connect-machine → create project → trigger a phase (routes to the user's companion) → answer a clarification → decide a gate → preview the published artifact — **no shell/manage.py step** anywhere in the chain.
+
+**Still open (deferred to Phase 4.8 — design-sensitive, not a 4.7 REST-wrapping task):**
+- **Criteria-gate** data on approvals (J15) — a generalized criteria-checklist gate schema beyond the existing WCAG-only conditions, needed once S-22's checklist UI is built.
 
 ---
 
