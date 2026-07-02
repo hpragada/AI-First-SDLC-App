@@ -17,9 +17,14 @@ import { useCreateRunner, useRevokeRunner, useRunners } from "./hooks";
 // S-06 view states: not-started · token-generated (awaiting check-in) · connected · offline.
 export type ConnectView = "not-started" | "token-generated" | "connected" | "offline";
 
-const API_URL = "https://app.acme.com";
-const serveCmd = (token: string) =>
-  `python -m runner.companion serve --api-url ${API_URL} --token ${token}`;
+// The companion appends its own `/api/...` paths, so strip a trailing `/api` from the
+// browser API base to get the root the daemon expects.
+const API_ROOT = (import.meta.env.VITE_API_BASE ?? "http://localhost:8000/api").replace(
+  /\/api\/?$/,
+  "",
+);
+const serveCmd = (token: string, tenant: string) =>
+  `python -m runner.companion serve --api-url ${API_ROOT} --tenant ${tenant} --token ${token}`;
 
 export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
   const { currentUser } = useAuth();
@@ -28,6 +33,7 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
   const revokeRunner = useRevokeRunner();
   const [token, setToken] = useState<string | null>(null);
 
+  const tenantId = currentUser?.tenant.id ?? "";
   const runner = runners.data?.[0];
   const derived: ConnectView = runner?.online
     ? "connected"
@@ -112,7 +118,7 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
               terminal:
             </p>
             <div style={{ marginTop: "var(--space-3)" }}>
-              <CmdBlock rows={[serveCmd(shownToken)]} />
+              <CmdBlock rows={[serveCmd(shownToken, tenantId)]} />
             </div>
             <div className="gate-panel__actions">
               <Button variant="secondary" onClick={onGenerate}>
@@ -152,7 +158,7 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
                   <div className="vstep__title">Run these in your terminal</div>
                   <div className="vstep__desc">Leave the second command running in the background.</div>
                   <div style={{ marginTop: "var(--space-4)" }}>
-                    <CmdBlock rows={["claude", serveCmd(shownToken)]} />
+                    <CmdBlock rows={["claude", serveCmd(shownToken, tenantId)]} />
                   </div>
                 </div>
               </div>
@@ -209,7 +215,7 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
                   background.
                 </div>
                 <div style={{ marginTop: "var(--space-4)", opacity: 0.55 }}>
-                  <CmdBlock rows={["claude", "python -m runner.companion serve --api-url … --token …"]} />
+                  <CmdBlock rows={["claude", "python -m runner.companion serve --api-url … --tenant … --token …"]} />
                 </div>
                 <p className="field__help">Generate the token in Step A to reveal these commands.</p>
               </div>

@@ -39,6 +39,9 @@ def _enroll(args) -> int:
 
 def _run(args) -> int:
     task = BuildTask(**json.loads(open(args.task, encoding="utf-8").read()))
+    from .daemon import ensure_backend_importable
+
+    ensure_backend_importable()
     from drivers.claude_driver import ClaudeDriver
 
     driver = ClaudeDriver(body_loader=lambda spec: task.agent_body)

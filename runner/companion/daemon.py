@@ -75,9 +75,20 @@ def state_mcp_servers(*, api_url: str, tenant_id: str, token: str, run_id: str,
     }
 
 
+def ensure_backend_importable() -> None:
+    """Put the repo's `backend/` on sys.path so `drivers.*` resolves. The companion runs as
+    `python -m runner.companion` from the repo root, which only puts the root on the path —
+    the engine driver lives under `backend/`, so without this the lazy import below fails
+    with ModuleNotFoundError: No module named 'drivers'."""
+    backend = Path(__file__).resolve().parents[2] / "backend"
+    if backend.is_dir() and str(backend) not in sys.path:
+        sys.path.insert(0, str(backend))
+
+
 def _default_driver_factory(agent_body: str):
     """Build the real ClaudeDriver (imported lazily so the daemon only needs the engine SDK
     when it actually runs a phase). The body travels in the task (no DB on the dev machine)."""
+    ensure_backend_importable()
     from drivers.claude_driver import ClaudeDriver
 
     return ClaudeDriver(body_loader=lambda spec: agent_body)
