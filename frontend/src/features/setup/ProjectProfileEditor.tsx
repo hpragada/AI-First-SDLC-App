@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 
 import { useAuth } from "../../auth/AuthContext";
 import { Button, Field, Panel, Textarea, Input } from "../../components/ui";
@@ -36,7 +36,7 @@ function toForm(p: ProjectProfile | null | undefined): FormState {
 
 export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView }) {
   const { selectedProject } = useAuth();
-  const projectId = selectedProject?.project;
+  const projectId = selectedProject?.project_id;
   const profile = useProfile(projectId);
   const save = useSaveProfile(projectId);
 

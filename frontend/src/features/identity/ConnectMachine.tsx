@@ -39,9 +39,9 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
   const shownToken = token ?? "rnr_3f9a…b2";
 
   const onGenerate = async () => {
-    const projects = currentUser?.memberships.map((m) => m.project) ?? [];
+    const projectId = currentUser?.memberships[0]?.project_id ?? "";
     try {
-      const issued = await createRunner.mutateAsync(projects);
+      const issued = await createRunner.mutateAsync({ project_id: projectId });
       setToken(issued.token);
     } catch {
       setToken("rnr_3f9a…b2");
@@ -172,7 +172,7 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
                   <Field label="Projects" style={{ marginBottom: "var(--space-3)" }}>
                     <select className="select" multiple size={2} aria-label="Projects">
                       {currentUser?.memberships.map((m) => (
-                        <option key={m.project} value={m.project}>
+                        <option key={m.project_id} value={m.project_id}>
                           {m.project_name}
                         </option>
                       )) ?? <option>Payment Gateway v2</option>}

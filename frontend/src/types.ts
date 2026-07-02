@@ -142,12 +142,28 @@ export interface TraceGraph {
   edges: TraceGraphEdge[];
 }
 
-// The four planning phases migrated in P0 (the acceptance slice).
-export const PLANNING_PHASES: { key: string; label: string }[] = [
-  { key: "01_ideation", label: "Ideation" },
-  { key: "02_requirements", label: "Requirements" },
-  { key: "03_prd", label: "PRD" },
-  { key: "04_architecture", label: "Architecture" },
+// All 16 active agent phases (matches ACTIVE_AGENT_CATALOG in backend/apps/registry/catalog.py).
+// Plan tier: onboarding/context setup (00_*) + strategy phases (01–04).
+// Build tier: implementation, quality, ops phases (05–12).
+// Used by PhaseConsole (legacy) and any component that needs the full static list.
+// For dynamic/tenant-specific ordering use GET /api/phases/ via usePhaseCatalog().
+export const PLANNING_PHASES: { key: string; label: string; tier: "plan" | "build" }[] = [
+  { key: "00_onboarding",                    label: "Onboarding",         tier: "plan" },
+  { key: "00b_context_bridge",               label: "Context Bridge",     tier: "plan" },
+  { key: "00c_intelligent_context_extractor",label: "Context Extraction", tier: "plan" },
+  { key: "01_ideation",                      label: "Ideation",           tier: "plan" },
+  { key: "02_requirements",                  label: "Requirements",       tier: "plan" },
+  { key: "03_prd",                           label: "PRD",                tier: "plan" },
+  { key: "04_architecture",                  label: "Architecture",       tier: "plan" },
+  { key: "05_ux_design",                     label: "UX Design",          tier: "build" },
+  { key: "06_task_breakdown",                label: "Task Breakdown",     tier: "build" },
+  { key: "07_implementation",                label: "Implementation",     tier: "build" },
+  { key: "08_code_review",                   label: "Code Review",        tier: "build" },
+  { key: "09_testing",                       label: "Testing",            tier: "build" },
+  { key: "09b_test_automation",              label: "Test Automation",    tier: "build" },
+  { key: "10_security",                      label: "Security",           tier: "build" },
+  { key: "11_cicd",                          label: "CI/CD",              tier: "build" },
+  { key: "12_deployment",                    label: "Deployment",         tier: "build" },
 ];
 
 // Phase 4.8 auth/session surface. Tenant comes from the authenticated session;
@@ -159,18 +175,19 @@ export interface User {
   is_tenant_admin?: boolean;
 }
 
+// Backend returns { project_id, project_name, role } — no top-level id field.
 export interface Membership {
-  id: string;
-  project: string;
+  project_id: string;
   project_name: string;
   role: string;
 }
 
+// isAdmin is NOT a top-level field in the backend response — it lives in user.is_tenant_admin.
+// AuthContext derives context.isAdmin from that field.
 export interface CurrentUser {
   user: User;
   tenant: Tenant;
   memberships: Membership[];
-  isAdmin: boolean;
 }
 
 export interface LoginRequest {
@@ -246,9 +263,10 @@ export interface RoleCoverage {
 }
 
 // Companion enrollments (S-05 tick, S-06 connect-machine).
+// Backend groups by machine label; each project entry uses project_id/project_name.
 export interface RunnerProject {
-  id: string;
-  name: string;
+  project_id: string;
+  project_name: string;
 }
 
 export interface Runner {

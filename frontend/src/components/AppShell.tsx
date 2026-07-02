@@ -150,11 +150,11 @@ export function AppShell() {
           <select
             className="switcher"
             aria-label="Switch project"
-            value={selectedProject?.project ?? ""}
+            value={selectedProject?.project_id ?? ""}
             onChange={(event) => setSelectedProjectId(event.target.value)}
           >
             {currentUser?.memberships.map((membership) => (
-              <option key={membership.id} value={membership.project}>{membership.project_name}</option>
+              <option key={membership.project_id} value={membership.project_id}>{membership.project_name}</option>
             ))}
             {!currentUser?.memberships.length && <option>{project}</option>}
           </select>

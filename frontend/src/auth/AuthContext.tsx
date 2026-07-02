@@ -52,18 +52,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const selectedProject = useMemo(() => {
     if (!currentUser?.memberships.length) return null;
     return (
-      currentUser.memberships.find((membership) => membership.project === selectedProjectId) ??
+      currentUser.memberships.find((m) => m.project_id === selectedProjectId) ??
       currentUser.memberships[0]
     );
   }, [currentUser, selectedProjectId]);
 
   useEffect(() => {
-    if (selectedProject?.project) {
-      localStorage.setItem("selectedProjectId", selectedProject.project);
+    if (selectedProject?.project_id) {
+      localStorage.setItem("selectedProjectId", selectedProject.project_id);
     } else {
       localStorage.removeItem("selectedProjectId");
     }
-  }, [selectedProject?.project]);
+  }, [selectedProject?.project_id]);
 
   const loginMutation = useMutation({
     mutationFn: api.login,
@@ -104,7 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       currentUser,
       isLoading: meQuery.isLoading,
       isAuthenticated: Boolean(currentUser),
-      isAdmin: Boolean(currentUser?.isAdmin),
+      isAdmin: Boolean(currentUser?.user.is_tenant_admin),
       selectedProject,
       setSelectedProjectId,
       login,

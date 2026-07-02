@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
@@ -55,7 +55,7 @@ function WiCard({ card }: { card: WorkItemCard }) {
 
 export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
   const { selectedProject } = useAuth();
-  const projectId = selectedProject?.project;
+  const projectId = selectedProject?.project_id;
   const [level, setLevel] = useState<"all" | "epic" | "task" | "defect">("all");
   const [mode, setMode] = useState<"board" | "list">("board");
 

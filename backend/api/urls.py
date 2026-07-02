@@ -33,6 +33,7 @@ from .views import (
     EventViewSet,
     IntegrationViewSet,
     InvitationViewSet,
+    PhaseCatalogView,
     ProjectViewSet,
     RunViewSet,
     SourceDocumentViewSet,
@@ -60,6 +61,8 @@ router.register("drift", DriftRecordViewSet, basename="drift")
 
 urlpatterns = [
     path("tenants/", TenantCreateView.as_view(), name="tenant-create"),
+    # Phase catalog (S-18 trigger picker, gap C): tenant-scoped via session / header.
+    path("phases/", PhaseCatalogView.as_view(), name="phases"),
     # Server-session auth (P4.7-T1, DECISION-3). Tenant is resolved from the session
     # user by TenantContextMiddleware; the runner-token path is untouched.
     path("auth/signup/", SignupView.as_view(), name="auth-signup"),

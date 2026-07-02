@@ -1,4 +1,4 @@
-import { useAuth } from "../../auth/AuthContext";
+﻿import { useAuth } from "../../auth/AuthContext";
 import {
   Assess,
   Banner,
@@ -37,7 +37,7 @@ function rolesFor(user: AdminUser, projectId: string): Set<string> {
 
 export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
   const { selectedProject } = useAuth();
-  const projectId = selectedProject?.project;
+  const projectId = selectedProject?.project_id;
   const projectName = selectedProject?.project_name ?? "Payment Gateway v2";
   const users = useUsers();
   const coverage = useRoleCoverage(projectId);

@@ -348,13 +348,14 @@ def read_gap_report(*, tenant_id, project_id) -> dict | None:
     if report is None:
         return None
     ext = report.external_ref or {}
-    assessment = {"complete": "Complete", "partial": "Partial", "missing": "Missing"}
     return {
         "gap_report_id": str(report.id),
         "resume_phase": ext.get("resume_phase"),
         "intel_present": ext.get("intel_present", False),
         "phases": [
-            {"phase": p["phase"], "assessment": assessment.get(p["status"], p["status"]),
+            # assessment values are lowercase to match the frontend GapPhaseAssessment type:
+            # "complete" | "partial" | "missing"  (never capitalised in the REST response)
+            {"phase": p["phase"], "assessment": p["status"],
              "evidence": p.get("evidence", [])}
             for p in ext.get("phases", [])
         ],

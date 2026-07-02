@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+﻿import { useState, type FormEvent } from "react";
 
 import { ApiError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
@@ -77,7 +77,7 @@ function AddRepoForm({ projectId, dup }: { projectId: string | undefined; dup?: 
 
 export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
   const { selectedProject } = useAuth();
-  const projectId = selectedProject?.project;
+  const projectId = selectedProject?.project_id;
   const repos = useRepositories(projectId);
   const deleteRepo = useDeleteRepository(projectId);
   const [showAdd, setShowAdd] = useState(false);

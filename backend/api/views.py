@@ -14,6 +14,10 @@ from rest_framework.exceptions import NotFound, ParseError, PermissionDenied, Va
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from datetime import timedelta
+
+from django.utils import timezone
+
 from apps.clarifications.models import Clarification
 from apps.clarifications.services import (
     ClarificationError,
@@ -39,7 +43,7 @@ from apps.projects.repos import (
     require_repo_manage_role,
     set_default_repository,
 )
-from apps.registry.models import Artifact, TraceEdge
+from apps.registry.models import AgentSpec, Artifact, TraceEdge
 from apps.runs.models import Run
 from apps.tenancy.auth import IsAuthenticatedMember, IsTenantAdmin, current_user
 from apps.tenancy.models import Invitation, Membership, Tenant, User
@@ -173,6 +177,9 @@ class ProjectViewSet(
             return [IsAuthenticatedMember()]
         # API contracts & drift (P4.7-T9): any authenticated member may read.
         if self.action in {"api_contracts", "api_contract_detail", "drift"}:
+            return [IsAuthenticatedMember()]
+        # Dashboard rollup (S-31): authenticated member.
+        if self.action == "dashboard":
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
@@ -378,6 +385,87 @@ class ProjectViewSet(
         """GET the open drift queue with cross-repo change-impact (S-27 Drift queue tab)."""
         project = self.get_object()
         return Response(drift_queue(tenant_id=self.tenant_id, project_id=str(project.id)))
+
+    @action(detail=True, methods=["get"])
+    def dashboard(self, request, pk=None):
+        """S-31 dashboard rollup: needs-me items (pending gates, clarifications, my runs)
+        + health counters + recent publishes — all scoped to this project and current user."""
+        project = self.get_object()
+        user = current_user(request)
+        tid = self.tenant_id
+        one_week_ago = timezone.now() - timedelta(days=7)
+
+        pending_gates = (
+            Approval.objects.filter(tenant_id=tid, work_item__project=project, decision="pending")
+            .select_related("work_item")[:20]
+        )
+        pending_clarifications = (
+            Clarification.objects.filter(tenant_id=tid, work_item__project=project, status="pending")
+            .select_related("work_item")[:20]
+        )
+        my_runs = []
+        if user:
+            my_runs = list(
+                Run.objects.filter(
+                    tenant_id=tid, work_item__project=project,
+                    triggered_by=user, status__in=["running", "awaiting_gate"],
+                ).select_related("agent_spec")[:10]
+            )
+
+        recent_published = list(
+            Artifact.objects.filter(
+                tenant_id=tid, project=project,
+                status=Artifact.Status.PUBLISHED, created_at__gte=one_week_ago,
+            ).order_by("-created_at")[:5]
+        )
+
+        return Response({
+            "needs_me": {
+                "gates": [
+                    {
+                        "approval_id": str(a.id),
+                        "gate": a.gate_type,
+                        "work_item": str(a.work_item_id),
+                        "role": a.required_role,
+                    }
+                    for a in pending_gates
+                ],
+                "clarifications": [
+                    {
+                        "id": str(c.id),
+                        "work_item": str(c.work_item_id),
+                        "question": (c.questions[0]["text"] if c.questions else ""),
+                        "waiting_s": int((timezone.now() - c.created_at).total_seconds()),
+                    }
+                    for c in pending_clarifications
+                ],
+                "my_runs": [
+                    {
+                        "run_id": str(r.id),
+                        "phase": r.agent_spec.key if r.agent_spec_id else "",
+                        "work_item": str(r.work_item_id),
+                        "status": r.status,
+                    }
+                    for r in my_runs
+                ],
+            },
+            "health": {
+                "work_items": WorkItem.objects.filter(tenant_id=tid, project=project).count(),
+                "phases_in_progress": Run.objects.filter(
+                    tenant_id=tid, work_item__project=project, status="running"
+                ).count(),
+                "awaiting_gate": Approval.objects.filter(
+                    tenant_id=tid, work_item__project=project, decision="pending"
+                ).count(),
+                "published_week": Artifact.objects.filter(
+                    tenant_id=tid, project=project,
+                    status=Artifact.Status.PUBLISHED, created_at__gte=one_week_ago,
+                ).count(),
+            },
+            "recent_publishes": [
+                {"title": f"{a.type} — {a.phase}"} for a in recent_published
+            ],
+        })
 
     # ── Repositories (P4.7-T7, backs S-13) ───────────────────────────
     @action(detail=True, methods=["get", "post"])
@@ -678,8 +766,104 @@ class WorkItemViewSet(
             raise ValidationError(str(exc)) from exc
         return Response(out)
 
+    @action(detail=True, methods=["get"])
+    def lifecycle(self, request, pk=None):
+        """S-17 lifecycle rail: per-phase state derived from runs + pending gates/clarifications.
+        Tier is determined by work-item type; nodes come from the tenant's AgentSpec registry."""
+        work_item = self.get_object()
 
-# ── Runs (read-only) ────────────────────────────────────────────────
+        # Tier mapping by work-item type
+        tier_map = {"epic": "plan", "story": "plan", "task": "build", "defect": "remediation"}
+        tier = tier_map.get(work_item.type, "plan")
+
+        # All runs for this work-item indexed by agent_spec key
+        runs_by_key: dict[str, Run] = {}
+        for run in (
+            Run.objects.filter(tenant_id=self.tenant_id, work_item=work_item)
+            .select_related("agent_spec")
+            .order_by("-created_at")
+        ):
+            if run.agent_spec_id and run.agent_spec.key not in runs_by_key:
+                runs_by_key[run.agent_spec.key] = run
+
+        # Pending clarification and gate keys
+        clarification_run_ids = set(
+            Clarification.objects.filter(
+                tenant_id=self.tenant_id, work_item=work_item, status="pending"
+            ).values_list("run_id", flat=True)
+        )
+        gate_run_ids = set(
+            Approval.objects.filter(
+                tenant_id=self.tenant_id, work_item=work_item, decision="pending"
+            ).values_list("run_id", flat=True)
+        )
+
+        # Build nodes from the registered AgentSpecs for this tenant
+        specs = list(
+            AgentSpec.objects.filter(tenant_id=self.tenant_id).order_by("key")
+        )
+        # Fallback: full ACTIVE_AGENT_CATALOG when no specs are seeded yet
+        if not specs:
+            specs_data = [
+                {"key": d.key, "label": d.phase_label}
+                for d in _ACTIVE_CATALOG
+            ]
+        else:
+            specs_data = [{"key": s.key, "label": s.phase_label or s.key} for s in specs]
+
+        run_status_to_node_state = {
+            "running": "running",
+            "awaiting_gate": "awaiting_gate",
+            "approved": "done",
+            "completed": "done",
+            "rejected": "failed",
+            "failed": "failed",
+        }
+        nodes = []
+        for spec in specs_data:
+            key = spec["key"]
+            run = runs_by_key.get(key)
+            if run is None:
+                node_state = "not_started"
+                run_id = None
+            elif run.id in clarification_run_ids:
+                node_state = "needs_answer"
+                run_id = str(run.id)
+            elif run.id in gate_run_ids:
+                node_state = "awaiting_gate"
+                run_id = str(run.id)
+            else:
+                node_state = run_status_to_node_state.get(run.status, "running")
+                run_id = str(run.id)
+            nodes.append({
+                "phase": key,
+                "label": spec["label"],
+                "state": node_state,
+                "run_id": run_id,
+                "triggerable": node_state in ("not_started", "failed"),
+            })
+
+        # Children work-items
+        children = [
+            {"id": str(c.id), "title": c.title, "type": c.type, "phase": c.feature_stream}
+            for c in work_item.children.all()[:20]
+        ]
+        # Parent
+        parent = None
+        if work_item.parent_id:
+            p = work_item.parent
+            parent = {"id": str(p.id), "title": p.title}
+
+        return Response({
+            "tier": tier,
+            "nodes": nodes,
+            "loops": [],
+            "children": children,
+            "parent": parent,
+        })
+
+
+# ── Runs (read-only + transcript/takeover) ─────────────────────────
 class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = RunSerializer
     queryset = Run.objects.all().order_by("-created_at")
@@ -693,6 +877,63 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         if project:
             qs = qs.filter(work_item__project_id=project)
         return qs
+
+    @action(detail=True, methods=["get"])
+    def transcript(self, request, pk=None):
+        """S-33 run transcript: read-only replay of the agent conversation stored in
+        run.outputs. Returns an empty turns list when no transcript has been recorded yet."""
+        run = self.get_object()
+        # Prefetch agent_spec for key access (avoids extra query after get_object)
+        if run.agent_spec_id:
+            run.agent_spec  # noqa: B018 — triggers deferred FK load
+        outputs = run.outputs or {}
+        # Agent SDK stores the conversation under outputs["report"]["transcript"]
+        # or directly under outputs["transcript"] — check both.
+        report = outputs.get("report") or {}
+        raw_turns = (
+            report.get("transcript")
+            or outputs.get("transcript")
+            or []
+        )
+        turns = [
+            {
+                "role": t.get("role", "agent"),
+                "body": t.get("content") or t.get("body") or "",
+                "meta": t.get("meta"),
+            }
+            for t in raw_turns
+            if isinstance(t, dict)
+        ]
+        return Response({
+            "run_id": str(run.id),
+            "phase": run.agent_spec.key if run.agent_spec_id else "",
+            "engine": run.engine,
+            "cost": str(run.cost_usd) if run.cost_usd is not None else None,
+            "turns": turns,
+        })
+
+    @action(detail=True, methods=["post"], url_path="take-over")
+    def take_over(self, request, pk=None):
+        """S-32 offline takeover via run ID: delegates to the work-item's takeover service
+        (the run is the entry point the UI knows; the work-item owns the flag)."""
+        run = self.get_object()
+        try:
+            if request.data.get("release"):
+                out = release_takeover(
+                    tenant_id=self.tenant_id,
+                    work_item_id=str(run.work_item_id),
+                    actor=request.data.get("actor", "developer"),
+                )
+            else:
+                out = request_takeover(
+                    tenant_id=self.tenant_id,
+                    work_item_id=str(run.work_item_id),
+                    actor=request.data.get("actor", "developer"),
+                    reason=request.data.get("reason", ""),
+                )
+        except TakeoverError as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(out)
 
 
 # ── Artifacts (read-only — pointers/provenance) ─────────────────────
@@ -724,6 +965,27 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         if result is None:
             raise NotFound("artifact has no body to preview")
         return Response(result, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def publish(self, request, pk=None):
+        """S-34 manual gate-respecting publish (DECISION-8): only approved artifacts may be
+        pushed to a SoR. Never auto-publishes — a gate approval is the precondition (#5)."""
+        artifact = self.get_object()
+        if artifact.status != Artifact.Status.APPROVED:
+            raise ValidationError(
+                "Artifact must be gate-approved before publishing. "
+                f"Current status: {artifact.status}"
+            )
+        target_capability = request.data.get("target_capability", "internal")
+        destination = request.data.get("destination", "")
+        # Map capability string to SoR value if it matches a known choice
+        sor_values = {c.value for c in Artifact.SoR}
+        new_sor = target_capability if target_capability in sor_values else artifact.sor
+        artifact.status = Artifact.Status.PUBLISHED
+        artifact.sor = new_sor
+        artifact.save(update_fields=["status", "sor", "updated_at"])
+        sor_link = f"{destination.rstrip('/')}/{artifact.id}" if destination else None
+        return Response({"status": "published", "sor_link": sor_link})
 
 
 class TraceEdgeViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
@@ -765,6 +1027,31 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
                 qs = qs.filter(**{("run_id" if field == "run" else
                                    "work_item_id" if field == "work_item" else field): value})
         return qs
+
+    @action(detail=True, methods=["get"])
+    def criteria(self, request, pk=None):
+        """S-22 generalized criteria-gate checklist (DECISION-6): exposes the approval's
+        conditions JSONField as typed GateCriterion objects with computed approve_enabled."""
+        approval = self.get_object()
+        raw = approval.conditions or []
+        criteria_list = [
+            {
+                "id": c.get("key", str(i)),
+                "text": c.get("label", f"Criterion {i + 1}"),
+                "required": bool(c.get("required", True)),
+                "satisfied": bool(c.get("satisfied", False)),
+                "note": c.get("note"),
+            }
+            for i, c in enumerate(raw)
+        ]
+        met = sum(1 for c in criteria_list if c["satisfied"])
+        required_unmet = any(c for c in criteria_list if c["required"] and not c["satisfied"])
+        return Response({
+            "criteria": criteria_list,
+            "met": met,
+            "total": len(criteria_list),
+            "approve_enabled": approval.decision == "pending" and not required_unmet,
+        })
 
     @action(detail=True, methods=["post"])
     def decide(self, request, pk=None):
@@ -861,3 +1148,86 @@ class ClarificationViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         except ClarificationError as exc:
             raise ValidationError(str(exc)) from exc
         return Response(result, status=status.HTTP_200_OK)
+
+
+# ── Phase catalog (S-18 trigger picker, gap C) ──────────────────────
+from apps.registry.catalog import ACTIVE_AGENT_CATALOG as _ACTIVE_CATALOG
+from apps.registry.catalog import get_by_key as _catalog_get
+
+# Tier bucket membership — derived from ACTIVE_AGENT_CATALOG so it never drifts.
+# Plan  : onboarding/context phases (00_*) + strategy phases (01_–04_).
+# Build : implementation, quality, ops phases (05_–12_).
+# Remediation: reserved (none in current catalog — defect/hotfix phases added later).
+_PLAN_KEYS = frozenset(
+    d.key for d in _ACTIVE_CATALOG
+    if d.key[:2] in ("00", "01", "02", "03", "04")
+)
+_BUILD_KEYS = frozenset(
+    d.key for d in _ACTIVE_CATALOG
+    if d.key[:2] in ("05", "06", "07", "08", "09", "10", "11", "12")
+)
+
+
+def _catalog_entry(key: str, label: str, gate_role: str) -> dict:
+    return {"key": key, "label": label, "agent_key": key, "gate_role": gate_role}
+
+
+def _full_catalog_from_db(tenant_id: str) -> tuple[list, list, list]:
+    """Return (plan, build, remediation) lists built from the tenant's AgentSpec rows."""
+    plan: list[dict] = []
+    build: list[dict] = []
+    remediation: list[dict] = []
+    specs = list(AgentSpec.objects.filter(tenant_id=tenant_id).order_by("key"))
+    for s in specs:
+        defn = _catalog_get(s.key)
+        gate_role = defn.gate_role if defn else "product_owner"
+        entry = _catalog_entry(s.key, s.phase_label or s.key, gate_role)
+        if s.key in _PLAN_KEYS:
+            plan.append(entry)
+        elif s.key in _BUILD_KEYS:
+            build.append(entry)
+        else:
+            remediation.append(entry)
+    return plan, build, remediation
+
+
+def _full_catalog_from_code() -> tuple[list, list, list]:
+    """Fallback: build catalog from ACTIVE_AGENT_CATALOG when DB has no AgentSpecs yet."""
+    plan: list[dict] = []
+    build: list[dict] = []
+    for d in _ACTIVE_CATALOG:
+        entry = _catalog_entry(d.key, d.phase_label, d.gate_role)
+        if d.key in _PLAN_KEYS:
+            plan.append(entry)
+        elif d.key in _BUILD_KEYS:
+            build.append(entry)
+    return plan, build, []
+
+
+class PhaseCatalogView(APIView):
+    """GET /api/phases/ — tenant-scoped phase catalog (bucket B, gap C).
+
+    Returns plan / build / remediation buckets ordered by agent key. Each entry carries:
+    - ``agent_key``  – the value to send in the trigger POST body
+    - ``gate_role``  – the Membership role that must approve the phase gate
+
+    Source of truth is the tenant's AgentSpec rows (seeded by ``seed_agent_specs`` on
+    tenant creation). Falls back to the in-code ACTIVE_AGENT_CATALOG if the DB is empty
+    (e.g. test environments that skip the seed step).
+
+    Greenfield and brownfield share the same catalog: the 00_* onboarding agents are in
+    the plan bucket so brownfield projects can trigger them before ideation."""
+
+    permission_classes = []  # Allow-any; tenant resolved from session or X-Tenant-ID
+
+    def get(self, request):
+        tenant_id = getattr(request, "tenant_id", None)
+
+        if tenant_id:
+            plan, build, remediation = _full_catalog_from_db(tenant_id)
+            if not plan and not build and not remediation:
+                plan, build, remediation = _full_catalog_from_code()
+        else:
+            plan, build, remediation = _full_catalog_from_code()
+
+        return Response({"plan": plan, "build": build, "remediation": remediation})

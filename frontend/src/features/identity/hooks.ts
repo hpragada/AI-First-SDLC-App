@@ -39,7 +39,7 @@ export function useRunners(poll = false) {
 export function useCreateRunner() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (projects: string[]) => api.createRunner({ projects }),
+    mutationFn: (body: { project_id: string; label?: string }) => api.createRunner(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["runners"] }),
   });
 }

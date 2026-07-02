@@ -1,33 +1,72 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Banner, EmptyState, Field, Panel, Select, Table } from "../../components/ui";
+import { Badge, Banner, EmptyState, Field, Panel, Select, Spinner, Table } from "../../components/ui";
 import { useRunners } from "../identity/hooks";
-import { useRuns } from "./hooks";
-import type { Run } from "../../types";
+import { usePhaseCatalog, useRuns, useTriggerPhase, useWorkItems } from "./hooks";
+import type { PhaseCatalogEntry, Run } from "../../types";
 
 // S-18 view states: companion online + triggerable (default) · companion offline
 // (blocked) · no runs yet.
 export type PhasesRunsView = "online" | "offline" | "no-runs";
 
-const PHASE_PICKER = [
-  { label: "Ideation ✓", done: true },
-  { label: "Requirements ✓", done: true },
-  { label: "PRD ✓", done: true },
-  { label: "Run Architecture", primary: true },
-  { label: "UX Design" },
-  { label: "Task Breakdown" },
-];
-
 export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
   const { selectedProject } = useAuth();
-  const projectId = selectedProject?.project;
+  const projectId = selectedProject?.project_id;
   const runners = useRunners();
-  const runs = useRuns({ project: projectId });
+  const workItems = useWorkItems(projectId);
+  const catalog = usePhaseCatalog();
+  const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | undefined>();
+
+  const activeWorkItemId =
+    selectedWorkItemId ?? workItems.data?.[0]?.id;
+
+  const runs = useRuns({
+    project: forceView ? undefined : projectId,
+    work_item: forceView ? undefined : activeWorkItemId,
+  });
+  const trigger = useTriggerPhase(activeWorkItemId);
 
   const online = Boolean(runners.data?.some((r) => r.online));
   const view: PhasesRunsView =
-    forceView ?? (!online ? "offline" : (runs.data?.length ?? 0) === 0 ? "no-runs" : "online");
+    forceView ??
+    (!online ? "offline" : (runs.data?.length ?? 0) === 0 ? "no-runs" : "online");
+
+  // All phases from the live catalog: plan + build in order
+  const allPhases: PhaseCatalogEntry[] = [
+    ...(catalog.data?.plan ?? []),
+    ...(catalog.data?.build ?? []),
+    ...(catalog.data?.remediation ?? []),
+  ];
+
+  // Gallery fallback phases (used only when forceView is set)
+  const galleryPhases: PhaseCatalogEntry[] = [
+    { key: "01_ideation",     label: "Ideation",      agent_key: "01_ideation",     gate_role: "product_owner" },
+    { key: "02_requirements", label: "Requirements",  agent_key: "02_requirements", gate_role: "product_owner" },
+    { key: "03_prd",          label: "PRD",           agent_key: "03_prd",          gate_role: "product_owner" },
+    { key: "04_architecture", label: "Architecture",  agent_key: "04_architecture", gate_role: "architect" },
+    { key: "05_ux_design",    label: "UX Design",     agent_key: "05_ux_design",    gate_role: "designer" },
+    { key: "06_task_breakdown",label:"Task Breakdown", agent_key:"06_task_breakdown",gate_role:"tech_lead" },
+    { key: "07_implementation",label:"Implementation", agent_key:"07_implementation",gate_role:"tech_lead" },
+    { key: "08_code_review",  label: "Code Review",   agent_key: "08_code_review",  gate_role: "reviewer" },
+    { key: "09_testing",      label: "Testing",       agent_key: "09_testing",      gate_role: "qa_lead" },
+    { key: "10_security",     label: "Security",      agent_key: "10_security",     gate_role: "security_engineer" },
+    { key: "11_cicd",         label: "CI/CD",         agent_key: "11_cicd",         gate_role: "devops" },
+    { key: "12_deployment",   label: "Deployment",    agent_key: "12_deployment",   gate_role: "devops" },
+  ];
+
+  const phases = forceView ? galleryPhases : (allPhases.length > 0 ? allPhases : galleryPhases);
+
+  const handleTrigger = (agentKey: string) => {
+    if (!activeWorkItemId) return;
+    trigger.mutate(agentKey);
+  };
+
+  const activeWorkItem = workItems.data?.find((wi) => wi.id === activeWorkItemId);
+  const workItemLabel = activeWorkItem
+    ? `${activeWorkItem.id.slice(0, 8)} · ${activeWorkItem.title || activeWorkItem.type}`
+    : "No work item selected";
 
   return (
     <div className="canvas-pad">
@@ -50,12 +89,8 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
                 <Link to="/connect">Connect your machine ↗</Link>
               </Banner>
               <div className="phase-picker" style={{ opacity: 0.5, pointerEvents: "none" }}>
-                {PHASE_PICKER.slice(3).map((p) => (
-                  <button
-                    key={p.label}
-                    className={`btn btn--${p.primary ? "primary" : "secondary"} btn--sm`}
-                    aria-disabled="true"
-                  >
+                {phases.slice(3, 9).map((p) => (
+                  <button key={p.key} className="btn btn--secondary btn--sm" aria-disabled="true">
                     {p.label}
                   </button>
                 ))}
@@ -65,28 +100,81 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
             <div className="u-stack">
               <div className="u-row u-wrap">
                 <Field label="Work item" style={{ marginBottom: 0, minWidth: "280px" }}>
-                  <Select>
-                    <option>WI-492 · Stripe Webhook Integration (Epic)</option>
-                    <option>WI-540 · Verify Stripe signing secret (Task)</option>
-                  </Select>
+                  {forceView ? (
+                    <Select>
+                      <option>WI-492 · Stripe Webhook Integration (Epic)</option>
+                      <option>WI-540 · Verify Stripe signing secret (Task)</option>
+                    </Select>
+                  ) : (
+                    <Select
+                      value={activeWorkItemId ?? ""}
+                      onChange={(e) => setSelectedWorkItemId(e.target.value)}
+                    >
+                      {workItems.isLoading && <option disabled>Loading…</option>}
+                      {(workItems.data ?? []).map((wi) => (
+                        <option key={wi.id} value={wi.id}>
+                          {wi.id.slice(0, 8)} · {wi.title || wi.type}
+                        </option>
+                      ))}
+                      {!workItems.isLoading && (workItems.data?.length ?? 0) === 0 && (
+                        <option disabled>No work items yet</option>
+                      )}
+                    </Select>
+                  )}
                 </Field>
-                <span className="conn-status conn-status--connected" style={{ alignSelf: "flex-end" }}>
+                <span
+                  className="conn-status conn-status--connected"
+                  style={{ alignSelf: "flex-end" }}
+                >
                   Companion ready — {runners.data?.[0]?.machine ?? "Sarah's MacBook"}
                 </span>
               </div>
               <div>
-                <span className="field__label">Phases valid for this Epic</span>
-                <div className="phase-picker">
-                  {PHASE_PICKER.map((p) => (
+                <span className="field__label">
+                  {forceView
+                    ? "Phases valid for this Epic"
+                    : `All phases — ${workItemLabel}`}
+                </span>
+                {catalog.isLoading && !forceView && (
+                  <span className="u-muted t-sm" style={{ marginLeft: "var(--space-2)" }}>
+                    <Spinner /> Loading phases…
+                  </span>
+                )}
+                <div className="phase-picker" style={{ marginTop: "var(--space-3)" }}>
+                  {phases.map((p) => (
                     <button
-                      key={p.label}
-                      className={`btn btn--${p.primary ? "primary" : "secondary"} btn--sm`}
-                      disabled={p.done}
+                      key={p.key}
+                      className="btn btn--secondary btn--sm"
+                      disabled={
+                        forceView
+                          ? ["01_ideation", "02_requirements", "03_prd"].includes(p.key)
+                          : trigger.isPending || !activeWorkItemId
+                      }
+                      onClick={() => handleTrigger(p.agent_key)}
+                      title={`Trigger ${p.label} (gate: ${p.gate_role})`}
                     >
-                      {p.label}
+                      {trigger.isPending && trigger.variables === p.agent_key ? (
+                        <><Spinner /> Triggering…</>
+                      ) : (
+                        `▶ ${p.label}`
+                      )}
                     </button>
                   ))}
                 </div>
+                {trigger.isError && (
+                  <div style={{ marginTop: "var(--space-3)" }}>
+                    <Banner variant="danger" title="Trigger failed">
+                      {trigger.error instanceof Error ? trigger.error.message : "Unknown error"}
+                    </Banner>
+                  </div>
+                )}
+                {trigger.isSuccess && (
+                  <div style={{ marginTop: "var(--space-3)" }}>
+                    <Banner variant="success" title="Phase triggered">
+                      Run started — watch it appear in the Runs table below.
+                    </Banner>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -96,7 +184,11 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
       <Panel
         flush={view !== "no-runs"}
         title="Runs"
-        actions={<span className="t-sm u-muted">{view === "no-runs" ? "WI-508" : "WI-492"}</span>}
+        actions={
+          <span className="t-sm u-muted">
+            {forceView ? "WI-492" : (activeWorkItem?.title ?? activeWorkItemId?.slice(0, 8) ?? "—")}
+          </span>
+        }
       >
         {view === "no-runs" ? (
           <EmptyState
@@ -107,22 +199,12 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
           <Table
             headers={["Run", "Phase", "Status", "Engine / model", "Cost", "Workflow", "Created"]}
             rows={(runs.data ?? sampleRuns).map((r) => [
-              <span className="table__id" key="id">
-                {r.id}
-              </span>,
-              <span className="table__primary" key="p">
-                {r.agent_spec}
-              </span>,
-              <Badge variant={statusVariant(r.status)} key="s">
-                {r.status}
-              </Badge>,
+              <span className="table__id" key="id">{r.id}</span>,
+              <span className="table__primary" key="p">{r.agent_spec}</span>,
+              <Badge variant={statusVariant(r.status)} key="s">{r.status}</Badge>,
               `${r.engine} · ${r.model}`,
-              <span className="table__id" key="c">
-                {r.cost_usd ? `$${r.cost_usd}` : "—"}
-              </span>,
-              <span className="table__id" key="w">
-                {r.temporal_workflow_id}
-              </span>,
+              <span className="table__id" key="c">{r.cost_usd ? `$${r.cost_usd}` : "—"}</span>,
+              <span className="table__id" key="w">{r.temporal_workflow_id}</span>,
               r.created_at,
             ])}
           />
@@ -134,30 +216,16 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
 
 const sampleRuns: Run[] = [
   {
-    id: "RUN-42",
-    work_item: "WI-492",
-    agent_spec: "Architecture",
-    status: "gate",
-    engine: "Claude",
-    model: "local",
-    cost_usd: "0.31",
-    temporal_workflow_id: "wf-7c3a",
-    started_at: null,
-    ended_at: null,
-    created_at: "just now",
+    id: "RUN-42", work_item: "WI-492", agent_spec: "Architecture",
+    status: "gate", engine: "Claude", model: "local",
+    cost_usd: "0.31", temporal_workflow_id: "wf-7c3a",
+    started_at: null, ended_at: null, created_at: "just now",
   },
   {
-    id: "RUN-41",
-    work_item: "WI-492",
-    agent_spec: "PRD",
-    status: "done",
-    engine: "Claude",
-    model: "local",
-    cost_usd: "0.18",
-    temporal_workflow_id: "wf-6b21",
-    started_at: null,
-    ended_at: null,
-    created_at: "1h ago",
+    id: "RUN-41", work_item: "WI-492", agent_spec: "PRD",
+    status: "done", engine: "Claude", model: "local",
+    cost_usd: "0.18", temporal_workflow_id: "wf-6b21",
+    started_at: null, ended_at: null, created_at: "1h ago",
   },
 ];
 

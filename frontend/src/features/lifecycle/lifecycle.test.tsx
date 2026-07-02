@@ -82,7 +82,8 @@ describe("S-18 Phases & runs", () => {
   it("online · offline · no-runs", () => {
     const { rerender } = renderWithProviders(<PhasesAndRuns forceView="online" />);
     expect(screen.getByText("Trigger a phase")).toBeDefined();
-    expect(screen.getByText("Run Architecture")).toBeDefined();
+    // Gallery now shows all 16 phases as "▶ <Label>" buttons (not the old "Run Architecture")
+    expect(screen.getAllByText(/▶/).length).toBeGreaterThan(4);
 
     rerender(<PhasesAndRuns forceView="offline" />);
     expect(screen.getByText("Your machine isn't connected")).toBeDefined();

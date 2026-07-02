@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+﻿import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, EmptyState, Panel, Table } from "../../components/ui";
@@ -15,7 +15,7 @@ function statusBadge(status: string) {
 
 export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) {
   const { selectedProject } = useAuth();
-  const artifacts = useArtifacts({ project: selectedProject?.project });
+  const artifacts = useArtifacts({ project: selectedProject?.project_id });
   const list = artifacts.data ?? [];
   const view: ArtifactsView =
     forceView ?? (list.length === 0 && artifacts.isSuccess ? "empty" : "populated");

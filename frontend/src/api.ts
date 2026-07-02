@@ -60,10 +60,21 @@ interface ReqOpts {
   query?: Record<string, string | undefined>;
 }
 
+function getCsrfToken(): string {
+  if (typeof document === "undefined") return "";
+  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 async function req<T>(method: string, path: string, opts: ReqOpts = {}): Promise<T> {
   const headers: Record<string, string> = {};
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (opts.tenantId) headers["X-Tenant-ID"] = opts.tenantId;
+  // Django SessionAuthentication requires X-CSRFToken on all unsafe methods.
+  if (method !== "GET" && method !== "HEAD") {
+    const csrf = getCsrfToken();
+    if (csrf) headers["X-CSRFToken"] = csrf;
+  }
 
   let url = BASE + path;
   if (opts.query) {
@@ -128,8 +139,9 @@ export const api = {
     req<RoleCoverage>("GET", `/projects/${projectId}/role-coverage/`),
 
   // Phase 4.8 T2 — companion enrollments (4.7 T11). POST issues a one-time token.
+  // Backend groups enrollments by machine label on GET; POST binds developer_id from session.
   listRunners: () => req<Runner[]>("GET", "/runners/"),
-  createRunner: (body: { projects: string[] }) =>
+  createRunner: (body: { project_id: string; label?: string }) =>
     req<RunnerToken>("POST", "/runners/", { body }),
 
   // Phase 4.8 T3 — integrations management + secret store (4.7 T6). Session-derived
@@ -149,8 +161,13 @@ export const api = {
 
   // Phase 4.8 T3 — repositories (4.7 T7). Session-derived tenant; member-scoped reads,
   // tech_lead/admin writes.
-  listRepositories: (projectId: string) =>
-    req<Repository[]>("GET", `/projects/${projectId}/repositories/`),
+  // Backend wraps the list: { repo_topology, repositories: [...] } — unwrap here.
+  listRepositories: async (projectId: string): Promise<Repository[]> => {
+    const data = await req<{ repo_topology: string; repositories: Repository[] }>(
+      "GET", `/projects/${projectId}/repositories/`
+    );
+    return data.repositories;
+  },
   createRepository: (
     projectId: string,
     body: { name: string; role: string; base_branch: string },

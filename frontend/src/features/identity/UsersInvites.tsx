@@ -51,7 +51,7 @@ function InviteDrawer({
   const [email, setEmail] = useState(dup ? "sarah@acme.com" : "");
   const [name, setName] = useState("");
   const projectName = currentUser?.memberships[0]?.project_name ?? "Payment Gateway v2";
-  const projectId = currentUser?.memberships[0]?.project ?? "";
+  const projectId = currentUser?.memberships[0]?.project_id ?? "";
   const [role, setRole] = useState("engineer");
 
   const duplicate =
