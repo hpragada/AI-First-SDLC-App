@@ -39,6 +39,12 @@ export interface WorkItem {
   type: string;
   state: string;
   created_at: string;
+  title?: string;
+  description?: string;
+  parent?: string | null;
+  assignee?: string | null;
+  takeover_flag?: boolean;
+  external_ref?: { sor?: string; id?: string; key?: string; url?: string } | null;
 }
 
 export interface Run {
@@ -224,12 +230,14 @@ export interface InvitationGrant {
 export interface Invitation {
   id: string;
   email: string;
+  name?: string;
   status: string; // "pending" | "revoked" | "accepted" | "expired"
   expires_at: string;
   grants: InvitationGrant[];
 }
 
 export interface AdminUserMembership {
+  id: string;
   project_id: string;
   project_name: string;
   role: string;
@@ -415,26 +423,42 @@ export interface RunEvent {
 
 // ── Phase 4.8 T5 — brownfield onboarding + observability (4.7 T8/T9/T10 + bucket B) ──
 
-// Onboarding hub (S-24, 4.7-T8).
-export interface OnboardingDoc {
+// Source documents (S-25, spec §6). Mirrors `SourceDocumentSerializer` exactly.
+export interface SourceDocument {
   id: string;
-  name: string;
-  size_bytes: number;
-  status: "uploading" | "extracting" | "extracted" | "adopted";
-  progress?: number;
+  project: string;
+  filename: string;
+  mime: string;
+  status: "uploaded" | "extracting" | "extracted" | "adopted" | "failed";
+  extracted_artifact_ids: string[];
+  provenance: Record<string, unknown>;
+  created_at: string;
+}
+
+// Onboarding hub (S-24, 4.7-T8). Mirrors `integrations/onboarding.py::onboarding_hub()` exactly.
+export interface OnboardingUploadDoc {
+  id: string;
+  filename: string;
+  status: "uploaded" | "extracting" | "extracted" | "adopted" | "failed";
+}
+
+export interface OnboardingAdoptDoc {
+  id: string;
+  filename: string;
 }
 
 export interface OnboardingRegister {
-  docstore_space?: string;
-  tasktracker_project?: string;
-  linked_issues?: number;
+  docstore_connected: boolean;
+  tasktracker_connected: boolean;
+  pages_registered: number;
+  issues_registered: number;
 }
 
 export interface OnboardingHub {
-  upload: OnboardingDoc[];
-  adopt: OnboardingDoc[];
+  upload: OnboardingUploadDoc[];
+  adopt: OnboardingAdoptDoc[];
   register: OnboardingRegister;
-  index: { status: "not_started" | "running" | "done"; files_indexed?: number; total_files?: number };
+  index: { status: "not_started" | "indexed"; artifact_id?: string | null };
   gap: { ready: boolean; resume_phase?: string };
 }
 
@@ -451,12 +475,13 @@ export interface GapReport {
   blocking: string[];
 }
 
-// API contracts & drift (S-27, 4.7-T9).
+// API contracts & drift (S-27, 4.7-T9). Mirrors `integrations/api_contract.py::list_api_contracts`.
 export interface ApiContract {
   artifact_id: string;
   name: string;
-  version: string;
-  provider_repo: string;
+  version: number;
+  semver?: string | null;
+  provider_repo: string | null;
   status: string;
 }
 
@@ -465,29 +490,32 @@ export interface DriftImpact {
   repo_id: string;
 }
 
+// `detail` is DriftRecord.detail — a JSONField (hashes/semver/source), not a string.
 export interface DriftRecord {
   id: string;
   kind: string;
   required_role: string;
-  detail: string;
+  detail: Record<string, unknown>;
   impacted: DriftImpact[];
 }
 
-// Artifact preview read-through (S-29, 4.7-T10, DECISION-5).
+// Artifact preview read-through (S-29, 4.7-T10, DECISION-5). `versions` mirrors
+// `integrations/preview.py::_versions()` exactly — sibling registry rows, newest first.
 export interface ArtifactVersion {
-  version: string;
+  artifact_id: string;
+  version: number;
   status: string;
-  by: string;
-  when: string;
+  run_id: string | null;
+  created_at: string;
 }
 
 export interface ArtifactPreview {
   body: string | null;
   content_type: string;
   status: string;
-  version: string;
+  version: number;
   versions: ArtifactVersion[];
-  sor_link?: string;
+  sor_link?: string | null;
 }
 
 // Run transcript (S-33, new — DECISION-7).

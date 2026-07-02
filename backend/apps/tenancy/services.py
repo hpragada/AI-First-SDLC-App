@@ -240,7 +240,10 @@ _GATE_LABELS = {
 
 def _membership_summary(user: User) -> list[dict]:
     return [
-        {"project_id": str(m.project_id), "project_name": m.project.name, "role": m.role}
+        {
+            "id": str(m.id), "project_id": str(m.project_id),
+            "project_name": m.project.name, "role": m.role,
+        }
         for m in user.memberships.select_related("project").all()
     ]
 

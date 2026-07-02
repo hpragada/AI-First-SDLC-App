@@ -1,11 +1,142 @@
-import { Badge, Banner, Breadcrumb, Card, CardBody, DiagramFrame, DocPreview } from "../../components/ui";
+import { useParams } from "react-router-dom";
+
+import { Badge, Banner, Card, CardBody, Breadcrumb, DocPreview, Panel, Spinner } from "../../components/ui";
+import { useArtifactPreview } from "./hooks";
 
 // S-29 view states: markdown · diagram · external · body-unavailable.
 export type ArtifactPreviewView = "markdown" | "diagram" | "external" | "unavailable";
 
 export function ArtifactPreviewScreen({ forceView }: { forceView?: ArtifactPreviewView }) {
-  const view: ArtifactPreviewView = forceView ?? "markdown";
+  if (forceView) return <ArtifactPreviewGallery view={forceView} />;
+  return <ArtifactPreviewLive />;
+}
 
+// ── Live: the real artifact's read-through body + version history ──────────
+function ArtifactPreviewLive() {
+  const { id } = useParams();
+  const preview = useArtifactPreview(id);
+
+  if (preview.isLoading) {
+    return (
+      <div className="canvas-pad">
+        <Panel>
+          <Spinner /> Loading preview…
+        </Panel>
+      </div>
+    );
+  }
+
+  if (!preview.data) {
+    return (
+      <div className="canvas-pad">
+        <Breadcrumb items={[{ label: "Artifacts", href: "/artifacts" }, "Preview"]} />
+        <Panel>
+          <Banner variant="danger" title="Artifact not found">
+            This artifact doesn't exist, has no body, or you don't have access to it.
+          </Banner>
+        </Panel>
+      </div>
+    );
+  }
+
+  const data = preview.data;
+  const hasBody = Boolean(data.body);
+
+  return (
+    <div className="canvas-pad">
+      <Breadcrumb items={[{ label: "Artifacts", href: "/artifacts" }, "Preview"]} />
+
+      {hasBody ? (
+        <div className="grid grid--detail">
+          <div className="u-stack">
+            <div className="u-row">
+              <h1 className="t-h1">Artifact v{data.version}</h1>
+              <Badge variant={data.status === "published" ? "done" : data.status === "pending_gate" ? "gate" : "info-hue"}>
+                {data.status}
+              </Badge>
+              {data.sor_link && (
+                <>
+                  <span className="u-spacer" />
+                  <a className="sor-chip sor-chip--confluence" href={data.sor_link} target="_blank" rel="noreferrer">
+                    <span className="sor-chip__glyph">↗</span>Open source
+                  </a>
+                </>
+              )}
+            </div>
+            <Banner variant="info">Read-through from the system-of-record. This preview is never an editor.</Banner>
+            <DocPreview>
+              {data.content_type === "text/html" ? (
+                <div dangerouslySetInnerHTML={{ __html: data.body ?? "" }} />
+              ) : (
+                <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit" }}>{data.body}</pre>
+              )}
+            </DocPreview>
+          </div>
+          <Card>
+            <CardBody>
+              <h3 className="t-h3" style={{ marginBottom: "var(--space-2)" }}>
+                Version history
+              </h3>
+              {data.versions.length === 0 ? (
+                <p className="t-sm u-muted">No prior versions.</p>
+              ) : (
+                data.versions.map((v) => (
+                  <div className="version-row" key={v.artifact_id}>
+                    <span className="version-row__tag">v{v.version}</span>
+                    <span className="t-sm u-strong">{v.status}</span>
+                    <span className="u-spacer" />
+                    <span className="t-xs u-muted">{new Date(v.created_at).toLocaleDateString()}</span>
+                  </div>
+                ))
+              )}
+            </CardBody>
+          </Card>
+        </div>
+      ) : data.sor_link ? (
+        <Card>
+          <CardBody>
+            <div className="u-row">
+              <span className="artifact-row__icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M6 2h9l5 5v15H6z" />
+                </svg>
+              </span>
+              <div className="artifact-row__main">
+                <div className="artifact-row__title">Artifact v{data.version}</div>
+                <div className="artifact-row__meta">{data.status}</div>
+              </div>
+              <a className="sor-chip sor-chip--confluence" href={data.sor_link} target="_blank" rel="noreferrer">
+                <span className="sor-chip__glyph">↗</span>Open source
+              </a>
+            </div>
+            <div style={{ marginTop: "var(--space-3)" }}>
+              <Banner variant="info">
+                This artifact is owned by its system of record. Open it there for the live, editable copy.
+              </Banner>
+            </div>
+          </CardBody>
+        </Card>
+      ) : (
+        <div className="panel">
+          <div className="empty">
+            <svg className="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 8v5M12 16h.01" />
+            </svg>
+            <div className="empty__title">Preview unavailable</div>
+            <div className="empty__text">
+              The body couldn't be read from its source right now. The pointer and version are
+              intact.
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Gallery: fixed demo states for /dev/components + tests ─────────────────
+function ArtifactPreviewGallery({ view }: { view: ArtifactPreviewView }) {
   return (
     <div className="canvas-pad">
       <Breadcrumb items={[{ label: "Artifacts", href: "/artifacts" }, "Preview"]} />
@@ -83,13 +214,13 @@ export function ArtifactPreviewScreen({ forceView }: { forceView?: ArtifactPrevi
               <span className="sor-chip__glyph">F</span>Open in Figma
             </a>
           </div>
-          <DiagramFrame>
+          <div className="diagram-frame">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4">
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <path d="M3 9h18M9 21V9" />
             </svg>
             <span className="t-sm">Figma embed · System Sequence Diagram v0.9</span>
-          </DiagramFrame>
+          </div>
         </>
       )}
 

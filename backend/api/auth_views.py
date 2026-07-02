@@ -1,9 +1,11 @@
 """Auth endpoints (P4.7-T1): server-session login / logout / me (DECISION-3).
 
-Login establishes a Django session (cookie); thereafter `request.user` is set by
-`AuthenticationMiddleware` and the tenant is resolved from the user. The runner-token
-path is untouched (those views set their own `authentication_classes`). `/me` sets the
-CSRF cookie so the SPA can send `X-CSRFToken` on subsequent unsafe requests.
+Login establishes a Django session (cookie) and stashes `tenant_id` in the session data;
+`TenantContextMiddleware` reads that on every later request to scope RLS, and only then
+does `AuthenticationMiddleware` resolve `request.user` (see that middleware's docstring
+for why the ordering matters). The runner-token path is untouched (those views set their
+own `authentication_classes`). `/me` sets the CSRF cookie so the SPA can send
+`X-CSRFToken` on subsequent unsafe requests.
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.tenancy.auth import serialize_me
+from apps.tenancy.context import tenant_context
 from apps.tenancy.services import (
     InvitationError,
     ResetError,
@@ -52,8 +55,15 @@ class SignupView(APIView):
             user = signup(**ser.validated_data)
         except SignupError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
-        login(request, user, backend=_MODEL_BACKEND)
-        return Response(serialize_me(user), status=status.HTTP_201_CREATED)
+        # login() writes last_login via a signal, and serialize_me() reads memberships —
+        # both need the tenant RLS context, which signup()'s own tenant_context block has
+        # already exited by this point.
+        with tenant_context(user.tenant_id):
+            login(request, user, backend=_MODEL_BACKEND)
+            # TenantContextMiddleware reads this on every later request — see its docstring.
+            request.session["tenant_id"] = str(user.tenant_id)
+            body = serialize_me(user)
+        return Response(body, status=status.HTTP_201_CREATED)
 
 
 class LoginView(APIView):
@@ -77,8 +87,14 @@ class LoginView(APIView):
                 {"detail": "Invalid email or password."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
-        login(request, user)
-        return Response(serialize_me(user))
+        # login() writes last_login via a signal, and serialize_me() reads memberships —
+        # the pre-auth request has no tenant RLS context yet, so establish it explicitly.
+        with tenant_context(user.tenant_id):
+            login(request, user)
+            # TenantContextMiddleware reads this on every later request — see its docstring.
+            request.session["tenant_id"] = str(user.tenant_id)
+            body = serialize_me(user)
+        return Response(body)
 
 
 class AcceptInvitationView(APIView):
@@ -100,8 +116,12 @@ class AcceptInvitationView(APIView):
             )
         except InvitationError as exc:
             return Response({"detail": str(exc)}, status=exc.status)
-        login(request, user, backend=_MODEL_BACKEND)
-        return Response(serialize_me(user))
+        # Same tenant-context requirement as SignupView — see comment there.
+        with tenant_context(user.tenant_id):
+            login(request, user, backend=_MODEL_BACKEND)
+            request.session["tenant_id"] = str(user.tenant_id)
+            body = serialize_me(user)
+        return Response(body)
 
 
 class RequestResetView(APIView):

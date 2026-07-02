@@ -16,6 +16,7 @@ from rest_framework.views import APIView
 
 from datetime import timedelta
 
+from django.db.models import Count
 from django.utils import timezone
 
 from apps.clarifications.models import Clarification
@@ -107,6 +108,7 @@ from .serializers import (
     TenantSerializer,
     TraceEdgeSerializer,
     TriggerSerializer,
+    WorkItemPatchSerializer,
     WorkItemSerializer,
 )
 
@@ -184,7 +186,19 @@ class ProjectViewSet(
         return super().get_permissions()
 
     def perform_create(self, serializer):
-        serializer.save(tenant_id=self.tenant_id)
+        project = serializer.save(tenant_id=self.tenant_id)
+        # Any authenticated tenant member may create a project (see get_permissions above),
+        # but the frontend only ever offers a project as "selectable" via the creator's own
+        # Membership rows (there's no unscoped project-list call) — without this grant, the
+        # creator could never see or select the project they just made.
+        user = current_user(self.request)
+        if user is not None:
+            try:
+                grant_membership(
+                    tenant=project.tenant, project=project, user_id=str(user.id), role="admin",
+                )
+            except RoleError:
+                pass  # already holds the role somehow — not worth failing project creation over
 
     @action(detail=True, methods=["get", "post"])
     def memberships(self, request, pk=None):
@@ -697,19 +711,31 @@ class WorkItemViewSet(
     mixins.CreateModelMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
     viewsets.GenericViewSet,
 ):
     serializer_class = WorkItemSerializer
     queryset = WorkItem.objects.all().order_by("-created_at")
 
+    def get_serializer_class(self):
+        if self.action in ("update", "partial_update"):
+            return WorkItemPatchSerializer
+        return WorkItemSerializer
+
     def get_queryset(self):
         qs = super().get_queryset()
         project = self.request.query_params.get("project")
         state = self.request.query_params.get("state")
+        type_ = self.request.query_params.get("type")
+        parent = self.request.query_params.get("parent")
         if project:
             qs = qs.filter(project_id=project)
         if state:
             qs = qs.filter(state=state)
+        if type_:
+            qs = qs.filter(type=type_)
+        if parent:
+            qs = qs.filter(parent_id=parent)
         return qs
 
     def perform_create(self, serializer):
@@ -717,6 +743,64 @@ class WorkItemViewSet(
         if not Project.objects.filter(id=project_id, tenant_id=self.tenant_id).exists():
             raise ValidationError({"project": "unknown project for this tenant"})
         serializer.save(tenant_id=self.tenant_id, project_id=project_id)
+
+    def _card_fields(self, work_items):
+        """P4.8-T1 bucket-B gap B: artifact_count/owner/needs the board + detail cards render,
+        computed here rather than on the plain model serializer (they aren't columns). Keyed
+        by str(id) throughout — serializer output carries string ids, model FK attributes UUIDs."""
+        ids = [w.id for w in work_items]
+        counts = {
+            str(row["id"]): row["artifact_count"]
+            for row in WorkItem.objects.filter(tenant_id=self.tenant_id, id__in=ids)
+            .annotate(artifact_count=Count("runs__artifacts", distinct=True))
+            .values("id", "artifact_count")
+        }
+        needs_clarification = {
+            str(wid)
+            for wid in Clarification.objects.filter(
+                tenant_id=self.tenant_id, work_item_id__in=ids, status="pending"
+            ).values_list("work_item_id", flat=True)
+        }
+        needs_gate = {
+            str(a.work_item_id): a.gate_type
+            for a in Approval.objects.filter(
+                tenant_id=self.tenant_id, work_item_id__in=ids, decision="pending"
+            )
+        }
+        out = {}
+        for w in work_items:
+            wid = str(w.id)
+            if wid in needs_clarification:
+                needs = {"clarification": True, "label": "Needs answer"}
+            elif wid in needs_gate:
+                needs = {"gate": True, "label": f"{needs_gate[wid]} gate"}
+            else:
+                needs = None
+            out[wid] = {
+                "artifact_count": counts.get(wid, 0),
+                "owner": w.assignee.name if w.assignee_id else None,
+                "needs": needs,
+            }
+        return out
+
+    def list(self, request, *args, **kwargs):
+        qs = self.filter_queryset(self.get_queryset()).select_related("assignee")
+        page = self.paginate_queryset(qs)
+        work_items = page if page is not None else list(qs)
+        card_fields = self._card_fields(work_items)
+        data = WorkItemSerializer(work_items, many=True).data
+        empty_card = {"artifact_count": 0, "owner": None, "needs": None}
+        for row in data:
+            row.update(card_fields.get(row["id"], empty_card))
+        if page is not None:
+            return self.get_paginated_response(data)
+        return Response(data)
+
+    def retrieve(self, request, *args, **kwargs):
+        work_item = self.get_object()
+        data = WorkItemSerializer(work_item).data
+        data.update(self._card_fields([work_item])[str(work_item.id)])
+        return Response(data)
 
     @action(detail=True, methods=["post"])
     def trigger(self, request, pk=None):

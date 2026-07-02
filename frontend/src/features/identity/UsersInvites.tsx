@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 
 import { ApiError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
@@ -13,9 +14,10 @@ import {
   Panel,
   Table,
 } from "../../components/ui";
-import type { AdminUser } from "../../types";
+import type { AdminUser, Invitation } from "../../types";
 import {
   useCreateInvitation,
+  useInvitations,
   useResendInvitation,
   useRevokeInvitation,
   useUsers,
@@ -39,6 +41,14 @@ function membershipSummary(u: AdminUser) {
   return [u.is_tenant_admin ? "Tenant-admin" : null, roles].filter(Boolean).join(" · ");
 }
 
+function invitationGrantSummary(inv: Invitation, projectNames: Map<string, string>) {
+  // The backend normalizes grants down to {project_id, role} (no name) when an invitation
+  // is created — resolve against the projects this admin already knows about for display.
+  return inv.grants
+    .map((g) => `${g.role} @ ${g.project_name ?? projectNames.get(g.project_id) ?? g.project_id}`)
+    .join(" · ");
+}
+
 function InviteDrawer({
   dup,
   onClose,
@@ -50,12 +60,23 @@ function InviteDrawer({
   const createInvitation = useCreateInvitation();
   const [email, setEmail] = useState(dup ? "sarah@acme.com" : "");
   const [name, setName] = useState("");
-  const projectName = currentUser?.memberships[0]?.project_name ?? "Payment Gateway v2";
-  const projectId = currentUser?.memberships[0]?.project_id ?? "";
-  const [role, setRole] = useState("engineer");
+
+  const projects = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const m of currentUser?.memberships ?? []) seen.set(m.project_id, m.project_name);
+    return Array.from(seen, ([project_id, project_name]) => ({ project_id, project_name }));
+  }, [currentUser]);
+  const defaultProjectId = projects[0]?.project_id ?? "";
+  const [grants, setGrants] = useState([{ project_id: defaultProjectId, role: "engineer" }]);
 
   const duplicate =
     dup || (createInvitation.error instanceof ApiError && createInvitation.error.status === 409);
+
+  const updateGrant = (i: number, patch: Partial<{ project_id: string; role: string }>) =>
+    setGrants((g) => g.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
+
+  const addGrant = () =>
+    setGrants((g) => [...g, { project_id: defaultProjectId, role: "engineer" }]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -63,7 +84,7 @@ function InviteDrawer({
       await createInvitation.mutateAsync({
         email,
         name: name || undefined,
-        grants: projectId ? [{ project_id: projectId, role }] : undefined,
+        grants: grants.filter((g) => g.project_id).length ? grants.filter((g) => g.project_id) : undefined,
       });
       onClose();
     } catch {
@@ -116,23 +137,35 @@ function InviteDrawer({
             <div className="t-label" style={{ margin: "var(--space-4) 0 var(--space-2)" }}>
               Initial project & role grants
             </div>
-            <div className="u-row" style={{ gap: "var(--space-2)" }}>
-              <select className="select" aria-label="Project">
-                <option>{projectName}</option>
-              </select>
-              <select
-                className="select"
-                aria-label="Role"
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-              >
-                <option value="engineer">engineer</option>
-                <option value="product_owner">product_owner</option>
-                <option value="architect">architect</option>
-                <option value="reviewer">reviewer</option>
-              </select>
-            </div>
-            <Button variant="ghost" size="sm" type="button" style={{ marginTop: "var(--space-3)" }}>
+            {grants.map((grant, i) => (
+              <div className="u-row" style={{ gap: "var(--space-2)", marginBottom: "var(--space-2)" }} key={i}>
+                <select
+                  className="select"
+                  aria-label="Project"
+                  value={grant.project_id}
+                  onChange={(e) => updateGrant(i, { project_id: e.target.value })}
+                >
+                  {projects.length === 0 && <option value="">No project</option>}
+                  {projects.map((p) => (
+                    <option key={p.project_id} value={p.project_id}>
+                      {p.project_name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="select"
+                  aria-label="Role"
+                  value={grant.role}
+                  onChange={(e) => updateGrant(i, { role: e.target.value })}
+                >
+                  <option value="engineer">engineer</option>
+                  <option value="product_owner">product_owner</option>
+                  <option value="architect">architect</option>
+                  <option value="reviewer">reviewer</option>
+                </select>
+              </div>
+            ))}
+            <Button variant="ghost" size="sm" type="button" onClick={addGrant} style={{ marginTop: "var(--space-1)" }}>
               + Add another grant
             </Button>
           </>
@@ -143,47 +176,71 @@ function InviteDrawer({
 }
 
 export function UsersInvites({ forceView }: { forceView?: UsersView }) {
+  const { currentUser } = useAuth();
   const users = useUsers();
+  const invitations = useInvitations();
   const resend = useResendInvitation();
   const revoke = useRevokeInvitation();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const list = users.data ?? [];
+  // GET /users/ only ever returns accepted accounts — pending invites are a separate
+  // resource (GET /invitations/) that has to be merged in for the table to be honest
+  // about who's been invited and hasn't joined yet.
+  const pendingInvites = (invitations.data ?? []).filter((i) => i.status === "pending");
+  const projectNames = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of currentUser?.memberships ?? []) map.set(m.project_id, m.project_name);
+    for (const u of list) for (const m of u.memberships) map.set(m.project_id, m.project_name);
+    return map;
+  }, [currentUser, list]);
   const view: UsersView =
     forceView ??
-    (drawerOpen ? "invite-drawer" : list.length <= 1 && users.isSuccess ? "empty" : "populated");
+    (drawerOpen
+      ? "invite-drawer"
+      : list.length <= 1 && pendingInvites.length === 0 && users.isSuccess
+        ? "empty"
+        : "populated");
 
-  const rows = list.map((u) => {
-    const pending = u.status !== "active";
-    const cells = [
+  const activeRows = list.map((u) => [
+    <div className="u-row-tight" key="n">
+      <Avatar size="sm">{u.name ? initials(u.name) : u.email[0]?.toUpperCase()}</Avatar>
+      <span className="table__primary">{u.name || u.email}</span>
+    </div>,
+    u.email,
+    <Badge variant="done" key="s">
+      Active
+    </Badge>,
+    membershipSummary(u),
+    <Link to="/admin/roles" className="btn btn--ghost btn--sm" key="a">
+      Manage
+    </Link>,
+  ]);
+
+  const pendingRows = pendingInvites.map((inv) => ({
+    cells: [
       <div className="u-row-tight" key="n">
-        <Avatar size="sm">{u.name ? initials(u.name) : u.email[0]?.toUpperCase()}</Avatar>
-        <span className="table__primary">{u.name || u.email}</span>
+        <Avatar size="sm">{inv.name ? initials(inv.name) : inv.email[0]?.toUpperCase()}</Avatar>
+        <span className="table__primary">{inv.name || inv.email}</span>
       </div>,
-      u.email,
-      pending ? (
-        <Badge variant="gate">Invited · pending</Badge>
-      ) : (
-        <Badge variant="done">Active</Badge>
-      ),
-      membershipSummary(u),
-      pending ? (
-        <span className="u-row-tight">
-          <Button variant="ghost" size="sm" onClick={() => resend.mutate(u.id)}>
-            Resend
-          </Button>
-          <Button variant="danger" size="sm" onClick={() => revoke.mutate(u.id)}>
-            Revoke
-          </Button>
-        </span>
-      ) : (
-        <Button variant="ghost" size="sm">
-          Manage
+      inv.email,
+      <Badge variant="gate" key="s">
+        Invited · pending
+      </Badge>,
+      invitationGrantSummary(inv, projectNames),
+      <span className="u-row-tight" key="a">
+        <Button variant="ghost" size="sm" onClick={() => resend.mutate(inv.id)}>
+          Resend
         </Button>
-      ),
-    ];
-    return pending ? { cells, style: { background: "var(--warning-bg)" } } : cells;
-  });
+        <Button variant="danger" size="sm" onClick={() => revoke.mutate(inv.id)}>
+          Revoke
+        </Button>
+      </span>,
+    ],
+    style: { background: "var(--warning-bg)" },
+  }));
+
+  const rows = [...pendingRows, ...activeRows];
 
   return (
     <div className="canvas-pad">

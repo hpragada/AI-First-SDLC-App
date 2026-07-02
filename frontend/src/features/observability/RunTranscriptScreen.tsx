@@ -1,16 +1,151 @@
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
-import { Badge, Banner, Breadcrumb, EmptyState, Panel, Table, Transcript, Turn } from "../../components/ui";
+import { useAuth } from "../../auth/AuthContext";
+import { Badge, Banner, Breadcrumb, EmptyState, Panel, Spinner, Table, Transcript, Turn } from "../../components/ui";
+import { useRuns } from "../lifecycle/hooks";
 import { useRunTranscript } from "./hooks";
 
 // S-33 view states: runs-list (no run selected) · transcript · empty.
 export type TranscriptView = "runs-list" | "transcript" | "empty";
 
 export function RunTranscriptScreen({ forceView }: { forceView?: TranscriptView }) {
-  const { id } = useParams();
-  const transcript = useRunTranscript(id ?? (forceView === "transcript" ? "RUN-42" : undefined));
-  const view: TranscriptView = forceView ?? (id ? "transcript" : "runs-list");
+  if (forceView) return <RunTranscriptGallery view={forceView} />;
+  return <RunTranscriptLive />;
+}
 
+// ── Live: the real completed-runs list, or a real run's transcript ─────────
+function RunTranscriptLive() {
+  const { id } = useParams();
+  const { selectedProject } = useAuth();
+  const projectId = selectedProject?.project_id;
+  const runs = useRuns({ project: id ? undefined : projectId });
+  const transcript = useRunTranscript(id);
+
+  if (id) {
+    if (transcript.isLoading) {
+      return (
+        <div className="canvas-pad">
+          <Panel>
+            <Spinner /> Loading transcript…
+          </Panel>
+        </div>
+      );
+    }
+    if (!transcript.data) {
+      return (
+        <div className="canvas-pad">
+          <Breadcrumb items={[{ label: "Phases & Runs", href: "/runs" }, "Transcripts"]} />
+          <Panel>
+            <Banner variant="danger" title="Transcript not found">
+              This run doesn't exist or you don't have access to it.
+            </Banner>
+          </Panel>
+        </div>
+      );
+    }
+    const data = transcript.data;
+    return (
+      <div className="canvas-pad">
+        <Breadcrumb items={[{ label: "Phases & Runs", href: "/runs" }, "Transcripts"]} />
+        <div className="page-head">
+          <div className="page-head__titles">
+            <h1 className="t-h1">Run transcripts</h1>
+            <p className="page-head__sub">
+              Read-only replay of each run — agent turns, tool calls, and the Q&amp;A. Stored for
+              provenance; never editable.
+            </p>
+          </div>
+        </div>
+        <Panel
+          title={`${data.run_id} · ${data.phase}`}
+          actions={
+            <>
+              <span className="meta-item">
+                Engine <strong>{data.engine}</strong>
+              </span>
+              <Badge variant="done">{data.cost ? `$${data.cost}` : "—"}</Badge>
+            </>
+          }
+        >
+          {data.turns.length === 0 ? (
+            <EmptyState title="No transcript recorded" text="This run has no captured conversation yet." />
+          ) : (
+            <Transcript>
+              {data.turns.map((t, i) => (
+                <Turn role={t.role} key={i}>
+                  {t.body}
+                  {t.meta ? ` (${t.meta})` : ""}
+                </Turn>
+              ))}
+            </Transcript>
+          )}
+          <Banner variant="info" title="">
+            Read-only replay — transcripts are stored for provenance and cannot be edited.
+          </Banner>
+        </Panel>
+      </div>
+    );
+  }
+
+  const completed = (runs.data ?? []).filter((r) => r.status === "completed" || r.status === "approved");
+
+  return (
+    <div className="canvas-pad">
+      <Breadcrumb items={[{ label: "Phases & Runs", href: "/runs" }, "Transcripts"]} />
+      <div className="page-head">
+        <div className="page-head__titles">
+          <h1 className="t-h1">Run transcripts</h1>
+          <p className="page-head__sub">
+            Read-only replay of each run — agent turns, tool calls, and the Q&amp;A. Stored for
+            provenance; never editable.
+          </p>
+        </div>
+      </div>
+
+      {runs.isLoading ? (
+        <Panel>
+          <Spinner /> Loading runs…
+        </Panel>
+      ) : completed.length === 0 ? (
+        <Panel>
+          <EmptyState
+            title="No transcripts yet"
+            text="Once you run a phase, its full session is captured here for read-only replay."
+          />
+        </Panel>
+      ) : (
+        <Panel flush>
+          <Table
+            headers={["Run", "Phase", "Work item", "Status", "Cost", ""]}
+            rows={completed.map((r) => [
+              <span className="table__id" key="r">
+                {r.id.slice(0, 8)}
+              </span>,
+              <span className="table__primary" key="p">
+                {r.agent_spec}
+              </span>,
+              <span className="table__id" key="w">
+                {r.work_item.slice(0, 8)}
+              </span>,
+              <Badge variant="done" key="s">
+                {r.status}
+              </Badge>,
+              <span className="table__id" key="c">
+                {r.cost_usd ? `$${r.cost_usd}` : "—"}
+              </span>,
+              <Link to={`/transcripts/${r.id}`} className="btn btn--ghost btn--sm" key="a">
+                Open transcript
+              </Link>,
+            ])}
+          />
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+// ── Gallery: fixed demo states for /dev/components + tests ─────────────────
+function RunTranscriptGallery({ view }: { view: TranscriptView }) {
   return (
     <div className="canvas-pad">
       <Breadcrumb items={[{ label: "Phases & Runs", href: "/runs" }, "Transcripts"]} />
@@ -87,7 +222,7 @@ export function RunTranscriptScreen({ forceView }: { forceView?: TranscriptView 
 
       {view === "transcript" && (
         <Panel
-          title={`${transcript.data?.run_id ?? "RUN-42"} · ${transcript.data?.phase ?? "Architecture"} · WI-492`}
+          title="RUN-42 · Architecture · WI-492"
           actions={
             <>
               <span className="meta-item">

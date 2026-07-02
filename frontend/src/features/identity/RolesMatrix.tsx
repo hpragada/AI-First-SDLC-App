@@ -1,4 +1,7 @@
-﻿import { useAuth } from "../../auth/AuthContext";
+﻿import { useState } from "react";
+
+import { ApiError } from "../../api";
+import { useAuth } from "../../auth/AuthContext";
 import {
   Assess,
   Banner,
@@ -9,7 +12,7 @@ import {
   Table,
 } from "../../components/ui";
 import type { AdminUser } from "../../types";
-import { useRoleCoverage, useSetMembership, useUsers } from "./hooks";
+import { useRevokeMembership, useRoleCoverage, useSetMembership, useSetTenantAdmin, useUsers } from "./hooks";
 
 // S-08 view states: gap-warning · saving · last-admin-guard.
 export type RolesView = "gap-warning" | "saving" | "last-admin-guard";
@@ -27,12 +30,13 @@ const ROLE_COLS: { key: string; short: string }[] = [
   { key: "admin", short: "Admin" },
 ];
 
-function rolesFor(user: AdminUser, projectId: string): Set<string> {
-  const roles = new Set(
-    user.memberships.filter((m) => m.project_id === projectId).map((m) => m.role),
-  );
-  if (user.is_tenant_admin) roles.add("admin");
-  return roles;
+// role → membership id, for this project only — needed to revoke a specific grant.
+function membershipMapFor(user: AdminUser, projectId: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const m of user.memberships) {
+    if (m.project_id === projectId) map.set(m.role, m.id);
+  }
+  return map;
 }
 
 export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
@@ -42,15 +46,45 @@ export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
   const users = useUsers();
   const coverage = useRoleCoverage(projectId);
   const setMembership = useSetMembership(projectId);
+  const revokeMembership = useRevokeMembership(projectId);
+  const setTenantAdmin = useSetTenantAdmin();
+  const [guardOpen, setGuardOpen] = useState(false);
 
-  const view: RolesView = forceView ?? (setMembership.isPending ? "saving" : "gap-warning");
+  const view: RolesView =
+    forceView ??
+    (guardOpen
+      ? "last-admin-guard"
+      : setMembership.isPending || revokeMembership.isPending || setTenantAdmin.isPending
+        ? "saving"
+        : "gap-warning");
 
   const list = users.data ?? [];
   const blockedRoles = coverage.data?.roles.filter((r) => r.gate_blocked) ?? [];
 
+  const toggleRole = (u: AdminUser, roleKey: string) => {
+    if (roleKey === "admin") {
+      setTenantAdmin.mutate(
+        { userId: u.id, isTenantAdmin: !u.is_tenant_admin },
+        {
+          onError: (err) => {
+            if (err instanceof ApiError && err.status === 409) setGuardOpen(true);
+          },
+        },
+      );
+      return;
+    }
+    if (!projectId) return;
+    const membershipId = membershipMapFor(u, projectId).get(roleKey);
+    if (membershipId) {
+      revokeMembership.mutate(membershipId);
+    } else {
+      setMembership.mutate({ user_id: u.id, role: roleKey });
+    }
+  };
+
   const headers = ["User", ...ROLE_COLS.map((c) => <span title={c.key}>{c.short}</span>)];
   const rows = list.map((u) => {
-    const held = projectId ? rolesFor(u, projectId) : new Set<string>();
+    const membershipMap = projectId ? membershipMapFor(u, projectId) : new Map<string, string>();
     return [
       <span className="table__primary" key="u">
         {u.name}
@@ -59,10 +93,8 @@ export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
         <Switch
           key={c.key}
           label={`${u.name} — ${c.key}`}
-          checked={held.has(c.key)}
-          onChange={() =>
-            projectId && setMembership.mutate({ user_id: u.id, role: c.key })
-          }
+          checked={c.key === "admin" ? u.is_tenant_admin : membershipMap.has(c.key)}
+          onChange={() => toggleRole(u, c.key)}
         />
       )),
     ];
@@ -95,8 +127,12 @@ export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
             title="Can't remove the last admin"
             footer={
               <>
-                <Button variant="secondary">Cancel</Button>
-                <Button variant="primary">Promote a member</Button>
+                <Button variant="secondary" onClick={() => setGuardOpen(false)}>
+                  Cancel
+                </Button>
+                <Button variant="primary" onClick={() => setGuardOpen(false)}>
+                  Promote a member
+                </Button>
               </>
             }
           >

@@ -38,10 +38,19 @@ RBAC + a secret store**; Phase 5 hardens them (vault, SoD, immutable audit).
 - **`CurrentUser` resolution.** Add a helper (`apps/tenancy/auth.py::current_user(request)`) plus DRF
   permissions `IsAuthenticatedMember` / `IsTenantAdmin`. Authenticated views resolve the **tenant from
   the user** (`user.tenant_id`), NOT the `X-Tenant-ID` header.
-- **`TenantContextMiddleware` precedence (the one cross-cutting change):** if an authenticated session
-  user exists → set `request.tenant_id` + the RLS GUC from `user.tenant_id`; **else** fall back to the
-  `X-Tenant-ID` header (preserves runner/pre-auth/test paths). This is the single seam that flips the
-  app from header-scoped to user-scoped; everything else inherits it.
+- **`TenantContextMiddleware` precedence (the one cross-cutting change) — corrected 2026-07-02,
+  see `/docs/decisions/0002-rls-tenant-bootstrap-session.md`:** the original wording here ("if an
+  authenticated session user exists → set the RLS GUC from `user.tenant_id`") is circular under
+  the real `sdlc_app` RLS-enforced role: resolving `request.user` itself requires querying the
+  RLS-protected `tenancy_user` table, which needs `app.tenant_id` already set — a bug the test
+  suite couldn't catch because it runs against the RLS-bypassing Postgres superuser role. The
+  actual (fixed) precedence is: **read `request.session["tenant_id"]`** (set at login —
+  `api/auth_views.py`, no DB query needed) → **else** fall back to the `X-Tenant-ID` header
+  (preserves runner/pre-auth/test paths). `TenantContextMiddleware` now runs *before*
+  `AuthenticationMiddleware` in `config/settings.py::MIDDLEWARE` so `app.tenant_id` is set before
+  anything lazily resolves `request.user`. This is still the single seam that flips the app from
+  header-scoped to user-scoped; everything else inherits it. Any new code path that calls
+  `django.contrib.auth.login()` must also set `request.session["tenant_id"]` — see ADR 0002.
 - **Actor for actions:** `WorkItem.trigger`, gate `decide`, clarification `answer` take the **session
   user** as actor when present (T5); the `user_id` body param becomes optional/ignored under a session.
 

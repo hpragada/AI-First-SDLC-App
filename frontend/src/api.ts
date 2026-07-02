@@ -32,6 +32,7 @@ import type {
   RunnerToken,
   RunTranscript,
   SignupRequest,
+  SourceDocument,
   Tenant,
   TestConnectionResult,
   TraceEdge,
@@ -105,6 +106,22 @@ async function req<T>(method: string, path: string, opts: ReqOpts = {}): Promise
   return data as T;
 }
 
+async function uploadFile<T>(path: string, file: File): Promise<T> {
+  const headers: Record<string, string> = {};
+  const csrf = getCsrfToken();
+  if (csrf) headers["X-CSRFToken"] = csrf;
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(BASE + path, { method: "POST", headers, credentials: "include", body: form });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : undefined;
+  if (!res.ok) {
+    const msg = (data && (data.detail || JSON.stringify(data))) || `${res.status} ${res.statusText}`;
+    throw new ApiError(res.status, msg, data);
+  }
+  return data as T;
+}
+
 export const api = {
   // Auth (Phase 4.8 foundation): session cookies; tenant is server-derived.
   me: () => req<CurrentUser>("GET", "/auth/me/"),
@@ -122,6 +139,9 @@ export const api = {
 
   // Phase 4.8 T2 — admin: users, invitations, memberships, role coverage (4.7 T3/T4).
   listUsers: () => req<AdminUser[]>("GET", "/users/"),
+  // GET /users/ only ever returns accepted accounts — pending/revoked/expired invitations
+  // are a separate resource the Users & Invitations table also needs to render.
+  listInvitations: () => req<Invitation[]>("GET", "/invitations/"),
   createInvitation: (body: {
     email: string;
     name?: string;
@@ -137,12 +157,20 @@ export const api = {
     req<void>("DELETE", `/projects/${projectId}/memberships/${membershipId}/`),
   roleCoverage: (projectId: string) =>
     req<RoleCoverage>("GET", `/projects/${projectId}/role-coverage/`),
+  // PATCH /api/users/{id}/ — tenant-wide admin flag (separate from per-project role grants
+  // above). Backend 409s if this would leave the tenant with no admin.
+  setTenantAdmin: (userId: string, isTenantAdmin: boolean) =>
+    req<{ id: string; name: string; email: string; is_tenant_admin: boolean }>(
+      "PATCH", `/users/${userId}/`, { body: { is_tenant_admin: isTenantAdmin } },
+    ),
 
   // Phase 4.8 T2 — companion enrollments (4.7 T11). POST issues a one-time token.
   // Backend groups enrollments by machine label on GET; POST binds developer_id from session.
   listRunners: () => req<Runner[]>("GET", "/runners/"),
   createRunner: (body: { project_id: string; label?: string }) =>
     req<RunnerToken>("POST", "/runners/", { body }),
+  revokeRunner: (id: string) =>
+    req<{ id: string; status: string }>("POST", `/runners/${id}/revoke/`),
 
   // Phase 4.8 T3 — integrations management + secret store (4.7 T6). Session-derived
   // tenant; secrets are write-only and never appear in any response.
@@ -209,7 +237,13 @@ export const api = {
   createWorkItem: (
     tenantId: string,
     projectId: string,
-    data: { type: string; feature_stream?: string },
+    data: {
+      type: string;
+      title?: string;
+      description?: string;
+      feature_stream?: string;
+      parent?: string;
+    },
   ) => req<WorkItem>("POST", "/work-items/", { tenantId, body: { project: projectId, ...data } }),
   getWorkItem: (tenantId: string, workItemId: string) =>
     req<WorkItemCard>("GET", `/work-items/${workItemId}/`, { tenantId }),
@@ -247,7 +281,7 @@ export const api = {
     req<TraceGraph>("GET", `/projects/${projectId}/traceability/`, { tenantId }),
 
   // Gates.
-  listApprovals: (tenantId: string, q: { decision?: string } = {}) =>
+  listApprovals: (tenantId: string, q: { decision?: string; work_item?: string; run?: string } = {}) =>
     req<Approval[]>("GET", "/approvals/", { tenantId, query: q }),
   decideApproval: (
     tenantId: string,
@@ -256,7 +290,9 @@ export const api = {
       user_id?: string;
       decision: "approved" | "rejected";
       comment?: string;
-      satisfied?: Record<string, boolean>;
+      // Reviewer's checklist updates — matched server-side by `key` (== GateCriterion.id).
+      // Field name/shape must match `GateDecisionSerializer.conditions` exactly.
+      conditions?: { key: string; satisfied: boolean }[];
     },
   ) => req<Record<string, unknown>>("POST", `/approvals/${approvalId}/decide/`, { tenantId, body }),
 
@@ -282,6 +318,16 @@ export const api = {
   // Phase 4.8 T5 — brownfield onboarding (4.7 T8). Session-derived tenant.
   getOnboardingHub: (projectId: string) =>
     req<OnboardingHub>("GET", `/projects/${projectId}/onboarding/`),
+  onboardAtlassian: (projectId: string) =>
+    req<Record<string, unknown>>("POST", `/projects/${projectId}/onboard-atlassian/`),
+  listSourceDocuments: (projectId: string) =>
+    req<SourceDocument[]>("GET", `/projects/${projectId}/source-documents/`),
+  uploadSourceDocument: (projectId: string, file: File) =>
+    uploadFile<Record<string, unknown>>(`/projects/${projectId}/source-documents/`, file),
+  adoptSourceDocument: (sourceDocumentId: string, userId: string) =>
+    req<Record<string, unknown>>("POST", `/source-documents/${sourceDocumentId}/adopt/`, {
+      body: { user_id: userId },
+    }),
   startCodeIntel: (projectId: string, repoId: string) =>
     req<Record<string, unknown>>("POST", `/projects/${projectId}/code-intel/`, {
       body: { repo_id: repoId },
@@ -319,6 +365,9 @@ export const api = {
     req<DashboardRollup>("GET", `/projects/${projectId}/dashboard/`),
 
   // Offline takeover (S-32) — reuses GET /runners/ (4.7-T11) + existing take-over/.
-  takeOverRun: (tenantId: string, runId: string) =>
-    req<Record<string, unknown>>("POST", `/runs/${runId}/take-over/`, { tenantId }),
+  takeOverRun: (
+    tenantId: string,
+    runId: string,
+    body: { release?: boolean; actor?: string; reason?: string } = {},
+  ) => req<{ work_item_id: string; takeover: boolean }>("POST", `/runs/${runId}/take-over/`, { tenantId, body }),
 };

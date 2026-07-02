@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Button, Card, CardBody, Chip, ConnStatus, Spinner } from "../../components/ui";
+import { Badge, Button, Card, CardBody, Chip, ConnStatus, Panel, Spinner } from "../../components/ui";
+import { useOnboardAtlassian, useOnboardingHub, useRunGapReport } from "./hooks";
 
 // S-24 view states: nothing-done (resume=Ideation) · in-progress (extracting/
 // indexing) · gap-ready (resume=Architecture).
@@ -34,15 +35,183 @@ function Vstep({
 }
 
 export function OnboardingHub({ forceView }: { forceView?: OnboardingView }) {
+  if (forceView) return <OnboardingHubGallery view={forceView} />;
+  return <OnboardingHubLive />;
+}
+
+// ── Live: the real onboarding state for the selected project ───────────────
+function OnboardingHubLive() {
   const { selectedProject } = useAuth();
-  const projectName = selectedProject?.project_name ?? "Legacy Billing";
-  const view: OnboardingView = forceView ?? "nothing-done";
+  const projectId = selectedProject?.project_id;
+  const hub = useOnboardingHub(projectId);
+  const onboardAtlassian = useOnboardAtlassian(projectId);
+  const runGapReport = useRunGapReport(projectId);
+
+  if (!projectId || hub.isLoading) {
+    return (
+      <div className="canvas-pad" style={{ maxWidth: "920px" }}>
+        <Panel>
+          <Spinner /> Loading onboarding status…
+        </Panel>
+      </div>
+    );
+  }
+
+  const data = hub.data;
+  if (!data) {
+    return (
+      <div className="canvas-pad" style={{ maxWidth: "920px" }}>
+        <Panel>Couldn't load onboarding status.</Panel>
+      </div>
+    );
+  }
+
+  const uploadDone = data.upload.length > 0 && data.upload.every((d) => d.status === "extracted" || d.status === "adopted");
+  const registerDone = data.register.docstore_connected || data.register.tasktracker_connected;
+  const indexDone = data.index.status === "indexed";
 
   return (
     <div className="canvas-pad" style={{ maxWidth: "920px" }}>
       <div className="page-head">
         <div className="page-head__titles">
-          <h1 className="t-h1">Onboarding — {projectName}</h1>
+          <h1 className="t-h1">Onboarding — {selectedProject?.project_name}</h1>
+          <p className="page-head__sub">
+            Brownfield project. Let's assess what already exists, then resume the lifecycle at the
+            right phase. We store analysis + pointers — never your source.
+          </p>
+        </div>
+        <Badge variant="navy" dot={false}>
+          Brownfield
+        </Badge>
+      </div>
+
+      <Card>
+        <CardBody>
+          <Vstep
+            num="1"
+            title="Upload resources"
+            desc={
+              data.upload.length === 0
+                ? "Drag in existing specs, PRDs, designs (.docx · .pdf · .xlsx)."
+                : `${data.upload.length} document${data.upload.length === 1 ? "" : "s"} uploaded.`
+            }
+            state={uploadDone ? "done" : data.upload.length > 0 ? "running" : "active"}
+          >
+            {data.upload.length === 0 ? (
+              <div className="dropzone" style={{ marginTop: "var(--space-3)" }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
+                </svg>
+                <div className="t-body u-strong">Drag & drop documents</div>
+                <div className="t-sm u-muted">
+                  or <Link to="/onboarding/documents">browse</Link>
+                </div>
+              </div>
+            ) : (
+              <div className="u-row u-wrap" style={{ marginTop: "var(--space-2)" }}>
+                {data.upload.map((doc) => (
+                  <Chip key={doc.id} variant={doc.status === "extracting" ? "running" : doc.status === "failed" ? undefined : "done"}>
+                    {doc.filename} · {doc.status}
+                  </Chip>
+                ))}
+                <Link to="/onboarding/documents" className="t-sm">
+                  Manage documents ↗
+                </Link>
+              </div>
+            )}
+          </Vstep>
+
+          <Vstep
+            num="2"
+            title="Register existing tools"
+            desc={
+              registerDone
+                ? `${data.register.docstore_connected ? "Confluence" : ""}${
+                    data.register.docstore_connected && data.register.tasktracker_connected ? " + " : ""
+                  }${data.register.tasktracker_connected ? "Jira" : ""} — ${data.register.pages_registered} pages, ${data.register.issues_registered} issues registered.`
+                : "Link existing Confluence / Jira — register, don't recreate."
+            }
+            state={registerDone ? "done" : undefined}
+          >
+            {!registerDone && (
+              <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
+                <Button variant="secondary" onClick={() => onboardAtlassian.mutate()} disabled={onboardAtlassian.isPending}>
+                  {onboardAtlassian.isPending ? <Spinner /> : "Register Confluence & Jira"}
+                </Button>
+              </div>
+            )}
+            {onboardAtlassian.isError && (
+              <p className="t-sm" style={{ color: "var(--danger)" }}>
+                {onboardAtlassian.error instanceof Error ? onboardAtlassian.error.message : "Registration failed — no connector configured for this tenant?"}
+              </p>
+            )}
+          </Vstep>
+
+          <Vstep
+            num="3"
+            title="Index code"
+            desc={
+              indexDone
+                ? "Code intelligence indexed."
+                : "Point your companion at a repo clone — the built-in code-intel indexes it (companion CLI; see Section 3 of the guide)."
+            }
+            state={indexDone ? "done" : undefined}
+          />
+
+          <Vstep
+            num="4"
+            title="Gap report"
+            desc={data.gap.ready ? `Ready — resume at ${data.gap.resume_phase}.` : "What exists, what's missing, and where to resume."}
+            state={data.gap.ready ? "done" : undefined}
+          >
+            {data.gap.ready ? (
+              <Card attention>
+                <CardBody style={{ maxWidth: "520px" }}>
+                  <span className="gate-panel__role">Recommended resume point</span>
+                  <h3 className="t-h3">Resume at: {data.gap.resume_phase}</h3>
+                  <div className="gate-panel__actions">
+                    <Link to="/onboarding/gap-report" className="btn btn--secondary">
+                      View full gap report
+                    </Link>
+                  </div>
+                </CardBody>
+              </Card>
+            ) : (
+              <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
+                <Button variant="secondary" onClick={() => runGapReport.mutate()} disabled={runGapReport.isPending}>
+                  {runGapReport.isPending ? <Spinner /> : "Run gap report"}
+                </Button>
+              </div>
+            )}
+          </Vstep>
+
+          <Vstep
+            num="5"
+            title="Resume"
+            desc={data.gap.ready ? `Trigger ${data.gap.resume_phase} on a work item to enter the pipeline.` : "Available after the gap report."}
+            state={data.gap.ready ? "active" : undefined}
+          >
+            {data.gap.ready && (
+              <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
+                <Link to="/runs" className="btn btn--primary">
+                  Go to Phases &amp; Runs
+                </Link>
+              </div>
+            )}
+          </Vstep>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+// ── Gallery: fixed demo states for /dev/components + tests ─────────────────
+function OnboardingHubGallery({ view }: { view: OnboardingView }) {
+  return (
+    <div className="canvas-pad" style={{ maxWidth: "920px" }}>
+      <div className="page-head">
+        <div className="page-head__titles">
+          <h1 className="t-h1">Onboarding — Legacy Billing</h1>
           <p className="page-head__sub">
             Brownfield project. Let's assess what already exists, then resume the lifecycle at the
             right phase. We store analysis + pointers — never your source.

@@ -64,9 +64,12 @@ def test_list_users_returns_admin_flag_and_memberships(client, admin, member, pr
     assert by_email["boss@acme.com"]["status"] == "active"
     dev = by_email["dev@acme.com"]
     assert dev["is_tenant_admin"] is False
-    assert dev["memberships"] == [
-        {"project_id": str(project.id), "project_name": project.name, "role": "engineer"}
-    ]
+    assert len(dev["memberships"]) == 1
+    membership = dev["memberships"][0]
+    assert membership["project_id"] == str(project.id)
+    assert membership["project_name"] == project.name
+    assert membership["role"] == "engineer"
+    assert "id" in membership  # needed by the UI to revoke a specific grant
 
 
 def test_list_users_admin_only(client, member):

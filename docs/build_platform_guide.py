@@ -183,10 +183,12 @@ def cover():
     gap(40)
     meta = [
         ["Prepared for", "The Engineering Team — EdvenSoft"],
-        ["Scope", "Phases 0–4 (complete &amp; tested); Phase 5 next"],
-        ["Document", "Goal &amp; overview · phase build descriptions · what works today end-to-end · hands-on local testing guide · setup &amp; credentials"],
+        ["Scope", "Phases 0–4.8 (complete &amp; tested); Phase 5 next. Brownfield code-intelligence "
+         "dispatch is a documented, deliberately deferred decision (see 2.8 and ADR references) — "
+         "everything else is UI-driven end to end."],
+        ["Document", "Goal &amp; overview · phase build descriptions · what works today end-to-end · hands-on local testing guide (UI-first) · setup &amp; credentials"],
         ["Date", date.today().strftime("%B %d, %Y")],
-        ["Source of truth", "/CLAUDE.md · /BUILD_PLAN.md · /docs/*"],
+        ["Source of truth", "/CLAUDE.md · /BUILD_PLAN.md · /docs/* (incl. /docs/decisions/*)"],
     ]
     t = Table([[Paragraph(k, _style("mk", parent=BODY, fontName="Helvetica-Bold",
                                     textColor=NAVY, fontSize=9.5)),
@@ -322,12 +324,14 @@ def section_1():
 
 def section_2():
     story.append(Paragraph("", BODY))
-    h1("2. The Build, Phase by Phase (Phases 0–4)")
+    h1("2. The Build, Phase by Phase (Phases 0–4.8)")
     lead("Each phase below lists the concrete components that were built and explains what each "
          "one does in everyday language, and closes with a <b>capstone slice</b> — the thin "
          "end-to-end demo that proves the phase works. (For a real, straight-through test pass — "
-         "greenfield and brownfield — see the two journeys in <b>Section 5</b>.) Phases 0 through "
-         "4 are complete and tested.")
+         "see the scenarios in <b>Section 5</b>.) Phases 0 through 4.8 are complete and tested. "
+         "Phases 0–4 (2.1–2.5) built the platform's execution spine and connectors; Phases "
+         "4.5/4.7/4.8 (2.6–2.8) turned it into a real, self-serve, browser-driven product — every "
+         "screen in this guide from Section 3 onward is one of the hi-fi screens 4.8 shipped.")
 
     # ---- Phase 0 ----
     h2("2.1 Phase 0 — The Platform Spine")
@@ -544,6 +548,113 @@ def section_2():
             "drift gate</b> whose change-impact <b>spans both repos</b>, decided by the architect. "
             "Verified end-to-end; the full platform suite is green across all phases.", ok=True)
 
+    # ---- Phase 4.5 ----
+    h2("2.6 Phase 4.5 — Local-Engine Execution &amp; Interactive Clarifications")
+    p("<b>Goal:</b> make “agents run on your own Claude Code” real end-to-end, and let an agent "
+      "ask a genuine question mid-run instead of guessing — without ever billing while it waits.")
+    table([
+        ["Component", "What it is / does"],
+        ["Companion-routed trigger", "The REST trigger (and the UI) now resolves the acting user "
+         "and routes the run to <i>their</i> enrolled companion (<tt>execution_mode=companion</tt>) "
+         "instead of a server-side engine call — this is what makes Section 3's “run a phase” "
+         "actually execute on your machine."],
+        ["Interactive <tt>ask_human</tt>", "An agent can open a pending <b>Clarification</b> "
+         "mid-run and pause — the companion is idle and <b>no tokens are spent while it waits</b>. "
+         "Answering (REST or the Clarifications screen) lets the companion pick the answer up on "
+         "its next poll and resume in the same session."],
+        ["Cost accounting fix", "A run's cost is only set from the companion's final report — a "
+         "paused clarification never shows a phantom cost."],
+        ["Offline -> human takeover", "If the companion never reports (laptop closed, network "
+         "down), the run parks the WorkItem for human takeover instead of hanging forever."],
+    ], [4.4 * cm, 12.0 * cm])
+    callout("Phase 4.5 — capstone slice (what this phase proves)",
+            "Trigger a phase as yourself -> it routes to your companion -> the agent asks a "
+            "question -> the run shows “needs answer” at <b>zero cost</b> while it waits -> you "
+            "answer -> it resumes and completes -> gate -> publish. Plus: an offline companion "
+            "parks the run for takeover instead of hanging.", ok=True)
+
+    # ---- Phase 4.7 ----
+    h2("2.7 Phase 4.7 — Web-App Productization: Auth &amp; Admin (backend)")
+    p("<b>Goal:</b> replace the pre-4.8 “paste a tenant id into a header” acceptance-slice shell "
+      "with the real auth/admin backend a proper product needs — session login, self-serve "
+      "signup, invitations, and role management — as the <b>design-invariant</b> contract the "
+      "Phase 4.8 hi-fi screens are built against.")
+    table([
+        ["Component", "What it is / does"],
+        ["Server-session auth", "<tt>POST /auth/signup</tt> (atomically creates a new Tenant + its "
+         "first admin User), <tt>POST /auth/login</tt>, <tt>GET /auth/me</tt>, "
+         "<tt>POST /auth/logout</tt> — a real browser session (cookie), not a header you type in."],
+        ["Invitations", "Admin invites by email with initial project/role grants; the invitee "
+         "accepts (sets their password) via a tokenised link; resend/revoke; no account "
+         "enumeration on password reset."],
+        ["User &amp; role management", "Users list, per-project role grants (<tt>Membership</tt>), "
+         "gate-role coverage (flags e.g. “no reviewer -> merge gate unactionable”), the "
+         "tenant-admin flag with a <b>last-admin guard</b> (can't demote the only admin) — both a "
+         "tenant-admin <i>and</i> a project-admin can approve <b>any</b> gate on their scope."],
+        ["Companion status + connect", "The Connect-Machine flow (enrollment token, online/offline "
+         "status) is now session-scoped to the logged-in developer instead of an ungated, "
+         "tenant-wide list."],
+        ["Tenant context from the session (hardened 2026-07-02)", "How RLS learns which tenant a "
+         "request belongs to was corrected after this Guide's own testing pass exercised it "
+         "for the first time against the real (non-superuser) database role — see "
+         "<tt>/docs/decisions/0002-rls-tenant-bootstrap-session.md</tt> for the full root cause "
+         "and fix; the short version is in Section 4.4."],
+    ], [4.4 * cm, 12.0 * cm])
+    callout("Phase 4.7 — capstone slice (what this phase proves)",
+            "From scratch, no shell step: signup -> admin invites a user -> user accepts + sets a "
+            "password -> admin grants gate roles -> connect-machine status -> create a project -> "
+            "trigger a phase as the authenticated user (routes to their companion) -> answer a "
+            "clarification -> decide a gate -> preview the published artifact. This is exactly "
+            "Section 5's Scenario 1, driven by the real REST surface underneath the 4.8 screens.",
+            ok=True)
+
+    # ---- Phase 4.8 ----
+    h2("2.8 Phase 4.8 — Hi-Fi Web App (the UI in this guide)")
+    p("<b>Goal:</b> build the real product UI — every journey (J1–J22) as a signed-off, hi-fi "
+      "screen wired to live data — replacing the placeholder “Tenant + Project bar” shell that "
+      "earlier guide revisions walked through.")
+    table([
+        ["Component", "What it is / does"],
+        ["App shell + navigation", "Login/Signup/AcceptInvite/ResetPassword (pre-auth) and, once "
+         "signed in, a persistent sidebar (Dashboard, Work Items, Phases &amp; Runs, Gates, "
+         "Clarifications, Artifacts &amp; Traceability, plus Project and Admin sections) with a "
+         "tenant/project switcher — this is what Section 3.2 walks through screen by screen."],
+        ["Work Items board + detail", "Create/list/filter work items (Epic/Task/Defect), a "
+         "type-adaptive lifecycle rail per item, in-place edit, and a task-breakdown fan-out from "
+         "an approved epic into build-tier tasks."],
+        ["Phases &amp; Runs", "Pick a work item, trigger any phase for it (blocked with a link to "
+         "Connect Machine if your companion is offline), and watch the run timeline live."],
+        ["Gates, Clarifications, Criteria-gate", "Real approve/reject with the required role "
+         "enforced, a generalized checklist-condition gate (e.g. the WCAG gate), and a live answer "
+         "form for pending questions."],
+        ["Artifacts, Traceability, Publish", "Registry + preview + version history, a lineage "
+         "graph, and a gate-respecting publish action to the live system of record."],
+        ["Onboarding (brownfield front door)", "Upload-and-extract source documents behind an "
+         "adopt gate, register existing Confluence/Jira (no duplicates), a gap report with a "
+         "resume-phase recommendation. <b>Code-intelligence indexing is the one still-open piece</b> "
+         "— see the callout below."],
+        ["Setup: Integrations, Repositories, Connect Machine", "Attach Confluence/Jira/GitHub/"
+         "Figma/Xray from a form (no shell script), manage the project's repositories, and "
+         "generate a companion enrollment token with the exact two terminal commands to run."],
+        ["Admin: Users &amp; Invitations, Roles &amp; Memberships", "Invite teammates (multiple "
+         "project/role grants per invite), see pending invitations alongside active members, and "
+         "grant/revoke per-project roles or the tenant-admin flag from a matrix."],
+    ], [4.4 * cm, 12.0 * cm])
+    callout("What's genuinely still not UI-driven — brownfield code-intelligence dispatch",
+            "Every brownfield onboarding step above works from the browser <b>except</b> triggering "
+            "the built-in code-intelligence analyzer itself: the backend endpoint only "
+            "<i>records</i> an already-computed result, and there is deliberately no live command "
+            "channel yet from the platform to a developer's companion to run it on demand (a "
+            "<b>documented, deferred architecture decision</b>, not an oversight — Phase 4.7's own "
+            "spec calls it out). Because of this, Section 5's brownfield scenarios (5.4/5.5) are "
+            "left as they were in the previous guide revision — API/shell-annotated — rather than "
+            "rewritten to a UI flow that doesn't fully exist yet. Everything else in this guide, "
+            "greenfield and brownfield alike, is UI-first.")
+    callout("Phase 4.8 — capstone slice (what this phase proves)",
+            "Every screen renders every labelled state from the hi-fi design gallery with visual "
+            "parity, wired to live endpoints — not mock data. Section 3.2 and Section 5's "
+            "greenfield scenarios are a straight-through click-path proof of this.", ok=True)
+
 
 def section_3():
     h1("3. The Local Execution &amp; Testing Guide")
@@ -605,42 +716,63 @@ def section_3():
       "polling for work. When you trigger a phase (next), it claims and runs it; an agent that "
       "needs input surfaces a question on the <b>Clarifications</b> tab and waits at no cost.")
 
-    h2("3.2 Part B — Drive the planning slice in the browser (Phase 0 end-to-end)")
-    p("This is the core, no-external-accounts workflow. Open <tt>http://localhost:5173</tt> and "
-      "work left to right through the tabs. With your companion from Step 4 running, each "
-      "triggered phase executes on your local Claude Code.")
+    h2("3.2 Part B — Drive the planning slice in the browser (real Phase 4.8 screens)")
+    p("This is the core, no-external-accounts workflow, entirely in the browser — the only "
+      "exceptions anywhere in this walkthrough are the two local terminal commands in Step 4 above "
+      "(<tt>claude</tt> login and running the companion). Open "
+      "<tt>http://localhost:5173</tt>: you land on <b>Login</b>. This guide builds "
+      "<b>your own</b> tenant from scratch rather than the seeded demo — click "
+      "<b>“Create a workspace”</b> to reach <b>Signup</b>.")
     callout("Cost &amp; interaction note",
             "Phases run on your <b>local Claude Code subscription</b> via the companion — there is "
             "no per-call API charge and no <tt>ANTHROPIC_API_KEY</tt> needed. If an agent needs "
-            "information it cannot find, it asks on the <b>Clarifications</b> tab and <b>pauses at "
-            "zero cost</b> until you answer (the model is idle while it waits) — then continues in "
-            "the same session. To see the whole loop quickly, trigger a single phase (Ideation).")
+            "information it cannot find, it asks on the <b>Clarifications</b> screen and <b>pauses "
+            "at zero cost</b> until you answer (the model is idle while it waits) — then continues "
+            "in the same session. To see the whole loop quickly, trigger a single phase (Ideation).")
     table([
-        ["Tab / action", "What to do", "What you should see (the proof)"],
-        ["Tenant + Project bar", "Create or select a tenant, then a project (the seeded demo is "
-         "fine).", "The tabs unlock."],
-        ["1. Project Profile", "Fill description, tech stack, important context; Save.", "A new "
-         "profile version is saved; it becomes the agent's context next run."],
-        ["2. Phase Console", "Add a WorkItem (a feature stream), then click <b>Ideation</b>.",
-         "A Run appears in the Run Timeline and moves <tt>running -> awaiting_gate</tt> as your "
+        ["Screen", "What to do", "What you should see (the proof)"],
+        ["Signup (<tt>/signup</tt>)", "Full name, work email, a password, and your workspace/org "
+         "name; <b>Create workspace</b>.", "You land signed in as the tenant's first admin — no "
+         "shell step created you. A confirmation screen hands you to the Setup Checklist."],
+        ["Setup Checklist (<tt>/setup</tt>)", "Follow its steps in order: create a project, "
+         "connect your machine, invite teammates (optional for a solo test), connect "
+         "integrations (optional — Part C).", "Each step ticks off as you complete it."],
+        ["Create Project (<tt>/projects/new</tt>)", "Name it, pick Greenfield, Save.", "You land on "
+         "the new project's Project Profile, and it becomes your selected project everywhere "
+         "(top-bar switcher) — as the creator you're automatically granted the project-admin "
+         "role, so you can approve every gate on it yourself."],
+        ["Connect Machine (<tt>/connect</tt>)", "Pick this project, <b>Generate enrollment "
+         "token</b>.", "A one-time token is shown once, with the exact two commands to paste into "
+         "your terminal — the same <tt>claude</tt> + <tt>companion serve</tt> pair from Step 4, "
+         "now pre-filled with your token. Once the daemon checks in, this screen (and the sidebar) "
+         "shows <b>Connected</b>."],
+        ["Project Profile (<tt>/profile</tt>)", "Fill description, tech stack, important context; "
+         "Save.", "A new profile version is saved; it becomes the agent's context next run."],
+        ["Work Items (<tt>/work-items</tt>)", "<b>+ New Work Item</b> -> a title, type "
+         "<b>Epic</b> -> Create.", "You land on the new epic's detail page with a full 16-phase "
+         "lifecycle rail, all <tt>Upcoming</tt>."],
+        ["Phases &amp; Runs (<tt>/runs</tt>)", "Pick your work item, click <b>Ideation</b> to "
+         "trigger it.", "A Run appears and moves <tt>running -> awaiting_gate</tt> as your "
          "companion executes it. In the Temporal UI (:8080) a new <tt>AgentRunWorkflow</tt> is "
-         "visible. A <b>“needs answer”</b> badge appears if the agent asks a question."],
-        ["3. Clarifications", "If a run shows “needs answer”, open this tab, answer the "
-         "question(s), and Send.", "The agent resumes in the same session (it was paused at zero "
-         "cost); the badge clears."],
-        ["4. Gate Approvals", "Find the pending approval; approve it as a user holding the "
-         "required role.", "The run resumes to <tt>completed</tt>; the workflow finishes in the "
-         "Temporal UI."],
-        ["5. Artifacts", "Look at the ideation artifact.", "Its status flips <tt>draft -> "
-         "published</tt>; its body is stored in MinIO (visible in the :9001 console under "
-         "<tt>drafts/</tt> and <tt>snapshots/</tt>)."],
-        ["6. Traceability", "Open the lineage view.", "A graph of artifacts and their "
-         "<tt>derives/tests/...</tt> edges; once external SoRs are connected, nodes deep-link to "
-         "the live Confluence/Jira items."],
-    ], [3.4 * cm, 5.6 * cm, 7.4 * cm])
-    p("Repeat the trigger for <b>Requirements -> PRD -> Architecture</b> to walk the full "
-      "planning chain. Each run reads the artifacts the previous phase published (proving the "
-      "platform — not a local file — is the source of truth), and each is independently gated.")
+         "visible. A <b>“needs answer”</b> badge appears on the Clarifications nav item if the "
+         "agent asks a question."],
+        ["Clarifications (<tt>/clarifications</tt>)", "If the badge is showing, open this screen, "
+         "answer the question(s), Send.", "The agent resumes in the same session (it was paused at "
+         "zero cost); the badge clears."],
+        ["Gates (<tt>/gates</tt>)", "Find the pending approval; Approve (you hold the role — "
+         "project-admin can approve any gate).", "The run resumes to <tt>completed</tt>; the "
+         "workflow finishes in the Temporal UI."],
+        ["Artifacts &amp; Traceability (<tt>/artifacts</tt>, <tt>/traceability</tt>)", "Open the "
+         "ideation artifact; open the lineage view.", "The artifact's status flips <tt>draft -> "
+         "published</tt> (body in MinIO under <tt>drafts/</tt> and <tt>snapshots/</tt>); the "
+         "traceability graph shows it and its <tt>derives/tests/...</tt> edges — once external "
+         "SoRs are connected, nodes deep-link to the live Confluence/Jira items."],
+    ], [3.6 * cm, 5.4 * cm, 7.4 * cm])
+    p("Repeat the trigger for <b>Requirements -> PRD -> Architecture</b> from Phases &amp; Runs to "
+      "walk the full planning chain. Each run reads the artifacts the previous phase published "
+      "(proving the platform — not a local file — is the source of truth), and each is "
+      "independently gated. This exact walkthrough, scripted start to finish, is Section 5's "
+      "Scenario 1.")
 
     h2("3.3 Part C — Optional: exercise the live connectors")
     p("These steps need real (test) cloud accounts. Each is independent — do only the ones you "
@@ -801,13 +933,20 @@ def section_4():
         "first <tt>make dev</tt> takes a few minutes while node modules download.",
         "<b>The companion runner</b> runs on the developer's own machine (not in Docker) via "
         "<tt>python -m runner.companion ...</tt>; it connects outbound to the platform API.",
+        "<b>Login/signup returning 401 or “Invalid email or password” with correct credentials</b> "
+        "on an older local database means migration "
+        "<tt>apps/tenancy/migrations/0005_user_rls_auth_bootstrap.py</tt> hasn't run yet — "
+        "<tt>make migrate</tt> (as the <tt>postgres</tt> superuser, same as above) applies it. See "
+        "<tt>/docs/decisions/0002-rls-tenant-bootstrap-session.md</tt> for why this exists: "
+        "resolving who's logged in has to work *before* the tenant is known, which the original "
+        "RLS policy on the users table didn't allow for.",
     ])
     callout("Quick start, condensed",
             "<tt>cp .env.example .env</tt> (set ANTHROPIC_API_KEY) -> <tt>docker compose up -d"
             "</tt> -> <tt>make migrate</tt> -> <tt>make seed</tt> -> <tt>make dev</tt> -> open "
             "<tt>http://localhost:5173</tt> and run a phase through its gate.", ok=True)
     gap(8)
-    p("<i>This document describes Phases 0–4 (complete and tested). Section 5 is an explicit "
+    p("<i>This document describes Phases 0–4.8 (complete and tested). Section 5 is an explicit "
       "test-through inventory of what works today. The next milestone is Phase 5 — Enterprise "
       "Hardening &amp; Cloud Migration (RBAC + segregation of duties, secrets vault, "
       "prompt-injection hardening, immutable audit/compliance, the eval harness, and the cloud "
@@ -821,96 +960,99 @@ def section_5():
          "scenarios that matter, <b>each built from scratch</b> — you create your own tenant, "
          "user, project and companion; nothing here uses the seeded demo tenant. Do <b>Section "
          "3</b> bring-up once, then the shared <b>5.1 preflight</b>, then run whichever scenarios "
-         "you need. Each scenario lists every step and whether it is done in the <b>UI</b> or via "
-         "the <b>API</b> (used only where no UI exists yet).")
+         "you need. Scenarios 1, 2, and 5 (greenfield + cross-cutting) are <b>UI-only</b> except "
+         "the two irreducible local commands (<tt>claude</tt> login, running the companion — "
+         "Section 3.1 Step 4). Scenarios 3 and 4 (brownfield) still carry API/shell steps for the "
+         "one piece that isn't wired to the browser yet — code-intelligence indexing — a "
+         "deliberate, documented scope decision explained in 2.8; those two scenarios are "
+         "otherwise unchanged from the previous guide revision pending that follow-up.")
     callout("Two ground rules for every scenario",
-            "(1) <b>From scratch:</b> you create the tenant/user/project yourself — do not use the "
-            "seed demo tenant. (2) <b>Agents run on your Claude Code:</b> every phase executes on "
-            "your machine via the <b>companion</b> daemon using your logged-in <tt>claude</tt> (no "
-            "API key); you only ever click and type in the web app. API calls carry "
-            "<tt>-H \"X-Tenant-ID: $TENANT\"</tt> (tenant-create is the one exception).")
+            "(1) <b>From scratch:</b> you create the tenant/user/project yourself, via the real "
+            "Signup screen — do not use the seed demo tenant. (2) <b>Agents run on your Claude "
+            "Code:</b> every phase executes on your machine via the <b>companion</b> daemon using "
+            "your logged-in <tt>claude</tt> (no API key); you only ever click and type in the web "
+            "app. The handful of remaining API calls (brownfield code-intel only) carry "
+            "<tt>-H \"X-Tenant-ID: $TENANT\"</tt>.")
 
     h2("5.1 Preflight — build your own world (shared by all scenarios)")
-    p("<b>Step 1 (UI/infra).</b> Bring the stack up once (Section 3.1): <tt>docker compose up -d</tt> "
+    p("<b>Step 1 (infra).</b> Bring the stack up once (Section 3.1): <tt>docker compose up -d</tt> "
       "-> <tt>make migrate</tt> -> <tt>make dev</tt>. You do <b>not</b> run <tt>make seed</tt> — you "
       "are building everything yourself.")
-    p("<b>Step 2 (API) — create your tenant.</b> Creating a tenant also seeds that tenant's agent "
-      "specs (all phases), so it is immediately usable:")
-    code("export API=http://localhost:8000/api\n"
-         "curl -s -X POST $API/tenants/ -H Content-Type:application/json -d '{\"name\":\"My Co\"}'\n"
-         "export TENANT=<id-from-response>\n"
-         "export H=\"-H X-Tenant-ID:$TENANT -H Content-Type:application/json\"")
-    p("<b>Step 3 (API/shell) — create your user and grant the gate roles.</b> There is no user-"
-      "admin UI yet, so create the user + memberships once via a marked shell call, and capture "
-      "the user id (used to answer clarifications and decide gates):")
-    code("docker compose exec backend python manage.py shell -c \"\\\n"
-         "from apps.tenancy.models import User, Membership; from apps.projects.models import Project;\\\n"
-         "u,_=User.objects.get_or_create(email='me@myco.test', tenant_id='$TENANT',"
-         " defaults={'name':'Me'});\\\n"
-         "u.set_password('pw'); u.save(); print('USER', u.id)\"\n"
-         "export USER=<id-printed-above>\n"
-         "# (after you create a project in each scenario, grant every gate role on it:)\n"
-         "# docker compose exec backend python manage.py shell -c \"...Membership.get_or_create(\n"
-         "#   tenant_id='$TENANT', user_id='$USER', project_id='$PROJECT', role=r) for r in [...]\"")
-    p("<b>Step 4 (CLI) — log in Claude Code and run your companion.</b> This is what makes phases "
-      "run on your machine. Do it once per scenario's project (or pass several repos):")
+    p("<b>Step 2 (UI) — sign up.</b> Open <tt>http://localhost:5173/signup</tt>: name, work email, "
+      "password, workspace name -> <b>Create workspace</b>. This atomically creates your tenant "
+      "and you as its first admin (and seeds that tenant's agent specs) — no <tt>curl</tt>, no "
+      "shell. You're signed in immediately. As the tenant's sole admin, and as the project-admin "
+      "you're automatically granted on any project you create (5.2's first step), you can approve "
+      "<b>every</b> gate yourself — invite a teammate only if you specifically want to test "
+      "role-scoped gating.")
+    p("<b>Step 3 (UI, optional) — invite a teammate + grant roles.</b> Only needed if you want "
+      "more than one person: <b>Users &amp; Invitations</b> (sidebar -> Workspace Admin) -> "
+      "<b>+ Invite</b> -> email + one or more project/role grants -> Send invite. The invite "
+      "shows as <b>Invited · pending</b> with Resend/Revoke until accepted. To change anyone's "
+      "roles later, <b>Roles &amp; Memberships</b> is a live grant/revoke matrix per project, plus "
+      "the tenant-admin toggle (guarded — you can't demote the last admin).")
+    p("<b>Step 4 (CLI, irreducible) — log in Claude Code and run your companion.</b> This is what "
+      "makes phases run on your machine. In the UI, open <b>Connect Machine</b> (sidebar), pick "
+      "your project, and click <b>Generate enrollment token</b> — it shows the token once, with "
+      "the exact two commands below already filled in for you to paste into your terminal:")
     code("claude            # sign in to your subscription   (or: claude setup-token for headless)\n"
-         "python -m runner.companion enroll --api-url http://localhost:8000 \\\n"
-         "    --tenant $TENANT --project $PROJECT --label my-laptop --developer-id $USER\n"
-         "#   -> prints a one-time enrollment token; then leave the daemon running:\n"
          "python -m runner.companion serve --api-url http://localhost:8000 \\\n"
          "    --tenant $TENANT --token <enrollment-token>      # add --repo-path/--worktrees for builds")
+    p("Once the daemon checks in, Connect Machine (and the sidebar) shows <b>Connected</b>.")
     callout("How a gate or a question is handled (the same in every scenario)",
-            "When a run reaches a human gate it appears on the <b>Gate Approvals</b> tab — approve "
-            "as <tt>$USER</tt> (who must hold that gate's role). If an agent needs information it "
-            "posts a question on the <b>Clarifications</b> tab and the run shows <b>“needs "
-            "answer”</b> in the Phase Console; answer it and the run continues at no extra cost. "
-            "API equivalents: <tt>POST /approvals/{id}/decide/</tt> and "
-            "<tt>POST /clarifications/{id}/answer/</tt>.")
+            "When a run reaches a human gate it appears on the <b>Gates</b> screen — Approve "
+            "(project-admin/tenant-admin can approve any gate; otherwise you must hold that gate's "
+            "role). If an agent needs information it posts a question on the "
+            "<b>Clarifications</b> screen and the run shows a <b>“needs answer”</b> badge; answer "
+            "it and the run continues at no extra cost.")
 
     h2("5.2 Scenario 1 — Greenfield, NO external integrations")
     p("Prove the full <b>planning/doc lifecycle</b> with everything kept internal — no Confluence/"
-      "Jira/Figma/Xray. Artifacts publish to the platform's internal store (bodies in MinIO).")
+      "Jira/Figma/Xray. Artifacts publish to the platform's internal store (bodies in MinIO). "
+      "Every step below is a click in the browser.")
     bullets([
-        "<b>(API) Create the project:</b> <tt>curl -s $H -X POST $API/projects/ -d "
-        "'{\"name\":\"Acme Shop\",\"track\":\"greenfield\"}'</tt> -> <tt>export PROJECT=&lt;id&gt;</tt>. "
-        "Then grant roles (5.1 Step 3) and enroll+serve the companion (5.1 Step 4).",
-        "<b>(UI) Project Profile tab:</b> fill description, tech stack, important context; Save.",
-        "<b>(UI) Phase Console tab:</b> add a WorkItem (feature stream), then trigger phases in "
-        "order: <b>Ideation -> Requirements -> PRD -> Architecture</b> (and 05/06 if you wish). "
-        "Each runs on your companion.",
-        "<b>(UI) Clarifications tab:</b> if a phase shows “needs answer”, answer it -> the run "
-        "resumes in the same session.",
-        "<b>(UI) Gate Approvals tab:</b> approve each phase's gate as <tt>$USER</tt> -> the run "
-        "completes and its artifact flips <tt>draft -> published</tt>.",
-        "<b>(UI) Artifacts + Traceability tabs:</b> see each artifact (body in the MinIO console "
-        ":9001) and the lineage graph (<tt>derives</tt> edges) — all <tt>sor=internal</tt>.",
+        "<b>Create Project</b> (<tt>/projects/new</tt>): name it, Track <b>Greenfield</b>, Save. "
+        "You're auto-granted project-admin on it (5.1 Step 2), and it becomes your selected "
+        "project. Then <b>Connect Machine</b> (5.1 Step 4) so phases have somewhere to run.",
+        "<b>Project Profile</b> (<tt>/profile</tt>): fill description, tech stack, important "
+        "context; Save.",
+        "<b>Work Items</b> (<tt>/work-items</tt>): <b>+ New Work Item</b> -> title, type Epic -> "
+        "Create. You land on its detail page with the full lifecycle rail.",
+        "<b>Phases &amp; Runs</b> (<tt>/runs</tt>): select the work item, trigger phases in order: "
+        "<b>Ideation -> Requirements -> PRD -> Architecture</b> (and 05/06 if you wish). Each runs "
+        "on your companion.",
+        "<b>Clarifications</b> (<tt>/clarifications</tt>): if a run shows “needs answer”, answer "
+        "it -> the run resumes in the same session.",
+        "<b>Gates</b> (<tt>/gates</tt>): approve each phase's gate -> the run completes and its "
+        "artifact flips <tt>draft -> published</tt>.",
+        "<b>Artifacts &amp; Traceability</b> (<tt>/artifacts</tt>, <tt>/traceability</tt>): see "
+        "each artifact (body in the MinIO console :9001) and the lineage graph (<tt>derives</tt> "
+        "edges) — all <tt>sor=internal</tt>.",
     ])
     callout("Scenario 1 proof",
             "A greenfield project went idea -> requirements -> PRD -> architecture entirely on "
             "your local Claude Code, each phase human-gated, every artifact published internally "
-            "with full lineage — and <b>zero external accounts</b>. (The build/merge + live-SoR "
-            "phases are Scenario 2.)", ok=True)
+            "with full lineage — <b>zero external accounts</b>, and every step above was a click, "
+            "not a shell command. (The build/merge + live-SoR phases are Scenario 2.)", ok=True)
 
     h2("5.3 Scenario 2 — Greenfield, WITH external integrations")
     p("Same lifecycle as Scenario 1, but real systems of record: PRD -> Confluence, backlog -> "
-      "Jira, UX from live Figma, build -> a GitHub PR, tests -> Xray. Set the credentials in "
-      "<tt>.env</tt> (Section 4.2) and <b>attach the connectors to YOUR tenant</b> (the seed does "
-      "this only for the demo tenant), then restart <tt>make dev</tt>:")
-    code("# attach connectors to your from-scratch tenant (creds resolve from .env):\n"
-         "docker compose exec backend python manage.py shell -c \"\\\n"
-         "from django.conf import settings as s; from apps.integrations.models import "
-         "IntegrationConnection as C;\\\n"
-         "rows=[('docstore','confluence',{'space_key':s.CONFLUENCE_SPACE_KEY}),\\\n"
-         "      ('tasktracker','jira',{'project_key':s.JIRA_PROJECT_KEY}),\\\n"
-         "      ('codehost','github',{'repo':s.GITHUB_REPO,'default_base':s.GITHUB_DEFAULT_BASE}),\\\n"
-         "      ('designsource','figma',{'file_key':s.FIGMA_FILE_KEY}),\\\n"
-         "      ('testmgmt','xray',{'project_key':s.XRAY_PROJECT_KEY}),('codeintel','builtin',{})];\\\n"
-         "[C.objects.update_or_create(tenant_id='$TENANT',capability=c,connector=n,"
-         "defaults={'scopes':sc}) for c,n,sc in rows]\"")
-    p("Now run the lifecycle exactly as Scenario 1 (UI Phase Console + Clarifications + Gate "
-      "Approvals). The same two moves per phase — <b>trigger</b>, then <b>approve</b> — now also "
-      "write to the live tools. Per-phase agent keys, gate roles, and the live proof:")
+      "Jira, UX from live Figma, build -> a GitHub PR, tests -> Xray. Put the credentials in "
+      "<tt>.env</tt> first (Section 4.2 — the connect form below still needs somewhere to source "
+      "tokens/URLs from), then <b>attach each connector to YOUR project from the browser</b>:")
+    bullets([
+        "<b>Integrations</b> (sidebar, under Project): a card per capability (Docs, Task Tracker, "
+        "Code Host, Design Source, Test Mgmt), each showing <b>Not connected</b>.",
+        "Click a card -> <b>Connect a capability</b> (<tt>/integrations/&lt;capability&gt;</tt>): "
+        "pick the vendor, fill its binding fields (e.g. Confluence's space key, Jira's project "
+        "key, GitHub's repo) and the secret (API token/PAT), <b>Test connection</b>, then Save.",
+        "Repeat per capability you want live: Docs -> Confluence, Task Tracker -> Jira, "
+        "Code Host -> GitHub, Design Source -> Figma, Test Mgmt -> Xray. The Integrations grid "
+        "now shows each as <b>Connected</b>.",
+    ])
+    p("Now run the lifecycle exactly as Scenario 1 (Phases &amp; Runs + Clarifications + Gates). "
+      "The same two moves per phase — <b>trigger</b>, then <b>approve</b> — now also write to the "
+      "live tools. Per-phase agent keys, gate roles, and the live proof:")
     table([
         ["Phase — <tt>agent_key</tt>", "Gate role", "Live proof on approval"],
         ["PRD — <tt>03_prd</tt>", "product_owner", "A <b>Confluence page</b> is created; the "
@@ -1003,22 +1145,24 @@ def section_5():
             "<b>breaking change opened a drift gate</b> whose impact spanned both repos.", ok=True)
 
     h2("5.6 Scenario 5 — Interactive clarifications &amp; offline takeover (cross-cutting)")
-    p("These prove the two Phase-4.5 guarantees directly and apply on top of any scenario above.")
+    p("These prove the two Phase-4.5 guarantees directly and apply on top of any scenario above. "
+      "Everything except stopping/restarting the companion itself is a click.")
     bullets([
-        "<b>Zero-cost clarification (UI):</b> trigger any phase; if the agent asks, the Phase "
-        "Console shows <b>“needs answer”</b> and the run sits idle (your <tt>claude</tt> is not "
-        "generating, so nothing is billed). Answer on the <b>Clarifications</b> tab -> the run "
-        "resumes in the same session.",
+        "<b>Zero-cost clarification (UI):</b> trigger any phase; if the agent asks, the "
+        "Clarifications nav item shows a <b>“needs answer”</b> badge and the run sits idle (your "
+        "<tt>claude</tt> is not generating, so nothing is billed). Open <b>Clarifications</b>, "
+        "answer -> the run resumes in the same session.",
         "<b>Durability (no re-ask):</b> stop the companion (<tt>Ctrl-C</tt>) while a clarification "
-        "is answered but the phase hasn't reported, then re-trigger the phase — the agent reuses "
-        "your earlier answer (folded into its manifest) instead of asking again.",
+        "is answered but the phase hasn't reported, then re-trigger the phase from <b>Phases &amp; "
+        "Runs</b> — the agent reuses your earlier answer (folded into its manifest) instead of "
+        "asking again.",
         "<b>Offline takeover:</b> stop the companion, trigger a phase, and leave it; after the "
-        "report timeout the run parks the WorkItem for <b>human takeover</b> (Run status "
-        "<tt>failed</tt> + a takeover flag) rather than hanging — restart the companion to resume "
-        "normal operation.",
+        "report timeout the run parks the WorkItem for <b>human takeover</b> (visible on the "
+        "<b>Offline Takeover</b> screen — Run status <tt>failed</tt> + a takeover flag) rather "
+        "than hanging — restart the companion, or take it over by hand, to resume.",
         "<b>Local engine, not the API (verify):</b> the companion log shows it dropped "
         "<tt>ANTHROPIC_API_KEY</tt> and used <tt>claude</tt> on PATH; usage shows on your Claude "
-        "subscription, not an API bill.",
+        "subscription, not an API bill. Connect Machine shows <b>Connected</b> while it's up.",
     ])
 
     h2("5.7 If something stalls")
@@ -1028,15 +1172,21 @@ def section_5():
         "start it and <tt>docker compose up -d</tt> again.",
         "<b>Migrations:</b> if <tt>make migrate</tt> errors on an ALTER, run it with the "
         "<tt>postgres</tt> superuser DSN (Section 4.4).",
+        "<b>Login/signup fails with correct credentials:</b> a stale local database is missing the "
+        "RLS-auth-bootstrap migration — see the Section 4.4 gotcha and ADR 0002.",
         "<b>Phase never runs / stays pending:</b> your <b>companion isn't running</b> or isn't "
-        "enrolled for <tt>$USER</tt> — check <tt>serve</tt> is up and you triggered with your "
-        "<tt>user_id</tt>; confirm <tt>claude</tt> is logged in on that machine.",
-        "<b>Live SoR step does nothing:</b> the connector row isn't attached to <i>your</i> tenant "
-        "(run the 5.3 snippet) or the creds aren't in <tt>.env</tt>; restart <tt>make dev</tt>.",
-        "<b>Gate won't approve (403):</b> <tt>$USER</tt> doesn't hold that gate's role on the "
-        "project — re-run the role-grant in 5.1 Step 3.",
+        "enrolled for this project — check <b>Connect Machine</b> shows <b>Connected</b>, that "
+        "<tt>serve</tt> is up in your terminal, and that <tt>claude</tt> is logged in on that "
+        "machine.",
+        "<b>Live SoR step does nothing:</b> the connector isn't attached to <i>your</i> project — "
+        "check <b>Integrations</b> shows it <b>Connected</b> (5.3) — or the creds aren't in "
+        "<tt>.env</tt>; restart <tt>make dev</tt> after editing <tt>.env</tt>.",
+        "<b>Gate won't approve (403):</b> you don't hold that gate's role on the project and "
+        "aren't a project-/tenant-admin — grant the role via <b>Roles &amp; Memberships</b> (5.1 "
+        "Step 3).",
         "<b>Full automated proof anytime:</b> <tt>cd backend &amp;&amp; pytest -q</tt> — including "
-        "<tt>tests/test_acceptance_phase45.py</tt> (the local-execution + clarification loop) and "
+        "<tt>tests/test_acceptance_phase47.py</tt> (the full from-scratch REST spine: signup -> "
+        "invite -> roles -> connect -> trigger -> clarify -> gate -> preview) and "
         "<tt>tests/test_acceptance_phase4.py</tt> (brownfield/multi-repo).",
     ])
 

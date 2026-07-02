@@ -1,17 +1,237 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
-import { Badge, Banner, Button, Card, CardBody, EmptyState, Panel, Table, Tabs, Textarea } from "../../components/ui";
-import { useDecideApproval } from "./hooks";
+import { useAuth } from "../../auth/AuthContext";
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  CardBody,
+  EmptyState,
+  Panel,
+  Spinner,
+  Table,
+  Tabs,
+  Textarea,
+} from "../../components/ui";
+import type { Approval } from "../../types";
+import { useApprovals, useDecideApproval, useWorkItems } from "./hooks";
 
 // S-21 view states: can-decide (your role) · cannot-decide (permission) ·
 // decided-history · empty.
 export type GatesView = "can-decide" | "cannot-decide" | "history" | "empty";
 
+function gateLabel(gateType: string) {
+  return gateType
+    .split("_")
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
 export function Gates({ forceView }: { forceView?: GatesView }) {
+  if (forceView) return <GatesGallery view={forceView} />;
+  return <GatesLive />;
+}
+
+// ── Live: real pending/decided approvals for the selected project ──────────
+function GatesLive() {
+  const { selectedProject, currentUser } = useAuth();
+  const projectId = selectedProject?.project_id;
+  const workItems = useWorkItems(projectId);
+  const workItemIds = new Set((workItems.data ?? []).map((w) => w.id));
+  const approvals = useApprovals();
   const decideApproval = useDecideApproval();
   const [tab, setTab] = useState<"pending" | "history">("pending");
-  const view: GatesView = forceView ?? (tab === "history" ? "history" : "can-decide");
+  const [comment, setComment] = useState("");
+  const [selectedId, setSelectedId] = useState<string | undefined>();
 
+  const loading = approvals.isLoading || workItems.isLoading;
+  const projectApprovals = (approvals.data ?? []).filter((a) => workItemIds.has(a.work_item));
+  const pending = projectApprovals.filter((a) => a.decision === "pending");
+  const decided = projectApprovals.filter((a) => a.decision !== "pending");
+  const selected = pending.find((a) => a.id === selectedId) ?? pending[0];
+
+  const canDecide = (a: Approval) =>
+    Boolean(currentUser?.user.is_tenant_admin) || selectedProject?.role === a.required_role;
+
+  const workItemLabel = (id: string) => {
+    const wi = workItems.data?.find((w) => w.id === id);
+    return wi ? `${id.slice(0, 8)} · ${wi.title || wi.type}` : id.slice(0, 8);
+  };
+
+  const handleDecide = (decision: "approved" | "rejected") => {
+    if (!selected) return;
+    decideApproval.mutate({ id: selected.id, decision, comment: comment || undefined });
+    setComment("");
+  };
+
+  return (
+    <div className="canvas-pad">
+      <div className="page-head">
+        <div className="page-head__titles">
+          <h1 className="t-h1">
+            Gates{" "}
+            {!loading && pending.length > 0 && (
+              <Badge variant="gate" dot={false}>
+                {pending.length} pending
+              </Badge>
+            )}
+          </h1>
+          <p className="page-head__sub">
+            Approvals awaiting a decision. Only the required role can decide each gate — nothing
+            reaches a system-of-record without one.
+          </p>
+        </div>
+      </div>
+
+      <Tabs
+        tabs={[
+          { id: "pending", label: `Pending (${pending.length})` },
+          { id: "history", label: "Decided history" },
+        ]}
+        active={tab}
+        onSelect={(id) => setTab(id as "pending" | "history")}
+      />
+
+      {loading ? (
+        <Panel>
+          <Spinner /> Loading gates…
+        </Panel>
+      ) : tab === "history" ? (
+        <div style={{ marginTop: "var(--space-4)" }}>
+          <Panel flush>
+            {decided.length === 0 ? (
+              <EmptyState title="No decided gates yet" text="Decisions you make will show up here." />
+            ) : (
+              <Table
+                headers={["Gate", "Work item", "Decision", "By", "When"]}
+                rows={decided.map((a) => [
+                  gateLabel(a.gate_type),
+                  <span className="table__id" key="w">
+                    {workItemLabel(a.work_item)}
+                  </span>,
+                  <Badge variant={a.decision === "approved" ? "done" : "failed"} key="d">
+                    {a.decision === "approved" ? "Approved" : "Rejected"}
+                  </Badge>,
+                  a.approver === currentUser?.user.id ? "You" : a.approver ? a.approver.slice(0, 8) : "—",
+                  a.decided_at ? new Date(a.decided_at).toLocaleString() : "—",
+                ])}
+              />
+            )}
+          </Panel>
+        </div>
+      ) : pending.length === 0 ? (
+        <Panel>
+          <EmptyState
+            title="No gates need you"
+            text="Approvals you can act on will appear here and in the notifications bell."
+          />
+        </Panel>
+      ) : (
+        <div className="grid grid--detail" style={{ marginTop: "var(--space-5)" }}>
+          <Panel title="Pending approvals" flush>
+            <Table
+              headers={["Gate", "Required role", "Work item", "Artifact"]}
+              rows={pending.map((a) => ({
+                cells: [
+                  <button
+                    key="g"
+                    className="btn btn--ghost btn--sm"
+                    onClick={() => setSelectedId(a.id)}
+                  >
+                    {gateLabel(a.gate_type)}
+                  </button>,
+                  <span className="chip badge--navy" key="r">
+                    {a.required_role}
+                  </span>,
+                  <span className="table__id" key="w">
+                    {workItemLabel(a.work_item)}
+                  </span>,
+                  <Link to="/artifacts" key="a">
+                    Preview ↗
+                  </Link>,
+                ],
+                style: selected && a.id === selected.id ? { background: "var(--brand-orange-50)" } : undefined,
+              }))}
+            />
+          </Panel>
+
+          {selected &&
+            (canDecide(selected) ? (
+              <Card attention>
+                <CardBody>
+                  <span className="gate-panel__role">
+                    ▲ {gateLabel(selected.gate_type)} gate · required role: {selected.required_role}
+                  </span>
+                  <h3 className="t-h3">{workItemLabel(selected.work_item)}</h3>
+                  <Link to="/artifacts" className="t-sm">
+                    Preview artifact under review ↗
+                  </Link>
+                  <label className="field" style={{ margin: "var(--space-2) 0 0" }}>
+                    <span className="field__label">Comment (optional)</span>
+                    <Textarea
+                      value={comment}
+                      onChange={(e) => setComment(e.target.value)}
+                      placeholder="Add context for your decision…"
+                    />
+                  </label>
+                  <div className="gate-panel__actions">
+                    <Button
+                      variant="primary"
+                      disabled={decideApproval.isPending}
+                      onClick={() => handleDecide("approved")}
+                    >
+                      {decideApproval.isPending ? <Spinner /> : "Approve"}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      disabled={decideApproval.isPending}
+                      onClick={() => handleDecide("rejected")}
+                    >
+                      Reject
+                    </Button>
+                  </div>
+                  {decideApproval.isError && (
+                    <Banner variant="danger" title="Couldn't record the decision">
+                      {decideApproval.error instanceof Error ? decideApproval.error.message : "Unknown error"}
+                    </Banner>
+                  )}
+                  <span className="gate-reassure">Decision logged with your role &amp; comment.</span>
+                </CardBody>
+              </Card>
+            ) : (
+              <Card>
+                <CardBody>
+                  <span className="gate-panel__role" style={{ color: "var(--text-muted)" }}>
+                    {gateLabel(selected.gate_type)} gate · {workItemLabel(selected.work_item)}
+                  </span>
+                  <Banner variant="info" title={`Awaiting ${selected.required_role}`}>
+                    You don't hold the <strong>{selected.required_role}</strong> role on this
+                    project, so this is read-only.
+                  </Banner>
+                  <Link to="/artifacts" className="t-sm">
+                    Preview artifact under review ↗
+                  </Link>
+                  <div className="gate-panel__actions">
+                    <Button variant="primary" disabled aria-disabled="true">
+                      Approve
+                    </Button>
+                    <Button variant="secondary" disabled aria-disabled="true">
+                      Reject
+                    </Button>
+                  </div>
+                </CardBody>
+              </Card>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Gallery: fixed demo states for /dev/components + tests ─────────────────
+function GatesGallery({ view }: { view: GatesView }) {
   return (
     <div className="canvas-pad">
       <div className="page-head">
@@ -37,8 +257,7 @@ export function Gates({ forceView }: { forceView?: GatesView }) {
             { id: "pending", label: "Pending (3)" },
             { id: "history", label: "Decided history" },
           ]}
-          active={tab}
-          onSelect={(id) => setTab(id as "pending" | "history")}
+          active={view === "history" ? "history" : "pending"}
         />
       )}
 
@@ -158,18 +377,8 @@ export function Gates({ forceView }: { forceView?: GatesView }) {
                   <Textarea placeholder="Add context for your decision…" />
                 </label>
                 <div className="gate-panel__actions">
-                  <Button
-                    variant="primary"
-                    onClick={() => decideApproval.mutate({ id: "approval-1", decision: "approved" })}
-                  >
-                    Approve
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={() => decideApproval.mutate({ id: "approval-1", decision: "rejected" })}
-                  >
-                    Reject
-                  </Button>
+                  <Button variant="primary">Approve</Button>
+                  <Button variant="danger">Reject</Button>
                 </div>
                 <span className="gate-reassure">Decision logged with your role &amp; comment.</span>
               </CardBody>

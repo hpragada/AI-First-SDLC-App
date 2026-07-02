@@ -1,10 +1,23 @@
-﻿import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+﻿import { useMemo, useState, type FormEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Avatar, Badge, Chip, EmptyState, Needs, Panel, Table } from "../../components/ui";
+import {
+  Avatar,
+  Badge,
+  Button,
+  Chip,
+  Drawer,
+  EmptyState,
+  Field,
+  Input,
+  Needs,
+  Panel,
+  Select,
+  Table,
+} from "../../components/ui";
 import type { WorkItemCard } from "../../types";
-import { useWorkItems } from "./hooks";
+import { useCreateWorkItem, useWorkItems } from "./hooks";
 
 // S-14 view states: board (default) · list · filtered (tasks only) · empty.
 export type BoardView = "board" | "list" | "filtered" | "empty";
@@ -53,11 +66,71 @@ function WiCard({ card }: { card: WorkItemCard }) {
   );
 }
 
+function CreateWorkItemDrawer({
+  projectId,
+  onClose,
+}: {
+  projectId: string;
+  onClose: () => void;
+}) {
+  const navigate = useNavigate();
+  const createWorkItem = useCreateWorkItem(projectId);
+  const [title, setTitle] = useState("");
+  const [type, setType] = useState("epic");
+
+  const onSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      const created = await createWorkItem.mutateAsync({ type, title: title || undefined });
+      onClose();
+      navigate(`/work-items/${created.id}`);
+    } catch {
+      /* error surfaced inline below */
+    }
+  };
+
+  return (
+    <Drawer
+      title="New work item"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" type="submit" form="create-work-item-form" disabled={createWorkItem.isPending}>
+            {createWorkItem.isPending ? "Creating…" : "Create"}
+          </Button>
+        </>
+      }
+    >
+      <form id="create-work-item-form" onSubmit={onSubmit}>
+        <Field label="Title (optional)">
+          <Input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Stripe Webhook Integration" />
+        </Field>
+        <Field label="Type">
+          <Select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type">
+            <option value="epic">Epic</option>
+            <option value="story">Story</option>
+            <option value="task">Task</option>
+            <option value="defect">Defect</option>
+          </Select>
+        </Field>
+        {createWorkItem.isError && (
+          <p className="t-sm" style={{ color: "var(--danger)" }}>
+            {createWorkItem.error instanceof Error ? createWorkItem.error.message : "Couldn't create this work item."}
+          </p>
+        )}
+      </form>
+    </Drawer>
+  );
+}
+
 export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
   const { selectedProject } = useAuth();
   const projectId = selectedProject?.project_id;
   const [level, setLevel] = useState<"all" | "epic" | "task" | "defect">("all");
   const [mode, setMode] = useState<"board" | "list">("board");
+  const [createOpen, setCreateOpen] = useState(false);
 
   const items = useWorkItems(projectId, level === "all" ? {} : { type: level });
   const list = items.data ?? [];
@@ -94,7 +167,9 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
             two tiers don't collide.
           </p>
         </div>
-        <button className="btn btn--primary">+ New Work Item</button>
+        <button className="btn btn--primary" onClick={() => setCreateOpen(true)}>
+          + New Work Item
+        </button>
       </div>
 
       {view !== "empty" && (
@@ -150,7 +225,11 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
           <EmptyState
             title="No work items yet"
             text="Create your first work item to start the lifecycle. Epics run the plan tier; Task Breakdown fans out the build tier."
-            action={<button className="btn btn--primary">+ New Work Item</button>}
+            action={
+              <button className="btn btn--primary" onClick={() => setCreateOpen(true)}>
+                + New Work Item
+              </button>
+            }
           />
         </Panel>
       ) : view === "list" ? (
@@ -194,6 +273,10 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
             );
           })}
         </div>
+      )}
+
+      {createOpen && projectId && (
+        <CreateWorkItemDrawer projectId={projectId} onClose={() => setCreateOpen(false)} />
       )}
     </div>
   );

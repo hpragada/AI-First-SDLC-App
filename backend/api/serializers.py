@@ -231,6 +231,15 @@ class WorkItemSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "project", "state", "external_ref", "created_at"]
 
 
+class WorkItemPatchSerializer(serializers.ModelSerializer):
+    """P4.8-T1 bucket-B gap A: edit surface for S-15/S-16 "Edit" — title/description/type
+    only, never state/parent/takeover_flag/external_ref (those change via their own actions)."""
+
+    class Meta:
+        model = WorkItem
+        fields = ["title", "description", "type"]
+
+
 class TriggerSerializer(serializers.Serializer):
     """Input for the phase trigger (replaces the legacy slash command — §5)."""
 

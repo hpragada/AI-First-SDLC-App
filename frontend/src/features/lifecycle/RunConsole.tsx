@@ -1,6 +1,8 @@
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 
-import { Badge, Banner, Breadcrumb, Button, Console, Panel } from "../../components/ui";
+import { Badge, Banner, Breadcrumb, Button, Console, Panel, Spinner } from "../../components/ui";
+import type { RunEvent } from "../../types";
+import { useClarifications, useRun, useRunEvents, useTriggerPhase, useWorkItem } from "./hooks";
 
 // S-19 view states: dispatched · running · needs-answer · awaiting-gate · completed ·
 // failed · parked.
@@ -34,9 +36,154 @@ const BADGE_LABEL: Record<RunConsoleView, string> = {
 };
 
 export function RunConsole({ forceView }: { forceView?: RunConsoleView }) {
-  const { id = "RUN-42" } = useParams();
-  const view: RunConsoleView = forceView ?? "running";
+  if (forceView) return <RunConsoleGallery view={forceView} />;
+  return <RunConsoleLive />;
+}
 
+function eventLine(e: RunEvent) {
+  const ts = new Date(e.ts).toLocaleTimeString();
+  const cls = e.kind === "ok" ? "ok" : e.kind === "warn" ? "warn" : e.kind === "err" ? "err" : "info";
+  return (
+    <span key={e.id}>
+      <span className="console__ts">{ts}</span>
+      <span className={cls}>{e.message}</span>
+    </span>
+  );
+}
+
+// ── Live: the real run + its event stream ───────────────────────────────────
+function RunConsoleLive() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const run = useRun(id);
+  const events = useRunEvents(id);
+  const workItem = useWorkItem(run.data?.work_item);
+  const clarifications = useClarifications({ run: id, status: "pending" });
+  const retry = useTriggerPhase(run.data?.work_item);
+
+  if (run.isLoading) {
+    return (
+      <div className="canvas-pad">
+        <Panel>
+          <Spinner /> Loading run…
+        </Panel>
+      </div>
+    );
+  }
+
+  if (!run.data || !id) {
+    return (
+      <div className="canvas-pad">
+        <Breadcrumb items={[{ label: "Phases & Runs", href: "/runs" }, "Not found"]} />
+        <Panel>
+          <Banner variant="danger" title="Run not found">
+            This run doesn't exist or you don't have access to it.
+          </Banner>
+        </Panel>
+      </div>
+    );
+  }
+
+  const hasPendingClarification = (clarifications.data ?? []).length > 0;
+  const view: RunConsoleView = hasPendingClarification
+    ? "needs-answer"
+    : run.data.status === "pending"
+      ? "dispatched"
+      : run.data.status === "running"
+        ? "running"
+        : run.data.status === "awaiting_gate"
+          ? "awaiting-gate"
+          : run.data.status === "approved" || run.data.status === "completed"
+            ? "completed"
+            : "failed";
+
+  const lines = (events.data ?? []).map(eventLine);
+
+  const handleRetry = () => {
+    if (!run.data) return;
+    retry.mutate(run.data.agent_spec, {
+      onSuccess: (result) => navigate(`/runs/${result.run_id}`),
+    });
+  };
+
+  return (
+    <div className="canvas-pad">
+      <Breadcrumb items={[{ label: "Phases & Runs", href: "/runs" }, id]} />
+      <div className="page-head">
+        <div className="page-head__titles">
+          <h1 className="t-h1">
+            Run console — {run.data.agent_spec}
+            {workItem.data ? ` · ${workItem.data.title || workItem.data.id.slice(0, 8)}` : ""}
+          </h1>
+          <div className="meta-row" style={{ marginTop: "var(--space-2)" }}>
+            <span className="meta-item">
+              Engine <strong>{run.data.engine} · {run.data.model}</strong>
+            </span>
+            <span className="meta-item">
+              Workflow <strong>{run.data.temporal_workflow_id || "—"}</strong>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <Panel
+        title={id}
+        actions={
+          <>
+            {view === "completed" && run.data.cost_usd && (
+              <span className="meta-item">
+                Cost <strong>${run.data.cost_usd}</strong>
+              </span>
+            )}
+            <Badge variant={BADGE_VARIANT[view]}>{BADGE_LABEL[view]}</Badge>
+          </>
+        }
+      >
+        {view === "dispatched" && (
+          <Banner variant="info">Queued. It will start as soon as your companion claims it.</Banner>
+        )}
+        {view === "needs-answer" && (
+          <Banner variant="purple" title="Paused — no usage billed while waiting">
+            The agent asked a question. Answer it to resume in the same session.{" "}
+            <a href="/clarifications">Answer now ↗</a>
+          </Banner>
+        )}
+        {view === "awaiting-gate" && (
+          <Banner variant="warning" title="Awaiting gate">
+            The artifact is a draft until its gate is approved. <a href="/gates">Open gate ↗</a>
+          </Banner>
+        )}
+        {view === "failed" && (
+          <Banner variant="danger" title={run.data.status === "rejected" ? "Gate rejected" : "Run failed"}>
+            {run.data.status === "rejected"
+              ? "The gate was rejected. Re-trigger to try again."
+              : "The engine exited before reporting. No artifact was registered."}
+          </Banner>
+        )}
+
+        <div style={{ marginTop: view === "running" ? 0 : "var(--space-3)" }}>
+          {lines.length === 0 ? (
+            <Console lines={[<span key="empty" className="t-sm u-muted">No log lines yet…</span>]} />
+          ) : (
+            <Console lines={lines} />
+          )}
+        </div>
+
+        {view === "failed" && (
+          <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
+            <Button variant="primary" onClick={handleRetry} disabled={retry.isPending}>
+              {retry.isPending ? <Spinner /> : "Retry run"}
+            </Button>
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+// ── Gallery: fixed demo states for /dev/components + tests ─────────────────
+function RunConsoleGallery({ view }: { view: RunConsoleView }) {
+  const id = "RUN-42";
   return (
     <div className="canvas-pad">
       <Breadcrumb items={[{ label: "Phases & Runs", href: "/runs" }, id]} />

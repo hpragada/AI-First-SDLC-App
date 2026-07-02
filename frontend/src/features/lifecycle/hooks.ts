@@ -26,8 +26,13 @@ export function useCreateWorkItem(projectId: string | undefined) {
   const tenantId = useTenantId();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { type: string; feature_stream?: string }) =>
-      api.createWorkItem(tenantId, projectId as string, data),
+    mutationFn: (data: {
+      type: string;
+      title?: string;
+      description?: string;
+      feature_stream?: string;
+      parent?: string;
+    }) => api.createWorkItem(tenantId, projectId as string, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["work-items", projectId] }),
   });
 }
@@ -134,7 +139,7 @@ export function useAnswerClarification() {
 }
 
 // ── Gates (S-21/22) ─────────────────────────────────────────────────────────
-export function useApprovals(q: { decision?: string } = {}) {
+export function useApprovals(q: { decision?: string; work_item?: string; run?: string } = {}) {
   const tenantId = useTenantId();
   return useQuery({
     queryKey: ["approvals", q],
@@ -160,13 +165,13 @@ export function useDecideApproval() {
       id,
       decision,
       comment,
-      satisfied,
+      conditions,
     }: {
       id: string;
       decision: "approved" | "rejected";
       comment?: string;
-      satisfied?: Record<string, boolean>;
-    }) => api.decideApproval(tenantId, id, { decision, comment, satisfied }),
+      conditions?: { key: string; satisfied: boolean }[];
+    }) => api.decideApproval(tenantId, id, { decision, comment, conditions }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["approvals"] });
       qc.invalidateQueries({ queryKey: ["gate-criteria"] });

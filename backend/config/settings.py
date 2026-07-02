@@ -69,12 +69,15 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
+    # Sets `app.tenant_id` on the DB session so RLS scopes every query (#6). Reads it
+    # straight from session data (set at login — auth_views.py), so it must run BEFORE
+    # AuthenticationMiddleware: that middleware resolves request.user by querying the
+    # RLS-protected tenancy_user table, which needs app.tenant_id already set to avoid
+    # a resolve-tenant-from-user / resolve-user-needs-tenant deadlock.
+    "apps.tenancy.middleware.TenantContextMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    # Sets `app.tenant_id` on the DB session so RLS scopes every query (#6).
-    # After AuthenticationMiddleware so request.user (and its tenant) is resolved.
-    "apps.tenancy.middleware.TenantContextMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"

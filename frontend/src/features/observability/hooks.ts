@@ -19,6 +19,45 @@ export function useOnboardingHub(projectId: string | undefined) {
   });
 }
 
+export function useSourceDocuments(projectId: string | undefined) {
+  return useQuery({
+    queryKey: ["source-documents", projectId],
+    queryFn: () => api.listSourceDocuments(projectId as string),
+    enabled: Boolean(projectId),
+    refetchInterval: 4000,
+  });
+}
+
+export function useUploadSourceDocument(projectId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => api.uploadSourceDocument(projectId as string, file),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["source-documents", projectId] });
+      qc.invalidateQueries({ queryKey: ["onboarding", projectId] });
+    },
+  });
+}
+
+export function useAdoptSourceDocument(projectId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, userId }: { id: string; userId: string }) => api.adoptSourceDocument(id, userId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["source-documents", projectId] });
+      qc.invalidateQueries({ queryKey: ["onboarding", projectId] });
+    },
+  });
+}
+
+export function useOnboardAtlassian(projectId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.onboardAtlassian(projectId as string),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["onboarding", projectId] }),
+  });
+}
+
 export function useStartCodeIntel(projectId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
@@ -121,8 +160,12 @@ export function useTakeOverRun() {
   const tenantId = useTenantId();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (runId: string) => api.takeOverRun(tenantId, runId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["run"] }),
+    mutationFn: ({ runId, release }: { runId: string; release?: boolean }) =>
+      api.takeOverRun(tenantId, runId, release ? { release: true } : {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["run"] });
+      qc.invalidateQueries({ queryKey: ["runs"] });
+    },
   });
 }
 

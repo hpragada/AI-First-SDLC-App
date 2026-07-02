@@ -1,9 +1,184 @@
-import { Banner, Breadcrumb, Button, Card, CardBody, CriteriaItem, CriteriaList, Textarea } from "../../components/ui";
-import { useDecideApproval } from "./hooks";
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+
+import {
+  Banner,
+  Breadcrumb,
+  Button,
+  Card,
+  CardBody,
+  CriteriaItem,
+  CriteriaList,
+  Panel,
+  Spinner,
+  Textarea,
+} from "../../components/ui";
+import { useDecideApproval, useGateCriteria } from "./hooks";
 
 // S-22 view states: none-ticked · partial · all-ticked · rejected.
 export type CriteriaGateView = "none" | "partial" | "all" | "rejected";
 
+export function CriteriaGate({ forceView }: { forceView?: CriteriaGateView }) {
+  if (forceView) return <CriteriaGateGallery view={forceView} />;
+  return <CriteriaGateLive />;
+}
+
+// ── Live: the real approval's criteria checklist ────────────────────────────
+function CriteriaGateLive() {
+  const { id } = useParams();
+  const criteria = useGateCriteria(id);
+  const decideApproval = useDecideApproval();
+  const [satisfied, setSatisfied] = useState<Record<string, boolean>>({});
+  const [comment, setComment] = useState("");
+  const [decided, setDecided] = useState<"approved" | "rejected" | null>(null);
+
+  useEffect(() => {
+    if (criteria.data) {
+      setSatisfied(Object.fromEntries(criteria.data.criteria.map((c) => [c.id, c.satisfied])));
+    }
+  }, [criteria.data]);
+
+  if (criteria.isLoading) {
+    return (
+      <div className="canvas-pad" style={{ maxWidth: "880px" }}>
+        <Panel>
+          <Spinner /> Loading gate criteria…
+        </Panel>
+      </div>
+    );
+  }
+
+  if (!criteria.data || !id) {
+    return (
+      <div className="canvas-pad" style={{ maxWidth: "880px" }}>
+        <Panel>
+          <Banner variant="danger" title="Gate not found">
+            This approval doesn't exist or you don't have access to it.
+          </Banner>
+        </Panel>
+      </div>
+    );
+  }
+
+  const list = criteria.data.criteria;
+  const met = list.filter((c) => satisfied[c.id]).length;
+  const requiredUnmet = list.some((c) => c.required && !satisfied[c.id]);
+  const approveEnabled = !requiredUnmet;
+
+  const handleDecide = (decision: "approved" | "rejected") => {
+    decideApproval.mutate(
+      {
+        id,
+        decision,
+        comment: comment || undefined,
+        conditions: list.map((c) => ({ key: c.id, satisfied: Boolean(satisfied[c.id]) })),
+      },
+      { onSuccess: () => setDecided(decision) },
+    );
+  };
+
+  if (decided === "rejected") {
+    return (
+      <div className="canvas-pad" style={{ maxWidth: "880px" }}>
+        <Breadcrumb items={[{ label: "Gates", href: "/gates" }, "Criteria gate"]} />
+        <Card>
+          <CardBody>
+            <span className="gate-panel__role">Criteria gate</span>
+            <Banner variant="danger" title="Rejected — sent back for rework">
+              {comment || "A remediation note was sent to the run."}
+            </Banner>
+          </CardBody>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="canvas-pad" style={{ maxWidth: "880px" }}>
+      <Breadcrumb items={[{ label: "Gates", href: "/gates" }, "Criteria gate"]} />
+      <div className="page-head">
+        <div className="page-head__titles">
+          <h1 className="t-h1">Gate criteria checklist</h1>
+          <p className="page-head__sub">
+            A quality gate: approval stays disabled until every required criterion is ticked.
+          </p>
+        </div>
+      </div>
+
+      {decided === "approved" ? (
+        <Banner variant="success" title="Approved">
+          The gate was approved — the run resumes.
+        </Banner>
+      ) : (
+        <Card attention={approveEnabled} className={approveEnabled ? undefined : "gate-panel"}>
+          <CardBody>
+            <div className="u-row">
+              <span className="gate-panel__role">Criteria</span>
+              <span className="u-spacer" />
+              <span
+                className="criteria-progress"
+                style={approveEnabled ? { color: "var(--success)" } : undefined}
+              >
+                {met} of {list.length} criteria met
+              </span>
+            </div>
+            {list.length === 0 ? (
+              <p className="t-sm u-muted">This gate has no checklist — decide directly.</p>
+            ) : (
+              <CriteriaList>
+                {list.map((c) => (
+                  <div
+                    key={c.id}
+                    style={{ cursor: "pointer" }}
+                    onClick={() => setSatisfied((s) => ({ ...s, [c.id]: !s[c.id] }))}
+                  >
+                    {/* remount on toggle: CriteriaItem's checkbox is uncontrolled (defaultChecked) */}
+                    <CriteriaItem key={String(satisfied[c.id])} met={Boolean(satisfied[c.id])}>
+                      {c.text}
+                      {c.required && " *"}
+                    </CriteriaItem>
+                  </div>
+                ))}
+              </CriteriaList>
+            )}
+            <label className="field" style={{ margin: "var(--space-2) 0 0" }}>
+              <span className="field__label">Comment (optional)</span>
+              <Textarea value={comment} onChange={(e) => setComment(e.target.value)} />
+            </label>
+            <div className="gate-panel__actions">
+              <Button
+                variant="primary"
+                disabled={!approveEnabled || decideApproval.isPending}
+                aria-disabled={!approveEnabled}
+                onClick={() => handleDecide("approved")}
+              >
+                {approveEnabled
+                  ? decideApproval.isPending
+                    ? <Spinner />
+                    : "Approve"
+                  : `Approve (${list.length - met} remaining)`}
+              </Button>
+              <Button
+                variant="danger"
+                disabled={decideApproval.isPending}
+                onClick={() => handleDecide("rejected")}
+              >
+                Reject
+              </Button>
+            </div>
+            {decideApproval.isError && (
+              <Banner variant="danger" title="Couldn't record the decision">
+                {decideApproval.error instanceof Error ? decideApproval.error.message : "Unknown error"}
+              </Banner>
+            )}
+          </CardBody>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── Gallery: fixed demo states for /dev/components + tests ─────────────────
 const CRITERIA = [
   "Color contrast ≥ 4.5:1 for body text",
   "Keyboard navigable end-to-end",
@@ -15,10 +190,7 @@ const CRITERIA = [
   "Images have text alternatives",
 ];
 
-export function CriteriaGate({ forceView = "none" }: { forceView?: CriteriaGateView }) {
-  const decideApproval = useDecideApproval();
-  const view = forceView;
-
+function CriteriaGateGallery({ view }: { view: CriteriaGateView }) {
   const displayMet = view === "all" ? CRITERIA.length : view === "partial" ? 5 : 0;
   const approveEnabled = view === "all";
 
@@ -84,20 +256,10 @@ export function CriteriaGate({ forceView = "none" }: { forceView?: CriteriaGateV
             ))}
           </CriteriaList>
           <div className="gate-panel__actions">
-            <Button
-              variant="primary"
-              disabled={!approveEnabled}
-              aria-disabled={!approveEnabled}
-              onClick={() => decideApproval.mutate({ id: "approval-22", decision: "approved" })}
-            >
+            <Button variant="primary" disabled={!approveEnabled} aria-disabled={!approveEnabled}>
               {approveEnabled ? "Approve" : `Approve (${CRITERIA.length - displayMet} remaining)`}
             </Button>
-            <Button
-              variant="danger"
-              onClick={() => decideApproval.mutate({ id: "approval-22", decision: "rejected" })}
-            >
-              Reject
-            </Button>
+            <Button variant="danger">Reject</Button>
           </div>
         </CardBody>
       </Card>

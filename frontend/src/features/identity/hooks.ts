@@ -44,28 +44,50 @@ export function useCreateRunner() {
   });
 }
 
+export function useRevokeRunner() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.revokeRunner(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["runners"] }),
+  });
+}
+
 // ── Admin: users, invitations, memberships, role coverage (S-07/S-08) ───────
 export function useUsers() {
   return useQuery({ queryKey: ["users"], queryFn: api.listUsers });
+}
+
+export function useInvitations() {
+  return useQuery({ queryKey: ["invitations"], queryFn: api.listInvitations });
 }
 
 export function useCreateInvitation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: api.createInvitation,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["users"] });
+      qc.invalidateQueries({ queryKey: ["invitations"] });
+    },
   });
 }
 
 export function useResendInvitation() {
-  return useMutation({ mutationFn: (id: string) => api.resendInvitation(id) });
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.resendInvitation(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["invitations"] }),
+  });
 }
 
 export function useRevokeInvitation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.revokeInvitation(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["users"] });
+      qc.invalidateQueries({ queryKey: ["invitations"] });
+    },
   });
 }
 
@@ -86,6 +108,26 @@ export function useSetMembership(projectId: string | undefined) {
       qc.invalidateQueries({ queryKey: ["users"] });
       qc.invalidateQueries({ queryKey: ["role-coverage", projectId] });
     },
+  });
+}
+
+export function useRevokeMembership(projectId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (membershipId: string) => api.deleteMembership(projectId as string, membershipId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["users"] });
+      qc.invalidateQueries({ queryKey: ["role-coverage", projectId] });
+    },
+  });
+}
+
+export function useSetTenantAdmin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, isTenantAdmin }: { userId: string; isTenantAdmin: boolean }) =>
+      api.setTenantAdmin(userId, isTenantAdmin),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
   });
 }
 

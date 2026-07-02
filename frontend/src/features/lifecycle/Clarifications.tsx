@@ -1,7 +1,21 @@
 import { useState } from "react";
 
-import { Badge, Button, Card, CardBody, Check, EmptyState, Field, Input, Panel, Select } from "../../components/ui";
-import { useAnswerClarification } from "./hooks";
+import { useAuth } from "../../auth/AuthContext";
+import {
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  Check,
+  EmptyState,
+  Field,
+  Input,
+  Panel,
+  Select,
+  Spinner,
+} from "../../components/ui";
+import type { Clarification } from "../../types";
+import { useAnswerClarification, useClarifications, useWorkItems } from "./hooks";
 
 // S-20 view states: one-pending(confirm) · multi-question · required-error ·
 // already-answered · cancelled · empty.
@@ -14,17 +28,154 @@ export type ClarificationsView =
   | "empty";
 
 export function Clarifications({ forceView }: { forceView?: ClarificationsView }) {
-  const answer = useAnswerClarification();
-  const [submitted, setSubmitted] = useState(false);
-  const [touched, setTouched] = useState(false);
-  const view: ClarificationsView = forceView ?? (submitted ? "answered" : "one-pending");
+  if (forceView) return <ClarificationsGallery view={forceView} />;
+  return <ClarificationsLive />;
+}
 
-  const onSubmitOne = () => {
-    setTouched(true);
-    answer.mutate({ id: "clar-1", answers: { csv_export: true } });
-    setSubmitted(true);
+// ── Live: real pending clarifications for the selected project ─────────────
+function ClarificationsLive() {
+  const { selectedProject } = useAuth();
+  const projectId = selectedProject?.project_id;
+  const workItems = useWorkItems(projectId);
+  const workItemIds = new Set((workItems.data ?? []).map((w) => w.id));
+  const clarifications = useClarifications({ status: "pending" });
+  const answer = useAnswerClarification();
+  const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  const [touched, setTouched] = useState(false);
+  const [justAnswered, setJustAnswered] = useState<Clarification | null>(null);
+
+  const loading = clarifications.isLoading || workItems.isLoading;
+  const pending = (clarifications.data ?? []).filter((c) => workItemIds.has(c.work_item));
+  const current = pending[0];
+
+  const workItemLabel = (id: string) => {
+    const wi = workItems.data?.find((w) => w.id === id);
+    return wi ? `${id.slice(0, 8)} · ${wi.title || wi.type}` : id.slice(0, 8);
   };
 
+  const missingRequired = current
+    ? current.questions.filter((q) => q.required && answers[q.id] === undefined)
+    : [];
+
+  const handleSubmit = () => {
+    if (!current) return;
+    setTouched(true);
+    if (missingRequired.length > 0) return;
+    answer.mutate(
+      { id: current.id, answers },
+      {
+        onSuccess: () => {
+          setJustAnswered(current);
+          setAnswers({});
+          setTouched(false);
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="canvas-pad" style={{ maxWidth: "880px" }}>
+      <div className="page-head">
+        <div className="page-head__titles">
+          <h1 className="t-h1">Clarifications</h1>
+          <p className="page-head__sub">
+            Questions your agents are waiting on. Answering resumes the run in the same session —
+            and nothing is billed while it waits.
+          </p>
+        </div>
+      </div>
+
+      {loading ? (
+        <Panel>
+          <Spinner /> Loading clarifications…
+        </Panel>
+      ) : !current ? (
+        <Panel>
+          <EmptyState
+            title="No questions waiting"
+            text="When an agent needs input, it pauses (billing $0) and the question appears here."
+          />
+          {justAnswered && (
+            <Card style={{ marginTop: "var(--space-4)" }}>
+              <CardBody style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+                <Badge variant="done">Answered</Badge>
+                <span className="t-sm u-body">
+                  {workItemLabel(justAnswered.work_item)} — run resumed.
+                </span>
+              </CardBody>
+            </Card>
+          )}
+        </Panel>
+      ) : (
+        <Card className="clar-card">
+          <CardBody>
+            <div className="clar-card__head">
+              <span className="wi-card__id">{workItemLabel(current.work_item)}</span>
+              <Badge variant="needs-answer">{current.phase} · needs answer</Badge>
+              <span className="u-spacer" />
+              <span className="zero-cost">⏸ Paused — no usage billed while waiting</span>
+            </div>
+            {current.context && <p className="clar-card__why">{current.context}</p>}
+            {current.questions.map((q, index) => (
+              <Field
+                key={q.id}
+                label={
+                  <>
+                    {current.questions.length > 1 ? `${index + 1} · ` : ""}
+                    {q.text} {q.required && <span className="req">*</span>}
+                  </>
+                }
+                error={touched && q.required && answers[q.id] === undefined ? "This answer is required before the run can resume." : undefined}
+              >
+                {q.kind === "confirm" ? (
+                  <Check
+                    checked={Boolean(answers[q.id])}
+                    onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.checked }))}
+                  >
+                    Yes
+                  </Check>
+                ) : q.kind === "choice" && q.options?.length ? (
+                  <Select
+                    value={(answers[q.id] as string) ?? ""}
+                    onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                    aria-invalid={touched && q.required && answers[q.id] === undefined}
+                  >
+                    <option value="">Choose one…</option>
+                    {q.options.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </Select>
+                ) : (
+                  <Input
+                    type="text"
+                    value={(answers[q.id] as string) ?? ""}
+                    onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                    aria-invalid={touched && q.required && answers[q.id] === undefined}
+                  />
+                )}
+              </Field>
+            ))}
+            <div className="gate-panel__actions">
+              <Button variant="primary" onClick={handleSubmit} disabled={answer.isPending}>
+                {answer.isPending ? <Spinner /> : current.questions.length > 1 ? "Submit answers" : "Submit answer"}
+              </Button>
+            </div>
+            {answer.isError && (
+              <p className="t-sm" style={{ color: "var(--danger)", marginTop: "var(--space-2)" }}>
+                {answer.error instanceof Error ? answer.error.message : "Couldn't submit the answer."}
+              </p>
+            )}
+          </CardBody>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── Gallery: fixed demo states for /dev/components + tests ─────────────────
+function ClarificationsGallery({ view }: { view: ClarificationsView }) {
   return (
     <div className="canvas-pad" style={{ maxWidth: "880px" }}>
       <div className="page-head">
@@ -61,9 +212,7 @@ export function Clarifications({ forceView }: { forceView?: ClarificationsView }
             </p>
             <Check>Yes — include CSV export in v1</Check>
             <div className="gate-panel__actions">
-              <Button variant="primary" onClick={onSubmitOne} disabled={answer.isPending}>
-                Submit answer
-              </Button>
+              <Button variant="primary">Submit answer</Button>
               <Button variant="ghost">Skip for now</Button>
             </div>
           </CardBody>
@@ -142,8 +291,7 @@ export function Clarifications({ forceView }: { forceView?: ClarificationsView }
           <CardBody style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
             <Badge variant="done">Answered</Badge>
             <span className="t-sm u-body">
-              WI-510 · "CSV export in v1?" — answered <strong>Yes</strong> by{" "}
-              {touched ? "you" : "Sarah Chen"} · run resumed.
+              WI-510 · "CSV export in v1?" — answered <strong>Yes</strong> by Sarah Chen · run resumed.
             </span>
             <span className="u-spacer" />
             <Button variant="ghost" size="sm">

@@ -1,12 +1,158 @@
-import { EmptyState, GraphCanvas, Panel } from "../../components/ui";
+import { useNavigate } from "react-router-dom";
+
+import { useAuth } from "../../auth/AuthContext";
+import { EmptyState, GraphCanvas, Panel, Spinner } from "../../components/ui";
+import type { TraceGraph } from "../../types";
+import { useTraceability } from "./hooks";
 
 // S-30 view states: small (default) · highlighted (WI-492 lineage) · large-cluster
 // · empty.
 export type TraceabilityViewState = "small" | "highlighted" | "large-cluster" | "empty";
 
-export function TraceabilityView({ forceView }: { forceView?: TraceabilityViewState }) {
-  const view: TraceabilityViewState = forceView ?? "small";
+function nodeColor(status: string) {
+  if (status === "published") return "var(--success)";
+  if (status === "pending_gate" || status === "gate") return "var(--warning)";
+  return "var(--info)";
+}
 
+const LEGEND = (
+  <span className="graph-legend">
+    <span className="graph-legend__item">
+      <span className="graph-legend__dot" style={{ background: "var(--success)" }} />
+      Published
+    </span>
+    <span className="graph-legend__item">
+      <span className="graph-legend__dot" style={{ background: "var(--warning)" }} />
+      Pending gate
+    </span>
+    <span className="graph-legend__item">
+      <span className="graph-legend__dot" style={{ background: "var(--info)" }} />
+      Draft
+    </span>
+  </span>
+);
+
+export function TraceabilityView({ forceView }: { forceView?: TraceabilityViewState }) {
+  if (forceView) return <TraceabilityGallery view={forceView} />;
+  return <TraceabilityLive />;
+}
+
+// ── Live: the real lineage graph for the selected project ──────────────────
+function TraceabilityLive() {
+  const { selectedProject } = useAuth();
+  const projectId = selectedProject?.project_id;
+  const graph = useTraceability(projectId);
+
+  return (
+    <div className="canvas-pad">
+      <div className="page-head">
+        <div className="page-head__titles">
+          <h1 className="t-h1">Traceability</h1>
+          <p className="page-head__sub">
+            Artifact lineage — what derives from what, which tasks implement which requirement,
+            which tests cover which task. Click a node to preview or deep-link.
+          </p>
+        </div>
+      </div>
+
+      <div className="u-row u-wrap" style={{ marginBottom: "var(--space-4)" }}>
+        <span className="u-spacer" />
+        {LEGEND}
+      </div>
+
+      {graph.isLoading ? (
+        <Panel>
+          <Spinner /> Loading traceability graph…
+        </Panel>
+      ) : !graph.data || graph.data.nodes.length === 0 ? (
+        <Panel>
+          <EmptyState
+            title="No lineage yet"
+            text="Once phases produce artifacts and tasks, their relationships render here as a graph."
+          />
+        </Panel>
+      ) : (
+        <LineageGraph graph={graph.data} />
+      )}
+    </div>
+  );
+}
+
+function LineageGraph({ graph }: { graph: TraceGraph }) {
+  const navigate = useNavigate();
+  const cols = 4;
+  const boxW = 150;
+  const boxH = 44;
+  const gapX = 100;
+  const gapY = 90;
+  const marginX = 20;
+  const marginY = 40;
+
+  const positions = new Map<string, { x: number; y: number }>();
+  graph.nodes.forEach((n, i) => {
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    positions.set(n.id, {
+      x: marginX + col * (boxW + gapX),
+      y: marginY + row * (boxH + gapY),
+    });
+  });
+  const rows = Math.ceil(graph.nodes.length / cols);
+  const width = marginX * 2 + cols * boxW + (cols - 1) * gapX;
+  const height = marginY * 2 + rows * boxH + (rows - 1) * gapY;
+
+  return (
+    <GraphCanvas>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" role="img" aria-label="Lineage graph">
+        <g className="gedge">
+          {graph.edges.map((e, i) => {
+            const from = positions.get(e.from);
+            const to = positions.get(e.to);
+            if (!from || !to) return null;
+            return (
+              <line
+                key={i}
+                x1={from.x + boxW}
+                y1={from.y + boxH / 2}
+                x2={to.x}
+                y2={to.y + boxH / 2}
+              />
+            );
+          })}
+        </g>
+        <g fontFamily="var(--font-sans)">
+          {graph.nodes.map((n) => {
+            const pos = positions.get(n.id)!;
+            const go = () => (n.url ? window.open(n.url, "_blank", "noopener") : navigate(`/artifacts/${n.id}`));
+            return (
+              <g
+                key={n.id}
+                transform={`translate(${pos.x},${pos.y})`}
+                style={{ cursor: "pointer" }}
+                role="button"
+                tabIndex={0}
+                onClick={go}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && go()}
+              >
+                <rect width={boxW} height={boxH} rx="8" className="gnode" style={{ stroke: nodeColor(n.status) }} />
+                <circle cx="16" cy="22" r="5" style={{ fill: nodeColor(n.status) }} />
+                <text x="30" y="20" style={{ fill: "var(--text-strong)", fontSize: "12px", fontWeight: 600 }}>
+                  {n.type.length > 16 ? `${n.type.slice(0, 16)}…` : n.type}
+                </text>
+                <text x="30" y="35" style={{ fill: "var(--text-muted)", fontSize: "11px" }}>
+                  {n.phase} · {n.status}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+    </GraphCanvas>
+  );
+}
+
+// ── Gallery: fixed demo states for /dev/components + tests ─────────────────
+function TraceabilityGallery({ view }: { view: TraceabilityViewState }) {
   return (
     <div className="canvas-pad">
       <div className="page-head">
@@ -31,20 +177,7 @@ export function TraceabilityView({ forceView }: { forceView?: TraceabilityViewSt
           <option>None</option>
         </select>
         <span className="u-spacer" />
-        <span className="graph-legend">
-          <span className="graph-legend__item">
-            <span className="graph-legend__dot" style={{ background: "var(--success)" }} />
-            Published
-          </span>
-          <span className="graph-legend__item">
-            <span className="graph-legend__dot" style={{ background: "var(--warning)" }} />
-            Pending gate
-          </span>
-          <span className="graph-legend__item">
-            <span className="graph-legend__dot" style={{ background: "var(--info)" }} />
-            Draft
-          </span>
-        </span>
+        {LEGEND}
       </div>
 
       {view === "empty" ? (

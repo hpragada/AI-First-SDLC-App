@@ -12,7 +12,7 @@ import {
   Spinner,
   TokenReveal,
 } from "../../components/ui";
-import { useCreateRunner, useRunners } from "./hooks";
+import { useCreateRunner, useRevokeRunner, useRunners } from "./hooks";
 
 // S-06 view states: not-started · token-generated (awaiting check-in) · connected · offline.
 export type ConnectView = "not-started" | "token-generated" | "connected" | "offline";
@@ -25,6 +25,7 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
   const { currentUser } = useAuth();
   const runners = useRunners(true);
   const createRunner = useCreateRunner();
+  const revokeRunner = useRevokeRunner();
   const [token, setToken] = useState<string | null>(null);
 
   const runner = runners.data?.[0];
@@ -78,8 +79,19 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
               <Link to="/work-items" className="btn btn--primary">
                 Go to Work Items
               </Link>
-              <Button variant="secondary">Disconnect machine</Button>
+              <Button
+                variant="secondary"
+                disabled={revokeRunner.isPending || !runner}
+                onClick={() => runner && revokeRunner.mutate(runner.id)}
+              >
+                {revokeRunner.isPending ? "Disconnecting…" : "Disconnect machine"}
+              </Button>
             </div>
+            {revokeRunner.isError && (
+              <p className="t-sm" style={{ color: "var(--danger)", marginTop: "var(--space-2)" }}>
+                {revokeRunner.error instanceof Error ? revokeRunner.error.message : "Couldn't disconnect this machine."}
+              </p>
+            )}
           </CardBody>
         </Card>
       </div>
