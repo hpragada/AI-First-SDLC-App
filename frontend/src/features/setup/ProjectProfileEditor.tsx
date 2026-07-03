@@ -1,4 +1,5 @@
 ﻿import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import { Button, Field, Panel, Textarea, Input } from "../../components/ui";
@@ -36,6 +37,9 @@ function toForm(p: ProjectProfile | null | undefined): FormState {
 
 export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView }) {
   const { selectedProject } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const inSetup = searchParams.get("setup") === "1";
   const projectId = selectedProject?.project_id;
   const profile = useProfile(projectId);
   const save = useSaveProfile(projectId);
@@ -72,6 +76,7 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
       important_context: form.important_context,
     });
     setDirty(false);
+    if (inSetup) navigate("/setup");
   };
 
   const saveState =
@@ -128,14 +133,19 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
             </Field>
             {!validationError && (
               <>
-                <div className="grid grid--2">
-                  <Field label="Domain">
-                    <Input value={form.domain} onChange={(e) => update("domain")(e.target.value)} />
-                  </Field>
-                  <Field label="Tech stack">
-                    <Input value={form.tech_stack} onChange={(e) => update("tech_stack")(e.target.value)} />
-                  </Field>
-                </div>
+                <Field label="Domain">
+                  <Input value={form.domain} onChange={(e) => update("domain")(e.target.value)} />
+                </Field>
+                <Field label="Tech stack">
+                  <Textarea
+                    rows={6}
+                    placeholder={
+                      "One item per line, e.g.\nFrontend: TypeScript 5.x, Next.js 14\nBackend: Python 3.12, Django 5.x + DRF\nDatabase: PostgreSQL 16"
+                    }
+                    value={form.tech_stack}
+                    onChange={(e) => update("tech_stack")(e.target.value)}
+                  />
+                </Field>
                 <Field label="Coding standards">
                   <Textarea
                     value={form.coding_standards}

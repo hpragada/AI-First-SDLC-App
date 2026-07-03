@@ -39,7 +39,7 @@ describe("S-01 Signup", () => {
 describe("S-02 Login", () => {
   it("default · invalid · locked · submitting", () => {
     const { rerender } = renderWithProviders(<Login forceView="default" />);
-    expect(screen.getByText("Welcome back to Acme Corp.")).toBeDefined();
+    expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
 
     rerender(<Login forceView="invalid" />);
     expect(screen.getByText("Email or password is incorrect.")).toBeDefined();

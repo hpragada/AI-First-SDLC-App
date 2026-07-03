@@ -77,7 +77,7 @@ export function Login({ forceView }: { forceView?: LoginView }) {
         {view === "invalid" ? (
           <Banner variant="danger">Email or password is incorrect.</Banner>
         ) : (
-          <p className="auth-card__sub">Welcome back to Acme Corp.</p>
+          <p className="auth-card__sub">Welcome back.</p>
         )}
         <Field label="Work email">
           <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />

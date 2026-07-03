@@ -105,7 +105,7 @@ export function AppShell() {
   const { currentUser, selectedProject, setSelectedProjectId, isAdmin } = useAuth();
   const active = activeNav(location.pathname);
   const tenant = currentUser?.tenant.name ?? "Acme Corp";
-  const project = selectedProject?.project_name ?? "Payment Gateway v2";
+  const project = selectedProject?.project_name ?? "No project yet";
   const user = currentUser?.user.name ?? "You";
 
   return (

@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 
 import { Badge, Banner, CapCard } from "../../components/ui";
+import { SetupReturnLink } from "../identity/SetupReturnLink";
 import type { Capability } from "../../types";
 import { useIntegrations } from "./hooks";
 
@@ -52,6 +53,7 @@ export function Integrations({ forceView }: { forceView?: IntegrationsView }) {
             Phases use whatever is connected.
           </p>
         </div>
+        <SetupReturnLink />
       </div>
 
       <div className="grid grid--3">
