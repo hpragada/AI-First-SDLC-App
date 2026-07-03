@@ -1,6 +1,7 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
+import { useDashboard } from "../features/observability/hooks";
 import { cx, StatusDot } from "./ui";
 
 type NavId =
@@ -42,8 +43,8 @@ const NAV: Array<{
       { id: "dashboard", label: "Workspace Dashboard", icon: "dashboard", href: "/" },
       { id: "work-items", label: "Work Items", icon: "work", href: "/work-items" },
       { id: "runs", label: "Phases & Runs", icon: "runs", href: "/runs" },
-      { id: "gates", label: "Gates", icon: "gate", href: "/gates", count: 3 },
-      { id: "clarifications", label: "Clarifications", icon: "clar", href: "/clarifications", count: 1 },
+      { id: "gates", label: "Gates", icon: "gate", href: "/gates" },
+      { id: "clarifications", label: "Clarifications", icon: "clar", href: "/clarifications" },
       { id: "artifacts", label: "Artifacts & Traceability", icon: "artifacts", href: "/artifacts" },
     ],
   },
@@ -104,6 +105,14 @@ export function AppShell() {
   const location = useLocation();
   const { currentUser, selectedProject, setSelectedProjectId, isAdmin } = useAuth();
   const active = activeNav(location.pathname);
+
+  // Live nav/bell counts from the real needs-me rollup (Bugs.xlsx row 29.2) — no longer
+  // hardcoded. The dashboard query polls, so these stay current; zero when nothing needs you.
+  const dashboard = useDashboard(selectedProject?.project_id);
+  const gateCount = dashboard.data?.needs_me.gates.length ?? 0;
+  const clarCount = dashboard.data?.needs_me.clarifications.length ?? 0;
+  const navCounts: Partial<Record<NavId, number>> = { gates: gateCount, clarifications: clarCount };
+  const bellCount = gateCount + clarCount;
   const tenant = currentUser?.tenant.name ?? "Acme Corp";
   const project = selectedProject?.project_name ?? "No project yet";
   const user = currentUser?.user.name ?? "You";
@@ -121,13 +130,16 @@ export function AppShell() {
             return (
               <div key={group.section ?? index}>
                 {group.section && <div className="sidebar__section">{group.section}</div>}
-                {group.items.map((item) => (
-                  <Link key={item.id} className="nav-item" to={item.href} aria-current={item.id === active ? "page" : undefined}>
-                    <SvgIcon path={ICON[item.icon]} />
-                    <span className="nav-item__label">{item.label}</span>
-                    {item.count !== undefined && <span className="nav-item__count">{item.count}</span>}
-                  </Link>
-                ))}
+                {group.items.map((item) => {
+                  const count = item.count ?? navCounts[item.id];
+                  return (
+                    <Link key={item.id} className="nav-item" to={item.href} aria-current={item.id === active ? "page" : undefined}>
+                      <SvgIcon path={ICON[item.icon]} />
+                      <span className="nav-item__label">{item.label}</span>
+                      {count !== undefined && count > 0 && <span className="nav-item__count">{count}</span>}
+                    </Link>
+                  );
+                })}
               </div>
             );
           })}
@@ -163,9 +175,9 @@ export function AppShell() {
             <StatusDot />
             Companion: Ready
           </span>
-          <button className="bell" aria-label="Notifications, 4 unread">
+          <button className="bell" aria-label={`Notifications, ${bellCount} unread`}>
             <SvgIcon path={ICON.bell} />
-            <span className="bell__badge">4</span>
+            {bellCount > 0 && <span className="bell__badge">{bellCount}</span>}
           </button>
           <button className={cx("avatar")} aria-label={`Account menu for ${user}`}>
             {initials(user)}

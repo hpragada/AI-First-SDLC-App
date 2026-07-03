@@ -207,6 +207,18 @@ def register_artifact(
         )
         if sor not in Artifact.SoR.values:
             raise ValueError(f"invalid sor: {sor}")
+        # Version across re-registrations (Bugs.xlsx row 28.2): a fresh row per run/remediation
+        # loop shares (project, phase, type) with its predecessors. Number it one past the
+        # highest existing sibling so re-running a phase yields v2, v3, … instead of another v1.
+        # Only the integer counter — still a pointer row, no content stored (#1/#3).
+        last = (
+            Artifact.objects.filter(
+                tenant_id=tenant_id, project=project, phase=phase, type=type
+            )
+            .order_by("-version")
+            .values_list("version", flat=True)
+            .first()
+        )
         artifact = Artifact.objects.create(
             tenant_id=tenant_id,
             project=project,
@@ -218,6 +230,7 @@ def register_artifact(
             content_hash=content_hash or "",
             s3_key=s3_key or "",
             external_ref=external_ref,
+            version=(last or 0) + 1,
         )
         return _artifact(artifact)
 

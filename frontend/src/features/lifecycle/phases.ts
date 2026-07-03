@@ -45,3 +45,23 @@ export function visibleLifecycleNodes(nodes: LifecycleNode[]): LifecycleNode[] {
     .filter((n) => !isBrownfieldPhase(n.phase))
     .map((n) => ({ ...n, label: phaseLabel(n.label && n.label !== n.phase ? n.label : n.phase) }));
 }
+
+// The full lifecycle in SDLC order as board columns (Bugs.xlsx row 27.1): every non-brownfield
+// phase from the catalog, humanized. Ordinal-labelled so the sequence reads at a glance.
+export function lifecyclePhaseColumns(): { key: string; label: string }[] {
+  return PLANNING_PHASES.filter((p) => !isBrownfieldPhase(p.key)).map((p, i) => ({
+    key: p.key,
+    label: `${i + 1}. ${p.label}`,
+  }));
+}
+
+// Humanize a label that may embed a raw phase key (e.g. "04_architecture gate" -> "Architecture
+// gate"). Left untouched when it has no underscore, so plain labels like "Needs answer" are safe.
+export function humanizeLabel(text: string | null | undefined): string {
+  if (!text) return "";
+  if (!text.includes("_")) return text;
+  return text
+    .split(/\s+/)
+    .map((tok) => (tok.includes("_") ? phaseLabel(tok) : tok))
+    .join(" ");
+}

@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { useRunners } from "../identity/hooks";
 import { Badge, Button, Card, CardBody, ConnStatus, EmptyState, Kv, Panel, Spinner, Tile, Todo } from "../../components/ui";
+import { roleLabel } from "../identity/roles";
+import { phaseLabel } from "../lifecycle/phases";
 import { useDashboard } from "./hooks";
 
 // S-31 view states: busy (default) · calm · new-project.
@@ -64,7 +66,7 @@ function DashboardLive() {
       </div>
 
       <div className="grid grid--3" style={{ marginBottom: "var(--space-5)" }}>
-        <Tile num={gates.length} label="Gates need your approval" sub={gates.length > 0 ? `required role: ${gates[0].role}` : "all clear"} />
+        <Tile num={gates.length} label="Gates need your approval" sub={gates.length > 0 ? `required role: ${roleLabel(gates[0].role)}` : "all clear"} />
         <Tile num={clars.length} label="Questions awaiting you" sub={clars.length > 0 ? "$0 while waiting" : "all answered"} />
         <Tile num={runs.length} label="My runs in flight" sub={runs.length > 0 ? `${runs.filter((r) => r.status === "running").length} running` : "none"} />
       </div>
@@ -101,8 +103,8 @@ function DashboardLive() {
                   key={g.approval_id}
                   icon="▲"
                   type="gate"
-                  title={`${g.gate} gate · ${g.work_item.slice(0, 8)}`}
-                  meta={`required role: ${g.role}`}
+                  title={`${phaseLabel(g.gate)} gate · ${g.work_item.slice(0, 8)}`}
+                  meta={`required role: ${roleLabel(g.role)}`}
                   action={
                     <Link to="/gates" className="btn btn--primary btn--sm">
                       Review
@@ -129,7 +131,7 @@ function DashboardLive() {
                   key={r.run_id}
                   icon="▶"
                   type="run"
-                  title={`Run ${r.run_id.slice(0, 8)} · ${r.phase}`}
+                  title={`Run ${r.run_id.slice(0, 8)} · ${phaseLabel(r.phase)}`}
                   meta={`${r.work_item.slice(0, 8)} · ${r.status}`}
                   action={
                     <Link to={`/runs/${r.run_id}`} className="btn btn--ghost btn--sm">

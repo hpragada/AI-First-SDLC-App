@@ -1,6 +1,6 @@
 import { useParams } from "react-router-dom";
 
-import { Badge, Banner, Card, CardBody, Breadcrumb, DocPreview, Panel, Spinner } from "../../components/ui";
+import { Badge, Banner, Card, CardBody, Breadcrumb, DocPreview, Markdown, Panel, Spinner } from "../../components/ui";
 import { useArtifactPreview } from "./hooks";
 
 // S-29 view states: markdown · diagram · external · body-unavailable.
@@ -64,13 +64,18 @@ function ArtifactPreviewLive() {
               )}
             </div>
             <Banner variant="info">Read-through from the system-of-record. This preview is never an editor.</Banner>
-            <DocPreview>
-              {data.content_type === "text/html" ? (
+            {data.content_type === "text/html" ? (
+              <DocPreview>
                 <div dangerouslySetInnerHTML={{ __html: data.body ?? "" }} />
-              ) : (
+              </DocPreview>
+            ) : data.content_type === "text/markdown" ? (
+              // Row 28.1: render markdown (and ```mermaid diagrams), not raw source.
+              <Markdown>{data.body ?? ""}</Markdown>
+            ) : (
+              <DocPreview>
                 <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit" }}>{data.body}</pre>
-              )}
-            </DocPreview>
+              </DocPreview>
+            )}
           </div>
           <Card>
             <CardBody>

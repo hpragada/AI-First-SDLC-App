@@ -49,6 +49,25 @@ def test_register_get_and_list_artifacts(world):
     assert tools.list_artifacts(t.id, project.id, status="published") == []
 
 
+def test_register_artifact_bumps_version_across_re_registrations(world):
+    """Bugs.xlsx row 28.2: re-registering the same (project, phase, type) — e.g. re-running a
+    phase — yields v2, v3, … not another v1."""
+    t, project, run = world["t"], world["project"], world["run"]
+    first = tools.register_artifact(
+        t.id, project.id, run.id, "prd", "prd", "internal", "h1", s3_key="k1"
+    )
+    second = tools.register_artifact(
+        t.id, project.id, run.id, "prd", "prd", "internal", "h2", s3_key="k2"
+    )
+    assert first["version"] == 1
+    assert second["version"] == 2
+    # a different type on the same project starts its own count at v1
+    other = tools.register_artifact(
+        t.id, project.id, run.id, "requirements", "requirements", "internal", "h3"
+    )
+    assert other["version"] == 1
+
+
 def test_update_artifact(world):
     t, project, run = world["t"], world["project"], world["run"]
     a = tools.register_artifact(

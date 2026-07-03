@@ -18,16 +18,14 @@ import {
 } from "../../components/ui";
 import type { WorkItemCard } from "../../types";
 import { useCreateWorkItem, useWorkItems } from "./hooks";
+import { humanizeLabel, lifecyclePhaseColumns } from "./phases";
 
 // S-14 view states: board (default) · list · filtered (tasks only) · empty.
 export type BoardView = "board" | "list" | "filtered" | "empty";
 
-const PHASE_COLUMNS = [
-  { key: "01_ideation", label: "1. Ideation" },
-  { key: "02_requirements", label: "2. Requirements" },
-  { key: "03_architecture", label: "3. Architecture" },
-  { key: "04_ux_design", label: "4. UX Design" },
-];
+// Bugs.xlsx row 27.1: columns are the full lifecycle in SDLC order (from the catalog), not a
+// hardcoded four. The board scrolls horizontally, so the extra columns need no layout change.
+const PHASE_COLUMNS = lifecyclePhaseColumns();
 
 const BUILD_COLUMNS = [
   { key: "implementation", label: "Implementation" },
@@ -35,7 +33,7 @@ const BUILD_COLUMNS = [
 ];
 
 function statusBadge(card: WorkItemCard) {
-  const label = card.needs?.label;
+  const label = humanizeLabel(card.needs?.label);
   if (label && card.needs?.clarification) return <Needs type="clar">{label}</Needs>;
   if (label && card.needs?.gate) return <Needs type="gate">{label}</Needs>;
   if (card.state === "done") return <Badge variant="done">Phase complete</Badge>;

@@ -688,6 +688,8 @@ export function DocPreview({ children }: { children: ReactNode }) {
   return <div className="doc-preview prose">{children}</div>;
 }
 
+export { Markdown } from "./Markdown";
+
 export function DiagramFrame({ children }: { children: ReactNode }) {
   return <div className="diagram-frame">{children}</div>;
 }
