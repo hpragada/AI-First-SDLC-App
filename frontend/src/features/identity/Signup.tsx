@@ -23,10 +23,10 @@ export function Signup({ forceView }: { forceView?: SignupView }) {
   const navigate = useNavigate();
   const { refresh } = useAuth();
   const signup = useSignup();
-  const [name, setName] = useState("Sarah Chen");
-  const [email, setEmail] = useState("sarah@acme.com");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [orgName, setOrgName] = useState("Acme Corp");
+  const [orgName, setOrgName] = useState("");
   const [done, setDone] = useState(false);
 
   const emailInUse =
@@ -69,7 +69,7 @@ export function Signup({ forceView }: { forceView?: SignupView }) {
       <AuthSplit tagline={TAGLINE} sub={SUB}>
         <div className="auth-card">
           <h1 className="auth-card__title">Create your workspace</h1>
-          <p className="auth-card__sub">Setting up {orgName}…</p>
+          <p className="auth-card__sub">Setting up {orgName || "your workspace"}…</p>
           <Button variant="primary" block disabled aria-disabled="true">
             <Spinner /> Creating workspace…
           </Button>
@@ -84,7 +84,12 @@ export function Signup({ forceView }: { forceView?: SignupView }) {
         <h1 className="auth-card__title">Create your workspace</h1>
         <p className="auth-card__sub">Start your free Edvensoft workspace.</p>
         <Field label="Full name">
-          <Input type="text" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input
+            type="text"
+            placeholder="e.g. Jordan Lee"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
         </Field>
         <Field
           label="Work email"
@@ -98,6 +103,7 @@ export function Signup({ forceView }: { forceView?: SignupView }) {
         >
           <Input
             type="email"
+            placeholder="you@company.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             aria-invalid={view === "email-in-use"}
@@ -107,11 +113,21 @@ export function Signup({ forceView }: { forceView?: SignupView }) {
           label="Password"
           help={password ? "Strong — add a symbol to max it out." : undefined}
         >
-          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <Input
+            type="password"
+            placeholder="At least 8 characters"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
           <Strength value={passwordStrength(password)} />
         </Field>
         <Field label="Workspace / org name">
-          <Input type="text" value={orgName} onChange={(e) => setOrgName(e.target.value)} />
+          <Input
+            type="text"
+            placeholder="e.g. Northwind Labs"
+            value={orgName}
+            onChange={(e) => setOrgName(e.target.value)}
+          />
         </Field>
         <Button variant="primary" block type="submit">
           Create workspace

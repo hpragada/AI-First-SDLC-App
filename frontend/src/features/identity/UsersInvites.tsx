@@ -22,6 +22,7 @@ import {
   useRevokeInvitation,
   useUsers,
 } from "./hooks";
+import { SetupReturnLink } from "./SetupReturnLink";
 
 // S-07 view states: populated · invite-drawer · dup-error · empty.
 export type UsersView = "populated" | "invite-drawer" | "dup-error" | "empty";
@@ -251,6 +252,7 @@ export function UsersInvites({ forceView }: { forceView?: UsersView }) {
             Everyone in the Acme Corp workspace. Invite by email and grant initial project roles.
           </p>
         </div>
+        <SetupReturnLink />
         <Button variant="primary" onClick={() => setDrawerOpen(true)}>
           + Invite
         </Button>

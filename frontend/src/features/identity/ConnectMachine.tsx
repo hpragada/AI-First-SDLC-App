@@ -13,6 +13,7 @@ import {
   TokenReveal,
 } from "../../components/ui";
 import { useCreateRunner, useRevokeRunner, useRunners } from "./hooks";
+import { SetupReturnLink } from "./SetupReturnLink";
 
 // S-06 view states: not-started · token-generated (awaiting check-in) · connected · offline.
 export type ConnectView = "not-started" | "token-generated" | "connected" | "offline";
@@ -64,6 +65,7 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
           key, no usage billed to the workspace. Two one-time steps, like pairing a device.
         </p>
       </div>
+      <SetupReturnLink />
     </div>
   );
 

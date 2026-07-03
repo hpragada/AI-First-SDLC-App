@@ -16,7 +16,7 @@ export function Login({ forceView }: { forceView?: LoginView }) {
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? "/";
-  const [email, setEmail] = useState("sarah@acme.com");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<ApiError | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -77,10 +77,15 @@ export function Login({ forceView }: { forceView?: LoginView }) {
         {view === "invalid" ? (
           <Banner variant="danger">Email or password is incorrect.</Banner>
         ) : (
-          <p className="auth-card__sub">Welcome back to Acme Corp.</p>
+          <p className="auth-card__sub">Welcome back.</p>
         )}
         <Field label="Work email">
-          <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Input
+            type="email"
+            placeholder="you@company.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
         </Field>
         <Field
           label="Password"

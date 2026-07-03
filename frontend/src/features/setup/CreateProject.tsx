@@ -11,7 +11,7 @@ export type CreateProjectView = "default" | "brownfield" | "collision";
 export function CreateProject({ forceView }: { forceView?: CreateProjectView }) {
   const navigate = useNavigate();
   const createProject = useCreateProject();
-  const [name, setName] = useState("Payment Gateway v2");
+  const [name, setName] = useState("");
   const [track, setTrack] = useState<"greenfield" | "brownfield">(
     forceView === "brownfield" ? "brownfield" : "greenfield",
   );
@@ -28,7 +28,7 @@ export function CreateProject({ forceView }: { forceView?: CreateProjectView }) 
   const onCreate = async () => {
     try {
       const project = await createProject.mutateAsync({ name, track, repo_topology: topology });
-      navigate(track === "brownfield" ? "/onboarding" : `/profile?project=${project.id}`);
+      navigate(track === "brownfield" ? "/onboarding" : `/profile?project=${project.id}&setup=1`);
     } catch {
       /* collision surfaced via createProject.error */
     }
@@ -61,6 +61,7 @@ export function CreateProject({ forceView }: { forceView?: CreateProjectView }) 
           >
             <Input
               type="text"
+              placeholder="e.g. Billing Service"
               value={name}
               onChange={(e) => setName(e.target.value)}
               aria-invalid={view === "collision"}
@@ -121,7 +122,11 @@ export function CreateProject({ forceView }: { forceView?: CreateProjectView }) 
               </div>
 
               <div className="gate-panel__actions">
-                <Button variant="primary" onClick={onCreate} disabled={createProject.isPending}>
+                <Button
+                  variant="primary"
+                  onClick={onCreate}
+                  disabled={createProject.isPending || !name.trim()}
+                >
                   {view === "brownfield" || track === "brownfield"
                     ? "Create & start onboarding"
                     : "Create project"}
