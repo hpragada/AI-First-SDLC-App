@@ -116,7 +116,9 @@ export function AppShell() {
   const bellCount = gateCount + clarCount;
 
   // Companion pill reflects the real runner status (Bugs.xlsx row 30) — not a hardcoded "Ready".
-  const runners = useRunners(true);
+  // Poll gently here since the shell is mounted on every screen (Bugs.xlsx row 13); the
+  // Connect/Phases screens keep the fast 4s cadence via their own useRunners call (shared key).
+  const runners = useRunners(true, 15000);
   const companionOnline = (runners.data ?? []).some((r) => r.online);
   const companionPillClass = companionOnline ? "companion-pill--ready" : "companion-pill--offline";
   const companionPillText = companionOnline ? "Companion: Ready" : "Companion: Offline";

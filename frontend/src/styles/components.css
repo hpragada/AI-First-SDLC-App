@@ -483,8 +483,13 @@
 .cmd-row { display: flex; align-items: center; gap: var(--space-3); }
 .cmd-row__text { flex: 1 1 auto; font-family: var(--font-mono); font-size: var(--fs-mono); line-height: var(--lh-mono); color: var(--console-fg); white-space: pre-wrap; word-break: break-all; }
 .cmd-row__text .prompt { color: var(--console-faint); user-select: none; }
-.cmd-copy { flex: none; background: rgba(255,255,255,.08); color: var(--text-on-navy); border: 0; border-radius: var(--radius-sm); padding: 4px 10px; font-size: var(--fs-xs); font-weight: 600; }
+.cmd-copy { flex: none; background: rgba(255,255,255,.08); color: var(--text-on-navy); border: 0; border-radius: var(--radius-sm); padding: 4px 10px; font-size: var(--fs-xs); font-weight: 600; cursor: pointer; }
 .cmd-copy:hover { background: rgba(255,255,255,.16); }
+.cmd-copy--done { background: var(--success); color: #fff; }
+/* On the light token-reveal card the white-on-transparent button is invisible — give it contrast. */
+.token-reveal .cmd-copy { background: var(--brand-navy-700, var(--text-strong)); color: #fff; }
+.token-reveal .cmd-copy:hover { background: var(--text-strong); }
+.token-reveal .cmd-copy--done { background: var(--success); }
 
 /* token reveal (shown once) */
 .token-reveal { display: flex; align-items: center; gap: var(--space-3); background: var(--bg-subtle); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: var(--space-3) var(--space-4); font-family: var(--font-mono); font-size: var(--fs-mono); color: var(--text-strong); }

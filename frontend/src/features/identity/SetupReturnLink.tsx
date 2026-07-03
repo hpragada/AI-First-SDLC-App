@@ -1,22 +1,21 @@
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { useRunners, useUsers } from "./hooks";
+import { useRunners } from "./hooks";
 
 // Shown on setup destination screens (connect machine, invite team, integrations)
 // so a new user can always get back to the Get Started checklist — the hub of the
-// first-run flow. Hidden once the three required steps are done (same completion
-// logic as SetupChecklist), so it never nags established users.
+// first-run flow. Bugs.xlsx row 32: it used to also require an accepted teammate, so a
+// solo developer who finished setup still saw the link forever. Per team decision the
+// link now hides once the user has a project and a connected machine (inviting a team
+// stays optional), so it no longer nags an established user.
 export function SetupReturnLink() {
   const { currentUser } = useAuth();
   const runners = useRunners();
-  const users = useUsers();
 
   const hasProject = Boolean(currentUser?.memberships.length);
   const hasMachine = Boolean(runners.data?.some((r) => r.online || r.last_seen));
-  const hasTeam = (users.data?.length ?? 0) > 1;
-  const requiredDone = hasProject && hasMachine && hasTeam;
-  if (requiredDone) return null;
+  if (hasProject && hasMachine) return null;
 
   return (
     <Link to="/setup" className="btn btn--ghost btn--sm">

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type {
   ButtonHTMLAttributes,
   CSSProperties,
@@ -623,13 +623,51 @@ export function Kv({ rows }: { rows: Array<[ReactNode, ReactNode]> }) {
   );
 }
 
+// Bugs.xlsx row 14: the Copy buttons on the token + command blocks had no handler (nothing
+// happened). This writes the value to the clipboard, with a legacy execCommand fallback for
+// non-secure contexts, and confirms with a brief "Copied!".
+export function CopyButton({ text, className }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback for browsers / contexts without the async clipboard API.
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        /* give up silently — the value is still visible to copy manually */
+      }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button
+      type="button"
+      className={cx("cmd-copy", copied && "cmd-copy--done", className)}
+      onClick={onCopy}
+      aria-label={copied ? "Copied to clipboard" : "Copy to clipboard"}
+    >
+      {copied ? "✓ Copied!" : "Copy"}
+    </button>
+  );
+}
+
 export function CmdBlock({ rows }: { rows: string[] }) {
   return (
     <div className="cmd-block">
       {rows.map((row) => (
         <div className="cmd-row" key={row}>
           <span className="cmd-row__text"><span className="prompt">$ </span>{row}</span>
-          <button className="cmd-copy">Copy</button>
+          <CopyButton text={row} />
         </div>
       ))}
     </div>
@@ -641,7 +679,7 @@ export function TokenReveal({ token }: { token: string }) {
     <div className="token-reveal">
       <span>{token}</span>
       <span className="u-spacer" />
-      <button className="cmd-copy">Copy</button>
+      <CopyButton text={token} />
     </div>
   );
 }

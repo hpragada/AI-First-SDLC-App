@@ -28,11 +28,14 @@ export function useResetPassword() {
 
 // ── Companion enrollments (S-05 tick, S-06 connect-machine) ─────────────────
 // Poll while the connect screen waits for the first check-in (gallery: live status).
-export function useRunners(poll = false) {
+// Bugs.xlsx row 13: the interval is configurable so the always-mounted app shell can poll
+// gently (companion pill) while Connect Machine / Phases keep the fast 4s liveness cadence.
+// All callers share the ["runners"] query key, so react-query dedupes to one request per tick.
+export function useRunners(poll = false, intervalMs = 4000) {
   return useQuery({
     queryKey: ["runners"],
     queryFn: api.listRunners,
-    refetchInterval: poll ? 4000 : false,
+    refetchInterval: poll ? intervalMs : false,
   });
 }
 

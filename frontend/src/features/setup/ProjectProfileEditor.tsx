@@ -79,13 +79,21 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
     if (inSetup) navigate("/setup");
   };
 
+  // Bugs.xlsx row 10: a project with no profile yet returns 404 (no version). Treat that as
+  // "not saved" (version 0) so a fresh project doesn't falsely claim "✓ Saved · v1". The first
+  // save creates v1, so the dirty hint below reads "Saving will create v1" while unsaved.
+  // In the gallery (forceView) there's no live data, so demonstrate a saved profile (v1);
+  // in the live app a missing profile means version 0 / not-saved-yet.
+  const savedVersion = profile.data?.version ?? (forceView ? 1 : 0);
   const saveState =
     view === "saving" ? (
       <span className="save-state save-state--saving">⟳ Saving…</span>
     ) : view === "dirty" ? (
       <span className="save-state save-state--dirty">● Unsaved changes</span>
+    ) : savedVersion > 0 ? (
+      <span className="save-state save-state--saved">✓ Saved · v{savedVersion}</span>
     ) : (
-      <span className="save-state save-state--saved">✓ Saved · v{profile.data?.version ?? 1}</span>
+      <span className="save-state save-state--dirty">Draft · not saved yet</span>
     );
 
   return (
@@ -172,7 +180,7 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
                     onChange={(e) => update("important_context")(e.target.value)}
                   />
                 </Field>
-                {view === "dirty" && <p className="field__help">Saving will create v{(profile.data?.version ?? 1) + 1}.</p>}
+                {view === "dirty" && <p className="field__help">Saving will create v{savedVersion + 1}.</p>}
               </>
             )}
           </div>
