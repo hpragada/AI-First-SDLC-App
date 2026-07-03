@@ -2,6 +2,7 @@ import { useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, Card, CardBody, Kv, LifecycleRail, Panel, Spinner } from "../../components/ui";
 import { railNodeView } from "./railView";
+import { phaseLabel, visibleLifecycleNodes } from "./phases";
 import { useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
 
 // S-17 view states: open (default) · fixing · closed.
@@ -41,7 +42,7 @@ function WorkItemDefectLive() {
   const latestRun = runs.data?.[0];
   const running = latestRun?.status === "running";
   const closed = workItem.data.state === "done";
-  const nodes = (lifecycle.data?.nodes ?? []).map((n, i) => railNodeView(n, i));
+  const nodes = visibleLifecycleNodes(lifecycle.data?.nodes ?? []).map((n, i) => railNodeView(n, i));
 
   return (
     <div className="canvas-pad">
@@ -100,7 +101,7 @@ function WorkItemDefectLive() {
           </Panel>
           {latestRun && (
             <Panel title="Latest run" actions={<Badge variant={running ? "running" : "done"}>{latestRun.status}</Badge>}>
-              <Kv rows={[["Phase", latestRun.agent_spec]]} />
+              <Kv rows={[["Phase", phaseLabel(latestRun.agent_phase ?? latestRun.agent_key)]]} />
               <a href={`/runs/${latestRun.id}`} className="t-sm">
                 View run console ↗
               </a>

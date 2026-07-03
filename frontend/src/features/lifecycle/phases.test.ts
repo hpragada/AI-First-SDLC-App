@@ -1,0 +1,44 @@
+import { describe, expect, it } from "vitest";
+
+import { isBrownfieldPhase, phaseLabel, visibleLifecycleNodes } from "./phases";
+import type { LifecycleNode } from "../../types";
+
+// Bugs.xlsx row 21 (i): phase names must be human-readable and brownfield phases hidden.
+describe("phaseLabel", () => {
+  it("maps known keys to catalog labels (no underscores/ordinals)", () => {
+    expect(phaseLabel("06_task_breakdown")).toBe("Task Breakdown");
+    expect(phaseLabel("04_architecture")).toBe("Architecture");
+  });
+  it("humanizes unknown raw keys as a fallback", () => {
+    expect(phaseLabel("task_breakdown")).toBe("Task Breakdown");
+    expect(phaseLabel("some_new_phase")).toBe("Some New Phase");
+  });
+  it("returns a dash for empty/nullish", () => {
+    expect(phaseLabel(null)).toBe("—");
+  });
+});
+
+describe("isBrownfieldPhase", () => {
+  it("flags the onboarding/context phases", () => {
+    expect(isBrownfieldPhase("00_onboarding")).toBe(true);
+    expect(isBrownfieldPhase("00b_context_bridge")).toBe(true);
+    expect(isBrownfieldPhase("00c_intelligent_context_extractor")).toBe(true);
+  });
+  it("leaves normal phases alone", () => {
+    expect(isBrownfieldPhase("01_ideation")).toBe(false);
+    expect(isBrownfieldPhase("06_task_breakdown")).toBe(false);
+  });
+});
+
+describe("visibleLifecycleNodes", () => {
+  it("drops brownfield phases and humanizes labels", () => {
+    const nodes: LifecycleNode[] = [
+      { phase: "00b_context_bridge", label: "00b_context_bridge", state: "not_started", triggerable: true },
+      { phase: "06_task_breakdown", label: "06_task_breakdown", state: "not_started", triggerable: true },
+    ];
+    const out = visibleLifecycleNodes(nodes);
+    expect(out).toHaveLength(1);
+    expect(out[0].phase).toBe("06_task_breakdown");
+    expect(out[0].label).toBe("Task Breakdown");
+  });
+});

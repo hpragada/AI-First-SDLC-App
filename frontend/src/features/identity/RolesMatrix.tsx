@@ -123,7 +123,7 @@ export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
 
       {view === "last-admin-guard" && (
         <div className="modal-scrim">
-          <Modal
+          <Modal inline
             title="Can't remove the last admin"
             footer={
               <>

@@ -12,6 +12,7 @@ import {
   Spinner,
 } from "../../components/ui";
 import { railNodeView } from "./railView";
+import { phaseLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useDecideApproval, useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
 
 // S-16 view states: review-loop+test-failed (default) · implementation-running ·
@@ -55,7 +56,7 @@ function WorkItemTaskLive() {
   const latestRun = runs.data?.[0];
   const running = latestRun?.status === "running";
   const done = workItem.data.state === "done";
-  const nodes = (lifecycle.data?.nodes ?? []).map((n, i) => railNodeView(n, i));
+  const nodes = visibleLifecycleNodes(lifecycle.data?.nodes ?? []).map((n, i) => railNodeView(n, i));
   const loops = lifecycle.data?.loops ?? [];
 
   return (
@@ -125,7 +126,7 @@ function WorkItemTaskLive() {
             >
               <Kv
                 rows={[
-                  ["Phase", latestRun.agent_spec],
+                  ["Phase", phaseLabel(latestRun.agent_phase ?? latestRun.agent_key)],
                   ["Cost", latestRun.cost_usd ? `$${latestRun.cost_usd}` : "—"],
                 ]}
               />

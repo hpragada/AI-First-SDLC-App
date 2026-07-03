@@ -51,12 +51,29 @@ def _versions(*, tenant_id, artifact) -> list[dict]:
         ]
 
 
+_FORMAT_CONTENT_TYPE = {
+    "markdown": "text/markdown",
+    "md": "text/markdown",
+    "html": "text/html",
+    "text": "text/plain",
+    "plain": "text/plain",
+}
+
+
 def _read_internal(artifact, object_store) -> tuple[str, str]:
-    if not artifact.s3_key:
-        return "", ""
-    store = _object_store(object_store)
-    body = store.get(artifact.s3_key).decode("utf-8")
-    return body, _INTERNAL_CONTENT_TYPE
+    if artifact.s3_key:
+        store = _object_store(object_store)
+        body = store.get(artifact.s3_key).decode("utf-8")
+        return body, _INTERNAL_CONTENT_TYPE
+    # Some internal drafts are registered with the body inline in external_ref.body and no
+    # s3_key yet (the agent hasn't staged a snapshot to S3). Read that draft body through
+    # here — we don't copy it anywhere, it stays where it was registered (#1/#3).
+    ref = artifact.external_ref or {}
+    body = ref.get("body")
+    if body:
+        fmt = str(ref.get("format", "")).lower()
+        return body, _FORMAT_CONTENT_TYPE.get(fmt, _INTERNAL_CONTENT_TYPE)
+    return "", ""
 
 
 def _read_confluence(tenant_id, artifact, get_capability) -> tuple[str, str, str | None]:

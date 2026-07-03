@@ -79,9 +79,11 @@ def _load_agent_body(agent_spec_id: str, tenant_id: str) -> tuple[str, str]:
         return "", model
 
 
-def _mcp_servers(tenant_id: str) -> dict:
-    """Config the engine uses to launch the platform-state MCP server, with the tenant
-    bound from the control plane (the agent never passes a tenant)."""
+def _mcp_servers(tenant_id: str, project_id: str = "", run_id: str = "") -> dict:
+    """Config the engine uses to launch the platform-state MCP server, with the tenant (and
+    the project/run this launch is bound to) set from the control plane — the agent never
+    passes a tenant, and needn't know the project/run id either (e.g. artifact registration
+    fills them from here rather than asking the user, Bugs.xlsx row 25)."""
     repo_root = str(Path(__file__).resolve().parents[2])
     return {
         "platform-state": {
@@ -90,6 +92,8 @@ def _mcp_servers(tenant_id: str) -> dict:
             "args": ["-m", "mcp_platform_state.server"],
             "env": {
                 "PLATFORM_TENANT_ID": str(tenant_id),
+                "PLATFORM_PROJECT_ID": str(project_id or ""),
+                "PLATFORM_RUN_ID": str(run_id or ""),
                 "DJANGO_SETTINGS_MODULE": "config.settings",
                 "DATABASE_URL": settings.DATABASES["default"].get("URL", ""),
                 "PYTHONPATH": repo_root,
@@ -132,7 +136,8 @@ def execute_agent_core(inp: AgentRunInput, manifest: str) -> dict:
         result = asyncio.run(
             driver.run_planning_task(
                 manifest=manifest, agent_spec=agent_spec,
-                mcp_servers=_mcp_servers(inp.tenant_id), allowed_tools=PLATFORM_TOOLS,
+                mcp_servers=_mcp_servers(inp.tenant_id, inp.project_id, inp.run_id),
+                allowed_tools=PLATFORM_TOOLS,
                 work_item=work_item,
             )
         )

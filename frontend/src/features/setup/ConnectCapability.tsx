@@ -75,6 +75,7 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
       </div>
 
       <Drawer
+        inline
         title={CAP_LABEL[capability]}
         footer={
           <>

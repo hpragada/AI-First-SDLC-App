@@ -593,13 +593,23 @@
    19. Batch-3 additions
    ========================================================================== */
 
-/* right-side drawer (invite teammate, connect capability) */
-.drawer { display: flex; justify-content: flex-end; background: var(--scrim); border-radius: var(--radius-md); min-height: 520px; overflow: hidden; }
-.drawer__panel { width: 440px; max-width: 100%; background: var(--bg-surface); box-shadow: var(--shadow-lg); display: flex; flex-direction: column; }
+/* right-side drawer (invite teammate, create work item) — live it's a real overlay via
+   .scrim-overlay--right below; inline (a dedicated page like Connect capability, or the dev
+   gallery) it renders as a clean centered card, not a grey right-floated block. */
+.drawer { display: flex; justify-content: center; }
+.drawer__panel { width: 440px; max-width: 100%; background: var(--bg-surface); box-shadow: var(--shadow-lg); border-radius: var(--radius-lg); overflow: hidden; display: flex; flex-direction: column; }
 .drawer__header { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border); }
 .drawer__title { font-size: var(--fs-h2); font-weight: 600; color: var(--text-strong); flex: 1 1 auto; }
 .drawer__body { padding: var(--space-5); flex: 1 1 auto; overflow-y: auto; }
 .drawer__footer { display: flex; justify-content: flex-end; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-top: 1px solid var(--border); background: var(--bg-subtle); }
+
+/* live overlay wrapper for Modal / Drawer — a real dimmed backdrop above the page.
+   (The .modal / .drawer / .modal-scrim classes above are the inline gallery swatches.) */
+.scrim-overlay { position: fixed; inset: 0; z-index: 100; background: var(--scrim); display: flex; }
+.scrim-overlay--center { align-items: center; justify-content: center; padding: var(--space-6); }
+.scrim-overlay--center .modal { max-height: calc(100vh - var(--space-6) * 2); overflow-y: auto; }
+.scrim-overlay--right { justify-content: flex-end; }
+.scrim-overlay--right .drawer__panel { width: 440px; height: 100vh; max-height: 100vh; border-radius: 0; }
 
 /* capability tile (integrations grid) */
 .cap-card { display: flex; flex-direction: column; gap: var(--space-3); background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: var(--space-5); }

@@ -50,12 +50,15 @@ export interface WorkItem {
 export interface Run {
   id: string;
   work_item: string;
-  agent_spec: string;
+  agent_spec: string; // AgentSpec primary key (UUID) — do NOT re-trigger with this
+  agent_key: string | null; // AgentSpec key ("04_architecture") — use this to (re)trigger
+  agent_phase: string | null; // human phase label for display
   engine: string;
   model: string;
   status: string;
   cost_usd: string | null;
   temporal_workflow_id: string;
+  outputs?: unknown;
   started_at: string | null;
   ended_at: string | null;
   created_at: string;

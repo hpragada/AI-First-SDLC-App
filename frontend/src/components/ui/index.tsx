@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type {
   ButtonHTMLAttributes,
   CSSProperties,
@@ -9,6 +10,18 @@ import type {
   TextareaHTMLAttributes,
 } from "react";
 import { Link as RouterLink } from "react-router-dom";
+
+// Close an overlay on the Esc key. No-op when there's no handler (e.g. inline gallery swatches).
+function useEscapeToClose(onClose?: () => void) {
+  useEffect(() => {
+    if (!onClose) return;
+    const handle = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handle);
+    return () => window.removeEventListener("keydown", handle);
+  }, [onClose]);
+}
 
 type Variant =
   | "primary"
@@ -420,32 +433,76 @@ export function Toast({ children, variant = "info" }: { children: ReactNode; var
   return <div className={cx("toast", `toast--${variant}`)}>{children}</div>;
 }
 
-export function Modal({ title, children, footer }: { title: ReactNode; children: ReactNode; footer?: ReactNode }) {
-  return (
-    <div className="modal">
-      <div className="modal__panel">
-        <div className="modal__header">
-          <h3 className="modal__title">{title}</h3>
-          <button className="modal__close" aria-label="Close">✕</button>
-        </div>
-        <div className="modal__body">{children}</div>
-        {footer && <div className="modal__footer">{footer}</div>}
+export function Modal({
+  title,
+  children,
+  footer,
+  onClose,
+  inline,
+}: {
+  title: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+  onClose?: () => void;
+  inline?: boolean;
+}) {
+  useEscapeToClose(inline ? undefined : onClose);
+  const panel = (
+    <div className="modal" role="dialog" aria-modal={!inline}>
+      <div className="modal__header">
+        <h3 className="modal__title">{title}</h3>
+        <button className="modal__close" aria-label="Close" onClick={onClose}>✕</button>
       </div>
+      <div className="modal__body">{children}</div>
+      {footer && <div className="modal__footer">{footer}</div>}
+    </div>
+  );
+  if (inline) return panel;
+  return (
+    <div
+      className="scrim-overlay scrim-overlay--center"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose?.();
+      }}
+    >
+      {panel}
     </div>
   );
 }
 
-export function Drawer({ title, children, footer }: { title: ReactNode; children: ReactNode; footer?: ReactNode }) {
-  return (
-    <div className="drawer">
-      <div className="drawer__panel">
-        <div className="drawer__header">
-          <h3 className="drawer__title">{title}</h3>
-          <button className="modal__close" aria-label="Close">✕</button>
-        </div>
-        <div className="drawer__body">{children}</div>
-        {footer && <div className="drawer__footer">{footer}</div>}
+export function Drawer({
+  title,
+  children,
+  footer,
+  onClose,
+  inline,
+}: {
+  title: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+  onClose?: () => void;
+  inline?: boolean;
+}) {
+  useEscapeToClose(inline ? undefined : onClose);
+  const panel = (
+    <div className="drawer__panel" role="dialog" aria-modal={!inline}>
+      <div className="drawer__header">
+        <h3 className="drawer__title">{title}</h3>
+        <button className="modal__close" aria-label="Close" onClick={onClose}>✕</button>
       </div>
+      <div className="drawer__body">{children}</div>
+      {footer && <div className="drawer__footer">{footer}</div>}
+    </div>
+  );
+  if (inline) return <div className="drawer">{panel}</div>;
+  return (
+    <div
+      className="scrim-overlay scrim-overlay--right"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose?.();
+      }}
+    >
+      {panel}
     </div>
   );
 }

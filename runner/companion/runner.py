@@ -91,9 +91,12 @@ def build_mcp_servers(task: BuildTask, *, repo_root: str | None = None) -> dict:
                 "RUNNER_API_URL": task.api_url,
                 "RUNNER_TOKEN": task.runner_token,
                 "RUNNER_TENANT_ID": task.tenant_id,
-                # Identify the run/phase a clarification belongs to (the agent never passes them).
+                # Identify the run/phase/project this launch is bound to (the agent never
+                # passes them — e.g. artifact registration fills project_id/run_id from here
+                # instead of asking the user, Bugs.xlsx row 25).
                 "RUNNER_RUN_ID": task.run_id,
                 "RUNNER_PHASE": task.phase,
+                "RUNNER_PROJECT_ID": task.project_id,
                 "PYTHONPATH": root,
             },
         }

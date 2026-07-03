@@ -22,6 +22,7 @@ import {
   useRevokeInvitation,
   useUsers,
 } from "./hooks";
+import { ROLES, roleLabel } from "./roles";
 import { SetupReturnLink } from "./SetupReturnLink";
 
 // S-07 view states: populated · invite-drawer · dup-error · empty.
@@ -38,7 +39,7 @@ function initials(name: string) {
 }
 
 function membershipSummary(u: AdminUser) {
-  const roles = u.memberships.map((m) => `${m.role} @ ${m.project_name}`).join(" · ");
+  const roles = u.memberships.map((m) => `${roleLabel(m.role)} @ ${m.project_name}`).join(" · ");
   return [u.is_tenant_admin ? "Tenant-admin" : null, roles].filter(Boolean).join(" · ");
 }
 
@@ -46,7 +47,7 @@ function invitationGrantSummary(inv: Invitation, projectNames: Map<string, strin
   // The backend normalizes grants down to {project_id, role} (no name) when an invitation
   // is created — resolve against the projects this admin already knows about for display.
   return inv.grants
-    .map((g) => `${g.role} @ ${g.project_name ?? projectNames.get(g.project_id) ?? g.project_id}`)
+    .map((g) => `${roleLabel(g.role)} @ ${g.project_name ?? projectNames.get(g.project_id) ?? g.project_id}`)
     .join(" · ");
 }
 
@@ -79,6 +80,8 @@ function InviteDrawer({
   const addGrant = () =>
     setGrants((g) => [...g, { project_id: defaultProjectId, role: "engineer" }]);
 
+  const removeGrant = (i: number) => setGrants((g) => g.filter((_, idx) => idx !== i));
+
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     try {
@@ -96,6 +99,7 @@ function InviteDrawer({
   return (
     <Drawer
       title="Invite teammate"
+      onClose={onClose}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
@@ -159,11 +163,24 @@ function InviteDrawer({
                   value={grant.role}
                   onChange={(e) => updateGrant(i, { role: e.target.value })}
                 >
-                  <option value="engineer">engineer</option>
-                  <option value="product_owner">product_owner</option>
-                  <option value="architect">architect</option>
-                  <option value="reviewer">reviewer</option>
+                  {ROLES.map((r) => (
+                    <option key={r.key} value={r.key}>
+                      {r.label}
+                    </option>
+                  ))}
                 </select>
+                {grants.length > 1 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    aria-label="Remove this grant"
+                    title="Remove this grant"
+                    onClick={() => removeGrant(i)}
+                  >
+                    ✕
+                  </Button>
+                )}
               </div>
             ))}
             <Button variant="ghost" size="sm" type="button" onClick={addGrant} style={{ marginTop: "var(--space-1)" }}>

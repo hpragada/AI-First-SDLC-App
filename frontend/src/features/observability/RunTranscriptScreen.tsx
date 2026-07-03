@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Banner, Breadcrumb, EmptyState, Panel, Spinner, Table, Transcript, Turn } from "../../components/ui";
 import { useRuns } from "../lifecycle/hooks";
+import { phaseLabel } from "../lifecycle/phases";
 import { useRunTranscript } from "./hooks";
 
 // S-33 view states: runs-list (no run selected) · transcript · empty.
@@ -122,7 +123,7 @@ function RunTranscriptLive() {
                 {r.id.slice(0, 8)}
               </span>,
               <span className="table__primary" key="p">
-                {r.agent_spec}
+                {phaseLabel(r.agent_phase ?? r.agent_key)}
               </span>,
               <span className="table__id" key="w">
                 {r.work_item.slice(0, 8)}

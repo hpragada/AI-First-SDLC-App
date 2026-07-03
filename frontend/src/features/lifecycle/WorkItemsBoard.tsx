@@ -78,10 +78,13 @@ function CreateWorkItemDrawer({
   const [title, setTitle] = useState("");
   const [type, setType] = useState("epic");
 
+  const titleValid = title.trim().length > 0;
+
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    if (!titleValid) return;
     try {
-      const created = await createWorkItem.mutateAsync({ type, title: title || undefined });
+      const created = await createWorkItem.mutateAsync({ type, title: title.trim() });
       onClose();
       navigate(`/work-items/${created.id}`);
     } catch {
@@ -89,26 +92,40 @@ function CreateWorkItemDrawer({
     }
   };
 
+  // What each work-item type means, surfaced as a tooltip on the Type field (Bugs.xlsx row 21 iii).
+  const TYPE_HELP =
+    "Epic — a large body of work that runs the full plan tier (ideation → architecture). " +
+    "Story — a user-facing slice of an epic, also plan tier. " +
+    "Task — a concrete build-tier unit of work (implementation → review). " +
+    "Defect — a fix that runs the remediation tier.";
+
   return (
     <Drawer
       title="New work item"
+      onClose={onClose}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" form="create-work-item-form" disabled={createWorkItem.isPending}>
+          <Button variant="primary" type="submit" form="create-work-item-form" disabled={createWorkItem.isPending || !titleValid}>
             {createWorkItem.isPending ? "Creating…" : "Create"}
           </Button>
         </>
       }
     >
       <form id="create-work-item-form" onSubmit={onSubmit}>
-        <Field label="Title (optional)">
-          <Input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Stripe Webhook Integration" />
+        <Field label="Title" required>
+          <Input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Stripe Webhook Integration"
+            aria-required="true"
+          />
         </Field>
-        <Field label="Type">
-          <Select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type">
+        <Field label="Type" help={TYPE_HELP}>
+          <Select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type" title={TYPE_HELP}>
             <option value="epic">Epic</option>
             <option value="story">Story</option>
             <option value="task">Task</option>

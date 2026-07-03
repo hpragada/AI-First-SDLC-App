@@ -22,8 +22,13 @@ def build_server(
     clarify_client: ClarificationClient | None = None,
     run_id: str = "",
     phase: str = "",
+    project_id: str = "",
 ) -> FastMCP:
     server = FastMCP("platform-state")
+    # Launch-bound identifiers the agent never has to supply (see register_artifact).
+    project_id_bound = project_id
+    run_id_bound = run_id
+    phase_bound = phase
 
     @server.tool()
     def get_context(project_id: str, phase: str, work_item_id: str | None = None) -> dict:
@@ -40,11 +45,20 @@ def build_server(
         return client.call("list_artifacts", project_id=project_id, phase=phase, status=status)
 
     @server.tool()
-    def register_artifact(project_id: str, run_id: str, phase: str, type: str, sor: str,
-                          content_hash: str, s3_key: str | None = None,
+    def register_artifact(type: str, sor: str, content_hash: str,
+                          phase: str | None = None,
+                          project_id: str | None = None, run_id: str | None = None,
+                          s3_key: str | None = None,
                           external_ref: dict | None = None, repo_id: str | None = None) -> dict:
-        return client.call("register_artifact", project_id=project_id, run_id=run_id,
-                           phase=phase, type=type, sor=sor, content_hash=content_hash,
+        """Register a generated artifact (pointer/provenance only, never the body). You do NOT
+        need to know or ask for the project id or run id — the platform fills them in from the
+        run this phase is executing under (Bugs.xlsx row 25). Only pass project_id/run_id to
+        override the current run (rare)."""
+        return client.call("register_artifact",
+                           project_id=project_id or project_id_bound,
+                           run_id=run_id or run_id_bound,
+                           phase=phase or phase_bound,
+                           type=type, sor=sor, content_hash=content_hash,
                            s3_key=s3_key, external_ref=external_ref, repo_id=repo_id)
 
     @server.tool()
@@ -113,12 +127,14 @@ def _clarify_client_from_env() -> ClarificationClient:
 
 
 def main() -> None:
-    # run_id/phase identify which run a clarification belongs to (the agent never passes them).
+    # run_id/phase/project identify the run this launch is bound to (the agent never passes
+    # them — artifact registration fills project_id/run_id from here, Bugs.xlsx row 25).
     build_server(
         _client_from_env(),
         clarify_client=_clarify_client_from_env(),
         run_id=os.environ.get("RUNNER_RUN_ID", ""),
         phase=os.environ.get("RUNNER_PHASE", ""),
+        project_id=os.environ.get("RUNNER_PROJECT_ID", ""),
     ).run()  # stdio transport
 
 

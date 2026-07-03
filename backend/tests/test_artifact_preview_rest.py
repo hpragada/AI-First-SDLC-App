@@ -76,6 +76,23 @@ def test_preview_internal_artifact_returns_stored_body(client, project, member):
     assert resp.data["sor_link"] is None
 
 
+def test_preview_internal_artifact_reads_inline_external_ref_body(client, project, member):
+    """Bugs.xlsx row 22: agents register internal drafts with the body inline in
+    external_ref.body and no s3_key yet. Preview must read that draft body through instead
+    of 404-ing 'artifact has no body to preview'."""
+    artifact = Artifact.objects.create(
+        tenant=project.tenant, project=project, phase="ideation", type="assumption",
+        sor="internal", status="draft", s3_key="", version=1,
+        external_ref={"title": "Assumptions Register", "format": "markdown",
+                      "body": "# Assumptions\nSome draft content."},
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(artifact.id))
+    assert resp.status_code == 200
+    assert resp.data["body"] == "# Assumptions\nSome draft content."
+    assert resp.data["content_type"] == "text/markdown"
+
+
 def test_preview_missing_internal_body_is_404(client, project, member):
     artifact = Artifact.objects.create(
         tenant=project.tenant, project=project, phase="prd", type="prd",

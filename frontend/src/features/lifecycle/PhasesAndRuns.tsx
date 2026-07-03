@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Banner, EmptyState, Field, Panel, Select, Spinner, Table } from "../../components/ui";
 import { useRunners } from "../identity/hooks";
+import { phaseLabel } from "./phases";
 import { usePhaseCatalog, useRuns, useTriggerPhase, useWorkItems } from "./hooks";
 import type { PhaseCatalogEntry, Run } from "../../types";
 
@@ -200,7 +201,7 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
             headers={["Run", "Phase", "Status", "Engine / model", "Cost", "Workflow", "Created"]}
             rows={(runs.data ?? sampleRuns).map((r) => [
               <span className="table__id" key="id">{r.id}</span>,
-              <span className="table__primary" key="p">{r.agent_spec}</span>,
+              <span className="table__primary" key="p">{phaseLabel(r.agent_phase ?? r.agent_key)}</span>,
               <Badge variant={statusVariant(r.status)} key="s">{r.status}</Badge>,
               `${r.engine} · ${r.model}`,
               <span className="table__id" key="c">{r.cost_usd ? `$${r.cost_usd}` : "—"}</span>,
@@ -217,12 +218,14 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
 const sampleRuns: Run[] = [
   {
     id: "RUN-42", work_item: "WI-492", agent_spec: "Architecture",
+    agent_key: "04_architecture", agent_phase: "Architecture",
     status: "gate", engine: "Claude", model: "local",
     cost_usd: "0.31", temporal_workflow_id: "wf-7c3a",
     started_at: null, ended_at: null, created_at: "just now",
   },
   {
     id: "RUN-41", work_item: "WI-492", agent_spec: "PRD",
+    agent_key: "03_prd", agent_phase: "PRD",
     status: "done", engine: "Claude", model: "local",
     cost_usd: "0.18", temporal_workflow_id: "wf-6b21",
     started_at: null, ended_at: null, created_at: "1h ago",

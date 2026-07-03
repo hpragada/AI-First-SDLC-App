@@ -116,7 +116,8 @@ class AgentReviewProvider:
         manifest = self._build_review_manifest(inp, pr_ref)
         driver = self._driver_factory()
         result = asyncio.run(driver.run_review_task(
-            manifest=manifest, agent_spec=spec, mcp_servers=_mcp_servers(inp.tenant_id),
+            manifest=manifest, agent_spec=spec,
+            mcp_servers=_mcp_servers(inp.tenant_id, inp.project_id, inp.run_id),
             allowed_tools=PLATFORM_TOOLS, work_item=work_item,
         ))
         body = result.outputs.get("result") or result.outputs.get("text") or ""

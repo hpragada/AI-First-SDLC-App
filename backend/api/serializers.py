@@ -254,14 +254,29 @@ class TriggerSerializer(serializers.Serializer):
 
 # ── Run ─────────────────────────────────────────────────────────────
 class RunSerializer(serializers.ModelSerializer):
+    # `agent_spec` is the AgentSpec primary key (a UUID). Also expose the AgentSpec's
+    # human-facing key ("04_architecture") and phase label so the UI can show a readable
+    # phase and re-trigger by key — never the UUID (Bugs.xlsx row 21: "no AgentSpec
+    # registered for key '<uuid>'" came from re-triggering with the UUID).
+    agent_key = serializers.SerializerMethodField()
+    agent_phase = serializers.SerializerMethodField()
+
     class Meta:
         model = Run
         fields = [
-            "id", "work_item", "agent_spec", "engine", "model", "prompt_version",
-            "temporal_workflow_id", "status", "cost_usd", "inputs", "outputs",
-            "started_at", "ended_at", "created_at",
+            "id", "work_item", "agent_spec", "agent_key", "agent_phase", "engine", "model",
+            "prompt_version", "temporal_workflow_id", "status", "cost_usd", "inputs",
+            "outputs", "started_at", "ended_at", "created_at",
         ]
         read_only_fields = fields
+
+    def get_agent_key(self, obj) -> str | None:
+        return obj.agent_spec.key if obj.agent_spec_id else None
+
+    def get_agent_phase(self, obj) -> str | None:
+        if not obj.agent_spec_id:
+            return None
+        return obj.agent_spec.phase_label or obj.agent_spec.key
 
 
 # ── Artifact + TraceEdge ────────────────────────────────────────────
@@ -285,10 +300,38 @@ class TraceEdgeSerializer(serializers.ModelSerializer):
 
 # ── Event ───────────────────────────────────────────────────────────
 class EventSerializer(serializers.ModelSerializer):
+    # The run console renders each event by `kind` (colour) + `message` (text). The Event row
+    # only stores `action` + `payload`, so derive both here — without them every console line
+    # rendered blank, which read as "the run shows no streaming content" (Bugs.xlsx row 21 iv).
+    kind = serializers.SerializerMethodField()
+    message = serializers.SerializerMethodField()
+
     class Meta:
         model = Event
-        fields = ["id", "actor", "action", "target_type", "target_id", "ts", "payload"]
+        fields = ["id", "actor", "action", "target_type", "target_id", "ts", "payload",
+                  "kind", "message"]
         read_only_fields = fields
+
+    def get_kind(self, obj) -> str:
+        action = (obj.action or "").lower()
+        if any(w in action for w in ("failed", "rejected", "error", "denied", "blocked", "secret")):
+            return "err"
+        if any(w in action for w in ("gate", "clarification", "takeover", "parked", "warning")):
+            return "warn"
+        if any(w in action for w in ("executed", "published", "merged", "approved", "registered", "resumed")):
+            return "ok"
+        return "info"
+
+    def get_message(self, obj) -> str:
+        label = (obj.action or "event").replace(".", " ").replace("_", " ").strip()
+        label = label[:1].upper() + label[1:]
+        payload = obj.payload or {}
+        for key in ("message", "detail", "error", "comment", "phase", "execution_mode",
+                    "branch", "workflow_id"):
+            value = payload.get(key)
+            if value:
+                return f"{label} — {value}"
+        return label
 
 
 # ── Approval / gate decision ────────────────────────────────────────

@@ -11,7 +11,12 @@ import {
   Spinner,
 } from "../../components/ui";
 import { railNodeView } from "./railView";
+import { phaseLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useClarifications, useDecideApproval, useLifecycle, useRuns, useWorkItem } from "./hooks";
+
+function typeLabel(type: string): string {
+  return type ? type.charAt(0).toUpperCase() + type.slice(1) : "Item";
+}
 
 // S-15 view states: gate-pending (default) · running+needs-answer · all-complete.
 export type EpicView = "gate-pending" | "needs-answer" | "complete";
@@ -52,8 +57,9 @@ function WorkItemEpicLive() {
   const pendingGate = approvals.data?.[0];
   const pendingClar = clarifications.data?.[0];
 
-  const nodes = (lifecycle.data?.nodes ?? []).map((n, i) => railNodeView(n, i));
+  const nodes = visibleLifecycleNodes(lifecycle.data?.nodes ?? []).map((n, i) => railNodeView(n, i));
   const latestRun = runs.data?.[0];
+  const itemType = typeLabel(workItem.data.type);
 
   return (
     <div className="canvas-pad">
@@ -63,7 +69,7 @@ function WorkItemEpicLive() {
           <h1 className="t-h1">⚡ {workItem.data.title || id.slice(0, 8)}</h1>
           <div className="meta-row" style={{ marginTop: "var(--space-2)" }}>
             <span className="meta-item">
-              <span className="chip badge--navy">Epic</span>
+              <span className="chip badge--navy">{itemType}</span>
             </span>
             <span className="meta-item">
               Created <strong>{new Date(workItem.data.created_at).toLocaleDateString()}</strong>
@@ -80,7 +86,7 @@ function WorkItemEpicLive() {
       <Panel
         flush
         title="Lifecycle — Plan tier"
-        actions={<span className="t-sm u-muted">Epic · one pass through plan phases</span>}
+        actions={<span className="t-sm u-muted">{itemType} · one pass through plan phases</span>}
       >
         {nodes.length === 0 ? <p className="t-sm u-muted">No phases run yet.</p> : <LifecycleRail nodes={nodes} />}
       </Panel>
@@ -103,7 +109,7 @@ function WorkItemEpicLive() {
             >
               <Kv
                 rows={[
-                  ["Phase", latestRun.agent_spec],
+                  ["Phase", phaseLabel(latestRun.agent_phase ?? latestRun.agent_key)],
                   ["Status", latestRun.status],
                   ["Cost", latestRun.cost_usd ? `$${latestRun.cost_usd}` : "—"],
                 ]}

@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { Banner, Breadcrumb, Button, Card, CardBody, EmptyState, Kv, Panel, Spinner } from "../../components/ui";
 import { useRuns, useTriggerPhase, useWorkItem } from "../lifecycle/hooks";
+import { phaseLabel } from "../lifecycle/phases";
 import { useTakeOverRun } from "./hooks";
 
 // S-32 view states: parked · reconnecting · resumed.
@@ -62,7 +63,9 @@ function OfflineTakeoverLive() {
       { runId, release: true },
       {
         onSuccess: () => {
-          retry.mutate(parkedRun.agent_spec, {
+          if (!parkedRun.agent_key) return;
+          // Re-trigger by AgentSpec key, not the run's agent_spec UUID (Bugs.xlsx row 21).
+          retry.mutate(parkedRun.agent_key, {
             onSuccess: (result) => navigate(`/runs/${result.run_id}`),
           });
         },
@@ -76,7 +79,7 @@ function OfflineTakeoverLive() {
       <div className="page-head">
         <div className="page-head__titles">
           <h1 className="t-h1">
-            Run recovery — {workItem.data?.title || parkedRun.work_item.slice(0, 8)} · {parkedRun.agent_spec}
+            Run recovery — {workItem.data?.title || parkedRun.work_item.slice(0, 8)} · {phaseLabel(parkedRun.agent_phase ?? parkedRun.agent_key)}
           </h1>
           <p className="page-head__sub">
             When your machine goes offline mid-run, the platform parks the run for takeover rather
@@ -93,7 +96,7 @@ function OfflineTakeoverLive() {
           </Banner>
           <Kv
             rows={[
-              ["Run", `${parkedRun.id} · ${parkedRun.agent_spec} · ${parkedRun.work_item.slice(0, 8)}`],
+              ["Run", `${parkedRun.id} · ${phaseLabel(parkedRun.agent_phase ?? parkedRun.agent_key)} · ${parkedRun.work_item.slice(0, 8)}`],
               ["Status", parkedRun.status],
               ["Created", parkedRun.created_at],
             ]}

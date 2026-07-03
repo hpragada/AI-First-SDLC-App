@@ -27,6 +27,12 @@ export type ClarificationsView =
   | "cancelled"
   | "empty";
 
+// An option that lets the user supply their own answer (e.g. "Other", "Other (please
+// specify)", "Something else — please specify"). When picked we reveal a free-text box.
+function isOtherOption(option: string): boolean {
+  return /^\s*(other|something else)\b/i.test(option) || /please specify/i.test(option);
+}
+
 export function Clarifications({ forceView }: { forceView?: ClarificationsView }) {
   if (forceView) return <ClarificationsGallery view={forceView} />;
   return <ClarificationsLive />;
@@ -41,6 +47,8 @@ function ClarificationsLive() {
   const clarifications = useClarifications({ status: "pending" });
   const answer = useAnswerClarification();
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  // Free text typed against an "Other (please specify)" choice, keyed by question id.
+  const [otherText, setOtherText] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState(false);
   const [justAnswered, setJustAnswered] = useState<Clarification | null>(null);
 
@@ -53,20 +61,38 @@ function ClarificationsLive() {
     return wi ? `${id.slice(0, 8)} · ${wi.title || wi.type}` : id.slice(0, 8);
   };
 
+  // The answer actually submitted for a question. For a choice where the selected option is
+  // the "Other (please specify)" one, that's the free text the user typed — not the literal
+  // option label (which the agent can't act on). Empty free text counts as unanswered.
+  const resolvedAnswer = (q: Clarification["questions"][number]): unknown => {
+    const raw = answers[q.id];
+    if (q.kind === "choice" && typeof raw === "string" && isOtherOption(raw)) {
+      const typed = (otherText[q.id] ?? "").trim();
+      return typed === "" ? undefined : typed;
+    }
+    return raw;
+  };
+
   const missingRequired = current
-    ? current.questions.filter((q) => q.required && answers[q.id] === undefined)
+    ? current.questions.filter((q) => q.required && resolvedAnswer(q) === undefined)
     : [];
 
   const handleSubmit = () => {
     if (!current) return;
     setTouched(true);
     if (missingRequired.length > 0) return;
+    const payload: Record<string, unknown> = {};
+    for (const q of current.questions) {
+      const value = resolvedAnswer(q);
+      if (value !== undefined) payload[q.id] = value;
+    }
     answer.mutate(
-      { id: current.id, answers },
+      { id: current.id, answers: payload },
       {
         onSuccess: () => {
           setJustAnswered(current);
           setAnswers({});
+          setOtherText({});
           setTouched(false);
         },
       },
@@ -135,18 +161,31 @@ function ClarificationsLive() {
                     Yes
                   </Check>
                 ) : q.kind === "choice" && q.options?.length ? (
-                  <Select
-                    value={(answers[q.id] as string) ?? ""}
-                    onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
-                    aria-invalid={touched && q.required && answers[q.id] === undefined}
-                  >
-                    <option value="">Choose one…</option>
-                    {q.options.map((opt) => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
-                    ))}
-                  </Select>
+                  <>
+                    <Select
+                      value={(answers[q.id] as string) ?? ""}
+                      onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                      aria-invalid={touched && q.required && resolvedAnswer(q) === undefined}
+                    >
+                      <option value="">Choose one…</option>
+                      {q.options.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </Select>
+                    {typeof answers[q.id] === "string" && isOtherOption(answers[q.id] as string) && (
+                      <Input
+                        type="text"
+                        placeholder="Please specify…"
+                        aria-label="Please specify"
+                        style={{ marginTop: "var(--space-2)" }}
+                        value={otherText[q.id] ?? ""}
+                        onChange={(e) => setOtherText((o) => ({ ...o, [q.id]: e.target.value }))}
+                        aria-invalid={touched && q.required && resolvedAnswer(q) === undefined}
+                      />
+                    )}
+                  </>
                 ) : (
                   <Input
                     type="text"

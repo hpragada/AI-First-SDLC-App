@@ -48,7 +48,7 @@ function ExportPublishLive() {
 
       <div className="modal-scrim">
         {publish.isSuccess ? (
-          <Modal title="Published" footer={<Button variant="primary" onClick={() => navigate(`/artifacts/${id}`)}>Done</Button>}>
+          <Modal inline title="Published" footer={<Button variant="primary" onClick={() => navigate(`/artifacts/${id}`)}>Done</Button>}>
             <Banner variant="success" title="Published">
               Artifact v{data?.version} is now published.
             </Banner>
@@ -63,7 +63,7 @@ function ExportPublishLive() {
             )}
           </Modal>
         ) : !canPublish ? (
-          <Modal
+          <Modal inline
             title="Publish artifact"
             footer={
               <>
@@ -85,7 +85,7 @@ function ExportPublishLive() {
             </Banner>
           </Modal>
         ) : (
-          <Modal
+          <Modal inline
             title="Publish artifact"
             footer={
               <>
@@ -151,7 +151,7 @@ function ExportPublishGallery({ view }: { view: PublishView }) {
 
       <div className="modal-scrim">
         {view === "choose-target" && (
-          <Modal
+          <Modal inline
             title="Publish artifact"
             footer={
               <>
@@ -182,7 +182,7 @@ function ExportPublishGallery({ view }: { view: PublishView }) {
         )}
 
         {view === "publishing" && (
-          <Modal
+          <Modal inline
             title="Publish artifact"
             footer={
               <>
@@ -202,7 +202,7 @@ function ExportPublishGallery({ view }: { view: PublishView }) {
         )}
 
         {view === "success" && (
-          <Modal
+          <Modal inline
             title="Published"
             footer={<Button variant="primary">Done</Button>}
           >
@@ -220,7 +220,7 @@ function ExportPublishGallery({ view }: { view: PublishView }) {
         )}
 
         {view === "blocked" && (
-          <Modal
+          <Modal inline
             title="Publish artifact"
             footer={
               <>

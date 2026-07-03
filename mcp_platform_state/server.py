@@ -24,6 +24,17 @@ def _tenant() -> str:
     return tenant_id
 
 
+# Project / run this launch is bound to (set by the control plane per run). Agents never
+# need to supply these — e.g. artifact registration fills them from here rather than asking
+# the user for a project id they can't know (Bugs.xlsx row 25).
+def _bound_project() -> str | None:
+    return os.environ.get("PLATFORM_PROJECT_ID") or None
+
+
+def _bound_run() -> str | None:
+    return os.environ.get("PLATFORM_RUN_ID") or None
+
+
 @server.tool()
 def get_context(project_id: str, phase: str, work_item_id: str | None = None) -> dict:
     return tools.get_context(_tenant(), project_id, phase, work_item_id)
@@ -31,18 +42,25 @@ def get_context(project_id: str, phase: str, work_item_id: str | None = None) ->
 
 @server.tool()
 def register_artifact(
-    project_id: str,
-    run_id: str,
     phase: str,
     type: str,
     sor: str,
     content_hash: str,
+    project_id: str | None = None,
+    run_id: str | None = None,
     s3_key: str | None = None,
     external_ref: dict | None = None,
     repo_id: str | None = None,
 ) -> dict:
+    """Register a generated artifact (pointer/provenance only, never the body). You do NOT
+    need to know or ask for the project id or run id — the platform fills them from the run
+    this phase is executing under (Bugs.xlsx row 25). Only pass them to override (rare)."""
+    resolved_project = project_id or _bound_project()
+    resolved_run = run_id or _bound_run()
+    if not resolved_project:
+        raise RuntimeError("project_id not provided and no PLATFORM_PROJECT_ID bound.")
     return tools.register_artifact(
-        _tenant(), project_id, run_id, phase, type, sor,
+        _tenant(), resolved_project, resolved_run, phase, type, sor,
         content_hash, s3_key, external_ref, repo_id,
     )
 

@@ -2,6 +2,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, Console, Panel, Spinner } from "../../components/ui";
 import type { RunEvent } from "../../types";
+import { phaseLabel } from "./phases";
 import { useClarifications, useRun, useRunEvents, useTriggerPhase, useWorkItem } from "./hooks";
 
 // S-19 view states: dispatched · running · needs-answer · awaiting-gate · completed ·
@@ -98,10 +99,22 @@ function RunConsoleLive() {
             : "failed";
 
   const lines = (events.data ?? []).map(eventLine);
+  // Surface a concrete failure reason (Bugs.xlsx row 21 v.1) — the last error event, or an
+  // error captured on the run's outputs — rather than a generic "engine exited" message.
+  const outputsError =
+    run.data.outputs && typeof run.data.outputs === "object"
+      ? ((run.data.outputs as Record<string, unknown>).error ??
+        (run.data.outputs as Record<string, unknown>).detail)
+      : undefined;
+  const lastError = [...(events.data ?? [])].reverse().find((e) => e.kind === "err")?.message;
+  const failureReason =
+    (typeof outputsError === "string" && outputsError) || lastError || undefined;
 
   const handleRetry = () => {
-    if (!run.data) return;
-    retry.mutate(run.data.agent_spec, {
+    // Re-trigger by the AgentSpec *key* (e.g. "04_architecture"), never the run's
+    // agent_spec UUID — the trigger endpoint resolves by key (Bugs.xlsx row 21).
+    if (!run.data?.agent_key) return;
+    retry.mutate(run.data.agent_key, {
       onSuccess: (result) => navigate(`/runs/${result.run_id}`),
     });
   };
@@ -112,7 +125,7 @@ function RunConsoleLive() {
       <div className="page-head">
         <div className="page-head__titles">
           <h1 className="t-h1">
-            Run console — {run.data.agent_spec}
+            Run console — {phaseLabel(run.data.agent_phase ?? run.data.agent_key)}
             {workItem.data ? ` · ${workItem.data.title || workItem.data.id.slice(0, 8)}` : ""}
           </h1>
           <div className="meta-row" style={{ marginTop: "var(--space-2)" }}>
@@ -157,7 +170,9 @@ function RunConsoleLive() {
           <Banner variant="danger" title={run.data.status === "rejected" ? "Gate rejected" : "Run failed"}>
             {run.data.status === "rejected"
               ? "The gate was rejected. Re-trigger to try again."
-              : "The engine exited before reporting. No artifact was registered."}
+              : failureReason
+                ? `Reason: ${failureReason}`
+                : "The engine exited before reporting. No artifact was registered."}
           </Banner>
         )}
 

@@ -244,7 +244,7 @@ export function DevComponents() {
             <EmptyState title="No work items yet" text="Create your first work item to start the lifecycle." action={<Button variant="primary">New Work Item</Button>} />
             <div><Skeleton kind="title" /><Skeleton /><Skeleton /><Skeleton kind="block" /></div>
           </div>
-          <Modal title="Publish artifact" footer={<><Button>Cancel</Button><Button variant="primary">Publish</Button></>}>
+          <Modal inline title="Publish artifact" footer={<><Button>Cancel</Button><Button variant="primary">Publish</Button></>}>
             <Field label="Destination"><Input defaultValue="Confluence / PAY" /></Field>
           </Modal>
         </Section>
@@ -289,7 +289,7 @@ export function DevComponents() {
             <CapCard vendor="github" capability="Code host" failed status={<Badge variant="failed">Failed</Badge>} />
           </div>
           <div className="u-row u-wrap"><Switch label="Role on" defaultChecked /><Switch label="Role off" /></div>
-          <Drawer title="Invite teammate" footer={<><Button>Cancel</Button><Button variant="primary">Send invite</Button></>}>
+          <Drawer inline title="Invite teammate" footer={<><Button>Cancel</Button><Button variant="primary">Send invite</Button></>}>
             <Field label="Work email"><Input defaultValue="raj@acme.com" /></Field>
           </Drawer>
         </Section>
