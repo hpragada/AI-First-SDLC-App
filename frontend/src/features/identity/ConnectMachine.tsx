@@ -9,7 +9,6 @@ import {
   CmdBlock,
   ConnStatus,
   Field,
-  Spinner,
   TokenReveal,
 } from "../../components/ui";
 import { useCreateRunner, useRevokeRunner, useRunners } from "./hooks";
@@ -167,7 +166,7 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
             </CardBody>
           </Card>
           <ConnStatus state="waiting">
-            <Spinner /> Waiting for first check-in — run the command above…
+            Waiting for first check-in — run the command above…
           </ConnStatus>
         </div>
       </div>

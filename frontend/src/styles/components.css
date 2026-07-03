@@ -92,6 +92,8 @@
   background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px;
 }
 .field__help { font-size: var(--fs-xs); color: var(--text-muted); margin-top: var(--space-2); }
+.field__tip { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 50%; cursor: help; vertical-align: middle; }
+.field__tip:hover, .field__tip:focus-visible { color: var(--text-strong); border-color: var(--border-strong); outline: none; }
 .field__error { font-size: var(--fs-xs); color: var(--danger); margin-top: var(--space-2); display: none; }
 .field--error .input, .field--error .select, .field--error .textarea { border-color: var(--danger); }
 .field--error .field__error { display: block; }

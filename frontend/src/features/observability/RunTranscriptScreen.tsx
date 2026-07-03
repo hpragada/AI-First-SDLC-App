@@ -58,7 +58,7 @@ function RunTranscriptLive() {
           </div>
         </div>
         <Panel
-          title={`${data.run_id} · ${data.phase}`}
+          title={`${data.run_id} · ${phaseLabel(data.phase)}`}
           actions={
             <>
               <span className="meta-item">

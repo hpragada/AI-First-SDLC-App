@@ -142,7 +142,7 @@ function WorkItemTaskLive() {
                 <div className="artifact-row" key={c.id}>
                   <div className="artifact-row__main">
                     <div className="artifact-row__title">{c.title || c.id.slice(0, 8)}</div>
-                    <div className="artifact-row__meta">{c.type} · {c.phase}</div>
+                    <div className="artifact-row__meta">{c.type} · {phaseLabel(c.phase)}</div>
                   </div>
                   <a href={`/work-items/${c.id}`} className="btn btn--ghost btn--sm">
                     Open

@@ -94,6 +94,7 @@ export function Login({ forceView }: { forceView?: LoginView }) {
         >
           <Input
             type="password"
+            placeholder="Your password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             aria-invalid={view === "invalid"}

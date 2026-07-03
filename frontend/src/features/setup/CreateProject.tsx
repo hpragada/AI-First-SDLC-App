@@ -8,6 +8,10 @@ import { useCreateProject } from "./hooks";
 // S-09 view states: default (greenfield) · brownfield · name-collision.
 export type CreateProjectView = "default" | "brownfield" | "collision";
 
+// Bugs.xlsx row 9: the track explainer moved out of a wall of help text into a tooltip.
+const TRACK_HELP =
+  "Greenfield starts from a blank profile. Brownfield opens onboarding to assess what already exists.";
+
 export function CreateProject({ forceView }: { forceView?: CreateProjectView }) {
   const navigate = useNavigate();
   const createProject = useCreateProject();
@@ -71,12 +75,24 @@ export function CreateProject({ forceView }: { forceView?: CreateProjectView }) 
           {view !== "collision" && (
             <>
               <div className="field">
-                <span className="field__label">Track</span>
+                <span className="field__label">
+                  Track{" "}
+                  <span
+                    className="field__tip"
+                    tabIndex={0}
+                    role="img"
+                    aria-label="Greenfield starts from a blank profile. Brownfield opens onboarding to assess what already exists."
+                    title={TRACK_HELP}
+                  >
+                    ⓘ
+                  </span>
+                </span>
                 <span className="segmented">
                   <button
                     type="button"
                     aria-pressed={track === "greenfield"}
                     onClick={() => setTrack("greenfield")}
+                    title={TRACK_HELP}
                   >
                     Greenfield
                   </button>
@@ -84,13 +100,10 @@ export function CreateProject({ forceView }: { forceView?: CreateProjectView }) 
                     type="button"
                     aria-pressed={track === "brownfield"}
                     onClick={() => setTrack("brownfield")}
+                    title={TRACK_HELP}
                   >
                     Brownfield
                   </button>
-                </span>
-                <span className="field__help">
-                  Greenfield starts from a blank profile. Brownfield opens onboarding to assess what
-                  already exists.
                 </span>
               </div>
 

@@ -1,8 +1,18 @@
-﻿import { Link } from "react-router-dom";
+﻿import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, EmptyState, Panel, Table } from "../../components/ui";
+import { phaseLabel } from "../lifecycle/phases";
 import { useArtifacts } from "./hooks";
+
+// Humanize a status token (draft / pending_gate / published) for display + filter options.
+function statusLabel(status: string) {
+  return status
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
 
 // S-28 view states: populated · internal-only (no external link) · empty.
 export type ArtifactsView = "populated" | "internal-only" | "empty";
@@ -17,6 +27,30 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
   const { selectedProject } = useAuth();
   const artifacts = useArtifacts({ project: selectedProject?.project_id });
   const list = artifacts.data ?? [];
+
+  // Bugs.xlsx row 24: the search box and Phase/Type/Status filters were inert with no options.
+  // Filter client-side over the registry in view; options are the distinct values actually present.
+  const [search, setSearch] = useState("");
+  const [phase, setPhase] = useState("");
+  const [type, setType] = useState("");
+  const [status, setStatus] = useState("");
+
+  const phaseOptions = useMemo(() => [...new Set(list.map((a) => a.phase))].filter(Boolean).sort(), [list]);
+  const typeOptions = useMemo(() => [...new Set(list.map((a) => a.type))].filter(Boolean).sort(), [list]);
+  const statusOptions = useMemo(() => [...new Set(list.map((a) => a.status))].filter(Boolean).sort(), [list]);
+
+  const filtered = useMemo(
+    () =>
+      list.filter(
+        (a) =>
+          (!phase || a.phase === phase) &&
+          (!type || a.type === type) &&
+          (!status || a.status === status) &&
+          (!search || `${a.type} ${a.phase}`.toLowerCase().includes(search.toLowerCase())),
+      ),
+    [list, phase, type, status, search],
+  );
+
   const view: ArtifactsView =
     forceView ?? (list.length === 0 && artifacts.isSuccess ? "empty" : "populated");
 
@@ -51,17 +85,60 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
               placeholder="Search artifacts…"
               style={{ maxWidth: "240px" }}
               aria-label="Search artifacts"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
             />
-            <select className="select" style={{ maxWidth: "150px" }} aria-label="Filter by phase">
-              <option>Phase: All</option>
+            <select
+              className="select"
+              style={{ maxWidth: "170px" }}
+              aria-label="Filter by phase"
+              value={phase}
+              onChange={(e) => setPhase(e.target.value)}
+            >
+              <option value="">Phase: All</option>
+              {phaseOptions.map((p) => (
+                <option key={p} value={p}>
+                  {phaseLabel(p)}
+                </option>
+              ))}
             </select>
-            <select className="select" style={{ maxWidth: "140px" }} aria-label="Filter by type">
-              <option>Type: All</option>
+            <select
+              className="select"
+              style={{ maxWidth: "170px" }}
+              aria-label="Filter by type"
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+            >
+              <option value="">Type: All</option>
+              {typeOptions.map((t) => (
+                <option key={t} value={t}>
+                  {phaseLabel(t)}
+                </option>
+              ))}
             </select>
-            <select className="select" style={{ maxWidth: "150px" }} aria-label="Filter by status">
-              <option>Status: All</option>
+            <select
+              className="select"
+              style={{ maxWidth: "160px" }}
+              aria-label="Filter by status"
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+            >
+              <option value="">Status: All</option>
+              {statusOptions.map((s) => (
+                <option key={s} value={s}>
+                  {statusLabel(s)}
+                </option>
+              ))}
             </select>
           </div>
+          {view !== "internal-only" && filtered.length === 0 ? (
+            <Panel>
+              <EmptyState
+                title="No artifacts match these filters"
+                text="Clear the search or filters to see the full registry."
+              />
+            </Panel>
+          ) : (
           <Panel flush>
             <Table
               headers={["Artifact", "Phase", "Version", "Status", "System of record", ""]}
@@ -87,11 +164,11 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
                         </Link>,
                       ],
                     ]
-                  : list.map((artifact) => [
+                  : filtered.map((artifact) => [
                       <span className="table__primary" key="t">
-                        {artifact.type}
+                        {phaseLabel(artifact.type)}
                       </span>,
-                      artifact.phase,
+                      phaseLabel(artifact.phase),
                       <span className="table__id" key="v">
                         v{artifact.version}
                       </span>,
@@ -113,6 +190,7 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
               }
             />
           </Panel>
+          )}
         </>
       )}
     </div>

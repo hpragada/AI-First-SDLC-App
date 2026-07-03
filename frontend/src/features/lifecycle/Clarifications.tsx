@@ -16,6 +16,7 @@ import {
 } from "../../components/ui";
 import type { Clarification } from "../../types";
 import { useAnswerClarification, useClarifications, useWorkItems } from "./hooks";
+import { phaseLabel } from "./phases";
 
 // S-20 view states: one-pending(confirm) · multi-question · required-error ·
 // already-answered · cancelled · empty.
@@ -137,7 +138,7 @@ function ClarificationsLive() {
           <CardBody>
             <div className="clar-card__head">
               <span className="wi-card__id">{workItemLabel(current.work_item)}</span>
-              <Badge variant="needs-answer">{current.phase} · needs answer</Badge>
+              <Badge variant="needs-answer">{phaseLabel(current.phase)} · needs answer</Badge>
               <span className="u-spacer" />
               <span className="zero-cost">⏸ Paused — no usage billed while waiting</span>
             </div>

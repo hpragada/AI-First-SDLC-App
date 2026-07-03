@@ -148,7 +148,7 @@ function WorkItemEpicLive() {
             <Card attention>
               <CardBody>
                 <span className="gate-panel__role" style={{ color: "var(--accent-purple)" }}>
-                  ? Clarification · {pendingClar.phase}
+                  ? Clarification · {phaseLabel(pendingClar.phase)}
                 </span>
                 <h3 className="t-h3">1 question awaiting an answer</h3>
                 <p className="zero-cost">⏸ Paused — no usage billed while waiting</p>

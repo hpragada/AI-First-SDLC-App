@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { EmptyState, GraphCanvas, Panel, Spinner } from "../../components/ui";
 import type { TraceGraph } from "../../types";
+import { phaseLabel } from "../lifecycle/phases";
 import { useTraceability } from "./hooks";
 
 // S-30 view states: small (default) · highlighted (WI-492 lineage) · large-cluster
@@ -140,7 +141,7 @@ function LineageGraph({ graph }: { graph: TraceGraph }) {
                   {n.type.length > 16 ? `${n.type.slice(0, 16)}…` : n.type}
                 </text>
                 <text x="30" y="35" style={{ fill: "var(--text-muted)", fontSize: "11px" }}>
-                  {n.phase} · {n.status}
+                  {phaseLabel(n.phase)} · {n.status}
                 </text>
               </g>
             );

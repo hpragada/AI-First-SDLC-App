@@ -13,6 +13,7 @@ import {
 } from "../../components/ui";
 import type { AdminUser } from "../../types";
 import { useRevokeMembership, useRoleCoverage, useSetMembership, useSetTenantAdmin, useUsers } from "./hooks";
+import { roleLabel } from "./roles";
 
 // S-08 view states: gap-warning · saving · last-admin-guard.
 export type RolesView = "gap-warning" | "saving" | "last-admin-guard";
@@ -171,7 +172,7 @@ export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
                       <Assess state="missing">✗</Assess>
                     )}
                     <span className={r.covered ? "t-sm" : "t-sm u-danger"}>
-                      {r.role}
+                      {roleLabel(r.role)}
                       {r.covered
                         ? ` — ${r.holders.map((h) => h.name).join(", ")}`
                         : ` — nobody${r.note ? ` (${r.note})` : ""}`}

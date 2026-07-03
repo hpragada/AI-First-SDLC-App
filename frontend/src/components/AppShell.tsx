@@ -1,6 +1,7 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
+import { useRunners } from "../features/identity/hooks";
 import { useDashboard } from "../features/observability/hooks";
 import { cx, StatusDot } from "./ui";
 
@@ -113,6 +114,12 @@ export function AppShell() {
   const clarCount = dashboard.data?.needs_me.clarifications.length ?? 0;
   const navCounts: Partial<Record<NavId, number>> = { gates: gateCount, clarifications: clarCount };
   const bellCount = gateCount + clarCount;
+
+  // Companion pill reflects the real runner status (Bugs.xlsx row 30) — not a hardcoded "Ready".
+  const runners = useRunners(true);
+  const companionOnline = (runners.data ?? []).some((r) => r.online);
+  const companionPillClass = companionOnline ? "companion-pill--ready" : "companion-pill--offline";
+  const companionPillText = companionOnline ? "Companion: Ready" : "Companion: Offline";
   const tenant = currentUser?.tenant.name ?? "Acme Corp";
   const project = selectedProject?.project_name ?? "No project yet";
   const user = currentUser?.user.name ?? "You";
@@ -145,9 +152,9 @@ export function AppShell() {
           })}
         </nav>
         <div className="sidebar__foot">
-          <span className="companion-pill companion-pill--ready">
+          <span className={cx("companion-pill", companionPillClass)}>
             <StatusDot />
-            Companion: Ready
+            {companionPillText}
           </span>
         </div>
       </aside>
@@ -171,9 +178,9 @@ export function AppShell() {
             {!currentUser?.memberships.length && <option>{project}</option>}
           </select>
           <span className="u-spacer" />
-          <span className="companion-pill companion-pill--ready" style={{ width: "auto" }}>
+          <span className={cx("companion-pill", companionPillClass)} style={{ width: "auto" }}>
             <StatusDot />
-            Companion: Ready
+            {companionPillText}
           </span>
           <button className="bell" aria-label={`Notifications, ${bellCount} unread`}>
             <SvgIcon path={ICON.bell} />

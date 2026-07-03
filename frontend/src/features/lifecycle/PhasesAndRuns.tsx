@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Banner, EmptyState, Field, Panel, Select, Spinner, Table } from "../../components/ui";
 import { useRunners } from "../identity/hooks";
+import { roleLabel } from "../identity/roles";
 import { phaseLabel } from "./phases";
 import { usePhaseCatalog, useRuns, useTriggerPhase, useWorkItems } from "./hooks";
 import type { PhaseCatalogEntry, Run } from "../../types";
@@ -33,6 +34,11 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
   const view: PhasesRunsView =
     forceView ??
     (!online ? "offline" : (runs.data?.length ?? 0) === 0 ? "no-runs" : "online");
+
+  // Bugs.xlsx row 33: when the companion is offline (or there are simply no runs yet), the Runs
+  // panel must show the "No runs yet" empty state — not the demo sampleRuns it used to fall back to.
+  // In the gallery (forceView) we still show sampleRuns so the design catalogue has data.
+  const showRunsEmpty = view === "no-runs" || (!forceView && (runs.data?.length ?? 0) === 0);
 
   // All phases from the live catalog: plan + build in order
   const allPhases: PhaseCatalogEntry[] = [
@@ -90,9 +96,9 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
                 <Link to="/connect">Connect your machine ↗</Link>
               </Banner>
               <div className="phase-picker" style={{ opacity: 0.5, pointerEvents: "none" }}>
-                {phases.slice(3, 9).map((p) => (
+                {phases.slice(3, 6).map((p) => (
                   <button key={p.key} className="btn btn--secondary btn--sm" aria-disabled="true">
-                    {p.label}
+                    ▶ {p.label}
                   </button>
                 ))}
               </div>
@@ -152,7 +158,7 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
                           : trigger.isPending || !activeWorkItemId
                       }
                       onClick={() => handleTrigger(p.agent_key)}
-                      title={`Trigger ${p.label} (gate: ${p.gate_role})`}
+                      title={`Trigger ${p.label} (gate: ${roleLabel(p.gate_role)})`}
                     >
                       {trigger.isPending && trigger.variables === p.agent_key ? (
                         <><Spinner /> Triggering…</>
@@ -183,7 +189,7 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
       </div>
 
       <Panel
-        flush={view !== "no-runs"}
+        flush={!showRunsEmpty}
         title="Runs"
         actions={
           <span className="t-sm u-muted">
@@ -191,7 +197,7 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
           </span>
         }
       >
-        {view === "no-runs" ? (
+        {showRunsEmpty ? (
           <EmptyState
             title="No runs yet"
             text="Trigger the first phase for this work item to see runs appear here with live status and cost."
@@ -199,7 +205,7 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
         ) : (
           <Table
             headers={["Run", "Phase", "Status", "Engine / model", "Cost", "Workflow", "Created"]}
-            rows={(runs.data ?? sampleRuns).map((r) => [
+            rows={(forceView ? sampleRuns : runs.data ?? []).map((r) => [
               <span className="table__id" key="id">{r.id}</span>,
               <span className="table__primary" key="p">{phaseLabel(r.agent_phase ?? r.agent_key)}</span>,
               <Badge variant={statusVariant(r.status)} key="s">{r.status}</Badge>,

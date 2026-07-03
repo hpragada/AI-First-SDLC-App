@@ -83,13 +83,13 @@ export function AcceptInvite({ forceView }: { forceView?: AcceptInviteView }) {
           Gateway v2.
         </p>
         <Field label="Your name">
-          <Input type="text" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input type="text" placeholder="e.g. Jordan Lee" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field label="Email">
           <Input type="email" value="raj@acme.com" disabled />
         </Field>
         <Field label="Set a password" help={password ? "Strong password." : undefined}>
-          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <Input type="password" placeholder="At least 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} />
           <Strength value={passwordStrength(password)} />
         </Field>
         <Button variant="primary" block type="submit">

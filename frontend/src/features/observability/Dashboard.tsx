@@ -341,22 +341,25 @@ function DashboardGallery({ view }: { view: DashboardView }) {
       {view === "new-project" && (
         <div className="grid grid--detail">
           <Panel title="Get started">
-            <div className="vstep vstep--done">
-              <span className="vstep__num">✓</span>
+            <div className="vstep vstep--active">
+              <span className="vstep__num">1</span>
               <div className="vstep__body">
                 <div className="vstep__title">Create your first project</div>
-                <div className="vstep__desc">
-                  <Link to="/projects/new">Create a project ↗</Link>
+                <div className="vstep__desc">Greenfield or brownfield — this is where work items live.</div>
+                <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
+                  <Link to="/projects/new" className="btn btn--primary btn--sm">
+                    Create a project
+                  </Link>
                 </div>
               </div>
             </div>
-            <div className="vstep vstep--active">
+            <div className="vstep">
               <span className="vstep__num">2</span>
               <div className="vstep__body">
                 <div className="vstep__title">Connect your machine</div>
                 <div className="vstep__desc">Phases run on your computer.</div>
                 <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
-                  <Link to="/connect" className="btn btn--primary btn--sm">
+                  <Link to="/connect" className="btn btn--secondary btn--sm">
                     Connect
                   </Link>
                 </div>

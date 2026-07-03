@@ -137,7 +137,7 @@ function InviteDrawer({
         {!duplicate && (
           <>
             <Field label="Name (optional)">
-              <Input type="text" value={name} onChange={(e) => setName(e.target.value)} />
+              <Input type="text" placeholder="e.g. Jordan Lee" value={name} onChange={(e) => setName(e.target.value)} />
             </Field>
             <div className="t-label" style={{ margin: "var(--space-4) 0 var(--space-2)" }}>
               Initial project & role grants
@@ -212,11 +212,16 @@ export function UsersInvites({ forceView }: { forceView?: UsersView }) {
     for (const u of list) for (const m of u.memberships) map.set(m.project_id, m.project_name);
     return map;
   }, [currentUser, list]);
+  // Bugs.xlsx row 31.1: the table must show whenever there's anyone to list (the admin always is
+  // one row) — the old heuristic hid it behind an "It's just you" empty state, so registered/invited
+  // users only appeared once the Invite drawer flipped the view. Reserve empty for a truly empty
+  // list (which, since the admin always exists, is effectively never a live state).
+  const hasAnyRow = list.length > 0 || pendingInvites.length > 0;
   const view: UsersView =
     forceView ??
     (drawerOpen
       ? "invite-drawer"
-      : list.length <= 1 && pendingInvites.length === 0 && users.isSuccess
+      : users.isSuccess && !hasAnyRow
         ? "empty"
         : "populated");
 
@@ -266,7 +271,8 @@ export function UsersInvites({ forceView }: { forceView?: UsersView }) {
         <div className="page-head__titles">
           <h1 className="t-h1">Users & invitations</h1>
           <p className="page-head__sub">
-            Everyone in the Acme Corp workspace. Invite by email and grant initial project roles.
+            Everyone in the {currentUser?.tenant.name ?? "your"} workspace. Invite by email and grant
+            initial project roles.
           </p>
         </div>
         <SetupReturnLink />
