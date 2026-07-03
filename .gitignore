@@ -46,3 +46,6 @@ Thumbs.db
 runner/workdir/
 **/AGENTS.md.tmp
 *.log
+
+# Office temp lock files
+~$*
