@@ -32,8 +32,8 @@
         <div class="panel">
           <div class="panel__header"><h2 class="panel__title">Needs me</h2><span class="u-spacer"></span><span class="badge badge--orange">6 items</span></div>
           <div class="panel__body--flush">
-            <div class="todo"><span class="todo__icon todo__icon--gate">▲</span><div class="todo__main"><div class="todo__title">Architecture gate · WI-492 Stripe Webhook Integration</div><div class="todo__meta">required role: architect · Run #42 awaiting gate</div></div><a href="S-21-gates.html" class="btn btn--primary btn--sm">Review</a></div>
-            <div class="todo"><span class="todo__icon todo__icon--gate">▲</span><div class="todo__main"><div class="todo__title">PM Approval gate · WI-511 Fix Session Timeout Logic</div><div class="todo__meta">required role: product_owner · Run #39 awaiting gate</div></div><a href="S-21-gates.html" class="btn btn--secondary btn--sm">Review</a></div>
+            <div class="todo"><span class="todo__icon todo__icon--gate">▲</span><div class="todo__main"><div class="todo__title">Architecture gate · WI-492 Stripe Webhook Integration</div><div class="todo__meta">required role: Architect · Run #42 awaiting gate</div></div><a href="S-21-gates.html" class="btn btn--primary btn--sm">Review</a></div>
+            <div class="todo"><span class="todo__icon todo__icon--gate">▲</span><div class="todo__main"><div class="todo__title">PM Approval gate · WI-511 Fix Session Timeout Logic</div><div class="todo__meta">required role: Product Owner · Run #39 awaiting gate</div></div><a href="S-21-gates.html" class="btn btn--secondary btn--sm">Review</a></div>
             <div class="todo"><span class="todo__icon todo__icon--clar">?</span><div class="todo__main"><div class="todo__title">Question · WI-510 Analytics Dashboard PRD</div><div class="todo__meta">"CSV export in v1?" · waiting 6m · $0 while waiting</div></div><a href="S-20-clarifications.html" class="btn btn--secondary btn--sm">Answer</a></div>
             <div class="todo"><span class="todo__icon todo__icon--run">▶</span><div class="todo__main"><div class="todo__title">Run #44 · UX Design running</div><div class="todo__meta">WI-487 Checkout Flow Redesign</div></div><a href="S-19-run-console.html" class="btn btn--ghost btn--sm">View</a></div>
           </div>
@@ -90,9 +90,11 @@
       <div class="grid grid--detail">
         <div class="panel">
           <div class="panel__header"><h2 class="panel__title">Get started</h2></div>
+          <!-- Bugs.xlsx row 7: right after first login (no project yet) step 1 is the ACTIVE,
+               not-yet-done step (numbered 1) with a Create action — it is NOT pre-ticked. -->
           <div class="panel__body">
-            <div class="vstep vstep--done"><span class="vstep__num">✓</span><div class="vstep__body"><div class="vstep__title">Create your first project</div><div class="vstep__desc">Payment Gateway v2 created.</div></div></div>
-            <div class="vstep vstep--active"><span class="vstep__num">2</span><div class="vstep__body"><div class="vstep__title">Connect your machine</div><div class="vstep__desc">Phases run on your computer.</div><div class="gate-panel__actions" style="margin-top:var(--space-2)"><a href="S-06-connect-machine.html" class="btn btn--primary btn--sm">Connect</a></div></div></div>
+            <div class="vstep vstep--active"><span class="vstep__num">1</span><div class="vstep__body"><div class="vstep__title">Create your first project</div><div class="vstep__desc">Greenfield or brownfield — this is where work items live.</div><div class="gate-panel__actions" style="margin-top:var(--space-2)"><a href="S-09-create-project.html" class="btn btn--primary btn--sm">Create a project</a></div></div></div>
+            <div class="vstep"><span class="vstep__num">2</span><div class="vstep__body"><div class="vstep__title">Connect your machine</div><div class="vstep__desc">Phases run on your computer.</div></div></div>
             <div class="vstep"><span class="vstep__num">3</span><div class="vstep__body"><div class="vstep__title">Invite your team &amp; assign roles</div><div class="vstep__desc">So gates have someone to decide them.</div></div></div>
             <div class="vstep" style="padding-bottom:0"><span class="vstep__num">4</span><div class="vstep__body"><div class="vstep__title">Connect integrations</div><div class="vstep__desc">Confluence, Jira, Figma, GitHub…</div></div></div>
           </div>

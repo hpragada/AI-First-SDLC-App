@@ -1,5 +1,16 @@
 # Hi-Fi HTML Mockup Gallery (`docs/design/`)
 
+> **⚠ 2026-07-06 — Gallery reconciled to the as-built app.** This gallery was the *original*
+> build target and had drifted behind the shipped app after the `Bugs.xlsx` rows 2–33 fixes
+> (stale on content, layout, and behaviour). The **greenfield-flow** screens have now been
+> updated to match the current app — see
+> [`reviews/2026-07-06-hifi-reconciliation.md`](reviews/2026-07-06-hifi-reconciliation.md) for
+> exactly what changed and what is still pending. A few areas remain "styling reference only"
+> until a follow-up pass (integrations drawer overlay, clarifications "Other" state, artifacts
+> filters/preview, dynamic shell counts); brownfield/onboarding/code-intel screens were left
+> untouched by guardrail. When in doubt, the **running app is the source of truth for
+> content/behaviour**; use the gallery for component/visual design.
+
 The **visual acceptance reference** for the Phase-4.8 React build. Every screen of the
 Edvensoft AI-First SDLC platform is rendered as **static, self-contained HTML**, composed
 **only** from shared component classes over one shared shell. No app code lives here; this

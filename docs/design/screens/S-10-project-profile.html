@@ -25,10 +25,11 @@
         <div class="panel__header"><h2 class="panel__title">Edit profile</h2><span class="u-spacer"></span><span class="save-state save-state--saved">✓ Saved · v3</span><button class="btn btn--primary btn--sm" disabled aria-disabled="true">Save</button></div>
         <div class="panel__body u-stack">
           <label class="field"><span class="field__label">Description</span><textarea class="textarea">Card payment gateway handling Stripe + Adyen, with ledger reconciliation and webhook ingestion.</textarea></label>
-          <div class="grid grid--2">
-            <label class="field"><span class="field__label">Domain</span><input class="input" value="Payments"></label>
-            <label class="field"><span class="field__label">Tech stack</span><input class="input" value="Django, React, Postgres"></label>
-          </div>
+          <label class="field"><span class="field__label">Domain</span><input class="input" value="Payments"></label>
+          <label class="field"><span class="field__label">Tech stack</span><textarea class="textarea" rows="6">Frontend: TypeScript 5.x, Next.js 14
+Backend: Python 3.12, Django 5.x + DRF
+Database: PostgreSQL 16
+Infra: Docker Compose, Temporal, MinIO</textarea></label>
           <label class="field"><span class="field__label">Coding standards</span><textarea class="textarea">PEP 8 + ruff; typed Python (mypy); React function components; RLS-aware migrations.</textarea></label>
           <div class="grid grid--2">
             <label class="field"><span class="field__label">NFRs</span><textarea class="textarea">PCI-DSS scope; &lt;500ms webhook ack; at-least-once delivery.</textarea></label>
@@ -40,13 +41,27 @@
       </div>
     </div>
 
+    <!-- ============ Draft · new project, never saved (Bugs.xlsx row 10) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Draft · new project, never saved</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Edit profile</h2><span class="u-spacer"></span><span class="save-state save-state--dirty">Draft · not saved yet</span><button class="btn btn--primary btn--sm">Save</button></div>
+        <div class="panel__body">
+          <label class="field" style="margin-bottom:0"><span class="field__label">Description</span><textarea class="textarea">Orders processing service.</textarea></label>
+          <p class="field__help">Saving will create v1.</p>
+        </div>
+      </div>
+    </div>
+
     <!-- ============ Unsaved changes (dirty) ============ -->
     <div class="state-block">
       <span class="state-block__label">Unsaved changes · dirty</span>
       <div class="panel">
         <div class="panel__header"><h2 class="panel__title">Edit profile</h2><span class="u-spacer"></span><span class="save-state save-state--dirty">● Unsaved changes</span><button class="btn btn--primary btn--sm">Save</button></div>
         <div class="panel__body">
-          <label class="field" style="margin-bottom:0"><span class="field__label">Tech stack</span><input class="input" value="Django, React, Postgres, Temporal"></label>
+          <label class="field" style="margin-bottom:0"><span class="field__label">Tech stack</span><textarea class="textarea" rows="6">Frontend: TypeScript 5.x, Next.js 14
+Backend: Python 3.12, Django 5.x + DRF
+Database: PostgreSQL 16, Temporal</textarea></label>
           <p class="field__help">Saving will create v4.</p>
         </div>
       </div>

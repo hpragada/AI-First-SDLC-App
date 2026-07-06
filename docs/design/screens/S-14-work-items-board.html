@@ -25,21 +25,21 @@
 
       <div class="u-row u-wrap" style="margin-bottom:var(--space-4)">
         <input class="input" type="search" placeholder="Search work items…" style="max-width:240px" aria-label="Search work items">
-        <select class="select" style="max-width:150px" aria-label="Filter by phase"><option>Phase: All</option><option>Ideation</option><option>Requirements</option><option>Architecture</option><option>UX Design</option></select>
+        <select class="select" style="max-width:150px" aria-label="Filter by phase"><option>Phase: All</option><option>Ideation</option><option>Requirements</option><option>PRD</option><option>Architecture</option><option>UX Design</option><option>Task Breakdown</option><option>Implementation</option><option>Code Review</option><option>Testing</option><option>Test Automation</option><option>Security</option><option>CI/CD</option><option>Deployment</option></select>
         <span class="u-row-tight"><button class="chip chip--filter" aria-pressed="true">All levels</button><button class="chip chip--filter">Epics</button><button class="chip chip--filter">Tasks</button><button class="chip chip--filter">Defects</button></span>
-        <select class="select" style="max-width:140px" aria-label="Filter by role"><option>Role: All</option><option>product_owner</option><option>architect</option></select>
+        <select class="select" style="max-width:140px" aria-label="Filter by role"><option>Role: All</option><option>Product Owner</option><option>Architect</option><option>Designer</option><option>Tech Lead</option><option>Engineer</option><option>Reviewer</option></select>
         <select class="select" style="max-width:150px" aria-label="Filter by status"><option>Status: All</option><option>Draft</option><option>Awaiting gate</option></select>
         <span class="u-spacer"></span>
         <span class="segmented"><button aria-pressed="true">Board</button><button>List</button></span>
       </div>
 
+      <!-- Bugs.xlsx row 27: columns are the full lifecycle from the phase catalog, in SDLC order,
+           numbered + human-readable (PRD was previously missing). The board scrolls horizontally.
+           App renders no per-column icon, so none here (see reconciliation note). -->
       <div class="board">
         <!-- 1. Ideation -->
         <div class="board__col">
-          <div class="board__col-head">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12c.6.6 1 1.2 1 2h6c0-.8.4-1.4 1-2a7 7 0 0 0-4-12z"/></svg>
-            <span class="board__col-title">1. Ideation</span><span class="u-spacer"></span><span class="board__col-count">2</span>
-          </div>
+          <div class="board__col-head"><span class="board__col-title">1. Ideation</span><span class="u-spacer"></span><span class="board__col-count">2</span></div>
           <div class="board__list">
             <div class="wi-card">
               <div class="wi-card__top"><span class="wi-card__id">WI-508</span><span class="badge badge--queued"><span class="status-dot"></span>Draft</span></div>
@@ -50,7 +50,7 @@
             <div class="wi-card">
               <div class="wi-card__top"><span class="wi-card__id">WI-521</span><span class="badge badge--queued"><span class="status-dot"></span>Draft</span></div>
               <div class="wi-card__title">Dark Mode UI Theme Support</div>
-              <div class="wi-card__meta"><span class="chip badge--navy">Feature</span></div>
+              <div class="wi-card__meta"><span class="chip badge--navy">Story</span></div>
               <div class="wi-card__foot"><span>0 artifacts</span><span class="u-spacer"></span><span class="avatar avatar--sm">PN</span></div>
             </div>
           </div>
@@ -58,10 +58,7 @@
 
         <!-- 2. Requirements -->
         <div class="board__col">
-          <div class="board__col-head">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M9 12h6M9 16h6"/></svg>
-            <span class="board__col-title">2. Requirements</span><span class="u-spacer"></span><span class="board__col-count">3</span>
-          </div>
+          <div class="board__col-head"><span class="board__col-title">2. Requirements</span><span class="u-spacer"></span><span class="board__col-count">3</span></div>
           <div class="board__list">
             <div class="wi-card">
               <div class="wi-card__top"><span class="wi-card__id">WI-510</span><span class="badge badge--running"><span class="status-dot"></span>AI compiling…</span></div>
@@ -78,18 +75,21 @@
             <div class="wi-card">
               <div class="wi-card__top"><span class="wi-card__id">WI-499</span><span class="badge badge--done"><span class="status-dot"></span>Phase complete</span></div>
               <div class="wi-card__title">Multi-Currency Support</div>
-              <div class="wi-card__meta"><span class="chip badge--navy">Feature</span></div>
+              <div class="wi-card__meta"><span class="chip badge--navy">Story</span></div>
               <div class="wi-card__foot"><span>3 artifacts</span><span class="u-spacer"></span><span class="avatar avatar--sm">ML</span></div>
             </div>
           </div>
         </div>
 
-        <!-- 3. Architecture -->
+        <!-- 3. PRD -->
         <div class="board__col">
-          <div class="board__col-head">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg>
-            <span class="board__col-title">3. Architecture</span><span class="u-spacer"></span><span class="board__col-count">1</span>
-          </div>
+          <div class="board__col-head"><span class="board__col-title">3. PRD</span><span class="u-spacer"></span><span class="board__col-count">0</span></div>
+          <div class="board__list"></div>
+        </div>
+
+        <!-- 4. Architecture -->
+        <div class="board__col">
+          <div class="board__col-head"><span class="board__col-title">4. Architecture</span><span class="u-spacer"></span><span class="board__col-count">1</span></div>
           <div class="board__list">
             <div class="wi-card wi-card--selected">
               <div class="wi-card__top"><span class="wi-card__id">WI-492</span><span class="needs needs--gate"><span class="status-dot" style="background:currentColor"></span>Review Architecture Gate</span></div>
@@ -100,21 +100,28 @@
           </div>
         </div>
 
-        <!-- 4. UX Design -->
+        <!-- 5. UX Design -->
         <div class="board__col">
-          <div class="board__col-head">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg>
-            <span class="board__col-title">4. UX Design</span><span class="u-spacer"></span><span class="board__col-count">1</span>
-          </div>
+          <div class="board__col-head"><span class="board__col-title">5. UX Design</span><span class="u-spacer"></span><span class="board__col-count">1</span></div>
           <div class="board__list">
             <div class="wi-card">
               <div class="wi-card__top"><span class="wi-card__id">WI-487</span><span class="badge badge--running"><span class="status-dot"></span>AI compiling…</span></div>
               <div class="wi-card__title">Checkout Flow Redesign</div>
-              <div class="wi-card__meta"><span class="chip badge--navy">Feature</span></div>
+              <div class="wi-card__meta"><span class="chip badge--navy">Story</span></div>
               <div class="wi-card__foot"><span>1 artifact</span><span class="u-spacer"></span><span class="avatar avatar--sm">PN</span></div>
             </div>
           </div>
         </div>
+
+        <!-- 6-13: remaining build-tier phases (empty in this sample) -->
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">6. Task Breakdown</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">7. Implementation</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">8. Code Review</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">9. Testing</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">10. Test Automation</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">11. Security</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">12. CI/CD</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">13. Deployment</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
       </div>
     </div>
 
@@ -130,9 +137,9 @@
               <tr><td class="table__id">WI-508</td><td class="table__primary">Customer Loyalty Program</td><td><span class="chip badge--navy">Epic</span></td><td>Ideation</td><td><span class="badge badge--queued"><span class="status-dot"></span>Draft</span></td><td>0</td><td>Sarah Chen</td></tr>
               <tr><td class="table__id">WI-510</td><td class="table__primary">Analytics Dashboard PRD Generation</td><td><span class="chip badge--navy">Epic</span></td><td>Requirements</td><td><span class="badge badge--needs-answer"><span class="status-dot"></span>1 Clarification</span></td><td>0</td><td>Sarah Chen</td></tr>
               <tr><td class="table__id">WI-511</td><td class="table__primary">Fix Session Timeout Logic</td><td><span class="chip">Task</span></td><td>Requirements</td><td><span class="badge badge--gate"><span class="status-dot"></span>Gate: PM Approval</span></td><td>1</td><td>Dan Ortiz</td></tr>
-              <tr><td class="table__id">WI-499</td><td class="table__primary">Multi-Currency Support</td><td><span class="chip badge--navy">Feature</span></td><td>Requirements</td><td><span class="badge badge--done"><span class="status-dot"></span>Phase complete</span></td><td>3</td><td>Marcus Lee</td></tr>
+              <tr><td class="table__id">WI-499</td><td class="table__primary">Multi-Currency Support</td><td><span class="chip badge--navy">Story</span></td><td>Requirements</td><td><span class="badge badge--done"><span class="status-dot"></span>Phase complete</span></td><td>3</td><td>Marcus Lee</td></tr>
               <tr><td class="table__id">WI-492</td><td class="table__primary">Stripe Webhook Integration</td><td><span class="chip badge--navy">Epic</span></td><td>Architecture</td><td><span class="badge badge--gate"><span class="status-dot"></span>Awaiting gate</span></td><td>2</td><td>Sarah Chen</td></tr>
-              <tr><td class="table__id">WI-487</td><td class="table__primary">Checkout Flow Redesign</td><td><span class="chip badge--navy">Feature</span></td><td>UX Design</td><td><span class="badge badge--running"><span class="status-dot"></span>Running</span></td><td>1</td><td>Priya Nair</td></tr>
+              <tr><td class="table__id">WI-487</td><td class="table__primary">Checkout Flow Redesign</td><td><span class="chip badge--navy">Story</span></td><td>UX Design</td><td><span class="badge badge--running"><span class="status-dot"></span>Running</span></td><td>1</td><td>Priya Nair</td></tr>
             </tbody>
           </table>
         </div>

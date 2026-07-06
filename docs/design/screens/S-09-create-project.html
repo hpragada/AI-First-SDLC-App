@@ -17,17 +17,16 @@
     <div class="state-block">
       <span class="state-block__label">Default · Greenfield selected</span>
       <div class="card"><div class="card__body u-stack">
-        <label class="field"><span class="field__label">Project name <span class="req">*</span></span><input class="input" type="text" value="Payment Gateway v2"></label>
+        <label class="field"><span class="field__label">Project name <span class="req">*</span></span><input class="input" type="text" placeholder="e.g. Billing Service"></label>
         <div class="field">
-          <span class="field__label">Track</span>
-          <span class="segmented"><button aria-pressed="true">Greenfield</button><button>Brownfield</button></span>
-          <span class="field__help">Greenfield starts from a blank profile. Brownfield opens onboarding to assess what already exists.</span>
+          <span class="field__label">Track <span class="field__tip" tabindex="0" role="img" aria-label="Greenfield starts from a blank profile. Brownfield opens onboarding to assess what already exists." title="Greenfield starts from a blank profile. Brownfield opens onboarding to assess what already exists.">ⓘ</span></span>
+          <span class="segmented"><button aria-pressed="true" title="Greenfield starts from a blank profile. Brownfield opens onboarding to assess what already exists.">Greenfield</button><button title="Greenfield starts from a blank profile. Brownfield opens onboarding to assess what already exists.">Brownfield</button></span>
         </div>
         <div class="field">
           <span class="field__label">Repository topology</span>
           <span class="segmented"><button aria-pressed="true">Single repo</button><button>Multi-repo</button></span>
         </div>
-        <div class="gate-panel__actions"><button class="btn btn--primary">Create project</button><button class="btn btn--ghost">Cancel</button></div>
+        <div class="gate-panel__actions"><button class="btn btn--primary" disabled aria-disabled="true" title="Enter a project name first">Create project</button><button class="btn btn--ghost">Cancel</button></div>
       </div></div>
     </div>
 

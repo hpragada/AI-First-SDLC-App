@@ -47,7 +47,7 @@
               <div class="vstep__desc">Paste these two commands. Sign in once, then leave the companion running in the background.</div>
               <div class="cmd-block" style="margin-top:var(--space-4);opacity:.55">
                 <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>claude</span><button class="cmd-copy" disabled>Copy</button></div>
-                <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>python -m runner.companion serve --api-url … --token …</span><button class="cmd-copy" disabled>Copy</button></div>
+                <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>python -m runner.companion serve --api-url … --tenant … --token …</span><button class="cmd-copy" disabled>Copy</button></div>
               </div>
               <p class="field__help">Generate the token in Step A to reveal these commands.</p>
             </div>
@@ -79,7 +79,7 @@
               <div class="vstep__desc">Leave the second command running in the background.</div>
               <div class="cmd-block" style="margin-top:var(--space-4)">
                 <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>claude</span><button class="cmd-copy">Copy</button></div>
-                <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>python -m runner.companion serve --api-url https://app.acme.com --token rnr_3f9a…b2</span><button class="cmd-copy">Copy</button></div>
+                <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>python -m runner.companion serve --api-url https://app.edvensoft.com --tenant tnt_8a2f… --token rnr_3f9a…b2</span><button class="cmd-copy">Copy</button></div>
               </div>
             </div>
           </div>
@@ -106,7 +106,7 @@
         <div class="conn-status conn-status--offline" style="margin-bottom:var(--space-4)"><span class="status-dot" style="background:currentColor"></span>Offline — Sarah's MacBook · last seen 5m ago</div>
         <p class="t-sm u-body">The companion daemon stopped. Phases can't run until it's back. Restart it in your terminal:</p>
         <div class="cmd-block" style="margin-top:var(--space-3)">
-          <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>python -m runner.companion serve --api-url https://app.acme.com --token rnr_3f9a…b2</span><button class="cmd-copy">Copy</button></div>
+          <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>python -m runner.companion serve --api-url https://app.edvensoft.com --tenant tnt_8a2f… --token rnr_3f9a…b2</span><button class="cmd-copy">Copy</button></div>
         </div>
         <div class="gate-panel__actions"><button class="btn btn--secondary">Generate new token</button></div>
       </div></div>
