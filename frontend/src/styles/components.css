@@ -207,6 +207,9 @@
 .grid { display: grid; gap: var(--space-5); }
 .grid--2 { grid-template-columns: 1fr 1fr; }
 .grid--3 { grid-template-columns: repeat(3, 1fr); }
+/* Responsive card grid (Bugs.xlsx: Integrations cards clipped on narrow windows). Wraps to
+   fewer columns as space shrinks and fills wider viewports, instead of a fixed 3-across. */
+.grid--auto { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 .grid--detail { grid-template-columns: minmax(0,1fr) 320px; align-items: start; }
 
 /* ============================================================================

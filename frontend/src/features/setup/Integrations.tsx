@@ -56,7 +56,7 @@ export function Integrations({ forceView }: { forceView?: IntegrationsView }) {
         <SetupReturnLink />
       </div>
 
-      <div className="grid grid--3">
+      <div className="grid grid--auto">
         {caps.map((cap) => {
           const integration = view === "empty" ? undefined : byCap.get(cap);
           const builtIn = cap === "codeintel";

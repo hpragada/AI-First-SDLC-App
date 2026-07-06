@@ -45,6 +45,31 @@ class WorkItem(TenantScopedModel):
     takeover_flag = models.BooleanField(default=False)
     # Pointer to the SoR issue once reconciled (proposed→accepted), e.g. a Jira key (P1).
     external_ref = models.JSONField(null=True, blank=True)
+    # Human-readable, per-project sequential display number. Renders as "WI-<number>" so users
+    # never see the raw UUID (Bugs.xlsx: work items shown by raw UUID). Assigned on first save.
+    number = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "number"], name="uniq_workitem_number_per_project"
+            )
+        ]
+
+    @property
+    def key(self) -> str:
+        """Human work-item key, e.g. "WI-42". Empty only until the first save assigns a number."""
+        return f"WI-{self.number}" if self.number else ""
+
+    def save(self, *args, **kwargs):
+        # Assign the next per-project number on creation. Numbers are stable (never reused) so
+        # the key stays a durable handle even if earlier items are deleted.
+        if self.number is None and self.project_id:
+            last = WorkItem.objects.filter(project_id=self.project_id).aggregate(
+                m=models.Max("number")
+            )["m"]
+            self.number = (last or 0) + 1
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
-        return f"{self.type}:{self.feature_stream or self.id}"
+        return f"{self.key or self.type}:{self.feature_stream or self.id}"

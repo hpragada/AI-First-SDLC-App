@@ -16,6 +16,7 @@ import {
   Textarea,
 } from "../../components/ui";
 import type { Approval } from "../../types";
+import { roleLabel } from "../identity/roles";
 import { useApprovals, useDecideApproval, useWorkItems } from "./hooks";
 
 // S-21 view states: can-decide (your role) · cannot-decide (permission) ·
@@ -57,7 +58,8 @@ function GatesLive() {
 
   const workItemLabel = (id: string) => {
     const wi = workItems.data?.find((w) => w.id === id);
-    return wi ? `${id.slice(0, 8)} · ${wi.title || wi.type}` : id.slice(0, 8);
+    if (!wi) return id.slice(0, 8);
+    return `${wi.key || id.slice(0, 8)} · ${wi.title || wi.type}`;
   };
 
   const handleDecide = (decision: "approved" | "rejected") => {
@@ -114,7 +116,9 @@ function GatesLive() {
                   <Badge variant={a.decision === "approved" ? "done" : "failed"} key="d">
                     {a.decision === "approved" ? "Approved" : "Rejected"}
                   </Badge>,
-                  a.approver === currentUser?.user.id ? "You" : a.approver ? a.approver.slice(0, 8) : "—",
+                  a.approver === currentUser?.user.id
+                    ? "You"
+                    : a.approver_name ?? (a.approver ? a.approver.slice(0, 8) : "—"),
                   a.decided_at ? new Date(a.decided_at).toLocaleString() : "—",
                 ])}
               />
@@ -143,7 +147,7 @@ function GatesLive() {
                     {gateLabel(a.gate_type)}
                   </button>,
                   <span className="chip badge--navy" key="r">
-                    {a.required_role}
+                    {roleLabel(a.required_role)}
                   </span>,
                   <span className="table__id" key="w">
                     {workItemLabel(a.work_item)}
@@ -162,7 +166,7 @@ function GatesLive() {
               <Card attention>
                 <CardBody>
                   <span className="gate-panel__role">
-                    ▲ {gateLabel(selected.gate_type)} gate · required role: {selected.required_role}
+                    ▲ {gateLabel(selected.gate_type)} gate · required role: {roleLabel(selected.required_role)}
                   </span>
                   <h3 className="t-h3">{workItemLabel(selected.work_item)}</h3>
                   <Link to="/artifacts" className="t-sm">

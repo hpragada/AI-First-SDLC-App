@@ -7,6 +7,10 @@ import { PLANNING_PHASES } from "../../types";
 import type { LifecycleNode } from "../../types";
 
 const LABEL_BY_KEY = new Map(PLANNING_PHASES.map((p) => [p.key, p.label]));
+// Also index by the bare (ordinal-stripped) name so a backend node label like "prd" or
+// "ux_design" still resolves to the catalog's proper casing ("PRD", "UX Design") instead of
+// the naive title-case fallback ("Prd", "Ux Design"). Bugs.xlsx: rail vs board disagreed.
+const LABEL_BY_BARE = new Map(PLANNING_PHASES.map((p) => [normalize(p.key), p.label]));
 
 // Brownfield / project-onboarding phases (the 00_* group) — hidden from a work item's rail.
 const BROWNFIELD_PHASE_KEYS = new Set([
@@ -29,7 +33,7 @@ export function isBrownfieldPhase(phase: string): boolean {
 // A clean, human-readable label for a phase key/name — no underscores, no ordinal prefix.
 export function phaseLabel(phase: string | null | undefined): string {
   if (!phase) return "—";
-  const known = LABEL_BY_KEY.get(phase);
+  const known = LABEL_BY_KEY.get(phase) ?? LABEL_BY_BARE.get(normalize(phase));
   if (known) return known;
   return normalize(phase)
     .split("_")

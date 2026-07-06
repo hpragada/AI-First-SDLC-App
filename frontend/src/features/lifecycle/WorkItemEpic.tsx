@@ -63,10 +63,10 @@ function WorkItemEpicLive() {
 
   return (
     <div className="canvas-pad">
-      <Breadcrumb items={[{ label: "Work Items", href: "/work-items" }, id]} />
+      <Breadcrumb items={[{ label: "Work Items", href: "/work-items" }, workItem.data.key || id]} />
       <div className="page-head">
         <div className="page-head__titles">
-          <h1 className="t-h1">⚡ {workItem.data.title || id.slice(0, 8)}</h1>
+          <h1 className="t-h1">⚡ {workItem.data.title || workItem.data.key || id.slice(0, 8)}</h1>
           <div className="meta-row" style={{ marginTop: "var(--space-2)" }}>
             <span className="meta-item">
               <span className="chip badge--navy">{itemType}</span>

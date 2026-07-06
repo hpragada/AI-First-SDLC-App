@@ -342,12 +342,15 @@ def project_role_coverage(*, tenant, project) -> dict:
         covered = bool(holders)
         gate_blocked = not covered and not admin_fallback
         label = _GATE_LABELS.get(role, f"{role} gate")
+        # Human-readable role name in the copy — never the raw key (e.g. "Product Owner",
+        # not "product_owner"). Bugs.xlsx: coverage notes leaked raw role keys.
+        role_label = Role(role).label
         if covered:
             note = None
         elif admin_fallback:
-            note = f"no {role} assigned — an admin can approve the {label}"
+            note = f"no {role_label} assigned — an admin can approve the {label}"
         else:
-            note = f"{label} unactionable — no {role}"
+            note = f"{label} unactionable — no {role_label}"
         rows.append({
             "role": role,
             "holders": holders,

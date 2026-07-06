@@ -220,15 +220,18 @@ class ProjectProfileSerializer(serializers.ModelSerializer):
 
 # ── WorkItem ────────────────────────────────────────────────────────
 class WorkItemSerializer(serializers.ModelSerializer):
+    # Human key ("WI-42") + its raw number, so the UI never has to show the UUID.
+    key = serializers.ReadOnlyField()
+
     class Meta:
         model = WorkItem
         fields = [
-            "id", "project", "repo", "feature_stream", "title", "description",
+            "id", "key", "number", "project", "repo", "feature_stream", "title", "description",
             "type", "state", "parent", "depends_on", "assignee", "takeover_flag",
             "external_ref", "created_at",
         ]
         # external_ref is set by reconciliation (proposed→accepted), not by clients.
-        read_only_fields = ["id", "project", "state", "external_ref", "created_at"]
+        read_only_fields = ["id", "key", "number", "project", "state", "external_ref", "created_at"]
 
 
 class WorkItemPatchSerializer(serializers.ModelSerializer):
@@ -336,13 +339,19 @@ class EventSerializer(serializers.ModelSerializer):
 
 # ── Approval / gate decision ────────────────────────────────────────
 class ApprovalSerializer(serializers.ModelSerializer):
+    # Approver's display name so the UI can show who decided a gate instead of a raw user id.
+    approver_name = serializers.SerializerMethodField()
+
     class Meta:
         model = Approval
         fields = [
-            "id", "run", "gate_type", "work_item", "required_role", "approver",
+            "id", "run", "gate_type", "work_item", "required_role", "approver", "approver_name",
             "decision", "comment", "decided_at", "created_at",
         ]
         read_only_fields = fields
+
+    def get_approver_name(self, obj) -> str | None:
+        return obj.approver.name if obj.approver_id else None
 
 
 class GateDecisionSerializer(serializers.Serializer):

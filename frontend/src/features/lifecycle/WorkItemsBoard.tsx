@@ -41,17 +41,22 @@ function statusBadge(card: WorkItemCard) {
   return <Badge variant="queued">Draft</Badge>;
 }
 
+// Human-readable work-item type ("story" → "Story"). One place so the board card and list agree.
+function typeLabel(type: string | undefined): string {
+  return type ? type[0].toUpperCase() + type.slice(1) : "Item";
+}
+
 function WiCard({ card }: { card: WorkItemCard }) {
   return (
     <Link to={`/work-items/${card.id}`} className="wi-card">
       <div className="wi-card__top">
-        <span className="wi-card__id">{card.id}</span>
+        <span className="wi-card__id">{card.key || card.id}</span>
         {statusBadge(card)}
       </div>
-      <div className="wi-card__title">{card.title ?? card.id}</div>
+      <div className="wi-card__title">{card.title || card.key || card.id}</div>
       <div className="wi-card__meta">
         <Chip variant={card.type === "task" ? undefined : "navy"}>
-          {card.type ? card.type[0].toUpperCase() + card.type.slice(1) : "Item"}
+          {typeLabel(card.type)}
         </Chip>
         {card.parent && <Chip>↖ {card.parent}</Chip>}
       </div>
@@ -253,13 +258,13 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
             headers={["ID", "Title", "Level", "Phase", "Status", "Artifacts", "Owner"]}
             rows={list.map((item) => [
               <span className="table__id" key="id">
-                {item.id}
+                {item.key || item.id}
               </span>,
               <span className="table__primary" key="t">
-                {item.title ?? item.id}
+                {item.title || item.key || item.id}
               </span>,
               <Chip key="l" variant={item.type === "task" ? undefined : "navy"}>
-                {item.type}
+                {typeLabel(item.type)}
               </Chip>,
               item.feature_stream,
               statusBadge(item),

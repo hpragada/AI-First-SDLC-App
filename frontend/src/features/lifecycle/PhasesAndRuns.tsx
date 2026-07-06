@@ -98,7 +98,7 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
               <div className="phase-picker" style={{ opacity: 0.5, pointerEvents: "none" }}>
                 {phases.slice(3, 6).map((p) => (
                   <button key={p.key} className="btn btn--secondary btn--sm" aria-disabled="true">
-                    ▶ {p.label}
+                    ▶ {phaseLabel(p.key)}
                   </button>
                 ))}
               </div>
@@ -120,7 +120,7 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
                       {workItems.isLoading && <option disabled>Loading…</option>}
                       {(workItems.data ?? []).map((wi) => (
                         <option key={wi.id} value={wi.id}>
-                          {wi.id.slice(0, 8)} · {wi.title || wi.type}
+                          {wi.key || wi.id.slice(0, 8)} · {wi.title || wi.type}
                         </option>
                       ))}
                       {!workItems.isLoading && (workItems.data?.length ?? 0) === 0 && (
@@ -158,12 +158,12 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
                           : trigger.isPending || !activeWorkItemId
                       }
                       onClick={() => handleTrigger(p.agent_key)}
-                      title={`Trigger ${p.label} (gate: ${roleLabel(p.gate_role)})`}
+                      title={`Trigger ${phaseLabel(p.key)} (gate: ${roleLabel(p.gate_role)})`}
                     >
                       {trigger.isPending && trigger.variables === p.agent_key ? (
                         <><Spinner /> Triggering…</>
                       ) : (
-                        `▶ ${p.label}`
+                        `▶ ${phaseLabel(p.key)}`
                       )}
                     </button>
                   ))}

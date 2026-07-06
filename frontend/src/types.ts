@@ -34,6 +34,9 @@ export interface ProjectProfile {
 
 export interface WorkItem {
   id: string;
+  // Human-readable per-project key ("WI-42") + its raw number. Shown to users instead of the UUID.
+  key?: string;
+  number?: number | null;
   project: string;
   feature_stream: string;
   type: string;
@@ -93,6 +96,7 @@ export interface Approval {
   work_item: string;
   required_role: string;
   approver: string | null;
+  approver_name?: string | null;
   decision: string;
   comment: string;
   decided_at: string | null;
