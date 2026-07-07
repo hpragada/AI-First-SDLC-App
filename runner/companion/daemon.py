@@ -163,10 +163,13 @@ class CompanionDaemon:
             ))
             outputs = getattr(result, "outputs", {}) or {}
             body = outputs.get("result") or outputs.get("text") or ""
-            self._report(report_path, {"status": "ok", "body": body,
-                                       "cost_usd": getattr(result, "cost_usd", 0.0)})
+            cost = getattr(result, "cost_usd", 0.0)
+            self._report(report_path, {"status": "ok", "body": body, "cost_usd": cost})
         except Exception as exc:  # noqa: BLE001 — report the failure so the run never hangs
             self._report(report_path, {"status": "failed", "message": str(exc)})
+            return
+        # After reporting (the work isn't wasted): halt if the run billed the API.
+        assert_subscription_billing(cost)
 
     def _run_build(self, task: dict) -> None:
         if not (self._repo_path and self._worktrees_root):
@@ -182,8 +185,13 @@ class CompanionDaemon:
             build_task, driver=driver, repo_path=self._repo_path,
             worktrees_root=self._worktrees_root))
         self._report(f"/api/runner/builds/{task['run_id']}/report/", to_build_report(result))
+        # After reporting: halt if the build billed the API (subscription reports $0.00).
+        assert_subscription_billing((result or {}).get("cost_usd"))
 
     def run_task(self, task: dict) -> None:
+        # Re-assert subscription-only auth before EVERY run, not just at startup — a
+        # long-lived daemon must notice a key configured after it started (fail-closed).
+        ensure_local_engine_auth()
         kind = task.get("kind", "plan")
         if kind == "build":
             self._run_build(task)
@@ -210,13 +218,75 @@ class CompanionDaemon:
         return processed
 
 
-def ensure_local_engine_auth() -> None:
-    """Make the engine use the user's **local logged-in Claude Code**, not an API key (req #1):
-    drop ANTHROPIC_API_KEY from this process env (the engine subprocess inherits it) and
-    confirm `claude` is on PATH. The user logs in once (`claude` / `claude setup-token`)."""
+def ensure_local_engine_auth(home: Path | None = None) -> None:
+    """FAIL-CLOSED guarantee that the engine bills the user's **Claude Code subscription**,
+    never an API key (req #1). An API key can reach the engine through THREE channels; all
+    are checked and the daemon refuses to run rather than ever bill the API (incident
+    2026-07-07: an expired subscription login + a key persisted in ~/.claude.json silently
+    billed the API for every phase — the env scrub alone could not catch it):
+
+      1. Process env → ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN are dropped so the engine
+         subprocess can't inherit them.
+      2. The CLI's own config (~/.claude.json `primaryApiKey`, or an approved
+         customApiKeyResponses entry) → refuse with removal instructions; env scrubbing
+         cannot override a key stored in the CLI config.
+      3. No valid subscription credential at all (no OAuth token in
+         ~/.claude/.credentials.json and no CLAUDE_CODE_OAUTH_TOKEN from
+         `claude setup-token`) → refuse with login instructions, instead of letting the
+         CLI fall back to whatever key source it can find.
+    """
     os.environ.pop("ANTHROPIC_API_KEY", None)
+    os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
     if shutil.which("claude") is None:
         raise DaemonError(
             "the 'claude' CLI is not on PATH — install Claude Code and log in "
             "(claude / claude setup-token) so phases run on your local subscription"
+        )
+
+    home = home or Path.home()
+    cli_config = home / ".claude.json"
+    if cli_config.is_file():
+        try:
+            cfg = json.loads(cli_config.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cfg = {}
+        if cfg.get("primaryApiKey") or (cfg.get("customApiKeyResponses") or {}).get("approved"):
+            raise DaemonError(
+                "Claude Code has an API key stored in ~/.claude.json (primaryApiKey / an "
+                "approved API-key prompt). Phases would bill the Anthropic API instead of "
+                "your subscription — refusing to run. Remove it (delete the 'primaryApiKey' "
+                "and 'customApiKeyResponses' entries) and log in with your subscription: "
+                "claude /login"
+            )
+
+    if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return  # long-lived subscription token from `claude setup-token`
+    creds = home / ".claude" / ".credentials.json"
+    oauth = {}
+    if creds.is_file():
+        try:
+            oauth = (json.loads(creds.read_text(encoding="utf-8"))
+                     .get("claudeAiOauth") or {})
+        except (OSError, ValueError):
+            oauth = {}
+    if not oauth.get("accessToken"):
+        raise DaemonError(
+            "no Claude subscription login found (~/.claude/.credentials.json has no OAuth "
+            "token). Refusing to run rather than fall back to an API key — log in with "
+            "your subscription first: claude /login  (or set CLAUDE_CODE_OAUTH_TOKEN from "
+            "`claude setup-token`)"
+        )
+
+
+# Subscription usage reports $0.00 — a non-zero engine cost means an API key slipped
+# through some channel we don't know about yet. Last line of defense: halt the daemon so
+# at most ONE run can ever bill the API, and say so loudly.
+def assert_subscription_billing(cost_usd: float | None) -> None:
+    if cost_usd and float(cost_usd) > 0:
+        raise DaemonError(
+            f"the engine reported a non-zero API cost (${float(cost_usd):.4f}) — phases "
+            "must bill the Claude subscription (which reports $0.00), so an API key is "
+            "reaching the engine. Companion halted to stop further API spend. Check "
+            "~/.claude.json (primaryApiKey), the ANTHROPIC_API_KEY env var, and log in "
+            "with: claude /login"
         )

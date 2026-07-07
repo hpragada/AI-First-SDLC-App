@@ -25,7 +25,8 @@ class _FakeDriver:
                                work_item):
         self.calls.append(("plan", manifest, agent_spec.phase_label, allowed_tools))
         self.mcp_servers = mcp_servers
-        return SimpleNamespace(outputs={"result": "# PRD body"}, cost_usd=0.02)
+        # Subscription billing reports $0.00 (a non-zero cost trips the API-billing halt).
+        return SimpleNamespace(outputs={"result": "# PRD body"}, cost_usd=0.0)
 
     async def run_review_task(self, **kwargs):
         self.calls.append(("review",))
@@ -50,8 +51,20 @@ class _Transport:
 
 
 @pytest.fixture(autouse=True)
-def _claude_on_path(monkeypatch):
+def _claude_on_path(monkeypatch, tmp_path):
+    """A healthy local engine: `claude` on PATH + a valid subscription login in a fake
+    HOME (ensure_local_engine_auth is fail-closed and reads ~/.claude.json +
+    ~/.claude/.credentials.json — tests must never depend on the real machine's state)."""
+    import json as _json
+    from pathlib import Path
+
     monkeypatch.setattr("shutil.which", lambda cmd: "/usr/local/bin/claude")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / ".credentials.json").write_text(
+        _json.dumps({"claudeAiOauth": {"accessToken": "oat-test"}}), encoding="utf-8")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    return tmp_path
 
 
 def _daemon(transport, driver, **kw):
@@ -75,7 +88,7 @@ def test_serve_runs_plan_then_idles():
     assert len(reports) == 1
     url, body = reports[0]
     assert url.endswith("/api/runner/phases/r1/report/")
-    assert body == {"status": "ok", "body": "# PRD body", "cost_usd": 0.02}
+    assert body == {"status": "ok", "body": "# PRD body", "cost_usd": 0.0}
     assert slept == [5.0]   # slept once (the default poll interval) on the idle (204) iteration
 
 
@@ -132,9 +145,10 @@ def test_build_kind_delegates_to_run_build(monkeypatch):
 
 def test_ensure_local_engine_auth_drops_api_key(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-be-dropped")
-    monkeypatch.setattr("shutil.which", lambda cmd: "/usr/local/bin/claude")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "tok-should-be-dropped")
     ensure_local_engine_auth()
     assert "ANTHROPIC_API_KEY" not in os.environ   # forced to the local subscription
+    assert "ANTHROPIC_AUTH_TOKEN" not in os.environ
 
 
 def test_ensure_local_engine_auth_requires_claude(monkeypatch):
@@ -143,3 +157,65 @@ def test_ensure_local_engine_auth_requires_claude(monkeypatch):
     with pytest.raises(DaemonError):
         ensure_local_engine_auth()
     assert "ANTHROPIC_API_KEY" not in os.environ   # dropped even though claude is missing
+
+
+# ── fail-closed subscription guarantee (incident 2026-07-07: phases billed the API) ──
+def test_auth_refuses_api_key_stored_in_cli_config(_claude_on_path):
+    """A key persisted in ~/.claude.json (primaryApiKey) bills the API regardless of env
+    scrubbing — the daemon must refuse to run, with removal instructions."""
+    import json as _json
+
+    (_claude_on_path / ".claude.json").write_text(
+        _json.dumps({"primaryApiKey": "sk-ant-oops"}), encoding="utf-8")
+    with pytest.raises(DaemonError, match="primaryApiKey"):
+        ensure_local_engine_auth()
+
+
+def test_auth_refuses_approved_api_key_prompt(_claude_on_path):
+    import json as _json
+
+    (_claude_on_path / ".claude.json").write_text(
+        _json.dumps({"customApiKeyResponses": {"approved": ["somehash"]}}), encoding="utf-8")
+    with pytest.raises(DaemonError, match="API key"):
+        ensure_local_engine_auth()
+
+
+def test_auth_refuses_when_no_subscription_login(_claude_on_path):
+    """No OAuth token and no setup-token → refuse rather than let the CLI fall back to
+    any API key source (fail-closed)."""
+    import json as _json
+
+    (_claude_on_path / ".claude" / ".credentials.json").write_text(
+        _json.dumps({"claudeAiOauth": {}}), encoding="utf-8")
+    with pytest.raises(DaemonError, match="claude /login"):
+        ensure_local_engine_auth()
+
+
+def test_auth_accepts_setup_token_without_credentials_file(_claude_on_path, monkeypatch):
+    (_claude_on_path / ".claude" / ".credentials.json").unlink()
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oat-from-setup-token")
+    ensure_local_engine_auth()   # no raise — setup-token is subscription auth
+
+
+def test_nonzero_engine_cost_halts_daemon_after_reporting():
+    """Last line of defense: subscription usage reports $0.00, so a non-zero cost means an
+    API key slipped through — the daemon reports the finished phase, then HALTS so at most
+    one run can ever bill the API."""
+    transport = _Transport([(200, _PLAN_TASK)])
+    driver = _FakeDriver()
+
+    async def _billed(**kwargs):
+        return SimpleNamespace(outputs={"result": "# body"}, cost_usd=1.23)
+
+    driver.run_planning_task = _billed
+    d = _daemon(transport, driver)
+    with pytest.raises(DaemonError, match="non-zero API cost"):
+        d.serve(max_iterations=1)
+    url, body = transport.reports()[0]     # the work was still reported first
+    assert body["status"] == "ok" and body["cost_usd"] == 1.23
+
+
+def test_zero_cost_run_does_not_halt():
+    transport = _Transport([(200, _PLAN_TASK), (204, None)])
+    d = _daemon(transport, _FakeDriver())   # fake reports $0.00 (subscription)
+    assert d.serve(max_iterations=2) == 1   # ran + idled, no DaemonError
