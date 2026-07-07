@@ -103,6 +103,64 @@ def test_preview_missing_internal_body_is_404(client, project, member):
     assert resp.status_code == 404
 
 
+def _run_for(project, phase="ideation", outputs=None):
+    from apps.registry.models import AgentSpec
+    from apps.runs.models import Run
+    from apps.workitems.models import WorkItem
+
+    wi = WorkItem.objects.create(tenant=project.tenant, project=project,
+                                 type=WorkItem.Type.STORY)
+    spec = AgentSpec.objects.create(tenant=project.tenant, key=f"01_{phase}",
+                                    body_ref="x", phase_label=phase)
+    return Run.objects.create(tenant=project.tenant, work_item=wi, agent_spec=spec,
+                              status="completed", outputs=outputs or {})
+
+
+def test_preview_falls_back_to_run_report_body(client, project, member):
+    """Bugs.xlsx row 59: an agent-registered pointer (no s3_key, no inline body) must read
+    through to the body of the run it came from instead of 404-ing 'Artifact not found'."""
+    run = _run_for(project, outputs={"report": {"body": "# Ideation\nfull phase output",
+                                                "status": "ok"}})
+    artifact = Artifact.objects.create(
+        tenant=project.tenant, project=project, run=run, phase="ideation",
+        type="market_sizing", sor="internal", status="published", s3_key="", version=1,
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(artifact.id))
+    assert resp.status_code == 200
+    assert resp.data["body"] == "# Ideation\nfull phase output"
+    assert resp.data["content_type"] == "text/markdown"
+
+
+def test_preview_prefers_runs_staged_draft_over_raw_report(client, project, member):
+    store = s3_from_settings()
+    key = f"test-preview/{project.tenant_id}/{project.id}/staged-ideation.md"
+    store.put(key, "# Staged draft")
+    run = _run_for(project, outputs={"artifact_s3_key": key,
+                                     "report": {"body": "raw report", "status": "ok"}})
+    artifact = Artifact.objects.create(
+        tenant=project.tenant, project=project, run=run, phase="ideation",
+        type="assumption", sor="internal", status="published", s3_key="", version=1,
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(artifact.id))
+    assert resp.status_code == 200
+    assert resp.data["body"] == "# Staged draft"
+
+
+def test_preview_missing_s3_object_degrades_not_500(client, project, member):
+    """A pointer at an S3 key that no longer exists must degrade (404 'no body'), never
+    crash the endpoint with an unhandled boto error (Bugs.xlsx row 59)."""
+    artifact = Artifact.objects.create(
+        tenant=project.tenant, project=project, phase="prd", type="prd",
+        sor="internal", status="draft", s3_key="test-preview/definitely-missing.md",
+        version=1,
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(artifact.id))
+    assert resp.status_code == 404
+
+
 def test_preview_unknown_artifact_is_404(client, project, member):
     _login(client, "dev@acme.com", "dev-pass!")
     resp = client.get(_preview_url("00000000-0000-0000-0000-000000000000"))

@@ -190,6 +190,7 @@ function ClarificationsLive() {
                 ) : (
                   <Input
                     type="text"
+                    placeholder="Type your answer…"
                     value={(answers[q.id] as string) ?? ""}
                     onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
                     aria-invalid={touched && q.required && answers[q.id] === undefined}

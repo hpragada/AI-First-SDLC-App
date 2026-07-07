@@ -60,10 +60,20 @@ _FORMAT_CONTENT_TYPE = {
 }
 
 
+def _s3_body(key, object_store) -> str:
+    """Best-effort S3 read: a missing object/bucket degrades to no-body instead of a 500
+    (Bugs.xlsx row 59 — the internal read-through must be as forgiving as the SoR ones)."""
+    if not key:
+        return ""
+    try:
+        return _object_store(object_store).get(key).decode("utf-8")
+    except Exception:  # noqa: BLE001 — read-through is best-effort (S-29 "Preview unavailable")
+        return ""
+
+
 def _read_internal(artifact, object_store) -> tuple[str, str]:
-    if artifact.s3_key:
-        store = _object_store(object_store)
-        body = store.get(artifact.s3_key).decode("utf-8")
+    body = _s3_body(artifact.s3_key, object_store)
+    if body:
         return body, _INTERNAL_CONTENT_TYPE
     # Some internal drafts are registered with the body inline in external_ref.body and no
     # s3_key yet (the agent hasn't staged a snapshot to S3). Read that draft body through
@@ -73,7 +83,28 @@ def _read_internal(artifact, object_store) -> tuple[str, str]:
     if body:
         fmt = str(ref.get("format", "")).lower()
         return body, _FORMAT_CONTENT_TYPE.get(fmt, _INTERNAL_CONTENT_TYPE)
+    # Agent-registered pointer with no body of its own (Bugs.xlsx row 59): fall back to the
+    # run this artifact came from — first the staged phase draft in S3, then the raw report
+    # the companion posted. Read-through only; nothing is copied onto the artifact row.
+    if artifact.run_id:
+        outputs = (artifact.run.outputs or {}) if artifact.run else {}
+        body = _s3_body(outputs.get("artifact_s3_key"), object_store)
+        if body:
+            return body, _INTERNAL_CONTENT_TYPE
+        report = outputs.get("report") or {}
+        body = report.get("body") or ""
+        if body:
+            return body, _INTERNAL_CONTENT_TYPE
     return "", ""
+
+
+def internal_draft_body(artifact, object_store=None) -> str:
+    """Public read-through for an internal artifact's draft body (own S3 draft → inline
+    external_ref.body → the run's staged/reported body). Used by publish so an export never
+    pushes an empty page when the body lives on the run (Bugs.xlsx row 59). Callers outside
+    a tenant_context must select_related(\"run\")."""
+    body, _ = _read_internal(artifact, object_store)
+    return body
 
 
 def _read_confluence(tenant_id, artifact, get_capability) -> tuple[str, str, str | None]:
@@ -135,9 +166,19 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
             body, content_type = "", ""
             sor_link = (artifact.external_ref or {}).get("url")
 
+        # The phase's allowed manual-export target (policy defaults + profile overrides)
+        # so the Export/Publish modal needs no extra request. None => internal only.
+        from integrations.export_policy import export_target_for
+
+        export_target = export_target_for(
+            getattr(artifact.project, "profile", None), artifact.phase)
+
         return {
             "body": body, "content_type": content_type, "status": artifact.status,
             "version": artifact.version,
             "versions": _versions(tenant_id=tenant_id, artifact=artifact),
             "sor_link": sor_link,
+            "phase": artifact.phase,
+            "artifact_type": artifact.type,
+            "export_target": export_target,
         }

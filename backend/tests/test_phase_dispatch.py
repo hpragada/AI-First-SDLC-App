@@ -69,6 +69,30 @@ def test_register_phase_result_core_drafts_and_is_idempotent(monkeypatch, world)
     assert again.get("idempotent") is True and again["artifact_ids"] == [art_id]
 
 
+def test_register_phase_result_backfills_agent_registered_artifact(monkeypatch, world):
+    """Bugs.xlsx row 59: when the agent registered the phase artifact itself mid-run
+    (pointer-only — content_hash, no s3_key), the report step must still stage the body
+    to S3 and attach it to that row, not skip as 'idempotent' and leave every artifact
+    of the run body-less (the preview 404)."""
+    from mcp_platform_state import tools
+
+    store = InMemoryObjectStore()
+    monkeypatch.setattr(activities, "get_object_store", lambda: store)
+    pre = tools.register_artifact(
+        world["tenant_id"], world["project_id"], world["run_id"], "prd", "prd",
+        "internal", "sha256:agent",
+    )
+    report = PhaseReport(status="ok", body="# PRD\nstaged body", cost_usd=0.01)
+
+    out = activities.register_phase_result_core(world["inp"], report)
+    assert out["artifact_ids"] == [pre["id"]]          # reused the agent's row
+    art = Artifact.objects.get(id=pre["id"])
+    assert art.s3_key and store.get(art.s3_key) == b"# PRD\nstaged body"
+
+    again = activities.register_phase_result_core(world["inp"], report)
+    assert again.get("idempotent") is True and again["artifact_ids"] == [pre["id"]]
+
+
 def test_mark_phase_takeover_core_parks_run(world):
     activities.mark_phase_takeover_core(world["inp"])
     run = Run.objects.get(id=world["run_id"])

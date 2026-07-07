@@ -142,10 +142,10 @@ class _FakeDocStore:
                            url="https://x.atlassian.net/wiki/PAGE-1", version=1)
 
 
-def test_publish_artifacts_core_pushes_to_docstore_when_connected(wired, store, run_input,
-                                                                  monkeypatch):
-    """A prd artifact with a docstore connector publishes to Confluence: sor + external_ref
-    are set from the returned pointer (gate→publish→pointer+version)."""
+def test_publish_artifacts_core_never_auto_exports(wired, store, run_input, monkeypatch):
+    """Team flow decision 2026-07-07: gate approval publishes INTERNAL only — even with a
+    docstore connector configured, nothing is pushed. Export is user-triggered via the
+    manual publish endpoint, governed by the phase-scoped export policy."""
     from integrations import publish
 
     fake = _FakeDocStore()
@@ -159,14 +159,10 @@ def test_publish_artifacts_core_pushes_to_docstore_when_connected(wired, store, 
 
     artifact = Artifact.objects.get(id=result["published"][0])
     assert artifact.status == Artifact.Status.PUBLISHED
-    assert artifact.sor == Artifact.SoR.CONFLUENCE
-    assert artifact.external_ref["id"] == "PAGE-1"
-    assert artifact.external_ref["url"].endswith("/PAGE-1")
-    assert fake.created and "<h1>" in fake.created[0]["body_html"]  # markdown → HTML
-
-    # Idempotent: re-publish does not create a second page.
-    activities.publish_artifacts_core(run_input)
-    assert len(fake.created) == 1
+    assert artifact.sor == Artifact.SoR.INTERNAL      # never confluence on approval
+    assert fake.created == []                          # no page was pushed
+    # The audit snapshot still lands in the store.
+    assert any(k.startswith("snapshots/") for k in store._data)
 
 
 def test_transition_work_item_core(wired, run_input):

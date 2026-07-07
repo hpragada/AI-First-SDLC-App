@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { cleanup, screen } from "@testing-library/react";
+import { Route, Routes } from "react-router-dom";
 
 import { renderWithProviders, stubFetchJson } from "../../test/utils";
 import { ArtifactPreviewScreen } from "./ArtifactPreviewScreen";
@@ -185,5 +186,65 @@ describe("S-34 Export / publish", () => {
 
     rerender(<ExportPublish forceView="blocked" />);
     expect(screen.getByText("Can't publish — not gate-approved")).toBeDefined();
+  });
+});
+
+// Team flow decision 2026-07-07: the live modal is driven by the phase's export policy.
+// Per-URL stub: the preview endpoint returns the payload; /auth/me/ (AuthProvider) and
+// everything else stay 401 so the auth context settles to unauthenticated.
+function stubPreview(preview: Record<string, unknown>) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: RequestInfo | URL) => {
+      const href = String(url);
+      const hit = href.includes("/preview/");
+      return {
+        ok: hit,
+        status: hit ? 200 : 401,
+        statusText: "stub",
+        text: async () => JSON.stringify(hit ? preview : { detail: "no session" }),
+      } as Response;
+    }),
+  );
+}
+
+function renderLivePublish() {
+  return renderWithProviders(
+    <Routes>
+      <Route path="/artifacts/:id/publish" element={<ExportPublish />} />
+    </Routes>,
+    { route: "/artifacts/a1/publish" },
+  );
+}
+
+describe("S-34 Export / publish — policy-driven live modal", () => {
+  // render() queries bind to document.body; without explicit cleanup the first test's
+  // DOM leaks into the second and absence assertions lie.
+  afterEach(cleanup);
+
+  it("offers only Internal + the phase's single policy target", async () => {
+    stubPreview({
+      body: "# PRD", content_type: "text/markdown", status: "approved", version: 1,
+      versions: [], sor_link: null, phase: "03_prd", artifact_type: "prd",
+      export_target: "docstore",
+    });
+    const { findByText, queryByText } = renderLivePublish();
+    expect(await findByText("Internal (platform)")).toBeDefined();
+    expect(queryByText("Documentation store · Confluence")).not.toBeNull();
+    // No other capability is offered — the policy allows exactly one target.
+    expect(queryByText("Task tracker · Jira")).toBeNull();
+    expect(queryByText("Test management · Xray")).toBeNull();
+  });
+
+  it("internal-only phase shows the policy banner, with the Figma note for ux_design", async () => {
+    stubPreview({
+      body: "# UX", content_type: "text/markdown", status: "approved", version: 1,
+      versions: [], sor_link: null, phase: "05_ux_design", artifact_type: "design_system",
+      export_target: null,
+    });
+    const { findByText, queryByText } = renderLivePublish();
+    expect(await findByText(/publishes internally only/)).toBeDefined();
+    expect(queryByText(/Figma export is coming later/)).not.toBeNull();
+    expect(queryByText("Target capability")).toBeNull();
   });
 });

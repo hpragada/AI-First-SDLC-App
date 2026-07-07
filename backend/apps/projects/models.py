@@ -44,6 +44,11 @@ class ProjectProfile(TenantScopedModel):
     # verbatim into the rendered manifest so design/implementation agents honor one theme —
     # no per-tenant code fork. e.g. {"brand","tokens":{...},"breakpoints":[375,768,1440]}.
     theme = models.JSONField(default=dict, blank=True)
+    # Phase-scoped manual-export overrides (bare phase name -> capability | "internal").
+    # Effective policy = integrations.export_policy.DEFAULT_EXPORT_POLICY overlaid with
+    # this; empty dict = pure defaults. Exports are always user-triggered (team flow
+    # decision 2026-07-07) — this only governs WHERE each phase's artifacts may go.
+    export_policy = models.JSONField(default=dict, blank=True)
     important_context = models.TextField(blank=True)
     version = models.IntegerField(default=1)
 

@@ -183,9 +183,18 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
                           Platform only
                         </span>
                       ),
-                      <Link to={`/artifacts/${artifact.id}`} className="btn btn--ghost btn--sm" key="a">
-                        Preview
-                      </Link>,
+                      <span className="u-row-tight" key="a">
+                        <Link to={`/artifacts/${artifact.id}`} className="btn btn--ghost btn--sm">
+                          Preview
+                        </Link>
+                        {(artifact.status === "approved" || artifact.status === "published") && (
+                          // Mirrors the backend export eligibility (gate passed) so the
+                          // button never lands on a status 400.
+                          <Link to={`/artifacts/${artifact.id}/publish`} className="btn btn--ghost btn--sm">
+                            Export
+                          </Link>
+                        )}
+                      </span>,
                     ])
               }
             />

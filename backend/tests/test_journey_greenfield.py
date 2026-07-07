@@ -878,21 +878,40 @@ class TestGateRejectionAndRetrigger:
 
 class TestArtifactPublish:
     def test_approved_artifact_publishes_successfully(self, client, sarah, project, acme):
+        """Bugs.xlsx row 59: manual publish is a REAL capability push — sor only becomes
+        'confluence' because a page was actually created (no more cosmetic sor flip)."""
+        from types import SimpleNamespace
+
+        from apps.integrations.models import IntegrationConnection
+        from integrations.registry import _BUILDERS, register_connector
+
         art = Artifact.objects.create(
             tenant=acme, project=project, phase="01_ideation",
             type="brief", status=Artifact.Status.APPROVED, sor="internal",
-            s3_key="k1", content_hash="h1", version=1,
+            s3_key="", content_hash="h1", version=1,
+            external_ref={"format": "markdown", "body": "# Brief\ngf"},
         )
-        _login(client, "sarah@acme.com", "Str0ng-Pass!")
-        r = client.post(f"/api/artifacts/{art.id}/publish/", {
-            "target_capability": "confluence",
-            "destination": "https://confluence.acme.com/space",
-        }, format="json")
-        assert r.status_code == 200
-        assert r.data["status"] == "published"
-        art.refresh_from_db()
-        assert art.status == Artifact.Status.PUBLISHED
-        assert art.sor == "confluence"
+        register_connector("docstore", "gf_fake", lambda conn: SimpleNamespace(
+            create_page=lambda *, space, title, body_html: SimpleNamespace(
+                sor="confluence", id="41", version=1,
+                url="https://confluence.acme.com/41")))
+        try:
+            IntegrationConnection.objects.create(
+                tenant=acme, capability="docstore", connector="gf_fake",
+            )
+            _login(client, "sarah@acme.com", "Str0ng-Pass!")
+            r = client.post(f"/api/artifacts/{art.id}/publish/", {
+                "target_capability": "confluence",
+                "destination": "SPACE",
+            }, format="json")
+            assert r.status_code == 200
+            assert r.data["status"] == "published"
+            assert r.data["sor_link"] == "https://confluence.acme.com/41"
+            art.refresh_from_db()
+            assert art.status == Artifact.Status.PUBLISHED
+            assert art.sor == "confluence"
+        finally:
+            _BUILDERS.pop(("docstore", "gf_fake"), None)
 
     def test_draft_artifact_cannot_publish(self, client, sarah, project, acme):
         draft = Artifact.objects.create(

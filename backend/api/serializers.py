@@ -230,7 +230,8 @@ class ProjectProfileSerializer(serializers.ModelSerializer):
         model = ProjectProfile
         fields = [
             "id", "project", "description", "domain", "tech_stack", "coding_standards",
-            "nfrs", "constraints", "glossary", "important_context", "version",
+            "nfrs", "constraints", "glossary", "export_policy", "important_context",
+            "version",
         ]
         read_only_fields = ["id", "project", "version"]
 

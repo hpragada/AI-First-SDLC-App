@@ -64,7 +64,11 @@ function AddRepoForm({ projectId, dup }: { projectId: string | undefined; dup?: 
             </Select>
           </Field>
           <Field label="Base branch" style={{ marginBottom: 0, minWidth: "120px" }}>
-            <Input value={baseBranch} onChange={(e) => setBaseBranch(e.target.value)} />
+            <Input
+              placeholder="main"
+              value={baseBranch}
+              onChange={(e) => setBaseBranch(e.target.value)}
+            />
           </Field>
           <Button variant="primary" type="submit" disabled={!name}>
             Add

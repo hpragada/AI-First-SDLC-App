@@ -12,13 +12,30 @@ export function ExportPublish({ forceView }: { forceView?: PublishView }) {
   return <ExportPublishLive />;
 }
 
+// Per-capability display bits for the export target picker (capabilities not vendors —
+// the vendor label reflects today's bound connector family).
+const TARGET_LABEL: Record<string, string> = {
+  docstore: "Documentation store · Confluence",
+  tasktracker: "Task tracker · Jira",
+  testmgmt: "Test management · Xray",
+};
+const DESTINATION_HELP: Record<string, string> = {
+  docstore: "Confluence space key (blank = connector default)",
+  tasktracker: "Jira project key (blank = connector default)",
+  testmgmt: "Xray/Jira project key (blank = connector default)",
+};
+
+function bare(phase?: string): string {
+  return (phase ?? "").replace(/^\d+[a-z]?_/i, "").toLowerCase();
+}
+
 // ── Live: publish the real, gate-approved artifact ──────────────────────────
 function ExportPublishLive() {
   const { id } = useParams();
   const navigate = useNavigate();
   const preview = useArtifactPreview(id);
   const publish = usePublishArtifact(id);
-  const [capability, setCapability] = useState("docstore");
+  const [capability, setCapability] = useState<string | null>(null);
   const [destination, setDestination] = useState("");
 
   if (preview.isLoading) {
@@ -32,6 +49,10 @@ function ExportPublishLive() {
 
   const data = preview.data;
   const canPublish = data && data.status !== "draft" && data.status !== "staged";
+  // The phase's single allowed external target per the project's export policy.
+  const exportTarget = data?.export_target ?? null;
+  const selected = capability ?? exportTarget ?? "internal";
+  const isUxDesign = bare(data?.phase) === "ux_design";
 
   return (
     <div className="canvas-pad">
@@ -50,7 +71,11 @@ function ExportPublishLive() {
         {publish.isSuccess ? (
           <Modal inline title="Published" footer={<Button variant="primary" onClick={() => navigate(`/artifacts/${id}`)}>Done</Button>}>
             <Banner variant="success" title="Published">
-              Artifact v{data?.version} is now published.
+              {publish.data?.reconciled != null
+                ? `${publish.data.reconciled} work item${publish.data.reconciled === 1 ? "" : "s"} reconciled to the task tracker (${publish.data.created ?? 0} created).`
+                : publish.data?.test_key
+                  ? `Test case exported as ${publish.data.test_key}.`
+                  : `Artifact v${data?.version} is now published.`}
             </Banner>
             {publish.data?.sor_link && (
               <div className="u-row" style={{ marginTop: "var(--space-3)" }}>
@@ -61,6 +86,17 @@ function ExportPublishLive() {
                 </a>
               </div>
             )}
+            {(publish.data?.items ?? []).slice(0, 8).map((it) => (
+              <div className="u-row" key={it.work_item_id} style={{ marginTop: "var(--space-1)" }}>
+                <span className="t-sm">{it.key || it.work_item_id.slice(0, 8)}</span>
+                <span className="u-spacer" />
+                {it.url && (
+                  <a className="t-sm" href={it.url} target="_blank" rel="noreferrer">
+                    Open ↗
+                  </a>
+                )}
+              </div>
+            ))}
           </Modal>
         ) : !canPublish ? (
           <Modal inline
@@ -94,8 +130,8 @@ function ExportPublishLive() {
                 </Button>
                 <Button
                   variant="primary"
-                  disabled={publish.isPending || !destination}
-                  onClick={() => publish.mutate({ target_capability: capability, destination })}
+                  disabled={publish.isPending}
+                  onClick={() => publish.mutate({ target_capability: selected, destination })}
                 >
                   {publish.isPending ? "Publishing…" : "Publish"}
                 </Button>
@@ -108,15 +144,31 @@ function ExportPublishLive() {
             <Banner variant="success" title="Gate approved">
               Eligible to publish.
             </Banner>
-            <Field label="Target capability">
-              <Select value={capability} onChange={(e) => setCapability(e.target.value)}>
-                <option value="docstore">Documentation store · Confluence</option>
-                <option value="tasktracker">Task tracker · Jira</option>
-              </Select>
-            </Field>
-            <Field label="Destination" help="e.g. a Confluence space key or Jira project key">
-              <Input value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="PAY" />
-            </Field>
+            {exportTarget ? (
+              <>
+                <Field label="Target capability">
+                  <Select value={selected} onChange={(e) => setCapability(e.target.value)}>
+                    <option value="internal">Internal (platform)</option>
+                    <option value={exportTarget}>
+                      {TARGET_LABEL[exportTarget] ?? exportTarget}
+                    </option>
+                  </Select>
+                </Field>
+                {selected !== "internal" && (
+                  <Field
+                    label="Destination"
+                    help={DESTINATION_HELP[selected] ?? "Destination key (blank = connector default)"}
+                  >
+                    <Input value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="PAY" />
+                  </Field>
+                )}
+              </>
+            ) : (
+              <Banner variant="info">
+                This phase publishes internally only per the project's export policy.
+                {isUxDesign && " Figma export is coming later; UX artifacts stay internal for now."}
+              </Banner>
+            )}
             {publish.isPending && (
               <ConnStatus state="waiting">
                 <Spinner /> Publishing…

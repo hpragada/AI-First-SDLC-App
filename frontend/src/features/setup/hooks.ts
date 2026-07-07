@@ -35,7 +35,21 @@ export function useSaveProfile(projectId: string | undefined) {
   return useMutation({
     mutationFn: (patch: Partial<ProjectProfile>) =>
       api.putProfile(currentUser?.tenant.id ?? "", projectId as string, patch),
-    onSuccess: (data) => qc.setQueryData(["profile", projectId], data),
+    onSuccess: (data) => {
+      qc.setQueryData(["profile", projectId], data);
+      // Overrides may have changed — effective export policy must refetch.
+      qc.invalidateQueries({ queryKey: ["export-policy", projectId] });
+    },
+  });
+}
+
+// Phase-scoped export policy (defaults + overrides + connector presence) — drives the
+// profile editor's export matrix; the Export modal reads its target off the preview.
+export function useExportPolicy(projectId: string | undefined) {
+  return useQuery({
+    queryKey: ["export-policy", projectId],
+    queryFn: () => api.getExportPolicy(projectId as string),
+    enabled: Boolean(projectId),
   });
 }
 

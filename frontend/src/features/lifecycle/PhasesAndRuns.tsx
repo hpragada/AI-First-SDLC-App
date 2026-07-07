@@ -5,7 +5,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { Badge, Banner, EmptyState, Field, Panel, Select, Spinner, Table } from "../../components/ui";
 import { useRunners } from "../identity/hooks";
 import { roleLabel } from "../identity/roles";
-import { phaseLabel } from "./phases";
+import { phaseLabel, statusLabel } from "./phases";
 import { usePhaseCatalog, useRuns, useTriggerPhase, useWorkItems } from "./hooks";
 import type { PhaseCatalogEntry, Run } from "../../types";
 
@@ -206,13 +206,19 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
           <Table
             headers={["Run", "Phase", "Status", "Engine / model", "Cost", "Workflow", "Created"]}
             rows={(forceView ? sampleRuns : runs.data ?? []).map((r) => [
-              <span className="table__id" key="id">{r.id}</span>,
+              // Humanised short reference, full id on hover; opens the run console
+              // (Bugs.xlsx row 55: no raw long UUIDs in the table).
+              <Link to={`/runs/${r.id}`} className="table__id" title={r.id} key="id">
+                Run {shortRef(r.id)} ↗
+              </Link>,
               <span className="table__primary" key="p">{phaseLabel(r.agent_phase ?? r.agent_key)}</span>,
-              <Badge variant={statusVariant(r.status)} key="s">{r.status}</Badge>,
+              <Badge variant={statusVariant(r.status)} key="s">{statusLabel(r.status)}</Badge>,
               `${r.engine} · ${r.model}`,
               <span className="table__id" key="c">{r.cost_usd ? `$${r.cost_usd}` : "—"}</span>,
-              <span className="table__id" key="w">{r.temporal_workflow_id}</span>,
-              r.created_at,
+              <span className="table__id" title={r.temporal_workflow_id} key="w">
+                {shortRef(r.temporal_workflow_id)}
+              </span>,
+              formatWhen(r.created_at),
             ])}
           />
         )}
@@ -239,9 +245,28 @@ const sampleRuns: Run[] = [
 ];
 
 function statusVariant(status: string) {
-  if (status === "done" || status === "completed") return "done" as const;
-  if (status === "gate") return "gate" as const;
-  if (status === "failed") return "failed" as const;
+  if (status === "done" || status === "completed" || status === "approved") return "done" as const;
+  if (status === "gate" || status === "awaiting_gate") return "gate" as const;
+  if (status === "failed" || status === "rejected") return "failed" as const;
   if (status === "running") return "running" as const;
   return "queued" as const;
+}
+
+// A short human reference for any long id ("82a4ff91-…" -> "82a4ff91",
+// "agent-run-82a4ff91-…" -> "agent-run-82a4ff91"); short values pass through.
+// Dynamic — works for every run/workflow, full value stays on hover (row 55).
+function shortRef(id: string | null | undefined): string {
+  if (!id) return "—";
+  const m = id.match(/^(.*?)([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f-]+$/i);
+  if (m) return `${m[1]}${m[2]}`;
+  return id.length > 20 ? `${id.slice(0, 17)}…` : id;
+}
+
+// Locale-formatted timestamp for user-facing display; non-date strings (gallery
+// samples like "just now") pass through unchanged.
+function formatWhen(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }

@@ -123,7 +123,8 @@ def test_phase1_greenfield_acceptance(monkeypatch):
         assert prd_art.status == Artifact.Status.DRAFT
         assert prd_art.sor == Artifact.SoR.INTERNAL and prd_art.external_ref is None
 
-        # ── 2. Post-APPROVED publish step → live Confluence page ──
+        # ── 2. Post-APPROVED publish step → published INTERNAL only (team flow decision
+        # 2026-07-07: gate approval never auto-exports; the user pushes manually) ──
         inp = AgentRunInput(
             run_id=str(run.id), tenant_id=str(tenant.id), project_id=str(project.id),
             work_item_id=str(work_item.id), agent_spec_id=str(spec.id), phase="prd",
@@ -132,6 +133,19 @@ def test_phase1_greenfield_acceptance(monkeypatch):
 
         prd_art.refresh_from_db()
         assert prd_art.status == Artifact.Status.PUBLISHED
+        assert prd_art.sor == Artifact.SoR.INTERNAL          # nothing reached Confluence
+        assert prd_art.external_ref is None
+
+        # ── 2b. Manual user-triggered export → live Confluence page (the real endpoint,
+        # governed by the phase-scoped export policy: prd → docstore) ──
+        publish_client = APIClient()
+        resp = publish_client.post(
+            f"/api/artifacts/{prd_art.id}/publish/",
+            {"target_capability": "docstore"}, format="json",
+            HTTP_X_TENANT_ID=str(tenant.id),
+        )
+        assert resp.status_code == 200, resp.data
+        prd_art.refresh_from_db()
         assert prd_art.sor == Artifact.SoR.CONFLUENCE
         page_id = prd_art.external_ref["id"]
         assert page_id and prd_art.external_ref["url"].startswith(settings.ATLASSIAN_SITE_URL)
@@ -140,8 +154,13 @@ def test_phase1_greenfield_acceptance(monkeypatch):
         page = docstore.get_page(page_ref=page_id)
         assert page.title.endswith("Prd") and "sign in" in page.body_html
 
-        # Idempotent re-publish updates the same page — never a duplicate.
-        activities.publish_artifacts_core(inp)
+        # Idempotent re-export updates the same page — never a duplicate (docstore-
+        # published artifacts re-export via the update path).
+        resp = publish_client.post(
+            f"/api/artifacts/{prd_art.id}/publish/",
+            {"target_capability": "docstore"}, format="json",
+            HTTP_X_TENANT_ID=str(tenant.id),
+        )
         prd_art.refresh_from_db()
         assert prd_art.external_ref["id"] == page_id
 

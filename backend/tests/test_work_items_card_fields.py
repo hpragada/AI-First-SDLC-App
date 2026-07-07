@@ -137,6 +137,22 @@ def test_artifact_count_and_owner_on_list_and_retrieve(client, tenant, project, 
     assert detail_resp.data["owner"] == "Dev Patel"
 
 
+def test_current_phase_is_latest_runs_phase(client, tenant, project, dev, epic):
+    """Bugs.xlsx rows 49/50: the board/list 'Phase' must be the item's actual lifecycle
+    phase (latest run's agent), not the feature stream; empty when nothing has run."""
+    spec_arch = _agent_spec(tenant, "04_architecture")
+    spec_prd = AgentSpec.objects.create(tenant=tenant, key="03_prd", body_ref="agents/03.md")
+    _run(tenant, epic, spec_prd)              # older
+    _run(tenant, epic, spec_arch)             # newest → current phase
+    fresh = WorkItem.objects.create(tenant=tenant, project=project, type="task", title="New")
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    resp = _list(client, tenant, project)
+    by_id = {r["id"]: r for r in resp.data}
+    assert by_id[str(epic.id)]["current_phase"] == "04_architecture"
+    assert by_id[str(fresh.id)]["current_phase"] == ""   # no runs yet
+
+
 def test_needs_reflects_pending_clarification_over_gate(client, tenant, project, dev, epic):
     spec = _agent_spec(tenant)
     run = _run(tenant, epic, spec)
@@ -158,7 +174,8 @@ def test_needs_reflects_pending_gate_when_no_clarification(client, tenant, proje
     _login(client, "dev@acme.com", "dev-pass!")
     resp = _list(client, tenant, project)
     row = next(r for r in resp.data if r["id"] == str(epic.id))
-    assert row["needs"] == {"gate": True, "label": "architecture gate"}
+    # Humanised gate label (Bugs.xlsx rows 54-58): capitalised, single "gate".
+    assert row["needs"] == {"gate": True, "label": "Architecture gate"}
 
 
 def test_needs_is_none_when_nothing_pending(client, tenant, project, dev, epic):

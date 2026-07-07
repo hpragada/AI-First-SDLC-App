@@ -1,5 +1,6 @@
-"""P1 — publish-to-SoR resolution + idempotent DocStore push (pure, no DB/network)."""
-from integrations.publish import publish_doc, render_html, resolve_capability
+"""P1 — idempotent DocStore push (pure, no DB/network). The old type→capability
+resolution is superseded by the phase-scoped export policy (test_export_policy.py)."""
+from integrations.publish import publish_doc, render_html
 from integrations.types import ExternalRef
 
 
@@ -17,14 +18,6 @@ class _FakeDocStore:
         self.updated.append({"page_ref": page_ref, "base_version": base_version})
         return ExternalRef(sor="confluence", id=page_ref,
                            url=f"https://x.atlassian.net/wiki/{page_ref}", version=base_version + 1)
-
-
-def test_resolve_capability_maps_doc_types_to_docstore():
-    assert resolve_capability("prd") == "docstore"
-    assert resolve_capability("requirements") == "docstore"
-    assert resolve_capability("architecture") == "docstore"
-    assert resolve_capability("ideation") is None       # internal
-    assert resolve_capability("backlog") is None         # reconciliation, not publish
 
 
 def test_render_html_converts_markdown():

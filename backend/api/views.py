@@ -271,6 +271,27 @@ class ProjectViewSet(
         code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         return Response(ProjectProfileSerializer(profile).data, status=code)
 
+    @action(detail=True, methods=["get"], url_path="export-policy")
+    def export_policy(self, request, pk=None):
+        """The project's phase-scoped manual-export policy (team flow decision
+        2026-07-07): code defaults overlaid with ProjectProfile.export_policy overrides,
+        plus which export capabilities have a connector bound — so the UI can drive the
+        Export modal / profile matrix and pre-warn 'no connector configured'."""
+        from integrations.export_policy import DEFAULT_EXPORT_POLICY, effective_policy
+        from integrations.registry import get_connection
+
+        project = self.get_object()
+        profile = getattr(project, "profile", None)
+        return Response({
+            "defaults": DEFAULT_EXPORT_POLICY,
+            "overrides": (profile.export_policy if profile else {}) or {},
+            "effective": effective_policy(profile),
+            "connected": {
+                cap: get_connection(self.tenant_id, cap) is not None
+                for cap in ("docstore", "tasktracker", "testmgmt")
+            },
+        })
+
     @action(detail=True, methods=["get"])
     def traceability(self, request, pk=None):
         """Lineage graph for the viewer (spec §5): artifact nodes + their TraceEdges,
@@ -787,6 +808,20 @@ class WorkItemViewSet(
                 tenant_id=self.tenant_id, work_item_id__in=ids, decision="pending"
             )
         }
+        # The item's CURRENT lifecycle phase = its latest run's agent phase (Bugs.xlsx
+        # rows 49/50: the board/list showed the feature stream as "Phase"). One query,
+        # newest run per work item.
+        current_phase = {}
+        for r in (
+            Run.objects.filter(tenant_id=self.tenant_id, work_item_id__in=ids)
+            .select_related("agent_spec")
+            .order_by("work_item_id", "-created_at")
+            .distinct("work_item_id")
+        ):
+            spec = r.agent_spec
+            current_phase[str(r.work_item_id)] = (
+                (spec.key or spec.phase_label) if spec else ""
+            )
         out = {}
         for w in work_items:
             wid = str(w.id)
@@ -800,6 +835,7 @@ class WorkItemViewSet(
                 "artifact_count": counts.get(wid, 0),
                 "owner": w.assignee.name if w.assignee_id else None,
                 "needs": needs,
+                "current_phase": current_phase.get(wid, ""),
             }
         return out
 
@@ -809,7 +845,7 @@ class WorkItemViewSet(
         work_items = page if page is not None else list(qs)
         card_fields = self._card_fields(work_items)
         data = WorkItemSerializer(work_items, many=True).data
-        empty_card = {"artifact_count": 0, "owner": None, "needs": None}
+        empty_card = {"artifact_count": 0, "owner": None, "needs": None, "current_phase": ""}
         for row in data:
             row.update(card_fields.get(row["id"], empty_card))
         if page is not None:
@@ -1041,6 +1077,12 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 
 
 # ── Artifacts (read-only — pointers/provenance) ─────────────────────
+class _ExportImpossible(Exception):
+    """A manual export can't reach its SoR (no connector / no body). The publish action
+    maps this to the B3 internal fallback for a first publish, or an honest 400 on
+    re-export."""
+
+
 class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = ArtifactSerializer
     queryset = Artifact.objects.all().order_by("-created_at")
@@ -1072,24 +1114,185 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["post"])
     def publish(self, request, pk=None):
-        """S-34 manual gate-respecting publish (DECISION-8): only approved artifacts may be
-        pushed to a SoR. Never auto-publishes — a gate approval is the precondition (#5)."""
+        """S-34 manual gate-respecting publish (DECISION-8): push a gate-approved artifact
+        to a SoR through its capability — a REAL export, not a status flip. Export is
+        always user-triggered (team flow decision 2026-07-07) and governed by the
+        project's phase-scoped export policy: docstore transfers the SoR (page holds the
+        body); tasktracker/testmgmt are projections (issues/tests derived from the body;
+        the artifact stays internal SoR with the export recorded in external_ref).
+        Never bypasses a gate (#5): drafts/pending stay rejected. Published-internal
+        artifacts may be re-exported once a connector exists — their gate already passed."""
+        from integrations.export_policy import export_target_for
+        from integrations.preview import read_artifact_preview
+
         artifact = self.get_object()
-        if artifact.status != Artifact.Status.APPROVED:
+        # APPROVED = first publish; PUBLISHED = re-export (its gate already passed —
+        # docstore re-exports update the same page idempotently, projections re-run
+        # register-don't-recreate). Drafts/pending/staged/rejected never export (#5).
+        exportable = artifact.status in (
+            Artifact.Status.APPROVED, Artifact.Status.PUBLISHED,
+        )
+        if not exportable:
             raise ValidationError(
                 "Artifact must be gate-approved before publishing. "
                 f"Current status: {artifact.status}"
             )
         target_capability = request.data.get("target_capability", "internal")
         destination = request.data.get("destination", "")
-        # Map capability string to SoR value if it matches a known choice
-        sor_values = {c.value for c in Artifact.SoR}
-        new_sor = target_capability if target_capability in sor_values else artifact.sor
+        # Legacy/vendor spelling: "confluence" is the docstore capability (#9 — the API
+        # speaks capabilities; the vendor is whatever connector is bound).
+        if target_capability == "confluence":
+            target_capability = "docstore"
+
+        if target_capability == "internal":
+            artifact.status = Artifact.Status.PUBLISHED
+            artifact.save(update_fields=["status", "updated_at"])
+            return Response({"status": "published", "sor_link": None})
+
+        # Phase-scoped export policy (defaults + ProjectProfile overrides).
+        profile = getattr(artifact.project, "profile", None)
+        allowed = export_target_for(profile, artifact.phase)
+        if target_capability != allowed:
+            raise ValidationError(
+                f"Export policy for phase '{artifact.phase}' allows "
+                + (f"only '{allowed}'" if allowed else "internal publishing only")
+                + f"; requested '{target_capability}'. Adjust the project profile's "
+                "export policy to change this."
+            )
+
+        # Body via the same read-through the preview uses (own S3 draft → inline draft →
+        # the run's staged/reported body) — never stored back on the row (#1/#3).
+        preview = read_artifact_preview(
+            tenant_id=self.tenant_id, artifact_id=str(artifact.id))
+        body_md = (preview or {}).get("body") or ""
+
+        try:
+            if target_capability == "docstore":
+                return self._publish_docstore(artifact, body_md, destination)
+            if target_capability == "tasktracker":
+                return self._publish_tasktracker(artifact, destination)
+            if target_capability == "testmgmt":
+                return self._publish_testmgmt(artifact, body_md, destination)
+        except _ExportImpossible as exc:
+            if artifact.status == Artifact.Status.APPROVED:
+                # First publish that can't reach a SoR → internal fallback (blueprint B3):
+                # the publish is still recorded, sor stays internal (provenance never
+                # claims a push that didn't happen).
+                artifact.status = Artifact.Status.PUBLISHED
+                artifact.save(update_fields=["status", "updated_at"])
+                return Response({"status": "published", "sor_link": None})
+            # Re-export of an already-published-internal artifact: succeeding without an
+            # actual push would be a no-op lie — fail honestly with guidance.
+            raise ValidationError(str(exc)) from exc
+        raise ValidationError(f"Unknown export capability '{target_capability}'.")
+
+    def _publish_docstore(self, artifact, body_md, destination):
+        """Docstore transfers the SoR: the page holds the full body → sor + external_ref
+        point at it. Idempotent — an existing page updates in place (base_version)."""
+        from integrations.publish import publish_to_docstore
+        from integrations.types import CapabilityUnavailable
+
+        if not body_md:
+            raise _ExportImpossible("Artifact has no body to export.")
+        work_item = artifact.run.work_item if artifact.run_id else None
+        title_base = (
+            (work_item.feature_stream if work_item else "")
+            or artifact.project.name
+        )
+        # Humanized phase in the page title — no raw "03_prd" ordinals (Bugs.xlsx rows
+        # 54-58 established the no-raw-keys rule for user-facing text).
+        from integrations.export_policy import normalize_phase
+
+        phase_label = normalize_phase(artifact.phase).replace("_", " ").title() or "Artifact"
+        title = f"{title_base} — {phase_label}"
+        try:
+            ref = publish_to_docstore(
+                tenant_id=self.tenant_id, artifact=artifact, body_md=body_md,
+                title=title, space=destination or None,
+            )
+        except CapabilityUnavailable as exc:
+            raise _ExportImpossible(
+                "No documentation-store connector is configured for this workspace. "
+                "Connect one on the Integrations page first."
+            ) from exc
         artifact.status = Artifact.Status.PUBLISHED
-        artifact.sor = new_sor
-        artifact.save(update_fields=["status", "sor", "updated_at"])
-        sor_link = f"{destination.rstrip('/')}/{artifact.id}" if destination else None
-        return Response({"status": "published", "sor_link": sor_link})
+        artifact.sor = ref.sor
+        artifact.external_ref = {
+            "sor": ref.sor, "id": ref.id, "url": ref.url, "version": ref.version,
+        }
+        artifact.save(update_fields=["status", "sor", "external_ref", "updated_at"])
+        return Response({"status": "published", "sor_link": ref.url})
+
+    def _publish_tasktracker(self, artifact, destination):
+        """Task-breakdown export = reconcile the project's proposed backlog into the
+        tracker (register-don't-recreate — the artifact's stories ARE the project's
+        proposed WorkItems). A projection: the artifact stays internal SoR; the export is
+        merged into external_ref (never overwriting the inline draft body)."""
+        from integrations.reconcile import reconcile_backlog
+        from integrations.types import CapabilityUnavailable
+
+        try:
+            result = reconcile_backlog(
+                tenant_id=self.tenant_id, project_id=str(artifact.project_id),
+                project_key=(destination or None),
+            )
+        except CapabilityUnavailable as exc:
+            raise _ExportImpossible(
+                "No task-tracker connector is configured for this workspace. "
+                "Connect one on the Integrations page first."
+            ) from exc
+        items = [
+            {"work_item_id": r["work_item_id"],
+             "key": (r["external_ref"] or {}).get("id", ""),
+             "url": (r["external_ref"] or {}).get("url", "")}
+            for r in result["items"]
+        ]
+        artifact.status = Artifact.Status.PUBLISHED
+        artifact.external_ref = {
+            **(artifact.external_ref or {}),
+            "export": {"sor": "jira", "reconciled": result["reconciled"],
+                       "created": result["created"]},
+        }
+        artifact.save(update_fields=["status", "external_ref", "updated_at"])
+        return Response({
+            "status": "published",
+            "sor_link": next((i["url"] for i in items if i["url"]), None),
+            "reconciled": result["reconciled"], "created": result["created"],
+            "items": items,
+        })
+
+    def _publish_testmgmt(self, artifact, body_md, destination):
+        """Test-case export → testmgmt.create_test (idempotent by summary). A projection:
+        the artifact stays internal SoR; the created test is merged into external_ref."""
+        from integrations.export_tests import parse_test_case
+        from integrations.registry import get_capability, get_connection
+        from integrations.types import CapabilityUnavailable
+
+        if artifact.type != "test_case":
+            raise ValidationError(
+                "Only test_case artifacts export to the test-management system; "
+                "test plans and reports stay internal."
+            )
+        if not body_md and not (artifact.external_ref or {}).get("steps"):
+            raise _ExportImpossible("Artifact has no body to export.")
+        try:
+            tm = get_capability(self.tenant_id, "testmgmt")
+        except CapabilityUnavailable as exc:
+            raise _ExportImpossible(
+                "No test-management connector is configured for this workspace. "
+                "Connect one on the Integrations page first."
+            ) from exc
+        conn = get_connection(self.tenant_id, "testmgmt")
+        project_key = destination or ((conn.scopes or {}).get("project_key") if conn else None)
+        summary, steps = parse_test_case(artifact, body_md)
+        ref = tm.create_test(project=project_key, summary=summary, steps=steps)
+        artifact.status = Artifact.Status.PUBLISHED
+        artifact.external_ref = {
+            **(artifact.external_ref or {}),
+            "export": {"sor": ref.sor, "id": ref.id, "url": ref.url},
+        }
+        artifact.save(update_fields=["status", "external_ref", "updated_at"])
+        return Response({"status": "published", "sor_link": ref.url, "test_key": ref.id})
 
 
 class TraceEdgeViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):

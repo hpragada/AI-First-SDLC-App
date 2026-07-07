@@ -2,9 +2,30 @@
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Button, Field, Panel, Textarea, Input } from "../../components/ui";
+import { Button, Field, Panel, Select, Textarea, Input } from "../../components/ui";
 import type { ProjectProfile } from "../../types";
-import { useProfile, useSaveProfile } from "./hooks";
+import { useExportPolicy, useProfile, useSaveProfile } from "./hooks";
+
+// The exportable-phase rows of the export-policy matrix (bare phase names — the backend
+// normalizes NN_ prefixes). Every phase not listed here is internal-only and not editable.
+const EXPORT_PHASES: { key: string; label: string }[] = [
+  { key: "ideation", label: "Ideation" },
+  { key: "requirements", label: "Requirements" },
+  { key: "prd", label: "PRD" },
+  { key: "architecture", label: "Architecture" },
+  { key: "ux_design", label: "UX Design" },
+  { key: "task_breakdown", label: "Task Breakdown" },
+  { key: "testing", label: "Testing" },
+  { key: "test_automation", label: "Test Automation" },
+  { key: "security", label: "Security" },
+  { key: "cicd", label: "CI/CD" },
+];
+const TARGET_OPTIONS: { value: string; label: string; short: string }[] = [
+  { value: "internal", label: "Internal only", short: "Internal only" },
+  { value: "docstore", label: "Confluence — Documentation store", short: "Confluence" },
+  { value: "tasktracker", label: "Jira — Task tracker", short: "Jira" },
+  { value: "testmgmt", label: "Xray — Test management", short: "Xray" },
+];
 
 // S-10 view states: clean (saved) · dirty (unsaved) · saving · validation.
 export type ProfileView = "clean" | "dirty" | "saving" | "validation";
@@ -46,10 +67,19 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
 
   const [form, setForm] = useState<FormState>(toForm(null));
   const [dirty, setDirty] = useState(false);
+  // Export-policy overrides being edited (bare phase -> capability | "internal");
+  // absent key = project uses the default. Saved with the profile PUT.
+  const policy = useExportPolicy(projectId);
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (profile.data) {
       setForm(toForm(profile.data));
+      setOverrides(
+        Object.fromEntries(
+          Object.entries(profile.data.export_policy ?? {}).map(([k, v]) => [k, v ?? "internal"]),
+        ),
+      );
       setDirty(false);
     }
   }, [profile.data]);
@@ -63,6 +93,16 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
     setDirty(true);
   };
 
+  const setPhaseTarget = (phase: string, value: string, defaultTarget: string) => {
+    setOverrides((o) => {
+      const next = { ...o };
+      if (value === `default:${defaultTarget}`) delete next[phase];
+      else next[phase] = value;
+      return next;
+    });
+    setDirty(true);
+  };
+
   const onSave = async () => {
     if (!form.description) return; // validation state
     await save.mutateAsync({
@@ -73,6 +113,7 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
       nfrs: { value: form.nfrs },
       constraints: { value: form.constraints },
       glossary: { value: form.glossary },
+      export_policy: overrides,
       important_context: form.important_context,
     });
     setDirty(false);
@@ -137,12 +178,17 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
                 value={form.description}
                 onChange={(e) => update("description")(e.target.value)}
                 aria-invalid={validationError}
+                placeholder="What this project is and what it should achieve, e.g. A web app for individuals to log daily expenses and see where their money goes."
               />
             </Field>
             {!validationError && (
               <>
                 <Field label="Domain">
-                  <Input value={form.domain} onChange={(e) => update("domain")(e.target.value)} />
+                  <Input
+                    value={form.domain}
+                    onChange={(e) => update("domain")(e.target.value)}
+                    placeholder="e.g. Personal finance, Healthcare, E-commerce"
+                  />
                 </Field>
                 <Field label="Tech stack">
                   <Textarea
@@ -158,27 +204,78 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
                   <Textarea
                     value={form.coding_standards}
                     onChange={(e) => update("coding_standards")(e.target.value)}
+                    placeholder={"e.g.\nPython: ruff + mypy strict, 100-char lines\nTypeScript: ESLint + Prettier, no any\nTests required for every change"}
                   />
                 </Field>
                 <div className="grid grid--2">
                   <Field label="NFRs">
-                    <Textarea value={form.nfrs} onChange={(e) => update("nfrs")(e.target.value)} />
+                    <Textarea
+                      value={form.nfrs}
+                      onChange={(e) => update("nfrs")(e.target.value)}
+                      placeholder={"e.g.\nAPI response < 300ms (P95)\n99.9% uptime\nWCAG 2.1 AA accessibility"}
+                    />
                   </Field>
                   <Field label="Constraints">
                     <Textarea
                       value={form.constraints}
                       onChange={(e) => update("constraints")(e.target.value)}
+                      placeholder={"e.g.\nMust run on the free hosting tier\nNo third-party analytics\nLaunch by end of Q3"}
                     />
                   </Field>
                 </div>
                 <Field label="Glossary">
-                  <Textarea value={form.glossary} onChange={(e) => update("glossary")(e.target.value)} />
+                  <Textarea
+                    value={form.glossary}
+                    onChange={(e) => update("glossary")(e.target.value)}
+                    placeholder={"Project terms agents should know, e.g.\nMAU — monthly active users\nSoR — system of record"}
+                  />
                 </Field>
                 <Field label="Important context">
                   <Textarea
                     value={form.important_context}
                     onChange={(e) => update("important_context")(e.target.value)}
+                    placeholder="Anything else every agent should keep in mind — key decisions already made, existing systems to integrate with, things to avoid."
                   />
+                </Field>
+                <Field
+                  label="Export policy"
+                  help="Where each phase's artifacts may be exported by the user. Exports are always manual — gate approval never auto-publishes to external tools."
+                >
+                  <div className="u-stack" style={{ gap: "var(--space-2)" }}>
+                    {EXPORT_PHASES.map((p) => {
+                      const defaultTarget = policy.data?.defaults?.[p.key] ?? "internal";
+                      const override = overrides[p.key];
+                      const value = override ?? `default:${defaultTarget}`;
+                      // Clean, bracket-free label, e.g. "Default — Confluence".
+                      const defaultShort =
+                        TARGET_OPTIONS.find((t) => t.value === defaultTarget)?.short ?? "Internal only";
+                      return (
+                        <div className="u-row" key={p.key}>
+                          <span className="t-sm" style={{ minWidth: "160px" }}>{p.label}</span>
+                          <Select
+                            aria-label={`Export target for ${p.label}`}
+                            value={value}
+                            onChange={(e) => setPhaseTarget(p.key, e.target.value, defaultTarget)}
+                            style={{ maxWidth: "320px" }}
+                          >
+                            <option value={`default:${defaultTarget}`}>
+                              Default — {defaultShort}
+                            </option>
+                            {TARGET_OPTIONS.filter(
+                              (t) => !(p.key === "ux_design" && t.value !== "internal"),
+                            ).map((t) => (
+                              <option key={t.value} value={t.value}>
+                                {t.label}
+                              </option>
+                            ))}
+                          </Select>
+                          {p.key === "ux_design" && (
+                            <span className="t-xs u-muted">Figma export coming later</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </Field>
                 {view === "dirty" && <p className="field__help">Saving will create v{savedVersion + 1}.</p>}
               </>

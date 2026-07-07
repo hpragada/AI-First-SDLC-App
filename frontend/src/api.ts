@@ -13,6 +13,7 @@ import type {
   CurrentUser,
   DashboardRollup,
   DriftRecord,
+  ExportPolicy,
   GapReport,
   GateCriteria,
   Integration,
@@ -358,10 +359,16 @@ export const api = {
     req<RunTranscript>("GET", `/runs/${runId}/transcript/`, { tenantId }),
 
   // Phase 4.8 T5 — manual gate-respecting publish (new, DECISION-8). Never bypasses a gate.
+  // destination optional: falls back to the connector's configured space/project key.
   publishArtifact: (
     artifactId: string,
-    body: { target_capability: string; destination: string },
+    body: { target_capability: string; destination?: string },
   ) => req<PublishResult>("POST", `/artifacts/${artifactId}/publish/`, { body }),
+
+  // Phase-scoped export policy (team flow decision 2026-07-07): defaults + per-project
+  // overrides + which export capabilities have a connector bound.
+  getExportPolicy: (projectId: string) =>
+    req<ExportPolicy>("GET", `/projects/${projectId}/export-policy/`),
 
   // Phase 4.8 T5 — dashboard rollup (bucket B, S-31).
   getDashboard: (projectId: string) =>

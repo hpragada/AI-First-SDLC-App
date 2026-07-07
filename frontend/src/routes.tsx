@@ -1,4 +1,4 @@
-import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 
 import { useAuth } from "./auth/AuthContext";
 import { AppShell } from "./components/AppShell";
@@ -74,6 +74,28 @@ function RedirectIfAuthed() {
   return <Outlet />;
 }
 
+// Admin-only routes (Bugs.xlsx row 51): a signed-in non-admin who deep-links to
+// /admin/* must see a clear "admin access needed" screen, not a broken blank render.
+function RequireAdmin() {
+  const { isAdmin } = useAuth();
+  if (!isAdmin) {
+    return (
+      <main className="canvas-pad">
+        <Panel title="Admin access needed">
+          <p className="t-body">
+            This page manages workspace users and roles, and is available to workspace
+            admins only. Ask an admin to grant you the admin role if you need it.
+          </p>
+          <Link to="/" className="btn btn--secondary" style={{ marginTop: "var(--space-3)" }}>
+            ← Back to the dashboard
+          </Link>
+        </Panel>
+      </main>
+    );
+  }
+  return <Outlet />;
+}
+
 function AppPlaceholder({ title }: { title: string }) {
   return (
     <main className="canvas-pad">
@@ -125,10 +147,12 @@ export function AppRoutes() {
           <Route path="/integrations" element={<Integrations />} />
           <Route path="/integrations/:capability" element={<ConnectCapability />} />
           <Route path="/repositories" element={<Repositories />} />
-          <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
-          <Route path="/admin/users" element={<UsersInvites />} />
-          <Route path="/admin/roles" element={<RolesMatrix />} />
-          <Route path="/admin/*" element={<AppPlaceholder title="Workspace Admin" />} />
+          <Route element={<RequireAdmin />}>
+            <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
+            <Route path="/admin/users" element={<UsersInvites />} />
+            <Route path="/admin/roles" element={<RolesMatrix />} />
+            <Route path="/admin/*" element={<AppPlaceholder title="Workspace Admin" />} />
+          </Route>
           <Route path="/connect" element={<ConnectMachine />} />
           <Route path="/recovery" element={<OfflineTakeover />} />
           <Route path="/setup" element={<SetupChecklist />} />

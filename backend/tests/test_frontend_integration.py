@@ -502,24 +502,265 @@ def test_dashboard_endpoint_exists(client, project, member):
 
 
 def test_artifact_publish_endpoint_exists(client, project, admin):
-    """S-34: POST /artifacts/{id}/publish/ on approved artifact → { status, sor_link }"""
+    """S-34: POST /artifacts/{id}/publish/ on approved artifact → a REAL push through the
+    docstore capability, returning the live page URL (Bugs.xlsx row 59: no more stub)."""
+    from types import SimpleNamespace
+
+    from apps.integrations.models import IntegrationConnection
     from apps.registry.models import Artifact
+    from integrations.registry import _BUILDERS, register_connector
+
     a = Artifact.objects.create(
         tenant=admin.tenant, project=project, phase="01_ideation",
         type="brief", status=Artifact.Status.APPROVED, sor="internal",
-        s3_key="drafts/test.md", content_hash="abc123", version=1,
+        s3_key="", content_hash="abc123", version=1,
+        external_ref={"format": "markdown", "body": "# Brief\ncontent"},
+    )
+    created = {}
+
+    def _create_page(*, space, title, body_html):
+        created.update({"space": space, "title": title, "body_html": body_html})
+        return SimpleNamespace(sor="confluence", id="991", version=1,
+                               url="https://acme.atlassian.net/wiki/991")
+
+    register_connector("docstore", "test_fake_pub", lambda conn: SimpleNamespace(
+        create_page=_create_page))
+    try:
+        IntegrationConnection.objects.create(
+            tenant=admin.tenant, capability="docstore", connector="test_fake_pub",
+        )
+        _login(client, "boss@acme.com", "admin-pass!")
+        r = client.post(
+            f"/api/artifacts/{a.id}/publish/",
+            {"target_capability": "confluence", "destination": "SDLC"},
+            format="json",
+        )
+        assert r.status_code == 200, r.data
+        assert r.data["status"] == "published"
+        assert r.data["sor_link"] == "https://acme.atlassian.net/wiki/991"
+        assert created["space"] == "SDLC" and "Brief" in created["body_html"]
+        a.refresh_from_db()
+        assert a.status == Artifact.Status.PUBLISHED
+        assert a.sor == "confluence" and a.external_ref["id"] == "991"
+    finally:
+        _BUILDERS.pop(("docstore", "test_fake_pub"), None)
+
+
+def test_artifact_publish_reexports_internal_published(client, project, admin):
+    """Bugs.xlsx row 59: an artifact that auto-published as internal (no connector at gate
+    time) may be exported later once a connector exists — its gate already passed."""
+    from types import SimpleNamespace
+
+    from apps.integrations.models import IntegrationConnection
+    from apps.registry.models import Artifact
+    from integrations.registry import _BUILDERS, register_connector
+
+    a = Artifact.objects.create(
+        tenant=admin.tenant, project=project, phase="01_ideation",
+        type="brief", status=Artifact.Status.PUBLISHED, sor="internal",
+        s3_key="", content_hash="abc123", version=1,
+        external_ref={"format": "markdown", "body": "# Brief\nlate export"},
+    )
+    register_connector("docstore", "test_fake_pub2", lambda conn: SimpleNamespace(
+        create_page=lambda *, space, title, body_html: SimpleNamespace(
+            sor="confluence", id="992", version=1, url="https://acme.atlassian.net/992")))
+    try:
+        IntegrationConnection.objects.create(
+            tenant=admin.tenant, capability="docstore", connector="test_fake_pub2",
+        )
+        _login(client, "boss@acme.com", "admin-pass!")
+        r = client.post(
+            f"/api/artifacts/{a.id}/publish/",
+            {"target_capability": "docstore", "destination": ""},
+            format="json",
+        )
+        assert r.status_code == 200, r.data
+        assert r.data["sor_link"] == "https://acme.atlassian.net/992"
+        a.refresh_from_db()
+        assert a.sor == "confluence"
+    finally:
+        _BUILDERS.pop(("docstore", "test_fake_pub2"), None)
+
+
+def test_publish_policy_rejects_wrong_target_per_phase(client, project, admin):
+    """Team flow decision 2026-07-07: a phase's artifacts may only export to its policy
+    target — docstore on task_breakdown, tasktracker on prd, and anything external on
+    ux_design are all 400s naming the allowed target."""
+    from apps.registry.models import Artifact
+
+    def art(phase):
+        return Artifact.objects.create(
+            tenant=admin.tenant, project=project, phase=phase, type="doc",
+            status=Artifact.Status.APPROVED, sor="internal", s3_key="",
+            content_hash="h", version=1,
+            external_ref={"format": "markdown", "body": "# body"},
+        )
+
+    _login(client, "boss@acme.com", "admin-pass!")
+    r = client.post(f"/api/artifacts/{art('06_task_breakdown').id}/publish/",
+                    {"target_capability": "docstore"}, format="json")
+    assert r.status_code == 400 and "tasktracker" in str(r.data)
+    r = client.post(f"/api/artifacts/{art('03_prd').id}/publish/",
+                    {"target_capability": "tasktracker"}, format="json")
+    assert r.status_code == 400 and "docstore" in str(r.data)
+    r = client.post(f"/api/artifacts/{art('05_ux_design').id}/publish/",
+                    {"target_capability": "docstore"}, format="json")
+    assert r.status_code == 400 and "internal" in str(r.data).lower()
+    # Internal publish is always allowed regardless of policy.
+    r = client.post(f"/api/artifacts/{art('05_ux_design').id}/publish/",
+                    {"target_capability": "internal"}, format="json")
+    assert r.status_code == 200
+
+
+def test_publish_policy_honors_project_profile_override(client, project, admin):
+    """ProjectProfile.export_policy overrides the defaults per project."""
+    from apps.projects.models import ProjectProfile
+    from apps.registry.models import Artifact
+
+    ProjectProfile.objects.create(
+        tenant=admin.tenant, project=project, description="d",
+        export_policy={"prd": "internal"},
+    )
+    a = Artifact.objects.create(
+        tenant=admin.tenant, project=project, phase="03_prd", type="prd",
+        status=Artifact.Status.APPROVED, sor="internal", s3_key="",
+        content_hash="h", version=1,
+        external_ref={"format": "markdown", "body": "# body"},
+    )
+    _login(client, "boss@acme.com", "admin-pass!")
+    r = client.post(f"/api/artifacts/{a.id}/publish/",
+                    {"target_capability": "docstore"}, format="json")
+    assert r.status_code == 400 and "internal" in str(r.data).lower()
+
+
+def test_publish_tasktracker_reconciles_backlog(client, project, admin, monkeypatch):
+    """Task-breakdown export = reconcile the project's proposed WorkItems into Jira via a
+    fake tracker: counts + items returned; artifact stays internal SoR with the export
+    merged into external_ref WITHOUT losing the inline draft body."""
+    from types import SimpleNamespace
+
+    from apps.registry.models import Artifact
+    from apps.workitems.models import WorkItem
+    from integrations import reconcile as reconcile_mod
+    from integrations.types import ExternalRef
+
+    story = WorkItem.objects.create(
+        tenant=admin.tenant, project=project, type=WorkItem.Type.STORY,
+        title="Login story", state=WorkItem.State.PROPOSED,
+    )
+    a = Artifact.objects.create(
+        tenant=admin.tenant, project=project, phase="06_task_breakdown", type="backlog",
+        status=Artifact.Status.APPROVED, sor="internal", s3_key="",
+        content_hash="h", version=1,
+        external_ref={"format": "markdown", "body": "# Backlog"},
+    )
+    created = []
+
+    class _FakeTracker:
+        def search(self, *, jql):
+            return []
+
+        def create_issue(self, *, kind, summary, description, parent_ref=None, fields=None):
+            created.append(summary)
+            return ExternalRef(sor="jira", id=f"PAY-{len(created)}",
+                               url=f"https://x/browse/PAY-{len(created)}")
+
+    monkeypatch.setattr(reconcile_mod, "get_capability", lambda t, c: _FakeTracker())
+    monkeypatch.setattr(reconcile_mod, "get_connection",
+                        lambda t, c: SimpleNamespace(scopes={"project_key": "PAY"}))
+
+    _login(client, "boss@acme.com", "admin-pass!")
+    r = client.post(f"/api/artifacts/{a.id}/publish/",
+                    {"target_capability": "tasktracker", "destination": "PAY"},
+                    format="json")
+    assert r.status_code == 200, r.data
+    assert r.data["reconciled"] == 1 and r.data["created"] == 1
+    assert r.data["items"][0]["key"] == "PAY-1"
+    story.refresh_from_db()
+    assert story.external_ref["id"] == "PAY-1"
+    a.refresh_from_db()
+    assert a.status == Artifact.Status.PUBLISHED and a.sor == "internal"  # projection
+    assert a.external_ref["export"]["reconciled"] == 1
+    assert a.external_ref["body"] == "# Backlog"  # inline draft body survives the merge
+
+
+def test_publish_testmgmt_exports_test_case(client, project, admin, monkeypatch):
+    """Test-case export via a fake testmgmt capability: idempotent by summary, artifact
+    stays internal SoR with the created test merged into external_ref; non-test_case
+    types in the testing phase are rejected."""
+    from types import SimpleNamespace
+
+    from apps.registry.models import Artifact
+    from integrations import registry as registry_mod
+    from integrations.types import ExternalRef
+
+    calls = []
+
+    class _FakeTestMgmt:
+        def create_test(self, *, project, summary, steps, fields=None):
+            calls.append({"project": project, "summary": summary, "steps": steps})
+            return ExternalRef(sor="xray", id="TC-77", url="https://x/browse/TC-77")
+
+    monkeypatch.setattr(registry_mod, "get_capability", lambda t, c: _FakeTestMgmt())
+    monkeypatch.setattr(registry_mod, "get_connection",
+                        lambda t, c: SimpleNamespace(scopes={"project_key": "QA"}))
+
+    a = Artifact.objects.create(
+        tenant=admin.tenant, project=project, phase="09_testing", type="test_case",
+        status=Artifact.Status.APPROVED, sor="internal", s3_key="",
+        content_hash="h", version=1,
+        external_ref={"format": "markdown", "tc_id": "TC-007",
+                      "steps": [{"action": "Log in", "expected": "Dashboard"}],
+                      "body": "# TC-007 Login"},
+    )
+    _login(client, "boss@acme.com", "admin-pass!")
+    r = client.post(f"/api/artifacts/{a.id}/publish/",
+                    {"target_capability": "testmgmt"}, format="json")
+    assert r.status_code == 200, r.data
+    assert r.data["test_key"] == "TC-77" and r.data["sor_link"].endswith("TC-77")
+    assert calls[0]["summary"].startswith("TC-007") and calls[0]["project"] == "QA"
+    a.refresh_from_db()
+    assert a.sor == "internal" and a.external_ref["export"]["id"] == "TC-77"
+    assert a.external_ref["body"] == "# TC-007 Login"  # inline body survives
+
+    # Re-export runs again (published artifacts stay exportable) — idempotency lives in
+    # the connector's summary lookup.
+    r = client.post(f"/api/artifacts/{a.id}/publish/",
+                    {"target_capability": "testmgmt"}, format="json")
+    assert r.status_code == 200
+
+    # Non-test_case types in the testing phase are rejected.
+    plan = Artifact.objects.create(
+        tenant=admin.tenant, project=project, phase="09_testing", type="test_report",
+        status=Artifact.Status.APPROVED, sor="internal", s3_key="",
+        content_hash="h2", version=1,
+        external_ref={"format": "markdown", "body": "# Report"},
+    )
+    r = client.post(f"/api/artifacts/{plan.id}/publish/",
+                    {"target_capability": "testmgmt"}, format="json")
+    assert r.status_code == 400 and "test_case" in str(r.data)
+
+
+def test_artifact_reexport_no_connector_is_clear_400(client, project, admin):
+    """Re-exporting an already-published-internal artifact with no docstore connector must
+    fail honestly (400 with guidance) — a 'success' would be a no-op lie. (First publish of
+    an APPROVED artifact keeps the blueprint-B3 internal fallback — journey tests.)"""
+    from apps.registry.models import Artifact
+
+    a = Artifact.objects.create(
+        tenant=admin.tenant, project=project, phase="01_ideation",
+        type="brief", status=Artifact.Status.PUBLISHED, sor="internal",
+        s3_key="", content_hash="abc123", version=1,
+        external_ref={"format": "markdown", "body": "# Brief"},
     )
     _login(client, "boss@acme.com", "admin-pass!")
     r = client.post(
         f"/api/artifacts/{a.id}/publish/",
-        {"target_capability": "confluence", "destination": "https://confluence.example.com/space"},
+        {"target_capability": "docstore", "destination": "SDLC"},
         format="json",
     )
-    assert r.status_code == 200, r.data
-    assert r.data["status"] == "published"
-    assert "sor_link" in r.data
-    a.refresh_from_db()
-    assert a.status == Artifact.Status.PUBLISHED
+    assert r.status_code == 400
+    assert "connector" in str(r.data).lower()
 
 
 def test_artifact_publish_blocked_without_gate(client, project, admin):

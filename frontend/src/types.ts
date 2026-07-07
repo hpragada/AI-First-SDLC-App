@@ -28,6 +28,8 @@ export interface ProjectProfile {
   nfrs: Record<string, unknown>;
   constraints: Record<string, unknown>;
   glossary: Record<string, unknown>;
+  // Phase-scoped manual-export overrides (bare phase name -> capability | "internal").
+  export_policy?: Record<string, string | null>;
   important_context: string;
   version: number;
 }
@@ -372,6 +374,9 @@ export interface WorkItemCard extends WorkItem {
   owner?: string;
   parent?: string | null;
   needs?: { clarification?: boolean; gate?: boolean; label?: string };
+  // The item's current lifecycle phase (latest run's agent key, e.g. "03_prd");
+  // empty when no phase has run yet. Bugs.xlsx rows 49/50.
+  current_phase?: string;
 }
 
 export type LifecycleNodeState =
@@ -547,6 +552,11 @@ export interface ArtifactPreview {
   version: number;
   versions: ArtifactVersion[];
   sor_link?: string | null;
+  // Export policy context (team flow decision 2026-07-07): the phase's single allowed
+  // manual-export capability, or null when the phase publishes internally only.
+  phase?: string;
+  artifact_type?: string;
+  export_target?: string | null;
 }
 
 // Run transcript (S-33, new — DECISION-7).
@@ -567,7 +577,21 @@ export interface RunTranscript {
 // Manual gate-respecting publish (S-34, new — DECISION-8).
 export interface PublishResult {
   status: string;
-  sor_link?: string;
+  sor_link?: string | null;
+  // tasktracker export (backlog reconciliation) summary:
+  reconciled?: number;
+  created?: number;
+  items?: { work_item_id: string; key: string; url: string }[];
+  // testmgmt export:
+  test_key?: string;
+}
+
+// Phase-scoped export policy (GET /projects/{id}/export-policy/).
+export interface ExportPolicy {
+  defaults: Record<string, string>;
+  overrides: Record<string, string | null>;
+  effective: Record<string, string>;
+  connected: Record<string, boolean>;
 }
 
 // Dashboard rollup (S-31, bucket B).
