@@ -2,7 +2,7 @@ import { useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, Card, CardBody, Kv, LifecycleRail, Panel, Spinner } from "../../components/ui";
 import { railNodeView } from "./railView";
-import { phaseLabel, visibleLifecycleNodes } from "./phases";
+import { phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
 
 // S-17 view states: open (default) · fixing · closed.
@@ -116,7 +116,7 @@ function WorkItemDefectLive() {
             <Kv
               rows={[
                 ["Parent", workItem.data.parent?.slice(0, 8) ?? "—"],
-                ["Status", workItem.data.state],
+                ["Status", statusLabel(workItem.data.state)],
               ]}
             />
           </CardBody>

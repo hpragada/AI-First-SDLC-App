@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  gateLabel,
   humanizeLabel,
   isBrownfieldPhase,
   lifecyclePhaseColumns,
   phaseLabel,
+  statusLabel,
   visibleLifecycleNodes,
 } from "./phases";
 import type { LifecycleNode } from "../../types";
@@ -54,6 +56,27 @@ describe("humanizeLabel", () => {
   it("leaves plain labels untouched", () => {
     expect(humanizeLabel("Needs answer")).toBe("Needs answer");
     expect(humanizeLabel(null)).toBe("");
+  });
+});
+
+// Bugs.xlsx rows 54/56/57/58: gate labels must never double the word "gate" or show underscores.
+describe("gateLabel", () => {
+  it("humanizes a gate type to a single lowercase 'gate', never doubled", () => {
+    expect(gateLabel("phase_gate")).toBe("Phase gate");
+    expect(gateLabel("design_gate")).toBe("Design gate");
+    expect(gateLabel("architecture")).toBe("Architecture gate");
+  });
+  it("falls back to 'Gate' for empty/nullish", () => {
+    expect(gateLabel("")).toBe("Gate");
+    expect(gateLabel(null)).toBe("Gate");
+  });
+});
+
+describe("statusLabel", () => {
+  it("humanizes status tokens (no underscores)", () => {
+    expect(statusLabel("awaiting_gate")).toBe("Awaiting gate");
+    expect(statusLabel("running")).toBe("Running");
+    expect(statusLabel(null)).toBe("—");
   });
 });
 

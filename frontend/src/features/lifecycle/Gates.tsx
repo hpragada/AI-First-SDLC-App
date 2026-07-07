@@ -18,17 +18,11 @@ import {
 import type { Approval } from "../../types";
 import { roleLabel } from "../identity/roles";
 import { useApprovals, useDecideApproval, useWorkItems } from "./hooks";
+import { gateLabel } from "./phases";
 
 // S-21 view states: can-decide (your role) · cannot-decide (permission) ·
 // decided-history · empty.
 export type GatesView = "can-decide" | "cannot-decide" | "history" | "empty";
-
-function gateLabel(gateType: string) {
-  return gateType
-    .split("_")
-    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
-    .join(" ");
-}
 
 export function Gates({ forceView }: { forceView?: GatesView }) {
   if (forceView) return <GatesGallery view={forceView} />;
@@ -166,7 +160,7 @@ function GatesLive() {
               <Card attention>
                 <CardBody>
                   <span className="gate-panel__role">
-                    ▲ {gateLabel(selected.gate_type)} gate · required role: {roleLabel(selected.required_role)}
+                    ▲ {gateLabel(selected.gate_type)} · required role: {roleLabel(selected.required_role)}
                   </span>
                   <h3 className="t-h3">{workItemLabel(selected.work_item)}</h3>
                   <Link to="/artifacts" className="t-sm">
@@ -208,7 +202,7 @@ function GatesLive() {
               <Card>
                 <CardBody>
                   <span className="gate-panel__role" style={{ color: "var(--text-muted)" }}>
-                    {gateLabel(selected.gate_type)} gate · {workItemLabel(selected.work_item)}
+                    {gateLabel(selected.gate_type)} · {workItemLabel(selected.work_item)}
                   </span>
                   <Banner variant="info" title={`Awaiting ${selected.required_role}`}>
                     You don't hold the <strong>{selected.required_role}</strong> role on this

@@ -704,8 +704,28 @@ class IntegrationViewSet(
         conn = self.get_object()
         return Response(test_integration_connection(conn))
 
+    @action(detail=False, methods=["get"], url_path="catalog")
+    def catalog(self, request):
+        """The per-capability vendor + field catalog that drives the S-12 connect form
+        (Bugs.xlsx #40). Static wiring metadata — no tenant data — so it's safe for any
+        admin; keeps the frontend from hardcoding vendors."""
+        from apps.integrations.catalog import catalog_payload
+
+        return Response(catalog_payload())
+
 
 # ── WorkItems + phase trigger ───────────────────────────────────────
+def humanize_gate(gate_type: str | None) -> str:
+    """A human gate label from a gate type, e.g. "phase_gate" -> "Phase gate": one lowercase
+    "gate", no underscores, never doubled. Mirrors the frontend gateLabel so the board card
+    reads the same as the Gates/Dashboard panels (Bugs.xlsx rows 54/56/57/58)."""
+    words = [w for w in (gate_type or "").replace("_", " ").split() if w]
+    if words and words[-1].lower() == "gate":
+        words = words[:-1]
+    base = " ".join(w[:1].upper() + w[1:] for w in words)
+    return f"{base} gate" if base else "Gate"
+
+
 class WorkItemViewSet(
     TenantScopedMixin,
     mixins.CreateModelMixin,
@@ -773,7 +793,7 @@ class WorkItemViewSet(
             if wid in needs_clarification:
                 needs = {"clarification": True, "label": "Needs answer"}
             elif wid in needs_gate:
-                needs = {"gate": True, "label": f"{needs_gate[wid]} gate"}
+                needs = {"gate": True, "label": humanize_gate(needs_gate[wid])}
             else:
                 needs = None
             out[wid] = {

@@ -4,7 +4,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { useRunners } from "../identity/hooks";
 import { Badge, Button, Card, CardBody, ConnStatus, EmptyState, Kv, Panel, Spinner, Tile, Todo } from "../../components/ui";
 import { roleLabel } from "../identity/roles";
-import { phaseLabel } from "../lifecycle/phases";
+import { gateLabel, phaseLabel, statusLabel } from "../lifecycle/phases";
 import { useDashboard } from "./hooks";
 
 // S-31 view states: busy (default) · calm · new-project.
@@ -103,7 +103,7 @@ function DashboardLive() {
                   key={g.approval_id}
                   icon="▲"
                   type="gate"
-                  title={`${phaseLabel(g.gate)} gate · ${g.work_item.slice(0, 8)}`}
+                  title={`${gateLabel(g.gate)} · ${g.work_item.slice(0, 8)}`}
                   meta={`required role: ${roleLabel(g.role)}`}
                   action={
                     <Link to="/gates" className="btn btn--primary btn--sm">
@@ -132,7 +132,7 @@ function DashboardLive() {
                   icon="▶"
                   type="run"
                   title={`Run ${r.run_id.slice(0, 8)} · ${phaseLabel(r.phase)}`}
-                  meta={`${r.work_item.slice(0, 8)} · ${r.status}`}
+                  meta={`${r.work_item.slice(0, 8)} · ${statusLabel(r.status)}`}
                   action={
                     <Link to={`/runs/${r.run_id}`} className="btn btn--ghost btn--sm">
                       View

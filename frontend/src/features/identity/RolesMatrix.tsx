@@ -43,13 +43,16 @@ function membershipMapFor(user: AdminUser, projectId: string): Map<string, strin
 export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
   const { selectedProject } = useAuth();
   const projectId = selectedProject?.project_id;
-  const projectName = selectedProject?.project_name ?? "Payment Gateway v2";
+  const projectName = selectedProject?.project_name ?? "this project";
   const users = useUsers();
   const coverage = useRoleCoverage(projectId);
   const setMembership = useSetMembership(projectId);
   const revokeMembership = useRevokeMembership(projectId);
   const setTenantAdmin = useSetTenantAdmin();
   const [guardOpen, setGuardOpen] = useState(false);
+  // The change currently being saved, so the banner names the real user + role instead of a
+  // hardcoded sample (Bugs.xlsx row 53: was always "Tom Reyes (reviewer …)").
+  const [pending, setPending] = useState<{ name: string; role: string } | null>(null);
 
   const view: RolesView =
     forceView ??
@@ -63,6 +66,7 @@ export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
   const blockedRoles = coverage.data?.roles.filter((r) => r.gate_blocked) ?? [];
 
   const toggleRole = (u: AdminUser, roleKey: string) => {
+    setPending({ name: u.name, role: roleKey });
     if (roleKey === "admin") {
       setTenantAdmin.mutate(
         { userId: u.id, isTenantAdmin: !u.is_tenant_admin },
@@ -118,7 +122,9 @@ export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
 
       {view === "saving" && (
         <Banner variant="info">
-          Saving role change for Tom Reyes (reviewer @ {projectName})…
+          {pending
+            ? `Saving role change for ${pending.name} (${roleLabel(pending.role)} @ ${projectName})…`
+            : "Saving role change…"}
         </Banner>
       )}
 

@@ -316,7 +316,8 @@ export type Capability =
 export interface Integration {
   id: string;
   capability: Capability;
-  vendor: string;
+  connector: string; // vendor slug (e.g. "confluence")
+  vendor: string; // human label (e.g. "Confluence")
   status: "connected" | "not_connected" | "failed";
   configured: boolean;
   binding: Record<string, unknown>;
@@ -327,6 +328,29 @@ export interface TestConnectionResult {
   ok: boolean;
   detail: string;
   fix_hint?: string;
+}
+
+// Connector catalog (Bugs #40) — drives the per-vendor connect form.
+export interface ConnectorField {
+  name: string;
+  label: string;
+  type: "text" | "password";
+  placeholder: string;
+  required: boolean;
+}
+
+export interface ConnectorVendor {
+  slug: string;
+  label: string;
+  no_secret?: boolean;
+  binding: ConnectorField[];
+  secrets: ConnectorField[];
+}
+
+export interface CapabilityCatalogEntry {
+  capability: Capability;
+  label: string;
+  vendors: ConnectorVendor[];
 }
 
 // Repositories (S-13, 4.7-T7).

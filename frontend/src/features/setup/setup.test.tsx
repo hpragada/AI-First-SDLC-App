@@ -68,7 +68,7 @@ describe("S-12 Connect capability", () => {
     expect(screen.getByText("Connect a capability")).toBeDefined();
 
     rerender(<ConnectCapability forceView="filled" />);
-    expect(screen.getByText(/Configured/)).toBeDefined();
+    expect(screen.getByText("Vendor")).toBeDefined();
 
     rerender(<ConnectCapability forceView="testing" />);
     expect(screen.getByText(/Testing connection/)).toBeDefined();
@@ -77,7 +77,7 @@ describe("S-12 Connect capability", () => {
     expect(screen.getByText("Connection OK")).toBeDefined();
 
     rerender(<ConnectCapability forceView="fail" />);
-    expect(screen.getByText(/Connection failed — 403/)).toBeDefined();
+    expect(screen.getByText("Connection failed")).toBeDefined();
   });
 });
 

@@ -12,17 +12,19 @@ from runner.companion import daemon as daemon_mod
 from runner.companion.daemon import CompanionDaemon, DaemonError, ensure_local_engine_auth
 
 _PLAN_TASK = {"kind": "plan", "run_id": "r1", "payload": {
-    "phase": "prd", "work_item_id": "w1", "model": "claude-x", "agent_body": "BODY",
-    "manifest": "# Project\nm"}}
+    "phase": "prd", "work_item_id": "w1", "project_id": "proj-1", "model": "claude-x",
+    "agent_body": "BODY", "manifest": "# Project\nm"}}
 
 
 class _FakeDriver:
     def __init__(self):
         self.calls = []
+        self.mcp_servers = None
 
     async def run_planning_task(self, *, manifest, agent_spec, mcp_servers, allowed_tools,
                                work_item):
         self.calls.append(("plan", manifest, agent_spec.phase_label, allowed_tools))
+        self.mcp_servers = mcp_servers
         return SimpleNamespace(outputs={"result": "# PRD body"}, cost_usd=0.02)
 
     async def run_review_task(self, **kwargs):
@@ -75,6 +77,18 @@ def test_serve_runs_plan_then_idles():
     assert url.endswith("/api/runner/phases/r1/report/")
     assert body == {"status": "ok", "body": "# PRD body", "cost_usd": 0.02}
     assert slept == [5.0]   # slept once (the default poll interval) on the idle (204) iteration
+
+
+def test_plan_binds_project_id_into_state_mcp_env():
+    """Regression (Bugs.xlsx row 53): the companion planning/review launch must bind the
+    project id from the dispatched payload, so register_artifact fills it in rather than
+    500-ing and forcing the agent to ask the user for a project UUID (row 25's missed seam)."""
+    transport = _Transport([(200, _PLAN_TASK), (204, None)])
+    driver = _FakeDriver()
+    d = _daemon(transport, driver, sleep=lambda _s: None)
+    d.serve(max_iterations=2)
+    env = driver.mcp_servers["platform-state"]["env"]
+    assert env["RUNNER_PROJECT_ID"] == "proj-1"
 
 
 def test_engine_failure_is_reported_not_swallowed():

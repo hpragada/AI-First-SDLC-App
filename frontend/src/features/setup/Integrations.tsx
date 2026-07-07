@@ -69,6 +69,7 @@ export function Integrations({ forceView }: { forceView?: IntegrationsView }) {
               key={cap}
               vendor={integration?.vendor || (builtIn ? "Built-in" : "Not connected")}
               capability={CAP_LABEL[cap]}
+              capabilityKey={cap}
               failed={failed}
               status={
                 <>

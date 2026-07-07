@@ -197,9 +197,9 @@ describe("GF-A-3 ConnectCapability (ConnectView: 'empty'|'filled'|'testing'|'suc
     expect(bodyHas(/connect/i)).toBe(true);
   });
 
-  it("filled state shows Configured badge", () => {
+  it("filled state shows the vendor form", () => {
     renderWithProviders(<ConnectCapability forceView="filled" />);
-    expect(screen.getAllByText(/configured/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Vendor").length).toBeGreaterThan(0);
   });
 
   it("testing state shows testing in progress", () => {
