@@ -8,6 +8,7 @@ import type {
   Approval,
   Artifact,
   ArtifactPreview,
+  CapabilityCatalogEntry,
   Clarification,
   CurrentUser,
   DashboardRollup,
@@ -175,6 +176,8 @@ export const api = {
   // Phase 4.8 T3 — integrations management + secret store (4.7 T6). Session-derived
   // tenant; secrets are write-only and never appear in any response.
   listIntegrations: () => req<Integration[]>("GET", "/integrations/"),
+  integrationsCatalog: () =>
+    req<CapabilityCatalogEntry[]>("GET", "/integrations/catalog/"),
   createIntegration: (body: {
     capability: string;
     vendor: string;

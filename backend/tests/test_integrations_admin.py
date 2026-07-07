@@ -74,7 +74,8 @@ def test_admin_creates_integration_secret_never_returned(client, admin, tenant):
     assert resp.status_code == 201
     body = resp.data
     assert body["capability"] == "docstore"
-    assert body["vendor"] == "confluence"
+    assert body["connector"] == "confluence"   # slug (registry key)
+    assert body["vendor"] == "Confluence"       # human label (from the catalog)
     assert body["binding"] == {"space_key": "ENG"}
     assert body["configured"] is True
     assert "secret" not in body and "secrets" not in body and "secret_encrypted" not in body
@@ -214,6 +215,78 @@ def test_test_connection_fails_without_secret(client, admin):
 
     conn = IntegrationConnection.objects.get(id=conn_id)
     assert conn.health == IntegrationConnection.Health.DOWN
+
+
+# ── catalog + slug round-trip (Bugs #39/#40) ─────────────────────────
+def test_catalog_lists_registered_vendors_per_capability(client, admin):
+    _login(client, "boss@acme.com", "admin-pass!")
+    resp = client.get("/api/integrations/catalog/")
+    assert resp.status_code == 200
+    by_cap = {c["capability"]: c for c in resp.data}
+    # every capability the services layer accepts is present in the catalog…
+    assert {"docstore", "tasktracker", "codehost", "designsource", "testmgmt",
+            "codeintel"} <= set(by_cap)
+    # …and every vendor slug it advertises is actually builder-wired (so a saved
+    # connection can never hit "No connector registered" — the #39 root cause).
+    from integrations.registry import get_builder
+
+    for cap in resp.data:
+        assert cap["vendors"], f"{cap['capability']} has no vendors"
+        for vendor in cap["vendors"]:
+            assert get_builder(cap["capability"], vendor["slug"]) is not None
+
+
+def test_non_admin_cannot_read_catalog(client, member):
+    _login(client, "dev@acme.com", "dev-pass!")
+    assert client.get("/api/integrations/catalog/").status_code == 403
+
+
+def test_catalog_slug_saves_and_tests_ok(client, admin):
+    """The exact #39 flow: the connector slug from the catalog saves and test-connection
+    passes (previously the UI sent the display name 'Confluence' → registry miss)."""
+    _login(client, "boss@acme.com", "admin-pass!")
+    create = client.post(
+        "/api/integrations/",
+        {"capability": "docstore", "vendor": "confluence",
+         "binding": {"space_key": "PAY"}, "secrets": {"api_token": "t"}},
+        format="json",
+    )
+    assert create.status_code == 201
+    assert create.data["status"] == "connected"   # grid now shows Connected
+    resp = client.post(f"/api/integrations/{create.data['id']}/test-connection/")
+    assert resp.status_code == 200
+    assert resp.data["ok"] is True
+
+
+def test_every_catalog_vendor_saves_and_tests_ok(client, admin):
+    """The #39 fix must hold for EVERY connector, not just docstore: for each vendor the
+    catalog advertises, saving with its slug + the fields it declares yields a connection
+    whose test-connection passes (and the read shape carries the slug + human label)."""
+    _login(client, "boss@acme.com", "admin-pass!")
+    catalog = client.get("/api/integrations/catalog/").data
+    checked = []
+    for cap in catalog:
+        for vendor in cap["vendors"]:
+            binding = {f["name"]: "x" for f in vendor["binding"]}
+            secrets = {} if vendor.get("no_secret") else {f["name"]: "x" for f in vendor["secrets"]}
+            create = client.post(
+                "/api/integrations/",
+                {"capability": cap["capability"], "vendor": vendor["slug"],
+                 "binding": binding, "secrets": secrets},
+                format="json",
+            )
+            assert create.status_code == 201, (cap["capability"], create.data)
+            assert create.data["connector"] == vendor["slug"]
+            assert create.data["vendor"] == vendor["label"]
+            assert create.data["status"] == "connected"
+            test = client.post(f"/api/integrations/{create.data['id']}/test-connection/")
+            assert test.status_code == 200
+            assert test.data["ok"] is True, (cap["capability"], vendor["slug"], test.data)
+            checked.append((cap["capability"], vendor["slug"]))
+    # every capability the services layer accepts was exercised
+    assert {c for c, _ in checked} == {
+        "docstore", "tasktracker", "codehost", "designsource", "testmgmt", "codeintel"
+    }
 
 
 def test_test_connection_fails_for_unregistered_vendor(client, admin):

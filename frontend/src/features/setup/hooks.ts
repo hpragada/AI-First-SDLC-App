@@ -44,6 +44,15 @@ export function useIntegrations() {
   return useQuery({ queryKey: ["integrations"], queryFn: api.listIntegrations });
 }
 
+// Per-capability vendor + field catalog (Bugs #40) — static wiring metadata.
+export function useIntegrationsCatalog() {
+  return useQuery({
+    queryKey: ["integrations", "catalog"],
+    queryFn: api.integrationsCatalog,
+    staleTime: Infinity,
+  });
+}
+
 export function useCreateIntegration() {
   const qc = useQueryClient();
   return useMutation({

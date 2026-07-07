@@ -131,15 +131,32 @@ class IntegrationSerializer(serializers.ModelSerializer):
     """Read shape for a connection (S-11 grid). Secret is never exposed — `configured` is the
     only signal a secret has been stored."""
 
-    vendor = serializers.CharField(source="connector", read_only=True)
-    status = serializers.CharField(source="health", read_only=True)
+    connector = serializers.CharField(read_only=True)  # slug (e.g. "confluence")
+    vendor = serializers.SerializerMethodField()        # human label (e.g. "Confluence")
+    status = serializers.SerializerMethodField()
     binding = serializers.JSONField(source="scopes", read_only=True)
     configured = serializers.BooleanField(source="is_configured", read_only=True)
 
     class Meta:
         model = IntegrationConnection
-        fields = ["id", "capability", "vendor", "status", "configured", "binding", "created_at"]
+        fields = ["id", "capability", "connector", "vendor", "status", "configured",
+                  "binding", "created_at"]
         read_only_fields = fields
+
+    def get_vendor(self, obj) -> str:
+        from apps.integrations.catalog import vendor_label
+
+        return vendor_label(obj.capability, obj.connector)
+
+    def get_status(self, obj) -> str:
+        """UI status the S-11 grid understands: a failed health check → 'failed', a
+        stored/usable credential → 'connected', otherwise 'not_connected'. (The raw
+        `health` enum is unknown/healthy/degraded/down — the grid never spoke that.)"""
+        if obj.health == IntegrationConnection.Health.DOWN:
+            return "failed"
+        if obj.is_configured:
+            return "connected"
+        return "not_connected"
 
 
 class IntegrationCreateSerializer(serializers.Serializer):

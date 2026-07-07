@@ -704,6 +704,15 @@ class IntegrationViewSet(
         conn = self.get_object()
         return Response(test_integration_connection(conn))
 
+    @action(detail=False, methods=["get"], url_path="catalog")
+    def catalog(self, request):
+        """The per-capability vendor + field catalog that drives the S-12 connect form
+        (Bugs.xlsx #40). Static wiring metadata — no tenant data — so it's safe for any
+        admin; keeps the frontend from hardcoding vendors."""
+        from apps.integrations.catalog import catalog_payload
+
+        return Response(catalog_payload())
+
 
 # ── WorkItems + phase trigger ───────────────────────────────────────
 class WorkItemViewSet(
