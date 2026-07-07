@@ -53,10 +53,12 @@ def _urllib_transport(method: str, url: str, headers: dict, body: dict | None):
 
 
 def state_mcp_servers(*, api_url: str, tenant_id: str, token: str, run_id: str,
-                      phase: str, repo_root: str | None = None) -> dict:
+                      phase: str, project_id: str = "", repo_root: str | None = None) -> dict:
     """MCP config a planning/review agent uses: the companion-side platform-state server,
     proxying to the platform over HTTP and carrying the run/phase so `ask_human` can open a
-    clarification against this run."""
+    clarification against this run. The project this launch is bound to travels too, so
+    artifact registration fills project_id from here rather than asking the user for a UUID
+    they can't know (Bugs.xlsx rows 25 + 53 — the planning/review seam the earlier fix missed)."""
     root = repo_root or str(Path(__file__).resolve().parents[2])
     return {
         "platform-state": {
@@ -69,6 +71,7 @@ def state_mcp_servers(*, api_url: str, tenant_id: str, token: str, run_id: str,
                 "RUNNER_TENANT_ID": tenant_id,
                 "RUNNER_RUN_ID": run_id,
                 "RUNNER_PHASE": phase,
+                "RUNNER_PROJECT_ID": project_id,
                 "PYTHONPATH": root,
             },
         }
@@ -146,7 +149,8 @@ class CompanionDaemon:
         work_item = _WorkItemShim(payload["work_item_id"], "")
         driver = self._driver_factory(payload.get("agent_body", ""))
         mcp = state_mcp_servers(api_url=self._base, tenant_id=self._tenant, token=self._token,
-                                run_id=run_id, phase=phase)
+                                run_id=run_id, phase=phase,
+                                project_id=payload.get("project_id", ""))
         # Review posts its verdict to the review endpoint (findings); planning posts its draft
         # body to the phase endpoint (becomes the artifact).
         report_path = (f"/api/runner/reviews/{run_id}/report/" if review

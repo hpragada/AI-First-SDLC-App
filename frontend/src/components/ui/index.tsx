@@ -552,23 +552,44 @@ export function Segmented({ options, active }: { options: string[]; active: stri
   );
 }
 
+// A stable, always-visible per-capability glyph so a card reads before any vendor is connected
+// (Bugs.xlsx row 37: icons were blank until connection because the logo derived from the vendor
+// name, which is "Not connected" until then). Keyed by the capability, not the vendor.
+const CAP_GLYPH: Record<string, string> = {
+  docstore: "Do",
+  tasktracker: "Ta",
+  designsource: "De",
+  codehost: "Co",
+  testmgmt: "Te",
+  codeintel: "In",
+};
+
 export function CapCard({
   vendor,
   capability,
+  capabilityKey,
   status,
   failed,
   children,
 }: {
   vendor: string;
   capability: string;
+  capabilityKey?: string;
   status: ReactNode;
   failed?: boolean;
   children?: ReactNode;
 }) {
+  // Show the vendor logo once a real vendor is bound; before that fall back to the capability
+  // icon (always visible) rather than a broken initial of "Not connected".
+  const hasVendor = Boolean(vendor) && vendor !== "Not connected";
+  const glyph = hasVendor ? vendor.charAt(0) : CAP_GLYPH[capabilityKey ?? ""] ?? "•";
+  const logoModifier = hasVendor
+    ? `cap-card__logo--${vendor.toLowerCase()}`
+    : `cap-card__logo--cap-${capabilityKey ?? "unknown"}`;
   return (
     <div className={cx("cap-card", failed && "cap-card--failed")}>
       <div className="cap-card__head">
-        <span className={cx("cap-card__logo", `cap-card__logo--${vendor.toLowerCase()}`)}>{vendor.charAt(0)}</span>
+        <span className={cx("cap-card__logo", logoModifier)}>{glyph}</span>
         <div>
           <div className="cap-card__cap">{capability}</div>
           <div className="cap-card__vendor">{vendor}</div>

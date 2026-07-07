@@ -6,9 +6,12 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { useApp } from "../state";
 import { PLANNING_PHASES, type Run, type WorkItem } from "../types";
+import { statusLabel } from "../features/lifecycle/phases";
 
+// Keep the raw status as the CSS class (styling hook) but show a humanized label —
+// no raw "awaiting_gate" with an underscore leaks to the user (Bugs.xlsx rows 57/58).
 function StateBadge({ value }: { value: string }) {
-  return <span className={`badge ${value}`}>{value}</span>;
+  return <span className={`badge ${value}`}>{statusLabel(value)}</span>;
 }
 
 export function PhaseConsole() {
@@ -101,7 +104,7 @@ export function PhaseConsole() {
             <option value="">— select work item —</option>
             {workItems.map((w) => (
               <option key={w.id} value={w.id}>
-                {w.feature_stream || w.id.slice(0, 8)} · {w.type} · {w.state}
+                {w.feature_stream || w.id.slice(0, 8)} · {w.type} · {statusLabel(w.state)}
               </option>
             ))}
           </select>

@@ -11,7 +11,7 @@ import {
   Spinner,
 } from "../../components/ui";
 import { railNodeView } from "./railView";
-import { phaseLabel, visibleLifecycleNodes } from "./phases";
+import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useClarifications, useDecideApproval, useLifecycle, useRuns, useWorkItem } from "./hooks";
 
 function typeLabel(type: string): string {
@@ -110,7 +110,7 @@ function WorkItemEpicLive() {
               <Kv
                 rows={[
                   ["Phase", phaseLabel(latestRun.agent_phase ?? latestRun.agent_key)],
-                  ["Status", latestRun.status],
+                  ["Status", statusLabel(latestRun.status)],
                   ["Cost", latestRun.cost_usd ? `$${latestRun.cost_usd}` : "—"],
                 ]}
               />
@@ -122,7 +122,7 @@ function WorkItemEpicLive() {
           {pendingGate && (
             <Card attention>
               <CardBody>
-                <span className="gate-panel__role">▲ {pendingGate.gate_type} gate · required role: {pendingGate.required_role}</span>
+                <span className="gate-panel__role">▲ {gateLabel(pendingGate.gate_type)} · required role: {pendingGate.required_role}</span>
                 <h3 className="t-h3">Awaiting your decision</h3>
                 <div className="gate-panel__actions">
                   <Button

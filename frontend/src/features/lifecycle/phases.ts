@@ -69,3 +69,24 @@ export function humanizeLabel(text: string | null | undefined): string {
     .map((tok) => (tok.includes("_") ? phaseLabel(tok) : tok))
     .join(" ");
 }
+
+// A human gate label from a gate type, e.g. "phase_gate" -> "Phase gate": one lowercase "gate",
+// no underscores, never doubled. Callers must NOT append the word "gate" themselves — this
+// returns the whole phrase. Bugs.xlsx rows 54/56/57/58 ("Phase Gate gate" / "phase_gate").
+export function gateLabel(gateType: string | null | undefined): string {
+  if (!gateType) return "Gate";
+  const words = gateType.split(/[_\s]+/).filter(Boolean);
+  const hasGate = words.length > 0 && words[words.length - 1].toLowerCase() === "gate";
+  const base = (hasGate ? words.slice(0, -1) : words)
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ");
+  return base ? `${base} gate` : "Gate";
+}
+
+// Humanize a run/gate status token for display: underscores -> spaces, first word capitalized.
+// "awaiting_gate" -> "Awaiting gate", "running" -> "Running". Bugs.xlsx rows 57/58.
+export function statusLabel(status: string | null | undefined): string {
+  if (!status) return "—";
+  const s = String(status).replace(/_/g, " ").trim();
+  return s ? s[0].toUpperCase() + s.slice(1) : "—";
+}

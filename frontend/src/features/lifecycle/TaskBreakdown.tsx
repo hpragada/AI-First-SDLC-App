@@ -2,6 +2,7 @@ import { useParams } from "react-router-dom";
 
 import { Banner, Breadcrumb, Button, Card, CardBody, Panel, Spinner } from "../../components/ui";
 import { useWorkItem, useWorkItems } from "./hooks";
+import { statusLabel } from "./phases";
 
 // S-23 view states: pushed-to-jira · internal-only.
 export type TaskBreakdownView = "pushed" | "internal";
@@ -102,7 +103,7 @@ function TaskBreakdownLive() {
               <div className="artifact-row" key={task.id}>
                 <div className="artifact-row__main">
                   <div className="artifact-row__title">{task.title || task.id.slice(0, 8)}</div>
-                  <div className="artifact-row__meta">{task.id.slice(0, 8)} · {task.state}</div>
+                  <div className="artifact-row__meta">{task.id.slice(0, 8)} · {statusLabel(task.state)}</div>
                 </div>
                 {task.external_ref?.sor === "jira" && task.external_ref.key && (
                   <span className="sor-chip sor-chip--jira">

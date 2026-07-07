@@ -12,7 +12,7 @@ import {
   Spinner,
 } from "../../components/ui";
 import { railNodeView } from "./railView";
-import { phaseLabel, visibleLifecycleNodes } from "./phases";
+import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useDecideApproval, useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
 
 // S-16 view states: review-loop+test-failed (default) · implementation-running ·
@@ -120,7 +120,7 @@ function WorkItemTaskLive() {
               title="Latest run"
               actions={
                 <Badge variant={running ? "running" : latestRun.status === "failed" ? "failed" : "done"}>
-                  {running ? "Running on your companion" : latestRun.status}
+                  {running ? "Running on your companion" : statusLabel(latestRun.status)}
                 </Badge>
               }
             >
@@ -157,7 +157,7 @@ function WorkItemTaskLive() {
           {pendingGate ? (
             <Card attention>
               <CardBody>
-                <span className="gate-panel__role">▲ {pendingGate.gate_type} gate · required role: {pendingGate.required_role}</span>
+                <span className="gate-panel__role">▲ {gateLabel(pendingGate.gate_type)} · required role: {pendingGate.required_role}</span>
                 <h3 className="t-h3">Awaiting your decision</h3>
                 <div className="gate-panel__actions">
                   <Button
@@ -194,7 +194,7 @@ function WorkItemTaskLive() {
               </h3>
               <Kv
                 rows={[
-                  ["State", workItem.data.state],
+                  ["State", statusLabel(workItem.data.state)],
                   ["Artifacts", String(workItem.data.artifact_count ?? 0)],
                   ["Open gates", String(approvals.data?.length ?? 0)],
                 ]}

@@ -669,6 +669,16 @@
 .cap-card__logo--builtin { background: var(--brand-navy-500); }
 .cap-card__logo--empty { background: var(--bg-subtle); color: var(--text-muted); }
 
+/* capability tints — shown before any vendor is connected so the icon is always visible
+   (Bugs.xlsx row 37). Distinct per capability, smaller glyph since it's a 2-letter code. */
+.cap-card__logo--cap-docstore { background: #2563EB; }
+.cap-card__logo--cap-tasktracker { background: #4F46E5; }
+.cap-card__logo--cap-designsource { background: #7C5CD6; }
+.cap-card__logo--cap-codehost { background: #1B2440; }
+.cap-card__logo--cap-testmgmt { background: #1FA971; }
+.cap-card__logo--cap-codeintel { background: #B45309; }
+[class*="cap-card__logo--cap-"] { font-size: var(--fs-body); letter-spacing: -0.02em; }
+
 /* save-state indicator (profile editor) */
 .save-state { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-muted); }
 .save-state--dirty { color: var(--warning); }
