@@ -203,24 +203,40 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
             text="Trigger the first phase for this work item to see runs appear here with live status and cost."
           />
         ) : (
-          <Table
-            headers={["Run", "Phase", "Status", "Engine / model", "Cost", "Workflow", "Created"]}
-            rows={(forceView ? sampleRuns : runs.data ?? []).map((r) => [
-              // Humanised short reference, full id on hover; opens the run console
-              // (Bugs.xlsx row 55: no raw long UUIDs in the table).
-              <Link to={`/runs/${r.id}`} className="table__id" title={r.id} key="id">
-                Run {shortRef(r.id)} ↗
-              </Link>,
-              <span className="table__primary" key="p">{phaseLabel(r.agent_phase ?? r.agent_key)}</span>,
-              <Badge variant={statusVariant(r.status)} key="s">{statusLabel(r.status)}</Badge>,
-              `${r.engine} · ${r.model}`,
-              <span className="table__id" key="c">{r.cost_usd ? `$${r.cost_usd}` : "—"}</span>,
-              <span className="table__id" title={r.temporal_workflow_id} key="w">
-                {shortRef(r.temporal_workflow_id)}
-              </span>,
-              formatWhen(r.created_at),
-            ])}
-          />
+          <>
+            <Table
+              headers={[
+                "Run", "Phase", "Status", "Engine / model",
+                <span
+                  key="cost-h"
+                  title="Computed Claude Code subscription-equivalent usage — for testing reference. The subscription is not billed per token (actual cost is $0)."
+                >
+                  Cost (est.)
+                </span>,
+                "Workflow", "Created",
+              ]}
+              rows={(forceView ? sampleRuns : runs.data ?? []).map((r) => [
+                // Humanised short reference, full id on hover; opens the run console
+                // (Bugs.xlsx row 55: no raw long UUIDs in the table).
+                <Link to={`/runs/${r.id}`} className="table__id" title={r.id} key="id">
+                  Run {shortRef(r.id)} ↗
+                </Link>,
+                <span className="table__primary" key="p">{phaseLabel(r.agent_phase ?? r.agent_key)}</span>,
+                <Badge variant={statusVariant(r.status)} key="s">{statusLabel(r.status)}</Badge>,
+                `${r.engine} · ${r.model}`,
+                <span className="table__id" key="c">{r.cost_usd ? `$${r.cost_usd}` : "—"}</span>,
+                <span className="table__id" title={r.temporal_workflow_id} key="w">
+                  {shortRef(r.temporal_workflow_id)}
+                </span>,
+                formatWhen(r.created_at),
+              ])}
+            />
+            <p className="t-sm u-muted">
+              Cost is the computed Claude Code <strong>subscription-equivalent</strong> usage,
+              shown for the team's testing reference — the subscription itself is not billed per
+              token (actual charge is $0).
+            </p>
+          </>
         )}
       </Panel>
     </div>

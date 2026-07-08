@@ -20,6 +20,7 @@ import json
 import os
 import shutil
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -101,7 +102,7 @@ class CompanionDaemon:
     def __init__(
         self, *, api_url: str, tenant_id: str, token: str,
         repo_path: str | None = None, worktrees_root: str | None = None,
-        poll_interval: float = 5.0,
+        poll_interval: float = 5.0, heartbeat_interval: float = 30.0,
         transport: Callable[..., tuple[int, object]] | None = None,
         driver_factory: Callable[[str], object] | None = None,
         sleep: Callable[[float], None] = time.sleep,
@@ -112,6 +113,7 @@ class CompanionDaemon:
         self._repo_path = repo_path
         self._worktrees_root = worktrees_root
         self._poll_interval = poll_interval
+        self._heartbeat_interval = heartbeat_interval
         self._transport = transport or _urllib_transport
         self._driver_factory = driver_factory or _default_driver_factory
         self._sleep = sleep
@@ -164,12 +166,25 @@ class CompanionDaemon:
             outputs = getattr(result, "outputs", {}) or {}
             body = outputs.get("result") or outputs.get("text") or ""
             cost = getattr(result, "cost_usd", 0.0)
-            self._report(report_path, {"status": "ok", "body": body, "cost_usd": cost})
+            # `cost` is the engine's computed Claude-subscription-equivalent cost, reported
+            # for the team's reference and surfaced in the web UI. It is NOT an API-billing
+            # signal — current Claude Code reports a non-zero computed cost even on a
+            # subscription, so subscription-only auth is enforced by ensure_local_engine_auth
+            # (below/at startup), never inferred from this number.
+            report = {"status": "ok", "body": body, "cost_usd": cost}
+            # Don't swallow abnormal engine endings: the work that WAS done (MCP-registered
+            # artifacts) is still reported, but the platform gets an honest message instead
+            # of a silently empty phase draft (incident: run 7f67d88a previewed as blank).
+            subtype = outputs.get("result_subtype") or ""
+            if subtype and subtype != "success":
+                report["message"] = f"engine ended abnormally ({subtype})"
+            elif not body:
+                report["message"] = ("engine returned no final text; the staged phase "
+                                     "draft is empty")
+            self._report(report_path, report)
         except Exception as exc:  # noqa: BLE001 — report the failure so the run never hangs
             self._report(report_path, {"status": "failed", "message": str(exc)})
             return
-        # After reporting (the work isn't wasted): halt if the run billed the API.
-        assert_subscription_billing(cost)
 
     def _run_build(self, task: dict) -> None:
         if not (self._repo_path and self._worktrees_root):
@@ -185,8 +200,6 @@ class CompanionDaemon:
             build_task, driver=driver, repo_path=self._repo_path,
             worktrees_root=self._worktrees_root))
         self._report(f"/api/runner/builds/{task['run_id']}/report/", to_build_report(result))
-        # After reporting: halt if the build billed the API (subscription reports $0.00).
-        assert_subscription_billing((result or {}).get("cost_usd"))
 
     def run_task(self, task: dict) -> None:
         # Re-assert subscription-only auth before EVERY run, not just at startup — a
@@ -200,22 +213,46 @@ class CompanionDaemon:
         else:
             self._run_engine_phase(task, review=False)
 
+    # ── liveness heartbeat (RC-2) ──────────────────────────────────
+    def _heartbeat_once(self) -> None:
+        """Touch last_seen so the platform keeps this companion 'online' even while the serve
+        loop is blocked running a phase (it isn't polling /work/ then). Best-effort: a failed
+        ping must never crash the daemon — the next tick retries."""
+        try:
+            self._transport("POST", f"{self._base}/api/runner/heartbeat/", self._headers(), {})
+        except Exception:  # noqa: BLE001 — liveness is best-effort, never fatal
+            pass
+
+    def _run_heartbeat_loop(self, stop: threading.Event) -> None:
+        while not stop.is_set():
+            self._heartbeat_once()
+            stop.wait(self._heartbeat_interval)
+
     # ── the loop ───────────────────────────────────────────────────
     def serve(self, *, max_iterations: int | None = None) -> int:
         """Claim → run → report, sleeping when idle. Runs forever unless `max_iterations`
-        is set (tests). Returns the number of tasks processed."""
+        is set (tests). Returns the number of tasks processed. A background heartbeat thread
+        keeps the companion 'online' throughout a long phase, when the loop is busy in
+        run_task and not polling (RC-2)."""
         ensure_local_engine_auth()
-        processed = 0
-        iterations = 0
-        while max_iterations is None or iterations < max_iterations:
-            iterations += 1
-            task = self.claim()
-            if task is None:
-                self._sleep(self._poll_interval)
-                continue
-            self.run_task(task)
-            processed += 1
-        return processed
+        stop = threading.Event()
+        if self._heartbeat_interval and self._heartbeat_interval > 0:
+            threading.Thread(
+                target=self._run_heartbeat_loop, args=(stop,), daemon=True).start()
+        try:
+            processed = 0
+            iterations = 0
+            while max_iterations is None or iterations < max_iterations:
+                iterations += 1
+                task = self.claim()
+                if task is None:
+                    self._sleep(self._poll_interval)
+                    continue
+                self.run_task(task)
+                processed += 1
+            return processed
+        finally:
+            stop.set()
 
 
 def ensure_local_engine_auth(home: Path | None = None) -> None:
@@ -278,15 +315,10 @@ def ensure_local_engine_auth(home: Path | None = None) -> None:
         )
 
 
-# Subscription usage reports $0.00 — a non-zero engine cost means an API key slipped
-# through some channel we don't know about yet. Last line of defense: halt the daemon so
-# at most ONE run can ever bill the API, and say so loudly.
-def assert_subscription_billing(cost_usd: float | None) -> None:
-    if cost_usd and float(cost_usd) > 0:
-        raise DaemonError(
-            f"the engine reported a non-zero API cost (${float(cost_usd):.4f}) — phases "
-            "must bill the Claude subscription (which reports $0.00), so an API key is "
-            "reaching the engine. Companion halted to stop further API spend. Check "
-            "~/.claude.json (primaryApiKey), the ANTHROPIC_API_KEY env var, and log in "
-            "with: claude /login"
-        )
+# NOTE: subscription-only auth is enforced solely by ensure_local_engine_auth() (env,
+# ~/.claude.json, and OAuth credential checks, fail-closed before every task). The daemon no
+# longer halts on a non-zero engine cost: current Claude Code reports a computed
+# subscription-equivalent cost even when correctly billing the subscription (a real
+# subscription is not metered per-token), so cost is NOT a usable API-key signal. That
+# computed figure is reported to the platform and shown in the web UI for the team's
+# reference only.

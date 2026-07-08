@@ -18,6 +18,7 @@ from .runner_views import (
     RunnerClarificationCreateView,
     RunnerClarificationPollView,
     RunnerEnrollmentView,
+    RunnerHeartbeatView,
     RunnerPhaseFetchView,
     RunnerPhaseReportView,
     RunnerReviewReportView,
@@ -85,6 +86,9 @@ urlpatterns = [
          name="runner-clarification-create"),
     path("runner/clarifications/<uuid:clarification_id>/", RunnerClarificationPollView.as_view(),
          name="runner-clarification-poll"),
+    # Companion liveness: a cheap keep-alive so the companion stays "online" while it is busy
+    # running a phase and not polling /work/ (RC-2).
+    path("runner/heartbeat/", RunnerHeartbeatView.as_view(), name="runner-heartbeat"),
     # Companion phase execution (req #1): claim work, fetch the phase task, report the result.
     path("runner/work/", RunnerWorkClaimView.as_view(), name="runner-work-claim"),
     path("runner/phases/<uuid:run_id>/", RunnerPhaseFetchView.as_view(),

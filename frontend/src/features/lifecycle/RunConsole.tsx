@@ -144,8 +144,11 @@ function RunConsoleLive() {
         actions={
           <>
             {view === "completed" && run.data.cost_usd && (
-              <span className="meta-item">
-                Cost <strong>${run.data.cost_usd}</strong>
+              <span
+                className="meta-item"
+                title="Computed Claude Code subscription-equivalent usage — for testing reference. The subscription is not billed per token (actual cost is $0)."
+              >
+                Cost (est.) <strong>${run.data.cost_usd}</strong>
               </span>
             )}
             <Badge variant={BADGE_VARIANT[view]}>{BADGE_LABEL[view]}</Badge>

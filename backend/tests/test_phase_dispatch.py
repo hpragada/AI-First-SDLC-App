@@ -147,6 +147,46 @@ def test_work_claim_scoped_to_enrollment(world):
     assert r.status_code == 204
 
 
+def test_stale_claim_is_reclaimed_after_lease(world):
+    """RC-3: if the companion that claimed a run dies before reporting, the claim goes stale and
+    a later poll re-claims it. Without this the run stays 'running' with no artifacts, no gate."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    activities.dispatch_phase_core(world["inp"], manifest="# Project\nm")
+    client = APIClient()
+    assert client.get("/api/runner/work/", **_auth(world)).status_code == 200   # first claim
+    assert client.get("/api/runner/work/", **_auth(world)).status_code == 204   # fresh lease held
+
+    # Age the claim past the lease — the companion "died" mid-run without reporting.
+    run = Run.objects.get(id=world["run_id"])
+    dispatch = dict(run.inputs["dispatch"])
+    dispatch["claimed_at"] = (timezone.now() - timedelta(minutes=30)).isoformat()
+    run.inputs = {**run.inputs, "dispatch": dispatch}
+    run.save(update_fields=["inputs"])
+
+    r = client.get("/api/runner/work/", **_auth(world))
+    assert r.status_code == 200 and r.json()["run_id"] == world["run_id"]       # re-dispatched
+    assert Run.objects.get(id=world["run_id"]).inputs["dispatch"]["claim_count"] == 2
+
+
+def test_heartbeat_refreshes_last_seen_and_rejects_bad_token(world):
+    """RC-2: the heartbeat resolves the runner (stamping last_seen), keeping the companion
+    'online' while a phase runs and the loop isn't polling /work/."""
+    from apps.runs.models import RunnerEnrollment
+
+    RunnerEnrollment.objects.filter(id=world["enrollment_id"]).update(last_seen=None)
+    client = APIClient()
+    ok = client.post("/api/runner/heartbeat/", **_auth(world))
+    assert ok.status_code == 200 and ok.json()["ok"] is True
+    assert RunnerEnrollment.objects.get(id=world["enrollment_id"]).last_seen is not None
+
+    bad = client.post("/api/runner/heartbeat/", HTTP_AUTHORIZATION="Runner nope",
+                      HTTP_X_TENANT_ID=world["tenant_id"])
+    assert bad.status_code == 401
+
+
 def test_phase_fetch_then_report(monkeypatch, world):
     from orchestration import phase_report
 

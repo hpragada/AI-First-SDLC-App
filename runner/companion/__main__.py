@@ -59,7 +59,7 @@ def _serve(args) -> int:
     daemon = CompanionDaemon(
         api_url=args.api_url, tenant_id=args.tenant, token=args.token,
         repo_path=args.repo_path, worktrees_root=args.worktrees,
-        poll_interval=args.poll_interval,
+        poll_interval=args.poll_interval, heartbeat_interval=args.heartbeat_interval,
     )
     daemon.serve()
     return 0
@@ -86,6 +86,9 @@ def main(argv=None) -> int:
     s.add_argument("--repo-path", default=None)
     s.add_argument("--worktrees", default=None)
     s.add_argument("--poll-interval", type=float, default=5.0)
+    s.add_argument("--heartbeat-interval", type=float, default=30.0,
+                   help="seconds between liveness pings that keep the companion 'online' while "
+                        "a phase runs (0 disables)")
     s.set_defaults(func=_serve)
 
     r = sub.add_parser("run")

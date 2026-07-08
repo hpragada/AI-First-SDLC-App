@@ -25,7 +25,6 @@ class _FakeDriver:
                                work_item):
         self.calls.append(("plan", manifest, agent_spec.phase_label, allowed_tools))
         self.mcp_servers = mcp_servers
-        # Subscription billing reports $0.00 (a non-zero cost trips the API-billing halt).
         return SimpleNamespace(outputs={"result": "# PRD body"}, cost_usd=0.0)
 
     async def run_review_task(self, **kwargs):
@@ -71,7 +70,10 @@ def _daemon(transport, driver, **kw):
     return CompanionDaemon(
         api_url="http://platform", tenant_id="t1", token="tok",
         transport=transport, driver_factory=lambda body: driver,
-        sleep=kw.pop("sleep", lambda _s: None), **kw)
+        sleep=kw.pop("sleep", lambda _s: None),
+        # Heartbeat is off by default in tests so its background POSTs don't perturb the
+        # report/claim call assertions; the heartbeat has its own focused test below.
+        heartbeat_interval=kw.pop("heartbeat_interval", 0), **kw)
 
 
 def test_serve_runs_plan_then_idles():
@@ -102,6 +104,42 @@ def test_plan_binds_project_id_into_state_mcp_env():
     d.serve(max_iterations=2)
     env = driver.mcp_servers["platform-state"]["env"]
     assert env["RUNNER_PROJECT_ID"] == "proj-1"
+
+
+def test_empty_engine_result_reports_ok_with_honest_message():
+    """Incident (run 7f67d88a): the engine ended with no final text and the daemon reported
+    a silently empty phase draft. The work already done (MCP-registered artifacts) still
+    reports ok, but with an explicit message instead of a blank body going unnoticed."""
+    transport = _Transport([(200, _PLAN_TASK), (204, None)])
+    driver = _FakeDriver()
+
+    async def _empty(**kwargs):
+        return SimpleNamespace(outputs={"result": "", "text": "", "result_subtype": ""},
+                               cost_usd=0.0)
+
+    driver.run_planning_task = _empty
+    d = _daemon(transport, driver)
+    d.serve(max_iterations=2)
+    url, body = transport.reports()[0]
+    assert body["status"] == "ok" and body["body"] == ""
+    assert "no final text" in body["message"]
+
+
+def test_abnormal_engine_subtype_is_reported_in_message():
+    transport = _Transport([(200, _PLAN_TASK), (204, None)])
+    driver = _FakeDriver()
+
+    async def _truncated(**kwargs):
+        return SimpleNamespace(
+            outputs={"result": "partial", "text": "partial",
+                     "result_subtype": "error_max_turns"}, cost_usd=0.5)
+
+    driver.run_planning_task = _truncated
+    d = _daemon(transport, driver)
+    d.serve(max_iterations=2)
+    url, body = transport.reports()[0]
+    assert body["status"] == "ok" and body["body"] == "partial"
+    assert "error_max_turns" in body["message"]
 
 
 def test_engine_failure_is_reported_not_swallowed():
@@ -197,11 +235,12 @@ def test_auth_accepts_setup_token_without_credentials_file(_claude_on_path, monk
     ensure_local_engine_auth()   # no raise — setup-token is subscription auth
 
 
-def test_nonzero_engine_cost_halts_daemon_after_reporting():
-    """Last line of defense: subscription usage reports $0.00, so a non-zero cost means an
-    API key slipped through — the daemon reports the finished phase, then HALTS so at most
-    one run can ever bill the API."""
-    transport = _Transport([(200, _PLAN_TASK)])
+def test_nonzero_engine_cost_is_reported_not_halted():
+    """Current Claude Code reports a computed subscription-equivalent cost even when correctly
+    billing the subscription, so a non-zero cost is NOT an API-billing signal. The daemon must
+    keep running and report the figure (surfaced in the UI for the team's reference), relying on
+    ensure_local_engine_auth for subscription-only enforcement."""
+    transport = _Transport([(200, _PLAN_TASK), (204, None)])
     driver = _FakeDriver()
 
     async def _billed(**kwargs):
@@ -209,13 +248,33 @@ def test_nonzero_engine_cost_halts_daemon_after_reporting():
 
     driver.run_planning_task = _billed
     d = _daemon(transport, driver)
-    with pytest.raises(DaemonError, match="non-zero API cost"):
-        d.serve(max_iterations=1)
-    url, body = transport.reports()[0]     # the work was still reported first
+    assert d.serve(max_iterations=2) == 1   # ran + idled, no DaemonError
+    url, body = transport.reports()[0]
     assert body["status"] == "ok" and body["cost_usd"] == 1.23
 
 
 def test_zero_cost_run_does_not_halt():
     transport = _Transport([(200, _PLAN_TASK), (204, None)])
-    d = _daemon(transport, _FakeDriver())   # fake reports $0.00 (subscription)
+    d = _daemon(transport, _FakeDriver())
     assert d.serve(max_iterations=2) == 1   # ran + idled, no DaemonError
+
+
+# ── liveness heartbeat (RC-2: companion stayed "online" while busy running a phase) ──
+def test_heartbeat_posts_to_heartbeat_endpoint():
+    """The heartbeat touches last_seen out-of-band of the claim/report loop, so a long phase
+    doesn't let the enrollment go stale and flip the UI to 'offline / daemon stopped'."""
+    transport = _Transport([])
+    d = _daemon(transport, _FakeDriver())
+    d._heartbeat_once()
+    posts = [(url, body) for (m, url, body) in transport.calls if m == "POST"]
+    assert posts and posts[0][0].endswith("/api/runner/heartbeat/")
+
+
+def test_heartbeat_failure_never_raises():
+    """A network hiccup on the keep-alive must not crash the daemon — the next tick retries."""
+    def _boom(*a, **k):
+        raise RuntimeError("network down")
+
+    d = _daemon(_Transport([]), _FakeDriver())
+    d._transport = _boom
+    d._heartbeat_once()   # swallowed, no exception

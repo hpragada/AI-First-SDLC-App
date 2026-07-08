@@ -103,6 +103,27 @@ def test_get_groups_enrollments_by_machine_across_projects(
     assert {p["project_name"] for p in machine["projects"]} == {"Payments", "Ledger"}
 
 
+def test_get_collapses_labelless_reenrollments_for_same_project(client, tenant, project, dev):
+    """RC-4: generating a fresh token (no machine label — the web-app default) for the same
+    project must not spawn a new phantom 'machine' card each time. They collapse into one,
+    represented by the most-recently-seen enrollment, so the card reflects the live daemon."""
+    _login(client, "dev@acme.com", "dev-pass!")
+    first = _enroll(client, tenant, project)    # no label
+    second = _enroll(client, tenant, project)   # re-enroll for the same project, still no label
+    assert first.status_code == 201 and second.status_code == 201
+    RunnerEnrollment.objects.filter(id=first.data["id"]).update(
+        last_seen=timezone.now() - timedelta(minutes=10))
+    RunnerEnrollment.objects.filter(id=second.data["id"]).update(last_seen=timezone.now())
+
+    resp = client.get("/api/runners/", HTTP_X_TENANT_ID=str(tenant.id))
+    assert resp.status_code == 200
+    assert len(resp.data) == 1                                    # one card, not two phantoms
+    card = resp.data[0]
+    assert card["online"] is True                                # freshest enrollment wins
+    assert card["id"] == second.data["id"]                       # representative = most recent
+    assert [p["project_id"] for p in card["projects"]] == [str(project.id)]  # project not duped
+
+
 def test_get_online_derived_from_last_seen(client, tenant, project, dev):
     _login(client, "dev@acme.com", "dev-pass!")
     resp = _enroll(client, tenant, project, label="Sarah's MacBook")

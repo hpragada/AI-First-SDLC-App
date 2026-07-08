@@ -100,7 +100,12 @@ def list_developer_enrollments(*, tenant_id, developer_id) -> list[dict]:
     groups: dict[str, dict] = {}
     order: list[str] = []
     for e in rows:
-        key = e.label or str(e.id)
+        # Labelled machines group by label (one card spanning their projects). Label-less
+        # enrollments — the default when a token is generated from the web app — group by
+        # PROJECT instead of by id, so generating a fresh token for the same project (or
+        # re-connecting) collapses into ONE card rather than N phantom "machines" that each
+        # look offline (Bugs.xlsx row 61 / RC-4). The most-recently-seen row represents it.
+        key = e.label or f"project:{e.project_id}"
         if key not in groups:
             groups[key] = {"id": str(e.id), "machine": e.label, "last_seen": e.last_seen,
                            "projects": []}
@@ -109,7 +114,8 @@ def list_developer_enrollments(*, tenant_id, developer_id) -> list[dict]:
         if e.last_seen and (g["last_seen"] is None or e.last_seen > g["last_seen"]):
             g["last_seen"] = e.last_seen
             g["id"] = str(e.id)  # representative row = the group's most recently active one
-        g["projects"].append({"project_id": str(e.project_id), "project_name": e.project.name})
+        if not any(p["project_id"] == str(e.project_id) for p in g["projects"]):
+            g["projects"].append({"project_id": str(e.project_id), "project_name": e.project.name})
 
     now = timezone.now()
     out = []

@@ -26,6 +26,21 @@ const API_ROOT = (import.meta.env.VITE_API_BASE ?? "http://localhost:8000/api").
 const serveCmd = (token: string, tenant: string) =>
   `python -m runner.companion serve --api-url ${API_ROOT} --tenant ${tenant} --token ${token}`;
 
+// Human "last seen" from the real timestamp — replaces the old hardcoded "5m ago" that showed
+// regardless of when the companion actually checked in (Bugs.xlsx row 61 / RC-4).
+function sinceLabel(iso: string | null | undefined): string {
+  if (!iso) return "not yet";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "recently";
+  const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (secs < 45) return "just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+
 export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
   const { currentUser } = useAuth();
   const runners = useRunners(true);
@@ -75,8 +90,8 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
         <Card>
           <CardBody>
             <ConnStatus state="connected">
-              Connected — <strong style={{ margin: "0 4px" }}>{runner?.machine ?? "Sarah's MacBook"}</strong>{" "}
-              · last seen just now
+              Connected — <strong style={{ margin: "0 4px" }}>{runner?.machine || "your machine"}</strong>{" "}
+              · last seen {sinceLabel(runner?.last_seen)}
             </ConnStatus>
             <p className="t-sm u-body" style={{ marginTop: "var(--space-4)" }}>
               Your machine is ready. Trigger phases from any work item — they'll run here. Keep the{" "}
@@ -112,11 +127,11 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
         <Card>
           <CardBody>
             <ConnStatus state="offline">
-              Offline — {runner?.machine ?? "Sarah's MacBook"} · last seen 5m ago
+              Offline — {runner?.machine || "your machine"} · last seen {sinceLabel(runner?.last_seen)}
             </ConnStatus>
             <p className="t-sm u-body" style={{ marginTop: "var(--space-4)" }}>
-              The companion daemon stopped. Phases can't run until it's back. Restart it in your
-              terminal:
+              The companion isn't reachable right now. If it's mid-phase it will reconnect on its
+              own; if it stopped, restart it in your terminal:
             </p>
             <div style={{ marginTop: "var(--space-3)" }}>
               <CmdBlock rows={[serveCmd(shownToken, tenantId)]} />

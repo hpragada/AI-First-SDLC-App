@@ -11,10 +11,19 @@ Two surfaces:
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
 from mcp_platform_state import tools
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+# A work claim is a *lease*. If the companion that claimed a run dies before reporting (crash,
+# manual stop, laptop sleep), the run would otherwise stay "claimed" forever — status stuck at
+# "running", no artifacts, no gate (Bugs.xlsx row 61 / RC-3). A later poll re-claims a run whose
+# claim went stale (claimed_at older than this with no report). It MUST exceed the longest real
+# phase so a still-running phase is never stolen from a live companion.
+CLAIM_LEASE = timedelta(minutes=15)
 
 from apps.projects.models import Project
 from apps.runs.enrollment import (
@@ -232,32 +241,77 @@ class RunnerWorkClaimView(APIView):
 
     def get(self, request):
         from django.db import transaction
+        from django.db.models import Q
+        from django.utils import timezone
 
         runner = RunnerStateView._resolve_runner(request)
         if runner is None:
             return Response({"detail": "invalid or missing Runner token"},
                             status=status.HTTP_401_UNAUTHORIZED)
         tid = str(runner.tenant_id)
+        now = timezone.now()
+        stale_before = (now - CLAIM_LEASE).isoformat()   # ISO8601 UTC sorts chronologically
         with tenant_context(tid), transaction.atomic():
-            run = (
+            # A poll may claim a fresh `pending` dispatch OR re-claim one that a dead companion
+            # left `claimed` past its lease (RC-3). Staleness is checked in Python on the ISO
+            # claimed_at so we lean only on the proven exact JSON-key lookups in the query.
+            candidates = (
                 Run.objects.select_for_update(skip_locked=True)
-                .filter(tenant_id=tid, inputs__dispatch__status="pending",
-                        inputs__dispatch__enrollment_id=str(runner.id))
-                .order_by("created_at").first()
+                .filter(tenant_id=tid, inputs__dispatch__enrollment_id=str(runner.id))
+                .filter(Q(inputs__dispatch__status="pending")
+                        | Q(inputs__dispatch__status="claimed"))
+                .order_by("created_at")
             )
+            run = None
+            reclaimed = False
+            for cand in candidates:
+                dispatch = (cand.inputs or {}).get("dispatch") or {}
+                st = dispatch.get("status")
+                if st == "pending":
+                    run = cand
+                    break
+                claimed_at = dispatch.get("claimed_at")
+                if st == "claimed" and claimed_at and claimed_at < stale_before:
+                    run, reclaimed = cand, True   # its companion went silent past the lease
+                    break
             if run is None:
                 return Response(status=status.HTTP_204_NO_CONTENT)
             inputs = dict(run.inputs or {})
             dispatch = dict(inputs.get("dispatch") or {})
             dispatch["status"] = "claimed"
+            dispatch["claimed_at"] = now.isoformat()
+            dispatch["claim_count"] = int(dispatch.get("claim_count") or 0) + 1
             inputs["dispatch"] = dispatch
             run.inputs = inputs
             run.save(update_fields=["inputs", "updated_at"])
+            if reclaimed:
+                tools.log_event(tid, "companion", "phase.reclaimed", "run", str(run.id),
+                                {"claim_count": dispatch["claim_count"]})
             kind = dispatch.get("kind", "plan")
             key = {"plan": "phase_task", "review": "review_task",
                    "build": "build_task"}.get(kind, "phase_task")
             payload = inputs.get(key) or {}
             return Response({"kind": kind, "run_id": str(run.id), "payload": payload})
+
+
+class RunnerHeartbeatView(APIView):
+    """POST /api/runner/heartbeat/ — the companion pings this on a fixed cadence so the platform
+    keeps the enrollment "online" even while a phase is running. The serve loop runs each phase
+    synchronously (it is busy in run_task and not polling /work/), so without an independent
+    heartbeat `last_seen` goes stale mid-phase and the UI falsely flips to "offline / daemon
+    stopped" and disables triggers (Bugs.xlsx row 61 / RC-2). Resolving the runner refreshes
+    last_seen; the body is otherwise trivial."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request):
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        return Response({"ok": True,
+                         "last_seen": runner.last_seen.isoformat() if runner.last_seen else None})
 
 
 class RunnerPhaseFetchView(APIView):
