@@ -116,6 +116,84 @@ def _run_for(project, phase="ideation", outputs=None):
                               status="completed", outputs=outputs or {})
 
 
+def test_preview_renders_structured_external_ref(client, project, member):
+    """Run 7f67d88a incident: agents register sub-artifacts whose CONTENT is structured
+    JSON in external_ref (the MCP tool is pointers-only — there is no other body channel).
+    Preview must render that content generically, for every artifact type of every phase."""
+    artifact = Artifact.objects.create(
+        tenant=project.tenant, project=project, phase="ideation", type="assumption",
+        sor="internal", status="draft", s3_key="", version=1,
+        external_ref={
+            "title": "Assumptions Register — SpendLog Ideation Phase",
+            "project": "SpendLog-Test-2.1",          # pointer — must NOT render
+            "work_item_id": "8d6f3b7d",              # pointer — must NOT render
+            "total_tier3_inferences": 2,
+            "zero_inference_count": False,
+            "tier3_inferences": [
+                {"id": "ASM-001", "statement": "Mint's shutdown created a gap",
+                 "risk": "Medium", "used_in": ["ideation", "competitive_analysis"]},
+                {"id": "ASM-002", "statement": "5% conversion is reasonable",
+                 "risk": "High", "used_in": ["market_sizing"]},
+            ],
+        },
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(artifact.id))
+    assert resp.status_code == 200
+    body = resp.data["body"]
+    assert resp.data["content_type"] == "text/markdown"
+    assert "# Assumptions Register — SpendLog Ideation Phase" in body
+    assert "### ASM-001" in body and "### ASM-002" in body
+    assert "Mint's shutdown created a gap" in body
+    assert "**Used in:** ideation, competitive_analysis" in body
+    assert "**Total tier3 inferences:** 2" in body
+    assert "SpendLog-Test-2.1" not in body and "8d6f3b7d" not in body
+
+
+def test_preview_prefers_own_structured_ref_over_run_fallback(client, project, member):
+    """A sub-artifact with its own structured content must preview THAT content, not the
+    run's whole phase document."""
+    run = _run_for(project, outputs={"report": {"body": "# whole phase doc", "status": "ok"}})
+    artifact = Artifact.objects.create(
+        tenant=project.tenant, project=project, run=run, phase="ideation",
+        type="stakeholder_map", sor="internal", status="draft", s3_key="", version=1,
+        external_ref={"stakeholders": [{"name": "PO", "role": "approver"}]},
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(artifact.id))
+    assert resp.status_code == 200
+    assert "PO" in resp.data["body"]
+    assert "whole phase doc" not in resp.data["body"]
+
+
+def test_preview_pointer_only_external_ref_still_uses_run_fallback(client, project, member):
+    """An external_ref holding nothing but pointers renders no structured body — the run
+    fallback chain must still apply (regression guard for the row-59 behavior)."""
+    run = _run_for(project, outputs={"report": {"body": "# phase doc", "status": "ok"}})
+    artifact = Artifact.objects.create(
+        tenant=project.tenant, project=project, run=run, phase="ideation",
+        type="market_sizing", sor="internal", status="draft", s3_key="", version=1,
+        external_ref={"title": "", "project": "SpendLog", "work_item_id": "8d6f3b7d"},
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(artifact.id))
+    assert resp.status_code == 200
+    assert resp.data["body"] == "# phase doc"
+
+
+def test_render_structured_ref_units():
+    from integrations.preview import render_structured_ref
+
+    assert render_structured_ref(None) == ""
+    assert render_structured_ref({}) == ""
+    assert render_structured_ref({"url": "x", "id": "1", "sor": "internal"}) == ""
+    out = render_structured_ref({"title": "T", "notes": ["a", "b"],
+                                 "summary": {"state": "ok", "count": 3}})
+    assert "# T" in out
+    assert "## Notes" in out and "- a" in out and "- b" in out
+    assert "## Summary" in out and "- **State:** ok" in out and "- **Count:** 3" in out
+
+
 def test_preview_falls_back_to_run_report_body(client, project, member):
     """Bugs.xlsx row 59: an agent-registered pointer (no s3_key, no inline body) must read
     through to the body of the run it came from instead of 404-ing 'Artifact not found'."""

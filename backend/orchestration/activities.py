@@ -360,7 +360,11 @@ def register_phase_result_core(inp: AgentRunInput, report) -> dict:
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         run.cost_usd = Decimal(str(cost))
-        run.outputs = {"artifact_s3_key": s3_key, "content_hash": digest, "cost_usd": cost}
+        # MERGE, never overwrite: report_phase stored the companion's raw report under
+        # outputs["report"] just before this activity — it is preview's documented last
+        # fallback and must survive result registration.
+        run.outputs = {**(run.outputs or {}), "artifact_s3_key": s3_key,
+                       "content_hash": digest, "cost_usd": cost}
         dispatch = dict((run.inputs or {}).get("dispatch") or {})
         if dispatch:
             dispatch["status"] = "reported"
@@ -368,6 +372,16 @@ def register_phase_result_core(inp: AgentRunInput, report) -> dict:
         run.save(update_fields=["cost_usd", "outputs", "inputs", "updated_at"])
         tools.log_event(inp.tenant_id, "orchestrator", "run.executed", "run", inp.run_id,
                         {"artifact_id": artifact["id"]})
+        if not body:
+            # An "ok" report with no text means the engine ended without producing the phase
+            # document (e.g. max-turns). Don't hide it behind a blank preview at gate time —
+            # make it visible in the run's event stream.
+            tools.log_event(
+                inp.tenant_id, "orchestrator", "phase.empty_result", "run", inp.run_id,
+                {"phase": inp.phase,
+                 "message": getattr(report, "message", "") or
+                 "companion reported ok but the engine returned no final text; "
+                 "the staged phase draft is empty"})
     return {"artifact_ids": [artifact["id"]], "cost_usd": cost}
 
 

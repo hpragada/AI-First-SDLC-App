@@ -21,6 +21,8 @@ wrapper invents.
 """
 from __future__ import annotations
 
+import json
+
 _DOC_CONTENT_TYPE = "text/html"
 _ISSUE_CONTENT_TYPE = "text/plain"
 _INTERNAL_CONTENT_TYPE = "text/markdown"
@@ -71,6 +73,69 @@ def _s3_body(key, object_store) -> str:
         return ""
 
 
+# external_ref keys that are pointers/provenance, not content — everything else an agent
+# put there IS the artifact's content (the MCP register_artifact tool is pointers-only, so
+# structured data in external_ref is the only home sub-artifact content has).
+_REF_POINTER_KEYS = {
+    "body", "format", "title", "url", "id", "key", "sor", "export", "project",
+    "project_id", "run_id", "work_item_id", "repo_id", "space", "space_key",
+}
+
+
+def _humanize_key(key) -> str:
+    return str(key).replace("_", " ").strip().capitalize()
+
+
+def _scalar(value) -> str:
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return str(value)
+
+
+def _render_fields(item: dict) -> list[str]:
+    lines = []
+    for k, v in item.items():
+        if isinstance(v, list) and v and all(not isinstance(x, (dict, list)) for x in v):
+            lines.append(f"- **{_humanize_key(k)}:** {', '.join(_scalar(x) for x in v)}")
+        elif isinstance(v, (dict, list)):
+            lines.append(f"- **{_humanize_key(k)}:** {json.dumps(v, ensure_ascii=False)}")
+        else:
+            lines.append(f"- **{_humanize_key(k)}:** {_scalar(v)}")
+    return lines
+
+
+def render_structured_ref(ref: dict | None) -> str:
+    """Type- and phase-agnostic markdown rendering of the structured content agents register
+    in `external_ref` (assumptions registers, stakeholder maps, test steps, …). No
+    per-artifact-type knowledge: scalars become labelled lines, lists become bullets, lists
+    of dicts become titled sections — so every current and future artifact type of every
+    phase previews the same way. Returns "" when the ref holds nothing but pointers."""
+    ref = ref or {}
+    content = {k: v for k, v in ref.items()
+               if k not in _REF_POINTER_KEYS and v not in (None, "", [], {})}
+    if not content:
+        return ""
+    lines: list[str] = []
+    if ref.get("title"):
+        lines += [f"# {ref['title']}", ""]
+    for key, value in content.items():
+        if isinstance(value, list) and all(isinstance(x, dict) for x in value):
+            lines += [f"## {_humanize_key(key)}", ""]
+            for i, item in enumerate(value, 1):
+                heading = (item.get("id") or item.get("name") or item.get("key")
+                           or f"{_humanize_key(key)} {i}")
+                fields = {k: v for k, v in item.items() if k not in ("id", "name", "key")}
+                lines += [f"### {heading}", *_render_fields(fields), ""]
+        elif isinstance(value, list):
+            lines += [f"## {_humanize_key(key)}",
+                      *[f"- {_scalar(x)}" for x in value], ""]
+        elif isinstance(value, dict):
+            lines += [f"## {_humanize_key(key)}", *_render_fields(value), ""]
+        else:
+            lines.append(f"**{_humanize_key(key)}:** {_scalar(value)}")
+    return "\n".join(lines).strip() + "\n"
+
+
 def _read_internal(artifact, object_store) -> tuple[str, str]:
     body = _s3_body(artifact.s3_key, object_store)
     if body:
@@ -83,6 +148,12 @@ def _read_internal(artifact, object_store) -> tuple[str, str]:
     if body:
         fmt = str(ref.get("format", "")).lower()
         return body, _FORMAT_CONTENT_TYPE.get(fmt, _INTERNAL_CONTENT_TYPE)
+    # The artifact's OWN structured external_ref content (rendered generically) ranks above
+    # the run-level fallbacks: a sub-artifact (assumptions register, stakeholder map, …)
+    # must preview its own content, not the whole phase document.
+    body = render_structured_ref(ref)
+    if body:
+        return body, _INTERNAL_CONTENT_TYPE
     # Agent-registered pointer with no body of its own (Bugs.xlsx row 59): fall back to the
     # run this artifact came from — first the staged phase draft in S3, then the raw report
     # the companion posted. Read-through only; nothing is copied onto the artifact row.

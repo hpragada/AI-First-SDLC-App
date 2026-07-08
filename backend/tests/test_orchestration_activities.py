@@ -165,6 +165,34 @@ def test_publish_artifacts_core_never_auto_exports(wired, store, run_input, monk
     assert any(k.startswith("snapshots/") for k in store._data)
 
 
+def test_register_phase_result_core_merges_outputs_keeping_report(wired, run_input):
+    """The companion's raw report (stored under outputs["report"] by report_phase, just
+    before this activity) is preview's documented last fallback — result registration must
+    MERGE into run.outputs, never overwrite it away."""
+    run = Run.objects.get(id=run_input.run_id)
+    run.outputs = {"report": {"status": "ok", "body": "# Ideation\nfull phase output"}}
+    run.save(update_fields=["outputs"])
+
+    report = SimpleNamespace(body="# Ideation\nfull phase output", cost_usd=0.02)
+    activities.register_phase_result_core(run_input, report)
+
+    outputs = Run.objects.get(id=run_input.run_id).outputs
+    assert outputs["report"]["body"] == "# Ideation\nfull phase output"  # survived
+    assert outputs["artifact_s3_key"]                                    # and staged
+
+
+def test_register_phase_result_core_flags_empty_body(wired, run_input):
+    """An "ok" report with no text must not silently open a gate on a blank deliverable —
+    a phase.empty_result event makes it visible in the run's stream."""
+    from apps.ledger.models import Event
+
+    report = SimpleNamespace(body="", cost_usd=0.0, message="")
+    activities.register_phase_result_core(run_input, report)
+
+    assert Event.objects.filter(action="phase.empty_result",
+                                target_id=run_input.run_id).exists()
+
+
 def test_transition_work_item_core(wired, run_input):
     activities.transition_work_item_core(run_input, "done")
     assert WorkItem.objects.get(id=run_input.work_item_id).state == WorkItem.State.DONE

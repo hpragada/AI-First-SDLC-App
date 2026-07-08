@@ -109,6 +109,7 @@ class ClaudeDriver:
         artifacts: list[ArtifactDraft] = []
         cost_usd = 0.0
         final_result: str | None = None
+        result_subtype = ""
         transport = None
         if self._cli_path:
             transport = SubprocessCLITransport(prompt=prompt, options=options, cli_path=str(self._cli_path))
@@ -126,9 +127,17 @@ class ClaudeDriver:
             elif isinstance(message, ResultMessage):
                 cost_usd = message.total_cost_usd or 0.0
                 final_result = message.result
+                result_subtype = getattr(message, "subtype", "") or ""
 
         joined = "".join(text_parts)
-        outputs = {"result": final_result if final_result is not None else joined, "text": joined}
+        # `result_subtype` travels so callers can tell a normal end ("success") from an
+        # abnormal one (e.g. "error_max_turns") instead of silently treating an empty
+        # result as a finished phase. "" means no ResultMessage arrived at all.
+        outputs = {
+            "result": final_result if final_result is not None else joined,
+            "text": joined,
+            "result_subtype": result_subtype,
+        }
         return RunResult(
             outputs=outputs, artifacts=artifacts, cost_usd=cost_usd, raw_messages=raw_messages
         )
