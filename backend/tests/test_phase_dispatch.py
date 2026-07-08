@@ -187,6 +187,56 @@ def test_heartbeat_refreshes_last_seen_and_rejects_bad_token(world):
     assert bad.status_code == 401
 
 
+# ── RC-3 follow-up: kill the duplicate-v2 re-run (a long phase re-claimed after it reported) ──
+def test_report_phase_flips_dispatch_to_reported_synchronously(world):
+    """The report must mark the dispatch 'reported' in the SAME request, so the daemon's next
+    /work/ poll can never re-claim a just-reported (possibly lease-stale) run and re-run it."""
+    from orchestration.phase_report import report_phase
+
+    activities.dispatch_phase_core(world["inp"], manifest="# Project\nm")
+    report_phase(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                 report={"status": "ok", "body": "# draft"}, signal_sender=lambda *a, **k: None)
+    run = Run.objects.get(id=world["run_id"])
+    assert run.inputs["dispatch"]["status"] == "reported"
+
+
+def test_report_phase_tolerates_already_completed_workflow(world):
+    """A late/duplicate report to a finished workflow returns benignly — no 500 that would
+    crash the companion daemon."""
+    from orchestration.phase_report import report_phase
+
+    activities.dispatch_phase_core(world["inp"], manifest="# Project\nm")
+
+    def _completed(*a, **k):
+        raise RuntimeError("workflow execution already completed")
+
+    out = report_phase(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                       report={"status": "ok", "body": "x"}, signal_sender=_completed)
+    assert out["signaled"] is False and "already completed" in out["note"]
+
+
+def test_stale_claim_not_reclaimed_once_run_left_running(world):
+    """Even a lease-stale 'claimed' dispatch must NOT be re-claimed once the run advanced past
+    running (gated/completed) — exactly the condition that produced the duplicate-v2 artifact."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    activities.dispatch_phase_core(world["inp"], manifest="# Project\nm")
+    client = APIClient()
+    assert client.get("/api/runner/work/", **_auth(world)).status_code == 200   # first claim
+
+    run = Run.objects.get(id=world["run_id"])
+    dispatch = dict(run.inputs["dispatch"])
+    dispatch["claimed_at"] = (timezone.now() - timedelta(minutes=30)).isoformat()  # past lease
+    run.inputs = {**run.inputs, "dispatch": dispatch}
+    run.status = Run.Status.AWAITING_GATE                       # phase finished, at its gate
+    run.save(update_fields=["inputs", "status"])
+
+    # Must NOT re-run it, despite the stale claim.
+    assert client.get("/api/runner/work/", **_auth(world)).status_code == 204
+
+
 def test_phase_fetch_then_report(monkeypatch, world):
     from orchestration import phase_report
 

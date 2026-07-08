@@ -278,3 +278,46 @@ def test_heartbeat_failure_never_raises():
     d = _daemon(_Transport([]), _FakeDriver())
     d._transport = _boom
     d._heartbeat_once()   # swallowed, no exception
+
+
+# ── one bad report must not take down the whole daemon (RC-3 follow-up: v2-duplicate crash) ──
+class _ReportFailsTransport:
+    """Scripted /work/ responses; the report POST returns 500 (e.g. a late report to a
+    workflow that already finished), every other POST is 200."""
+
+    def __init__(self, work_responses):
+        self._work = list(work_responses)
+        self.calls = []
+
+    def __call__(self, method, url, headers, body):
+        self.calls.append((method, url, body))
+        if method == "GET" and url.endswith("/api/runner/work/"):
+            return self._work.pop(0) if self._work else (204, None)
+        if url.endswith("/report/"):
+            return 500, "workflow execution already completed"
+        return 200, {"ok": True}
+
+
+def test_failed_report_does_not_crash_daemon():
+    transport = _ReportFailsTransport([(200, _PLAN_TASK), (204, None)])
+    d = _daemon(transport, _FakeDriver())
+    # The report 500s, but serve must keep going (log + continue), not raise.
+    assert d.serve(max_iterations=2) == 0   # task attempted, report failed → not counted
+    assert any(u.endswith("/api/runner/phases/r1/report/") for (_m, u, _b) in transport.calls)
+
+
+def test_engine_auth_error_still_halts_the_loop():
+    """Auth failures remain fail-closed — EngineAuthError propagates out of serve even though
+    it subclasses DaemonError (which the loop otherwise swallows per-task)."""
+    from runner.companion.daemon import EngineAuthError
+
+    assert issubclass(EngineAuthError, DaemonError)
+    transport = _Transport([(200, _PLAN_TASK), (204, None)])
+    d = _daemon(transport, _FakeDriver())
+
+    def _auth_boom(task):
+        raise EngineAuthError("api key appeared mid-run")
+
+    d.run_task = _auth_boom
+    with pytest.raises(EngineAuthError):
+        d.serve(max_iterations=2)

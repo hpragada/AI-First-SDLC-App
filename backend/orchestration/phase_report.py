@@ -46,12 +46,35 @@ def report_phase(*, tenant_id, run_id, report, signal_sender=None) -> dict:
     with tenant_context(tenant_id):
         run = Run.objects.get(id=run_id, tenant_id=tenant_id)
         run.outputs = {**(run.outputs or {}), "report": asdict(report)}
-        run.save(update_fields=["outputs", "updated_at"])
+        # Close the claim SYNCHRONOUSLY, here, before the (async) workflow flips it. The daemon
+        # polls /api/runner/work/ again the instant this report returns; if the dispatch were
+        # still "claimed" and the phase had outrun CLAIM_LEASE, the work-claim lease would judge
+        # it stale and re-claim + re-run this very phase (the duplicate-v2 regression). Marking
+        # the dispatch terminal now removes it from the claimable set immediately.
+        inputs = dict(run.inputs or {})
+        dispatch = dict(inputs.get("dispatch") or {})
+        if dispatch:
+            dispatch["status"] = "reported"
+            inputs["dispatch"] = dispatch
+            run.inputs = inputs
+            run.save(update_fields=["outputs", "inputs", "updated_at"])
+        else:
+            run.save(update_fields=["outputs", "updated_at"])
         workflow_id = run.temporal_workflow_id
         tools.log_event(tenant_id, "companion", "phase.reported", "run", str(run_id),
                         {"status": report.status})
 
     if not workflow_id:
         raise PhaseReportError("run has no temporal_workflow_id; cannot resume the workflow")
-    signal_sender(workflow_id, report)
+    try:
+        signal_sender(workflow_id, report)
+    except Exception as exc:  # noqa: BLE001
+        # A late or duplicate report can land after the workflow already finished (e.g. the
+        # phase was reported once, gated, and completed). That's not a server error — the
+        # result is recorded — so acknowledge it instead of 500-ing, which would otherwise
+        # crash the companion daemon on an unfatal condition.
+        if "already completed" in str(exc).lower():
+            return {"run_id": str(run_id), "signaled": False, "status": report.status,
+                    "note": "workflow already completed"}
+        raise
     return {"run_id": str(run_id), "signaled": True, "status": report.status}

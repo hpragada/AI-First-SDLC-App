@@ -271,8 +271,14 @@ class RunnerWorkClaimView(APIView):
                     run = cand
                     break
                 claimed_at = dispatch.get("claimed_at")
-                if st == "claimed" and claimed_at and claimed_at < stale_before:
-                    run, reclaimed = cand, True   # its companion went silent past the lease
+                # Re-claim ONLY a still-in-flight run whose companion went silent past the
+                # lease. Never re-run one that already reached a gate or a terminal state — a
+                # long phase that just reported (dispatch flips to "reported" synchronously in
+                # report_phase) or was gated/approved must not be re-run (the duplicate-v2
+                # regression combined a stale lease with an already-finished phase).
+                if (st == "claimed" and claimed_at and claimed_at < stale_before
+                        and cand.status in (Run.Status.PENDING, Run.Status.RUNNING)):
+                    run, reclaimed = cand, True
                     break
             if run is None:
                 return Response(status=status.HTTP_204_NO_CONTENT)

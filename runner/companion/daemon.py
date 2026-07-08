@@ -38,6 +38,12 @@ class DaemonError(Exception):
     """The companion daemon could not start or run a task."""
 
 
+class EngineAuthError(DaemonError):
+    """Subscription-only auth could not be guaranteed (fail-closed). Subclasses DaemonError so
+    existing callers/tests still catch it, but the serve loop re-raises it rather than treating
+    it as a per-task failure — an auth problem must always halt the daemon, never be skipped."""
+
+
 def _urllib_transport(method: str, url: str, headers: dict, body: dict | None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
@@ -248,8 +254,17 @@ class CompanionDaemon:
                 if task is None:
                     self._sleep(self._poll_interval)
                     continue
-                self.run_task(task)
-                processed += 1
+                try:
+                    self.run_task(task)
+                    processed += 1
+                except EngineAuthError:
+                    raise   # fail-closed: an auth problem must always halt the daemon
+                except DaemonError as exc:
+                    # A failed run/report for ONE task must not take down the whole companion
+                    # — otherwise the user sees it drop offline and every later phase stalls.
+                    # The platform already owns the run's state; log and keep serving.
+                    print(f"[companion] task {task.get('run_id')} failed, continuing: {exc}",
+                          file=sys.stderr, flush=True)
             return processed
         finally:
             stop.set()
@@ -275,7 +290,7 @@ def ensure_local_engine_auth(home: Path | None = None) -> None:
     os.environ.pop("ANTHROPIC_API_KEY", None)
     os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
     if shutil.which("claude") is None:
-        raise DaemonError(
+        raise EngineAuthError(
             "the 'claude' CLI is not on PATH — install Claude Code and log in "
             "(claude / claude setup-token) so phases run on your local subscription"
         )
@@ -288,7 +303,7 @@ def ensure_local_engine_auth(home: Path | None = None) -> None:
         except (OSError, ValueError):
             cfg = {}
         if cfg.get("primaryApiKey") or (cfg.get("customApiKeyResponses") or {}).get("approved"):
-            raise DaemonError(
+            raise EngineAuthError(
                 "Claude Code has an API key stored in ~/.claude.json (primaryApiKey / an "
                 "approved API-key prompt). Phases would bill the Anthropic API instead of "
                 "your subscription — refusing to run. Remove it (delete the 'primaryApiKey' "
@@ -307,7 +322,7 @@ def ensure_local_engine_auth(home: Path | None = None) -> None:
         except (OSError, ValueError):
             oauth = {}
     if not oauth.get("accessToken"):
-        raise DaemonError(
+        raise EngineAuthError(
             "no Claude subscription login found (~/.claude/.credentials.json has no OAuth "
             "token). Refusing to run rather than fall back to an API key — log in with "
             "your subscription first: claude /login  (or set CLAUDE_CODE_OAUTH_TOKEN from "
