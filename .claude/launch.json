@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "design-gallery",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8137", "--directory", "docs/design"],
+      "port": 8137
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--host", "0.0.0.0"],
+      "cwd": "frontend",
+      "port": 5173,
+      "autoPort": false,
+      "env": { "VITE_API_BASE": "http://localhost:8000/api" }
+    }
+  ]
+}

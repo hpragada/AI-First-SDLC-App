@@ -49,3 +49,6 @@ runner/workdir/
 
 # Office temp lock files
 ~$*
+
+# Claude Code: machine-local permission grants stay local; launch.json is shared
+.claude/settings.local.json
