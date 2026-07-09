@@ -42,6 +42,7 @@ def _fake_query_factory(messages, captured):
     async def fake_query(*, prompt, options, transport=None):
         captured["prompt"] = prompt
         captured["options"] = options
+        captured["transport"] = transport
         for m in messages:
             yield m
 
@@ -146,6 +147,102 @@ def test_claude_driver_honors_cli_path_env(monkeypatch):
     monkeypatch.setenv("CLAUDE_CLI_PATH", "/usr/local/bin/claude")
     driver = ClaudeDriver(query_fn=_fake_query_factory([], {}), body_loader=lambda s: "b")
     assert driver._cli_path == Path("/usr/local/bin/claude")
+
+
+def test_cli_path_defaults_to_claude_on_path_not_bundle(monkeypatch):
+    """Regression (UX 'Claude Code not found'): with no explicit path or env var, the driver
+    pins to the `claude` found on PATH — so the engine never falls back to the SDK's older
+    bundled binary."""
+    monkeypatch.delenv("CLAUDE_CLI_PATH", raising=False)
+    monkeypatch.setattr("drivers.claude_driver.shutil.which",
+                        lambda name: "/usr/local/bin/claude" if name == "claude" else None)
+    driver = ClaudeDriver(query_fn=_fake_query_factory([], {}), body_loader=lambda s: "b")
+    assert driver._cli_path == Path("/usr/local/bin/claude")
+
+
+async def test_cli_path_reaches_the_engine(tmp_path, monkeypatch):
+    """The pinned CLI must reach the engine — via ClaudeAgentOptions.cli_path on SDKs that
+    support it, else via an explicit transport — so the SDK never resolves its bundled binary."""
+    import drivers.claude_driver as cd
+
+    monkeypatch.setattr(cd.shutil, "which", lambda name: "/usr/local/bin/claude")
+    captured: dict = {}
+    driver = ClaudeDriver(query_fn=_fake_query_factory([], captured),
+                          body_loader=lambda s: "b", workdir_base=tmp_path)
+    await driver.run_planning_task(manifest="m", agent_spec=_spec(), mcp_servers={},
+                                   allowed_tools=[], work_item=SimpleNamespace(id="w1"))
+    if cd._OPTIONS_ACCEPTS_CLI_PATH:
+        assert Path(captured["options"].cli_path) == Path("/usr/local/bin/claude")
+    else:
+        assert captured["transport"] is not None   # pinned via explicit transport (older SDK)
+
+
+async def test_engine_launch_retries_transient_not_found(tmp_path, monkeypatch):
+    """A transient 'Claude Code not found' while the CLI IS present on disk (a lost launch
+    race) is retried, not surfaced as a phase failure."""
+    import drivers.claude_driver as cd
+
+    monkeypatch.setattr(cd, "_LAUNCH_BACKOFF", 0)              # no real waiting in tests
+    cli = tmp_path / "claude.exe"
+    cli.write_text("x")                                       # CLI exists on disk
+
+    calls = {"n": 0}
+
+    async def flaky(*, prompt, options, transport=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError(f"Claude Code not found at: {cli}")
+        for m in _messages():
+            yield m
+
+    driver = ClaudeDriver(query_fn=flaky, body_loader=lambda s: "b", workdir_base=tmp_path,
+                          cli_path=str(cli))
+    result = await driver.run_planning_task(manifest="m", agent_spec=_spec(), mcp_servers={},
+                                            allowed_tools=[], work_item=SimpleNamespace(id="w1"))
+    assert calls["n"] == 2 and result.outputs   # retried once, then succeeded
+
+
+async def test_engine_launch_does_not_retry_when_cli_missing(tmp_path, monkeypatch):
+    """A genuinely missing CLI must fail fast — no retry spin."""
+    import pytest
+
+    import drivers.claude_driver as cd
+
+    monkeypatch.setattr(cd, "_LAUNCH_BACKOFF", 0)
+    calls = {"n": 0}
+
+    async def missing(*, prompt, options, transport=None):
+        calls["n"] += 1
+        raise RuntimeError("Claude Code not found at: /nope/claude")
+        yield  # pragma: no cover — makes this an async generator
+
+    driver = ClaudeDriver(query_fn=missing, body_loader=lambda s: "b", workdir_base=tmp_path,
+                          cli_path="/nope/claude")            # path that does not exist
+    with pytest.raises(RuntimeError, match="not found"):
+        await driver.run_planning_task(manifest="m", agent_spec=_spec(), mcp_servers={},
+                                       allowed_tools=[], work_item=SimpleNamespace(id="w2"))
+    assert calls["n"] == 1   # failed fast, no retry
+
+
+async def test_large_body_delivered_via_file_not_command_line(tmp_path):
+    """Regression (UX 'Claude Code not found' = WinError 206, command line too long): an agent
+    body larger than the command-line budget must be delivered via AGENTS.md, NOT as the system
+    prompt on the command line. Small bodies (the other tests) still travel as the system prompt."""
+    import drivers.claude_driver as cd
+
+    captured: dict = {}
+    big = "X" * (cd._MAX_INLINE_BODY_CHARS + 5000)
+    driver = ClaudeDriver(query_fn=_fake_query_factory(_messages(), captured),
+                          body_loader=lambda s: big, workdir_base=tmp_path)
+    await driver.run_planning_task(manifest="# Project\nmanifest body", agent_spec=_spec(),
+                                   mcp_servers={}, allowed_tools=[],
+                                   work_item=SimpleNamespace(id="big1"))
+
+    # The body is OFF the command line...
+    assert captured["options"].system_prompt is None
+    # ...and instead lives in AGENTS.md, together with the run context.
+    agents_md = (tmp_path / "wi-big1" / "AGENTS.md").read_text(encoding="utf-8")
+    assert big in agents_md and "# Project" in agents_md and "manifest body" in agents_md
 
 
 def test_body_loader_reads_body_ref(tmp_path):

@@ -7,7 +7,11 @@ without the network. `run_build_task` is Phase 2.
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import os
+import shutil
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -25,6 +29,12 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 
 from .base import ArtifactDraft, RunResult
 
+# The SDK moved the "which CLI to launch" setting between versions: newer builds accept it as
+# ClaudeAgentOptions(cli_path=...); older ones only via SubprocessCLITransport(cli_path=...).
+# Detect which the *installed* SDK supports so we pin the CLI correctly on either — the daemon
+# machine and the server/CI can legitimately run different SDK versions.
+_OPTIONS_ACCEPTS_CLI_PATH = "cli_path" in inspect.signature(ClaudeAgentOptions).parameters
+
 if TYPE_CHECKING:
     from apps.registry.models import AgentSpec
     from apps.workitems.models import WorkItem
@@ -32,6 +42,20 @@ if TYPE_CHECKING:
 # Suffix of the platform-state tool that registers an artifact. MCP tools are exposed to
 # the engine as `mcp__<server>__<tool>`, so we match on the suffix.
 _REGISTER_ARTIFACT_TOOL = "register_artifact"
+
+# The agent's instruction body is normally handed to the engine as its system prompt, which the
+# SDK passes ON THE COMMAND LINE. Windows caps a process command line at 32,767 chars, so a large
+# body (the UX Design agent is ~36 KB) overflows it: CreateProcess fails with WinError 206, which
+# the SDK misreports as "Claude Code not found". The fix is to deliver a large body as a FILE
+# (AGENTS.md, which Claude Code auto-loads) instead of the command line — see _deliver_body. This
+# threshold leaves generous headroom for the rest of the args (mcp-config, allowed-tools, flags).
+_MAX_INLINE_BODY_CHARS = 24000
+
+# Generic safety net (NOT the fix above): the engine subprocess can occasionally lose a launch
+# race and surface as "Claude Code not found" even though the CLI is present. That happens before
+# any message streams, so retrying the whole run a few times never double-processes.
+_LAUNCH_RETRIES = 4
+_LAUNCH_BACKOFF = 3.0  # seconds; multiplied by the attempt number for an escalating wait
 
 
 class ClaudeDriver:
@@ -50,13 +74,14 @@ class ClaudeDriver:
         self._body_loader = body_loader or self._read_body_file
         self._repo_root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
         self._workdir_base = Path(workdir_base) if workdir_base else None
-        self._cli_path = (
-            Path(cli_path)
-            if cli_path
-            else Path(os.environ["CLAUDE_CLI_PATH"])
-            if os.environ.get("CLAUDE_CLI_PATH")
-            else None
-        )
+        # Which Claude Code CLI to launch, in priority order:
+        #   explicit cli_path arg  ->  CLAUDE_CLI_PATH env  ->  the `claude` on PATH.
+        # Preferring the on-PATH CLI (the user's own install, kept current) means the engine does
+        # NOT default to the SDK's *bundled* binary, which is an older build. The resolved path is
+        # handed to the engine via ClaudeAgentOptions.cli_path (see below), which the installed
+        # SDK honours; the previous transport-level override was silently incompatible with it.
+        _cli = cli_path or os.environ.get("CLAUDE_CLI_PATH") or shutil.which("claude")
+        self._cli_path = Path(_cli) if _cli else None
         # Engine has no human in the loop — gates are control-plane (#2). Tools are still
         # whitelisted via allowed_tools, so only platform-state tools can run.
         # Use default CLI permission handling in container/root environments to avoid
@@ -77,6 +102,37 @@ class ClaudeDriver:
         workdir.mkdir(parents=True, exist_ok=True)
         return workdir
 
+    # ── engine options ─────────────────────────────────────────────
+    def _agent_options(self, **kwargs) -> ClaudeAgentOptions:
+        """Build ClaudeAgentOptions, pinning the resolved CLI via the field the installed SDK
+        supports (newer SDKs accept options.cli_path; older SDKs get it via an explicit
+        transport in _consume). This is what keeps the engine off the SDK's bundled binary."""
+        if self._cli_path is not None and _OPTIONS_ACCEPTS_CLI_PATH:
+            kwargs["cli_path"] = str(self._cli_path)
+        return ClaudeAgentOptions(**kwargs)
+
+    # ── body delivery ──────────────────────────────────────────────
+    def _deliver_body(self, body: str, manifest: str) -> tuple[str | None, str]:
+        """Decide how the agent's instruction body reaches the engine, and what goes in AGENTS.md.
+
+        The body is normally passed as the engine's system prompt, which the SDK puts on the
+        process command line — capped at 32,767 chars on Windows. A large body (the UX Design
+        agent is ~36 KB) overflows that and the launch fails with WinError 206, which the SDK
+        misreports as 'Claude Code not found'. So when the body is large we deliver it as a FILE:
+        prepend it to AGENTS.md (which Claude Code auto-loads from the working dir as authoritative
+        instructions) and keep it off the command line. Small bodies stay as the system prompt,
+        exactly as before. Returns (system_prompt, agents_md_contents)."""
+        if len(body) <= _MAX_INLINE_BODY_CHARS:
+            return body, manifest
+        agents_md = (
+            f"{body}\n\n"
+            "<!-- The section above is your agent role and operating instructions; treat it as "
+            "authoritative. Your run context (project profile, work item, artifacts) follows. -->"
+            "\n\n---\n\n"
+            f"{manifest}"
+        )
+        return None, agents_md
+
     # ── planning ───────────────────────────────────────────────────
     async def run_planning_task(
         self,
@@ -88,10 +144,11 @@ class ClaudeDriver:
         work_item: WorkItem,
     ) -> RunResult:
         workdir = self._prepare_workdir(work_item)
-        (workdir / "AGENTS.md").write_text(manifest, encoding="utf-8")
+        system_prompt, agents_md = self._deliver_body(self._body_loader(agent_spec), manifest)
+        (workdir / "AGENTS.md").write_text(agents_md, encoding="utf-8")
 
-        options = ClaudeAgentOptions(
-            system_prompt=self._body_loader(agent_spec),
+        options = self._agent_options(
+            system_prompt=system_prompt,
             mcp_servers=mcp_servers,
             allowed_tools=allowed_tools,
             cwd=str(workdir),
@@ -102,7 +159,67 @@ class ClaudeDriver:
         return await self._consume(prompt, options)
 
     async def _consume(self, prompt: str, options: ClaudeAgentOptions) -> RunResult:
-        """Run the engine and map its message stream to a RunResult (shared by planning and
+        """Run the engine, retrying a few times on a transient launch failure — a lost spawn race
+        that the SDK surfaces as 'Claude Code not found' even though the CLI exists. The failure
+        happens before any message streams, so retrying the whole run never double-processes. The
+        known large-body overflow is prevented upstream by _deliver_body, not by this retry."""
+        last_exc: Exception | None = None
+        for attempt in range(_LAUNCH_RETRIES):
+            try:
+                return await self._consume_stream(prompt, options)
+            except Exception as exc:  # noqa: BLE001
+                if self._looks_like_launch_failure(exc):
+                    self._log_launch_diagnostic(exc, options, attempt)
+                if attempt + 1 < _LAUNCH_RETRIES and self._is_transient_launch_error(exc):
+                    last_exc = exc
+                    await asyncio.sleep(_LAUNCH_BACKOFF * (attempt + 1))
+                    continue
+                raise
+        assert last_exc is not None  # loop only exits early via return/raise
+        raise last_exc
+
+    @staticmethod
+    def _looks_like_launch_failure(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return "claude code not found" in msg or "failed to start claude code" in msg
+
+    def _log_launch_diagnostic(self, exc: Exception, options: ClaudeAgentOptions,
+                               attempt: int) -> None:
+        """The SDK hides the real OS error behind a generic 'Claude Code not found'. Surface the
+        raw exception chain (winerror/filename), the CLI, and the working dir to the companion's
+        log so a launch failure is actually diagnosable."""
+        cwd = getattr(options, "cwd", None)
+        cli = self._cli_path
+        lines = [
+            f"[claude-driver] engine launch failed (attempt {attempt + 1}/{_LAUNCH_RETRIES})",
+            f"  cli_path={cli!r} exists={bool(cli) and Path(cli).exists()}",
+            f"  cwd={cwd!r} exists={bool(cwd) and Path(str(cwd)).exists()} "
+            f"is_dir={bool(cwd) and Path(str(cwd)).is_dir()}",
+        ]
+        cur: BaseException | None = exc
+        depth = 0
+        while cur is not None and depth < 8:
+            lines.append(
+                f"  cause[{depth}] {type(cur).__name__}: "
+                f"winerror={getattr(cur, 'winerror', None)} errno={getattr(cur, 'errno', None)} "
+                f"filename={getattr(cur, 'filename', None)} :: {str(cur)[:180]}"
+            )
+            cur = cur.__cause__ or cur.__context__
+            depth += 1
+        print("\n".join(lines), file=sys.stderr, flush=True)
+
+    def _is_transient_launch_error(self, exc: Exception) -> bool:
+        """A lost launch race is reported as 'Claude Code not found at: <path>'. Treat it as
+        transient (worth a retry) ONLY when the CLI actually exists on disk — a genuinely missing
+        CLI must fail fast, not spin. (Command-line-length overflows can't reach here: large
+        bodies are delivered as a file by _deliver_body before launch.)"""
+        msg = str(exc).lower()
+        if "claude code not found" not in msg and "failed to start claude code" not in msg:
+            return False
+        return self._cli_path is not None and Path(self._cli_path).exists()
+
+    async def _consume_stream(self, prompt: str, options: ClaudeAgentOptions) -> RunResult:
+        """Run the engine once and map its message stream to a RunResult (shared by planning and
         build). Artifacts the agent registered are observed via the register_artifact tool."""
         raw_messages: list[Any] = []
         text_parts: list[str] = []
@@ -110,9 +227,12 @@ class ClaudeDriver:
         cost_usd = 0.0
         final_result: str | None = None
         result_subtype = ""
+        # On older SDKs that don't accept cli_path on the options object, pin the CLI via an
+        # explicit transport instead — so those versions still avoid the bundled binary.
         transport = None
-        if self._cli_path:
-            transport = SubprocessCLITransport(prompt=prompt, options=options, cli_path=str(self._cli_path))
+        if self._cli_path is not None and not _OPTIONS_ACCEPTS_CLI_PATH:
+            transport = SubprocessCLITransport(
+                prompt=prompt, options=options, cli_path=str(self._cli_path))
 
         async for message in self._query(prompt=prompt, options=options, transport=transport):
             raw_messages.append(message)
@@ -182,10 +302,11 @@ class ClaudeDriver:
         repo_workspace = Path(repo_workspace)
         sdlc = repo_workspace / ".sdlc"
         sdlc.mkdir(parents=True, exist_ok=True)
-        (sdlc / "AGENTS.md").write_text(manifest, encoding="utf-8")
+        system_prompt, agents_md = self._deliver_body(self._body_loader(agent_spec), manifest)
+        (sdlc / "AGENTS.md").write_text(agents_md, encoding="utf-8")
 
-        options = ClaudeAgentOptions(
-            system_prompt=self._body_loader(agent_spec),
+        options = self._agent_options(
+            system_prompt=system_prompt,
             mcp_servers=mcp_servers,
             allowed_tools=allowed_tools,
             cwd=str(repo_workspace),
@@ -221,10 +342,11 @@ class ClaudeDriver:
         tools; it never edits code, runs git, or merges (the platform owns those). The result
         carries the agent's structured findings, parsed by the review provider."""
         workdir = self._prepare_workdir(work_item)
-        (workdir / "AGENTS.md").write_text(manifest, encoding="utf-8")
+        system_prompt, agents_md = self._deliver_body(self._body_loader(agent_spec), manifest)
+        (workdir / "AGENTS.md").write_text(agents_md, encoding="utf-8")
 
-        options = ClaudeAgentOptions(
-            system_prompt=self._body_loader(agent_spec),
+        options = self._agent_options(
+            system_prompt=system_prompt,
             mcp_servers=mcp_servers,
             allowed_tools=allowed_tools,
             cwd=str(workdir),
