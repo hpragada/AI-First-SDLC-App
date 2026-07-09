@@ -557,6 +557,15 @@ export interface ArtifactPreview {
   phase?: string;
   artifact_type?: string;
   export_target?: string | null;
+  // Multi-state artifacts (per-screen wireframes) carry one self-contained HTML document per
+  // UI state; the preview renders them behind a state switcher. Empty for single-body ones.
+  states?: ArtifactState[];
+}
+
+export interface ArtifactState {
+  name: string;
+  body: string;
+  content_type: string;
 }
 
 // Run transcript (S-33, new — DECISION-7).

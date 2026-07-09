@@ -27,7 +27,8 @@ from .worktree import changed_files, provision_worktree, teardown_worktree
 # the interactive-clarification channel (req #2) — served by dedicated runner endpoints, not
 # the generic state route, but still an mcp__platform-state__ tool the engine must be allowed.
 BUILD_STATE_TOOLS = [
-    "get_context", "get_artifact", "list_artifacts", "register_artifact",
+    "get_context", "get_artifact", "get_artifact_body", "list_artifacts",
+    "register_artifact", "stage_artifact_body",
     "update_artifact", "add_trace_edge", "log_event", "list_work_items",
     "create_work_item", "transition_work_item", "ask_human",
 ]

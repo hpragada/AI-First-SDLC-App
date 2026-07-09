@@ -93,6 +93,37 @@ def test_preview_internal_artifact_reads_inline_external_ref_body(client, projec
     assert resp.data["content_type"] == "text/markdown"
 
 
+def test_preview_multistate_wireframe_returns_states_and_default_body(project, member):
+    """A per-screen wireframe carries one HTML document per UI state in external_ref.states.
+    The preview surfaces every state (read-through) and defaults the primary body to the
+    'default' state so the switcher and the top-level body both render."""
+    from integrations.preview import read_artifact_preview
+    from storage.object_store import InMemoryObjectStore
+
+    store = InMemoryObjectStore()
+    tenant = project.tenant
+    dk = f"drafts/{tenant.id}/{project.id}/r/ux/SCR-001-login-state-1-default.html"
+    ek = f"drafts/{tenant.id}/{project.id}/r/ux/SCR-001-login-state-4-error.html"
+    store.put(dk, "<html>DEFAULT</html>", content_type="text/html")
+    store.put(ek, "<html>ERROR</html>", content_type="text/html")
+    artifact = Artifact.objects.create(
+        tenant=tenant, project=project, phase="ux_design", type="wireframe",
+        sor="internal", status="draft", s3_key=dk, version=1,
+        external_ref={"screen_id": "SCR-001", "route": "/auth/login", "states": [
+            {"name": "state-1-default", "s3_key": dk},
+            {"name": "state-4-error", "s3_key": ek},
+        ]},
+    )
+    payload = read_artifact_preview(
+        tenant_id=str(tenant.id), artifact_id=str(artifact.id), object_store=store)
+    assert payload is not None
+    assert [s["name"] for s in payload["states"]] == ["state-1-default", "state-4-error"]
+    assert "ERROR" in payload["states"][1]["body"]
+    assert payload["states"][1]["content_type"] == "text/html"
+    # primary body is the default state
+    assert "DEFAULT" in payload["body"]
+
+
 def test_preview_missing_internal_body_is_404(client, project, member):
     artifact = Artifact.objects.create(
         tenant=project.tenant, project=project, phase="prd", type="prd",

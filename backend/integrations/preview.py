@@ -169,6 +169,72 @@ def _read_internal(artifact, object_store) -> tuple[str, str]:
     return "", ""
 
 
+def _states(artifact) -> list[dict]:
+    """The wireframe/multi-body state descriptors an agent registered in external_ref.states —
+    each {name, s3_key, content_hash}. Empty for single-body artifacts."""
+    ref = artifact.external_ref or {}
+    states = ref.get("states")
+    return states if isinstance(states, list) else []
+
+
+def render_states(artifact, object_store=None) -> list[dict]:
+    """Read-through every state body of a multi-state artifact (a per-screen wireframe carries
+    one self-contained HTML document per UI state). Returns [{name, body, content_type}] in
+    registration order — the S-29 preview renders these behind a state switcher. Best-effort:
+    a missing S3 object degrades to an empty body, never a 500 (Bugs.xlsx row 59)."""
+    rendered = []
+    for st in _states(artifact):
+        if not isinstance(st, dict):
+            continue
+        rendered.append({
+            "name": st.get("name") or st.get("state") or "state",
+            "body": _s3_body(st.get("s3_key"), object_store),
+            "content_type": _DOC_CONTENT_TYPE,
+        })
+    return rendered
+
+
+def artifact_body_for_agent(artifact, *, state=None, object_store=None,
+                            max_bytes=400_000) -> dict:
+    """One artifact body for an agent that must read content (get_artifact_body). For a
+    multi-state artifact, `state` selects one document; without it, returns the default/primary
+    body and lists the available state names so the caller can fetch the rest one at a time.
+    Truncates a single body at `max_bytes` to stay within the MCP token budget (never silently
+    — sets `truncated`)."""
+    states = _states(artifact)
+    names = [s.get("name") for s in states if isinstance(s, dict) and s.get("name")]
+    if states:
+        if state:
+            match = next((s for s in states
+                          if isinstance(s, dict) and s.get("name") == state), None)
+            if match is None:
+                return {"state": state, "body": "", "content_type": _DOC_CONTENT_TYPE,
+                        "available_states": names,
+                        "error": f"no such state '{state}'"}
+            body = _s3_body(match.get("s3_key"), object_store)
+            return _cap_body({"state": state, "content_type": _DOC_CONTENT_TYPE,
+                              "available_states": names, "body": body}, max_bytes)
+        # No state requested: default/primary body + the menu of states to fetch next.
+        body, content_type = _read_internal(artifact, object_store)
+        return _cap_body({"state": None, "content_type": content_type or _DOC_CONTENT_TYPE,
+                          "available_states": names, "body": body}, max_bytes)
+    body, content_type = _read_internal(artifact, object_store)
+    return _cap_body({"state": None, "content_type": content_type or _INTERNAL_CONTENT_TYPE,
+                      "available_states": [], "body": body}, max_bytes)
+
+
+def _cap_body(payload: dict, max_bytes: int) -> dict:
+    body = payload.get("body") or ""
+    encoded = body.encode("utf-8")
+    if len(encoded) > max_bytes:
+        payload["body"] = encoded[:max_bytes].decode("utf-8", "ignore")
+        payload["truncated"] = True
+        payload["full_bytes"] = len(encoded)
+    else:
+        payload["truncated"] = False
+    return payload
+
+
 def internal_draft_body(artifact, object_store=None) -> str:
     """Public read-through for an internal artifact's draft body (own S3 draft → inline
     external_ref.body → the run's staged/reported body). Used by publish so an export never
@@ -225,8 +291,16 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
             return None
 
         sor_link = None
+        # Multi-state artifacts (per-screen wireframes) carry one HTML document per UI state.
+        states = render_states(artifact, object_store) if artifact.sor == "internal" else []
         if artifact.sor == "internal":
             body, content_type = _read_internal(artifact, object_store)
+            if not body and states:
+                # Primary body defaults to the "default" state (or the first) so a wireframe
+                # whose row has no own s3_key still previews rather than 404-ing.
+                default = next((s for s in states if "default" in (s["name"] or "")),
+                               states[0])
+                body, content_type = default["body"], default["content_type"]
             if not body:
                 return None
         elif artifact.sor == "confluence":
@@ -252,4 +326,5 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
             "phase": artifact.phase,
             "artifact_type": artifact.type,
             "export_target": export_target,
+            "states": states,
         }

@@ -35,7 +35,8 @@ class WriteCompletenessError(Exception):
     """Rule 11: a run reached completion without registering an expected artifact."""
 
 _PLATFORM_TOOL_NAMES = [
-    "get_context", "register_artifact", "update_artifact", "add_trace_edge", "log_event",
+    "get_context", "register_artifact", "stage_artifact_body", "get_artifact_body",
+    "update_artifact", "add_trace_edge", "log_event",
     "list_work_items", "create_work_item", "transition_work_item", "get_artifact",
     "list_artifacts", "detect_drift",
 ]

@@ -32,17 +32,39 @@ def build_server(
 
     @server.tool()
     def get_context(project_id: str, phase: str, work_item_id: str | None = None) -> dict:
-        return client.call("get_context", project_id=project_id, phase=phase,
-                           work_item_id=work_item_id)
+        # Prefer the launch-bound project UUID: agents often pass the project *name* from the
+        # manifest, which is not a valid id (backend 500). The platform knows the real one.
+        return client.call("get_context", project_id=project_id_bound or project_id,
+                           phase=phase, work_item_id=work_item_id)
 
     @server.tool()
     def get_artifact(artifact_id: str) -> dict:
         return client.call("get_artifact", artifact_id=artifact_id)
 
     @server.tool()
+    def get_artifact_body(artifact_id: str, state: str | None = None) -> dict:
+        """Read the actual BODY of an artifact (get_artifact returns pointers only). For a
+        multi-state wireframe, pass `state` (e.g. "state-1-default") for one document; omit it
+        to get the default body plus `available_states` to fetch the rest one call at a time."""
+        return client.call("get_artifact_body", artifact_id=artifact_id, state=state)
+
+    @server.tool()
     def list_artifacts(project_id: str, phase: str | None = None,
                        status: str | None = None) -> list:
-        return client.call("list_artifacts", project_id=project_id, phase=phase, status=status)
+        return client.call("list_artifacts", project_id=project_id_bound or project_id,
+                           phase=phase, status=status)
+
+    @server.tool()
+    def stage_artifact_body(filename: str, body: str, content_type: str = "text/html",
+                            phase: str | None = None) -> dict:
+        """Persist a large DRAFT artifact body (e.g. one self-contained HTML wireframe state)
+        to the object store; returns its pointer (`s3_key`, `content_hash`, `bytes`). Stage
+        each big document here, then reference the returned `s3_key` from `register_artifact`
+        — `register_artifact` never carries a body. project/run/phase are filled from this
+        run. Call once per document to stay within limits."""
+        return client.call("stage_artifact_body", project_id=project_id_bound,
+                           run_id=run_id_bound, phase=phase or phase_bound,
+                           filename=filename, body=body, content_type=content_type)
 
     @server.tool()
     def register_artifact(type: str, sor: str, content_hash: str,

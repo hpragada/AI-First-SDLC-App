@@ -185,7 +185,18 @@ For each screen in the inventory, produce a structured specification:
 
 > **Why separate documents per state:** Separating states into individual self-contained HTML documents eliminates layout clutter, makes each state independently reviewable and renderable in isolation via `<iframe>`, and keeps each one focused and readable. It also prevents state content from interfering with adjacent state layouts — a known issue when all states share a single scrollable document.
 
-For every screen in the Screen Inventory (Step 3), register **one `wireframe` artifact** that carries one self-contained HTML state document per state. The platform persists each artifact body (the HTML) to the object store and renders it on demand — you produce the HTML, not local files.
+For every screen in the Screen Inventory (Step 3), register **one `wireframe` artifact** that carries one self-contained HTML state document per state. You produce the HTML, not local files — and you persist each state's HTML through the platform, not by trying to cram it into `register_artifact` (which is pointers-only and will reject a large body).
+
+**Persistence protocol (do this exactly — it is how the HTML actually reaches the object store and the preview):**
+
+1. For **each** state document of a screen, call **`stage_artifact_body`** with a `filename` like `SCR-001-login-state-1-default.html` and the full HTML as `body`. It returns `{s3_key, content_hash, bytes}`. Stage **one document per call** — never concatenate all states or all screens into one call.
+2. After staging every state of a screen, call **`register_artifact`** **once** for that screen with:
+   - `type="wireframe"`, `sor="internal"`,
+   - `s3_key` = the **default** state's `s3_key` (so the artifact's primary preview is the default screen),
+   - `content_hash` = the default state's `content_hash`,
+   - `external_ref` = `{ "screen_id": "SCR-001", "screen_name": "...", "route": "/...", "persona": "...", "states": [ {"name": "state-1-default", "s3_key": "<from step 1>", "content_hash": "<...>"}, {"name": "state-2-loading", "s3_key": "...", "content_hash": "..."}, ... ] }`.
+
+The platform reads each `states[].s3_key` back through on demand and renders each state in an isolated `<iframe>` behind a state switcher. Do **not** put the HTML itself in `external_ref` and do **not** substitute a prose description for the HTML — stage the real document. The implementation phase later reads any state's HTML with `get_artifact_body(artifact_id, state="state-1-default")`.
 
 **State document naming convention (within each screen's `wireframe` artifact):**
 ```
@@ -509,7 +520,9 @@ For each critical user journey from Step 1, step through the wireframe sequence 
 
 ## Output — Register These Artifacts
 
-Produce each deliverable in full, then register it with the platform-state `register_artifact` tool. Link each output to its source inputs with `add_trace_edge` (rel `derives`), and record the work with `log_event`. The platform persists each artifact body — do not write local files.
+Produce each deliverable in full, then register it with the platform-state `register_artifact` tool. Link each output to its source inputs with `add_trace_edge` (rel `derives`), and record the work with `log_event`. Do not write local files.
+
+**How bodies are persisted:** `register_artifact` is **pointers-only** — it never carries a body. For anything beyond a short structured summary (the full UX Design spec, journey maps, and every wireframe state HTML), first call **`stage_artifact_body(filename, body)`** to persist the body to the object store, then pass the returned `s3_key`/`content_hash` to `register_artifact`. A short, purely structured artifact (e.g. an `assumption` register) may instead carry its content in `external_ref` and be rendered from there. When in doubt, stage the body — never drop content or replace it with a prose stand-in just to make registration fit.
 
 ### 1. UX Design Spec — register as type `ux_design` (primary, `sor="internal"`)
 The authoritative UX specification: the Screen Inventory (Step 3), the Information Architecture — sitemap, navigation pattern decision, and per-screen content inventory (Step 2) — and the structured per-screen wireframe specifications (Step 4). This is the spec the implementation phase reads alongside the per-screen `wireframe` artifacts.
@@ -518,7 +531,7 @@ The authoritative UX specification: the Screen Inventory (Step 3), the Informati
 Complete journey maps for each primary persona, including happy path, error path, and key edge cases (Step 1).
 
 ### 3. Wireframes — register one type `wireframe` artifact **per screen** (`sor="internal"`; `sor="figma"` in READ-AS-SOR MODE)
-One `wireframe` artifact per screen in the Screen Inventory, whose body carries the self-contained HTML state documents for that screen (Step 4b). Every screen must have its required state documents:
+One `wireframe` artifact per screen in the Screen Inventory, whose state HTML documents are persisted via `stage_artifact_body` and referenced from `external_ref.states` (the persistence protocol in Step 4b — stage each state, then one `register_artifact` per screen with `s3_key`=default state and the `states` list). Every screen must have its required state documents:
 - `state-1-default` — always required
 - `state-2-loading` — always required (use Loading State Classification)
 - `state-3-empty` — always required for list/data screens

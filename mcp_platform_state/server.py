@@ -35,9 +35,47 @@ def _bound_run() -> str | None:
     return os.environ.get("PLATFORM_RUN_ID") or None
 
 
+def _resolve_project(project_id: str | None) -> str:
+    """Agents often pass the project *name* from their manifest (or nothing) — the platform
+    knows the real UUID from the launch binding, so prefer it. Only fall back to the agent's
+    arg when nothing is bound (e.g. a cross-project read in a tool that supports it)."""
+    resolved = _bound_project() or project_id
+    if not resolved:
+        raise RuntimeError("project_id not provided and no PLATFORM_PROJECT_ID bound.")
+    return resolved
+
+
 @server.tool()
 def get_context(project_id: str, phase: str, work_item_id: str | None = None) -> dict:
-    return tools.get_context(_tenant(), project_id, phase, work_item_id)
+    return tools.get_context(_tenant(), _resolve_project(project_id), phase, work_item_id)
+
+
+@server.tool()
+def stage_artifact_body(
+    filename: str,
+    body: str,
+    content_type: str = "text/html",
+    phase: str = "",
+    project_id: str | None = None,
+    run_id: str | None = None,
+) -> dict:
+    """Persist a large DRAFT artifact body (e.g. one self-contained HTML wireframe state) to
+    the object store and get back its pointer (`s3_key`, `content_hash`, `bytes`). Stage each
+    big document here, then reference the returned `s3_key` from `register_artifact` —
+    `register_artifact` never carries a body. project_id/run_id/phase are filled from this
+    run; you only pass `filename` + `body`. Call once per document to stay within limits."""
+    return tools.stage_artifact_body(
+        _tenant(), project_id or _bound_project(), run_id or _bound_run(),
+        phase, filename, body, content_type,
+    )
+
+
+@server.tool()
+def get_artifact_body(artifact_id: str, state: str | None = None) -> dict:
+    """Read the actual BODY of an artifact (get_artifact returns pointers only). For a
+    multi-state wireframe, pass `state` (e.g. "state-1-default") to fetch one document; omit
+    it to get the default body plus `available_states` to fetch the rest one call at a time."""
+    return tools.get_artifact_body(_tenant(), artifact_id, state)
 
 
 @server.tool()
@@ -126,7 +164,7 @@ def get_artifact(artifact_id: str) -> dict:
 def list_artifacts(
     project_id: str, phase: str | None = None, status: str | None = None
 ) -> list[dict]:
-    return tools.list_artifacts(_tenant(), project_id, phase, status)
+    return tools.list_artifacts(_tenant(), _resolve_project(project_id), phase, status)
 
 
 @server.tool()

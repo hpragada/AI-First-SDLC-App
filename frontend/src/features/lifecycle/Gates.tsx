@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
@@ -8,6 +8,8 @@ import {
   Button,
   Card,
   CardBody,
+  CriteriaItem,
+  CriteriaList,
   EmptyState,
   Panel,
   Spinner,
@@ -17,7 +19,7 @@ import {
 } from "../../components/ui";
 import type { Approval } from "../../types";
 import { roleLabel } from "../identity/roles";
-import { useApprovals, useDecideApproval, useWorkItems } from "./hooks";
+import { useApprovals, useDecideApproval, useGateCriteria, useWorkItems } from "./hooks";
 import { gateLabel } from "./phases";
 
 // S-21 view states: can-decide (your role) · cannot-decide (permission) ·
@@ -40,12 +42,27 @@ function GatesLive() {
   const [tab, setTab] = useState<"pending" | "history">("pending");
   const [comment, setComment] = useState("");
   const [selectedId, setSelectedId] = useState<string | undefined>();
+  const [satisfied, setSatisfied] = useState<Record<string, boolean>>({});
 
   const loading = approvals.isLoading || workItems.isLoading;
   const projectApprovals = (approvals.data ?? []).filter((a) => workItemIds.has(a.work_item));
   const pending = projectApprovals.filter((a) => a.decision === "pending");
   const decided = projectApprovals.filter((a) => a.decision !== "pending");
   const selected = pending.find((a) => a.id === selectedId) ?? pending[0];
+
+  // Some gates (e.g. the UX Design a11y gate) carry a required WCAG checklist that must be
+  // satisfied before APPROVE — surface it here and send the reviewer's ticks with the decision,
+  // otherwise the backend rejects the approval with "required gate condition(s) unmet".
+  const criteria = useGateCriteria(selected?.id);
+  const criteriaList = criteria.data?.criteria ?? [];
+  useEffect(() => {
+    setSatisfied(Object.fromEntries(criteriaList.map((c) => [c.id, c.satisfied])));
+    // reset when the selected gate (and thus its criteria payload) changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [criteria.data, selected?.id]);
+
+  const metCount = criteriaList.filter((c) => satisfied[c.id]).length;
+  const requiredUnmet = criteriaList.some((c) => c.required && !satisfied[c.id]);
 
   const canDecide = (a: Approval) =>
     Boolean(currentUser?.user.is_tenant_admin) || selectedProject?.role === a.required_role;
@@ -58,7 +75,14 @@ function GatesLive() {
 
   const handleDecide = (decision: "approved" | "rejected") => {
     if (!selected) return;
-    decideApproval.mutate({ id: selected.id, decision, comment: comment || undefined });
+    decideApproval.mutate({
+      id: selected.id,
+      decision,
+      comment: comment || undefined,
+      conditions: criteriaList.length
+        ? criteriaList.map((c) => ({ key: c.id, satisfied: Boolean(satisfied[c.id]) }))
+        : undefined,
+    });
     setComment("");
   };
 
@@ -166,6 +190,35 @@ function GatesLive() {
                   <Link to="/artifacts" className="t-sm">
                     Preview artifact under review ↗
                   </Link>
+                  {criteriaList.length > 0 && (
+                    <div style={{ margin: "var(--space-3) 0 0" }}>
+                      <div className="u-row">
+                        <span className="gate-panel__role">Required checklist</span>
+                        <span className="u-spacer" />
+                        <span
+                          className="criteria-progress"
+                          style={!requiredUnmet ? { color: "var(--success)" } : undefined}
+                        >
+                          {metCount} of {criteriaList.length} met
+                        </span>
+                      </div>
+                      <CriteriaList>
+                        {criteriaList.map((c) => (
+                          <div
+                            key={c.id}
+                            style={{ cursor: "pointer" }}
+                            onClick={() => setSatisfied((s) => ({ ...s, [c.id]: !s[c.id] }))}
+                          >
+                            {/* remount on toggle: CriteriaItem's checkbox is uncontrolled */}
+                            <CriteriaItem key={String(satisfied[c.id])} met={Boolean(satisfied[c.id])}>
+                              {c.text}
+                              {c.required && " *"}
+                            </CriteriaItem>
+                          </div>
+                        ))}
+                      </CriteriaList>
+                    </div>
+                  )}
                   <label className="field" style={{ margin: "var(--space-2) 0 0" }}>
                     <span className="field__label">Comment (optional)</span>
                     <Textarea
@@ -177,10 +230,17 @@ function GatesLive() {
                   <div className="gate-panel__actions">
                     <Button
                       variant="primary"
-                      disabled={decideApproval.isPending}
+                      disabled={decideApproval.isPending || requiredUnmet}
+                      aria-disabled={requiredUnmet}
                       onClick={() => handleDecide("approved")}
                     >
-                      {decideApproval.isPending ? <Spinner /> : "Approve"}
+                      {decideApproval.isPending ? (
+                        <Spinner />
+                      ) : requiredUnmet ? (
+                        `Approve (${criteriaList.length - metCount} remaining)`
+                      ) : (
+                        "Approve"
+                      )}
                     </Button>
                     <Button
                       variant="danger"

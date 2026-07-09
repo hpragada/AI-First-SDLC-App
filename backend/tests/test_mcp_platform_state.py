@@ -5,6 +5,7 @@ tenant scoping (a tool scoped to tenant A cannot see/affect tenant B) and the
 server wiring (all tools registered).
 """
 import asyncio
+import json
 
 import pytest
 from mcp_platform_state import tools
@@ -30,6 +31,88 @@ def world(db):
     spec = AgentSpec.objects.create(tenant=t, key="03_prd", body_ref="agents/03_prd/agent.md")
     run = Run.objects.create(tenant=t, work_item=wi, agent_spec=spec)
     return {"t": t, "project": project, "wi": wi, "run": run}
+
+
+# ── body staging / read-through (large HTML wireframes) ─────────────
+def test_stage_artifact_body_persists_and_returns_pointer(world):
+    """The write-half register_artifact lacks: a large body is staged to the object store and
+    only its pointer comes back (#1/#3 — bodies never ride the pointers-only register call)."""
+    from storage.object_store import InMemoryObjectStore
+
+    t, project, run = world["t"], world["project"], world["run"]
+    store = InMemoryObjectStore()
+    html = "<!DOCTYPE html><html><body>login default</body></html>"
+    res = tools.stage_artifact_body(
+        t.id, project.id, run.id, "ux_design", "SCR-001-login-state-1-default.html",
+        html, object_store=store,
+    )
+    assert res["s3_key"].startswith(f"drafts/{t.id}/{project.id}/{run.id}/ux_design/")
+    assert res["bytes"] == len(html.encode())
+    assert res["content_hash"].startswith("sha256:")
+    # body actually landed in the store, unmodified
+    assert store.get(res["s3_key"]).decode() == html
+
+
+def test_get_artifact_body_returns_one_wireframe_state(world):
+    """A per-screen wireframe carries states[] pointers; get_artifact_body reads ONE state's
+    HTML back through the store (get_artifact stays pointers-only)."""
+    from storage.object_store import InMemoryObjectStore
+
+    t, project, run = world["t"], world["project"], world["run"]
+    store = InMemoryObjectStore()
+    default = tools.stage_artifact_body(
+        t.id, project.id, run.id, "ux_design", "SCR-001-login-state-1-default.html",
+        "<html>DEFAULT</html>", object_store=store)
+    error = tools.stage_artifact_body(
+        t.id, project.id, run.id, "ux_design", "SCR-001-login-state-4-error.html",
+        "<html>ERROR</html>", object_store=store)
+    art = tools.register_artifact(
+        t.id, project.id, run.id, "ux_design", "wireframe", "internal",
+        default["content_hash"], s3_key=default["s3_key"],
+        external_ref={"screen_id": "SCR-001", "route": "/auth/login", "states": [
+            {"name": "state-1-default", "s3_key": default["s3_key"],
+             "content_hash": default["content_hash"]},
+            {"name": "state-4-error", "s3_key": error["s3_key"],
+             "content_hash": error["content_hash"]},
+        ]},
+    )
+    # one specific state
+    body = tools.get_artifact_body(t.id, art["id"], state="state-4-error", object_store=store)
+    assert "ERROR" in body["body"]
+    assert body["available_states"] == ["state-1-default", "state-4-error"]
+    assert body["truncated"] is False
+    # no state → default/primary body + the menu of states to fetch next
+    primary = tools.get_artifact_body(t.id, art["id"], object_store=store)
+    assert "DEFAULT" in primary["body"]
+    assert primary["available_states"] == ["state-1-default", "state-4-error"]
+    # unknown state is reported, not a crash
+    missing = tools.get_artifact_body(t.id, art["id"], state="state-9-nope", object_store=store)
+    assert missing["body"] == "" and "no such state" in missing["error"]
+
+
+def test_list_and_context_return_pointer_only_external_ref(world):
+    """Bugs.xlsx row 69: list_artifacts / get_context must NOT dump artifact bodies. A wireframe
+    with big inline HTML in external_ref must come back with pointers only (states name+s3_key,
+    metadata) so a 50-artifact listing stays within the MCP token budget."""
+    t, project, run = world["t"], world["project"], world["run"]
+    big = "<html>" + "x" * 50_000 + "</html>"
+    tools.register_artifact(
+        t.id, project.id, run.id, "ux_design", "wireframe", "internal", "h1",
+        s3_key="drafts/k/default.html",
+        external_ref={"screen_id": "SCR-001", "route": "/login",
+                      "layout_notes": big, "raw_html": big,
+                      "states": [{"name": "state-1-default", "s3_key": "drafts/k/default.html",
+                                  "content_hash": "hh", "html": big}]},
+    )
+    listed = tools.list_artifacts(t.id, project.id)
+    ref = listed[0]["external_ref"]
+    assert "layout_notes" not in ref and "raw_html" not in ref  # bodies stripped
+    assert ref["screen_id"] == "SCR-001" and ref["route"] == "/login"  # pointers kept
+    assert ref["states"][0]["name"] == "state-1-default"
+    assert "html" not in ref["states"][0]  # only pointer fields survive in states
+    assert len(json.dumps(listed)) < 5_000  # the 50 KB body did not leak into the listing
+    ctx = tools.get_context(t.id, project.id, "ux_design")
+    assert len(json.dumps(ctx["relevant_artifacts"])) < 5_000
 
 
 # ── write tools ─────────────────────────────────────────────────────
@@ -206,7 +289,8 @@ def test_server_registers_all_tools():
 
     registered = {t.name for t in asyncio.run(server.server.list_tools())}
     expected = {
-        "get_context", "register_artifact", "update_artifact", "add_trace_edge",
+        "get_context", "register_artifact", "stage_artifact_body", "get_artifact_body",
+        "update_artifact", "add_trace_edge",
         "log_event", "list_work_items", "create_work_item", "transition_work_item",
         "get_artifact", "list_artifacts", "detect_drift",
     }

@@ -1,7 +1,51 @@
+import { useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { Badge, Banner, Card, CardBody, Breadcrumb, DocPreview, Markdown, Panel, Spinner } from "../../components/ui";
+import type { ArtifactState } from "../../types";
 import { useArtifactPreview } from "./hooks";
+
+// Per-screen wireframes carry one self-contained HTML document per UI state (default,
+// loading, empty, error, success). Each is a full Tailwind-CDN document, so it must render in
+// an isolated <iframe srcDoc> — injecting it into the app DOM would neither run its script nor
+// contain its styles. A switcher flips between the screen's states.
+function WireframeStates({ states }: { states: ArtifactState[] }) {
+  const ordered = [...states].sort((a, b) => a.name.localeCompare(b.name));
+  const [active, setActive] = useState(
+    ordered.find((s) => s.name.includes("default"))?.name ?? ordered[0]?.name,
+  );
+  const current = ordered.find((s) => s.name === active) ?? ordered[0];
+  const label = (name: string) => name.replace(/^state-\d+-/, "").replace(/-/g, " ");
+  return (
+    <div className="u-stack">
+      <div className="u-row" role="tablist" style={{ gap: "var(--space-2)", flexWrap: "wrap" }}>
+        {ordered.map((s) => (
+          <button
+            key={s.name}
+            role="tab"
+            aria-selected={s.name === current?.name}
+            className={s.name === current?.name ? "btn btn--primary btn--sm" : "btn btn--ghost btn--sm"}
+            onClick={() => setActive(s.name)}
+          >
+            {label(s.name)}
+          </button>
+        ))}
+      </div>
+      {current?.body ? (
+        <iframe
+          title={`Wireframe — ${current.name}`}
+          srcDoc={current.body}
+          style={{ width: "100%", height: "72vh", border: "1px solid var(--border, #d0d5dd)", borderRadius: "var(--radius-2, 8px)", background: "#fff" }}
+          sandbox="allow-scripts"
+        />
+      ) : (
+        <Banner variant="warning" title="State body unavailable">
+          This state's HTML couldn't be read from the object store right now.
+        </Banner>
+      )}
+    </div>
+  );
+}
 
 // S-29 view states: markdown · diagram · external · body-unavailable.
 export type ArtifactPreviewView = "markdown" | "diagram" | "external" | "unavailable";
@@ -40,7 +84,8 @@ function ArtifactPreviewLive() {
   }
 
   const data = preview.data;
-  const hasBody = Boolean(data.body);
+  const states = data.states ?? [];
+  const hasBody = Boolean(data.body) || states.length > 0;
 
   return (
     <div className="canvas-pad">
@@ -64,7 +109,9 @@ function ArtifactPreviewLive() {
               )}
             </div>
             <Banner variant="info">Read-through from the system-of-record. This preview is never an editor.</Banner>
-            {data.content_type === "text/html" ? (
+            {states.length > 0 ? (
+              <WireframeStates states={states} />
+            ) : data.content_type === "text/html" ? (
               <DocPreview>
                 <div dangerouslySetInnerHTML={{ __html: data.body ?? "" }} />
               </DocPreview>

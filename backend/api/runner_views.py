@@ -43,6 +43,8 @@ _BUILD_STATE_TOOLS = {
     "get_artifact": tools.get_artifact,
     "list_artifacts": tools.list_artifacts,
     "register_artifact": tools.register_artifact,
+    "stage_artifact_body": tools.stage_artifact_body,
+    "get_artifact_body": tools.get_artifact_body,
     "update_artifact": tools.update_artifact,
     "add_trace_edge": tools.add_trace_edge,
     "log_event": tools.log_event,

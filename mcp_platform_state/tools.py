@@ -44,6 +44,46 @@ def _artifact(a: Artifact) -> dict:
     }
 
 
+# external_ref keys that are small pointers/metadata (safe to inline in a LIST of artifacts).
+# Everything else an agent stuffed into external_ref is CONTENT (structured bodies, inline HTML,
+# long prose) — fetched on demand via get_artifact / get_artifact_body, never dumped into a
+# 50-artifact listing where it blows the MCP token budget (#1/#3: list = pointers, not bodies).
+_POINTER_REF_KEYS = {
+    "id", "key", "url", "title", "sor", "format", "project", "project_id", "run_id",
+    "work_item_id", "repo_id", "space", "space_key", "screen_id", "screen_name", "route",
+    "persona", "status", "count",
+}
+_MAX_POINTER_STR = 300
+
+
+def _lean_ref(ref):
+    """Reduce an external_ref to pointers only, so listing many artifacts stays small. Keeps
+    known small metadata keys and, for multi-state wireframes, the states' name+s3_key+hash
+    (already pointers) — drops every large/structured value (fetch it via get_artifact_body)."""
+    if not isinstance(ref, dict):
+        return ref
+    out = {}
+    for k, v in ref.items():
+        if k == "states" and isinstance(v, list):
+            out["states"] = [
+                {kk: sv.get(kk) for kk in ("name", "s3_key", "content_hash") if kk in sv}
+                for sv in v if isinstance(sv, dict)
+            ]
+        elif (k in _POINTER_REF_KEYS and isinstance(v, (str, int, float, bool))
+              and len(str(v)) <= _MAX_POINTER_STR):
+            out[k] = v
+    return out
+
+
+def _artifact_pointer(a: Artifact) -> dict:
+    """Pointer-only view for get_context / list_artifacts (many artifacts at once). Same shape
+    as _artifact but with the body content stripped out of external_ref so the aggregate stays
+    within the MCP token budget; agents fetch bodies on demand with get_artifact_body."""
+    d = _artifact(a)
+    d["external_ref"] = _lean_ref(a.external_ref)
+    return d
+
+
 def _work_item(w: WorkItem) -> dict:
     return {
         "id": str(w.id),
@@ -176,7 +216,9 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
             "profile": _profile(project),
             "repo": _repo(repo) if repo is not None else None,
             # Knowledge Index = project-scoped shared memory (D5) — retrieve across all repos.
-            "relevant_artifacts": [_artifact(a) for a in artifacts],
+            # Pointers only (bodies fetched via get_artifact_body) so many artifacts with large
+            # external_ref bodies don't blow the MCP token budget (Bugs.xlsx row 69).
+            "relevant_artifacts": [_artifact_pointer(a) for a in artifacts],
             "recent_events": [_event(e) for e in events],
             "retrieved_knowledge": _retrieve_knowledge(tenant_id, project_id, query),
             "answered_clarifications": [_clarification(c) for c in answered],
@@ -331,8 +373,76 @@ def transition_work_item(tenant_id, work_item_id, to_state) -> dict:
 
 
 def get_artifact(tenant_id, artifact_id) -> dict:
+    from django.core.exceptions import ValidationError
+
     with tenant_context(tenant_id):
-        return _artifact(Artifact.objects.get(id=artifact_id, tenant_id=tenant_id))
+        try:
+            return _artifact(Artifact.objects.get(id=artifact_id, tenant_id=tenant_id))
+        except (Artifact.DoesNotExist, ValidationError):
+            return {"error": f"no artifact '{artifact_id}' — pass the full id (a UUID) "
+                             "from list_artifacts / get_context, not a shortened one."}
+
+
+import re as _re  # noqa: E402
+
+# object bodies too large to ride the MCP call are staged here first, then referenced by
+# pointer from register_artifact (#1/#3: bodies live in the object store, state stays pointers).
+_SAFE_FILENAME = _re.compile(r"[^A-Za-z0-9._-]+")
+# read-through of a single body is capped so one screen-state never blows the MCP token
+# budget — agents fetch one state per call (get_artifact_body(state=...)).
+_MAX_BODY_READ_BYTES = 400_000
+
+
+def _obj_store(injected=None):
+    if injected is not None:
+        return injected
+    from storage import s3_from_settings
+
+    return s3_from_settings()
+
+
+def stage_artifact_body(
+    tenant_id, project_id, run_id, phase, filename, body,
+    content_type="text/html", object_store=None,
+) -> dict:
+    """Persist a DRAFT artifact body to the object store and return its pointer
+    (`s3_key`, `content_hash`, `bytes`). This is the write-half the pointers-only
+    `register_artifact` deliberately lacks: an agent stages each large body here (e.g. one
+    self-contained HTML wireframe state), then references the returned `s3_key` from
+    `register_artifact`. Bodies live in the object store, never in the DB/state (#1/#3), and
+    the draft key is run/phase-scoped so a re-run overwrites its own snapshot. Call once per
+    document — one HTML state per call keeps every call well under the MCP token budget."""
+    from storage.object_store import content_hash as _content_hash
+
+    store = _obj_store(object_store)
+    safe = _SAFE_FILENAME.sub("-", str(filename)).strip("-") or "body"
+    key = f"drafts/{tenant_id}/{project_id}/{run_id or 'norun'}/{phase or 'phase'}/{safe}"
+    data = body if isinstance(body, bytes) else str(body).encode("utf-8")
+    store.put(key, data, content_type=content_type)
+    return {"s3_key": key, "content_hash": _content_hash(data), "bytes": len(data)}
+
+
+def get_artifact_body(tenant_id, artifact_id, state=None, object_store=None) -> dict:
+    """Read-through the actual body of an artifact — the read-half agents need to consume
+    content (e.g. the implementation agent reading a screen's wireframe HTML), since
+    `get_artifact` returns pointers only. For a multi-state wireframe (external_ref.states),
+    pass `state` (e.g. "state-1-default") to fetch ONE state; omit it to get the default/
+    primary body plus the list of available state names. One state per call stays within the
+    MCP token budget. Never copies the body onto the row (#1/#3)."""
+    from django.core.exceptions import ValidationError
+    from integrations.preview import artifact_body_for_agent
+
+    with tenant_context(tenant_id):
+        try:
+            artifact = Artifact.objects.select_related("run").get(
+                id=artifact_id, tenant_id=tenant_id)
+        except (Artifact.DoesNotExist, ValidationError):
+            return {"body": "", "content_type": "", "available_states": [],
+                    "error": f"no artifact '{artifact_id}' — pass the full id (a UUID) from "
+                             "list_artifacts / get_context, not a shortened one."}
+        return artifact_body_for_agent(
+            artifact, state=state, object_store=object_store,
+            max_bytes=_MAX_BODY_READ_BYTES)
 
 
 def list_artifacts(tenant_id, project_id, phase=None, status=None) -> list[dict]:
@@ -344,7 +454,9 @@ def list_artifacts(tenant_id, project_id, phase=None, status=None) -> list[dict]
             if status not in Artifact.Status.values:
                 raise ValueError(f"invalid status: {status}")
             qs = qs.filter(status=status)
-        return [_artifact(a) for a in qs.order_by("-created_at")]
+        # Pointers only — a listing must never carry bodies (Bugs.xlsx row 69). Fetch a body
+        # on demand with get_artifact_body(id) using the full id returned here.
+        return [_artifact_pointer(a) for a in qs.order_by("-created_at")]
 
 
 def detect_drift(tenant_id, artifact_id) -> dict:
