@@ -51,8 +51,8 @@ class BuildTask:
     work_item_key: str          # used for the branch name + run prompt
     repo: str                   # "owner/name"
     base: str                   # base branch the worktree forks from
-    manifest: str               # composed AGENTS.md
-    agent_body: str             # the migrated agent's system prompt (07 Implementation)
+    manifest: str               # composed run manifest (delivered in the system prompt)
+    agent_body: str             # the migrated agent's role body (07 Implementation)
     model: str = ""
     phase: str = "implementation"
     api_url: str = ""           # platform base url for remote Platform-State

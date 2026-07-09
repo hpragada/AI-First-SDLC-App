@@ -1,16 +1,35 @@
 """P0-T6 — ExecutionDriver / ClaudeDriver (engine seam, spec §3).
 
 Pure unit tests: an injected fake `query_fn` yields real SDK message objects, so the
-message->RunResult mapping, options construction and AGENTS.md writing are verified
-without the network or a DB.
+message->RunResult mapping, options construction and system-prompt-file delivery are
+verified without the network or a DB.
+
+Delivery contract (Bugs row 65): the agent body + manifest are handed to the engine as its
+SYSTEM PROMPT via `--system-prompt-file <path>`, never on the command line — so any body size
+is safe on Windows and the instructions genuinely reach the model (unlike the earlier AGENTS.md
+attempt, which Claude Code never auto-loaded). The tests render the REAL CLI args and read the
+referenced file, rather than trusting that a file was merely written.
 """
 from pathlib import Path
 from types import SimpleNamespace
 
 import claude_agent_sdk
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from drivers import ArtifactDraft, ClaudeDriver, ExecutionDriver, RunResult
+
+
+def _cli_args(options) -> list[str]:
+    """Render the actual argv the SDK would exec — the true delivery contract, not just the
+    options object. `extra_args` (our SDK's channel for `--system-prompt-file`) lands here."""
+    return SubprocessCLITransport(prompt="x", options=options, cli_path="claude")._build_command()
+
+
+def _system_prompt_file(options) -> Path:
+    from drivers.claude_driver import _SYSTEM_PROMPT_FLAG
+
+    return Path(options.extra_args[_SYSTEM_PROMPT_FLAG])
 
 
 def _messages():
@@ -89,18 +108,33 @@ async def test_run_planning_task_maps_stream_and_writes_manifest(tmp_path):
     assert art.phase == "prd" and art.type == "prd"
     assert art.content_hash == "h1" and art.s3_key == "s3://b/prd.md"
 
-    # AGENTS.md written to the run workdir.
-    agents_md = tmp_path / "wi-wi-123" / "AGENTS.md"
-    assert agents_md.read_text() == "# Project\nmanifest body"
+    # System prompt (body + manifest) delivered via --system-prompt-file, never inline.
+    opts = captured["options"]
+    args = _cli_args(opts)
+    assert "--system-prompt-file" in args and "--system-prompt" not in args
+    assert opts.system_prompt is None
+    sp = _system_prompt_file(opts)
+    assert sp == (tmp_path / "wi-wi-123" / "SYSTEM_PROMPT.md")
+    content = sp.read_text(encoding="utf-8")
+    assert "AGENT BODY" in content and "# Project" in content and "manifest body" in content
+    assert content.index("AGENT BODY") < content.index("# Project")   # body leads
+    # Neither the body nor the manifest is an argv entry (they live in the file).
+    assert not any("AGENT BODY" in str(a) or "manifest body" in str(a) for a in args)
 
     # Options built correctly from the agent spec + caller args.
-    opts = captured["options"]
-    assert opts.system_prompt == "AGENT BODY"
     assert opts.allowed_tools == ["mcp__platform-state__get_context"]
     assert opts.mcp_servers == {"platform-state": {"command": "python"}}
     assert opts.model == "claude-opus-4-8"
     assert opts.permission_mode == "default"
     assert "wi-123" in captured["prompt"]
+
+    # Sandbox (Bugs S.No 63): planning is locked to platform-state MCP tools — the built-in
+    # filesystem/shell/subagent tools are denied, and only project (not user) settings load.
+    for blocked in ("Agent", "Bash", "Read", "Write", "Edit", "Grep", "Glob", "ToolSearch"):
+        assert blocked in opts.disallowed_tools
+    assert opts.setting_sources == ["project"]
+    assert "--disallowedTools" in args
+    assert args[args.index("--setting-sources") + 1] == "project"
 
 
 async def test_run_build_task_runs_in_worktree_and_writes_manifest(tmp_path):
@@ -121,16 +155,33 @@ async def test_run_build_task_runs_in_worktree_and_writes_manifest(tmp_path):
     )
 
     assert isinstance(result, RunResult) and result.cost_usd == 0.0123
-    # Manifest goes to .sdlc/ (excluded from the diff), never the worktree root.
-    assert (workspace / ".sdlc" / "AGENTS.md").read_text() == "# Build manifest"
-    assert not (workspace / "AGENTS.md").exists()
-
     opts = captured["options"]
+    args = _cli_args(opts)
+    # System prompt goes to .sdlc/ (excluded from the diff), never the worktree root; and via
+    # --system-prompt-file so a large build-agent body can never overflow the command line.
+    sp = _system_prompt_file(opts)
+    assert sp == (workspace / ".sdlc" / "SYSTEM_PROMPT.md")
+    assert not (workspace / "SYSTEM_PROMPT.md").exists()   # collision guard: clean worktree root
+    assert not (workspace / "AGENTS.md").exists()
+    content = sp.read_text(encoding="utf-8")
+    assert "BUILD BODY" in content and "# Build manifest" in content
+    assert "--system-prompt-file" in args and "--system-prompt" not in args
+    # We deliberately do NOT force project setting-sources on the client repo (no client
+    # CLAUDE.md / .claude hook loading). The SDK still emits an empty --setting-sources; assert
+    # we never turn it on to "project".
+    assert "project" not in args
     assert opts.cwd == str(workspace)          # the agent runs in the worktree
-    assert opts.system_prompt == "BUILD BODY"
+    assert opts.system_prompt is None
     assert "Bash" in opts.allowed_tools
+    # Implementation is NOT sandboxed — it must edit code in the real worktree, so the
+    # filesystem/shell tools are kept and never denied (Bugs S.No 63 sandbox is planning/review
+    # only). No planning denylist, and no forced project-only setting sources.
+    assert not opts.disallowed_tools
+    for fs_tool in ("Read", "Write", "Edit", "Bash", "Grep", "Glob"):
+        assert fs_tool not in (opts.disallowed_tools or [])
+    assert opts.setting_sources is None
     # The build prompt forbids git/PR — the platform does that (D2).
-    assert ".sdlc/AGENTS.md" in captured["prompt"] and "Do NOT run git" in captured["prompt"]
+    assert "system prompt" in captured["prompt"] and "Do NOT run git" in captured["prompt"]
 
 
 def test_claude_driver_satisfies_protocol():
@@ -224,25 +275,108 @@ async def test_engine_launch_does_not_retry_when_cli_missing(tmp_path, monkeypat
     assert calls["n"] == 1   # failed fast, no retry
 
 
-async def test_large_body_delivered_via_file_not_command_line(tmp_path):
-    """Regression (UX 'Claude Code not found' = WinError 206, command line too long): an agent
-    body larger than the command-line budget must be delivered via AGENTS.md, NOT as the system
-    prompt on the command line. Small bodies (the other tests) still travel as the system prompt."""
-    import drivers.claude_driver as cd
+import pytest
 
+
+@pytest.mark.parametrize("body_size", [5_000, 40_000])   # small AND ux_design-sized (>32767)
+async def test_body_and_manifest_delivered_via_system_prompt_file(tmp_path, body_size):
+    """Regression (Bugs row 65 — the row-64 AGENTS.md fix silently dropped the role body): for
+    EVERY body size, the body + manifest travel via --system-prompt-file (never the command
+    line, so no WinError 206), and both actually reach the file the model reads. The old test
+    asserted only that a file was written — i.e. that the body was on NO delivered channel."""
     captured: dict = {}
-    big = "X" * (cd._MAX_INLINE_BODY_CHARS + 5000)
+    body = "ROLE-BODY " + ("X" * body_size)
     driver = ClaudeDriver(query_fn=_fake_query_factory(_messages(), captured),
-                          body_loader=lambda s: big, workdir_base=tmp_path)
-    await driver.run_planning_task(manifest="# Project\nmanifest body", agent_spec=_spec(),
-                                   mcp_servers={}, allowed_tools=[],
-                                   work_item=SimpleNamespace(id="big1"))
+                          body_loader=lambda s: body, workdir_base=tmp_path)
+    await driver.run_planning_task(
+        manifest="# Project\nmanifest body\n# Rules\nRULE-1 always register",
+        agent_spec=_spec(), mcp_servers={}, allowed_tools=[],
+        work_item=SimpleNamespace(id="big1"))
 
-    # The body is OFF the command line...
-    assert captured["options"].system_prompt is None
-    # ...and instead lives in AGENTS.md, together with the run context.
-    agents_md = (tmp_path / "wi-big1" / "AGENTS.md").read_text(encoding="utf-8")
-    assert big in agents_md and "# Project" in agents_md and "manifest body" in agents_md
+    opts = captured["options"]
+    args = _cli_args(opts)
+    # Delivered as a file-based system prompt; the raw text is never an argv entry.
+    assert "--system-prompt-file" in args and "--system-prompt" not in args
+    assert opts.system_prompt is None
+    assert not any("ROLE-BODY" in str(a) or "RULE-1" in str(a) for a in args)
+    # The file the CLI reads contains the whole body AND the whole manifest (incl. # Rules,
+    # which reaches the model through no other channel).
+    content = _system_prompt_file(opts).read_text(encoding="utf-8")
+    assert body in content
+    assert "# Project" in content and "manifest body" in content
+    assert "# Rules" in content and "RULE-1 always register" in content
+
+
+async def test_system_prompt_file_path_with_spaces(monkeypatch):
+    """Windows run dirs can contain spaces; the SDK passes argv as a list (no shell), so an
+    absolute path with a space must survive intact as a single --system-prompt-file argument."""
+    import tempfile
+
+    base = Path(tempfile.mkdtemp(prefix="sdlc run ")) / "with space"
+    base.mkdir(parents=True)
+    captured: dict = {}
+    driver = ClaudeDriver(query_fn=_fake_query_factory(_messages(), captured),
+                          body_loader=lambda s: "BODY", workdir_base=base)
+    await driver.run_planning_task(manifest="# Project\nm", agent_spec=_spec(), mcp_servers={},
+                                   allowed_tools=[], work_item=SimpleNamespace(id="w1"))
+    sp = _system_prompt_file(captured["options"])
+    assert " " in str(sp) and sp.exists()
+    args = _cli_args(captured["options"])
+    # The path is one argv entry immediately after the flag (not split on the space).
+    assert args[args.index("--system-prompt-file") + 1] == str(sp)
+
+
+async def test_review_task_is_sandboxed_to_platform_tools(tmp_path):
+    """Review reasons over the PR diff the platform inlines into the manifest (read through the
+    CodeHost capability), running in an empty temp workdir — so it, too, is locked to the
+    platform-state MCP tools; the built-in filesystem/shell/subagent tools are denied."""
+    captured: dict = {}
+    driver = ClaudeDriver(query_fn=_fake_query_factory(_messages(), captured),
+                          body_loader=lambda s: "REVIEW BODY", workdir_base=tmp_path)
+    await driver.run_review_task(
+        manifest="# Project\nx\n# Pull Request Under Review\n+ added line",
+        agent_spec=_spec(phase_label="code_review", key="08_code_review"),
+        mcp_servers={}, allowed_tools=["mcp__platform-state__get_artifact"],
+        work_item=SimpleNamespace(id="rv1"))
+    opts = captured["options"]
+    for blocked in ("Agent", "Bash", "Read", "Grep", "ToolSearch"):
+        assert blocked in opts.disallowed_tools
+    assert opts.setting_sources == ["project"]
+    # The inlined diff still reaches the model via the system-prompt file.
+    assert "# Pull Request Under Review" in _system_prompt_file(opts).read_text(encoding="utf-8")
+
+
+def test_resilient_parser_tolerates_unknown_message_types():
+    """CLI/SDK version skew (Bugs: 'Unknown message type: rate_limit_event' aborted a run): an
+    engine message type the pinned SDK doesn't know must NOT crash the phase — it becomes a
+    benign SystemMessage — while a genuinely malformed message still raises."""
+    from claude_agent_sdk import SystemMessage
+    from claude_agent_sdk._errors import MessageParseError
+    from claude_agent_sdk._internal import client as _client
+
+    out = _client.parse_message({"type": "rate_limit_event", "rate_limit": {"status": "allowed"}})
+    assert isinstance(out, SystemMessage) and out.subtype == "rate_limit_event"
+    # forward-robust: any future unknown notification type is tolerated too
+    assert isinstance(_client.parse_message({"type": "some_future_event"}), SystemMessage)
+    # but real errors are NOT hidden
+    import pytest
+    with pytest.raises(MessageParseError):
+        _client.parse_message({"no_type": True})
+
+
+async def test_consume_ignores_system_message_in_stream(tmp_path):
+    """A rate_limit_event (parsed to SystemMessage) interleaved in the stream is ignored; the
+    run still maps the Assistant + Result messages to a valid RunResult."""
+    from claude_agent_sdk import SystemMessage
+
+    msgs = [_messages()[0], SystemMessage(subtype="rate_limit_event", data={}), _messages()[1]]
+    captured: dict = {}
+    driver = ClaudeDriver(query_fn=_fake_query_factory(msgs, captured),
+                          body_loader=lambda s: "b", workdir_base=tmp_path)
+    result = await driver.run_planning_task(manifest="m", agent_spec=_spec(), mcp_servers={},
+                                            allowed_tools=[], work_item=SimpleNamespace(id="w1"))
+    assert result.cost_usd == 0.0123 and result.outputs["result"] == "PRD complete"
+    assert len(result.artifacts) == 1   # the SystemMessage didn't disrupt artifact capture
 
 
 def test_body_loader_reads_body_ref(tmp_path):

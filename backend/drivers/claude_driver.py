@@ -1,9 +1,10 @@
 """ClaudeDriver — planning runs via the Claude Agent SDK (spec §3).
 
-Writes the composed manifest to the run workdir as AGENTS.md, runs the agent with its
-migrated body as the system prompt and the platform-state MCP server wired in, and maps
-the message stream to a RunResult. `query_fn` is injectable so the mapping is testable
-without the network. `run_build_task` is Phase 2.
+Writes the agent's migrated body + composed manifest to the run workdir as SYSTEM_PROMPT.md
+and delivers it as the engine's system prompt via `--system-prompt-file` (file-based, so any
+body size is safe on Windows), with the platform-state MCP server wired in, and maps the
+message stream to a RunResult. `query_fn` is injectable so the mapping is testable without the
+network. `run_build_task` is Phase 2.
 """
 from __future__ import annotations
 
@@ -22,12 +23,54 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ResultMessage,
+    SystemMessage,
     TextBlock,
     ToolUseBlock,
 )
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from .base import ArtifactDraft, RunResult
+
+
+def _install_resilient_message_parser() -> None:
+    """Make the SDK tolerant of engine message types it doesn't know (CLI/SDK version skew).
+
+    The pinned CLI (2.1.205) is newer than the pinned SDK (0.1.0) and emits notification
+    messages the SDK's parser has no case for — e.g. `rate_limit_event`. The parser then raises
+    `MessageParseError: Unknown message type: …`, which propagates out of `query()` and ABORTS
+    the whole phase (observed: a UX run failed with exactly this). These messages are
+    non-essential telemetry; the run's real output still arrives as Assistant/Result messages.
+
+    So we wrap `parse_message`: an unknown message type becomes a benign `SystemMessage` the
+    consumer ignores, instead of crashing the run. This is forward-robust — it tolerates ANY
+    future unknown notification type, not just `rate_limit_event` — while still raising on
+    genuinely malformed messages (missing type, bad shape). Patched at both the source module
+    and the `_internal.client` call site so `query()` picks it up. Idempotent."""
+    from claude_agent_sdk._errors import MessageParseError
+    from claude_agent_sdk._internal import client as _client
+    from claude_agent_sdk._internal import message_parser as _mp
+
+    if getattr(_mp.parse_message, "_sdlc_resilient", False):
+        return
+    _orig = _mp.parse_message
+
+    def _resilient(data):
+        try:
+            return _orig(data)
+        except MessageParseError as exc:
+            mtype = data.get("type") if isinstance(data, dict) else None
+            if mtype and "Unknown message type" in str(exc):
+                print(f"[claude-driver] ignoring unknown engine message type: {mtype!r} "
+                      "(CLI/SDK version skew — non-fatal)", file=sys.stderr, flush=True)
+                return SystemMessage(subtype=str(mtype), data=data)
+            raise
+
+    _resilient._sdlc_resilient = True
+    _mp.parse_message = _resilient
+    _client.parse_message = _resilient   # the actual call site in process_query
+
+
+_install_resilient_message_parser()
 
 # The SDK moved the "which CLI to launch" setting between versions: newer builds accept it as
 # ClaudeAgentOptions(cli_path=...); older ones only via SubprocessCLITransport(cli_path=...).
@@ -43,17 +86,46 @@ if TYPE_CHECKING:
 # the engine as `mcp__<server>__<tool>`, so we match on the suffix.
 _REGISTER_ARTIFACT_TOOL = "register_artifact"
 
-# The agent's instruction body is normally handed to the engine as its system prompt, which the
-# SDK passes ON THE COMMAND LINE. Windows caps a process command line at 32,767 chars, so a large
-# body (the UX Design agent is ~36 KB) overflows it: CreateProcess fails with WinError 206, which
-# the SDK misreports as "Claude Code not found". The fix is to deliver a large body as a FILE
-# (AGENTS.md, which Claude Code auto-loads) instead of the command line — see _deliver_body. This
-# threshold leaves generous headroom for the rest of the args (mcp-config, allowed-tools, flags).
-_MAX_INLINE_BODY_CHARS = 24000
+# The agent's role body + the composed run manifest are delivered to the engine as its SYSTEM
+# PROMPT, via a FILE (`--system-prompt-file <path>`), never on the command line. Passing the
+# system prompt inline (`--system-prompt <text>`) puts it on the process command line, which
+# Windows caps at 32,767 chars — a large body (the UX Design agent is ~36 KB) overflows it and
+# CreateProcess fails with WinError 206, which the SDK misreports as "Claude Code not found".
+# Delivering via a file makes overflow structurally impossible for ANY body size, and — unlike
+# the earlier AGENTS.md attempt — a `--system-prompt-file` genuinely reaches the model (Claude
+# Code does NOT auto-load AGENTS.md, and planning agents have no Read tool to open it). See
+# `_write_system_prompt_file`. The pinned CLI (2.1.205) accepts `--system-prompt-file`; our SDK
+# (0.1.0) doesn't type it, so we pass it through `ClaudeAgentOptions.extra_args`.
+_SYSTEM_PROMPT_FLAG = "system-prompt-file"
+_SYSTEM_PROMPT_FILENAME = "SYSTEM_PROMPT.md"
 
-# Generic safety net (NOT the fix above): the engine subprocess can occasionally lose a launch
-# race and surface as "Claude Code not found" even though the CLI is present. That happens before
-# any message streams, so retrying the whole run a few times never double-processes.
+# ── planning/review sandbox (Bugs S.No 63) ─────────────────────────────────────────────────
+# Planning and review phases REASON over the platform-provided manifest (project context,
+# registered artifacts, and — for review — the PR diff the platform inlines by reading it
+# THROUGH the CodeHost capability). They run in a fresh EMPTY temp workdir with no repo checked
+# out, so the engine's built-in filesystem/shell/subagent tools can reach nothing useful — they
+# only let the agent WANDER (observed: a UX run spawned subagents to grep an empty dir for
+# minutes before doing real work). We deny those tools so a planning/review agent can use ONLY
+# the platform-state MCP tools it was granted. Two layers:
+#   (1) disallowed_tools — a hard denylist the CLI enforces even in headless mode (verified: a
+#       disallowed Read returns "blocked"); covers built-ins + the subagent tool (`Agent`).
+#   (2) setting_sources=["project"] — load settings ONLY from the (empty) run workdir, never the
+#       user's global Claude Code config, so no user skills / custom subagents / extra MCP
+#       servers leak into the sandbox and tempt the agent off the platform tools. Context is
+#       delivered via --system-prompt-file (not settings), so this does not affect it.
+# Implementation/build is the ONE phase that works in a real git worktree and MUST keep these
+# tools — it runs through run_build_task and is deliberately NOT sandboxed here.
+_PLANNING_DISALLOWED_TOOLS = [
+    "Agent", "Task", "Bash", "BashOutput", "KillShell", "Read", "Write", "Edit",
+    "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch", "ToolSearch", "TodoWrite", "Skill",
+]
+_SANDBOX_SETTING_SOURCES = ["project"]
+
+# Generic safety net: the engine subprocess can occasionally lose a launch race and surface as
+# "Claude Code not found" even though the CLI is present. That happens before any message
+# streams, so retrying the whole run a few times never double-processes. (This is NOT the fix
+# for the overflow above — that is now impossible because the system prompt never touches the
+# command line; this only covers transient spawn races.)
 _LAUNCH_RETRIES = 4
 _LAUNCH_BACKOFF = 3.0  # seconds; multiplied by the attempt number for an escalating wait
 
@@ -111,27 +183,29 @@ class ClaudeDriver:
             kwargs["cli_path"] = str(self._cli_path)
         return ClaudeAgentOptions(**kwargs)
 
-    # ── body delivery ──────────────────────────────────────────────
-    def _deliver_body(self, body: str, manifest: str) -> tuple[str | None, str]:
-        """Decide how the agent's instruction body reaches the engine, and what goes in AGENTS.md.
-
-        The body is normally passed as the engine's system prompt, which the SDK puts on the
-        process command line — capped at 32,767 chars on Windows. A large body (the UX Design
-        agent is ~36 KB) overflows that and the launch fails with WinError 206, which the SDK
-        misreports as 'Claude Code not found'. So when the body is large we deliver it as a FILE:
-        prepend it to AGENTS.md (which Claude Code auto-loads from the working dir as authoritative
-        instructions) and keep it off the command line. Small bodies stay as the system prompt,
-        exactly as before. Returns (system_prompt, agents_md_contents)."""
-        if len(body) <= _MAX_INLINE_BODY_CHARS:
-            return body, manifest
-        agents_md = (
+    # ── system-prompt delivery (body + manifest, file-based) ───────
+    @staticmethod
+    def _compose_system_prompt(body: str, manifest: str) -> str:
+        """The agent's authoritative system prompt = its role/process body, then the composed run
+        manifest (project profile, work item, artifacts, and — reaching the model for the first
+        time via this channel — `# Rules`). Body first so the identity leads; the manifest follows
+        as the run context the body references."""
+        return (
             f"{body}\n\n"
             "<!-- The section above is your agent role and operating instructions; treat it as "
             "authoritative. Your run context (project profile, work item, artifacts) follows. -->"
             "\n\n---\n\n"
             f"{manifest}"
         )
-        return None, agents_md
+
+    def _write_system_prompt_file(self, dir_: Path, body: str, manifest: str) -> str:
+        """Write the composed system prompt to `SYSTEM_PROMPT.md` in the run dir and return its
+        ABSOLUTE path (the CLI resolves a relative `--system-prompt-file` against cwd and validates
+        it exists). A distinct filename — not AGENTS.md/CLAUDE.md — so it is never confused with a
+        project-instructions file, and size-independent: no command-line channel, no overflow."""
+        path = (dir_ / _SYSTEM_PROMPT_FILENAME).resolve()
+        path.write_text(self._compose_system_prompt(body, manifest), encoding="utf-8")
+        return str(path)
 
     # ── planning ───────────────────────────────────────────────────
     async def run_planning_task(
@@ -144,13 +218,15 @@ class ClaudeDriver:
         work_item: WorkItem,
     ) -> RunResult:
         workdir = self._prepare_workdir(work_item)
-        system_prompt, agents_md = self._deliver_body(self._body_loader(agent_spec), manifest)
-        (workdir / "AGENTS.md").write_text(agents_md, encoding="utf-8")
+        sp_file = self._write_system_prompt_file(
+            workdir, self._body_loader(agent_spec), manifest)
 
         options = self._agent_options(
-            system_prompt=system_prompt,
+            extra_args={_SYSTEM_PROMPT_FLAG: sp_file},
             mcp_servers=mcp_servers,
             allowed_tools=allowed_tools,
+            disallowed_tools=_PLANNING_DISALLOWED_TOOLS,   # sandbox: platform-state MCP only
+            setting_sources=_SANDBOX_SETTING_SOURCES,      # no user skills/subagents/MCP leak
             cwd=str(workdir),
             model=(agent_spec.recommended_model or None),
             permission_mode=self._permission_mode,
@@ -162,7 +238,8 @@ class ClaudeDriver:
         """Run the engine, retrying a few times on a transient launch failure — a lost spawn race
         that the SDK surfaces as 'Claude Code not found' even though the CLI exists. The failure
         happens before any message streams, so retrying the whole run never double-processes. The
-        known large-body overflow is prevented upstream by _deliver_body, not by this retry."""
+        old large-body overflow can no longer occur here: the system prompt (body + manifest) is
+        delivered via `--system-prompt-file`, so it never touches the command line at all."""
         last_exc: Exception | None = None
         for attempt in range(_LAUNCH_RETRIES):
             try:
@@ -211,8 +288,8 @@ class ClaudeDriver:
     def _is_transient_launch_error(self, exc: Exception) -> bool:
         """A lost launch race is reported as 'Claude Code not found at: <path>'. Treat it as
         transient (worth a retry) ONLY when the CLI actually exists on disk — a genuinely missing
-        CLI must fail fast, not spin. (Command-line-length overflows can't reach here: large
-        bodies are delivered as a file by _deliver_body before launch.)"""
+        CLI must fail fast, not spin. (Command-line-length overflows can't reach here at all: the
+        system prompt is delivered via --system-prompt-file, never on the command line.)"""
         msg = str(exc).lower()
         if "claude code not found" not in msg and "failed to start claude code" not in msg:
             return False
@@ -278,10 +355,10 @@ class ClaudeDriver:
     def _build_prompt(agent_spec: AgentSpec, work_item: WorkItem) -> str:
         phase = getattr(agent_spec, "phase_label", "") or getattr(agent_spec, "key", "")
         return (
-            f"Execute the '{phase}' phase for WorkItem {work_item.id}. Your composed project "
-            "manifest is in AGENTS.md in the working directory. Read your inputs and register "
-            "your outputs using the platform-state tools. Do not push to any system-of-record; "
-            "the platform handles gates and publishing."
+            f"Execute the '{phase}' phase for WorkItem {work_item.id}. Your role instructions and "
+            "composed run manifest are provided in your system prompt. Register your outputs and "
+            "fetch any referenced artifact bodies using the platform-state tools. Do not push to "
+            "any system-of-record; the platform handles gates and publishing."
         )
 
     # ── build (Phase 2) ────────────────────────────────────────────
@@ -296,17 +373,18 @@ class ClaudeDriver:
         work_item: WorkItem,
     ) -> RunResult:
         """Run the build agent against a git **worktree** (the companion provisions it; D9).
-        The composed manifest is written to `.sdlc/AGENTS.md` (kept out of the diff by the
-        worktree's local exclude) and the agent works in `repo_workspace`. The agent edits +
-        tests; it never runs git — the platform commits/pushes/opens the PR (D2)."""
+        The system prompt (role body + manifest) is written to `.sdlc/SYSTEM_PROMPT.md` (kept out
+        of the diff by the worktree's local exclude) and delivered via `--system-prompt-file`; the
+        agent works in `repo_workspace`. We deliberately set no `setting_sources`, so the client
+        repo's own CLAUDE.md/.claude hooks are NOT loaded (no collision, no client-hook execution).
+        The agent edits + tests; it never runs git — the platform commits/pushes/opens the PR (D2)."""
         repo_workspace = Path(repo_workspace)
         sdlc = repo_workspace / ".sdlc"
         sdlc.mkdir(parents=True, exist_ok=True)
-        system_prompt, agents_md = self._deliver_body(self._body_loader(agent_spec), manifest)
-        (sdlc / "AGENTS.md").write_text(agents_md, encoding="utf-8")
+        sp_file = self._write_system_prompt_file(sdlc, self._body_loader(agent_spec), manifest)
 
         options = self._agent_options(
-            system_prompt=system_prompt,
+            extra_args={_SYSTEM_PROMPT_FLAG: sp_file},
             mcp_servers=mcp_servers,
             allowed_tools=allowed_tools,
             cwd=str(repo_workspace),
@@ -321,10 +399,10 @@ class ClaudeDriver:
         phase = getattr(agent_spec, "phase_label", "") or getattr(agent_spec, "key", "")
         return (
             f"Execute the '{phase}' phase for WorkItem {work_item.id} in the current git "
-            "worktree (your working directory). Your composed project manifest is in "
-            ".sdlc/AGENTS.md. Implement the change with full tests and run them locally. "
-            "Register your outputs with the platform-state tools. Do NOT run git or open a "
-            "pull request — the platform commits, pushes, and opens the PR after your run."
+            "worktree (your working directory). Your role instructions and composed run manifest "
+            "are provided in your system prompt. Implement the change with full tests and run them "
+            "locally. Register your outputs with the platform-state tools. Do NOT run git or open "
+            "a pull request — the platform commits, pushes, and opens the PR after your run."
         )
 
     # ── code review (Phase 2 — read-only, server-side; D2) ──────────
@@ -342,13 +420,15 @@ class ClaudeDriver:
         tools; it never edits code, runs git, or merges (the platform owns those). The result
         carries the agent's structured findings, parsed by the review provider."""
         workdir = self._prepare_workdir(work_item)
-        system_prompt, agents_md = self._deliver_body(self._body_loader(agent_spec), manifest)
-        (workdir / "AGENTS.md").write_text(agents_md, encoding="utf-8")
+        sp_file = self._write_system_prompt_file(
+            workdir, self._body_loader(agent_spec), manifest)
 
         options = self._agent_options(
-            system_prompt=system_prompt,
+            extra_args={_SYSTEM_PROMPT_FLAG: sp_file},
             mcp_servers=mcp_servers,
             allowed_tools=allowed_tools,
+            disallowed_tools=_PLANNING_DISALLOWED_TOOLS,   # sandbox: platform-state MCP + inlined diff only
+            setting_sources=_SANDBOX_SETTING_SOURCES,      # no user skills/subagents/MCP leak
             cwd=str(workdir),
             model=(agent_spec.recommended_model or None),
             permission_mode=self._permission_mode,
@@ -360,9 +440,9 @@ class ClaudeDriver:
     def _build_review_prompt(agent_spec: AgentSpec, work_item: WorkItem) -> str:
         return (
             f"Review the pull request for WorkItem {work_item.id} across all eleven dimensions. "
-            "Your composed manifest is in AGENTS.md in the working directory and includes the "
-            "'# Pull Request Under Review' diff; fetch any referenced artifacts with the "
-            "platform-state tools. Do NOT modify code, run git, or merge — you only produce "
+            "Your role instructions and composed manifest are provided in your system prompt, "
+            "including the '# Pull Request Under Review' diff; fetch any referenced artifacts with "
+            "the platform-state tools. Do NOT modify code, run git, or merge — you only produce "
             "findings. Emit your full review, then exactly one fenced json block of structured "
             "findings (rem, severity, title, file, line) as your instructions specify."
         )
