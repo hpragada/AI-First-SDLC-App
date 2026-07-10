@@ -102,6 +102,30 @@ def test_open_pr_registers_code_pointer_and_is_idempotent(world, monkeypatch):
     assert Artifact.objects.filter(run_id=world.run.id, type="code").count() == 1
 
 
+def test_open_pr_reconciles_agent_pre_pr_pointer(world, monkeypatch):
+    """The implementation agent registers a *pre-PR* `code` pointer (branch/files, no PR).
+    open_build_pr must still open the PR and reconcile that pointer in place — not mistake it
+    for an already-opened PR (the KeyError('repo')/no-PR bug)."""
+    from mcp_platform_state import tools
+    tools.register_artifact(
+        str(world.t.id), str(world.p.id), str(world.run.id), "implementation", "code", "git",
+        content_hash="", external_ref={"branch": "feature/ST-1", "files_changed": ["login.py"]})
+    fake = _FakeCodeHost()
+    _use_fake_codehost(monkeypatch, fake)
+
+    out = ba.open_build_pr_core(_inp(world), BuildReport(status="ok", branch="feature/ST-1",
+                                                         head_sha="abc"))
+
+    assert out.get("idempotent") is not True          # the PR was actually opened
+    assert out["pr"]["number"] == 7
+    # the agent's pointer was reconciled in place — still one artifact, now carrying the PR ref
+    arts = Artifact.objects.filter(run_id=world.run.id, type="code")
+    assert arts.count() == 1
+    art = arts.first()
+    assert art.external_ref["repo"] and art.external_ref["number"] == 7
+    assert art.status == Artifact.Status.STAGED
+
+
 def test_merge_publishes_pointer_and_completes_run(world, monkeypatch):
     fake = _FakeCodeHost()
     _use_fake_codehost(monkeypatch, fake)

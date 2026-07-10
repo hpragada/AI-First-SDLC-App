@@ -89,13 +89,21 @@ def _code_artifact(inp: BuildInput) -> Artifact | None:
         )
 
 
+def _is_pr_ref(ref) -> bool:
+    """True once a real PR has been opened for the code artifact — a PR ref carries repo + number.
+    The implementation agent registers a *pre-PR* code pointer (branch/files, no PR yet, per its
+    §Output contract); that is NOT an opened PR and must not short-circuit open_build_pr."""
+    return bool(ref) and "repo" in ref and "number" in ref
+
+
 def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
-    """Open the draft PR for the companion-pushed branch and register the `code` pointer.
-    Idempotent — an existing code artifact / open PR for the head is reused (B1)."""
+    """Open the draft PR for the companion-pushed branch and register/reconcile the `code`
+    pointer. Idempotent — only an artifact that already carries a real PR ref (repo+number) is
+    reused. The agent's pre-PR pointer is *reconciled* (updated with the PR), not skipped."""
     from integrations.registry import get_capability
 
     existing = _code_artifact(inp)
-    if existing is not None and existing.external_ref:
+    if existing is not None and _is_pr_ref(existing.external_ref):
         return {"pr": existing.external_ref, "artifact_id": str(existing.id), "idempotent": True}
 
     codehost = get_capability(inp.tenant_id, "codehost")
@@ -106,11 +114,19 @@ def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
     )
     external_ref = {"sor": "git", "repo": ref.repo, "number": ref.number,
                     "head": ref.head, "url": ref.url, "sha": ref.sha}
-    artifact = tools.register_artifact(
-        inp.tenant_id, inp.project_id, inp.run_id, inp.phase, "code", "git",
-        content_hash=report.head_sha or "", external_ref=external_ref,
-    )
-    tools.update_artifact(inp.tenant_id, artifact["id"], status=Artifact.Status.STAGED)
+    if existing is not None:
+        # Reconcile the agent's pre-PR code pointer with the PR the platform just opened
+        # (register-don't-recreate) so downstream review/merge read a real PR ref.
+        tools.update_artifact(inp.tenant_id, str(existing.id), external_ref=external_ref,
+                              content_hash=report.head_sha or "", status=Artifact.Status.STAGED)
+        artifact_id = str(existing.id)
+    else:
+        artifact = tools.register_artifact(
+            inp.tenant_id, inp.project_id, inp.run_id, inp.phase, "code", "git",
+            content_hash=report.head_sha or "", external_ref=external_ref,
+        )
+        tools.update_artifact(inp.tenant_id, artifact["id"], status=Artifact.Status.STAGED)
+        artifact_id = artifact["id"]
     if report.head_sha:
         try:
             codehost.set_commit_status(repo=inp.repo, sha=report.head_sha, state="pending",
@@ -119,8 +135,8 @@ def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
             pass
     with tenant_context(inp.tenant_id):
         tools.log_event(inp.tenant_id, "orchestrator", "build.pr_opened", "run", inp.run_id,
-                        {"pr": ref.url, "artifact_id": artifact["id"]})
-    return {"pr": external_ref, "artifact_id": artifact["id"]}
+                        {"pr": ref.url, "artifact_id": artifact_id})
+    return {"pr": external_ref, "artifact_id": artifact_id}
 
 
 def open_merge_gate_core(inp: BuildInput) -> str:
@@ -256,8 +272,8 @@ def run_code_review_core(inp: BuildInput) -> dict:
     child WorkItems** (one per REM-C/REM-W): open new findings, close resolved ones. Returns
     the count of open blocking findings — the loop continues while it is > 0."""
     code = _code_artifact(inp)
-    if code is None or not code.external_ref:
-        raise RuntimeError(f"no PR to review for run {inp.run_id}")
+    if code is None or not _is_pr_ref(code.external_ref):
+        raise RuntimeError(f"no opened PR to review for run {inp.run_id}")
     pr_ref = f"{code.external_ref['repo']}#{code.external_ref['number']}"
 
     findings = list(get_review_provider().review(inp, pr_ref))
