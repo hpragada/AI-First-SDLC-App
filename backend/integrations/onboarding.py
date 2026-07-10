@@ -96,7 +96,7 @@ def adopt_source_document(*, tenant_id, source_document_id, user_id) -> dict:
     """Review gate: a product_owner publishes the extracted draft artifacts (idempotent)."""
     from apps.integrations.models import SourceDocument
     from apps.tenancy.context import tenant_context
-    from apps.tenancy.models import Membership
+    from apps.tenancy.models import Membership, User
 
     with tenant_context(tenant_id):
         src = SourceDocument.objects.get(id=source_document_id, tenant_id=tenant_id)
@@ -106,10 +106,17 @@ def adopt_source_document(*, tenant_id, source_document_id, user_id) -> dict:
                     "artifact_ids": artifact_ids, "idempotent": True}
         if src.status != SourceDocument.Status.EXTRACTED:
             raise OnboardingError(f"not ready for adoption (status={src.status})")
+        # Adoption is a review gate: the product_owner decides — OR an admin who can approve
+        # any gate (project-admin = Membership(role="admin"), or tenant-admin =
+        # User.is_tenant_admin), mirroring decide_gate's role check (P4.7-T4).
         has_role = Membership.objects.filter(
             tenant_id=tenant_id, user_id=user_id, project_id=src.project_id,
-            role="product_owner",
+            role__in=["product_owner", "admin"],
         ).exists()
+        if not has_role:
+            has_role = User.objects.filter(
+                id=user_id, tenant_id=tenant_id, is_tenant_admin=True
+            ).exists()
         if not has_role:
             raise OnboardingRoleError(
                 f"user {user_id} lacks role 'product_owner' for this project"
