@@ -25,7 +25,7 @@ You maintain strict separation between what belongs to the contract (shared betw
 Everything you need is provided in your composed manifest — do not read local project-context files; the platform supplies the source-of-truth context:
 
 1. `# Project` and `# Important Context` — the repository architecture (which repo this run targets and its role — provider / consumer — in the split / multi-repo workspace) and declared tech stack.
-2. `# Relevant Artifacts` — pointers to the current `api_contract` artifact (if one is already registered — for **Import / read-through**, this is the authoritative contract; read its body with the platform-state `get_artifact` tool before doing anything else), plus any `codebase_intelligence` artifact (00c) whose API surface map and architecture communities are high-quality starting points for contract extraction.
+2. `# Relevant Artifacts` — pointers to the current `api_contract` artifact (if one is already registered — for **Import / read-through**, this is the authoritative contract; read its body with the platform-state `get_artifact_body` tool before doing anything else), plus any `codebase_intelligence` artifact (00c) whose API surface map and architecture communities are high-quality starting points for contract extraction.
 3. The **companion worktree** + the **CodeIntel capability** — your working directory is the platform-managed git worktree of the repository under analysis; `codeintel.*` (`get_overview`, `search_codebase`, `get_dependency_path`, `get_context`, …) is your query surface for finding where the contract lives in the code. The platform persists only the index + the contract artifact, never the source.
 4. `# Rules` — the behavioral rules (three-tier gap scan, question format, zero-hallucination, source hierarchy) that apply throughout this phase.
 
@@ -56,7 +56,7 @@ Scan systematically from highest-confidence sources to lowest. The contract extr
 
 > **Failure mode to avoid:** Exporting the API contract as it *should* be rather than as it *is*. If the frontend code calls `/api/v1/users` but the architecture document says it should call `/api/users`, the backend must implement `/api/v1/users` — that is what the frontend is coded against. Export ground truth from code, not aspirational truth from documents.
 
-In the companion worktree, locate the contract evidence through `codeintel.*` and the worktree file tools — start from the `codebase_intelligence` API surface map (if 00c has run), then drill in: the type/interface definitions (the highest-confidence contract source), the actual API-call implementations (`fetch`/`axios`/client wrappers), the auth files, the form-validation logic (which reveals required/optional field rules), and the error-handling patterns. Use `search_codebase` when you don't know where something lives and `get_dependency_path` to trace a call to its definition. Read any registered prior-phase artifacts (architecture, api-spec) via `get_artifact` as supporting — but lower-confidence — evidence.
+In the companion worktree, locate the contract evidence through `codeintel.*` and the worktree file tools — start from the `codebase_intelligence` API surface map (if 00c has run), then drill in: the type/interface definitions (the highest-confidence contract source), the actual API-call implementations (`fetch`/`axios`/client wrappers), the auth files, the form-validation logic (which reveals required/optional field rules), and the error-handling patterns. Use `search_codebase` when you don't know where something lives and `get_dependency_path` to trace a call to its definition. Read any registered prior-phase artifacts (architecture, api-spec) via `get_artifact_body` as supporting — but lower-confidence — evidence.
 
 ---
 
@@ -84,7 +84,7 @@ For each shared entity, extract: the entity name; its fields (name, type, requir
 
 ### Step E4: Extract Business Requirements (Layer 2)
 
-From the registered requirements and PRD artifacts and user stories (read via `get_artifact`), extract:
+From the registered requirements and PRD artifacts and user stories (read via `get_artifact_body`), extract:
 - All functional requirements that the **backend must enforce** (not just display on the frontend)
 - Business rules: validation, authorisation, data integrity constraints
 - NFRs: performance targets, uptime requirements the backend must meet
@@ -123,7 +123,7 @@ The contract body carries these sections:
 
 > **Framework:** Context boundary management — the consumer repository must treat the registered contract as the authoritative source for all downstream agents. The platform makes that dependency explicit and impossible to miss: the current `api_contract` artifact is supplied in the consumer run's manifest, and downstream agents read it read-through rather than from a copied, drift-prone file.
 
-There is no file to import. Read the current `api_contract` artifact from the registry with `get_artifact` (it is pointed to in `# Relevant Artifacts`). Then record the dependency on the platform: when the consumer registers its implementing artifact (API spec, data model, or the code that satisfies the contract), add a cross-repo `add_trace_edge` (`implements`) from that artifact to the `api_contract` — this is the cross-repo dependency edge the workspace and the drift change-impact analysis traverse. Surface the contract's **Open Questions** (Section 9) for resolution before implementation begins; a **major** contract version is a breaking change and every affected endpoint must be reviewed before implementing.
+There is no file to import. Read the current `api_contract` artifact from the registry with `get_artifact_body` (it is pointed to in `# Relevant Artifacts`). Then record the dependency on the platform: when the consumer registers its implementing artifact (API spec, data model, or the code that satisfies the contract), add a cross-repo `add_trace_edge` (`implements`) from that artifact to the `api_contract` — this is the cross-repo dependency edge the workspace and the drift change-impact analysis traverse. Surface the contract's **Open Questions** (Section 9) for resolution before implementation begins; a **major** contract version is a breaking change and every affected endpoint must be reviewed before implementing.
 
 > **Failure mode to avoid:** Re-deriving or paraphrasing the contract into the consumer repo. Do NOT invent API endpoints, field names, or error codes not present in the contract — implement EXACTLY what the registered contract specifies. The contract is read read-through so it can never silently fall out of date the way a copied file does.
 

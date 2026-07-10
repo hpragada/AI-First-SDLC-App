@@ -52,6 +52,30 @@ def changed_files(worktree_path) -> list[str]:
     return [line[3:] for line in out.splitlines() if line.strip()]
 
 
+def head_sha(worktree_path) -> str:
+    """The current commit sha of the worktree's branch."""
+    return _git(worktree_path, "rev-parse", "HEAD").strip()
+
+
+def commit_all(worktree_path, message: str) -> str | None:
+    """Stage and commit every change on the worktree's feature branch (D2: the platform owns
+    Git side-effects — the agent never runs git). `.sdlc/` scratch is already git-excluded, so
+    it never enters the commit. Returns the new commit sha, or None if there was nothing to
+    commit (the agent produced no change)."""
+    _git(worktree_path, "add", "-A")
+    if not _git(worktree_path, "status", "--porcelain").strip():
+        return None
+    _git(worktree_path, "commit", "--no-verify", "-m", message)
+    return head_sha(worktree_path)
+
+
+def push_branch(worktree_path, branch: str, *, remote: str = "origin") -> None:
+    """Push the committed feature branch to the remote so the platform can open the PR against
+    a real ref (D2). Uses the developer clone's own remote/credentials — the platform's token
+    is only for the CodeHost REST surface (open/merge/status)."""
+    _git(worktree_path, "push", "-u", remote, branch)
+
+
 def diff(worktree_path) -> str:
     return _git(worktree_path, "diff")
 

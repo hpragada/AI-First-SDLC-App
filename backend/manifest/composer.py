@@ -158,7 +158,7 @@ def _render_artifacts(artifacts: list[dict], budget: TokenBudget) -> str:
     shown = artifacts[: budget.max_artifacts]
     lines = [
         "Pointers only — fetch full bodies with the platform-state "
-        "`get_artifact(artifact_id)` tool.",
+        "`get_artifact_body(artifact_id)` tool.",
         "",
     ]
     for a in shown:

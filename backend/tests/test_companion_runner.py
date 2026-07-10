@@ -35,6 +35,18 @@ def _init_repo(path: Path) -> Path:
     return path
 
 
+def _add_remote(repo: Path) -> Path:
+    """Give a clone a bare `origin` so the companion's push (G2) has somewhere to go."""
+    bare = repo.parent / (repo.name + "-origin.git")
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(bare)],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(bare)],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "push", "-u", "origin", "main"],
+                   check=True, capture_output=True)
+    return bare
+
+
 # ── remote state client ─────────────────────────────────────────────
 def test_state_client_posts_token_tenant_and_returns_result():
     seen = {}
@@ -130,6 +142,7 @@ class _FakeDriver:
 
 async def test_run_build_provisions_runs_in_worktree_and_tears_down(tmp_path):
     repo = _init_repo(tmp_path / "repo")
+    bare = _add_remote(repo)
     driver = _FakeDriver()
     out = await run_build(_task(work_item_key="ST-7"), driver=driver, repo_path=repo,
                           worktrees_root=tmp_path / "wt")
@@ -139,6 +152,50 @@ async def test_run_build_provisions_runs_in_worktree_and_tears_down(tmp_path):
     assert "Bash" in driver.captured["allowed"]
     assert not any("codehost" in t.lower() for t in driver.captured["allowed"])
     assert not (tmp_path / "wt" / "ST-7").exists()                # worktree torn down
+    # G2: the agent's change is committed and pushed to origin/feature/ST-7 (head_sha reported).
+    assert out["status"] == "ok" and len(out["head_sha"]) == 40
+    pushed = subprocess.run(
+        ["git", "-C", str(bare), "log", "-1", "--format=%H %s", "feature/ST-7"],
+        check=True, capture_output=True, text=True).stdout.strip()
+    sha, _, subject = pushed.partition(" ")
+    assert sha == out["head_sha"]
+    assert subject == "feat(ST-7): ST-7"                          # derived Conventional Commit
+
+
+async def test_run_build_derives_commit_subject_from_title(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    bare = _add_remote(repo)
+    task = _task(work_item_key="WI-18", work_item_title="TASK-001: venv setup",
+                 work_item_type="task")
+    out = await run_build(task, driver=_FakeDriver(), repo_path=repo,
+                          worktrees_root=tmp_path / "wt")
+    subject = subprocess.run(
+        ["git", "-C", str(bare), "log", "-1", "--format=%s", "feature/WI-18"],
+        check=True, capture_output=True, text=True).stdout.strip()
+    assert subject == "feat(WI-18): TASK-001: venv setup"
+    assert out["head_sha"]
+
+
+async def test_run_build_secret_block_does_not_commit_or_push(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path / "repo")
+    bare = _add_remote(repo)
+    import dataclasses
+
+    import runner.companion.runner as runner_mod
+
+    @dataclasses.dataclass
+    class _Finding:
+        rule: str = "aws_key"
+        path: str = "impl.py"
+        line: int = 1
+    monkeypatch.setattr(runner_mod, "scan_worktree", lambda wt: [_Finding()])
+    out = await run_build(_task(work_item_key="ST-9"), driver=_FakeDriver(), repo_path=repo,
+                          worktrees_root=tmp_path / "wt")
+    assert out["status"] == "secret_blocked" and "head_sha" not in out
+    # nothing was pushed — the feature branch never reaches the remote
+    branches = subprocess.run(["git", "-C", str(bare), "branch", "--list", "feature/ST-9"],
+                              check=True, capture_output=True, text=True).stdout.strip()
+    assert branches == ""
 
 
 def test_state_mcp_server_builds_with_a_client():

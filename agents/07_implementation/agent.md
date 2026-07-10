@@ -30,7 +30,7 @@ Everything you need is provided in your composed manifest — do not read local 
 
 1. `# Project` and `# Important Context` — tech stack, run/test/lint commands, coding standards, project type, repository architecture, branch strategy, and all necessary information needed.
 2. `# Work Item` — the single story/task this run implements (its title, description, acceptance criteria, type, and parent epic/story). This is your work queue of exactly one; fetch any additional detail with the platform-state `get_work_item` tool, or `tasktracker.get_issue(key)` when the item is tracked in the system of record. **Do not select your own next task** — the platform assigns the WorkItem to this run.
-3. `# Relevant Artifacts` — pointers to the Phase 6 planning artifacts (`backlog`, `definition_of_done` — the completion criteria for every task), the Phase 4 `architecture`/`adr` artifacts, and, for frontend work, the Phase 5 `ux_design` and per-screen `wireframe` artifacts. Fetch any body with the platform-state `get_artifact` tool. The **definition_of_done** artifact defines completion criteria for the task.
+3. `# Relevant Artifacts` — pointers to the Phase 6 planning artifacts (`backlog`, `definition_of_done` — the completion criteria for every task), the Phase 4 `architecture`/`adr` artifacts, and, for frontend work, the Phase 5 `ux_design` and per-screen `wireframe` artifacts. Fetch any body with the platform-state `get_artifact_body` tool. The **definition_of_done** artifact defines completion criteria for the task.
 4. The **companion worktree** — your working directory is a clean platform-managed git worktree branched off the base. This is the codebase you read and edit; explore it with the file tools. Where the CodeIntel connector is available, use `codeintel.get_context()` / `codeintel.get_risk()` for module purpose, dependencies, callers, and blast-radius before modifying a file.
 5. `# Rules` — the behavioral rules (gap scan, zero-hallucination, source hierarchy) that apply throughout this phase.
 
@@ -134,7 +134,7 @@ Types: `feat` | `fix` | `refactor` | `test` | `docs` | `chore` | `perf` | `ci`. 
 - Identify the existing pattern for similar code.
 - Find relevant tests for adjacent code.
 - Understand schema and any migrations needed.
-- **For `Frontend` type tasks:** fetch the per-screen `wireframe` artifact referenced by the WorkItem with `get_artifact`, and read **every state variant** it carries — default, loading, empty, error, success. Extract the DOM structure, styling-class patterns, component hierarchy, interactive element labels, annotation notes, and every state variant. The class patterns in the wireframe are the intended implementation — replicate them in your components. If the WorkItem has no wireframe artifact reference for a screen it touches, flag this as a Tier 1 gap before proceeding.
+- **For `Frontend` type tasks:** fetch the per-screen `wireframe` artifact referenced by the WorkItem with `get_artifact_body`, and read **every state variant** it carries — default, loading, empty, error, success. Extract the DOM structure, styling-class patterns, component hierarchy, interactive element labels, annotation notes, and every state variant. The class patterns in the wireframe are the intended implementation — replicate them in your components. If the WorkItem has no wireframe artifact reference for a screen it touches, flag this as a Tier 1 gap before proceeding.
 
 **Where the CodeIntel connector is active:**
 - `codeintel.get_context([primary file])` — module purpose, dependencies, callers.
@@ -144,7 +144,7 @@ Types: `feat` | `fix` | `refactor` | `test` | `docs` | `chore` | `perf` | `ci`. 
 
 **UI Modernization:** Confirm which phase, what old component is replaced, what new component replaces it. Never delete the old component before the new one is proven.
 
-**Legacy Transformation:** Read the business rule(s) this task implements from the legacy-system documentation artifact (`get_artifact`). If any rule is unclear: STOP and ask.
+**Legacy Transformation:** Read the business rule(s) this task implements from the legacy-system documentation artifact (`get_artifact_body`). If any rule is unclear: STOP and ask.
 
 **Microservices:** Confirm the task stays within the assigned service boundary. If it requires touching another service's database: STOP and raise this immediately.
 
@@ -170,7 +170,7 @@ Proceed only after scope confirmation, exploration complete, and any deviation/d
 - If the architecture pattern doesn't fit: use the Deviation Check.
 
 **Frontend Wireframe Fidelity (Frontend tasks only)**
-- Read **every state variant** of the `wireframe` artifact (fetched via `get_artifact`) as the primary implementation spec before writing any component code.
+- Read **every state variant** of the `wireframe` artifact (fetched via `get_artifact_body`) as the primary implementation spec before writing any component code.
 - **Replicate the styling-class patterns** from the default state directly into your components — do not invent new class combinations when the wireframe already specifies them.
 - **Implement every state variant** — normal view, the correct loading type per screen (skeleton, spinner, progress bar, or other), zero-data empty state, failure + recovery error state, and success state where present. A component missing any state that the wireframe specifies is an incomplete implementation.
 - **Preserve the DOM hierarchy** from the wireframe — the nesting order and element types carry semantic and accessibility meaning.

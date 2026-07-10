@@ -273,6 +273,20 @@ class TriggerSerializer(serializers.Serializer):
     user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
 
 
+class BuildTriggerSerializer(serializers.Serializer):
+    """Input for the build trigger — starts the implementation `BuildWorkflow` saga on a
+    WorkItem (the REST surface for `orchestration.trigger.trigger_build`). `repo`/`base` default
+    to the WorkItem's Repository; `agent_key` defaults to the implementation agent."""
+
+    agent_key = serializers.CharField(required=False, default="07_implementation")
+    repo = serializers.CharField(required=False, allow_null=True, default=None)
+    base = serializers.CharField(required=False, allow_null=True, default=None)
+    required_role = serializers.CharField(required=False, default="reviewer")
+    # Same companion-routing semantics as TriggerSerializer: the build claims onto the
+    # triggering user's enrolled local companion (/api/runner/work/).
+    user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+
+
 # ── Run ─────────────────────────────────────────────────────────────
 class RunSerializer(serializers.ModelSerializer):
     # `agent_spec` is the AgentSpec primary key (a UUID). Also expose the AgentSpec's

@@ -169,9 +169,24 @@ def trigger_build(
             id=work_item_id, tenant_id=tenant_id
         )
         repo = repo or (work_item.repo.name if work_item.repo else None)
-        base = base or (work_item.repo.default_base if work_item.repo else "main")
+        base = base or (work_item.repo.default_base if work_item.repo else None)
         if not repo:
-            raise TriggerError("work item has no target repository (set WorkItem.repo)")
+            # Fall back to the project's default repository (S-13) so a task can be built from
+            # the UI without first pinning a repo to the work item (proposed items have none).
+            from apps.projects.models import Repository
+
+            default_repo = Repository.objects.filter(
+                tenant_id=tenant_id, project_id=project_id, is_default=True
+            ).first()
+            if default_repo is not None:
+                repo = default_repo.name
+                base = base or default_repo.default_base
+        base = base or "main"
+        if not repo:
+            raise TriggerError(
+                "no target repository for this build — add a repository to the project "
+                "(Repositories) or set the work item's repo."
+            )
         work_item_key = (
             work_item_key or (work_item.external_ref or {}).get("id")
             or f"WI-{str(work_item.id)[:8]}"

@@ -43,7 +43,7 @@ Everything you need is provided in your composed manifest — do not read local 
 
 1. `# Project` — coding standards, test coverage targets, commit conventions, language and framework, tech stack, and the exact lint / type-check / test commands.
 2. `# Work Item` — the WorkItem under review: its acceptance criteria (the correctness contract) and type. Fetch additional detail with `get_work_item` or `tasktracker.get_issue(key)`.
-3. `# Relevant Artifacts` — the Phase 4 `architecture`/`adr` artifacts (pattern adherence and security posture), the `definition_of_done` artifact (what "done" means), and the `backlog` artifact (acceptance criteria source). Fetch any body with `get_artifact`.
+3. `# Relevant Artifacts` — the Phase 4 `architecture`/`adr` artifacts (pattern adherence and security posture), the `definition_of_done` artifact (what "done" means), and the `backlog` artifact (acceptance criteria source). Fetch any body with `get_artifact_body`.
 4. `# Pull Request Under Review` — the PR opened by the platform for this WorkItem's build: its ref (`owner/name#N`), the changed-file list, and the diff/file contents (read through the CodeHost capability — `codehost.list_pr_files` / `codehost.get_file` — never copied as a source of truth). This is the code you review. **You do not run git** and you do not call the host directly to write anything — the platform owns every Git side-effect.
 5. `# Rules` — the behavioral rules (gap scan, zero-hallucination, source hierarchy) that apply throughout this phase.
 
@@ -165,7 +165,7 @@ Layer pattern — the code uses the established layers (no database calls in con
 
 > **Trigger:** This step runs **only** when the WorkItem under review is Type `Frontend` AND references a `wireframe` artifact.
 
-Before executing, fetch (via `get_artifact`) all state variants of the `wireframe` artifact, the accessibility-requirements artifact, and the design-system artifact.
+Before executing, fetch (via `get_artifact_body`) all state variants of the `wireframe` artifact, the accessibility-requirements artifact, and the design-system artifact.
 
 **Fidelity:** Does the component hierarchy and grid layout match the wireframe default state? Are the wireframe's class patterns replicated, or were new patterns invented? Are all states implemented (default, loading, empty, error, success where present)? Does the loading implementation match the wireframe type (not defaulted to skeleton for every case)? Does the empty state include the correct CTA, and the error state the correct retry/fallback? Are the wireframe annotations (`@component`, `@data-source`, `@impl-note`) honoured?
 

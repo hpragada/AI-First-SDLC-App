@@ -74,6 +74,8 @@ def test_dispatch_assembles_payload_and_marks_running(world):
     payload = world.run.inputs["build_task"]
     assert payload["repo"] == "acme/api" and payload["work_item_key"] == "ST-1"
     assert payload["manifest"]                       # composed manifest shipped to the companion
+    # G2: WorkItem title/type travel so the companion derives the Conventional-Commit message.
+    assert payload["work_item_title"] == "Add login" and payload["work_item_type"] == "story"
 
 
 def test_dispatch_sets_claim_block_for_companion(world):

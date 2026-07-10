@@ -60,6 +60,11 @@ def dispatch_build_core(inp: BuildInput) -> dict:
     }
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        # Carry the WorkItem title/type so the companion derives a meaningful Conventional-Commit
+        # message (the platform owns the commit, D2 — the agent never runs git).
+        wi = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
+        payload["work_item_title"] = wi.title
+        payload["work_item_type"] = wi.type
         run.inputs = {
             **(run.inputs or {}),
             "build_task": payload,

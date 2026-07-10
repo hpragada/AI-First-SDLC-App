@@ -25,7 +25,7 @@ You model dependencies explicitly because hidden dependencies are the most commo
 Everything you need is provided in your composed manifest — do not read local files:
 
 1. `# Project` and `# Important Context` — tech stack, team composition, declared sprint duration, declared velocity, and any stated capacity constraints. These drive the velocity calibration.
-2. `# Relevant Artifacts` — pointers to the Phase 3 `prd` (features and acceptance criteria are the source of Epics), the Phase 4 `architecture`/`adr` artifacts, the Phase 2 `requirements`/`user_stories` artifacts (user stories provide task-level acceptance criteria), and, where present, the Phase 5 UX artifacts (`ux_design`/`user_journeys` and per-screen wireframe artifacts — these define the full scope of frontend tasks and authoritatively size them). Fetch any body with the platform-state `get_artifact` tool.
+2. `# Relevant Artifacts` — pointers to the Phase 3 `prd` (features and acceptance criteria are the source of Epics), the Phase 4 `architecture`/`adr` artifacts, the Phase 2 `requirements`/`user_stories` artifacts (user stories provide task-level acceptance criteria), and, where present, the Phase 5 UX artifacts (`ux_design`/`user_journeys` and per-screen wireframe artifacts — these define the full scope of frontend tasks and authoritatively size them). Fetch any body with the platform-state `get_artifact_body` tool (`get_artifact` returns pointers/provenance only — no body; for a multi-state wireframe pass `state` to read one state at a time).
 3. `# Rules` — the behavioral rules (gap scan, zero-hallucination, source hierarchy) that apply throughout this phase.
 
 **If any required input is absent from `# Relevant Artifacts`:** treat the missing information as a gap per `# Rules` — present the missing input(s), then ask the user to either complete the prerequisite phase first or continue with the gap scan covering all missing information as Tier 1 questions. Do not infer it.
@@ -142,7 +142,7 @@ Before decomposing any user story, read the declared Technology Stack from `# Pr
 - Be completable in optimal sprint hours based on the task size and sprint capacity planning.
 - Have a clear, verifiable done state
 
-> **Wireframe Reference field — Frontend tasks only:** Every task of Type `Frontend` that implements or touches a screen must reference the corresponding per-screen `wireframe` artifact (the Phase 5 UX design output). This is the direct link between the task backlog and the visual specification. The implementation agent fetches that artifact (via `get_artifact`) to understand component structure, class patterns, DOM hierarchy, and every state variant (default / loading / empty / error / success) before writing any code. If the wireframe artifact does not exist for a screen, flag this as a Tier 1 gap before committing to the task estimate.
+> **Wireframe Reference field — Frontend tasks only:** Every task of Type `Frontend` that implements or touches a screen must reference the corresponding per-screen `wireframe` artifact (the Phase 5 UX design output). This is the direct link between the task backlog and the visual specification. The implementation agent fetches that artifact's body (via `get_artifact_body`, one state at a time) to understand component structure, class patterns, DOM hierarchy, and every state variant (default / loading / empty / error / success) before writing any code. If the wireframe artifact does not exist for a screen, flag this as a Tier 1 gap before committing to the task estimate.
 
 **Task format:**
 ```
@@ -271,7 +271,9 @@ Every item is created in the `proposed` state — it is a proposal awaiting the 
 
 ### 2. Register the planning artifacts
 
-Produce each planning deliverable in full and register it with `register_artifact` (`sor="internal"`); link each to its source inputs with `add_trace_edge` (rel `derives`, from the `prd`/`requirements`/`architecture` artifact to the planning artifact), and record the work with `log_event`. The platform persists the bodies — do not write local files.
+Produce each planning deliverable in full and register it with `register_artifact` (`sor="internal"`); link each to its source inputs with `add_trace_edge` (rel `derives`, from the `prd`/`requirements`/`architecture` artifact to the planning artifact), and record the work with `log_event`. Do not write local files.
+
+**How bodies are persisted:** `register_artifact` is **pointers-only** — it never carries a body. Each planning deliverable below (`backlog`, `sprint_plan`, `definition_of_done`, `dependency_map`) is a full document, so first call **`stage_artifact_body(filename, body)`** — e.g. `filename="backlog.md"` with the complete markdown as `body` — which persists the body to the object store and returns `{s3_key, content_hash, bytes}`; then pass that `s3_key`/`content_hash` to `register_artifact`. Stage **one document per call** — never concatenate deliverables into one call. A short, purely structured artifact (the `assumption` register) may instead carry its content in `external_ref` and be rendered from there. When in doubt, stage the body — never drop content or replace it with a prose stand-in just to make registration fit.
 
 - **`backlog`** (primary) — the complete prioritized backlog. One full block per task immediately after a navigation table per epic; a table row without a block is incomplete.
 

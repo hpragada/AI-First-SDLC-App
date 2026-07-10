@@ -77,14 +77,17 @@ from integrations.onboarding import (
     register_atlassian,
 )
 from integrations.preview import read_artifact_preview
+from apps.registry.catalog import gate_role_for
+from apps.registry.catalog import rides_build as catalog_rides_build
 from integrations.types import CapabilityUnavailable
 from orchestration.takeover import TakeoverError, release_takeover, request_takeover
-from orchestration.trigger import TriggerError, trigger_phase
+from orchestration.trigger import TriggerError, trigger_build, trigger_phase
 
 from .serializers import (
     AdoptSerializer,
     ApprovalSerializer,
     ArtifactSerializer,
+    BuildTriggerSerializer,
     ClarificationAnswerSerializer,
     ClarificationSerializer,
     CodeIntelIndexSerializer,
@@ -860,25 +863,68 @@ class WorkItemViewSet(
 
     @action(detail=True, methods=["post"])
     def trigger(self, request, pk=None):
-        """Start a phase run for this work item (replaces the legacy command)."""
+        """Start a phase run for this work item (replaces the legacy command). Build phases
+        (07_implementation / 09b_test_automation / 11_cicd — the ones that produce a PR) route
+        to the BuildWorkflow via `trigger_build`; every other phase runs as an agent-run. This
+        keeps a single UI trigger correct for both plan and build phases (routing lives here,
+        keyed off the catalog's `rides_build`, so a new build agent needs no UI change)."""
         work_item = self.get_object()
         ser = TriggerSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        agent_key = ser.validated_data["agent_key"]
         try:
             # Actor = the session user when present (routes the phase to *their* companion
             # enrollment), else the pre-auth/runner `user_id` body param (T5).
             triggered_by = resolve_actor(request, ser.validated_data.get("user_id"))
-            result = trigger_phase(
+            if catalog_rides_build(agent_key):
+                result = trigger_build(
+                    tenant_id=self.tenant_id,
+                    project_id=str(work_item.project_id),
+                    work_item_id=str(work_item.id),
+                    agent_key=agent_key,
+                    required_role=ser.validated_data["required_role"]
+                    or gate_role_for(agent_key),
+                    triggered_by=triggered_by,
+                )
+            else:
+                result = trigger_phase(
+                    tenant_id=self.tenant_id,
+                    project_id=str(work_item.project_id),
+                    work_item_id=str(work_item.id),
+                    agent_key=agent_key,
+                    gate_type=ser.validated_data["gate_type"],
+                    required_role=ser.validated_data["required_role"],
+                    triggered_by=triggered_by,
+                )
+        except TriggerError as exc:
+            raise ValidationError({"agent_key": str(exc)}) from exc
+        return Response(
+            {"run_id": result.run_id, "workflow_id": result.workflow_id},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(detail=True, methods=["post"])
+    def build(self, request, pk=None):
+        """Start the implementation BuildWorkflow saga for this work item (G1 — the REST
+        surface for `trigger_build`). The build claims onto the triggering user's enrolled
+        companion; `repo`/`base` default to the work item's Repository."""
+        work_item = self.get_object()
+        ser = BuildTriggerSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            triggered_by = resolve_actor(request, ser.validated_data.get("user_id"))
+            result = trigger_build(
                 tenant_id=self.tenant_id,
                 project_id=str(work_item.project_id),
                 work_item_id=str(work_item.id),
                 agent_key=ser.validated_data["agent_key"],
-                gate_type=ser.validated_data["gate_type"],
+                repo=ser.validated_data.get("repo"),
+                base=ser.validated_data.get("base"),
                 required_role=ser.validated_data["required_role"],
                 triggered_by=triggered_by,
             )
         except TriggerError as exc:
-            raise ValidationError({"agent_key": str(exc)}) from exc
+            raise ValidationError({"detail": str(exc)}) from exc
         return Response(
             {"run_id": result.run_id, "workflow_id": result.workflow_id},
             status=status.HTTP_202_ACCEPTED,

@@ -21,7 +21,14 @@ from .guardrails import (
     check_command_egress,
     scan_worktree,
 )
-from .worktree import changed_files, provision_worktree, teardown_worktree
+from .worktree import (
+    changed_files,
+    commit_all,
+    head_sha,
+    provision_worktree,
+    push_branch,
+    teardown_worktree,
+)
 
 # The build-phase platform-state tools the companion exposes to the engine. `ask_human` is
 # the interactive-clarification channel (req #2) — served by dedicated runner endpoints, not
@@ -56,6 +63,8 @@ class BuildTask:
     agent_body: str             # the migrated agent's role body (07 Implementation)
     model: str = ""
     phase: str = "implementation"
+    work_item_title: str = ""   # for the derived Conventional-Commit subject
+    work_item_type: str = ""    # epic/story/task/defect — maps to the commit type
     api_url: str = ""           # platform base url for remote Platform-State
     runner_token: str = ""
     secrets: dict = field(default_factory=dict)   # injected as env, never written to repo
@@ -131,6 +140,15 @@ def run_provisioning(worktree: Path, task: BuildTask, policy: EgressPolicy) -> N
         subprocess.run(cmd, cwd=str(worktree), shell=isinstance(cmd, str), check=True)
 
 
+def _commit_message(task: BuildTask) -> str:
+    """The Conventional-Commit message the platform derives from the WorkItem (07 agent §Commit
+    convention). `<type>(<scope>): <subject>` — a defect maps to `fix`, everything else to `feat`;
+    scope is the WorkItem key, subject is its title (falling back to the key)."""
+    subject = (task.work_item_title or "").strip() or task.work_item_key
+    ctype = "fix" if task.work_item_type == "defect" else "feat"
+    return f"{ctype}({task.work_item_key}): {subject}"
+
+
 async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
                     keep_worktree: bool = False) -> dict:
     """Provision → environment → run the build agent in the worktree → **scan for secrets** →
@@ -170,6 +188,13 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
             out["secret_findings"] = [asdict(f) for f in secret_findings]
         else:
             out["status"] = "ok"
+            # G2 / D2: the platform owns Git side-effects — the companion commits the agent's
+            # work to the feature branch and pushes it so the platform can open the PR against a
+            # real ref. Nothing is committed/pushed when the scan blocks or the agent produced
+            # no change (head_sha stays empty → the saga reports an empty build).
+            if files and commit_all(worktree, _commit_message(task)) is not None:
+                push_branch(worktree, branch)
+                out["head_sha"] = head_sha(worktree)
         return out
     finally:
         if not keep_worktree:

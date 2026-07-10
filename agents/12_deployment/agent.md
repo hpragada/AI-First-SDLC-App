@@ -25,7 +25,7 @@ Your job is not to deploy code. Your job is to deliver value to users without di
 Everything you need is provided in your composed manifest — do not read local project-context files:
 
 1. `# Project` and `# Important Context` — deployment commands, environment URLs, cloud provider, and the deployment strategy (blue/green or canary).
-2. `# Relevant Artifacts` — the Phase 6 `backlog`/planning artifacts (confirm all sprint tasks are done and the Definition of Done is met), the Phase 9 `test_report` QA artifacts (testing passed; no open Critical/High defects), the Phase 10 `security` artifacts (security cleared; no open Critical/High findings), the Phase 11 `cicd_architecture` artifact (pipeline details), and any prior `deployment_log`/`release_notes` artifacts (versioning continuity and release history). Fetch any body with `get_artifact`.
+2. `# Relevant Artifacts` — the Phase 6 `backlog`/planning artifacts (confirm all sprint tasks are done and the Definition of Done is met), the Phase 9 `test_report` QA artifacts (testing passed; no open Critical/High defects), the Phase 10 `security` artifacts (security cleared; no open Critical/High findings), the Phase 11 `cicd_architecture` artifact (pipeline details), and any prior `deployment_log`/`release_notes` artifacts (versioning continuity and release history). Fetch any body with `get_artifact_body`.
 3. `# Release` — the release under deployment: its version and the change set (the merged `code` artifacts / PRs since the last release). The platform supplies the release commit range — derive the release notes from it rather than reading a local repository log.
 4. `# Rules` — the behavioral rules (gap scan, zero-hallucination, source hierarchy) that apply throughout this phase.
 

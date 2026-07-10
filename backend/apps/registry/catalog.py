@@ -35,6 +35,14 @@ class AgentDefinition:
     recommended_model: str = DEFAULT_MODEL
     recommended_engine: str = DEFAULT_ENGINE
     retired: bool = False  # D8: 00d Snapshot — no migrated body; not seeded/triggered
+    # True ⇒ this phase runs through the BuildWorkflow (worktree → commit → push → PR →
+    # review → merge gate), so a user trigger must route to `trigger_build`, not `trigger_phase`.
+    # Set from each agent body's execution model ("the platform commits/pushes/opens the PR"):
+    # 07_implementation, 09b_test_automation, 11_cicd write code into the worktree. Planning
+    # phases (register artifacts → review gate) leave this False. 08_code_review runs *inside*
+    # the build loop (dispatched by the workflow), never a standalone user trigger, so it is
+    # False here too.
+    rides_build: bool = False
 
     @property
     def body_ref(self) -> str:
@@ -49,12 +57,12 @@ AGENT_CATALOG: list[AgentDefinition] = [
     AgentDefinition("04_architecture", "architecture", "architecture", "04_architecture_agent.md", "P0", "architect"),
     AgentDefinition("05_ux_design", "ux-design", "ux_design", "05_ux_design_agent.md", "P3", "designer"),
     AgentDefinition("06_task_breakdown", "task-breakdown", "task_breakdown", "06_task_breakdown_agent.md", "P1", "tech_lead"),
-    AgentDefinition("07_implementation", "implement", "implementation", "07_implementation_agent.md", "P2", "tech_lead"),
+    AgentDefinition("07_implementation", "implement", "implementation", "07_implementation_agent.md", "P2", "tech_lead", rides_build=True),
     AgentDefinition("08_code_review", "code-review", "code_review", "08_code_review_agent.md", "P2", "reviewer"),
     AgentDefinition("09_testing", "test", "testing", "09_testing_agent.md", "P3", "qa_lead"),
-    AgentDefinition("09b_test_automation", "test-automation", "test_automation", "09b_test_automation_agent.md", "P3", "qa_lead"),
+    AgentDefinition("09b_test_automation", "test-automation", "test_automation", "09b_test_automation_agent.md", "P3", "qa_lead", rides_build=True),
     AgentDefinition("10_security", "security", "security", "10-security-agent.md", "P3", "security_engineer"),
-    AgentDefinition("11_cicd", "cicd", "cicd", "11_cicd_agent.md", "P2", "devops"),
+    AgentDefinition("11_cicd", "cicd", "cicd", "11_cicd_agent.md", "P2", "devops", rides_build=True),
     AgentDefinition("12_deployment", "deploy", "deployment", "12_deployment_agent.md", "P2", "devops"),
     # ── Entry / onboarding agents (P4) ──────────────────────────────
     AgentDefinition("00_onboarding", "onboard", "onboarding", "00_onboarding_agent.md", "P4", "product_owner"),
@@ -87,6 +95,14 @@ def get_by_command(command: str) -> AgentDefinition | None:
 def gate_role_for(key: str) -> str:
     definition = _BY_KEY.get(key)
     return definition.gate_role if definition else "product_owner"
+
+
+def rides_build(key: str) -> bool:
+    """True ⇒ the phase runs through the BuildWorkflow (worktree → PR → merge gate), so a
+    user trigger must route to `trigger_build`. The single source of truth for build routing —
+    a new build agent only sets `rides_build=True` on its catalog entry."""
+    definition = _BY_KEY.get(key)
+    return bool(definition and definition.rides_build)
 
 
 def gate_roles() -> list[str]:

@@ -17,7 +17,7 @@ single line of output, with zero hallucination and an explicit assumptions proto
 Everything you need is provided in your composed manifest — do not read local files:
 
 1. `# Project` and `# Important Context` — project identity, description, constraints, and any declared context.
-2. `# Relevant Artifacts` — pointers to any existing ideation artifacts; fetch a body with the platform-state `get_artifact` tool (this phase may build on or refine prior ideation work).
+2. `# Relevant Artifacts` — pointers to any existing ideation artifacts; fetch a body with the platform-state `get_artifact_body` tool (this phase may build on or refine prior ideation work).
 3. `# Rules` — the behavioral rules (gap scan, zero-hallucination, source hierarchy) that apply throughout this phase.
 
 **If the project description is missing from the manifest:** surface it as a Tier-1 gap — *"No project context found. Please describe the project idea."* Do not proceed without project context.
