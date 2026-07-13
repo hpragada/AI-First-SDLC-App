@@ -10,9 +10,9 @@
     {
       "name": "frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--host", "0.0.0.0"],
+      "runtimeArgs": ["run", "dev", "--", "--host", "0.0.0.0", "--port", "5174", "--strictPort"],
       "cwd": "frontend",
-      "port": 5173,
+      "port": 5174,
       "autoPort": false,
       "env": { "VITE_API_BASE": "http://localhost:8000/api" }
     }

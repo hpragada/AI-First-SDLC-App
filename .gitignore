@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!deploy/shared-aws/.env.shared.example
 *.pem
 *.key
 
