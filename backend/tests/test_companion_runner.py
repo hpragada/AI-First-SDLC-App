@@ -15,7 +15,13 @@ from runner.companion.runner import (
     run_build,
 )
 from runner.companion.state_client import RemoteStateClient, RemoteStateError
-from runner.companion.worktree import changed_files, provision_worktree, teardown_worktree
+from runner.companion.worktree import (
+    WorktreeError,
+    assert_remote_matches,
+    changed_files,
+    provision_worktree,
+    teardown_worktree,
+)
 
 from drivers.base import RunResult
 
@@ -90,6 +96,48 @@ def test_provision_creates_isolated_branch_and_excludes_scratch(tmp_path):
                               worktree_path=tmp_path / "wt" / "ST-1") == wt
     teardown_worktree(repo_path=repo, worktree_path=wt)
     assert not wt.exists()
+
+
+# ── multi-repo remote guard ─────────────────────────────────────────
+def test_assert_remote_matches_accepts_matching_hosted_remote(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                    "https://github.com/acme/web.git"], check=True, capture_output=True)
+    assert_remote_matches(repo, "acme/web")                     # no raise
+    subprocess.run(["git", "-C", str(repo), "remote", "set-url", "origin",
+                    "git@github.com:acme/web.git"], check=True, capture_output=True)
+    assert_remote_matches(repo, "acme/web")                     # ssh form also accepted
+
+
+def test_assert_remote_matches_rejects_wrong_hosted_remote(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                    "https://github.com/acme/api.git"], check=True, capture_output=True)
+    with pytest.raises(WorktreeError, match="repo mismatch"):
+        assert_remote_matches(repo, "acme/web")                 # clone is api, task routed to web
+
+
+def test_assert_remote_matches_skips_local_path_remote(tmp_path):
+    """A local bare-repo remote (tests, air-gapped setups) carries no owner/name — the guard is
+    a no-op rather than a false positive."""
+    repo = _init_repo(tmp_path / "repo")
+    _add_remote(repo)                                           # origin is a filesystem path
+    assert_remote_matches(repo, "acme/web")                     # no raise
+
+
+# ── CLI repo-map parsing ────────────────────────────────────────────
+def test_parse_repo_map_builds_name_to_path():
+    from runner.companion.__main__ import _parse_repo_map
+
+    m = _parse_repo_map(["acme/api=/repos/api", "acme/web=/repos/web"])
+    assert m == {"acme/api": "/repos/api", "acme/web": "/repos/web"}
+
+
+def test_parse_repo_map_rejects_malformed():
+    from runner.companion.__main__ import _parse_repo_map
+
+    with pytest.raises(SystemExit):
+        _parse_repo_map(["acme/api"])                           # no =PATH
 
 
 # ── build orchestration ─────────────────────────────────────────────

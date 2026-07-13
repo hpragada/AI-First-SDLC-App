@@ -97,6 +97,45 @@ def test_build_endpoint_rejects_workitem_without_repo(client, project, member):
     assert not Run.objects.filter(work_item=wi).exists()
 
 
+@pytest.mark.django_db
+def test_multi_repo_unpinned_workitem_is_rejected_not_silently_defaulted(client, project, member):
+    """D5 / Hybrid Option C: on a multi-repo project a work item with NO repo must NOT silently
+    build into the default repo (backend code PR'd into the frontend repo). It fails loud so the
+    assignment is confirmed at the Task Breakdown gate first."""
+    _login(client)
+    Repository.objects.create(tenant=project.tenant, project=project, name="acme/web",
+                              default_base="main", is_default=True)
+    Repository.objects.create(tenant=project.tenant, project=project, name="acme/api",
+                              default_base="main", is_default=False)
+    wi = WorkItem.objects.create(tenant=project.tenant, project=project,
+                                 type=WorkItem.Type.TASK, title="Unassigned task")
+
+    r = client.post(f"/api/work-items/{wi.id}/build/", {}, format="json")
+
+    assert r.status_code == 400, r.data
+    assert "multiple repositories" in str(r.data).lower()
+    assert not Run.objects.filter(work_item=wi).exists()
+
+
+@pytest.mark.django_db
+def test_multi_repo_pinned_workitem_builds_into_its_own_repo(client, project, member, _no_temporal):
+    """The pinned (non-default) repo is honoured — the build routes to acme/api even though
+    acme/web is the project default."""
+    _login(client)
+    Repository.objects.create(tenant=project.tenant, project=project, name="acme/web",
+                              default_base="main", is_default=True)
+    api = Repository.objects.create(tenant=project.tenant, project=project, name="acme/api",
+                                    default_base="develop", is_default=False)
+    wi = WorkItem.objects.create(tenant=project.tenant, project=project, repo=api,
+                                 type=WorkItem.Type.TASK, title="Backend task")
+
+    r = client.post(f"/api/work-items/{wi.id}/build/", {}, format="json")
+
+    assert r.status_code == 202, r.data
+    assert _no_temporal and _no_temporal[0][1].repo == "acme/api"
+    assert _no_temporal[0][1].base == "develop"
+
+
 # ── the UI phase-trigger routing: build agents → BuildWorkflow, plan agents → agent-run ──
 
 @pytest.mark.django_db

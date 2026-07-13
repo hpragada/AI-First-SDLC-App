@@ -69,6 +69,28 @@ def commit_all(worktree_path, message: str) -> str | None:
     return head_sha(worktree_path)
 
 
+def assert_remote_matches(worktree_path, repo: str, *, remote: str = "origin") -> None:
+    """Defense in depth for multi-repo: fail before pushing if the clone's `origin` isn't the
+    repo the platform routed this work item to (`task.repo`). A mis-mapped `--repo NAME=PATH`
+    would otherwise push a work item's branch to the wrong GitHub repo, where the platform then
+    can't find the head ref when it opens the PR. Matches `owner/name` against the remote URL in
+    both HTTPS (`.../owner/name(.git)`) and SSH (`git@host:owner/name(.git)`) forms. Only *hosted*
+    remotes are checked — a local filesystem remote (e.g. a test bare repo) carries no owner/name
+    and is left alone."""
+    url = _git(worktree_path, "remote", "get-url", remote, check=False).strip()
+    if not url:
+        return  # no origin at all — nothing to verify against
+    is_hosted = url.startswith(("http://", "https://", "ssh://")) or "@" in url
+    if not is_hosted:
+        return  # local/path remote — can't carry an owner/name to compare
+    norm = url[:-4] if url.endswith(".git") else url
+    slug = repo.strip("/")
+    if not (norm.endswith("/" + slug) or norm.endswith(":" + slug)):
+        raise WorktreeError(
+            f"repo mismatch: work item routed to {repo!r} but the clone's {remote} remote is "
+            f"{url!r}. Check the --repo {repo}=<path> mapping points at the right clone.")
+
+
 def push_branch(worktree_path, branch: str, *, remote: str = "origin") -> None:
     """Push the committed feature branch to the remote so the platform can open the PR against
     a real ref (D2). Uses the developer clone's own remote/credentials — the platform's token

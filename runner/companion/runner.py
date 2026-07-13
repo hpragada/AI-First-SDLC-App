@@ -22,6 +22,7 @@ from .guardrails import (
     scan_worktree,
 )
 from .worktree import (
+    assert_remote_matches,
     changed_files,
     commit_all,
     head_sha,
@@ -193,6 +194,8 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
             # real ref. Nothing is committed/pushed when the scan blocks or the agent produced
             # no change (head_sha stays empty → the saga reports an empty build).
             if files and commit_all(worktree, _commit_message(task)) is not None:
+                # Multi-repo safety: never push a work item's branch to the wrong repo's remote.
+                assert_remote_matches(worktree, task.repo)
                 push_branch(worktree, branch)
                 out["head_sha"] = head_sha(worktree)
         return out

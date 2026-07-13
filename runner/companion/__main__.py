@@ -1,8 +1,10 @@
 """Companion CLI: enroll a runner, serve as a daemon, or run a single build task.
 
     python -m runner.companion enroll --api-url URL --tenant T --project P --label laptop
-    python -m runner.companion serve  --api-url URL --tenant T --token TOK \
-                                      [--repo-path ~/repos/api --worktrees ~/sdlc]
+    python -m runner.companion serve  --api-url URL --tenant T --token TOK --worktrees ~/sdlc \
+                                      [--repo-path ~/repos/api]              # single-repo
+    python -m runner.companion serve  --api-url URL --tenant T --token TOK --worktrees ~/sdlc \
+        --repo acme/api=~/repos/api --repo acme/web=~/repos/web             # multi-repo
     python -m runner.companion run    --task task.json --repo-path ~/repos/api --worktrees ~/sdlc
 
 `enroll` returns the one-time token. `serve` is the headless background process: it claims
@@ -53,12 +55,26 @@ def _run(args) -> int:
     return 0
 
 
+def _parse_repo_map(pairs) -> dict:
+    """Turn repeated `--repo owner/name=/abs/clone` values into an {name: path} map. On a
+    multi-repo project each work item is assigned a repo (`task.repo`), so the companion needs
+    one local clone per repo — a single `--repo-path` can only ever serve one of them."""
+    repo_paths: dict[str, str] = {}
+    for pair in pairs or []:
+        name, sep, path = pair.partition("=")
+        if not sep or not name.strip() or not path.strip():
+            raise SystemExit(f"--repo expects NAME=PATH (e.g. owner/name=/path/to/clone), got: {pair!r}")
+        repo_paths[name.strip()] = path.strip()
+    return repo_paths
+
+
 def _serve(args) -> int:
     from .daemon import CompanionDaemon
 
+    repo_paths = _parse_repo_map(args.repo)
     daemon = CompanionDaemon(
         api_url=args.api_url, tenant_id=args.tenant, token=args.token,
-        repo_path=args.repo_path, worktrees_root=args.worktrees,
+        repo_path=args.repo_path, repo_paths=repo_paths, worktrees_root=args.worktrees,
         poll_interval=args.poll_interval, heartbeat_interval=args.heartbeat_interval,
     )
     daemon.serve()
@@ -83,7 +99,11 @@ def main(argv=None) -> int:
     s.add_argument("--api-url", required=True)
     s.add_argument("--tenant", required=True)
     s.add_argument("--token", required=True)
-    s.add_argument("--repo-path", default=None)
+    s.add_argument("--repo-path", default=None,
+                   help="single-repo shorthand: the one local clone builds run against")
+    s.add_argument("--repo", action="append", default=[], metavar="NAME=PATH",
+                   help="multi-repo: map a repo (owner/name) to its local clone; repeat once per "
+                        "repo. The build routes each work item to the clone matching its repo.")
     s.add_argument("--worktrees", default=None)
     s.add_argument("--poll-interval", type=float, default=5.0)
     s.add_argument("--heartbeat-interval", type=float, default=30.0,

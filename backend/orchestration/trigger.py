@@ -171,13 +171,25 @@ def trigger_build(
         repo = repo or (work_item.repo.name if work_item.repo else None)
         base = base or (work_item.repo.default_base if work_item.repo else None)
         if not repo:
-            # Fall back to the project's default repository (S-13) so a task can be built from
-            # the UI without first pinning a repo to the work item (proposed items have none).
             from apps.projects.models import Repository
 
-            default_repo = Repository.objects.filter(
-                tenant_id=tenant_id, project_id=project_id, is_default=True
-            ).first()
+            project_repos = Repository.objects.filter(
+                tenant_id=tenant_id, project_id=project_id
+            )
+            repo_count = project_repos.count()
+            # Multi-repo (D5 / Hybrid Option C): NEVER silently default an unpinned work item —
+            # its repo is chosen by the planner and confirmed at the Task Breakdown gate, so a
+            # build with no repo means that assignment was missed. Fail loud rather than PR into
+            # whatever happens to be the default repo (e.g. backend code into the frontend repo).
+            if repo_count > 1:
+                raise TriggerError(
+                    "this work item has no repository assigned and the project has multiple "
+                    "repositories — assign its repo (confirm it at the Task Breakdown gate or set "
+                    "the work item's repo) before building."
+                )
+            # Single-repo: fall back to the project's default repository (S-13) so a task can be
+            # built from the UI without first pinning a repo (proposed items have none).
+            default_repo = project_repos.filter(is_default=True).first()
             if default_repo is not None:
                 repo = default_repo.name
                 base = base or default_repo.default_base

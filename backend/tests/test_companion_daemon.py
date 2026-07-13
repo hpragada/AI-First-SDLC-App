@@ -181,6 +181,46 @@ def test_build_kind_delegates_to_run_build(monkeypatch):
     assert body["status"] == "ok" and body["branch"] == "feature/ST-1"
 
 
+def _build_task(repo: str):
+    return {"kind": "build", "run_id": "rb", "payload": {
+        "run_id": "rb", "tenant_id": "t1", "project_id": "p1", "work_item_id": "w1",
+        "work_item_key": "ST-1", "repo": repo, "base": "main",
+        "manifest": "# Project\nm", "agent_body": "BODY"}}
+
+
+def test_build_routes_to_the_mapped_clone_for_this_repo(monkeypatch):
+    """Multi-repo: a work item assigned to acme/web must build against acme/web's clone, not
+    whichever clone happens to be first — the whole point of Hybrid Option C routing."""
+    transport = _Transport([(200, _build_task("acme/web")), (204, None)])
+    seen = {}
+
+    async def _fake_run_build(task, *, driver, repo_path, worktrees_root, keep_worktree=False):
+        seen["repo_path"] = repo_path
+        return {"status": "ok", "branch": "feature/ST-1", "head_sha": "d", "changed_files": []}
+
+    monkeypatch.setattr(daemon_mod, "run_build", _fake_run_build)
+    d = _daemon(transport, _FakeDriver(), worktrees_root="/wt",
+                repo_paths={"acme/api": "/repos/api", "acme/web": "/repos/web"})
+    d.serve(max_iterations=2)
+    assert seen["repo_path"] == "/repos/web"
+
+
+def test_build_for_unmapped_repo_fails_loud_never_wrong_clone():
+    """A work item routed to a repo with no local clone must raise — never silently fall back to
+    another repo's clone (which would push code to the wrong GitHub repo)."""
+    d = _daemon(_Transport([]), _FakeDriver(), worktrees_root="/wt",
+                repo_paths={"acme/api": "/repos/api"})
+    with pytest.raises(DaemonError, match="no local clone configured for repo 'acme/web'"):
+        d._run_build(_build_task("acme/web"))
+
+
+def test_single_repo_shorthand_still_serves_any_repo():
+    """Backward compat: with only --repo-path (no --repo map), the single clone serves the
+    build regardless of the task's repo label (single-repo projects, unchanged behaviour)."""
+    d = _daemon(_Transport([]), _FakeDriver(), worktrees_root="/wt", repo_path="/repos/only")
+    assert d._resolve_repo_path("acme/api") == "/repos/only"
+
+
 def test_ensure_local_engine_auth_drops_api_key(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-be-dropped")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "tok-should-be-dropped")

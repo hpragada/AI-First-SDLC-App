@@ -107,7 +107,8 @@ def _default_driver_factory(agent_body: str):
 class CompanionDaemon:
     def __init__(
         self, *, api_url: str, tenant_id: str, token: str,
-        repo_path: str | None = None, worktrees_root: str | None = None,
+        repo_path: str | None = None, repo_paths: dict | None = None,
+        worktrees_root: str | None = None,
         poll_interval: float = 5.0, heartbeat_interval: float = 30.0,
         transport: Callable[..., tuple[int, object]] | None = None,
         driver_factory: Callable[[str], object] | None = None,
@@ -117,6 +118,10 @@ class CompanionDaemon:
         self._tenant = tenant_id
         self._token = token
         self._repo_path = repo_path
+        # {repo "owner/name": local clone path} for multi-repo routing. The single --repo-path
+        # shorthand is kept as an unnamed fallback (used only when exactly one clone is known and
+        # the task's repo isn't explicitly mapped — see _resolve_repo_path).
+        self._repo_paths = dict(repo_paths or {})
         self._worktrees_root = worktrees_root
         self._poll_interval = poll_interval
         self._heartbeat_interval = heartbeat_interval
@@ -192,20 +197,48 @@ class CompanionDaemon:
             self._report(report_path, {"status": "failed", "message": str(exc)})
             return
 
+    def _resolve_repo_path(self, repo: str) -> str:
+        """Pick the local clone this work item's repo (`task.repo`) must build against. On a
+        multi-repo project the wrong clone silently pushes code to the wrong GitHub repo, so we
+        never guess: an explicit --repo mapping wins; otherwise the single --repo-path shorthand
+        is used ONLY when no map was given (single-repo mode). A repo we can't resolve is a hard,
+        loud failure — never a fall-back to some other repo's clone."""
+        if repo in self._repo_paths:
+            return self._repo_paths[repo]
+        # single-repo shorthand: one clone, no explicit map → serve it.
+        if self._repo_path and not self._repo_paths:
+            return self._repo_path
+        raise DaemonError(
+            f"no local clone configured for repo {repo!r}; pass --repo {repo}=<path> "
+            f"(known: {sorted(self._repo_paths) or 'none'})")
+
     def _run_build(self, task: dict) -> None:
-        if not (self._repo_path and self._worktrees_root):
-            raise DaemonError("build dispatched but --repo-path/--worktrees not configured")
+        if not self._worktrees_root:
+            raise DaemonError("build dispatched but --worktrees not configured")
+        if not (self._repo_path or self._repo_paths):
+            raise DaemonError(
+                "build dispatched but no repo clone configured (pass --repo-path for single-repo "
+                "or one or more --repo NAME=PATH for multi-repo)")
         from runner.companion.runner import to_build_report
+        from runner.companion.worktree import WorktreeError
 
         payload = dict(task["payload"])
         payload.setdefault("runner_token", self._token)
         build_task = BuildTask(**{k: payload[k] for k in payload
                                   if k in BuildTask.__dataclass_fields__})
+        repo_path = self._resolve_repo_path(build_task.repo)
         driver = self._driver_factory(build_task.agent_body)
-        result = asyncio.run(run_build(
-            build_task, driver=driver, repo_path=self._repo_path,
-            worktrees_root=self._worktrees_root))
-        self._report(f"/api/runner/builds/{task['run_id']}/report/", to_build_report(result))
+        report_path = f"/api/runner/builds/{task['run_id']}/report/"
+        try:
+            result = asyncio.run(run_build(
+                build_task, driver=driver, repo_path=repo_path,
+                worktrees_root=self._worktrees_root))
+        except WorktreeError as exc:
+            # e.g. the clone's origin doesn't match the routed repo (mis-mapped --repo). Fail
+            # THIS build loudly on the platform, but keep the daemon serving other work items.
+            self._report(report_path, {"status": "failed", "message": str(exc)})
+            return
+        self._report(report_path, to_build_report(result))
 
     def run_task(self, task: dict) -> None:
         # Re-assert subscription-only auth before EVERY run, not just at startup — a
