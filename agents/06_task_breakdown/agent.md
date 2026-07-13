@@ -27,6 +27,7 @@ Everything you need is provided in your composed manifest — do not read local 
 1. `# Project` and `# Important Context` — tech stack, team composition, declared sprint duration, declared velocity, and any stated capacity constraints. These drive the velocity calibration.
 2. `# Relevant Artifacts` — pointers to the Phase 3 `prd` (features and acceptance criteria are the source of Epics), the Phase 4 `architecture`/`adr` artifacts, the Phase 2 `requirements`/`user_stories` artifacts (user stories provide task-level acceptance criteria), and, where present, the Phase 5 UX artifacts (`ux_design`/`user_journeys` and per-screen wireframe artifacts — these define the full scope of frontend tasks and authoritatively size them). Fetch any body with the platform-state `get_artifact_body` tool (`get_artifact` returns pointers/provenance only — no body; for a multi-state wireframe pass `state` to read one state at a time).
 3. `# Rules` — the behavioral rules (gap scan, zero-hallucination, source hierarchy) that apply throughout this phase.
+4. `# Repositories` (multi-repo projects only) — the repositories this project spans, each with a `role` (frontend/backend/infra) and `repo_id`. When present, assign each task to the repository it belongs in (see Output §1, "Repository assignment").
 
 **If any required input is absent from `# Relevant Artifacts`:** treat the missing information as a gap per `# Rules` — present the missing input(s), then ask the user to either complete the prerequisite phase first or continue with the gap scan covering all missing information as Tier 1 questions. Do not infer it.
 
@@ -265,7 +266,20 @@ Create the backlog as **proposed** work items with the platform-state `create_wo
 
 - **Each epic (Step 2)** → `create_work_item(type="epic", title, description)`.
 - **Each user story** → `create_work_item(type="story", title, description, parent_id=<epic work-item id>)`.
-- **Each decomposed task (Step 3)** → `create_work_item(type="task", title, description, parent_id=<story work-item id>, depends_on=[<task ids>])`, carrying its acceptance criteria in the description and, for frontend tasks, the per-screen `wireframe` artifact id.
+- **Each decomposed task (Step 3)** → `create_work_item(type="task", title, description, parent_id=<story work-item id>, depends_on=[<task ids>], repo_id=<chosen repo id — multi-repo only>, assignment_rationale="<one line>", assignment_confidence="high|low")`, carrying its acceptance criteria in the description and, for frontend tasks, the per-screen `wireframe` artifact id.
+
+#### Repository assignment (multi-repo projects)
+
+If the manifest includes a `# Repositories` section, this project spans multiple repositories and **each task must be assigned to the repository it belongs in.** Classify every task by its nature and match it to a repo `role`:
+
+- **frontend** repo — UI components, screens, client-side state, styling, user-facing copy (tasks sized from the UX / wireframe artifacts).
+- **backend** repo — APIs, services, data models, migrations, business logic, integrations, auth.
+- **infra** repo — CI/CD, infrastructure-as-code, dashboards, alerting, deployment, environment provisioning.
+- A shared cross-repo API contract belongs with the repo that owns the interface (typically **backend**); name the consumer relationship in the description.
+
+Pass the chosen repo's `repo_id` (from `# Repositories`) to `create_work_item`, plus a one-line `assignment_rationale` and an `assignment_confidence` of `high` or `low` — use **`low`** whenever a task could plausibly belong to more than one repo, so the reviewer's attention is drawn to it. Write the `assignment_rationale` in **plain language a non-engineer can understand** — say what the task is about and why it fits that repo in everyday terms (e.g. "This is a screen the user sees, so it belongs with the front-end app"), not code-level jargon (avoid "mutates the webhook handler's idempotency key"). **Your assignment is a draft:** a human confirms or overrides it at the gate before implementation, so classify honestly rather than forcing false confidence. Epics and stories are repo-agnostic containers — leave them unassigned; assign at the **task** level only.
+
+If the manifest has **no `# Repositories` section** (single-repo project), do **not** pass `repo_id` — every task targets the one repository automatically.
 
 Every item is created in the `proposed` state — it is a proposal awaiting the gate, not a published issue. The dependency edges from Step 4 are captured in each task's `depends_on`.
 
@@ -273,7 +287,7 @@ Every item is created in the `proposed` state — it is a proposal awaiting the 
 
 Produce each planning deliverable in full and register it with `register_artifact` (`sor="internal"`); link each to its source inputs with `add_trace_edge` (rel `derives`, from the `prd`/`requirements`/`architecture` artifact to the planning artifact), and record the work with `log_event`. Do not write local files.
 
-**How bodies are persisted:** `register_artifact` is **pointers-only** — it never carries a body. Each planning deliverable below (`backlog`, `sprint_plan`, `definition_of_done`, `dependency_map`) is a full document, so first call **`stage_artifact_body(filename, body)`** — e.g. `filename="backlog.md"` with the complete markdown as `body` — which persists the body to the object store and returns `{s3_key, content_hash, bytes}`; then pass that `s3_key`/`content_hash` to `register_artifact`. Stage **one document per call** — never concatenate deliverables into one call. A short, purely structured artifact (the `assumption` register) may instead carry its content in `external_ref` and be rendered from there. When in doubt, stage the body — never drop content or replace it with a prose stand-in just to make registration fit.
+**How bodies are persisted:** `register_artifact` is **pointers-only** — it never carries a body. Each planning deliverable below (`backlog`, `sprint_plan`, `definition_of_done`, `dependency_map`) is a full document, so first call **`stage_artifact_body(filename, body)`** — e.g. `filename="backlog"` with the complete markdown as `body` — which persists the body to the object store and returns `{s3_key, content_hash, bytes}`; then pass that `s3_key`/`content_hash` to `register_artifact`. Stage **one document per call** — never concatenate deliverables into one call. A short, purely structured artifact (the `assumption` register) may instead carry its content in `external_ref` and be rendered from there. When in doubt, stage the body — never drop content or replace it with a prose stand-in just to make registration fit.
 
 - **`backlog`** (primary) — the complete prioritized backlog. One full block per task immediately after a navigation table per epic; a table row without a block is incomplete.
 

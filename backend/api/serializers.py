@@ -14,7 +14,7 @@ from apps.clarifications.models import Clarification
 from apps.gates.models import Approval
 from apps.integrations.models import DriftRecord, IntegrationConnection, SourceDocument
 from apps.ledger.models import Event
-from apps.projects.models import Project, ProjectProfile
+from apps.projects.models import Project, ProjectProfile, Repository
 from apps.registry.models import Artifact, TraceEdge
 from apps.runs.models import Run
 from apps.tenancy.models import Invitation, Membership, Tenant
@@ -253,12 +253,20 @@ class WorkItemSerializer(serializers.ModelSerializer):
 
 
 class WorkItemPatchSerializer(serializers.ModelSerializer):
-    """P4.8-T1 bucket-B gap A: edit surface for S-15/S-16 "Edit" — title/description/type
-    only, never state/parent/takeover_flag/external_ref (those change via their own actions)."""
+    """P4.8-T1 bucket-B gap A: edit surface for S-15/S-16 "Edit" — title/description/type,
+    plus `repo` (Hybrid Option C: assign or redirect the work item's target repository —
+    the reviewer's override at the gate, and the per-task redirect until build). Never
+    state/parent/takeover_flag/external_ref (those change via their own actions)."""
+
+    # RLS scopes this queryset to the tenant; the view additionally checks the repo is on
+    # this work item's project. `allow_null` clears the assignment (fall back to default repo).
+    repo = serializers.PrimaryKeyRelatedField(
+        queryset=Repository.objects.all(), required=False, allow_null=True
+    )
 
     class Meta:
         model = WorkItem
-        fields = ["title", "description", "type"]
+        fields = ["title", "description", "type", "repo"]
 
 
 class TriggerSerializer(serializers.Serializer):

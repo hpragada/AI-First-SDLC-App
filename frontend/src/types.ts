@@ -49,7 +49,24 @@ export interface WorkItem {
   parent?: string | null;
   assignee?: string | null;
   takeover_flag?: boolean;
-  external_ref?: { sor?: string; id?: string; key?: string; url?: string } | null;
+  // Multi-repo (Hybrid Option C): the repository this work item targets (null = default repo).
+  repo?: string | null;
+  external_ref?: {
+    sor?: string;
+    id?: string;
+    key?: string;
+    url?: string;
+    // The Task Breakdown agent's draft repo suggestion — the reviewer confirms/overrides it.
+    repo_assignment?: RepoAssignment;
+  } | null;
+}
+
+// The agent's proposed repo for a work item, shown for review at the Task Breakdown gate.
+export interface RepoAssignment {
+  suggested_repo_id: string | null;
+  rationale: string;
+  confidence: "high" | "low" | string;
+  source: string;
 }
 
 export interface Run {

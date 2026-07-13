@@ -19,7 +19,9 @@ import {
 } from "../../components/ui";
 import type { Approval } from "../../types";
 import { roleLabel } from "../identity/roles";
-import { useApprovals, useDecideApproval, useGateCriteria, useWorkItems } from "./hooks";
+import { useApprovals, useDecideApproval, useGateCriteria, usePatchAnyWorkItem, useWorkItems } from "./hooks";
+import { useRepositories } from "../setup/hooks";
+import { RepoAssignmentReview } from "./RepoAssignmentReview";
 import { gateLabel } from "./phases";
 
 // S-21 view states: can-decide (your role) · cannot-decide (permission) ·
@@ -39,10 +41,13 @@ function GatesLive() {
   const workItemIds = new Set((workItems.data ?? []).map((w) => w.id));
   const approvals = useApprovals();
   const decideApproval = useDecideApproval();
+  const repos = useRepositories(projectId);
+  const patchAny = usePatchAnyWorkItem();
   const [tab, setTab] = useState<"pending" | "history">("pending");
   const [comment, setComment] = useState("");
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [satisfied, setSatisfied] = useState<Record<string, boolean>>({});
+  const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
 
   const loading = approvals.isLoading || workItems.isLoading;
   const projectApprovals = (approvals.data ?? []).filter((a) => workItemIds.has(a.work_item));
@@ -63,6 +68,25 @@ function GatesLive() {
 
   const metCount = criteriaList.filter((c) => satisfied[c.id]).length;
   const requiredUnmet = criteriaList.some((c) => c.required && !satisfied[c.id]);
+
+  // B2/C1 (Option C): on a multi-repo project, a Task Breakdown gate carries proposed tasks
+  // each with the planner's repo suggestion — surface them for confirm/override at the gate.
+  const repoList = repos.data ?? [];
+  const multiRepo = repoList.length > 1;
+  const assignmentItems = (workItems.data ?? []).filter(
+    (w) => w.state === "proposed" && w.external_ref?.repo_assignment,
+  );
+  const showReview = multiRepo && assignmentItems.length > 0;
+  const unreviewedLow = assignmentItems.filter(
+    (w) => w.external_ref?.repo_assignment?.confidence === "low" && !confirmed[w.id],
+  ).length;
+  const overrideRepo = (id: string, repoId: string) => {
+    patchAny.mutate({ id, patch: { repo: repoId || null } });
+    setConfirmed((c) => ({ ...c, [id]: true }));
+  };
+  const keepAssignment = (id: string) => setConfirmed((c) => ({ ...c, [id]: true }));
+  const confirmAll = () =>
+    setConfirmed(Object.fromEntries(assignmentItems.map((w) => [w.id, true])));
 
   const canDecide = (a: Approval) =>
     Boolean(currentUser?.user.is_tenant_admin) || selectedProject?.role === a.required_role;
@@ -151,7 +175,10 @@ function GatesLive() {
           />
         </Panel>
       ) : (
-        <div className="grid grid--detail" style={{ marginTop: "var(--space-5)" }}>
+        <div
+          className={showReview ? "u-stack" : "grid grid--detail"}
+          style={{ marginTop: "var(--space-5)" }}
+        >
           <Panel title="Pending approvals" flush>
             <Table
               headers={["Gate", "Required role", "Work item", "Artifact"]}
@@ -218,6 +245,31 @@ function GatesLive() {
                         ))}
                       </CriteriaList>
                     </div>
+                  )}
+                  {showReview && (
+                    <>
+                      <RepoAssignmentReview
+                        items={assignmentItems}
+                        repos={repoList}
+                        confirmed={confirmed}
+                        onOverride={overrideRepo}
+                        onKeep={keepAssignment}
+                        busy={patchAny.isPending}
+                      />
+                      {unreviewedLow > 0 && (
+                        <Banner
+                          variant="info"
+                          title={`${unreviewedLow} task${unreviewedLow > 1 ? "s" : ""} the planner wasn't sure about`}
+                        >
+                          Review the flagged tasks above, or{" "}
+                          <button className="btn btn--ghost btn--sm" onClick={confirmAll}>
+                            confirm all as-is
+                          </button>
+                          . You can still approve — this is a heads-up, not a block.
+                        </Banner>
+                      )}
+                      <span className="gate-reassure">Approving confirms these repository assignments.</span>
+                    </>
                   )}
                   <label className="field" style={{ margin: "var(--space-2) 0 0" }}>
                     <span className="field__label">Comment (optional)</span>

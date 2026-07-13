@@ -108,10 +108,16 @@ def build_server(
     @server.tool()
     def create_work_item(project_id: str, type: str, title: str, description: str = "",
                          parent_id: str | None = None, feature_stream: str = "",
-                         depends_on: list | None = None) -> dict:
+                         depends_on: list | None = None, repo_id: str | None = None,
+                         assignment_rationale: str = "", assignment_confidence: str = "") -> dict:
+        """Multi-repo (Option C): pass `repo_id` to assign the work item to one of the project's
+        repositories (from get_context `repositories`), plus a short `assignment_rationale` and
+        `assignment_confidence` (high|low) — the reviewer confirms/overrides these at the gate."""
         return client.call("create_work_item", project_id=project_id, type=type, title=title,
                            description=description, parent_id=parent_id,
-                           feature_stream=feature_stream, depends_on=depends_on)
+                           feature_stream=feature_stream, depends_on=depends_on,
+                           repo_id=repo_id, assignment_rationale=assignment_rationale,
+                           assignment_confidence=assignment_confidence)
 
     @server.tool()
     def transition_work_item(work_item_id: str, to_state: str) -> dict:

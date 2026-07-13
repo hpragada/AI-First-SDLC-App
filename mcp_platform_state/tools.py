@@ -133,7 +133,20 @@ def _repo(r: Repository) -> dict:
         "role": r.role,
         "default_base": r.default_base,
         "connector": r.connector,
+        "is_default": r.is_default,
         "stack_overrides": r.stack_overrides or {},
+    }
+
+
+def _repo_brief(r: Repository) -> dict:
+    """A project's repo as an assignment *option* (Task Breakdown reads these to pick a repo
+    per work item). Lean — identity + role + base + default flag, no stack overrides."""
+    return {
+        "repo_id": str(r.id),
+        "name": r.name,
+        "role": r.role,
+        "default_base": r.default_base,
+        "is_default": r.is_default,
     }
 
 
@@ -193,6 +206,13 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
             if scope_repo_id else None
         )
 
+        # All repos on the project — the assignment *options* a project-level planning run
+        # (e.g. Task Breakdown) classifies each work item against. Empty for single-repo/
+        # no-repo projects; the agent then leaves repo unset and the default repo is used.
+        all_repos = Repository.objects.filter(
+            tenant_id=tenant_id, project_id=project_id
+        ).order_by("-is_default", "role", "name")
+
         artifacts_qs = Artifact.objects.filter(tenant_id=tenant_id, project_id=project_id)
         if repo is not None:
             # this repo + repo-agnostic project artifacts + the shared cross-repo contract
@@ -215,6 +235,9 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
         return {
             "profile": _profile(project),
             "repo": _repo(repo) if repo is not None else None,
+            # The project's repos as assignment options (D5 multi-repo) — Task Breakdown reads
+            # these to pick a repo per work item; the reviewer confirms at the gate.
+            "repositories": [_repo_brief(r) for r in all_repos],
             # Knowledge Index = project-scoped shared memory (D5) — retrieve across all repos.
             # Pointers only (bodies fetched via get_artifact_body) so many artifacts with large
             # external_ref bodies don't blow the MCP token budget (Bugs.xlsx row 69).
@@ -343,9 +366,18 @@ def list_work_items(tenant_id, project_id, state=None) -> list[dict]:
 def create_work_item(
     tenant_id, project_id, type, title, description="",
     parent_id=None, feature_stream="", depends_on=None,
+    repo_id=None, assignment_rationale="", assignment_confidence="",
 ) -> dict:
     """Propose a WorkItem (state=proposed) — the backlog the Task-Breakdown agent emits.
-    Reconciliation later pushes proposed→accepted into the TaskTracker SoR (#5/B1)."""
+    Reconciliation later pushes proposed→accepted into the TaskTracker SoR (#5/B1).
+
+    Multi-repo (D5, Hybrid Option C): `repo_id` pins the work item to one of the project's
+    repositories (chosen from get_context's `repositories`). Optional — single-repo / repo-less
+    projects leave it unset and the default repo is used at build time. The agent's choice is a
+    *draft*: `assignment_rationale` / `assignment_confidence` are stored on
+    `external_ref.repo_assignment` so the reviewer can confirm or override it at the Task
+    Breakdown gate before it is locked for implementation.
+    """
     with tenant_context(tenant_id):
         if type not in WorkItem.Type.values:
             raise ValueError(f"invalid type: {type}")
@@ -353,10 +385,26 @@ def create_work_item(
         parent = (
             WorkItem.objects.get(id=parent_id, tenant_id=tenant_id) if parent_id else None
         )
+        repo = None
+        if repo_id:
+            repo = Repository.objects.filter(
+                id=repo_id, tenant_id=tenant_id, project_id=project_id
+            ).first()
+            if repo is None:
+                raise ValueError(f"repo {repo_id} is not a repository on this project")
+        external_ref: dict = {}
+        if repo is not None or assignment_rationale or assignment_confidence:
+            external_ref["repo_assignment"] = {
+                "suggested_repo_id": str(repo.id) if repo is not None else None,
+                "rationale": assignment_rationale or "",
+                "confidence": assignment_confidence or "",
+                "source": "agent",
+            }
         work_item = WorkItem.objects.create(
             tenant_id=tenant_id, project=project, type=type, title=title,
             description=description or "", feature_stream=feature_stream or "",
-            parent=parent, depends_on=depends_on or [],
+            parent=parent, depends_on=depends_on or [], repo=repo,
+            external_ref=external_ref,
             state=WorkItem.State.PROPOSED,
         )
         return _work_item(work_item)

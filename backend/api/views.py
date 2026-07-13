@@ -788,6 +788,14 @@ class WorkItemViewSet(
             raise ValidationError({"project": "unknown project for this tenant"})
         serializer.save(tenant_id=self.tenant_id, project_id=project_id)
 
+    def perform_update(self, serializer):
+        """Hybrid Option C: a work item may only target a repository on its OWN project — reject
+        a repo from another project (RLS already blocks another tenant's). Clearing (null) is ok."""
+        repo = serializer.validated_data.get("repo")
+        if repo is not None and str(repo.project_id) != str(serializer.instance.project_id):
+            raise ValidationError({"repo": "repository is not on this work item's project"})
+        serializer.save()
+
     def _card_fields(self, work_items):
         """P4.8-T1 bucket-B gap B: artifact_count/owner/needs the board + detail cards render,
         computed here rather than on the plain model serializer (they aren't columns). Keyed

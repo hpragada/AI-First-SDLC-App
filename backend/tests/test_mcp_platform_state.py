@@ -209,6 +209,55 @@ def test_create_work_item_proposes_hierarchy(world):
         tools.create_work_item(t.id, project.id, "not_a_type", "x")
 
 
+# ── multi-repo assignment (Hybrid Option C: agent proposes, human confirms) ──
+def test_create_work_item_assigns_repo_with_draft_rationale(world):
+    """A2/A5: the agent pins a repo + records a draft rationale/confidence the reviewer sees."""
+    from apps.projects.models import Repository
+    t, project = world["t"], world["project"]
+    repo = Repository.objects.create(tenant=t, project=project, name="acme/api",
+                                     role="backend", is_default=True)
+    wi = tools.create_work_item(
+        t.id, project.id, "task", "Persist webhook log", repo_id=str(repo.id),
+        assignment_rationale="new DB table, backend-only", assignment_confidence="high",
+    )
+    assert wi["repo_id"] == str(repo.id)
+    ra = wi["external_ref"]["repo_assignment"]
+    assert ra["suggested_repo_id"] == str(repo.id) and ra["confidence"] == "high"
+    assert ra["rationale"] == "new DB table, backend-only" and ra["source"] == "agent"
+
+
+def test_create_work_item_repo_less_is_unchanged(world):
+    """Backward-compat: no repo_id → repo stays null and no repo_assignment is written."""
+    t, project = world["t"], world["project"]
+    wi = tools.create_work_item(t.id, project.id, "task", "Some task")
+    assert wi["repo_id"] is None and "repo_assignment" not in (wi["external_ref"] or {})
+
+
+def test_create_work_item_rejects_repo_from_another_project(world):
+    """A repo must belong to the work item's own project (and tenant)."""
+    from apps.projects.models import Repository
+    t, project = world["t"], world["project"]
+    other = Project.objects.create(tenant=t, name="Other")
+    foreign = Repository.objects.create(tenant=t, project=other, name="x/y", role="backend")
+    with pytest.raises(ValueError):
+        tools.create_work_item(t.id, project.id, "task", "x", repo_id=str(foreign.id))
+
+
+def test_get_context_lists_repositories_as_assignment_options(world):
+    """A1: a project-level run gets the repo list (id/name/role/base/is_default), default first."""
+    from apps.projects.models import Repository
+    t, project = world["t"], world["project"]
+    Repository.objects.create(tenant=t, project=project, name="acme/web", role="frontend")
+    Repository.objects.create(tenant=t, project=project, name="acme/api", role="backend",
+                              is_default=True)
+    ctx = tools.get_context(t.id, project.id, phase="task_breakdown")
+    repos = ctx["repositories"]
+    assert len(repos) == 2
+    assert repos[0]["is_default"] is True and repos[0]["role"] == "backend"  # default first
+    assert {r["role"] for r in repos} == {"backend", "frontend"}
+    assert all({"repo_id", "name", "role", "default_base", "is_default"} <= set(r) for r in repos)
+
+
 # ── read / context / drift ──────────────────────────────────────────
 def test_get_context_shape(world):
     t, project, run = world["t"], world["project"], world["run"]
@@ -218,9 +267,10 @@ def test_get_context_shape(world):
     tools.log_event(t.id, "system", "phase.started", "work_item", str(world["wi"].id), {})
 
     ctx = tools.get_context(t.id, project.id, phase="prd")
-    assert set(ctx) == {"profile", "repo", "relevant_artifacts", "recent_events",
-                        "retrieved_knowledge", "answered_clarifications"}
+    assert set(ctx) == {"profile", "repo", "repositories", "relevant_artifacts",
+                        "recent_events", "retrieved_knowledge", "answered_clarifications"}
     assert ctx["repo"] is None  # repo-less run → no per-repo scoping (D5)
+    assert ctx["repositories"] == []  # no repos on this project → no assignment options
     assert ctx["profile"]["important_context"] == "ctx" and ctx["profile"]["version"] == 2
     assert len(ctx["relevant_artifacts"]) == 1
     assert len(ctx["recent_events"]) == 1

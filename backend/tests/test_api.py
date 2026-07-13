@@ -110,6 +110,35 @@ def test_create_work_item_rejects_foreign_project(client, tenant):
     assert "project" in resp.data
 
 
+def test_patch_work_item_repo_assign_reject_foreign_and_clear(client, project):
+    """B1 (Option C): a work item's target repo is assignable/clearable via PATCH and validated
+    to a repository on its OWN project — this backs the reviewer override + per-task redirect."""
+    from apps.projects.models import Repository
+    wi = WorkItem.objects.create(tenant=project.tenant, project=project, type=WorkItem.Type.TASK)
+    repo = Repository.objects.create(tenant=project.tenant, project=project, name="acme/api",
+                                     role="backend")
+    ok = client.patch(f"/api/work-items/{wi.id}/", {"repo": str(repo.id)},
+                      format="json", **_hdr(project.tenant_id))
+    assert ok.status_code == 200
+    wi.refresh_from_db()
+    assert str(wi.repo_id) == str(repo.id)
+
+    # a repo on a DIFFERENT project (same tenant) is rejected
+    other = Project.objects.create(tenant=project.tenant, name="Other")
+    foreign = Repository.objects.create(tenant=project.tenant, project=other, name="x/y",
+                                        role="backend")
+    bad = client.patch(f"/api/work-items/{wi.id}/", {"repo": str(foreign.id)},
+                       format="json", **_hdr(project.tenant_id))
+    assert bad.status_code == 400 and "repo" in bad.data
+
+    # clearing the assignment (null) is allowed — falls back to the default repo at build
+    clr = client.patch(f"/api/work-items/{wi.id}/", {"repo": None},
+                       format="json", **_hdr(project.tenant_id))
+    assert clr.status_code == 200
+    wi.refresh_from_db()
+    assert wi.repo_id is None
+
+
 # ── Phase trigger (real trigger_phase, stubbed workflow start) ──────
 def test_trigger_phase_creates_run(client, project, monkeypatch):
     seed_agent_specs(project.tenant)

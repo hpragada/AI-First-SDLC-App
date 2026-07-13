@@ -13,7 +13,9 @@ import {
 } from "../../components/ui";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
-import { useApprovals, useDecideApproval, useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
+import { useApprovals, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
+import { useRepositories } from "../setup/hooks";
+import type { WorkItemCard } from "../../types";
 
 // S-16 view states: review-loop+test-failed (default) · implementation-running ·
 // merge-gate · done.
@@ -201,9 +203,53 @@ function WorkItemTaskLive() {
               />
             </CardBody>
           </Card>
+          <RepoAssignmentCard workItem={workItem.data} buildStarted={Boolean(latestRun)} />
         </div>
       </div>
     </div>
+  );
+}
+
+// B3 (Hybrid Option C): assign / redirect a task's target repository. Multi-repo projects only
+// (single-repo has nothing to choose). Editable until the build starts. Shows the agent's plain-
+// language suggestion + a "needs review" flag when its confidence was low.
+function RepoAssignmentCard({ workItem, buildStarted }: { workItem: WorkItemCard; buildStarted: boolean }) {
+  const repos = useRepositories(workItem.project);
+  const patch = usePatchWorkItem(workItem.id);
+  const list = repos.data ?? [];
+  if (list.length <= 1) return null; // single-repo → no assignment choice
+  const suggestion = workItem.external_ref?.repo_assignment;
+  return (
+    <Card>
+      <CardBody>
+        <h3 className="t-h3" style={{ marginBottom: "var(--space-3)" }}>Repository</h3>
+        <label className="field" style={{ marginBottom: 0 }}>
+          <span className="field__label">Target repository</span>
+          <select
+            className="select"
+            value={workItem.repo ?? ""}
+            disabled={patch.isPending || buildStarted}
+            onChange={(e) => patch.mutate({ repo: e.target.value || null })}
+          >
+            <option value="">— default repository —</option>
+            {list.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name} · {r.role}
+              </option>
+            ))}
+          </select>
+        </label>
+        {suggestion?.rationale && (
+          <p className="t-sm u-muted" style={{ marginTop: "var(--space-2)" }}>
+            {suggestion.confidence === "low" ? "⚠ Needs review — " : ""}
+            Suggested by the planner: {suggestion.rationale}
+          </p>
+        )}
+        <p className="t-xs u-faint" style={{ marginTop: "var(--space-2)" }}>
+          {buildStarted ? "Locked — the build has started." : "You can redirect this task until its build starts."}
+        </p>
+      </CardBody>
+    </Card>
   );
 }
 

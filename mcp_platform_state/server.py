@@ -144,9 +144,14 @@ def create_work_item(
     parent_id: str | None = None,
     feature_stream: str = "",
     depends_on: list[str] | None = None,
+    repo_id: str | None = None,
+    assignment_rationale: str = "",
+    assignment_confidence: str = "",
 ) -> dict:
     return tools.create_work_item(
         _tenant(), project_id, type, title, description, parent_id, feature_stream, depends_on,
+        repo_id=repo_id, assignment_rationale=assignment_rationale,
+        assignment_confidence=assignment_confidence,
     )
 
 

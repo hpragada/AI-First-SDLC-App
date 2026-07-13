@@ -57,6 +57,33 @@ def test_fixed_section_order():
     assert positions == sorted(positions), "sections are out of the locked order"
 
 
+def test_repositories_section_for_multi_repo_project_level_run():
+    """A3: a project-level run (no single `repo`) on a project with >1 repo gets a
+    `# Repositories` section listing the assignment options + a classify instruction."""
+    repos = [
+        {"repo_id": "r-api", "name": "acme/api", "role": "backend",
+         "default_base": "main", "is_default": True},
+        {"repo_id": "r-web", "name": "acme/web", "role": "frontend",
+         "default_base": "main", "is_default": False},
+    ]
+    md = compose_manifest(context=_context(repositories=repos), work_item=_work_item(),
+                          phase="task_breakdown")
+    assert "# Repositories" in md
+    assert "acme/api" in md and "acme/web" in md
+    assert "backend" in md and "frontend" in md
+    assert "r-api" in md and "assign each" in md  # includes the classify instruction
+
+
+def test_repositories_section_omitted_for_single_repo():
+    """Single-repo (0 or 1 repo) → no `# Repositories` section (nothing to assign)."""
+    assert "# Repositories" not in compose_manifest(
+        context=_context(), work_item=_work_item(), phase="task_breakdown")
+    one = [{"repo_id": "r1", "name": "acme/app", "role": "backend",
+            "default_base": "main", "is_default": True}]
+    assert "# Repositories" not in compose_manifest(
+        context=_context(repositories=one), work_item=_work_item(), phase="task_breakdown")
+
+
 def test_answered_clarifications_rendered_when_present():
     ctx = _context(answered_clarifications=[
         {"phase": "prd", "context": "needed before drafting",
@@ -91,7 +118,7 @@ def test_work_item_and_phase_rendered():
 
 def test_artifacts_show_pointers_and_mcp_fetch_hint():
     md = compose_manifest(context=_context(), work_item=_work_item(), phase="prd")
-    assert "get_artifact(artifact_id)" in md  # how to fetch via MCP
+    assert "get_artifact_body(artifact_id)" in md  # how to fetch bodies via MCP (S.No 80 sweep)
     assert "s3://b/req.md" in md  # pointer, not body
     assert "[requirements v1] a1" in md
 

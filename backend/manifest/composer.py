@@ -103,6 +103,26 @@ def _render_repository(repo: dict, budget: TokenBudget) -> str:
     return _section("Repository", "\n".join(lines), budget.project)
 
 
+def _render_repositories(repositories: list, budget: TokenBudget) -> str:
+    """Multi-repo assignment options (D5, Hybrid Option C): the project's repos + roles, for a
+    project-level planning run (e.g. Task Breakdown) that assigns each work item to a repo.
+    Rendered only when the run is NOT scoped to a single repo and the project has >1 repo."""
+    lines = [
+        "This project spans multiple repositories. When you create work items, assign each to "
+        "the repository that best fits its nature (match the item to a repo `role`), and pass "
+        "the chosen `repo_id`. Give a one-line rationale and a confidence (high | low). Your "
+        "assignment is a draft the reviewer confirms or overrides at the gate.",
+        "",
+    ]
+    for r in repositories:
+        lines.append(
+            f"- repo_id: `{r.get('repo_id', '')}` · role: **{r.get('role', '') or '—'}** · "
+            f"name: {r.get('name', '')} · base: {r.get('default_base', '')}"
+            + ("  (default)" if r.get("is_default") else "")
+        )
+    return _section("Repositories", "\n".join(lines), budget.project)
+
+
 def _render_important_context(profile: dict, budget: TokenBudget) -> str:
     # Verbatim — this is the operator's hand-written steering text.
     return _section(
@@ -216,9 +236,14 @@ def compose_manifest(
     budget = budget or TokenBudget()
     profile = context.get("profile") or {}
     repo = context.get("repo")
+    repositories = context.get("repositories") or []
     sections = [_render_project(profile, budget)]
     if repo:  # only for a repo-scoped (multi-repo) run — single-repo manifests omit it
         sections.append(_render_repository(repo, budget))
+    elif len(repositories) > 1:
+        # project-level run (no single repo) on a multi-repo project — list the assignment
+        # options so Task Breakdown can route each work item to the right repo (Option C).
+        sections.append(_render_repositories(repositories, budget))
     sections += [
         _render_important_context(profile, budget),
         _render_work_item(work_item, phase, budget),

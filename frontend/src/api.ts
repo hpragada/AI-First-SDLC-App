@@ -254,7 +254,8 @@ export const api = {
   patchWorkItem: (
     tenantId: string,
     workItemId: string,
-    patch: { title?: string; description?: string; type?: string },
+    // `repo` (Option C): assign/redirect the target repository; null clears it (default repo).
+    patch: { title?: string; description?: string; type?: string; repo?: string | null },
   ) => req<WorkItem>("PATCH", `/work-items/${workItemId}/`, { tenantId, body: patch }),
   triggerPhase: (tenantId: string, workItemId: string, agentKey: string) =>
     req<TriggerResult>("POST", `/work-items/${workItemId}/trigger/`, {

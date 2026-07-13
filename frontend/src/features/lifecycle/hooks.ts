@@ -50,12 +50,24 @@ export function usePatchWorkItem(workItemId: string | undefined) {
   const tenantId = useTenantId();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (patch: { title?: string; description?: string; type?: string }) =>
+    mutationFn: (patch: { title?: string; description?: string; type?: string; repo?: string | null }) =>
       api.patchWorkItem(tenantId, workItemId as string, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["work-items"] });
       qc.invalidateQueries({ queryKey: ["lifecycle", workItemId] });
     },
+  });
+}
+
+// Patch ANY work item by id (not bound to one) — used by the Task Breakdown repo-assignment
+// review, which overrides the target repo across many proposed tasks (Option C, B2).
+export function usePatchAnyWorkItem() {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: { repo?: string | null } }) =>
+      api.patchWorkItem(tenantId, id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["work-items"] }),
   });
 }
 

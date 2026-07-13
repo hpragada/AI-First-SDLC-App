@@ -722,3 +722,20 @@
 .turn--tool  .turn__body { border-left-color: var(--info); font-family: var(--font-mono); font-size: var(--fs-mono); line-height: var(--lh-mono); }
 .turn--human .turn__role { color: var(--accent-purple); }
 .turn--human .turn__body { border-left-color: var(--accent-purple); background: var(--accent-purple-bg); }
+
+/* ── Repo-assignment review (Task Breakdown gate · Hybrid Option C, B2) ──────── */
+.chip--backend { background: var(--info-bg); color: var(--info); }
+.chip--frontend { background: var(--accent-purple-bg); color: var(--accent-purple); }
+.chip--infra { background: var(--warning-bg); color: var(--warning); }
+.chip--low { background: var(--warning-bg); color: var(--warning); }
+.repogroup__head {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+}
+.trow {
+  display: flex; align-items: flex-start; gap: var(--space-4);
+  padding: var(--space-3); border-top: 1px solid var(--border);
+}
+.trow:first-child { border-top: none; }
+.trow__main { min-width: 0; flex: 1 1 auto; }
