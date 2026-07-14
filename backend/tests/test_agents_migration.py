@@ -90,6 +90,17 @@ def test_task_breakdown_proposes_work_items_to_platform():
     assert "proposed" in body  # items are proposals awaiting the gate, not published issues
 
 
+def test_code_review_states_final_message_json_contract():
+    """Bugs S.No 114: the platform parses 08's verdict from the LAST json block of its FINAL
+    message. The body must make that contract explicit — final message ends with the json block,
+    nothing after it, and the verdict is not delivered via a tool/event instead."""
+    body = _body("08_code_review").lower()
+    assert "final message" in body
+    assert ("nothing after" in body or "last thing you output" in body
+            or "last thing you emit" in body)
+    assert "tool call or event" in body  # must not deliver the verdict only via an event
+
+
 @pytest.mark.django_db
 def test_seeded_agentspecs_resolve_to_migrated_bodies():
     t = Tenant.objects.create(name="Acme")

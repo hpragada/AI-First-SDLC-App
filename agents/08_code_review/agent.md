@@ -204,8 +204,10 @@ finding use the mentor format: a concise title, the file and line, the category,
 the principle or failure mode that makes it matter), the situational code snippet per the rules
 above, and the rationale/impact. Call out positive observations too.
 
-**Then emit your machine-readable verdict as the final block of your output — exactly one fenced
-`json` block** the platform parses to drive the loop:
+**Then end your reply with your machine-readable verdict — and nothing after it.** Your final
+message back to the platform MUST terminate with exactly one fenced `json` block (the verdict below).
+The platform parses **only this block, from the text of your final message** — so the closing fence
+of the `json` block must be the very last thing you output:
 
 ```json
 {
@@ -224,6 +226,19 @@ above, and the rationale/impact. Call out positive observations too.
   ]
 }
 ```
+
+**Output rules the platform enforces — a mismatch fails the review *closed* (the merge gate will NOT
+open and the run is halted for inspection), so follow these exactly:**
+- Your **final message ends with the `json` block above.** Do NOT write an executive summary, closing
+  remarks, a recap table, or ANY text after the closing fence — the closing ``` is the last thing you emit.
+- **Do not** deliver the verdict only through a tool call or event and then reply with prose. The `json`
+  block itself must be present in your final message. The full human-readable review goes in the
+  `code_review` artifact body; the machine verdict goes at the end of your final message. **Both are
+  required; neither substitutes for the other.**
+- Emit **exactly one** verdict `json` block. If you showed illustrative json earlier, the platform uses
+  the LAST block — so your true verdict must be last.
+- If blocking findings exist (`REM-C`/`REM-W`), they MUST appear in the `findings` array with the correct
+  `severity`. A `CHANGES_REQUIRED` status with an empty or missing `findings` array is a contract violation.
 
 **Findings contract — the platform consumes this, so be precise:**
 - `severity` is one of `critical` | `warning` | `suggestion`. `critical` and `warning` are **blocking**; `suggestion` is **non-blocking**.

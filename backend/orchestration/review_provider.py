@@ -33,7 +33,7 @@ from .activities import (
     compose_manifest_core,
     get_driver,
 )
-from .build_activities import Finding
+from .build_activities import _BLOCKING, Finding
 from .types import AgentRunInput
 
 if TYPE_CHECKING:
@@ -53,24 +53,52 @@ _SEVERITY_ALIASES = {
 _REM_PREFIX = {"critical": "REM-C", "warning": "REM-W", "suggestion": "REM-S"}
 # The migrated 08 body ends with exactly one fenced ```json block (its machine-readable verdict).
 _JSON_BLOCK = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
+# A body that signals blocking findings in prose even when the json verdict is missing/malformed:
+# a blocking REM id (REM-C1/REM-W1) or an explicit CHANGES_REQUIRED verdict word. Used by the
+# fail-closed guard so a mis-formatted verdict can never be silently downgraded to "0 blocking".
+_BLOCKING_REM = re.compile(r"\bREM-[CW]\d+\b")
+_CHANGES_REQUIRED = re.compile(r"CHANGES[_ ]REQUIRED", re.IGNORECASE)
+
+
+class ReviewContractError(RuntimeError):
+    """The 08 review output signalled blocking findings but they could not be parsed (the
+    machine-readable json verdict was missing or malformed). Raised so the build FAILS CLOSED —
+    the merge gate is never opened on an unreviewed downgrade (Bugs S.No 114)."""
 
 
 def _normalize_severity(value) -> str | None:
     return _SEVERITY_ALIASES.get(str(value or "").strip().lower())
 
 
+def _extract_verdict(text: str) -> dict | None:
+    """The reviewer's machine verdict: scan ALL fenced ```json blocks and take the LAST one that
+    parses AND looks like a verdict (has `status` or `findings`) — robust to illustrative json
+    earlier in the body and to a trailing prose summary the agent may append after the block."""
+    for block in reversed(_JSON_BLOCK.findall(text or "")):
+        try:
+            data = json.loads(block)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(data, dict) and ("findings" in data or "status" in data):
+            return data
+    return None
+
+
+def _looks_blocking(text: str) -> bool:
+    """True if the body indicates blocking findings independently of the json verdict — a blocking
+    REM id or an explicit CHANGES_REQUIRED verdict. The fail-closed signal (Bugs S.No 114)."""
+    t = text or ""
+    return bool(_BLOCKING_REM.search(t) or _CHANGES_REQUIRED.search(t))
+
+
 def parse_findings(text: str) -> list[Finding]:
-    """Extract the reviewer's final ```json verdict block and map it to `Finding`s.
+    """Extract the reviewer's ```json verdict block and map it to `Finding`s.
 
     Trusts the agent's `rem` id where present (so a still-open finding keeps its id across
     re-review cycles — the loop keys child WorkItems by it); synthesizes a stable-by-order id
     otherwise. Unknown/missing severities and malformed JSON are dropped, not raised."""
-    blocks = _JSON_BLOCK.findall(text or "")
-    if not blocks:
-        return []
-    try:
-        data = json.loads(blocks[-1])
-    except (json.JSONDecodeError, ValueError):
+    data = _extract_verdict(text)
+    if data is None:
         return []
 
     findings: list[Finding] = []
@@ -91,6 +119,32 @@ def parse_findings(text: str) -> list[Finding]:
             rem=rem, severity=severity, title=str(item.get("title") or rem),
             file=str(item.get("file") or ""), line=line,
         ))
+    return findings
+
+
+def parse_and_guard(body: str | None, *, tenant_id, run_id) -> list[Finding]:
+    """Parse the verdict AND fail closed on a contract mismatch (Bugs S.No 114).
+
+    The remediation loop keys off the parsed blocking findings; if the body clearly signals
+    blocking findings (a REM-C/REM-W id or a CHANGES_REQUIRED verdict) but none parse — the agent
+    put its prose last instead of the json block, or emitted a malformed/empty findings array —
+    then treating it as "0 blocking" would open the merge gate on an unreviewed downgrade. Raise
+    instead: `run_code_review` retries (capped) then the BuildWorkflow marks the run failed, so the
+    gate is never opened. An empty body (review timeout) has no blocking signal → returns [] as
+    before (the human merge gate still applies, S.No 110)."""
+    findings = parse_findings(body or "")
+    if not any(f.severity in _BLOCKING for f in findings) and _looks_blocking(body or ""):
+        with tenant_context(tenant_id):
+            tools.log_event(
+                tenant_id, "orchestrator", "review.parse_mismatch", "run", str(run_id),
+                {"reason": "blocking verdict signalled but no blocking findings parsed",
+                 "has_json_verdict": _extract_verdict(body or "") is not None},
+            )
+        raise ReviewContractError(
+            "08 review indicated blocking findings but none could be parsed from its output "
+            "(the machine-readable json verdict block was missing, malformed, or not the final "
+            "block); failing closed so the merge gate is not opened on an unreviewed downgrade"
+        )
     return findings
 
 
@@ -121,7 +175,7 @@ class AgentReviewProvider:
             allowed_tools=PLATFORM_TOOLS, work_item=work_item,
         ))
         body = result.outputs.get("result") or result.outputs.get("text") or ""
-        return parse_findings(body)
+        return parse_and_guard(body, tenant_id=inp.tenant_id, run_id=inp.run_id)
 
     # ── manifest assembly ───────────────────────────────────────────
     def _build_review_manifest(self, inp: BuildInput, pr_ref: str) -> str:
@@ -262,8 +316,8 @@ class CompanionReviewProvider:
         body = self._poll(inp, sleep=self._sleep, poll_interval=self._poll_interval,
                           timeout=timeout)
         if body is None:
-            return []
-        return parse_findings(body)
+            return []  # review timed out → no findings; human merge gate still applies (S.No 110)
+        return parse_and_guard(body, tenant_id=inp.tenant_id, run_id=inp.run_id)
 
 
 def build_companion_provider() -> CompanionReviewProvider:

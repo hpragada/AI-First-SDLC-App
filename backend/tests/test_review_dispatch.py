@@ -218,3 +218,62 @@ def test_review_report_endpoint_stores_verdict(world):
     assert r.status_code == 200 and r.json()["recorded"] is True
     world.run.refresh_from_db()
     assert world.run.outputs["review_body"] == _VERDICT
+
+
+# ── robust verdict parse + fail-closed guard (Bugs S.No 114) ─────────
+# The 08 reply this bug came from: a prose executive summary that names blocking findings
+# (CHANGES_REQUIRED + REM-C/REM-W) but carries NO fenced json verdict block. The old parser
+# read 0 findings → 0 blocking → merge gate opened on an unreviewed downgrade.
+_PROSE_BLOCKING_NO_JSON = (
+    "The review is complete.\n\n## Review Complete — CHANGES_REQUIRED\n\n"
+    "| REM-C1 | CRITICAL | PR size ~1,100 lines |\n"
+    "| REM-W1 | WARNING | PR targets main not develop |\n"
+    "Here is the executive summary — no machine-readable block follows."
+)
+
+
+def test_parse_findings_uses_last_verdict_block_ignoring_illustrative_json():
+    """A body may show illustrative json before the real verdict; parse must take the LAST block
+    that looks like a verdict, and ignore non-verdict json and trailing prose."""
+    text = ("Format example:\n```json\n{\"note\":\"ignore me\"}\n```\n"
+            "My verdict:\n" + _VERDICT + "\n\nThanks for reading!")
+    assert [f.rem for f in rp.parse_findings(text)] == ["REM-C1", "REM-S1"]
+
+
+def test_parse_findings_empty_when_no_verdict_block():
+    assert rp.parse_findings("just prose, no json at all") == []
+
+
+def test_parse_and_guard_passes_through_a_clean_verdict(world):
+    findings = rp.parse_and_guard(_VERDICT, tenant_id=str(world.t.id), run_id=str(world.run.id))
+    assert [f.rem for f in findings] == ["REM-C1", "REM-S1"]
+
+
+def test_parse_and_guard_returns_empty_on_empty_body(world):
+    # Review timeout path (S.No 110): empty body has no blocking signal → [] (gate still applies).
+    assert rp.parse_and_guard("", tenant_id=str(world.t.id), run_id=str(world.run.id)) == []
+    assert rp.parse_and_guard(None, tenant_id=str(world.t.id), run_id=str(world.run.id)) == []
+
+
+def test_parse_and_guard_fails_closed_when_blocking_signalled_but_unparsed(world):
+    """THE S.No 114 fix: prose says CHANGES_REQUIRED / REM-C / REM-W but no json parses → raise
+    (fail closed) and log review.parse_mismatch, so the merge gate is never opened blind."""
+    from apps.ledger.models import Event
+    with pytest.raises(rp.ReviewContractError):
+        rp.parse_and_guard(_PROSE_BLOCKING_NO_JSON,
+                           tenant_id=str(world.t.id), run_id=str(world.run.id))
+    assert Event.objects.filter(tenant=world.t, action="review.parse_mismatch",
+                                target_id=str(world.run.id)).exists()
+
+
+def test_companion_provider_fails_closed_on_contract_mismatch(world):
+    """End-to-end through the provider: a blocking-but-unparseable verdict raises rather than
+    feeding 0 findings into the loop (which would open the merge gate)."""
+    prov = CompanionReviewProvider(
+        get_capability=lambda tid, cap: _FakeCodeHost(),
+        compose_manifest=lambda inp: "# Project\n",
+        dispatch=lambda inp, **kw: None,
+        poll=lambda inp, **kw: _PROSE_BLOCKING_NO_JSON,
+    )
+    with pytest.raises(rp.ReviewContractError):
+        prov.review(_inp(world), "acme/api#7")
