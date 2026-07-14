@@ -172,6 +172,58 @@ def test_ui_trigger_routes_plan_agent_to_agent_run(client, project, member, _no_
     assert _no_temporal == []                                  # build starter never called
 
 
+# ── enrollment selection (Bugs S.No 84): dispatch must target the LIVE companion ──
+
+def _enrollment(project, user, *, last_seen=None):
+    from apps.runs.models import RunnerEnrollment
+    e = RunnerEnrollment.objects.create(
+        tenant=project.tenant, project=project, developer=user,
+        status=RunnerEnrollment.Status.ACTIVE)
+    if last_seen is not None:
+        RunnerEnrollment.objects.filter(id=e.id).update(last_seen=last_seen)
+        e.refresh_from_db()
+    return e
+
+
+@pytest.mark.django_db
+def test_resolve_enrollment_prefers_newest_online_over_newer_dead_one(project, member):
+    """S.No 84: a Connect-Machine visit can mint a NEWER enrollment that never connected;
+    dispatching to it strands the run while the live companion polls 204s. The online
+    (recently heartbeating) enrollment must win even when it is older."""
+    from django.utils import timezone
+
+    from orchestration.trigger import _resolve_enrollment
+
+    now = timezone.now()
+    stale = _enrollment(project, member, last_seen=now - timezone.timedelta(hours=3))
+    live = _enrollment(project, member, last_seen=now - timezone.timedelta(seconds=30))
+    dead_newest = _enrollment(project, member)   # newest, never checked in
+
+    got = _resolve_enrollment(project.tenant_id, project.id, member.id)
+    assert got.id == live.id, "must dispatch to the online companion, not the dead newest"
+    assert got.id not in (dead_newest.id, stale.id)
+
+
+@pytest.mark.django_db
+def test_resolve_enrollment_falls_back_seen_then_newest(project, member):
+    """No online enrollment: prefer one that has EVER checked in over a never-connected
+    newer one; with no check-ins at all keep the old newest-first behavior (the user may
+    trigger before starting the companion)."""
+    from django.utils import timezone
+
+    from orchestration.trigger import _resolve_enrollment
+
+    now = timezone.now()
+    seen_once = _enrollment(project, member, last_seen=now - timezone.timedelta(hours=5))
+    never = _enrollment(project, member)          # newer but never connected
+    got = _resolve_enrollment(project.tenant_id, project.id, member.id)
+    assert got.id == seen_once.id
+
+    seen_once.delete()
+    got = _resolve_enrollment(project.tenant_id, project.id, member.id)
+    assert got.id == never.id                     # nothing ever connected → newest overall
+
+
 def test_rides_build_flags_match_agent_execution_model():
     """The single source of truth: only the three agents whose body says the platform
     commits/pushes/opens a PR ride the build path."""

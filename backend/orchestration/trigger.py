@@ -50,18 +50,43 @@ def _default_workflow_starter(workflow_id: str, inp: AgentRunInput) -> None:
 
 def _resolve_enrollment(tenant_id, project_id, user_id):
     """The triggering user's active companion for this project (req #1 — run on their own
-    local Claude Code). None ⇒ no companion enrolled ⇒ server fallback."""
+    local Claude Code). None ⇒ no companion enrolled ⇒ server fallback.
+
+    Selection (Bugs S.No 84): a user often has several ACTIVE enrollments for one project
+    (each Connect Machine visit mints one), and only ONE of them is the token the running
+    companion actually polls with. Picking purely by recency could dispatch to an enrollment
+    that never connected — the live companion then long-polls /work/ into 204s forever and
+    the run sticks in pending. So prefer, in order:
+      1. the newest enrollment that is ONLINE (last_seen within ONLINE_THRESHOLD — it is
+         heartbeating/polling right now);
+      2. else the newest that has EVER checked in (a companion held that token at some point);
+      3. else the newest overall (nothing has connected yet — e.g. the user triggers before
+         starting the companion; the dispatch waits for it, same as before).
+    """
+    from django.utils import timezone
+
+    from apps.runs.enrollment import ONLINE_THRESHOLD
     from apps.runs.models import RunnerEnrollment
 
     if not user_id:
         return None
-    return (
+    candidates = list(
         RunnerEnrollment.objects.filter(
             tenant_id=tenant_id, project_id=project_id, developer_id=user_id,
             status=RunnerEnrollment.Status.ACTIVE,
         )
-        .order_by("-created_at").first()
+        .order_by("-created_at")
     )
+    if not candidates:
+        return None
+    cutoff = timezone.now() - ONLINE_THRESHOLD
+    online = [e for e in candidates if e.last_seen and e.last_seen >= cutoff]
+    if online:
+        return online[0]
+    seen = [e for e in candidates if e.last_seen]
+    if seen:
+        return seen[0]
+    return candidates[0]
 
 
 def trigger_phase(

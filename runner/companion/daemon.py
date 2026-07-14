@@ -148,10 +148,36 @@ class CompanionDaemon:
             raise DaemonError(f"claim work -> {status}: {data}")
         return data
 
+    # Transient-outage policy (Bugs S.No 105): a backend/worker restart drops the HTTP
+    # connection mid-poll; that surfaces as an OSError (URLError / ConnectionError / timeout),
+    # NOT as an HTTP status. Those must be retried with backoff, never treated as fatal —
+    # otherwise the companion silently stops heartbeating/polling and every later dispatch
+    # sits unclaimed until a human restarts it.
+    _RETRY_MAX_DELAY = 60.0   # cap between reconnect attempts (claim keeps trying forever)
+    _REPORT_RETRIES = 7       # ~2 min of backoff before a report is given up as failed
+
     def _report(self, path: str, report: dict) -> None:
-        status, data = self._transport("POST", f"{self._base}{path}", self._headers(), report)
-        if status >= 400:
-            raise DaemonError(f"report {path} -> {status}: {data}")
+        """POST a task result. A finished phase/build is too expensive to lose to a backend
+        restart, so transient connection errors are retried (~2 min of backoff) before the
+        failure is surfaced; HTTP 4xx/5xx answers still fail immediately (the platform saw us)."""
+        delay = min(self._poll_interval, self._RETRY_MAX_DELAY) or 1.0
+        for attempt in range(self._REPORT_RETRIES + 1):
+            try:
+                status, data = self._transport(
+                    "POST", f"{self._base}{path}", self._headers(), report)
+            except OSError as exc:
+                if attempt >= self._REPORT_RETRIES:
+                    raise DaemonError(
+                        f"report {path} failed after {attempt + 1} attempts "
+                        f"(backend unreachable): {exc}") from exc
+                print(f"[companion] backend unreachable reporting {path} ({exc}); "
+                      f"retrying in {delay:.0f}s", file=sys.stderr, flush=True)
+                self._sleep(delay)
+                delay = min(delay * 2, self._RETRY_MAX_DELAY)
+                continue
+            if status >= 400:
+                raise DaemonError(f"report {path} -> {status}: {data}")
+            return
 
     # ── per-kind execution ─────────────────────────────────────────
     def _run_engine_phase(self, task: dict, *, review: bool) -> None:
@@ -281,9 +307,27 @@ class CompanionDaemon:
         try:
             processed = 0
             iterations = 0
+            reconnect_delay = 0.0  # 0 ⇒ connected; grows while the backend is unreachable
             while max_iterations is None or iterations < max_iterations:
                 iterations += 1
-                task = self.claim()
+                try:
+                    task = self.claim()
+                except OSError as exc:
+                    # Backend restarting/unreachable (S.No 105): keep polling with capped
+                    # backoff until it returns — NEVER exit the loop on a connection error.
+                    # (The heartbeat thread already swallows its own failures and resumes.)
+                    reconnect_delay = (min(reconnect_delay * 2, self._RETRY_MAX_DELAY)
+                                       if reconnect_delay else
+                                       min(self._poll_interval, self._RETRY_MAX_DELAY) or 1.0)
+                    print(f"[companion] backend unreachable ({exc}); "
+                          f"reconnecting in {reconnect_delay:.0f}s",
+                          file=sys.stderr, flush=True)
+                    self._sleep(reconnect_delay)
+                    continue
+                if reconnect_delay:
+                    print("[companion] backend reconnected; resuming",
+                          file=sys.stderr, flush=True)
+                    reconnect_delay = 0.0
                 if task is None:
                     self._sleep(self._poll_interval)
                     continue

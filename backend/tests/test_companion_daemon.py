@@ -346,6 +346,70 @@ def test_failed_report_does_not_crash_daemon():
     assert any(u.endswith("/api/runner/phases/r1/report/") for (_m, u, _b) in transport.calls)
 
 
+# ── S.No 105: a backend restart must never kill the companion — retry with backoff ──
+class _FlakyBackendTransport:
+    """Backend down for the first N calls (connection refused, an OSError — how a docker
+    restart actually presents, NOT an HTTP status), then healthy and scripted like _Transport."""
+
+    def __init__(self, outage_calls, work_responses):
+        self._outage = outage_calls
+        self._work = list(work_responses)
+        self.calls = []
+
+    def __call__(self, method, url, headers, body):
+        self.calls.append((method, url, body))
+        if len(self.calls) <= self._outage:
+            raise ConnectionRefusedError("backend restarting")
+        if method == "GET" and url.endswith("/api/runner/work/"):
+            return self._work.pop(0) if self._work else (204, None)
+        return 200, {"ok": True}
+
+
+def test_claim_survives_backend_outage_and_resumes(capsys):
+    """S.No 105: previously a connection error in claim() propagated out of serve() and the
+    companion silently died — every later dispatch sat unclaimed until a human restarted it.
+    Now the loop backs off, reconnects, and still runs the task once the backend returns."""
+    transport = _FlakyBackendTransport(3, [(200, _PLAN_TASK), (204, None)])
+    slept = []
+    d = _daemon(transport, _FakeDriver(), sleep=slept.append)
+
+    assert d.serve(max_iterations=5) == 1          # 3 outage polls + claim + idle
+    assert any(u.endswith("/api/runner/phases/r1/report/")
+               for (_m, u, _b) in transport.calls)
+    # backoff grew (poll_interval 5 → 10 → 20), then the idle 204 slept the normal interval
+    assert slept[:3] == [5.0, 10.0, 20.0] and slept[-1] == 5.0
+    err = capsys.readouterr().err
+    assert "backend unreachable" in err and "reconnected" in err
+
+
+def test_report_retries_through_transient_outage():
+    """A finished phase must not be lost because the backend restarted right at report time:
+    the report POST retries with backoff until the backend is back."""
+    calls = []
+
+    def transport(method, url, headers, body):
+        calls.append((method, url))
+        if len(calls) <= 2:
+            raise ConnectionResetError("backend restarting")
+        return 200, {"ok": True}
+
+    slept = []
+    d = _daemon(transport, _FakeDriver(), sleep=slept.append)
+    d._report("/api/runner/phases/r1/report/", {"status": "ok"})
+    assert len(calls) == 3 and slept == [5.0, 10.0]
+
+
+def test_report_gives_up_after_bounded_retries():
+    """The retry is bounded: if the backend never comes back the failure still surfaces as a
+    DaemonError (which serve() logs per-task without dying)."""
+    def transport(method, url, headers, body):
+        raise ConnectionRefusedError("still down")
+
+    d = _daemon(transport, _FakeDriver(), sleep=lambda _s: None)
+    with pytest.raises(DaemonError, match="backend unreachable"):
+        d._report("/api/runner/phases/r1/report/", {"status": "ok"})
+
+
 def test_engine_auth_error_still_halts_the_loop():
     """Auth failures remain fail-closed — EngineAuthError propagates out of serve even though
     it subclasses DaemonError (which the loop otherwise swallows per-task)."""
