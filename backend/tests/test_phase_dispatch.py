@@ -187,6 +187,51 @@ def test_heartbeat_refreshes_last_seen_and_rejects_bad_token(world):
     assert bad.status_code == 401
 
 
+def test_heartbeat_renews_claim_so_a_long_live_phase_is_not_reclaimed(world):
+    """Bugs S.No 111 (S.No 110 follow-up): a phase can legitimately run longer than CLAIM_LEASE
+    (a code review up to 30 min). While the companion keeps heartbeating it is provably ALIVE, so
+    its claim must NOT go stale — otherwise the run is re-claimed mid-flight (duplicate artifacts +
+    a failed re-review, and the merge gate opens blind). The heartbeat renews claimed_at."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    activities.dispatch_phase_core(world["inp"], manifest="# Project\nm")
+    client = APIClient()
+    assert client.get("/api/runner/work/", **_auth(world)).status_code == 200   # claimed
+
+    # Simulate a long-running phase: the claim is now older than the lease...
+    run = Run.objects.get(id=world["run_id"])
+    dispatch = dict(run.inputs["dispatch"])
+    dispatch["claimed_at"] = (timezone.now() - timedelta(minutes=30)).isoformat()
+    run.inputs = {**run.inputs, "dispatch": dispatch}
+    run.save(update_fields=["inputs"])
+
+    # ...but the companion is alive and heartbeats → the claim is renewed.
+    hb = client.post("/api/runner/heartbeat/", **_auth(world))
+    assert hb.status_code == 200 and hb.json()["claims_renewed"] == 1
+
+    # A subsequent poll must NOT re-claim it (claim is fresh again); claim_count stays 1.
+    assert client.get("/api/runner/work/", **_auth(world)).status_code == 204
+    assert Run.objects.get(id=world["run_id"]).inputs["dispatch"]["claim_count"] == 1
+
+
+def test_heartbeat_does_not_renew_a_reported_claim(world):
+    """Renewal touches only in-flight (PENDING/RUNNING, still 'claimed') runs — a run that already
+    reported must be left alone so a heartbeat can never revive finished work."""
+    activities.dispatch_phase_core(world["inp"], manifest="# Project\nm")
+    client = APIClient()
+    client.get("/api/runner/work/", **_auth(world))            # claim it
+    run = Run.objects.get(id=world["run_id"])
+    dispatch = dict(run.inputs["dispatch"])
+    dispatch["status"] = "reported"
+    run.inputs = {**run.inputs, "dispatch": dispatch}
+    run.save(update_fields=["inputs"])
+
+    hb = client.post("/api/runner/heartbeat/", **_auth(world))
+    assert hb.status_code == 200 and hb.json()["claims_renewed"] == 0
+
+
 # ── RC-3 follow-up: kill the duplicate-v2 re-run (a long phase re-claimed after it reported) ──
 def test_report_phase_flips_dispatch_to_reported_synchronously(world):
     """The report must mark the dispatch 'reported' in the SAME request, so the daemon's next

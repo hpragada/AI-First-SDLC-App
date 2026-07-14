@@ -18,13 +18,6 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-# A work claim is a *lease*. If the companion that claimed a run dies before reporting (crash,
-# manual stop, laptop sleep), the run would otherwise stay "claimed" forever — status stuck at
-# "running", no artifacts, no gate (Bugs.xlsx row 61 / RC-3). A later poll re-claims a run whose
-# claim went stale (claimed_at older than this with no report). It MUST exceed the longest real
-# phase so a still-running phase is never stolen from a live companion.
-CLAIM_LEASE = timedelta(minutes=15)
-
 from apps.projects.models import Project
 from apps.runs.enrollment import (
     authenticate_runner,
@@ -36,6 +29,20 @@ from apps.runs.models import Run, RunnerEnrollment
 from apps.tenancy.auth import IsAuthenticatedMember, current_user
 from apps.tenancy.context import tenant_context
 from orchestration.build_report import BuildReportError, report_build
+
+# A work claim is a *lease*. If the companion that claimed a run dies before reporting (crash,
+# manual stop, laptop sleep), the run would otherwise stay "claimed" forever — status stuck at
+# "running", no artifacts, no gate (Bugs.xlsx row 61 / RC-3). A later poll re-claims a run whose
+# claim went stale (claimed_at older than this with no report).
+#
+# The lease detects a DEAD companion, so it must key off *liveness*, not task duration. It used
+# to key off "time since the claim was stamped", which wrongly fired on a LIVE companion running
+# a long phase (a genuine 19-min code review > this 15-min lease got re-claimed mid-flight →
+# duplicate artifacts + a failed re-review → the merge gate opened blind — Bugs S.No 111, the
+# S.No 110 follow-up). Fix: the heartbeat renews `claimed_at` while the companion is alive
+# (_renew_claims_for), so a heartbeating companion's claim never goes stale no matter how long the
+# phase runs, while a truly dead companion still gets re-claimed ~15 min after its LAST heartbeat.
+CLAIM_LEASE = timedelta(minutes=15)
 
 # Build-phase platform-state tool allowlist (no detect_drift, no planning-only tools).
 _BUILD_STATE_TOOLS = {
@@ -61,6 +68,41 @@ def _tenant_id(request) -> str:
 
         raise ParseError("X-Tenant-ID header is required.")
     return str(tid)
+
+
+def _renew_claims_for(runner) -> int:
+    """Refresh `claimed_at=now` on every in-flight run this companion currently holds, so its
+    claim lease (CLAIM_LEASE) tracks the companion's liveness, not the phase duration. Called on
+    each heartbeat: a live companion keeps its claim fresh no matter how long the phase runs, so
+    a long-but-healthy review is never re-claimed out from under it (Bugs S.No 111). A dead
+    companion stops heartbeating, so its claim ages out and the run is recovered as before.
+
+    Only `claimed`, still-in-flight (PENDING/RUNNING) runs are touched — a run that already
+    reported or reached a gate is left alone, so this can never revive finished work."""
+    from django.db import transaction
+    from django.utils import timezone
+
+    now = timezone.now().isoformat()
+    renewed = 0
+    with tenant_context(str(runner.tenant_id)), transaction.atomic():
+        runs = (
+            Run.objects.select_for_update(skip_locked=True)
+            .filter(tenant_id=runner.tenant_id,
+                    inputs__dispatch__enrollment_id=str(runner.id),
+                    inputs__dispatch__status="claimed",
+                    status__in=(Run.Status.PENDING, Run.Status.RUNNING))
+        )
+        for run in runs:
+            inputs = dict(run.inputs or {})
+            dispatch = dict(inputs.get("dispatch") or {})
+            if dispatch.get("status") != "claimed":
+                continue
+            dispatch["claimed_at"] = now
+            inputs["dispatch"] = dispatch
+            run.inputs = inputs
+            run.save(update_fields=["inputs", "updated_at"])
+            renewed += 1
+    return renewed
 
 
 def _serialize(e: RunnerEnrollment) -> dict:
@@ -318,7 +360,8 @@ class RunnerHeartbeatView(APIView):
         if runner is None:
             return Response({"detail": "invalid or missing Runner token"},
                             status=status.HTTP_401_UNAUTHORIZED)
-        return Response({"ok": True,
+        renewed = _renew_claims_for(runner)
+        return Response({"ok": True, "claims_renewed": renewed,
                          "last_seen": runner.last_seen.isoformat() if runner.last_seen else None})
 
 
