@@ -33,6 +33,7 @@ from rest_framework.test import APIClient
 from apps.integrations.crypto import encrypt_secrets
 from apps.integrations.models import IntegrationConnection
 from apps.projects.models import Project, Repository
+from apps.registry.models import AgentSpec
 from apps.runs.models import Run, RunnerEnrollment
 from apps.tenancy.models import Invitation, Membership, Tenant, User
 from apps.tenancy.services import create_invitation
@@ -378,8 +379,33 @@ class TestApprovalShape:
         assert isinstance(r.data, list)
         # Shape check: each row must have the fields the frontend Approval type expects.
         for row in r.data:
-            assert {"id", "run", "gate_type", "work_item", "required_role",
+            assert {"id", "run", "gate_type", "phase", "work_item", "required_role",
                     "decision", "comment", "decided_at", "created_at"} <= set(row.keys())
+
+
+@pytest.mark.django_db
+def test_approval_phase_is_the_gate_agent_key(client, project, admin):
+    """The Approval exposes `phase` = the run's agent key, so the UI can render phase-specific
+    gate panels (the repo-assignment review) ONLY on their own phase's gate and never resurface
+    them on a later merge/phase gate (Bugs S.No 106 follow-up)."""
+    from apps.gates.models import Approval
+    from apps.registry.catalog import seed_agent_specs
+    from apps.runs.models import Run
+    from apps.workitems.models import WorkItem
+
+    seed_agent_specs(project.tenant)
+    spec = AgentSpec.objects.filter(tenant=project.tenant, key="06_task_breakdown").first()
+    wi = WorkItem.objects.create(tenant=project.tenant, project=project,
+                                 type=WorkItem.Type.EPIC, title="Backlog")
+    run = Run.objects.create(tenant=project.tenant, work_item=wi, agent_spec=spec,
+                             status=Run.Status.AWAITING_GATE)
+    ap = Approval.objects.create(tenant=project.tenant, run=run, gate_type="phase_gate",
+                                 work_item=wi, required_role="tech_lead")
+
+    _login(client, "boss@acme.com", "admin-pass!")
+    r = client.get("/api/approvals/")
+    row = next(x for x in r.data if x["id"] == str(ap.id))
+    assert row["phase"] == "06_task_breakdown"
 
 
 # ── Clarifications (S-20) ────────────────────────────────────────────────────

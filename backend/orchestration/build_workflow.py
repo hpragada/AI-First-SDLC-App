@@ -79,11 +79,16 @@ class BuildWorkflow:
             )
 
             # Build phases (§5): review → remediate → re-review until no blocking findings.
+            # The review activity waits (inside itself) up to inp.review_timeout_seconds for the
+            # companion's 08 verdict, so its Temporal start_to_close MUST comfortably exceed that
+            # window — otherwise Temporal kills the activity mid-poll and retries, re-dispatching
+            # the review and never seeing the report (Bugs S.No 110). Keep them consistent here.
+            review_activity_timeout = timedelta(seconds=inp.review_timeout_seconds + 600)
             cycle = 0
             while True:
                 review = await workflow.execute_activity(
                     "run_code_review", inp,
-                    start_to_close_timeout=timedelta(minutes=10), retry_policy=_RETRY,
+                    start_to_close_timeout=review_activity_timeout, retry_policy=_RETRY,
                 )
                 if review["open_blocking"] == 0:
                     break

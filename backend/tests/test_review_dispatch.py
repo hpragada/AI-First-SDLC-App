@@ -4,6 +4,7 @@ Covers the dispatch + poll + report-endpoint round trip and the CompanionReviewP
 proves the companion provider still feeds the existing 07<->08 remediation loop unchanged.
 """
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from rest_framework.test import APIClient
@@ -16,6 +17,7 @@ from apps.tenancy.models import Tenant
 from apps.workitems.models import WorkItem
 from integrations.types import PullRequest, PullRequestRef
 from orchestration import build_activities as ba
+from orchestration import review_provider as rp
 from orchestration.build_types import BuildInput, BuildReport
 from orchestration.review_provider import (
     CompanionReviewProvider,
@@ -104,6 +106,45 @@ def test_record_review_report_stores_body(world):
     record_review_report(tenant_id=str(world.t.id), run_id=str(world.run.id), body=_VERDICT)
     world.run.refresh_from_db()
     assert world.run.outputs["review_body"] == _VERDICT
+
+
+def test_poll_does_a_final_grace_read_before_timeout(world):
+    """S.No 110: the 08 verdict often lands moments after the last poll tick. poll_review_body
+    must do one final read on timeout so a just-late report still drives the remediation loop
+    instead of being orphaned in run.outputs while the merge gate opens with no findings."""
+    inp = _inp(world)
+    reads = {"n": 0}
+    real_get = Run.objects.get
+
+    def _get_side_effect(**kw):
+        reads["n"] += 1
+        # No body during the polling window; the companion posts it exactly at the timeout
+        # boundary, so only the post-timeout grace read should see it.
+        if reads["n"] == 2:
+            world.run.outputs = {"review_body": _VERDICT}
+            world.run.save(update_fields=["outputs"])
+        return real_get(**kw)
+
+    with patch.object(rp.Run.objects, "get", side_effect=_get_side_effect):
+        # timeout=0 → one polling read (empty) then the grace read (finds the late body).
+        body = poll_review_body(inp, sleep=lambda _s: None, poll_interval=1, timeout=0)
+    assert body == _VERDICT
+
+
+def test_companion_provider_honours_per_run_review_timeout(world):
+    """The review wait is per-run configurable via inp.review_timeout_seconds (S.No 110):
+    480s was too tight for a first cold-companion review and skipped the remediation loop."""
+    seen = {}
+    prov = CompanionReviewProvider(
+        get_capability=lambda tid, cap: _FakeCodeHost(),
+        compose_manifest=lambda inp: "# Project\n",
+        dispatch=lambda inp, **kw: None,
+        poll=lambda inp, **kw: seen.update(timeout=kw["timeout"]) or _VERDICT,
+    )
+    inp = _inp(world)
+    inp.review_timeout_seconds = 1800
+    prov.review(inp, "acme/api#7")
+    assert seen["timeout"] == 1800.0
 
 
 # ── CompanionReviewProvider ─────────────────────────────────────────

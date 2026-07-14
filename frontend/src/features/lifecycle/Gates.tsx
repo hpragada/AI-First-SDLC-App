@@ -76,7 +76,13 @@ function GatesLive() {
   const assignmentItems = (workItems.data ?? []).filter(
     (w) => w.state === "proposed" && w.external_ref?.repo_assignment,
   );
-  const showReview = multiRepo && assignmentItems.length > 0;
+  // The repo-assignment review belongs to the Task Breakdown gate ONLY. Proposed sibling tasks
+  // keep their repo_assignment long after Task Breakdown, so keying purely on "multi-repo +
+  // assignments exist" resurfaced this panel on the merge gate (and would on any later
+  // testing/security/deployment phase gate too) — Bugs S.No 106 follow-up. Gate it on the
+  // selected gate's own phase being Task Breakdown so it never bleeds into another phase's gate.
+  const isTaskBreakdownGate = selected?.phase === "06_task_breakdown";
+  const showReview = multiRepo && isTaskBreakdownGate && assignmentItems.length > 0;
   const unreviewedLow = assignmentItems.filter(
     (w) => w.external_ref?.repo_assignment?.confidence === "low" && !confirmed[w.id],
   ).length;

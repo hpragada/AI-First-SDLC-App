@@ -23,6 +23,11 @@ class BuildInput:
     required_role: str = "reviewer"      # D6: the merge gate is a reviewer's call
     # If the companion (a laptop) never reports within this window, park for takeover.
     report_timeout_seconds: int = 7200
+    # How long the review activity waits for the companion's 08 verdict before giving up and
+    # falling through to the merge gate with no findings (Bugs S.No 110). Must comfortably
+    # exceed a realistic FIRST review on a cold companion (engine cold-start + context
+    # compaction can add several minutes) — 480s was too tight and skipped the remediation loop.
+    review_timeout_seconds: int = 1800
     # 07<->08 remediation loop: cap re-review cycles before escalating (§5).
     max_remediation_cycles: int = 3
     # Which enrolled companion to dispatch to (the triggering user's), so the build is

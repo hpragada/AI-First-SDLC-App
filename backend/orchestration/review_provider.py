@@ -191,20 +191,31 @@ def dispatch_review_task(inp, *, manifest: str, agent_body: str, model: str = ""
         tools.log_event(inp.tenant_id, "orchestrator", "review.dispatched", "run", inp.run_id, {})
 
 
+def _read_review_body(inp) -> str | None:
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        return (run.outputs or {}).get("review_body")
+
+
 def poll_review_body(inp, *, sleep, poll_interval: float, timeout: float) -> str | None:
     """Poll the run for the companion's posted review body. Returns None on timeout (treated
-    as no findings — the human merge gate still applies, so the build never hangs)."""
+    as no findings — the human merge gate still applies, so the build never hangs).
+
+    On timeout it does one final read before giving up (Bugs S.No 110): the 08 verdict
+    frequently lands moments after the last poll tick, and a report picked up here still drives
+    the remediation loop instead of being orphaned in run.outputs while the gate opens blind."""
     waited = 0.0
     while True:
-        with tenant_context(inp.tenant_id):
-            run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
-            body = (run.outputs or {}).get("review_body")
+        body = _read_review_body(inp)
         if body is not None:
             return body
         if waited >= timeout:
+            body = _read_review_body(inp)  # final grace read before declaring a timeout
+            if body is not None:
+                return body
             with tenant_context(inp.tenant_id):
                 tools.log_event(inp.tenant_id, "orchestrator", "review.timeout", "run",
-                                inp.run_id, {})
+                                inp.run_id, {"waited_seconds": int(waited)})
             return None
         sleep(poll_interval)
         waited += poll_interval
@@ -227,13 +238,13 @@ class CompanionReviewProvider:
     findings the companion posts back — review's counterpart of running planning/build locally."""
 
     def __init__(self, *, get_capability=None, compose_manifest=None, dispatch=None, poll=None,
-                 poll_interval: float = 3.0, timeout: float = 480.0, sleep=None) -> None:
+                 poll_interval: float = 3.0, timeout: float = 1800.0, sleep=None) -> None:
         self._manifest = AgentReviewProvider(
             get_capability=get_capability, compose_manifest=compose_manifest)
         self._dispatch = dispatch or dispatch_review_task
         self._poll = poll or poll_review_body
         self._poll_interval = poll_interval
-        self._timeout = timeout
+        self._timeout = timeout  # fallback; a per-run inp.review_timeout_seconds wins (S.No 110)
         self._sleep = sleep or time.sleep
 
     def review(self, inp: BuildInput, pr_ref: str) -> list[Finding]:
@@ -247,8 +258,9 @@ class CompanionReviewProvider:
         manifest = self._manifest._build_review_manifest(inp, pr_ref)
         agent_body, model = _load_agent_body(str(spec.id), inp.tenant_id)
         self._dispatch(inp, manifest=manifest, agent_body=agent_body, model=model)
+        timeout = float(getattr(inp, "review_timeout_seconds", None) or self._timeout)
         body = self._poll(inp, sleep=self._sleep, poll_interval=self._poll_interval,
-                          timeout=self._timeout)
+                          timeout=timeout)
         if body is None:
             return []
         return parse_findings(body)

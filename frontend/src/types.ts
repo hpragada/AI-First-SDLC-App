@@ -112,6 +112,9 @@ export interface Approval {
   id: string;
   run: string;
   gate_type: string;
+  /** Agent key of the run that opened this gate, e.g. "06_task_breakdown" (phase-specific
+   *  gate panels key on this so they render only for their own phase). */
+  phase?: string | null;
   work_item: string;
   required_role: string;
   approver: string | null;

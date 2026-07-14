@@ -381,17 +381,26 @@ class EventSerializer(serializers.ModelSerializer):
 class ApprovalSerializer(serializers.ModelSerializer):
     # Approver's display name so the UI can show who decided a gate instead of a raw user id.
     approver_name = serializers.SerializerMethodField()
+    # The agent phase that opened this gate (the run's agent key, e.g. "06_task_breakdown").
+    # The UI keys phase-specific gate panels on this — notably the repo-assignment review, which
+    # must render ONLY on the Task Breakdown gate, never resurface on a later merge/phase gate
+    # whose sibling tasks still carry their planner repo_assignment (Bugs S.No 106 follow-up).
+    phase = serializers.SerializerMethodField()
 
     class Meta:
         model = Approval
         fields = [
-            "id", "run", "gate_type", "work_item", "required_role", "approver", "approver_name",
-            "decision", "comment", "decided_at", "created_at",
+            "id", "run", "gate_type", "phase", "work_item", "required_role", "approver",
+            "approver_name", "decision", "comment", "decided_at", "created_at",
         ]
         read_only_fields = fields
 
     def get_approver_name(self, obj) -> str | None:
         return obj.approver.name if obj.approver_id else None
+
+    def get_phase(self, obj) -> str | None:
+        spec = getattr(obj.run, "agent_spec", None)
+        return getattr(spec, "key", None) if spec is not None else None
 
 
 class GateDecisionSerializer(serializers.Serializer):
