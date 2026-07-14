@@ -56,6 +56,42 @@ def test_selection_is_tenant_scoped(tenant):
         get_capability(other.id, "docstore")
 
 
+# ── per-tenant codehost credentials (Bugs S.No 112 / S.No 74): the token travels with the
+#    tenant in the shared DB, so any worker builds with the RIGHT token — multi-user safe ──
+def _connect_github(tenant, *, repo, access_token=None):
+    from apps.integrations.crypto import encrypt_secrets
+    return IntegrationConnection.objects.create(
+        tenant=tenant, capability="codehost", connector="github", scopes={"repo": repo},
+        secret_encrypted=encrypt_secrets({"access_token": access_token} if access_token else {}),
+    )
+
+
+def test_codehost_uses_the_tenants_own_stored_token(tenant, settings):
+    settings.GITHUB_TOKEN = "server-env-token"
+    _connect_github(tenant, repo="acme/api", access_token="tenant-A-pat")
+    ch = get_capability(tenant.id, "codehost")
+    assert ch._cfg.token == "tenant-A-pat"   # the tenant's stored token, NOT the server .env
+    assert ch._default_repo == "acme/api"
+
+
+def test_codehost_falls_back_to_settings_when_no_secret_stored(tenant, settings):
+    settings.GITHUB_TOKEN = "server-env-token"
+    _connect_github(tenant, repo="acme/api", access_token=None)   # no stored secret
+    ch = get_capability(tenant.id, "codehost")
+    assert ch._cfg.token == "server-env-token"   # backward-compat: local/CI still work
+
+
+def test_two_tenants_build_with_their_own_tokens(tenant, settings):
+    """The multi-user case: on a shared worker/DB, each tenant's build resolves ITS token, so a
+    build never runs with another tenant's credentials (the shared-queue 404 that blocked us)."""
+    settings.GITHUB_TOKEN = "server-env-token"
+    other = Tenant.objects.create(name="Other")
+    _connect_github(tenant, repo="acme/api", access_token="tenant-A-pat")
+    _connect_github(other, repo="beta/web", access_token="tenant-B-pat")
+    assert get_capability(tenant.id, "codehost")._cfg.token == "tenant-A-pat"
+    assert get_capability(other.id, "codehost")._cfg.token == "tenant-B-pat"
+
+
 def test_register_connector_extends_the_seam(tenant):
     sentinel = object()
     register_connector("docstore", "notion", lambda conn: sentinel)

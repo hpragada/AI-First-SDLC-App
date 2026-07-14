@@ -54,7 +54,10 @@ def _build_github(conn) -> CodeHost:
 
     repo = (conn.scopes or {}).get("repo") or settings.GITHUB_REPO
     transport = governed_transport(conn.tenant_id, conn.capability)
-    return GithubCodeHost(GithubConfig.from_settings(), default_repo=repo, transport=transport)
+    # Per-tenant token from the tenant's own connection (shared DB), not the server .env — so a
+    # build run for this tenant uses the right credential on ANY worker (Bugs S.No 112 / S.No 74).
+    return GithubCodeHost(
+        GithubConfig.from_connection(conn), default_repo=repo, transport=transport)
 
 
 def _build_figma(conn) -> DesignSource:
