@@ -47,3 +47,47 @@ def release_takeover(*, tenant_id: str, work_item_id: str, actor: str = "develop
     tools.log_event(tenant_id, actor, "workitem.takeover_released", "work_item",
                     str(work_item_id), {})
     return {"work_item_id": str(work_item_id), "takeover": False}
+
+
+def _default_abandon_sender(workflow_id: str) -> None:
+    import asyncio
+
+    from django.conf import settings
+    from temporalio.client import Client
+
+    async def _send() -> None:
+        client = await Client.connect(
+            settings.TEMPORAL_HOST, namespace=settings.TEMPORAL_NAMESPACE
+        )
+        handle = client.get_workflow_handle(workflow_id)
+        await handle.signal("abandon_run")
+
+    asyncio.run(_send())
+
+
+def abandon_stalled_run(*, tenant_id: str, run_id: str, signal_sender=None) -> dict:
+    """End a report-timeout-parked (STALLED) run terminally when a human explicitly takes it
+    over (Bugs S.No 89). A soft-takeover keeps the AgentRunWorkflow ALIVE so a returning
+    companion can still reconcile; but once the operator decides to hand-work the item or
+    re-run from a clean dispatch, the old still-waiting run must not linger — signal it to
+    abandon. No-op for any run that is not currently parked (only STALLED runs wait on this
+    signal), and tolerant of an already-gone workflow (a late report may have just reconciled
+    it, or it was a server-side run with no live handle)."""
+    from apps.runs.models import Run
+
+    signal_sender = signal_sender or _default_abandon_sender
+    with tenant_context(tenant_id):
+        run = Run.objects.filter(id=run_id, tenant_id=tenant_id).first()
+        if run is None or run.status != Run.Status.STALLED or not run.temporal_workflow_id:
+            return {"run_id": str(run_id), "abandoned": False}
+        workflow_id = run.temporal_workflow_id
+    try:
+        signal_sender(workflow_id)
+    except Exception as exc:  # noqa: BLE001
+        # The workflow may have already completed (e.g. a report landed first and reconciled
+        # it). That is not an error — the run is no longer parked either way.
+        if "already completed" in str(exc).lower() or "not found" in str(exc).lower():
+            return {"run_id": str(run_id), "abandoned": False,
+                    "note": "no live workflow to abandon"}
+        raise
+    return {"run_id": str(run_id), "abandoned": True}

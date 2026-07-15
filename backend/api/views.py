@@ -8,16 +8,15 @@ Custom actions delegate to the domain services (`trigger_phase`, `decide_gate`).
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
+from django.db.models import Count
+from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ParseError, PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
-from datetime import timedelta
-
-from django.db.models import Count
-from django.utils import timezone
 
 from apps.clarifications.models import Clarification
 from apps.clarifications.services import (
@@ -44,6 +43,8 @@ from apps.projects.repos import (
     require_repo_manage_role,
     set_default_repository,
 )
+from apps.registry.catalog import gate_role_for
+from apps.registry.catalog import rides_build as catalog_rides_build
 from apps.registry.models import AgentSpec, Artifact, TraceEdge
 from apps.runs.models import Run
 from apps.tenancy.auth import IsAuthenticatedMember, IsTenantAdmin, current_user
@@ -77,10 +78,13 @@ from integrations.onboarding import (
     register_atlassian,
 )
 from integrations.preview import read_artifact_preview
-from apps.registry.catalog import gate_role_for
-from apps.registry.catalog import rides_build as catalog_rides_build
 from integrations.types import CapabilityUnavailable
-from orchestration.takeover import TakeoverError, release_takeover, request_takeover
+from orchestration.takeover import (
+    TakeoverError,
+    abandon_stalled_run,
+    release_takeover,
+    request_takeover,
+)
 from orchestration.trigger import TriggerError, trigger_build, trigger_phase
 
 from .serializers import (
@@ -1109,7 +1113,12 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["post"], url_path="take-over")
     def take_over(self, request, pk=None):
         """S-32 offline takeover via run ID: delegates to the work-item's takeover service
-        (the run is the entry point the UI knows; the work-item owns the flag)."""
+        (the run is the entry point the UI knows; the work-item owns the flag).
+
+        If this run is a report-timeout-parked (STALLED) run, an explicit human takeover —
+        whether "Take over manually" or "Reconnect & re-run" (release) — also ends the old
+        still-waiting AgentRunWorkflow terminally (Bugs S.No 89), so it does not linger after
+        the operator has decided to hand-work the item or re-run from a clean dispatch."""
         run = self.get_object()
         try:
             if request.data.get("release"):
@@ -1125,6 +1134,7 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
                     actor=request.data.get("actor", "developer"),
                     reason=request.data.get("reason", ""),
                 )
+            abandon_stalled_run(tenant_id=self.tenant_id, run_id=str(run.id))
         except TakeoverError as exc:
             raise ValidationError(str(exc)) from exc
         return Response(out)

@@ -93,11 +93,50 @@ def test_register_phase_result_backfills_agent_registered_artifact(monkeypatch, 
     assert again.get("idempotent") is True and again["artifact_ids"] == [pre["id"]]
 
 
-def test_mark_phase_takeover_core_parks_run(world):
+def test_mark_phase_takeover_core_parks_run_non_terminally(world):
+    """Bugs S.No 89: a report-timeout parks the run as STALLED (reconcilable), NOT terminal
+    FAILED, and flags the WorkItem for takeover."""
     activities.mark_phase_takeover_core(world["inp"])
     run = Run.objects.get(id=world["run_id"])
-    assert run.status == Run.Status.FAILED
+    assert run.status == Run.Status.STALLED
     assert WorkItem.objects.get(id=world["inp"].work_item_id).takeover_flag is True
+
+
+def test_late_report_reconciles_a_parked_run(monkeypatch, world):
+    """Bugs S.No 89: a companion that went offline (STALLED + takeover_flag) then returned and
+    reported OK must reconcile — the draft is staged and the takeover flag is cleared so the
+    run can flow on to its gate."""
+    store = InMemoryObjectStore()
+    monkeypatch.setattr(activities, "get_object_store", lambda: store)
+    activities.mark_phase_takeover_core(world["inp"])          # park it
+    assert Run.objects.get(id=world["run_id"]).status == Run.Status.STALLED
+    assert WorkItem.objects.get(id=world["inp"].work_item_id).takeover_flag is True
+
+    report = PhaseReport(status="ok", body="# PRD\nlate body", cost_usd=0.02)
+    out = activities.register_phase_result_core(world["inp"], report)          # companion returns
+    art = Artifact.objects.get(id=out["artifact_ids"][0])
+    assert art.s3_key and store.get(art.s3_key) == b"# PRD\nlate body"
+    assert WorkItem.objects.get(id=world["inp"].work_item_id).takeover_flag is False
+
+
+def test_abandon_stalled_run_signals_only_when_parked(world):
+    """Bugs S.No 89: the abandon signal fires only for a parked (STALLED) run — a running or
+    already-reconciled run is left alone (no stray signal to a live/gone workflow)."""
+    from orchestration.takeover import abandon_stalled_run
+
+    sent: list[str] = []
+    sender = lambda wf: sent.append(wf)  # noqa: E731
+
+    # Not parked yet (run is PENDING) -> no-op.
+    out = abandon_stalled_run(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                              signal_sender=sender)
+    assert out["abandoned"] is False and sent == []
+
+    # Parked -> signals the run's workflow to abandon.
+    activities.mark_phase_takeover_core(world["inp"])
+    out = abandon_stalled_run(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                              signal_sender=sender)
+    assert out["abandoned"] is True and sent == ["wf-x"]
 
 
 def test_fail_run_core(world):
@@ -373,7 +412,9 @@ async def test_workflow_companion_branch_approved(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_workflow_companion_offline_takeover(monkeypatch):
+async def test_workflow_companion_offline_then_abandoned(monkeypatch):
+    """Bugs S.No 89: the report timeout parks the run (soft takeover) but the workflow keeps
+    waiting — an explicit human takeover (`abandon_run`) is what ends it terminally."""
     from temporalio.worker import Worker
 
     from orchestration.workflows import AgentRunWorkflow
@@ -387,7 +428,43 @@ async def test_workflow_companion_offline_takeover(monkeypatch):
                           activities=activities.ALL_ACTIVITIES, activity_executor=executor):
             handle = await client.start_workflow(
                 AgentRunWorkflow.run, _companion_input(), id=f"wf-{uuid.uuid4()}", task_queue=tq)
-            # Never report -> the 2s report timeout fires -> takeover.
+            # Never report -> the 2s timeout fires -> soft takeover. The workflow now WAITS;
+            # a human takeover signal ends it terminally. (Buffered signal is only observed
+            # after the timeout, so takeover still runs first.)
+            await handle.signal(AgentRunWorkflow.abandon_run)
             result = await handle.result()
-    assert result["status"] == "takeover"
-    assert calls == ["compose", "dispatch", "takeover"]
+    assert result["status"] == "abandoned"
+    assert calls == ["compose", "dispatch", "takeover", "fail"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_companion_recovers_after_takeover(monkeypatch):
+    """Bugs S.No 89 (the core fix): a companion that reports AFTER the report timeout — i.e.
+    the run was already parked — still reconciles all the way through its gate to publish,
+    instead of the workflow being dead and the run stuck FAILED."""
+    import asyncio
+
+    from temporalio.worker import Worker
+
+    from orchestration.types import GateDecision
+    from orchestration.workflows import AgentRunWorkflow
+
+    calls: list[str] = []
+    _patch_cores(monkeypatch, calls)
+    client = await _client()
+    tq = f"test-{uuid.uuid4()}"
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        async with Worker(client, task_queue=tq, workflows=[AgentRunWorkflow],
+                          activities=activities.ALL_ACTIVITIES, activity_executor=executor):
+            handle = await client.start_workflow(
+                AgentRunWorkflow.run, _companion_input(), id=f"wf-{uuid.uuid4()}", task_queue=tq)
+            # Let the 2s report timeout fire (soft takeover) BEFORE reporting, so we exercise
+            # the post-takeover recovery path rather than the happy path.
+            await asyncio.sleep(3)
+            await handle.signal(AgentRunWorkflow.phase_reported,
+                                PhaseReport(status="ok", body="x"))
+            await handle.signal(AgentRunWorkflow.gate_decision, GateDecision(decision="approved"))
+            result = await handle.result()
+    assert result["status"] == "completed"
+    assert calls == ["compose", "dispatch", "takeover", "register", "verify", "open",
+                     "publish", "transition"]

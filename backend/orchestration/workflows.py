@@ -19,6 +19,7 @@ class AgentRunWorkflow:
     def __init__(self) -> None:
         self._decision: GateDecision | None = None
         self._report: PhaseReport | None = None
+        self._abandoned: bool = False
 
     @workflow.signal(name="gate_decision")
     def gate_decision(self, decision: GateDecision) -> None:
@@ -27,6 +28,13 @@ class AgentRunWorkflow:
     @workflow.signal(name="phase_reported")
     def phase_reported(self, report: PhaseReport) -> None:
         self._report = report
+
+    @workflow.signal(name="abandon_run")
+    def abandon_run(self) -> None:
+        # A human explicitly took the parked run over (Bugs S.No 89). Only meaningful after a
+        # report-timeout soft-takeover: it ends the still-waiting run terminally so it does not
+        # linger once the operator has decided to hand-work it or re-run from a clean dispatch.
+        self._abandoned = True
 
     @workflow.query(name="status")
     def status(self) -> str:
@@ -54,11 +62,23 @@ class AgentRunWorkflow:
                     timeout=timedelta(seconds=inp.report_timeout_seconds),
                 )
             except TimeoutError:
+                # Soft, RECONCILABLE takeover (Bugs S.No 89): surface "companion appears
+                # offline" and let a human take over, but do NOT terminate — a companion that
+                # only slept can still return and complete this very run. Keep waiting for the
+                # report; an explicit human takeover sends `abandon_run` to end it terminally.
                 await workflow.execute_activity(
                     "mark_phase_takeover", inp,
                     start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
                 )
-                return {"status": "takeover", "run_id": inp.run_id}
+                await workflow.wait_condition(
+                    lambda: self._report is not None or self._abandoned
+                )
+                if self._abandoned:
+                    await workflow.execute_activity(
+                        "fail_run", args=[inp, "run abandoned by human takeover"],
+                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                    )
+                    return {"status": "abandoned", "run_id": inp.run_id}
             report = self._report
             if report.status != "ok":
                 await workflow.execute_activity(

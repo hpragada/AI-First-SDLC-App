@@ -371,6 +371,12 @@ def register_phase_result_core(inp: AgentRunInput, report) -> dict:
             dispatch["status"] = "reported"
             run.inputs = {**(run.inputs or {}), "dispatch": dispatch}
         run.save(update_fields=["cost_usd", "outputs", "inputs", "updated_at"])
+        # Reconcile a parked/STALLED run (Bugs S.No 89): a companion that went offline then
+        # returned and reported successfully un-parks the WorkItem — the run flows on to its
+        # gate (open_gate sets AWAITING_GATE), so the takeover flag must not linger.
+        WorkItem.objects.filter(
+            id=inp.work_item_id, tenant_id=inp.tenant_id, takeover_flag=True
+        ).update(takeover_flag=False)
         tools.log_event(inp.tenant_id, "orchestrator", "run.executed", "run", inp.run_id,
                         {"artifact_id": artifact["id"]})
         if not body:
@@ -387,15 +393,19 @@ def register_phase_result_core(inp: AgentRunInput, report) -> dict:
 
 
 def mark_phase_takeover_core(inp: AgentRunInput) -> dict:
-    """Offline-companion path: the companion never reported → park the WorkItem for human
-    takeover and flag the run failed (never silently hang). Mirrors the build takeover."""
+    """Offline-companion path: the companion did not report before the timeout → park the
+    WorkItem for human takeover. The run is marked STALLED, NOT terminal FAILED (Bugs S.No 89):
+    a companion that only slept can still return and report, and that late report reconciles
+    the run through the normal gate path (the workflow stays alive waiting). Terminal failure
+    happens only on an explicit human takeover (`abandon_run`) or a reported failure."""
     with tenant_context(inp.tenant_id):
         WorkItem.objects.filter(id=inp.work_item_id, tenant_id=inp.tenant_id).update(
             takeover_flag=True)
         Run.objects.filter(id=inp.run_id, tenant_id=inp.tenant_id).update(
-            status=Run.Status.FAILED)
+            status=Run.Status.STALLED)
         tools.log_event(inp.tenant_id, "orchestrator", "phase.takeover", "run", inp.run_id,
-                        {"reason": "companion offline / no report before timeout"})
+                        {"reason": "companion offline / no report before timeout",
+                         "reconcilable": True})
     return {"status": "takeover"}
 
 

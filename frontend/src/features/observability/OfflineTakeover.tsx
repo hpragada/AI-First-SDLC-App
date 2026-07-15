@@ -23,9 +23,11 @@ function OfflineTakeoverLive() {
   const runIdParam = params.get("run") ?? undefined;
 
   const runs = useRuns({ project: runIdParam ? undefined : projectId });
+  // A report-timeout parks a run as "stalled" (non-terminal, reconcilable — Bugs S.No 89);
+  // "failed" is the legacy/terminal park. Surface either for takeover.
   const parkedRun = runIdParam
     ? undefined
-    : (runs.data ?? []).find((r) => r.status === "failed");
+    : (runs.data ?? []).find((r) => r.status === "stalled" || r.status === "failed");
 
   const runId = runIdParam ?? parkedRun?.id;
   const workItem = useWorkItem(parkedRun?.work_item);
@@ -102,8 +104,9 @@ function OfflineTakeoverLive() {
             ]}
           />
           <Banner variant="info">
-            Reconnect your companion and re-run — the phase resumes from a clean dispatch, folding
-            in your earlier answers.
+            If your companion simply went to sleep, bringing it back online lets it finish this
+            same run — it reconciles automatically and moves to its gate. Or reconnect and re-run
+            to start from a clean dispatch, folding in your earlier answers.
           </Banner>
           {takeOver.isError && (
             <Banner variant="danger" title="Couldn't update takeover state">

@@ -96,7 +96,9 @@ function RunConsoleLive() {
           ? "awaiting-gate"
           : run.data.status === "approved" || run.data.status === "completed"
             ? "completed"
-            : "failed";
+            : run.data.status === "stalled"
+              ? "parked"
+              : "failed";
 
   const lines = (events.data ?? []).map(eventLine);
   // Surface a concrete failure reason (Bugs.xlsx row 21 v.1) — the last error event, or an

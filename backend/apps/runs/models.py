@@ -14,6 +14,11 @@ class Run(TenantScopedModel):
         REJECTED = "rejected", "Rejected"
         FAILED = "failed", "Failed"
         COMPLETED = "completed", "Completed"
+        # A companion did not report before the timeout, so the run is PARKED for human
+        # takeover — but NON-terminally (Bugs S.No 89). A companion that only slept can still
+        # return and report; that report reconciles the run through the normal gate path.
+        # Only an explicit human takeover (or a reported failure) makes it terminal.
+        STALLED = "stalled", "Stalled"
 
     work_item = models.ForeignKey(
         "workitems.WorkItem", on_delete=models.CASCADE, related_name="runs"
