@@ -42,3 +42,25 @@ class GithubRest:
                 f"GitHub {method} {path} -> {status}", status=status, detail=data
             )
         return data
+
+    def graphql(self, query: str, variables: dict | None = None) -> object:
+        """POST a GraphQL query/mutation to the v4 endpoint through the same shared Transport
+        (so the rate governor still wraps it). GraphQL returns HTTP 200 even for logical errors,
+        so a non-empty `errors` array is raised as CapabilityError too — not silently ignored."""
+        headers = {
+            "Authorization": self._cfg.auth_header(),
+            "Content-Type": "application/json",
+            "User-Agent": "sdlc-platform",
+        }
+        status, data = self._transport(
+            "POST", self._cfg.graphql_url, headers,
+            {"query": query, "variables": variables or {}},
+        )
+        if status >= 400:
+            raise CapabilityError(
+                f"GitHub GraphQL -> {status}", status=status, detail=data
+            )
+        errors = (data or {}).get("errors") if isinstance(data, dict) else None
+        if errors:
+            raise CapabilityError(f"GitHub GraphQL error: {errors}", detail=data)
+        return data

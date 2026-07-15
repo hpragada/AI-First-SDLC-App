@@ -82,11 +82,18 @@ def dispatch_build_core(inp: BuildInput) -> dict:
 
 
 def _code_artifact(inp: BuildInput) -> Artifact | None:
+    """The run's `code` artifact — the opened PR. A remediation build makes the implementation
+    agent re-register a fresh *pre-PR* pointer (branch/files, no PR ref) on the SAME run, so a
+    run can carry >1 `code` row; `.first()` is non-deterministic (no Meta ordering) and could
+    return the pre-PR pointer, making review/merge fail with "no opened PR". Prefer the artifact
+    that already carries a real PR ref (repo+number); fall back to the oldest otherwise."""
     with tenant_context(inp.tenant_id):
-        return (
+        arts = list(
             Artifact.objects
-            .filter(run_id=inp.run_id, tenant_id=inp.tenant_id, type="code").first()
+            .filter(run_id=inp.run_id, tenant_id=inp.tenant_id, type="code")
+            .order_by("created_at")
         )
+    return next((a for a in arts if _is_pr_ref(a.external_ref)), arts[0] if arts else None)
 
 
 def _is_pr_ref(ref) -> bool:
@@ -172,6 +179,11 @@ def merge_build_pr_core(inp: BuildInput) -> dict:
     codehost = get_capability(inp.tenant_id, "codehost")
     pr = codehost.get_pull_request(pr_ref=pr_ref)
     if not pr.merged:
+        # The PR was opened as a draft (draft during the 07<->08 review loop guards against a
+        # premature human merge). GitHub refuses to merge a draft PR (HTTP 405), so take it out
+        # of draft now that the merge gate is approved — the one legitimate moment to un-draft.
+        if pr.draft:
+            codehost.mark_ready_for_review(pr_ref=pr_ref)
         pr = codehost.merge_pull_request(pr_ref=pr_ref)
     with tenant_context(inp.tenant_id):
         tools.update_artifact(inp.tenant_id, str(artifact.id), status=Artifact.Status.PUBLISHED)

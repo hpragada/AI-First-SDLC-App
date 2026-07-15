@@ -42,6 +42,17 @@ class GithubConfig:
         return cls(api_url=settings.GITHUB_API_URL.rstrip("/"), token=token)
 
     @property
+    def graphql_url(self) -> str:
+        """GraphQL endpoint derived from the REST `api_url`. GitHub.com REST is
+        `https://api.github.com` → GraphQL `https://api.github.com/graphql`; GitHub Enterprise
+        REST is `https://HOST/api/v3` → GraphQL `https://HOST/api/graphql`. Needed because some
+        PR operations (un-drafting a PR) exist ONLY in GraphQL, not REST v3."""
+        base = self.api_url.rstrip("/")
+        if base.endswith("/api/v3"):
+            return base[: -len("/api/v3")] + "/api/graphql"
+        return base + "/graphql"
+
+    @property
     def configured(self) -> bool:
         return bool(self.api_url and self.token)
 

@@ -19,8 +19,10 @@ from orchestration.build_types import BuildInput, BuildReport
 
 
 class _FakeCodeHost:
-    def __init__(self):
+    def __init__(self, draft=False):
         self.merged = False
+        self.draft = draft
+        self.ready_called = False
         self.statuses = []
 
     def open_pull_request(self, *, repo, head, base, title, body, draft=True):
@@ -31,9 +33,15 @@ class _FakeCodeHost:
         repo, number = pr_ref.split("#")
         return PullRequest(repo=repo, number=int(number), title="t", state="open",
                            head="feature/ST-1", base="main", url="u", sha="abc",
-                           merged=self.merged)
+                           merged=self.merged, draft=self.draft)
+
+    def mark_ready_for_review(self, *, pr_ref):
+        self.ready_called = True
+        self.draft = False
 
     def merge_pull_request(self, *, pr_ref, method="squash"):
+        # Mirror GitHub: a draft PR cannot be merged (this is the 405 the fix guards against).
+        assert not self.draft, "attempted to merge a draft PR"
         self.merged = True
         return self.get_pull_request(pr_ref=pr_ref)
 
@@ -141,6 +149,22 @@ def test_merge_publishes_pointer_and_completes_run(world, monkeypatch):
     assert ba.merge_build_pr_core(_inp(world))["merged"] is True
 
 
+def test_merge_takes_draft_pr_out_of_draft_first(world, monkeypatch):
+    """Build PRs are opened as drafts (draft during the review loop); GitHub refuses to merge a
+    draft PR (405). merge_build_pr_core must mark it ready-for-review before merging (Bugs:
+    draft-PR merge 405)."""
+    fake = _FakeCodeHost(draft=True)
+    _use_fake_codehost(monkeypatch, fake)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+    out = ba.merge_build_pr_core(_inp(world))
+
+    assert fake.ready_called is True          # un-drafted before merge
+    assert out["merged"] is True and fake.merged is True
+    world.run.refresh_from_db()
+    assert world.run.status == Run.Status.COMPLETED
+
+
 def test_open_merge_gate_creates_reviewer_approval(world):
     approval_id = ba.open_merge_gate_core(_inp(world))
     ap = Approval.objects.get(id=approval_id)
@@ -228,3 +252,25 @@ def test_dispatch_remediation_briefs_the_open_items(world, monkeypatch):
     world.run.refresh_from_db()
     assert world.run.inputs["remediation"]["items"][0]["rem"] == "REM-W1"
     assert world.run.status == Run.Status.RUNNING
+
+
+def test_review_survives_duplicate_pre_pr_code_pointer(world, monkeypatch):
+    """A remediation build makes the implementation agent re-register a fresh *pre-PR* `code`
+    pointer (no repo/number) on the same run, so a run can carry two `code` artifacts. Review
+    (and merge) must operate on the artifact carrying the real PR ref, not the pre-PR pointer —
+    otherwise `_code_artifact().first()` non-deterministically picked the pre-PR one and review
+    raised "no opened PR to review" (Bugs: remediation duplicate code artifact)."""
+    from mcp_platform_state import tools
+    _open_pr(world, monkeypatch)                     # artifact #1: the opened PR (repo+number)
+    # artifact #2: the agent's remediation pre-PR pointer (registered AFTER the PR artifact)
+    tools.register_artifact(
+        str(world.t.id), str(world.p.id), str(world.run.id), "implementation", "code", "git",
+        content_hash="", external_ref={"branch": "feature/ST-1", "work_item_id": str(world.wi.id)})
+    assert Artifact.objects.filter(run_id=world.run.id, type="code").count() == 2
+
+    picked = ba._code_artifact(_inp(world))
+    assert ba._is_pr_ref(picked.external_ref)         # prefers the real PR ref, not the pre-PR one
+
+    monkeypatch.setattr(ba, "get_review_provider", lambda: _ScriptedReviewer([[]]))
+    out = ba.run_code_review_core(_inp(world))         # must NOT raise "no opened PR to review"
+    assert out["open_blocking"] == 0

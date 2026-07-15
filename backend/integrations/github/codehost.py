@@ -111,6 +111,37 @@ class GithubCodeHost:
             "POST", f"/repos/{repo}/issues/{number}/comments", body={"body": body}
         )
 
+    def mark_ready_for_review(self, *, pr_ref: str) -> None:
+        """Take a draft PR out of draft so it can be merged — GitHub refuses to merge a draft
+        PR (HTTP 405). REST v3 cannot un-draft; only the GraphQL `markPullRequestReadyForReview`
+        mutation can. Idempotent: a PR that is already ready is left untouched (safe on Temporal
+        retries). After the mutation we re-read the PR (bounded retries) to absorb GitHub's brief
+        eventual-consistency window before the caller attempts the merge."""
+        import time
+
+        repo, number = _split_pr_ref(pr_ref)
+        data = self._rest.request("GET", f"/repos/{repo}/pulls/{number}")
+        if not (data or {}).get("draft"):
+            return
+        node_id = (data or {}).get("node_id")
+        if not node_id:
+            raise CapabilityError(
+                f"cannot resolve node_id for {pr_ref} to mark ready-for-review"
+            )
+        self._rest.graphql(
+            "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id})"
+            "{pullRequest{isDraft}}}",
+            {"id": node_id},
+        )
+        # Confirm the un-draft has propagated to the REST view before returning (the merge
+        # endpoint reads REST); a couple of short waits cover the propagation lag that otherwise
+        # produces a spurious 405-on-merge right after un-drafting.
+        for _ in range(5):
+            fresh = self._rest.request("GET", f"/repos/{repo}/pulls/{number}")
+            if not (fresh or {}).get("draft"):
+                return
+            time.sleep(1)
+
     def merge_pull_request(self, *, pr_ref: str, method: str = "squash") -> PullRequest:
         repo, number = _split_pr_ref(pr_ref)
         self._rest.request(

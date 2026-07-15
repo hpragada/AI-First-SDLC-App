@@ -88,6 +88,11 @@ class CodeHost(Protocol):
 
     def add_pr_comment(self, *, pr_ref: str, body: str) -> None: ...
 
+    def mark_ready_for_review(self, *, pr_ref: str) -> None:
+        """Take a draft PR out of draft (idempotent — a ready PR is unchanged). Required before
+        merge: hosts refuse to merge a draft PR. Call at the gated merge, not during review."""
+        ...
+
     def merge_pull_request(self, *, pr_ref: str, method: str = "squash") -> PullRequest:
         """Merge a PR — the gated SoR write for code (#5/#8); call only post-approval."""
         ...
