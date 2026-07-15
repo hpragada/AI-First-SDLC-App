@@ -331,9 +331,28 @@ def run_code_review_core(inp: BuildInput) -> dict:
             "review_artifact_id": review_art_id}
 
 
+def _render_remediation_section(brief: list[dict]) -> str:
+    """Render the open REM findings as a manifest section the 07 agent re-runs against — same
+    idea as the reviewer's PR-diff section. The agent fixes these on the SAME branch."""
+    lines = ["# Remediation Items",
+             "The code review returned blocking findings. Address EACH of the following on the "
+             "current branch (do not open a new PR — push fixes to the existing one), then report:",
+             ""]
+    for f in brief:
+        loc = f"{f.get('file') or '?'}:{f.get('line') or 0}"
+        lines.append(f"- **{f.get('rem')}** ({f.get('severity')}) — {f.get('title')}  [{loc}]")
+    return "\n".join(lines)
+
+
 def dispatch_remediation_core(inp: BuildInput) -> dict:
-    """Send the open remediation items (the REM brief) back to the companion and mark the
-    run running again — the 07 agent re-runs in remediation mode against them."""
+    """Re-dispatch the build to the companion in remediation mode: the open REM brief is folded
+    into the 07 agent's manifest and a fresh `build_task` + pending `dispatch` claim block are
+    armed so the companion pulls it via /api/runner/work/ (exactly like the initial build), runs
+    07 against the findings on the SAME branch, and reports back. Without re-arming `dispatch`
+    the companion would have nothing to claim and the loop would hang → takeover (Bugs S.No 115).
+    Idempotent by run_id."""
+    from django.conf import settings
+
     with tenant_context(inp.tenant_id):
         open_items = WorkItem.objects.filter(
             tenant_id=inp.tenant_id, parent_id=inp.work_item_id, type=WorkItem.Type.TASK,
@@ -342,8 +361,30 @@ def dispatch_remediation_core(inp: BuildInput) -> dict:
                   "severity": (c.external_ref or {}).get("severity"),
                   "file": (c.external_ref or {}).get("file"),
                   "line": (c.external_ref or {}).get("line")} for c in open_items]
+
+    manifest = f"{compose_manifest_core(inp)}\n\n{_render_remediation_section(brief)}"
+    agent_body, model = _load_agent_body(inp.agent_spec_id, inp.tenant_id)
+    payload = {
+        "run_id": inp.run_id, "tenant_id": inp.tenant_id, "project_id": inp.project_id,
+        "work_item_id": inp.work_item_id, "work_item_key": inp.work_item_key,
+        "repo": inp.repo, "base": inp.base, "phase": inp.phase,
+        "manifest": manifest, "agent_body": agent_body, "model": model,
+        "api_url": getattr(settings, "PLATFORM_API_URL", ""),
+        "remediation": True,
+    }
+    with tenant_context(inp.tenant_id):
+        wi = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
+        payload["work_item_title"] = wi.title
+        payload["work_item_type"] = wi.type
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
-        run.inputs = {**(run.inputs or {}), "remediation": {"items": brief}}
+        run.inputs = {
+            **(run.inputs or {}),
+            "remediation": {"items": brief},
+            "build_task": payload,
+            # Re-arm the claim block so the companion can pull the remediation build (S.No 115).
+            "dispatch": {"kind": "build", "enrollment_id": inp.enrollment_id,
+                         "status": "pending"},
+        }
         run.status = Run.Status.RUNNING
         run.save(update_fields=["inputs", "status", "updated_at"])
         tools.log_event(inp.tenant_id, "orchestrator", "build.remediation_dispatched", "run",

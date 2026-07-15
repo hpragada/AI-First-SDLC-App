@@ -277,3 +277,42 @@ def test_companion_provider_fails_closed_on_contract_mismatch(world):
     )
     with pytest.raises(rp.ReviewContractError):
         prov.review(_inp(world), "acme/api#7")
+
+
+# ── remediation re-dispatch arms the companion claim (Bugs S.No 115) ─
+# Without re-arming inputs['dispatch'] the companion has nothing to claim after remediation,
+# so the 07 agent never re-runs, no build_reported ever fires, and the loop hangs → takeover.
+def _open_rem_child(world, rem, severity):
+    return WorkItem.objects.create(
+        tenant=world.t, project=world.p, type=WorkItem.Type.TASK, parent=world.wi,
+        title=f"fix {rem}", state=WorkItem.State.IN_PROGRESS,
+        external_ref={"rem": rem, "severity": severity, "file": "db.py", "line": 10})
+
+
+def test_dispatch_remediation_arms_build_claim_and_manifest(world):
+    _open_rem_child(world, "REM-C1", "critical")
+    _open_rem_child(world, "REM-W1", "warning")
+    out = ba.dispatch_remediation_core(_inp(world, enrollment_id=str(world.enrollment.id)))
+    assert out["items"] == 2
+    world.run.refresh_from_db()
+    # The claim block the companion polls for is armed as a pending BUILD, pinned to the enrollment.
+    assert world.run.inputs["dispatch"] == {
+        "kind": "build", "enrollment_id": str(world.enrollment.id), "status": "pending"}
+    bt = world.run.inputs["build_task"]
+    assert bt["remediation"] is True
+    assert "Remediation Items" in bt["manifest"]
+    assert "REM-C1" in bt["manifest"] and "REM-W1" in bt["manifest"]
+    assert len(world.run.inputs["remediation"]["items"]) == 2  # brief retained for provenance
+
+
+def test_work_claim_returns_the_remediation_build(world):
+    """The whole point (S.No 115): after remediation dispatch, /api/runner/work/ actually hands
+    the companion a build task carrying the REM brief — previously it returned 204 forever."""
+    _open_rem_child(world, "REM-C1", "critical")
+    ba.dispatch_remediation_core(_inp(world, enrollment_id=str(world.enrollment.id)))
+    r = APIClient().get("/api/runner/work/", **_auth(world))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["kind"] == "build"
+    assert "Remediation Items" in body["payload"]["manifest"]
+    assert body["payload"]["remediation"] is True
