@@ -101,6 +101,17 @@ def test_code_review_states_final_message_json_contract():
     assert "tool call or event" in body  # must not deliver the verdict only via an event
 
 
+def test_code_review_hygiene_findings_are_non_blocking():
+    """Bugs S.No 116: Step-1 hygiene checks (PR size, commit msg, branch, PR description, linear
+    history) are platform-owned or non-code, so the 07 remediation loop can't fix them. They must
+    be non-blocking Suggestions — NOT blocking Criticals that loop until the cycle cap exhausts."""
+    body = _body("08_code_review").lower()
+    assert "non-blocking suggestion" in body      # the reclassification
+    assert "unwinnable remediation loop" in body  # the rationale is stated
+    # the old "any check that fails -> CRITICAL finding" instruction must be gone
+    assert "any check that fails" not in body
+
+
 @pytest.mark.django_db
 def test_seeded_agentspecs_resolve_to_migrated_bodies():
     t = Tenant.objects.create(name="Acme")

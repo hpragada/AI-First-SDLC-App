@@ -61,7 +61,7 @@ On a **re-review** (the platform re-runs this review after a remediation build),
 
 ### Step 1: PR Hygiene & Conventional Commits Compliance
 
-> **Framework:** A PR that cannot be reviewed safely — because it is too large, lacks a clear description, or has an opaque commit history — should be returned before the reviewer invests time in code-level analysis. DORA research identifies small, well-described PRs as a structural predictor of lower defect rates. This is not administrative process; it is quality signal about the code inside.
+> **Framework:** A PR that cannot be reviewed safely — because it is too large, lacks a clear description, or has an opaque commit history — is a quality signal worth surfacing to the human reviewer at the merge gate, who can return it. DORA research identifies small, well-described PRs as a structural predictor of lower defect rates. This is not administrative process; it is quality signal about the code inside. (It is surfaced, not auto-blocked: these hygiene items are platform-owned or non-code, so the automated remediation loop cannot fix them — see the classification note below.)
 
 From `# Pull Request Under Review`, check:
 
@@ -73,7 +73,7 @@ From `# Pull Request Under Review`, check:
 | PR description | References the WorkItem and summarises what changed |
 | No merge commits | History is rebased and linear |
 
-**Any check that fails → CRITICAL finding. Document it and continue the review — do not stop here.** If the PR exceeds 400 lines, flag as Critical and note which files/sections account for the overage — generated, lock, or migration files are exempt if clearly identified; the reviewer's judgement on whether the overage is justified must be stated explicitly. Step 1 runs once per review session against the PR as a whole.
+**A failing check here is a non-blocking Suggestion (`REM-S`) for the human merge-gate reviewer — never a blocking `REM-C`/`REM-W`.** Every Step-1 item is either platform-owned (the platform generates the commit message, branch name, PR description, and keeps history linear — D2) or non-code (PR size): the platform re-runs the *implementation* agent on the **same branch** for every blocking finding, and that agent cannot split a PR, rename a branch, rewrite the commit message, or otherwise remediate a hygiene issue in code. Emitting these as blocking would create an **unwinnable remediation loop** that churns until the cycle cap exhausts and the build fails — without ever resolving the finding. So: record each failing check as a Suggestion (including a PR over 400 lines — note which files/sections account for the overage, with generated/lock/migration files exempt if identified, and state explicitly whether the overage is justified), so the human reviewer sees it at the merge gate and decides. **A genuinely un-reviewable PR is returned by the human reviewer at the gate, not by the automated loop.** Document each and continue the review — do not stop here. Step 1 runs once per review session against the PR as a whole.
 
 ### Step 2: Change Summary
 
