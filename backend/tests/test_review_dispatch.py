@@ -266,6 +266,36 @@ def test_parse_and_guard_fails_closed_when_blocking_signalled_but_unparsed(world
                                 target_id=str(world.run.id)).exists()
 
 
+def test_parse_and_guard_trusts_approved_verdict_mentioning_resolved_rem(world):
+    """Bugs S.No 114 false-positive (WI-27): a clean APPROVED verdict (0 blocking, one
+    suggestion) whose *narrative* names a RESOLVED REM-W1 must NOT fail closed — the present,
+    parseable verdict is authoritative; the prose REM mention is history, not an active blocker."""
+    from apps.ledger.models import Event
+    body = (
+        "## Findings Summary\n\n### REM-W1 — RESOLVED (Cycle 1 → Cycle 2; confirmed closed)\n"
+        "The blocking Warning REM-W1 raised in Cycle 1 was resolved and remains resolved.\n\n"
+        "## Review Verdict\n\n**APPROVED** — no Criticals, no open Warnings.\n\n"
+        '```json\n{"status":"APPROVED","findings":['
+        '{"rem":"REM-S1","severity":"suggestion","title":"add note","file":"a.py","line":1}'
+        ']}\n```'
+    )
+    findings = rp.parse_and_guard(body, tenant_id=str(world.t.id), run_id=str(world.run.id))
+    assert [f.rem for f in findings] == ["REM-S1"]        # trusted through, not raised
+    assert not any(f.severity in rp._BLOCKING for f in findings)   # 0 blocking → merge gate
+    assert not Event.objects.filter(tenant=world.t, action="review.parse_mismatch",
+                                    target_id=str(world.run.id)).exists()
+
+
+def test_parse_and_guard_fails_closed_on_in_json_downgrade(world):
+    """A parseable verdict whose own status demands changes but whose findings array carries no
+    blocking items is a genuine in-JSON downgrade → still fail closed (guard strengthened)."""
+    body = ('```json\n{"status":"CHANGES_REQUIRED","findings":['
+            '{"rem":"REM-S1","severity":"suggestion","title":"nit","file":"a.py","line":1}'
+            ']}\n```')
+    with pytest.raises(rp.ReviewContractError):
+        rp.parse_and_guard(body, tenant_id=str(world.t.id), run_id=str(world.run.id))
+
+
 def test_companion_provider_fails_closed_on_contract_mismatch(world):
     """End-to-end through the provider: a blocking-but-unparseable verdict raises rather than
     feeding 0 findings into the loop (which would open the merge gate)."""

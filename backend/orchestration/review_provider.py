@@ -58,6 +58,11 @@ _JSON_BLOCK = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 # fail-closed guard so a mis-formatted verdict can never be silently downgraded to "0 blocking".
 _BLOCKING_REM = re.compile(r"\bREM-[CW]\d+\b")
 _CHANGES_REQUIRED = re.compile(r"CHANGES[_ ]REQUIRED", re.IGNORECASE)
+# A machine-verdict `status` that itself demands changes (negative verdict). "APPROVED" does not
+# match; "CHANGES_REQUIRED"/"rejected"/"blocked"/"failed" do. Used so the fail-closed guard trusts
+# a present, parseable *approved* verdict instead of firing on prose that merely names a RESOLVED
+# REM id in the review narrative (Bugs S.No 114 false-positive).
+_NEGATIVE_STATUS = re.compile(r"chang|reject|denied?|blocked|fail", re.IGNORECASE)
 
 
 class ReviewContractError(RuntimeError):
@@ -86,9 +91,21 @@ def _extract_verdict(text: str) -> dict | None:
 
 def _looks_blocking(text: str) -> bool:
     """True if the body indicates blocking findings independently of the json verdict — a blocking
-    REM id or an explicit CHANGES_REQUIRED verdict. The fail-closed signal (Bugs S.No 114)."""
+    REM id or an explicit CHANGES_REQUIRED verdict. The prose fail-closed signal (Bugs S.No 114),
+    used ONLY when there is no parseable machine verdict — a REM id in prose can be a RESOLVED
+    finding the review is merely narrating, not an active blocker."""
     t = text or ""
     return bool(_BLOCKING_REM.search(t) or _CHANGES_REQUIRED.search(t))
+
+
+def _verdict_demands_changes(verdict: dict | None) -> bool:
+    """True when a parseable machine verdict is present AND its own `status` is a negative verdict
+    (changes-required/rejected/blocked/failed). A present verdict is the contract: trust its status
+    rather than the prose, so a clean APPROVED verdict that merely *names* a resolved REM id in its
+    narrative is not mistaken for an active blocker (Bugs S.No 114 false-positive)."""
+    if verdict is None:
+        return False
+    return bool(_NEGATIVE_STATUS.search(str(verdict.get("status") or "")))
 
 
 def parse_findings(text: str) -> list[Finding]:
@@ -123,27 +140,40 @@ def parse_findings(text: str) -> list[Finding]:
 
 
 def parse_and_guard(body: str | None, *, tenant_id, run_id) -> list[Finding]:
-    """Parse the verdict AND fail closed on a contract mismatch (Bugs S.No 114).
+    """Parse the verdict AND fail closed on a *genuine* contract downgrade (Bugs S.No 114).
 
-    The remediation loop keys off the parsed blocking findings; if the body clearly signals
-    blocking findings (a REM-C/REM-W id or a CHANGES_REQUIRED verdict) but none parse — the agent
-    put its prose last instead of the json block, or emitted a malformed/empty findings array —
-    then treating it as "0 blocking" would open the merge gate on an unreviewed downgrade. Raise
-    instead: `run_code_review` retries (capped) then the BuildWorkflow marks the run failed, so the
-    gate is never opened. An empty body (review timeout) has no blocking signal → returns [] as
-    before (the human merge gate still applies, S.No 110)."""
+    The remediation loop keys off the parsed blocking findings, so treating a review that really
+    demanded changes as "0 blocking" would open the merge gate on an unreviewed downgrade. Fail
+    closed when no blocking findings parse AND the review genuinely demands changes — meaning
+    either (a) there is NO parseable machine verdict but the prose signals blocking (the agent put
+    its prose last instead of the json block, or emitted a malformed/empty findings array), or
+    (b) a parseable verdict IS present and its own `status` demands changes yet no blocking
+    findings parsed (an in-JSON downgrade).
+
+    Crucially, a present + parseable + *approved* verdict is authoritative: its narrative may name
+    a RESOLVED REM id (e.g. "REM-W1 — RESOLVED") which the prose heuristic would otherwise mistake
+    for an active blocker and fail a clean APPROVED review (Bugs S.No 114 false-positive). An empty
+    body (review timeout) has no blocking signal → returns [] (the human merge gate still applies,
+    S.No 110)."""
     findings = parse_findings(body or "")
-    if not any(f.severity in _BLOCKING for f in findings) and _looks_blocking(body or ""):
+    has_blocking = any(f.severity in _BLOCKING for f in findings)
+    verdict = _extract_verdict(body or "")
+    demands_changes = _verdict_demands_changes(verdict) or (
+        verdict is None and _looks_blocking(body or "")
+    )
+    if not has_blocking and demands_changes:
         with tenant_context(tenant_id):
             tools.log_event(
                 tenant_id, "orchestrator", "review.parse_mismatch", "run", str(run_id),
-                {"reason": "blocking verdict signalled but no blocking findings parsed",
-                 "has_json_verdict": _extract_verdict(body or "") is not None},
+                {"reason": "review demands changes but no blocking findings parsed",
+                 "has_json_verdict": verdict is not None,
+                 "verdict_status": str((verdict or {}).get("status") or "")},
             )
         raise ReviewContractError(
-            "08 review indicated blocking findings but none could be parsed from its output "
-            "(the machine-readable json verdict block was missing, malformed, or not the final "
-            "block); failing closed so the merge gate is not opened on an unreviewed downgrade"
+            "08 review demanded changes but no blocking findings could be parsed (the machine "
+            "verdict was missing/malformed, or its status demands changes with an empty/downgraded "
+            "findings array); failing closed so the merge gate is not opened on an unreviewed "
+            "downgrade"
         )
     return findings
 
