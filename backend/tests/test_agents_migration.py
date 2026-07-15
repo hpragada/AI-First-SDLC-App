@@ -112,6 +112,25 @@ def test_code_review_hygiene_findings_are_non_blocking():
     assert "any check that fails" not in body
 
 
+def test_task_breakdown_descriptions_and_ac_are_humanized():
+    """Bugs S.No 118: 06 must require plain-language-with-technical-nuance, implement-by-reading
+    descriptions + acceptance criteria — not just an engineer-only precision bar."""
+    body = _body("06_task_breakdown")
+    assert "Writing standard" in body
+    low = body.lower()
+    assert "plain language" in low or "plain-language" in low
+    assert "implement" in low and "acceptance criteria" in low
+
+
+def test_per_item_agents_author_artifact_titles():
+    """Bugs S.No 120: agents that register many artifacts of one type must pass a human-readable
+    `title` so the UI can tell them apart (wireframe per screen, test_case per TC, etc.)."""
+    assert "Wireframe — Login Page" in _body("05_ux_design")
+    assert "title" in _body("09_testing").lower() and "TC-014" in _body("09_testing")
+    assert "title" in _body("10_security").lower()
+    assert "ADR-003" in _body("04_architecture")
+
+
 @pytest.mark.django_db
 def test_seeded_agentspecs_resolve_to_migrated_bodies():
     t = Tenant.objects.create(name="Acme")

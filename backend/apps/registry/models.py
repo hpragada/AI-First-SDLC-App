@@ -58,6 +58,11 @@ class Artifact(TenantScopedModel):
     )
     phase = models.CharField(max_length=64)
     type = models.CharField(max_length=64)
+    # Human-readable, context-carrying name the phase agent authors at registration
+    # (e.g. "Wireframe — Login Page", "ADR-003 — Event Sourcing"). Distinguishes per-item
+    # artifacts that share a `type`, and is what every UI surface displays (Bugs S.No 120).
+    # Blank falls back to a humanized `type` at the display layer for back-compat.
+    title = models.CharField(max_length=200, blank=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
     sor = models.CharField(max_length=16, choices=SoR.choices, default=SoR.INTERNAL)
     external_ref = models.JSONField(null=True, blank=True)
@@ -67,7 +72,7 @@ class Artifact(TenantScopedModel):
     embedding = VectorField(dimensions=EMBEDDING_DIM, null=True, blank=True)
 
     def __str__(self) -> str:
-        return f"{self.type}#{self.version} ({self.status})"
+        return f"{self.title or self.type}#{self.version} ({self.status})"
 
 
 class TraceEdge(TenantScopedModel):

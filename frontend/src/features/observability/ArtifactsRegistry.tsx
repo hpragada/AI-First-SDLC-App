@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, EmptyState, Panel, Table } from "../../components/ui";
-import { phaseLabel } from "../lifecycle/phases";
+import { phaseLabel, artifactLabel } from "../lifecycle/phases";
 import { useArtifacts } from "./hooks";
 
 // Humanize a status token (draft / pending_gate / published) for display + filter options.
@@ -46,7 +46,8 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
           (!phase || a.phase === phase) &&
           (!type || a.type === type) &&
           (!status || a.status === status) &&
-          (!search || `${a.type} ${a.phase}`.toLowerCase().includes(search.toLowerCase())),
+          (!search ||
+            `${a.title} ${a.type} ${a.phase}`.toLowerCase().includes(search.toLowerCase())),
       ),
     [list, phase, type, status, search],
   );
@@ -166,7 +167,7 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
                     ]
                   : filtered.map((artifact) => [
                       <span className="table__primary" key="t">
-                        {phaseLabel(artifact.type)}
+                        {artifactLabel(artifact.title, artifact.type)}
                       </span>,
                       phaseLabel(artifact.phase),
                       <span className="table__id" key="v">

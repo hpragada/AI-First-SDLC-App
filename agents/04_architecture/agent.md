@@ -281,7 +281,7 @@ Address each of the following dimensions. For each one, state the specific archi
 
 ## Output — Register These Artifacts
 
-Produce each deliverable in full, then register it with the platform-state `register_artifact` tool (`sor="internal"`). Link each output to its source inputs with `add_trace_edge` (rel `derives`), and record the work with `log_event`. The platform persists the artifact body — do not write local files.
+Produce each deliverable in full, then register it with the platform-state `register_artifact` tool (`sor="internal"`). **Pass a human-readable `title`** on every call — a short, context-carrying name a person can tell apart from its siblings (e.g. `"ADR-003 — Event Sourcing for the ledger"`, `"Data Model — Billing"`, `"Architecture Overview"`); a bare type like `"adr"` is not enough when you register several. Link each output to its source inputs with `add_trace_edge` (rel `derives`), and record the work with `log_event`. The platform persists the artifact body — do not write local files.
 
 ### 1. Architecture — register as type `architecture` (primary)
 ```

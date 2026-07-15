@@ -42,6 +42,16 @@ export function phaseLabel(phase: string | null | undefined): string {
     .join(" ");
 }
 
+// The human-readable name for an artifact (Bugs S.No 120): prefer the agent-authored `title`;
+// fall back to a humanized `type` for artifacts registered before titles existed / singletons.
+export function artifactLabel(
+  title: string | null | undefined,
+  type: string | null | undefined,
+): string {
+  const t = (title ?? "").trim();
+  return t || phaseLabel(type);
+}
+
 // The nodes a work item's rail should actually show: brownfield/onboarding phases dropped,
 // every label humanized.
 export function visibleLifecycleNodes(nodes: LifecycleNode[]): LifecycleNode[] {

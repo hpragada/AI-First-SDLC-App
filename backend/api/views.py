@@ -307,7 +307,7 @@ class ProjectViewSet(
             ext = a.external_ref or {}
             nodes.append({
                 "id": str(a.id), "kind": "artifact", "phase": a.phase, "type": a.type,
-                "status": a.status, "sor": a.sor,
+                "title": a.title, "status": a.status, "sor": a.sor,
                 "external_ref": ext or None, "url": ext.get("url"),
             })
         edges = TraceEdge.objects.filter(
@@ -501,7 +501,7 @@ class ProjectViewSet(
                 ).count(),
             },
             "recent_publishes": [
-                {"title": f"{a.type} — {a.phase}"} for a in recent_published
+                {"title": a.title or f"{a.type} — {a.phase}"} for a in recent_published
             ],
         })
 
@@ -1258,7 +1258,9 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         from integrations.export_policy import normalize_phase
 
         phase_label = normalize_phase(artifact.phase).replace("_", " ").title() or "Artifact"
-        title = f"{title_base} — {phase_label}"
+        # Prefer the artifact's own human-readable title (Bugs S.No 120); fall back to the
+        # feature-stream/project + humanized phase for artifacts registered without one.
+        title = artifact.title or f"{title_base} — {phase_label}"
         try:
             ref = publish_to_docstore(
                 tenant_id=self.tenant_id, artifact=artifact, body_md=body_md,

@@ -321,6 +321,8 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
         return {
             "body": body, "content_type": content_type, "status": artifact.status,
             "version": artifact.version,
+            "title": artifact.title,  # human name (S.No 120); blank → UI humanizes type
+
             "versions": _versions(tenant_id=tenant_id, artifact=artifact),
             "sor_link": sor_link,
             "phase": artifact.phase,

@@ -16,7 +16,12 @@ function driftSummary(detail: Record<string, unknown>) {
   if (oldV && newV) {
     return `${oldV} → ${newV}${breaking?.length ? ` — breaks ${breaking.join(", ")}` : ""}`;
   }
-  return Object.keys(detail).length ? JSON.stringify(detail) : "Details unavailable";
+  if (breaking?.length) return `Breaking changes: ${breaking.join(", ")}`;
+  // Humanize the remaining scalar fields instead of dumping raw JSON at the user (S.No 120, Part C-2).
+  const parts = Object.entries(detail)
+    .filter(([, v]) => v != null && typeof v !== "object")
+    .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`);
+  return parts.length ? parts.join(" · ") : "Contract changed — open the contract for details";
 }
 
 export function ContractsDrift({ forceView }: { forceView?: ContractsDriftView }) {
@@ -155,7 +160,7 @@ function ContractsDriftLive() {
                           <li className="u-row-tight" key={i}>
                             <Assess state="missing">✗</Assess>
                             <span className="t-sm">
-                              Artifact {imp.node.slice(0, 8)} · repo {imp.repo_id.slice(0, 8)}
+                              {imp.node_title || `Artifact ${imp.node.slice(0, 8)}`} · {imp.repo_name || `repo ${imp.repo_id.slice(0, 8)}`}
                             </span>
                           </li>
                         ))}

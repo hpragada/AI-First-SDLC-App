@@ -422,7 +422,7 @@ mcp__playwright__browser_navigate(url="[app_url]")
 
 ## Step 7: Record the Generated Script
 
-After a successful dry run, register the generated automation as a `test_report` artifact with `register_artifact` (the script body lives in the worktree as code; the artifact records the TC-ID, framework, script path, dry-run result, and discovered locators) and `log_event` the generation. The registry and ledger track which `TC-XXX` have generated scripts — there is no local log file. Capture this structure in the artifact:
+After a successful dry run, register the generated automation as a `test_report` artifact with `register_artifact` — pass a human-readable `title` such as `"Automation — TC-014 login"` (many `test_report` rows share the type, so the `title` is what distinguishes them in the UI) — (the script body lives in the worktree as code; the artifact records the TC-ID, framework, script path, dry-run result, and discovered locators) and `log_event` the generation. The registry and ledger track which `TC-XXX` have generated scripts — there is no local log file. Capture this structure in the artifact:
 
 ```markdown
 | TC-ID | Title | Framework | Script Path | Status | Dry Run | Notes |

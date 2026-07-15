@@ -326,7 +326,7 @@ Example: **Attack Surface: [e.g., User Authentication Endpoint]**
 
 ## Output — Register These Artifacts
 
-Produce each deliverable in full, then register it with the platform-state `register_artifact` tool (`sor="internal"`). Link each output to its source inputs with `add_trace_edge` (rel `derives`), and record the work with `log_event`. The platform persists each artifact body — do not write local files. Each open Critical or High finding opens a `defect` child WorkItem through the platform's **defect loopback** (the same open/close reconciliation as the test loop); the gate is not grantable while any Critical or High remains open.
+Produce each deliverable in full, then register it with the platform-state `register_artifact` tool (`sor="internal"`). **Pass a human-readable `title`** on every call (e.g. `"Finding — SQL injection in search filter"`, `"SBOM — payments-api"`, `"Threat Model"`) — every `security_finding` shares the type, so the `title` is what tells them apart in the UI; never omit it. Link each output to its source inputs with `add_trace_edge` (rel `derives`), and record the work with `log_event`. The platform persists each artifact body — do not write local files. Each open Critical or High finding opens a `defect` child WorkItem through the platform's **defect loopback** (the same open/close reconciliation as the test loop); the gate is not grantable while any Critical or High remains open.
 
 ### 1. Security Review — type `security_review` (primary)
 

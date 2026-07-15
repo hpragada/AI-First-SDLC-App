@@ -201,11 +201,37 @@ class CodeIntelIndexSerializer(serializers.Serializer):
 
 # ── API contracts & drift (P4.7-T9) ───────────────────────────────────
 class DriftRecordSerializer(serializers.ModelSerializer):
+    # Enrich each impacted entry with human-readable names so the UI never shows raw UUIDs
+    # (Bugs S.No 120, Part C-2). Batched lookups — no N+1.
+    impacted = serializers.SerializerMethodField()
+
     class Meta:
         model = DriftRecord
         fields = ["id", "project", "artifact", "kind", "required_role", "status",
                   "detail", "impacted", "decided_by", "decided_at", "comment", "created_at"]
         read_only_fields = fields
+
+    def get_impacted(self, obj):
+        from apps.projects.models import Repository
+        from apps.registry.models import Artifact
+
+        imps = obj.impacted or []
+        node_ids = [i.get("node") for i in imps if i.get("node")]
+        repo_ids = [i.get("repo_id") for i in imps if i.get("repo_id")]
+        titles = {
+            str(a.id): (a.title or a.type)
+            for a in Artifact.objects.filter(id__in=node_ids, tenant_id=obj.tenant_id)
+        } if node_ids else {}
+        repos = {
+            str(r.id): r.name
+            for r in Repository.objects.filter(id__in=repo_ids, tenant_id=obj.tenant_id)
+        } if repo_ids else {}
+        return [
+            {**i,
+             "node_title": titles.get(str(i.get("node")), ""),
+             "repo_name": repos.get(str(i.get("repo_id")), "")}
+            for i in imps
+        ]
 
 
 class DriftDecisionSerializer(serializers.Serializer):
@@ -328,7 +354,7 @@ class ArtifactSerializer(serializers.ModelSerializer):
         model = Artifact
         # Pointer + provenance only; never the body (#1/#3).
         fields = [
-            "id", "project", "repo", "run", "phase", "type", "status", "sor",
+            "id", "project", "repo", "run", "phase", "type", "title", "status", "sor",
             "external_ref", "s3_key", "content_hash", "version", "created_at",
         ]
         read_only_fields = fields

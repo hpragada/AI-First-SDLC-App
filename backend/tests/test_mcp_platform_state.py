@@ -151,6 +151,36 @@ def test_register_artifact_bumps_version_across_re_registrations(world):
     assert other["version"] == 1
 
 
+def test_register_artifact_stores_and_returns_title(world):
+    """Bugs S.No 120: the human-readable title is stored and echoed back."""
+    t, project, run = world["t"], world["project"], world["run"]
+    a = tools.register_artifact(
+        t.id, project.id, run.id, "05_ux_design", "wireframe", "internal", "h1",
+        title="Wireframe — Login Page",
+    )
+    assert a["title"] == "Wireframe — Login Page"
+    assert tools.get_artifact(t.id, a["id"])["title"] == "Wireframe — Login Page"
+
+
+def test_per_item_titles_get_independent_versions(world):
+    """Bugs S.No 120 Part C-1: distinct per-item artifacts that share (phase, type) must NOT be
+    numbered as versions of each other. Each titled sibling starts at v1; re-registering the SAME
+    title is a genuine new version (v2)."""
+    t, project, run = world["t"], world["project"], world["run"]
+    login = tools.register_artifact(
+        t.id, project.id, run.id, "05_ux_design", "wireframe", "internal", "h1",
+        title="Wireframe — Login Page")
+    checkout = tools.register_artifact(
+        t.id, project.id, run.id, "05_ux_design", "wireframe", "internal", "h2",
+        title="Wireframe — Checkout Page")
+    login_v2 = tools.register_artifact(
+        t.id, project.id, run.id, "05_ux_design", "wireframe", "internal", "h3",
+        title="Wireframe — Login Page")
+    assert login["version"] == 1
+    assert checkout["version"] == 1    # a sibling, NOT a supersession of login
+    assert login_v2["version"] == 2    # same title → genuine new version
+
+
 def test_update_artifact(world):
     t, project, run = world["t"], world["project"], world["run"]
     a = tools.register_artifact(

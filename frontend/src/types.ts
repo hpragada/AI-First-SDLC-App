@@ -92,6 +92,7 @@ export interface Artifact {
   run: string | null;
   phase: string;
   type: string;
+  title: string; // human-readable name (Bugs S.No 120); blank → humanize `type` for display
   status: string;
   sor: string;
   s3_key: string;
@@ -160,6 +161,7 @@ export interface TraceNode {
   kind: string; // "artifact"
   phase: string;
   type: string;
+  title?: string; // human-readable name (Bugs S.No 120); blank → humanize `type`
   status: string;
   sor: string;
   external_ref: Record<string, unknown> | null;
@@ -544,6 +546,8 @@ export interface ApiContract {
 export interface DriftImpact {
   node: string;
   repo_id: string;
+  node_title?: string; // human-readable artifact name (Bugs S.No 120, Part C-2); blank → short id
+  repo_name?: string; // "owner/name"; blank → short id
 }
 
 // `detail` is DriftRecord.detail — a JSONField (hashes/semver/source), not a string.
@@ -570,6 +574,7 @@ export interface ArtifactPreview {
   content_type: string;
   status: string;
   version: number;
+  title?: string; // human-readable name (Bugs S.No 120); blank → humanize `artifact_type`
   versions: ArtifactVersion[];
   sor_link?: string | null;
   // Export policy context (team flow decision 2026-07-07): the phase's single allowed

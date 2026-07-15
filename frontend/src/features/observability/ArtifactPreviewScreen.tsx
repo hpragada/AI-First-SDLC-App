@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 
 import { Badge, Banner, Card, CardBody, Breadcrumb, DocPreview, Markdown, Panel, Spinner } from "../../components/ui";
 import type { ArtifactState } from "../../types";
+import { artifactLabel } from "../lifecycle/phases";
 import { useArtifactPreview } from "./hooks";
 
 // Per-screen wireframes carry one self-contained HTML document per UI state (default,
@@ -95,7 +96,7 @@ function ArtifactPreviewLive() {
         <div className="grid grid--detail">
           <div className="u-stack">
             <div className="u-row">
-              <h1 className="t-h1">Artifact v{data.version}</h1>
+              <h1 className="t-h1">{artifactLabel(data.title, data.artifact_type)} · v{data.version}</h1>
               <Badge variant={data.status === "published" ? "done" : data.status === "pending_gate" ? "gate" : "info-hue"}>
                 {data.status}
               </Badge>
@@ -154,7 +155,7 @@ function ArtifactPreviewLive() {
                 </svg>
               </span>
               <div className="artifact-row__main">
-                <div className="artifact-row__title">Artifact v{data.version}</div>
+                <div className="artifact-row__title">{artifactLabel(data.title, data.artifact_type)} · v{data.version}</div>
                 <div className="artifact-row__meta">{data.status}</div>
               </div>
               <a className="sor-chip sor-chip--confluence" href={data.sor_link} target="_blank" rel="noreferrer">

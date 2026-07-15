@@ -33,6 +33,7 @@ def _artifact(a: Artifact) -> dict:
         "run_id": str(a.run_id) if a.run_id else None,
         "phase": a.phase,
         "type": a.type,
+        "title": a.title,
         "status": a.status,
         "sor": a.sor,
         "external_ref": a.external_ref,
@@ -262,7 +263,7 @@ def _retrieve_knowledge(tenant_id, project_id, query) -> list[dict]:
 
 def register_artifact(
     tenant_id, project_id, run_id, phase, type, sor,
-    content_hash, s3_key=None, external_ref=None, repo_id=None,
+    content_hash, s3_key=None, external_ref=None, repo_id=None, title="",
 ) -> dict:
     with tenant_context(tenant_id):
         project = Project.objects.get(id=project_id, tenant_id=tenant_id)
@@ -272,14 +273,18 @@ def register_artifact(
         )
         if sor not in Artifact.SoR.values:
             raise ValueError(f"invalid sor: {sor}")
-        # Version across re-registrations (Bugs.xlsx row 28.2): a fresh row per run/remediation
-        # loop shares (project, phase, type) with its predecessors. Number it one past the
-        # highest existing sibling so re-running a phase yields v2, v3, … instead of another v1.
-        # Only the integer counter — still a pointer row, no content stored (#1/#3).
+        # Version across re-registrations (Bugs.xlsx row 28.2): re-running a phase should yield
+        # v2, v3, … of the SAME artifact. But per-item types (adr, test_case, security_finding,
+        # code, code_review, test_report) register many DISTINCT rows sharing (phase, type) in one
+        # run — versioning by (phase, type) alone falsely numbered them as supersessions of each
+        # other (Bugs S.No 120, Part C-1). Scope the counter to the human `title` when present so
+        # distinct siblings each start at v1; fall back to (phase, type) for untitled/singletons.
+        version_filter = {"tenant_id": tenant_id, "project": project,
+                          "phase": phase, "type": type}
+        if title:
+            version_filter["title"] = title
         last = (
-            Artifact.objects.filter(
-                tenant_id=tenant_id, project=project, phase=phase, type=type
-            )
+            Artifact.objects.filter(**version_filter)
             .order_by("-version")
             .values_list("version", flat=True)
             .first()
@@ -291,6 +296,7 @@ def register_artifact(
             repo=repo,
             phase=phase,
             type=type,
+            title=title or "",
             sor=sor,
             content_hash=content_hash or "",
             s3_key=s3_key or "",
@@ -302,10 +308,12 @@ def register_artifact(
 
 def update_artifact(
     tenant_id, artifact_id, status=None, sor=None,
-    external_ref=None, content_hash=None, version=None,
+    external_ref=None, content_hash=None, version=None, title=None,
 ) -> dict:
     with tenant_context(tenant_id):
         artifact = Artifact.objects.get(id=artifact_id, tenant_id=tenant_id)
+        if title is not None:
+            artifact.title = title
         if status is not None:
             if status not in Artifact.Status.values:
                 raise ValueError(f"invalid status: {status}")

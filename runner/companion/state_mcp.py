@@ -68,6 +68,7 @@ def build_server(
 
     @server.tool()
     def register_artifact(type: str, sor: str, content_hash: str,
+                          title: str = "",
                           phase: str | None = None,
                           project_id: str | None = None, run_id: str | None = None,
                           s3_key: str | None = None,
@@ -75,20 +76,26 @@ def build_server(
         """Register a generated artifact (pointer/provenance only, never the body). You do NOT
         need to know or ask for the project id or run id — the platform fills them in from the
         run this phase is executing under (Bugs.xlsx row 25). Only pass project_id/run_id to
-        override the current run (rare)."""
+        override the current run (rare).
+
+        ALWAYS pass a `title`: a short, human-readable, context-carrying name for THIS artifact
+        that a person can tell apart from its siblings — e.g. "Wireframe — Login Page",
+        "TC-014 — Login rejects a bad password". A bare type is not enough when a phase produces
+        several of the same type; the title is what every UI surface shows (Bugs S.No 120)."""
         return client.call("register_artifact",
                            project_id=project_id or project_id_bound,
                            run_id=run_id or run_id_bound,
                            phase=phase or phase_bound,
-                           type=type, sor=sor, content_hash=content_hash,
+                           type=type, sor=sor, content_hash=content_hash, title=title,
                            s3_key=s3_key, external_ref=external_ref, repo_id=repo_id)
 
     @server.tool()
     def update_artifact(artifact_id: str, status: str | None = None, sor: str | None = None,
                         external_ref: dict | None = None, content_hash: str | None = None,
-                        version: int | None = None) -> dict:
+                        version: int | None = None, title: str | None = None) -> dict:
         return client.call("update_artifact", artifact_id=artifact_id, status=status, sor=sor,
-                           external_ref=external_ref, content_hash=content_hash, version=version)
+                           external_ref=external_ref, content_hash=content_hash, version=version,
+                           title=title)
 
     @server.tool()
     def add_trace_edge(from_artifact_id: str, to_artifact_id: str, rel: str) -> dict:

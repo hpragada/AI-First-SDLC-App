@@ -124,6 +124,7 @@ def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
         artifact = tools.register_artifact(
             inp.tenant_id, inp.project_id, inp.run_id, inp.phase, "code", "git",
             content_hash=report.head_sha or "", external_ref=external_ref,
+            title=f"Code — {inp.work_item_key}",
         )
         tools.update_artifact(inp.tenant_id, artifact["id"], status=Artifact.Status.STAGED)
         artifact_id = artifact["id"]
@@ -288,7 +289,7 @@ def run_code_review_core(inp: BuildInput) -> dict:
     if review_art is None:
         created = tools.register_artifact(
             inp.tenant_id, inp.project_id, inp.run_id, inp.phase, "code_review", "internal",
-            content_hash=digest)
+            content_hash=digest, title=f"Code Review — {inp.work_item_key}")
         review_art_id = created["id"]
         tools.add_trace_edge(inp.tenant_id, review_art_id, str(code.id), "tests")
     else:

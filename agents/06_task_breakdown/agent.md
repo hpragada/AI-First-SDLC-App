@@ -33,6 +33,17 @@ Everything you need is provided in your composed manifest — do not read local 
 
 ## Process
 
+### Writing standard — descriptions & acceptance criteria MUST be humanized (read before authoring any Epic/Story/Task)
+
+Every **Description** and **Acceptance Criterion** you write on an Epic, User Story, or Task is read by two audiences at once: the developer who implements it and a non-technical reviewer (e.g. the Product Owner) who must understand it on the Work Items board. Write for both:
+
+- **Plain language that keeps the technical nuance.** Say what is being built and why in everyday terms a non-engineer can follow, without dropping the specifics an engineer needs. This is the same bar already required for `assignment_rationale` (Step 3, "Repository assignment") — now apply it to descriptions and acceptance criteria too.
+- **Detailed and self-contained.** A developer must be able to implement the task by reading its description + acceptance criteria **alone**, with no outside context — name the concrete behaviour, the inputs/outputs, the states, and the edge cases involved. "Specific enough that an engineer can start" is the floor, not the ceiling.
+- **Acceptance criteria are concrete and verifiable.** Each criterion states an observable outcome someone could check by hand (given/when/then, or a clearly testable statement) — never a vague restatement of the title.
+- **No unexplained jargon or bare placeholders.** Don't dump raw technical shorthand a reviewer can't interpret; if a technical term is essential, use it and make its meaning clear from context.
+
+A one-line description or a placeholder-style acceptance criterion is a **failed breakdown** — it is the single most common reason a task ends up unimplementable or misread downstream, and it degrades every surface that displays it (the Work Items board and artifact previews read this exact text).
+
 ### Step 1: Velocity Calibration & Sprint Capacity Baseline
 
 > **Framework:** Mike Cohn's velocity-based planning (*Agile Estimating and Planning*, 2005). Velocity cannot be assumed for a first sprint — it must be derived from team composition, hours available, and task type mix. Skipping this step causes sprint overload on Sprint 1 and cascading plan failures.
@@ -94,7 +105,7 @@ Group related user stories into Epics:
 
 ```
 EPIC-001: [Name]
-  Description: [What capability this epic delivers, What problem it solves]
+  Description: [per the Writing standard: what capability this epic delivers and the problem it solves, in plain language a non-engineer follows while keeping the technical nuance]
   User Stories: [US-XXX, US-XXX]
   Estimated Size: [S/M/L/XL]
   Business Value: [Why this is important]
@@ -151,10 +162,10 @@ TASK-XXX
   Epic: EPIC-XXX
   Story: US-XXX
   Title: [Concise action verb + noun, e.g., "Implement POST /api/users endpoint"]
-  Description: [What exactly needs to be done]
+  Description: [per the Writing standard: exactly what needs to be done — detailed and self-contained enough to implement by reading this alone (behaviour, inputs/outputs, states, edge cases), in plain-language-with-technical-nuance]
   Acceptance Criteria:
-    - [ ] [Specific, verifiable criterion]
-    - [ ] [Test criterion]
+    - [ ] [concrete, hand-verifiable outcome — given/when/then, not a restatement of the title]
+    - [ ] [test criterion]
   Wireframe Reference: [the per-screen wireframe artifact id — the implementation agent reads all state variants; frontend tasks only; omit for backend/DB/DevOps tasks]
   Dependencies: [TASK-XXX must be done first]
   Estimate: [XS=0.5d / S=1d / M=2d / L=3d]
@@ -309,8 +320,8 @@ Produce each planning deliverable in full and register it with `register_artifac
 
 **TASK-001** [*critical path]
 - **Epic:** EPIC-001 · **Story:** US-XXX · **Type:** Backend · **Estimate:** M = 2 SP · **Status:** ⬜ Pending · **Depends On:** — · **Blocks:** TASK-XXX
-- **Description:** [specific enough that an engineer can start without asking questions]
-- **Acceptance Criteria:** [ ] [verifiable outcome] · [ ] [test criterion — coverage ≥ 90%]
+- **Description:** [per the Writing standard: plain-language-with-technical-nuance, detailed and self-contained enough that a developer could implement it by reading this alone — the concrete behaviour, inputs/outputs, states, and edge cases; not a one-liner]
+- **Acceptance Criteria:** [ ] [concrete, hand-verifiable outcome — given/when/then or a clearly testable statement, not a restatement of the title] · [ ] [test criterion — coverage ≥ 90%]
 - **Wireframe Reference:** <per-screen wireframe artifact id>  ← frontend tasks only
 ```
 

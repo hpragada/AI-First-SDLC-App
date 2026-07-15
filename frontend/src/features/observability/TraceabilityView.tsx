@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { EmptyState, GraphCanvas, Panel, Spinner } from "../../components/ui";
 import type { TraceGraph } from "../../types";
-import { phaseLabel } from "../lifecycle/phases";
+import { phaseLabel, artifactLabel } from "../lifecycle/phases";
 import { useTraceability } from "./hooks";
 
 // S-30 view states: small (default) · highlighted (WI-492 lineage) · large-cluster
@@ -125,6 +125,7 @@ function LineageGraph({ graph }: { graph: TraceGraph }) {
           {graph.nodes.map((n) => {
             const pos = positions.get(n.id)!;
             const go = () => (n.url ? window.open(n.url, "_blank", "noopener") : navigate(`/artifacts/${n.id}`));
+            const label = artifactLabel(n.title, n.type);  // human name, not the raw type (S.No 120)
             return (
               <g
                 key={n.id}
@@ -138,7 +139,7 @@ function LineageGraph({ graph }: { graph: TraceGraph }) {
                 <rect width={boxW} height={boxH} rx="8" className="gnode" style={{ stroke: nodeColor(n.status) }} />
                 <circle cx="16" cy="22" r="5" style={{ fill: nodeColor(n.status) }} />
                 <text x="30" y="20" style={{ fill: "var(--text-strong)", fontSize: "12px", fontWeight: 600 }}>
-                  {n.type.length > 16 ? `${n.type.slice(0, 16)}…` : n.type}
+                  {label.length > 22 ? `${label.slice(0, 22)}…` : label}
                 </text>
                 <text x="30" y="35" style={{ fill: "var(--text-muted)", fontSize: "11px" }}>
                   {phaseLabel(n.phase)} · {n.status}

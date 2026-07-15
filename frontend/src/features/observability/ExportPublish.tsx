@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { Breadcrumb, Banner, Button, ConnStatus, Field, Input, Modal, Select, Spinner } from "../../components/ui";
+import { artifactLabel } from "../lifecycle/phases";
 import { useArtifactPreview, usePublishArtifact } from "./hooks";
 
 // S-34 view states: choose-target · publishing · success · blocked (not gate-approved).
@@ -113,7 +114,7 @@ function ExportPublishLive() {
             }
           >
             <Field label="Artifact">
-              <Input value={`Artifact v${data?.version ?? "?"}`} disabled />
+              <Input value={`${artifactLabel(data?.title, data?.artifact_type)} · v${data?.version ?? "?"}`} disabled />
             </Field>
             <Banner variant="danger" title="Can't publish — not gate-approved">
               This artifact is still <strong>{data?.status}</strong>. Approve its gate first;
@@ -139,7 +140,7 @@ function ExportPublishLive() {
             }
           >
             <Field label="Artifact">
-              <Input value={`Artifact v${data?.version} · ${data?.status}`} disabled />
+              <Input value={`${artifactLabel(data?.title, data?.artifact_type)} · v${data?.version} · ${data?.status}`} disabled />
             </Field>
             <Banner variant="success" title="Gate approved">
               Eligible to publish.

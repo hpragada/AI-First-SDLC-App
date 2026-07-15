@@ -84,6 +84,7 @@ def register_artifact(
     type: str,
     sor: str,
     content_hash: str,
+    title: str = "",
     project_id: str | None = None,
     run_id: str | None = None,
     s3_key: str | None = None,
@@ -92,14 +93,20 @@ def register_artifact(
 ) -> dict:
     """Register a generated artifact (pointer/provenance only, never the body). You do NOT
     need to know or ask for the project id or run id — the platform fills them from the run
-    this phase is executing under (Bugs.xlsx row 25). Only pass them to override (rare)."""
+    this phase is executing under (Bugs.xlsx row 25). Only pass them to override (rare).
+
+    ALWAYS pass a `title`: a short, human-readable, context-carrying name for THIS artifact that
+    a person can tell apart from its siblings — e.g. "Wireframe — Login Page", "ADR-003 — Event
+    Sourcing", "TC-014 — Login rejects a bad password". A bare type ("wireframe") is NOT enough
+    when a phase produces several of the same type; the title is what every UI surface displays
+    and how the platform distinguishes per-item artifacts (Bugs S.No 120)."""
     resolved_project = project_id or _bound_project()
     resolved_run = run_id or _bound_run()
     if not resolved_project:
         raise RuntimeError("project_id not provided and no PLATFORM_PROJECT_ID bound.")
     return tools.register_artifact(
         _tenant(), resolved_project, resolved_run, phase, type, sor,
-        content_hash, s3_key, external_ref, repo_id,
+        content_hash, s3_key, external_ref, repo_id, title,
     )
 
 
@@ -111,9 +118,10 @@ def update_artifact(
     external_ref: dict | None = None,
     content_hash: str | None = None,
     version: int | None = None,
+    title: str | None = None,
 ) -> dict:
     return tools.update_artifact(
-        _tenant(), artifact_id, status, sor, external_ref, content_hash, version
+        _tenant(), artifact_id, status, sor, external_ref, content_hash, version, title
     )
 
 

@@ -192,6 +192,7 @@ For every screen in the Screen Inventory (Step 3), register **one `wireframe` ar
 1. For **each** state document of a screen, call **`stage_artifact_body`** with a `filename` like `SCR-001-login-state-1-default.html` and the full HTML as `body`. It returns `{s3_key, content_hash, bytes}`. Stage **one document per call** — never concatenate all states or all screens into one call.
 2. After staging every state of a screen, call **`register_artifact`** **once** for that screen with:
    - `type="wireframe"`, `sor="internal"`,
+   - `title` = a human-readable name that identifies the screen, e.g. `"Wireframe — Login Page"` (every wireframe shares `type="wireframe"`, so the `title` is the only thing that tells them apart in the UI — never omit it),
    - `s3_key` = the **default** state's `s3_key` (so the artifact's primary preview is the default screen),
    - `content_hash` = the default state's `content_hash`,
    - `external_ref` = `{ "screen_id": "SCR-001", "screen_name": "...", "route": "/...", "persona": "...", "states": [ {"name": "state-1-default", "s3_key": "<from step 1>", "content_hash": "<...>"}, {"name": "state-2-loading", "s3_key": "...", "content_hash": "..."}, ... ] }`.
@@ -520,7 +521,7 @@ For each critical user journey from Step 1, step through the wireframe sequence 
 
 ## Output — Register These Artifacts
 
-Produce each deliverable in full, then register it with the platform-state `register_artifact` tool. Link each output to its source inputs with `add_trace_edge` (rel `derives`), and record the work with `log_event`. Do not write local files.
+Produce each deliverable in full, then register it with the platform-state `register_artifact` tool. **Pass a human-readable `title`** on every call (e.g. `"Wireframe — Login Page"`, `"Design System"`, `"User Journey — Checkout"`) — a bare type like `"wireframe"` is not enough when a screen-by-screen phase registers many of the same type. Link each output to its source inputs with `add_trace_edge` (rel `derives`), and record the work with `log_event`. Do not write local files.
 
 **How bodies are persisted:** `register_artifact` is **pointers-only** — it never carries a body. For anything beyond a short structured summary (the full UX Design spec, journey maps, and every wireframe state HTML), first call **`stage_artifact_body(filename, body)`** to persist the body to the object store, then pass the returned `s3_key`/`content_hash` to `register_artifact`. A short, purely structured artifact (e.g. an `assumption` register) may instead carry its content in `external_ref` and be rendered from there. When in doubt, stage the body — never drop content or replace it with a prose stand-in just to make registration fit.
 

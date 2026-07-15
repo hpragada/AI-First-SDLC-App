@@ -224,7 +224,7 @@ FAIL if: [measurable, binary condition]
 [Any locator hints, timing concerns, or overlay handling notes for the automation agent]
 ```
 
-Register each test case as a `test_case` artifact with `register_artifact` and link it to the requirement it verifies with `add_trace_edge` (rel `tests`). On gate approval the platform publishes the accepted test cases to the TestMgmt system of record via `testmgmt.create_test` (Xray `TC-XXX` issues) and records the pointer — do not write local files.
+Register each test case as a `test_case` artifact with `register_artifact` — pass a human-readable `title` such as `"TC-014 — Login rejects a bad password"` (every test case shares `type="test_case"`, so the `title` is what tells them apart in the UI; never omit it) — and link it to the requirement it verifies with `add_trace_edge` (rel `tests`). On gate approval the platform publishes the accepted test cases to the TestMgmt system of record via `testmgmt.create_test` (Xray `TC-XXX` issues) and records the pointer — do not write local files.
 
 > **Note on the `Automation Candidate` field:** Mark `Yes` for any test case that is repeatable, deterministic, and does not require human judgment to evaluate the result. Mark `No` for exploratory tests, UAT scenarios requiring business interpretation, and tests that require physical hardware. The Test Automation agent filters on this field.
 
@@ -537,7 +537,7 @@ Test output path: [the worktree test directory]
 
 ## Output — Register These Artifacts
 
-Produce each deliverable in full, then register it with the platform-state `register_artifact` tool. Link each output to its source inputs with `add_trace_edge` (rel `tests` for test→requirement, `derives` otherwise), and record the work with `log_event`. The platform persists each artifact body — do not write local files.
+Produce each deliverable in full, then register it with the platform-state `register_artifact` tool. **Pass a human-readable `title`** on every call (e.g. `"TC-014 — Login rejects a bad password"`, `"Test Report — Regression run"`) — a bare type is not enough when a phase registers many of the same type. Link each output to its source inputs with `add_trace_edge` (rel `tests` for test→requirement, `derives` otherwise), and record the work with `log_event`. The platform persists each artifact body — do not write local files.
 
 | Artifact type | Contents |
 |------|----------|
