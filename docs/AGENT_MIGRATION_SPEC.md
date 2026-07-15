@@ -49,7 +49,7 @@ There is no fixed "Context Loading section" to edit and stop. Sweep the whole ag
 | "read the next task / the task from `tasks.md`" | the **WorkItem / issue key passed into the run**; fetch via `tasktracker.get_issue(key)` (Phase 1+) or `get_work_item(id)` |
 | "the current design / screens" | `designsource.get_design_context()` + `get_variable_defs()` — the **current** Figma (Phase 3) |
 | reads the codebase / repo | the **companion worktree** (the Phase-2 local-companion build runner's working tree) + `codeintel.*` (Repowise) where applicable |
-| writes a doc — `prd.md`, `tasks.md`, test cases, review notes, etc. | write body to S3 (draft) → `register_artifact(type, sor, s3_key, content_hash)` → `add_trace_edge(input→output, rel)` → `log_event(...)` |
+| writes a doc — `prd.md`, `tasks.md`, test cases, review notes, etc. | write body to S3 (draft) → `register_artifact(type, sor, s3_key, content_hash, title)` → `add_trace_edge(input→output, rel)` → `log_event(...)`. **Always pass a human-readable `title`** — a short, context-carrying name a person can tell apart from its siblings (e.g. `"Wireframe — Login Page"`, `"ADR-003 — Event Sourcing"`, `"TC-014 — Login rejects a bad password"`). A bare `type` is not enough when a phase registers several of the same type; the `title` is what every UI surface displays and how the platform distinguishes per-item artifacts (Bugs S.No 120). |
 | creates epics/stories/sprints | `tasktracker.create_*` (Jira, Phase 1) + `register_artifact` |
 | publishes a doc/page | `docstore.create_page/update_page` (Confluence, Phase 1) on **gate APPROVED only** |
 | "update `CLAUDE.md`" / write-back to project context | `register_artifact` + `log_event` (the registry/ledger ARE the project context now) |
