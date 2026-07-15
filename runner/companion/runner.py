@@ -187,6 +187,12 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
             # PG14: block the push/PR. Report the redacted findings; the branch is never pushed.
             out["status"] = "secret_blocked"
             out["secret_findings"] = [asdict(f) for f in secret_findings]
+            # Surface the (already-redacted) findings on the companion terminal — otherwise a
+            # secret block is invisible locally and the platform only sees a bare count.
+            print(f"[companion] SECRET SCAN BLOCKED push ({len(secret_findings)} finding(s)) — "
+                  f"branch NOT pushed:", file=sys.stderr)
+            for line in _format_secret_findings(out["secret_findings"]):
+                print(f"   {line}", file=sys.stderr)
         else:
             out["status"] = "ok"
             # G2 / D2: the platform owns Git side-effects — the companion commits the agent's
@@ -204,14 +210,35 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
             teardown_worktree(repo_path=repo_path, worktree_path=worktree)
 
 
+_MAX_REPORTED_FINDINGS = 8
+
+
+def _format_secret_findings(findings: list[dict], limit: int = _MAX_REPORTED_FINDINGS) -> list[str]:
+    """Render redacted secret findings as `[kind] path:line — preview` lines. Uses only the
+    already-redacted `preview` (never the raw value), and caps the count so the report/message
+    stays bounded no matter how many the scan returns."""
+    lines = []
+    for f in findings[:limit]:
+        loc = f"{f.get('path') or '?'}:{f.get('line') or 0}"
+        preview = f.get("preview")
+        lines.append(f"[{f.get('kind') or 'secret'}] {loc}" + (f" - {preview}" if preview else ""))
+    extra = len(findings) - limit
+    if extra > 0:
+        lines.append(f"(+{extra} more)")
+    return lines
+
+
 def to_build_report(result: dict) -> dict:
     """Map a `run_build` result to the BuildReport payload the platform's report API consumes.
     A secret-scan block becomes a **failed** build (the saga dead-letters it → Event logged,
-    WorkItem returned to in_progress, triage opened) — secrets never reach the PR."""
+    WorkItem returned to in_progress, triage opened) — secrets never reach the PR. The redacted
+    findings (kind + path:line + redacted preview) travel in `message` so they surface in the
+    `build.failed` event reason / run console (never the raw secret value)."""
     if result.get("status") == "secret_blocked":
-        n = len(result.get("secret_findings", []))
+        findings = result.get("secret_findings", [])
+        detail = "; ".join(_format_secret_findings(findings))
         return {"status": "failed", "branch": result.get("branch", ""),
-                "message": f"secret scan blocked the push: {n} finding(s) — see run events"}
+                "message": f"secret scan blocked the push: {len(findings)} finding(s): {detail}"}
     return {"status": "ok", "branch": result.get("branch", ""),
             "head_sha": result.get("head_sha", ""),
             "changed_files": result.get("changed_files", [])}

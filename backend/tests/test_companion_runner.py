@@ -246,6 +246,36 @@ async def test_run_build_secret_block_does_not_commit_or_push(tmp_path, monkeypa
     assert branches == ""
 
 
+def test_to_build_report_surfaces_redacted_secret_findings():
+    """Observability: a secret block must carry the redacted findings (kind + path:line +
+    redacted preview) in `message` so they reach the build.failed reason / run console — never
+    the raw secret value, and bounded no matter how many findings there are."""
+    from runner.companion.runner import to_build_report
+    result = {"status": "secret_blocked", "branch": "feature/ST-9", "secret_findings": [
+        {"kind": "jwt", "path": "app/tests/test_auth.py", "line": 14,
+         "preview": "eyJ0***9a (148 chars)"},
+        {"kind": "high_entropy_secret", "path": "app/core/config.py", "line": 8,
+         "preview": "Xy3K***2p (44 chars)"},
+    ]}
+    rep = to_build_report(result)
+    assert rep["status"] == "failed"
+    msg = rep["message"]
+    assert "2 finding(s)" in msg
+    assert "[jwt] app/tests/test_auth.py:14" in msg           # kind + path:line surfaced
+    assert "[high_entropy_secret] app/core/config.py:8" in msg
+    assert "eyJ0***9a" in msg and "Xy3K***2p" in msg          # redacted previews travel
+
+
+def test_to_build_report_caps_secret_findings_at_eight():
+    from runner.companion.runner import to_build_report
+    findings = [{"kind": "high_entropy_secret", "path": f"f{i}.py", "line": i,
+                 "preview": "ab***cd"} for i in range(12)]
+    msg = to_build_report({"status": "secret_blocked", "branch": "b",
+                           "secret_findings": findings})["message"]
+    assert "12 finding(s)" in msg and "(+4 more)" in msg      # 8 shown + overflow marker
+    assert "f11.py:11" not in msg                              # beyond the cap, not listed
+
+
 def test_state_mcp_server_builds_with_a_client():
     from runner.companion.state_mcp import build_server
 
