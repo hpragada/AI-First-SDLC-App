@@ -109,17 +109,38 @@ def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
     pointer. Idempotent — only an artifact that already carries a real PR ref (repo+number) is
     reused. The agent's pre-PR pointer is *reconciled* (updated with the PR), not skipped."""
     from integrations.registry import get_capability
+    from integrations.types import CapabilityError
 
     existing = _code_artifact(inp)
     if existing is not None and _is_pr_ref(existing.external_ref):
         return {"pr": existing.external_ref, "artifact_id": str(existing.id), "idempotent": True}
 
+    # Bugs S.No 139: an empty build — the agent produced no changes, so nothing was committed or
+    # pushed — cannot become a PR (GitHub 422 "no commits between base and head"). Fail fast with
+    # a clear, non-retryable reason instead of a cryptic 422 after 3 wasted retries. This is the
+    # expected outcome for a redundant task whose work already landed on the base.
+    if not (report.head_sha or report.changed_files):
+        raise ApplicationError(
+            "empty build: the agent produced no changes, so there is nothing to open a pull "
+            "request for",
+            type="EmptyBuild", non_retryable=True,
+        )
+
     codehost = get_capability(inp.tenant_id, "codehost")
-    ref = codehost.open_pull_request(
-        repo=inp.repo, head=report.branch, base=inp.base,
-        title=f"{inp.work_item_key}: build", body=f"Build for WorkItem {inp.work_item_id}.",
-        draft=True,
-    )
+    try:
+        ref = codehost.open_pull_request(
+            repo=inp.repo, head=report.branch, base=inp.base,
+            title=f"{inp.work_item_key}: build", body=f"Build for WorkItem {inp.work_item_id}.",
+            draft=True,
+        )
+    except CapabilityError as exc:
+        if exc.status == 422:      # no commits between base and head — an empty diff
+            raise ApplicationError(
+                "empty build: no commits between the base and the build branch (no changes to "
+                "open a pull request for)",
+                type="EmptyBuild", non_retryable=True,
+            ) from exc
+        raise
     external_ref = {"sor": "git", "repo": ref.repo, "number": ref.number,
                     "head": ref.head, "url": ref.url, "sha": ref.sha}
     if existing is not None:

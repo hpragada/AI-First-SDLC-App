@@ -15,7 +15,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
-    from .build_types import BuildInput, BuildReport
+    from .build_types import BuildInput, BuildReport, failure_reason
     from .types import GateDecision
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -129,8 +129,10 @@ class BuildWorkflow:
                 start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
             )
         except ActivityError as exc:
+            # Unwrap the ActivityError to the real cause (S.No 139) so mark_build_failed's
+            # classifier sees the actual error, not the generic "Activity task failed".
             await workflow.execute_activity(
-                "mark_build_failed", args=[inp, f"pr/gate setup failed: {exc}"],
+                "mark_build_failed", args=[inp, f"pr/gate setup failed: {failure_reason(exc)}"],
                 start_to_close_timeout=timedelta(minutes=1), retry_policy=_COMPENSATE,
             )
             return {"status": "build_failed", "run_id": inp.run_id}
@@ -146,8 +148,10 @@ class BuildWorkflow:
                     start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
                 )
             except ActivityError as exc:
+                # Unwrap to the real cause (S.No 139) — surfaces the S.No 136 "merge conflict"
+                # message instead of the generic "Activity task failed".
                 await workflow.execute_activity(
-                    "mark_build_failed", args=[inp, f"merge failed: {exc}"],
+                    "mark_build_failed", args=[inp, f"merge failed: {failure_reason(exc)}"],
                     start_to_close_timeout=timedelta(minutes=1), retry_policy=_COMPENSATE,
                 )
                 return {"status": "build_failed", "run_id": inp.run_id}

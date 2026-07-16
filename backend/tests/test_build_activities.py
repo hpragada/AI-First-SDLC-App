@@ -243,10 +243,37 @@ def test_classify_build_failure_maps_known_reasons():
     assert "merge conflict" in c("merge failed: GitHub PUT .../merge -> 405").lower()
     assert "permission" in c("pr/gate setup failed: ... -> 403 forbidden").lower()
     assert "remediation" in c("remediation cycles exhausted").lower()
+    assert "empty build" in c("pr/gate setup failed: empty build: no commits between").lower()
     assert "without reporting a specific reason" in c("build reported failed").lower()
     assert c("secret scan blocked the push: 2 finding(s): ...").startswith("secret scan")
     # an unrecognized specific message is preserved, never lost
     assert c("ImportError: no module named foo") == "ImportError: no module named foo"
+
+
+def test_failure_reason_unwraps_activity_error_cause():
+    """S.No 139: str(ActivityError) is the generic 'Activity task failed'; the meaningful message
+    lives on .cause. failure_reason must surface the cause so the classifier can see it — without
+    this the S.No 136 'merge conflict' message and empty-build/422 reasons never reach the user."""
+    from orchestration.build_types import failure_reason
+
+    wrapped = SimpleNamespace(cause=RuntimeError("merge conflict: needs manual resolution"))
+    assert "merge conflict" in failure_reason(wrapped)
+    # No cause → falls back to the exception itself.
+    assert failure_reason(RuntimeError("plain error")) == "plain error"
+
+
+def test_open_pr_empty_build_fails_fast_with_clear_reason(world, monkeypatch):
+    """S.No 139: a build that produced no changes (no head_sha, no changed_files) can't open a PR
+    (GitHub 422). Fail fast, non-retryably, with a clear 'empty build' reason — not a cryptic 422
+    after 3 retries. This is the expected outcome for a redundant task (e.g. TASK-002 vs 001)."""
+    _use_fake_codehost(monkeypatch, _FakeCodeHost())
+    empty = BuildReport(status="ok", branch="feature/ST-1", head_sha="", changed_files=[])
+    with pytest.raises(ApplicationError) as exc:
+        ba.open_build_pr_core(_inp(world), empty)
+    assert exc.value.non_retryable is True
+    assert "empty build" in str(exc.value).lower()
+    # The classifier turns it into the user-facing reason.
+    assert "empty build" in ba.classify_build_failure(str(exc.value)).lower()
 
 
 def test_mark_build_failed_classifies_and_writes_to_run_outputs(world):

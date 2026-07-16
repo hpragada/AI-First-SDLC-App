@@ -44,3 +44,12 @@ class BuildReport:
     head_sha: str = ""
     changed_files: list = field(default_factory=list)
     message: str = ""
+
+
+def failure_reason(exc) -> str:
+    """The human-meaningful message from a Temporal ActivityError (Bugs S.No 139): its `.cause`
+    (the real ApplicationError / exception raised inside the activity — e.g. "merge conflict: …"
+    or "GitHub POST …/pulls -> 422") rather than the generic "Activity task failed" wrapper that
+    `str(ActivityError)` returns. Without this the classifier and the S.No 136 merge-conflict
+    message never reach the user. Django-free so the workflow sandbox can import it."""
+    return str(getattr(exc, "cause", None) or exc)
