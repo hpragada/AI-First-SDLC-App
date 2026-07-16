@@ -223,6 +223,15 @@ function GatesLive() {
                   <Link to="/artifacts" className="t-sm">
                     Preview artifact under review ↗
                   </Link>
+                  {selected.merge_conflict && (
+                    <div style={{ margin: "var(--space-3) 0 0" }}>
+                      <Banner variant="warning" title="Merge paused — conflict needs resolving">
+                        This merge couldn't be completed automatically: {selected.merge_conflict}{" "}
+                        Resolve the conflict in the pull request on GitHub, then approve again to
+                        retry the merge — the build does not need to run again.
+                      </Banner>
+                    </div>
+                  )}
                   {criteriaList.length > 0 && (
                     <div style={{ margin: "var(--space-3) 0 0" }}>
                       <div className="u-row">

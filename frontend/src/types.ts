@@ -124,6 +124,9 @@ export interface Approval {
   comment: string;
   decided_at: string | null;
   created_at: string;
+  /** Set when a merge gate was re-opened because the merge hit a conflict (ENH-2 / S.No 141):
+   *  the human-readable conflict reason, so the gate panel can explain the retry. */
+  merge_conflict?: string | null;
 }
 
 export interface TriggerResult {

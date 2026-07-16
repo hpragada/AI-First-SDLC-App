@@ -414,12 +414,17 @@ class ApprovalSerializer(serializers.ModelSerializer):
     # must render ONLY on the Task Breakdown gate, never resurface on a later merge/phase gate
     # whose sibling tasks still carry their planner repo_assignment (Bugs S.No 106 follow-up).
     phase = serializers.SerializerMethodField()
+    # If this merge gate was RE-OPENED because the merge hit a conflict (Bugs S.No 141 / ENH-2),
+    # surface the conflict so the gate panel can explain WHY the user is being asked to approve
+    # again (resolve in GitHub, then re-approve to retry the merge — no rebuild). None otherwise.
+    merge_conflict = serializers.SerializerMethodField()
 
     class Meta:
         model = Approval
         fields = [
             "id", "run", "gate_type", "phase", "work_item", "required_role", "approver",
             "approver_name", "decision", "comment", "decided_at", "created_at",
+            "merge_conflict",
         ]
         read_only_fields = fields
 
@@ -429,6 +434,16 @@ class ApprovalSerializer(serializers.ModelSerializer):
     def get_phase(self, obj) -> str | None:
         spec = getattr(obj.run, "agent_spec", None)
         return getattr(spec, "key", None) if spec is not None else None
+
+    def get_merge_conflict(self, obj) -> str | None:
+        # Only relevant while the gate is still pending (a re-opened, awaiting-retry merge gate).
+        if obj.decision != Approval.Decision.PENDING:
+            return None
+        outputs = getattr(obj.run, "outputs", None) or {}
+        conflict = outputs.get("merge_conflict")
+        if not conflict:
+            return None
+        return conflict if isinstance(conflict, str) else conflict.get("reason") or str(conflict)
 
 
 class GateDecisionSerializer(serializers.Serializer):
