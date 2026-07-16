@@ -47,6 +47,52 @@ class _FakeCodeHost:
         pass
 
 
+class _ConflictThenCleanCodeHost:
+    """Merge is 'dirty' (conflict) on the FIRST attempt, then 'clean' after the reviewer
+    re-approves — models resolving the conflict in GitHub between approvals (S.No 141 ENH-2)."""
+
+    def __init__(self):
+        self.merged = False
+        self.attempt = 0
+
+    def open_pull_request(self, *, repo, head, base, title, body, draft=True):
+        return PullRequestRef(sor="git", repo=repo, number=7, head=head,
+                              url=f"https://github.com/{repo}/pull/7", sha="abc")
+
+    def get_pull_request(self, *, pr_ref):
+        repo, number = pr_ref.split("#")
+        return PullRequest(repo=repo, number=int(number), title="t", state="open",
+                           head="feature/ST-1", base="main", url="u", sha="abc",
+                           merged=self.merged)
+
+    def mark_ready_for_review(self, *, pr_ref):
+        pass
+
+    def ensure_mergeable(self, *, pr_ref):
+        self.attempt += 1
+        dirty = self.attempt == 1
+        return PullRequest(repo="acme/api", number=7, title="t", state="open",
+                           head="feature/ST-1", base="main", url="u", sha="abc",
+                           merged=self.merged, mergeable=not dirty,
+                           mergeable_state="dirty" if dirty else "clean")
+
+    def merge_pull_request(self, *, pr_ref, method="squash"):
+        self.merged = True
+        return self.get_pull_request(pr_ref=pr_ref)
+
+    def set_commit_status(self, **kw):
+        pass
+
+
+def _merge_conflict_recorded(run_id):
+    from django.db import connection
+
+    try:
+        return bool((Run.objects.get(id=run_id).outputs or {}).get("merge_conflict"))
+    finally:
+        connection.close()
+
+
 async def _temporal_client():
     from temporalio.client import Client
 
@@ -225,6 +271,46 @@ def test_build_workflow_remediation_loop(monkeypatch):
     assert result["status"] == "completed"
     child = WorkItem.objects.get(parent_id=wi.id, type=WorkItem.Type.TASK)
     assert child.external_ref["rem"] == "REM-C1" and child.state == WorkItem.State.DONE
+
+
+@pytest.mark.django_db(transaction=True)
+def test_build_workflow_merge_conflict_reopens_gate_then_retries(monkeypatch):
+    """S.No 141 ENH-2: a merge conflict does NOT end the build. The merge gate re-opens; after the
+    reviewer 'resolves' (fake flips clean) and approves AGAIN, the merge retries and completes —
+    no rebuild, no re-review."""
+    _skip_if_no_temporal(monkeypatch)
+    codehost = _ConflictThenCleanCodeHost()
+    monkeypatch.setattr("integrations.registry.get_capability", lambda tid, cap: codehost)
+    tenant, _project, wi, run, reviewer, inp = _seed()
+
+    async def _drive():
+        client = await _temporal_client()
+        task_queue = f"build-{uuid.uuid4()}"
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            async with await _worker_ctx(client, task_queue, executor):
+                handle = await client.start_workflow(
+                    BuildWorkflow.run, inp, id=f"build-run-{run.id}", task_queue=task_queue,
+                )
+                await _poll(lambda: _run_status(str(run.id)) == Run.Status.RUNNING)
+                await handle.signal("build_reported", BuildReport(
+                    status="ok", branch="feature/ST-1", head_sha="abc",
+                    changed_files=["login.py"]))
+                # 1st approval → merge hits a conflict → gate re-opens (not failed).
+                approval_id = await _poll(lambda: _pending_merge_approval(str(run.id)))
+                await asyncio.to_thread(_approve, str(tenant.id), approval_id, str(reviewer.id))
+                await _poll(lambda: _merge_conflict_recorded(str(run.id)))
+                assert _run_status(str(run.id)) == Run.Status.AWAITING_GATE   # recoverable
+                # Reviewer resolved it in GitHub (fake now clean) + approves AGAIN → merge retries.
+                approval_id = await _poll(lambda: _pending_merge_approval(str(run.id)))
+                await asyncio.to_thread(_approve, str(tenant.id), approval_id, str(reviewer.id))
+                return await handle.result()
+
+    result = asyncio.run(_drive())
+    assert result["status"] == "completed"
+    run.refresh_from_db()
+    wi.refresh_from_db()
+    assert run.status == Run.Status.COMPLETED and wi.state == WorkItem.State.DONE
+    assert codehost.merged is True and codehost.attempt == 2   # conflicted once, then merged
 
 
 @pytest.mark.django_db(transaction=True)

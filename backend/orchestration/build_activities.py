@@ -188,6 +188,27 @@ def open_merge_gate_core(inp: BuildInput) -> str:
     return str(approval.id)
 
 
+def reopen_merge_gate_core(inp: BuildInput, reason: str) -> dict:
+    """Bugs S.No 141 (ENH-2): the merge hit a CONFLICT — re-open the merge gate for a
+    resolve-then-retry instead of ending the whole build. Reset the reviewer Approval to PENDING,
+    keep the run AWAITING_GATE, and record the conflict reason so the UI can tell the reviewer to
+    resolve it in GitHub then approve again to retry the merge. The branch/PR are left as-is (the
+    human resolves the conflict there); nothing is rebuilt. Idempotent (safe on Temporal retries):
+    resetting an already-pending Approval + a merged/awaiting run is a no-op."""
+    classified = classify_build_failure(reason)
+    with tenant_context(inp.tenant_id):
+        Approval.objects.filter(
+            run_id=inp.run_id, gate_type=inp.gate_type, tenant_id=inp.tenant_id
+        ).update(decision=Approval.Decision.PENDING, approver=None, decided_at=None)
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.status = Run.Status.AWAITING_GATE
+        run.outputs = {**(run.outputs or {}), "merge_conflict": classified}
+        run.save(update_fields=["status", "outputs", "updated_at"])
+        tools.log_event(inp.tenant_id, "orchestrator", "build.merge_conflict", "run", inp.run_id,
+                        {"reason": classified, "action": "merge gate re-opened for retry"})
+    return {"status": "merge_conflict_reopened", "reason": classified}
+
+
 def merge_build_pr_core(inp: BuildInput) -> dict:
     """On approval, merge the PR (the gated SoR write). Idempotent — an already-merged PR is
     a no-op; the code artifact becomes published and the run completes."""
@@ -525,6 +546,11 @@ def reject_build_activity(inp: BuildInput, comment: str) -> dict:
     return _boundary(reject_build_core, inp, comment)
 
 
+@activity.defn(name="reopen_merge_gate")
+def reopen_merge_gate_activity(inp: BuildInput, reason: str) -> dict:
+    return _boundary(reopen_merge_gate_core, inp, reason)
+
+
 BUILD_ACTIVITIES = [
     dispatch_build_activity,
     open_build_pr_activity,
@@ -536,6 +562,7 @@ BUILD_ACTIVITIES = [
     mark_takeover_activity,
     mark_build_failed_activity,
     reject_build_activity,
+    reopen_merge_gate_activity,
 ]
 
 

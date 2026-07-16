@@ -15,7 +15,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
-    from .build_types import BuildInput, BuildReport, failure_reason
+    from .build_types import BuildInput, BuildReport, failure_reason, is_merge_conflict
     from .types import GateDecision
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -137,11 +137,22 @@ class BuildWorkflow:
             )
             return {"status": "build_failed", "run_id": inp.run_id}
 
-        # Block until a reviewer decides the merge gate (human-paced; no timeout).
-        await workflow.wait_condition(lambda: self._decision is not None)
-        decision = self._decision
+        # Merge gate: block until a reviewer decides (human-paced; no timeout). On a MERGE
+        # CONFLICT the build is NOT ended (Bugs S.No 141 / ENH-2): the gate re-opens so the
+        # reviewer can resolve the conflict in GitHub and approve again to retry the merge — no
+        # full rebuild. Only a non-conflict merge error, or a rejection, ends the build.
+        while True:
+            await workflow.wait_condition(lambda: self._decision is not None)
+            decision = self._decision
+            self._decision = None       # consume: each loop waits for a fresh decision
 
-        if decision.decision == "approved":
+            if decision.decision != "approved":
+                await workflow.execute_activity(
+                    "reject_build", args=[inp, decision.comment],
+                    start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                )
+                return {"status": "rejected", "run_id": inp.run_id}
+
             try:
                 await workflow.execute_activity(
                     "merge_build_pr", inp,
@@ -150,19 +161,23 @@ class BuildWorkflow:
             except ActivityError as exc:
                 # Unwrap to the real cause (S.No 139) — surfaces the S.No 136 "merge conflict"
                 # message instead of the generic "Activity task failed".
+                reason = failure_reason(exc)
+                if is_merge_conflict(exc):
+                    # Non-terminal (ENH-2): re-open the gate for a resolve-then-retry (no rebuild),
+                    # then loop back and wait for the reviewer's next decision.
+                    await workflow.execute_activity(
+                        "reopen_merge_gate", args=[inp, reason],
+                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                    )
+                    continue
                 await workflow.execute_activity(
-                    "mark_build_failed", args=[inp, f"merge failed: {failure_reason(exc)}"],
+                    "mark_build_failed", args=[inp, f"merge failed: {reason}"],
                     start_to_close_timeout=timedelta(minutes=1), retry_policy=_COMPENSATE,
                 )
                 return {"status": "build_failed", "run_id": inp.run_id}
+
             await workflow.execute_activity(
                 "transition_build_work_item", args=[inp, "done"],
                 start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
             )
             return {"status": "completed", "run_id": inp.run_id}
-
-        await workflow.execute_activity(
-            "reject_build", args=[inp, decision.comment],
-            start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
-        )
-        return {"status": "rejected", "run_id": inp.run_id}

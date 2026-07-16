@@ -181,6 +181,26 @@ def test_merge_takes_draft_pr_out_of_draft_first(world, monkeypatch):
     assert world.run.status == Run.Status.COMPLETED
 
 
+def test_reopen_merge_gate_resets_approval_and_records_conflict(world):
+    """S.No 141 ENH-2: after a merge conflict, reopen_merge_gate must reset the (approved) merge
+    Approval back to PENDING, keep the run AWAITING_GATE, and record the conflict reason — so the
+    reviewer can resolve it in GitHub and approve again to retry, without a rebuild."""
+    ba.open_merge_gate_core(_inp(world))
+    ap = Approval.objects.get(run_id=world.run.id, gate_type="merge_gate")
+    ap.decision = Approval.Decision.APPROVED
+    ap.save(update_fields=["decision"])
+
+    out = ba.reopen_merge_gate_core(
+        _inp(world), "merge failed: merge conflict: the branch conflicts with its base")
+
+    ap.refresh_from_db()
+    world.run.refresh_from_db()
+    assert out["status"] == "merge_conflict_reopened"
+    assert ap.decision == Approval.Decision.PENDING          # gate re-opened for a retry
+    assert world.run.status == Run.Status.AWAITING_GATE      # not FAILED — recoverable
+    assert "merge conflict" in (world.run.outputs.get("merge_conflict") or "").lower()
+
+
 def test_open_merge_gate_creates_reviewer_approval(world):
     approval_id = ba.open_merge_gate_core(_inp(world))
     ap = Approval.objects.get(id=approval_id)
@@ -248,6 +268,18 @@ def test_classify_build_failure_maps_known_reasons():
     assert c("secret scan blocked the push: 2 finding(s): ...").startswith("secret scan")
     # an unrecognized specific message is preserved, never lost
     assert c("ImportError: no module named foo") == "ImportError: no module named foo"
+
+
+def test_is_merge_conflict_detects_typed_cause_and_message():
+    """S.No 141 ENH-2: the workflow decides retry-vs-fail with is_merge_conflict. It must catch
+    the typed ApplicationError (type='MergeConflict', set by merge_build_pr_core) AND fall back to
+    the message text — robust whether or not Temporal preserved the typed cause."""
+    from orchestration.build_types import is_merge_conflict
+
+    assert is_merge_conflict(SimpleNamespace(cause=SimpleNamespace(type="MergeConflict"))) is True
+    assert is_merge_conflict(SimpleNamespace(cause=RuntimeError("merge conflict: resolve it")))
+    assert is_merge_conflict(SimpleNamespace(cause=RuntimeError("some other error"))) is False
+    assert is_merge_conflict(RuntimeError("plain error")) is False
 
 
 def test_failure_reason_unwraps_activity_error_cause():

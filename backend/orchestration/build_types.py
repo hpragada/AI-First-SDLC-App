@@ -53,3 +53,14 @@ def failure_reason(exc) -> str:
     `str(ActivityError)` returns. Without this the classifier and the S.No 136 merge-conflict
     message never reach the user. Django-free so the workflow sandbox can import it."""
     return str(getattr(exc, "cause", None) or exc)
+
+
+def is_merge_conflict(exc) -> bool:
+    """True when an ActivityError was a MERGE CONFLICT (Bugs S.No 141 / ENH-2), so the build can
+    re-open the merge gate for a resolve-then-retry instead of failing. Prefers the structured
+    ApplicationError `type` ("MergeConflict", set by merge_build_pr_core) and falls back to the
+    message text — robust whether or not Temporal preserved the typed cause."""
+    cause = getattr(exc, "cause", None)
+    if getattr(cause, "type", "") == "MergeConflict":
+        return True
+    return "merge conflict" in failure_reason(exc).lower()
