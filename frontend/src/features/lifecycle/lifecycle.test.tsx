@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 
 import { renderWithProviders, stubFetchJson } from "../../test/utils";
-import { Clarifications } from "./Clarifications";
+import { Clarifications, isOtherOption } from "./Clarifications";
 import { CriteriaGate } from "./CriteriaGate";
 import { Gates } from "./Gates";
 import { PhasesAndRuns } from "./PhasesAndRuns";
@@ -137,6 +137,19 @@ describe("S-20 Clarifications", () => {
 
     rerender(<Clarifications forceView="empty" />);
     expect(screen.getByText("No questions waiting")).toBeDefined();
+  });
+});
+
+describe("S-20 Clarifications · Other free-text reveal (Bugs S.No 60)", () => {
+  it("reveals the free-text box for enumerator-prefixed Other options", () => {
+    // The agent labels options like "d) Other" — the reveal must survive the prefix.
+    for (const opt of ["d) Other", "D) OTHER: ___", "Other", "Other (please specify)", "3. Something else"]) {
+      expect(isOtherOption(opt)).toBe(true);
+    }
+    // ...but must NOT false-positive on ordinary options that merely contain "other".
+    for (const opt of ["c) B2C subscription", "a) Free personal", "Another server option", "b) None of these"]) {
+      expect(isOtherOption(opt)).toBe(false);
+    }
   });
 });
 

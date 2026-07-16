@@ -361,6 +361,7 @@ export interface ConnectorField {
   type: "text" | "password";
   placeholder: string;
   required: boolean;
+  hint?: string;
 }
 
 export interface ConnectorVendor {

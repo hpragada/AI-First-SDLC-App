@@ -20,17 +20,18 @@ from .capabilities import CodeHost, CodeIntel, DesignSource, DocStore, TaskTrack
 from .types import CapabilityError, CapabilityUnavailable
 
 
-def _atlassian_config(token_ref: str) -> AtlassianConfig:
-    # token_ref indirection — Phase 1 resolves to the .env-backed settings creds.
-    # (Real per-tenant vault lookup is Phase 5; this is the seam.)
-    return AtlassianConfig.from_settings()
+def _atlassian_config(conn) -> AtlassianConfig:
+    # Per-tenant Atlassian creds from the tenant's own connection (shared DB), not the server
+    # .env — same multi-tenant credential fix as GitHub (Bugs S.No 74/113). Falls back to
+    # settings per-field when the tenant hasn't stored one.
+    return AtlassianConfig.from_connection(conn)
 
 
 def _build_confluence(conn) -> DocStore:
     from .rate_governor import governed_transport
 
     transport = governed_transport(conn.tenant_id, conn.capability)
-    return AtlassianDocStore(_atlassian_config(conn.token_ref), transport=transport)
+    return AtlassianDocStore(_atlassian_config(conn), transport=transport)
 
 
 def _build_jira(conn) -> TaskTracker:
@@ -41,7 +42,7 @@ def _build_jira(conn) -> TaskTracker:
     project = (conn.scopes or {}).get("project_key") or settings.JIRA_PROJECT_KEY
     transport = governed_transport(conn.tenant_id, conn.capability)
     return AtlassianTaskTracker(
-        _atlassian_config(conn.token_ref), project=project, transport=transport
+        _atlassian_config(conn), project=project, transport=transport
     )
 
 
@@ -69,8 +70,10 @@ def _build_figma(conn) -> DesignSource:
 
     file_key = (conn.scopes or {}).get("file_key") or settings.FIGMA_FILE_KEY
     transport = governed_transport(conn.tenant_id, conn.capability)
+    # Per-tenant token from the tenant's own connection (shared DB), not the server .env — same
+    # multi-tenant credential fix as GitHub (Bugs S.No 74/113).
     return FigmaDesignSource(
-        FigmaConfig.from_settings(), default_file_key=file_key, transport=transport
+        FigmaConfig.from_connection(conn), default_file_key=file_key, transport=transport
     )
 
 
@@ -83,7 +86,9 @@ def _build_xray(conn) -> TestMgmt:
 
     project = (conn.scopes or {}).get("project_key") or settings.XRAY_PROJECT_KEY
     transport = governed_transport(conn.tenant_id, conn.capability)
-    return XrayTestMgmt(XrayConfig.from_settings(), project=project, transport=transport)
+    # Per-tenant client_id/secret from the tenant's own connection (shared DB), not the server
+    # .env — same multi-tenant credential fix as GitHub (Bugs S.No 74/113).
+    return XrayTestMgmt(XrayConfig.from_connection(conn), project=project, transport=transport)
 
 
 def _build_builtin_codeintel(conn) -> CodeIntel:

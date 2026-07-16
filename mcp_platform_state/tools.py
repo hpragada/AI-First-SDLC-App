@@ -408,6 +408,25 @@ def create_work_item(
                 "confidence": assignment_confidence or "",
                 "source": "agent",
             }
+        # Idempotent re-run (Bugs S.No 77): re-dispatching Task Breakdown must REPLACE the prior
+        # draft backlog, not duplicate it. Dedupe on the natural key among PROPOSED items only —
+        # never touch items already accepted / in-progress / done (that is locked work). An
+        # existing proposed match is updated in place (keeps its number); otherwise create fresh.
+        existing = WorkItem.objects.filter(
+            tenant_id=tenant_id, project=project, type=type, title=title,
+            parent=parent, state=WorkItem.State.PROPOSED,
+        ).first()
+        if existing is not None:
+            existing.description = description or ""
+            existing.feature_stream = feature_stream or ""
+            existing.depends_on = depends_on or []
+            existing.repo = repo
+            existing.external_ref = external_ref
+            existing.save(update_fields=[
+                "description", "feature_stream", "depends_on", "repo",
+                "external_ref", "updated_at",
+            ])
+            return _work_item(existing)
         work_item = WorkItem.objects.create(
             tenant_id=tenant_id, project=project, type=type, title=title,
             description=description or "", feature_stream=feature_stream or "",

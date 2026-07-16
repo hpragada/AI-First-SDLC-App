@@ -30,8 +30,12 @@ export type ClarificationsView =
 
 // An option that lets the user supply their own answer (e.g. "Other", "Other (please
 // specify)", "Something else — please specify"). When picked we reveal a free-text box.
-function isOtherOption(option: string): boolean {
-  return /^\s*(other|something else)\b/i.test(option) || /please specify/i.test(option);
+// Agents routinely prefix options with an enumerator ("a) ", "3. ", "- "), so we strip a
+// leading enumerator before matching — otherwise "d) Other" fails the start-anchored test and
+// the free-text box silently never renders (Bugs S.No 60).
+export function isOtherOption(option: string): boolean {
+  const bare = option.replace(/^\s*(?:[a-z]|\d+)[).:-]\s*/i, "").trim();
+  return /^(other|something else)\b/i.test(bare) || /please specify/i.test(bare);
 }
 
 export function Clarifications({ forceView }: { forceView?: ClarificationsView }) {

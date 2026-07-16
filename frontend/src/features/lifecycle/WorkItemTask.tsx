@@ -1,4 +1,5 @@
-import { useParams } from "react-router-dom";
+import { useState } from "react";
+import { Link, useParams } from "react-router-dom";
 
 import {
   Badge,
@@ -8,6 +9,7 @@ import {
   CardBody,
   Kv,
   LifecycleRail,
+  Modal,
   Panel,
   Spinner,
 } from "../../components/ui";
@@ -35,6 +37,21 @@ function WorkItemTaskLive() {
   const runs = useRuns({ work_item: id });
   const decideApproval = useDecideApproval();
   const trigger = useTriggerPhase(id);
+  // Confirm before re-triggering implementation when a run already exists (Bugs S.No 77):
+  // in progress → blocked; already run → restart & replace this phase's artifacts.
+  const [confirm, setConfirm] = useState<{ kind: "rerun" | "active"; runId?: string } | null>(null);
+
+  const handleImplTrigger = () => {
+    const prior = runs.data?.[0];
+    const active = ["pending", "running", "awaiting_gate", "approved"];
+    if (prior && active.includes(prior.status)) {
+      setConfirm({ kind: "active", runId: prior.id });
+    } else if (prior) {
+      setConfirm({ kind: "rerun", runId: prior.id });
+    } else {
+      trigger.mutate("07_implementation");
+    }
+  };
 
   if (workItem.isLoading || lifecycle.isLoading) {
     return (
@@ -90,7 +107,7 @@ function WorkItemTaskLive() {
           </div>
         </div>
         <span className="u-row-tight">
-          <Button variant="primary" disabled={trigger.isPending} onClick={() => trigger.mutate("07_implementation")}>
+          <Button variant="primary" disabled={trigger.isPending} onClick={handleImplTrigger}>
             {trigger.isPending ? <Spinner /> : "Trigger phase"}
           </Button>
         </span>
@@ -206,6 +223,51 @@ function WorkItemTaskLive() {
           <RepoAssignmentCard workItem={workItem.data} buildStarted={Boolean(latestRun)} />
         </div>
       </div>
+
+      {confirm && (
+        <Modal
+          title={confirm.kind === "rerun" ? "Re-run implementation?" : "A run is already in progress"}
+          onClose={() => setConfirm(null)}
+          footer={
+            confirm.kind === "rerun" ? (
+              <>
+                <Button variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    trigger.mutate("07_implementation");
+                    setConfirm(null);
+                  }}
+                >
+                  Re-run phase
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" onClick={() => setConfirm(null)}>Close</Button>
+                {confirm.runId && (
+                  <Link className="btn btn--primary" to={`/runs/${confirm.runId}`}>
+                    Open current run
+                  </Link>
+                )}
+              </>
+            )
+          }
+        >
+          {confirm.kind === "rerun" ? (
+            <p className="u-body">
+              This task has already run. Running it again starts over and{" "}
+              <strong>replaces this phase's artifacts</strong> — it does not create duplicates.
+              The previous run stays in the history. Continue?
+            </p>
+          ) : (
+            <p className="u-body">
+              This work item already has a run <strong>in progress</strong>. Wait for it to
+              finish, or open the run to take it over, before starting a new one.
+            </p>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }

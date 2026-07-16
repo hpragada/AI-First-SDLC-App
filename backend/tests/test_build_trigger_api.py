@@ -85,6 +85,26 @@ def test_build_endpoint_starts_workflow(client, project, member, _no_temporal):
 
 
 @pytest.mark.django_db
+def test_build_endpoint_blocks_second_run_while_one_is_active(client, project, member, _no_temporal):
+    """Bugs S.No 77, Case 2: re-triggering while a run is live must NOT spawn a second concurrent
+    run — it returns 409 so the UI can offer 'wait / take over' instead."""
+    _login(client)
+    repo = Repository.objects.create(tenant=project.tenant, project=project, name="acme/api",
+                                     default_base="main", is_default=True)
+    wi = WorkItem.objects.create(tenant=project.tenant, project=project, repo=repo,
+                                 type=WorkItem.Type.TASK, title="Implement POST /users")
+
+    first = client.post(f"/api/work-items/{wi.id}/build/", {}, format="json")
+    assert first.status_code == 202, first.data
+
+    second = client.post(f"/api/work-items/{wi.id}/build/", {}, format="json")
+    assert second.status_code == 409, second.data
+    assert "in progress" in str(second.data).lower()
+    # still exactly one run — no duplicate created
+    assert Run.objects.filter(work_item=wi).count() == 1
+
+
+@pytest.mark.django_db
 def test_build_endpoint_rejects_workitem_without_repo(client, project, member):
     _login(client)
     wi = WorkItem.objects.create(tenant=project.tenant, project=project,

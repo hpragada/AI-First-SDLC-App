@@ -20,9 +20,9 @@ from __future__ import annotations
 
 
 def _field(name: str, label: str, *, type: str = "text", placeholder: str = "",
-           required: bool = True) -> dict:
+           required: bool = True, hint: str = "") -> dict:
     return {"name": name, "label": label, "type": type,
-            "placeholder": placeholder, "required": required}
+            "placeholder": placeholder, "required": required, "hint": hint}
 
 
 # capability -> {label, vendors: [{slug, label, no_secret?, binding[], secrets[]}]}.
@@ -38,6 +38,10 @@ CONNECTOR_CATALOG: dict[str, dict] = {
                     _field("space_key", "Space key", placeholder="e.g. PAY"),
                     _field("base_url", "Base URL",
                            placeholder="https://acme.atlassian.net/wiki"),
+                    _field("email", "Atlassian account email",
+                           placeholder="you@acme.com",
+                           hint="The account the API token belongs to — Atlassian auth is "
+                                "email + token."),
                 ],
                 "secrets": [
                     _field("api_token", "API token", type="password",
@@ -56,6 +60,10 @@ CONNECTOR_CATALOG: dict[str, dict] = {
                     _field("project_key", "Project key", placeholder="e.g. PAY"),
                     _field("base_url", "Base URL",
                            placeholder="https://acme.atlassian.net"),
+                    _field("email", "Atlassian account email",
+                           placeholder="you@acme.com",
+                           hint="The account the API token belongs to — Atlassian auth is "
+                                "email + token."),
                 ],
                 "secrets": [
                     _field("api_token", "API token", type="password",
@@ -87,7 +95,15 @@ CONNECTOR_CATALOG: dict[str, dict] = {
                 "slug": "github",
                 "label": "GitHub",
                 "binding": [
-                    _field("repo", "Repository", placeholder="e.g. acme/payments"),
+                    # One code-host connection is tenant-wide: the token covers EVERY repo in
+                    # the project, and each build targets its own work-item repo. So this is
+                    # only an optional fallback default, not a per-repo binding — labelling it a
+                    # required "Repository" read as single-repo on multi-repo projects (S.No 103).
+                    _field("repo", "Default repository", placeholder="e.g. acme/payments",
+                           required=False,
+                           hint="Optional. Each build targets its own repo; this is only a "
+                                "fallback default. The token must have access to ALL repos "
+                                "in this project."),
                 ],
                 "secrets": [
                     _field("access_token", "Access token", type="password",

@@ -136,7 +136,18 @@ def build_server(
         then continue. Use this whenever you are missing information you need to proceed (a
         context gap, a decision between options, a pre-gate confirmation) — do NOT guess.
         While you wait, no cost is incurred. Each question: {id, text, kind: "text"|"choice"
-        |"confirm", options?: [...], required?: bool}. Returns answers keyed by question id."""
+        |"confirm", options?: [...], required?: bool}. Returns answers keyed by question id.
+
+        Authoring rules — the reader is a busy human, not an engineer (Bugs S.No 60):
+        - `text` is ONE short, plain-language question in sentence case. No preamble dumps,
+          no ALL-CAPS, no "CONTEXT GAP CHECK 1. ..." headers.
+        - For kind="choice", put EVERY choice in `options` ONLY. Never also list the choices
+          inside `text` (e.g. "... a) Free b) Freemium c) B2C") — the UI already renders the
+          options as a picker, so inlining them shows each choice twice and reads as clutter.
+        - Keep each option short. To let the user type a free-form answer, add an option that
+          begins with the word "Other" (e.g. "Other (please specify)") — the UI reveals a
+          text box for it; do NOT write "Other: ___" inside `text`.
+        - `context` (separate arg) is where any short "why I'm asking" background goes."""
         if clarify_client is None:
             raise RuntimeError("ask_human is not configured (no clarification client)")
         return _ask_human(clarify_client, run_id=run_id, questions=questions,

@@ -204,7 +204,7 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
             </Field>
 
             {vendor?.binding.map((f) => (
-              <Field key={f.name} label={f.label}>
+              <Field key={f.name} label={f.label} help={f.hint || undefined}>
                 <Input
                   placeholder={f.placeholder}
                   value={binding[f.name] ?? ""}

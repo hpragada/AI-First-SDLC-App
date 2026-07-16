@@ -23,6 +23,40 @@ class TriggerError(Exception):
     """Could not start a phase run (e.g. no matching AgentSpec)."""
 
 
+class ActiveRunError(TriggerError):
+    """A run is already in progress for this work item (Bugs S.No 77, Case 2). The view maps
+    this to HTTP 409 so the UI can offer 'wait / take over' rather than silently double-running."""
+
+
+# Statuses that mean a run is still live for a work item — re-triggering while one of these is
+# open would spawn a second concurrent run against the same branch/PR (Bugs S.No 77). STALLED is
+# intentionally excluded: it is parked for human takeover (S.No 89) and a re-trigger is a valid
+# restart there.
+_ACTIVE_RUN_STATUSES = (
+    Run.Status.PENDING,
+    Run.Status.RUNNING,
+    Run.Status.AWAITING_GATE,
+    Run.Status.APPROVED,
+)
+
+
+def _guard_no_active_run(tenant_id: str, work_item_id: str) -> None:
+    """Raise ActiveRunError if the work item already has a live run (must be called inside a
+    tenant_context)."""
+    active = (
+        Run.objects.filter(
+            tenant_id=tenant_id, work_item_id=work_item_id, status__in=_ACTIVE_RUN_STATUSES
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if active is not None:
+        raise ActiveRunError(
+            f"a run is already in progress for this work item (status: {active.status}). "
+            "Wait for it to finish or take it over before starting a new one."
+        )
+
+
 @dataclass
 class TriggerResult:
     run_id: str
@@ -115,6 +149,7 @@ def trigger_phase(
         if spec is None:
             raise TriggerError(f"no AgentSpec registered for key {agent_key!r}")
         work_item = WorkItem.objects.get(id=work_item_id, tenant_id=tenant_id)
+        _guard_no_active_run(tenant_id, work_item_id)
 
         phase = spec.phase_label or agent_key
         role = required_role or gate_role_for(agent_key)
@@ -193,6 +228,7 @@ def trigger_build(
         work_item = WorkItem.objects.select_related("repo").get(
             id=work_item_id, tenant_id=tenant_id
         )
+        _guard_no_active_run(tenant_id, work_item_id)
         repo = repo or (work_item.repo.name if work_item.repo else None)
         base = base or (work_item.repo.default_base if work_item.repo else None)
         if not repo:

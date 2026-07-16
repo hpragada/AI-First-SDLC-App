@@ -239,6 +239,34 @@ def test_create_work_item_proposes_hierarchy(world):
         tools.create_work_item(t.id, project.id, "not_a_type", "x")
 
 
+def test_create_work_item_is_idempotent_on_rerun(world):
+    """Bugs S.No 77: re-running Task Breakdown must REPLACE the proposed backlog, not duplicate
+    it. Same (project, type, title, parent) among proposed items → update in place, one row."""
+    t, project = world["t"], world["project"]
+    first = tools.create_work_item(t.id, project.id, "task", "Set up CI", "initial description")
+    again = tools.create_work_item(t.id, project.id, "task", "Set up CI", "revised description")
+
+    assert again["id"] == first["id"], "re-run must reuse the existing proposed work item"
+    assert again["description"] == "revised description"  # updated in place
+    assert (
+        WorkItem.objects.filter(
+            tenant=t, project=project, type="task", title="Set up CI"
+        ).count()
+        == 1
+    ), "no duplicate row created on re-run"
+
+
+def test_create_work_item_does_not_touch_non_proposed(world):
+    """The dedupe is scoped to PROPOSED items — an item already advanced (accepted/in-progress)
+    is locked work and must not be overwritten; a same-title create makes a fresh proposed row."""
+    t, project = world["t"], world["project"]
+    made = tools.create_work_item(t.id, project.id, "task", "Locked task")
+    tools.transition_work_item(t.id, made["id"], WorkItem.State.ACCEPTED)
+
+    again = tools.create_work_item(t.id, project.id, "task", "Locked task")
+    assert again["id"] != made["id"], "must not clobber a non-proposed (locked) work item"
+
+
 # ── multi-repo assignment (Hybrid Option C: agent proposes, human confirms) ──
 def test_create_work_item_assigns_repo_with_draft_rationale(world):
     """A2/A5: the agent pins a repo + records a draft rationale/confidence the reviewer sees."""

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Banner, EmptyState, Field, Panel, Select, Spinner, Table } from "../../components/ui";
+import { Badge, Banner, Button, EmptyState, Field, Modal, Panel, Select, Spinner, Table } from "../../components/ui";
 import { useRunners } from "../identity/hooks";
 import { roleLabel } from "../identity/roles";
 import { phaseLabel, statusLabel } from "./phases";
@@ -65,9 +65,36 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
 
   const phases = forceView ? galleryPhases : (allPhases.length > 0 ? allPhases : galleryPhases);
 
-  const handleTrigger = (agentKey: string) => {
+  // Runs that mean a phase is still live — re-triggering one of these would spawn a second
+  // concurrent run (the backend blocks it with 409; the UI warns first). Bugs S.No 77.
+  const ACTIVE_STATUSES = ["pending", "running", "awaiting_gate", "approved"];
+  const runsForItem = forceView ? [] : (runs.data ?? []);
+  const latestRunForPhase = (agentKey: string): Run | undefined =>
+    runsForItem
+      .filter((r) => r.agent_key === agentKey)
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
+
+  // When a phase already has a run, confirm before re-triggering (Case 1: completed → restart &
+  // replace this phase's artifacts; Case 2: in progress → blocked). Applies to EVERY phase, not
+  // just Task Breakdown — any re-run regenerates that phase's artifacts.
+  const [confirm, setConfirm] = useState<{ phase: PhaseCatalogEntry; kind: "rerun" | "active"; run?: Run } | null>(null);
+
+  const handleTrigger = (phase: PhaseCatalogEntry) => {
     if (!activeWorkItemId) return;
-    trigger.mutate(agentKey);
+    const prior = latestRunForPhase(phase.agent_key);
+    if (prior && ACTIVE_STATUSES.includes(prior.status)) {
+      setConfirm({ phase, kind: "active", run: prior });
+    } else if (prior) {
+      setConfirm({ phase, kind: "rerun", run: prior });
+    } else {
+      trigger.mutate(phase.agent_key);
+    }
+  };
+
+  const confirmTrigger = () => {
+    if (!confirm) return;
+    trigger.mutate(confirm.phase.agent_key);
+    setConfirm(null);
   };
 
   const activeWorkItem = workItems.data?.find((wi) => wi.id === activeWorkItemId);
@@ -157,7 +184,7 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
                           ? ["01_ideation", "02_requirements", "03_prd"].includes(p.key)
                           : trigger.isPending || !activeWorkItemId
                       }
-                      onClick={() => handleTrigger(p.agent_key)}
+                      onClick={() => handleTrigger(p)}
                       title={`Trigger ${phaseLabel(p.key)} (gate: ${roleLabel(p.gate_role)})`}
                     >
                       {trigger.isPending && trigger.variables === p.agent_key ? (
@@ -239,6 +266,48 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
           </>
         )}
       </Panel>
+
+      {confirm && (
+        <Modal
+          title={
+            confirm.kind === "rerun"
+              ? `Re-run ${phaseLabel(confirm.phase.key)}?`
+              : `${phaseLabel(confirm.phase.key)} is already running`
+          }
+          onClose={() => setConfirm(null)}
+          footer={
+            confirm.kind === "rerun" ? (
+              <>
+                <Button variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
+                <Button variant="primary" onClick={confirmTrigger}>Re-run phase</Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" onClick={() => setConfirm(null)}>Close</Button>
+                {confirm.run && (
+                  <Link className="btn btn--primary" to={`/runs/${confirm.run.id}`}>
+                    Open current run
+                  </Link>
+                )}
+              </>
+            )
+          }
+        >
+          {confirm.kind === "rerun" ? (
+            <p className="u-body">
+              This phase has already run. Running it again starts over from scratch and{" "}
+              <strong>replaces this phase's artifacts</strong> — it does not create duplicates.
+              The previous run stays in the history. Continue?
+            </p>
+          ) : (
+            <p className="u-body">
+              This work item already has a run <strong>in progress</strong> for this phase. You
+              can't start a new one until it finishes — wait for it, or open the run to take it
+              over.
+            </p>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }

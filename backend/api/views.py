@@ -85,7 +85,7 @@ from orchestration.takeover import (
     release_takeover,
     request_takeover,
 )
-from orchestration.trigger import TriggerError, trigger_build, trigger_phase
+from orchestration.trigger import ActiveRunError, TriggerError, trigger_build, trigger_phase
 
 from .serializers import (
     AdoptSerializer,
@@ -908,6 +908,8 @@ class WorkItemViewSet(
                     required_role=ser.validated_data["required_role"],
                     triggered_by=triggered_by,
                 )
+        except ActiveRunError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except TriggerError as exc:
             raise ValidationError({"agent_key": str(exc)}) from exc
         return Response(
@@ -935,6 +937,8 @@ class WorkItemViewSet(
                 required_role=ser.validated_data["required_role"],
                 triggered_by=triggered_by,
             )
+        except ActiveRunError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except TriggerError as exc:
             raise ValidationError({"detail": str(exc)}) from exc
         return Response(
