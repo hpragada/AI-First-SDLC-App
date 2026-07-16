@@ -6,6 +6,7 @@ compensation. CodeHost is a fake injected through `get_capability`.
 from types import SimpleNamespace
 
 import pytest
+from temporalio.exceptions import ApplicationError
 
 from apps.gates.models import Approval
 from apps.projects.models import Project, ProjectProfile
@@ -19,11 +20,14 @@ from orchestration.build_types import BuildInput, BuildReport
 
 
 class _FakeCodeHost:
-    def __init__(self, draft=False):
+    def __init__(self, draft=False, mergeable_state="clean", mergeable=True):
         self.merged = False
         self.draft = draft
         self.ready_called = False
         self.statuses = []
+        self.mergeable_state = mergeable_state
+        self.mergeable = mergeable
+        self.update_branch_called = False
 
     def open_pull_request(self, *, repo, head, base, title, body, draft=True):
         return PullRequestRef(sor="git", repo=repo, number=7, head=head,
@@ -33,15 +37,27 @@ class _FakeCodeHost:
         repo, number = pr_ref.split("#")
         return PullRequest(repo=repo, number=int(number), title="t", state="open",
                            head="feature/ST-1", base="main", url="u", sha="abc",
-                           merged=self.merged, draft=self.draft)
+                           merged=self.merged, draft=self.draft,
+                           mergeable=self.mergeable, mergeable_state=self.mergeable_state)
 
     def mark_ready_for_review(self, *, pr_ref):
         self.ready_called = True
         self.draft = False
 
+    def update_branch(self, *, pr_ref):
+        self.update_branch_called = True
+        self.mergeable_state = "clean"     # updating a behind branch resolves it
+        self.mergeable = True
+
+    def ensure_mergeable(self, *, pr_ref):
+        if self.mergeable_state == "behind":
+            self.update_branch(pr_ref=pr_ref)
+        return self.get_pull_request(pr_ref=pr_ref)
+
     def merge_pull_request(self, *, pr_ref, method="squash"):
         # Mirror GitHub: a draft PR cannot be merged (this is the 405 the fix guards against).
         assert not self.draft, "attempted to merge a draft PR"
+        assert self.mergeable_state != "dirty", "attempted to merge a conflicted PR"
         self.merged = True
         return self.get_pull_request(pr_ref=pr_ref)
 
@@ -189,6 +205,56 @@ def test_build_failed_returns_workitem_to_in_progress(world):
     world.run.refresh_from_db()
     assert world.run.status == Run.Status.FAILED
     assert world.wi.state == WorkItem.State.IN_PROGRESS
+
+
+# ── S.No 136: never merge a stale/conflicted branch as-is ────────────
+def test_merge_updates_a_behind_branch_then_merges(world, monkeypatch):
+    """The base moved since the branch was cut → mergeable_state='behind' (no conflict). The
+    merge must update the branch against base first, then merge — not fail."""
+    fake = _FakeCodeHost(mergeable_state="behind", mergeable=None)
+    _use_fake_codehost(monkeypatch, fake)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+    out = ba.merge_build_pr_core(_inp(world))
+
+    assert fake.update_branch_called is True     # updated against base before merging
+    assert out["merged"] is True and fake.merged is True
+    world.run.refresh_from_db()
+    assert world.run.status == Run.Status.COMPLETED
+
+
+def test_merge_conflict_fails_clean_not_raw_405(world, monkeypatch):
+    """A true conflict (mergeable_state='dirty') must NOT be PUT-merged (that raises a raw 405).
+    It fails fast, non-retryably, with a clear reason — the run is never left merged."""
+    fake = _FakeCodeHost(mergeable_state="dirty", mergeable=False)
+    _use_fake_codehost(monkeypatch, fake)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+    with pytest.raises(ApplicationError) as exc:
+        ba.merge_build_pr_core(_inp(world))
+    assert exc.value.non_retryable is True
+    assert "merge conflict" in str(exc.value).lower()
+    assert fake.merged is False                  # never merged a conflicted PR
+
+
+# ── S.No 139: classified failure reasons ────────────────────────────
+def test_classify_build_failure_maps_known_reasons():
+    c = ba.classify_build_failure
+    assert "merge conflict" in c("merge failed: GitHub PUT .../merge -> 405").lower()
+    assert "permission" in c("pr/gate setup failed: ... -> 403 forbidden").lower()
+    assert "remediation" in c("remediation cycles exhausted").lower()
+    assert "without reporting a specific reason" in c("build reported failed").lower()
+    assert c("secret scan blocked the push: 2 finding(s): ...").startswith("secret scan")
+    # an unrecognized specific message is preserved, never lost
+    assert c("ImportError: no module named foo") == "ImportError: no module named foo"
+
+
+def test_mark_build_failed_classifies_and_writes_to_run_outputs(world):
+    """S.No 139: the classified reason is stored on run.outputs.error (where the run console
+    reads it) and in the build.failed event — not just a bare 'Build failed'."""
+    ba.mark_build_failed_core(_inp(world), "merge failed: GitHub PUT .../merge -> 405")
+    world.run.refresh_from_db()
+    assert "merge conflict" in (world.run.outputs.get("error") or "").lower()
 
 
 # ── code review + remediation loop (07<->08) ────────────────────────

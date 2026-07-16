@@ -12,6 +12,7 @@ from pathlib import Path
 
 from mcp_platform_state import tools
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from apps.gates.models import Approval
 from apps.registry.models import Artifact
@@ -184,6 +185,22 @@ def merge_build_pr_core(inp: BuildInput) -> dict:
         # of draft now that the merge gate is approved — the one legitimate moment to un-draft.
         if pr.draft:
             codehost.mark_ready_for_review(pr_ref=pr_ref)
+        # Bugs S.No 136: never merge a stale/conflicted branch as-is (that raises a raw 405).
+        # If the branch is merely *behind* its base, update it against base first; then if it is
+        # a true conflict ("dirty"), fail the gate with a clear reason instead of a cryptic 405.
+        # `ensure_mergeable` is a no-op for an already-clean PR (idempotent on Temporal retries).
+        if hasattr(codehost, "ensure_mergeable"):
+            pr = codehost.ensure_mergeable(pr_ref=pr_ref)
+            if pr.mergeable is False or pr.mergeable_state == "dirty":
+                # Not transient — fail fast (non-retryable) rather than burning 3 retries on a
+                # conflict. The workflow routes this to mark_build_failed, whose classifier turns
+                # it into the plain-language "merge conflict" reason (Bugs S.No 139).
+                raise ApplicationError(
+                    "merge conflict: the branch conflicts with its base and needs manual "
+                    "resolution",
+                    type="MergeConflict",
+                    non_retryable=True,
+                )
         pr = codehost.merge_pull_request(pr_ref=pr_ref)
     with tenant_context(inp.tenant_id):
         tools.update_artifact(inp.tenant_id, str(artifact.id), status=Artifact.Status.PUBLISHED)
@@ -218,17 +235,48 @@ def mark_takeover_core(inp: BuildInput) -> dict:
     return {"status": "takeover"}
 
 
+def classify_build_failure(reason: str) -> str:
+    """Map a raw failure reason / exception string to a single plain-language, classified reason
+    (Bugs S.No 139). The build.failed reason was populated inconsistently across paths — a bare
+    'build reported failed', a hardcoded 'remediation cycles exhausted', or a raw Temporal
+    exception string ('merge failed: ActivityError...'). This normalizes them so the user sees
+    *why* it failed. An already-good, specific message (e.g. the S.No 130 secret-scan message)
+    passes through unchanged; an unrecognized specific message is kept, never lost."""
+    r = (reason or "").lower()
+    if "secret scan" in r or "secret_blocked" in r:
+        return reason  # already a classified, redacted message (S.No 130) — keep it
+    if ("merge conflict" in r or "mergeable_state" in r or "dirty" in r
+            or "-> 405" in r or " 405 " in r or "merge_conflict" in r):
+        return ("Merge conflict: the branch conflicts with its base and needs manual "
+                "resolution before it can be merged.")
+    if "-> 403" in r or " 403 " in r or "permission" in r or "forbidden" in r:
+        return ("Permission denied: the GitHub token lacks access, or a branch protection "
+                "rule blocked the action.")
+    if "remediation cycles exhausted" in r:
+        return ("Remediation exhausted: code review kept finding blocking issues after the "
+                "maximum retry cycles.")
+    if "no changes" in r or "empty build" in r or "nothing to commit" in r:
+        return "Empty build: the agent produced no changes to commit."
+    if r.strip() in ("", "build reported failed", "remediation build failed"):
+        return "The build agent failed without reporting a specific reason."
+    return reason  # a specific message we don't need to reclassify
+
+
 def mark_build_failed_core(inp: BuildInput, reason: str) -> dict:
     """Dead-letter / failed-build compensation: flag the run failed, return the WorkItem to
-    in_progress (the branch/draft PR are left for human disposition — register-don't-recreate)."""
+    in_progress (the branch/draft PR are left for human disposition — register-don't-recreate).
+    The reason is classified (S.No 139) and stored on `run.outputs.error` — where the run
+    console reads the failure line — as well as the build.failed event payload."""
+    reason = classify_build_failure(reason)
     with tenant_context(inp.tenant_id):
-        Run.objects.filter(id=inp.run_id, tenant_id=inp.tenant_id).update(
-            status=Run.Status.FAILED
-        )
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.status = Run.Status.FAILED
+        run.outputs = {**(run.outputs or {}), "error": reason}
+        run.save(update_fields=["status", "outputs", "updated_at"])
         tools.transition_work_item(inp.tenant_id, inp.work_item_id, WorkItem.State.IN_PROGRESS)
         tools.log_event(inp.tenant_id, "orchestrator", "build.failed", "run", inp.run_id,
                         {"reason": reason})
-    return {"status": "build_failed"}
+    return {"status": "build_failed", "reason": reason}
 
 
 def reject_build_core(inp: BuildInput, comment: str) -> dict:

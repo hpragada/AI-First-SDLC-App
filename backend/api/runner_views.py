@@ -44,6 +44,16 @@ from orchestration.build_report import BuildReportError, report_build
 # phase runs, while a truly dead companion still gets re-claimed ~15 min after its LAST heartbeat.
 CLAIM_LEASE = timedelta(minutes=15)
 
+# The heartbeat renews the lease on *liveness*, which alone lets a wedged-but-heartbeating worker
+# (agent hung, but the heartbeat thread still ticking) renew its claim forever — the run sits
+# claimed, masked from recovery, until only the workflow's 2h report-timeout takeover (S.No 89)
+# frees it (Bugs S.No 134). MAX_CLAIM_AGE caps how long a single continuous claim may be renewed:
+# past it, the heartbeat STOPS renewing, so the lease ages out (CLAIM_LEASE) and the run is
+# recoverable well before the 2h backstop. Set safely ABOVE the longest legitimate build so a
+# healthy long build is never capped (which would reintroduce the S.No 111 mid-flight re-claim);
+# the team confirmed builds stay well under 60 min.
+MAX_CLAIM_AGE = timedelta(minutes=60)
+
 # Build-phase platform-state tool allowlist (no detect_drift, no planning-only tools).
 _BUILD_STATE_TOOLS = {
     "get_context": tools.get_context,
@@ -82,7 +92,11 @@ def _renew_claims_for(runner) -> int:
     from django.db import transaction
     from django.utils import timezone
 
-    now = timezone.now().isoformat()
+    now_dt = timezone.now()
+    now = now_dt.isoformat()
+    # Bugs S.No 134: a claim first held before this cutoff has been renewed for too long without
+    # finishing — stop renewing it so the lease can age out (a wedged worker can't renew forever).
+    max_age_before = (now_dt - MAX_CLAIM_AGE).isoformat()
     renewed = 0
     with tenant_context(str(runner.tenant_id)), transaction.atomic():
         runs = (
@@ -96,6 +110,12 @@ def _renew_claims_for(runner) -> int:
             inputs = dict(run.inputs or {})
             dispatch = dict(inputs.get("dispatch") or {})
             if dispatch.get("status") != "claimed":
+                continue
+            first_claimed_at = dispatch.get("first_claimed_at")
+            if first_claimed_at and first_claimed_at < max_age_before:
+                # Held (and renewed) past MAX_CLAIM_AGE without reporting — likely wedged. Stop
+                # renewing; the lease now ages out so the run is recoverable (re-claim / S.No 89
+                # takeover) instead of masked indefinitely by mere process liveness.
                 continue
             dispatch["claimed_at"] = now
             inputs["dispatch"] = dispatch
@@ -330,6 +350,10 @@ class RunnerWorkClaimView(APIView):
             dispatch = dict(inputs.get("dispatch") or {})
             dispatch["status"] = "claimed"
             dispatch["claimed_at"] = now.isoformat()
+            # Bugs S.No 134: mark when THIS continuous claim started (reset on every fresh claim /
+            # re-claim, never touched by heartbeat renewal) so the renewal cap can bound a claim
+            # that is renewed forever without progressing.
+            dispatch["first_claimed_at"] = now.isoformat()
             dispatch["claim_count"] = int(dispatch.get("claim_count") or 0) + 1
             inputs["dispatch"] = dispatch
             run.inputs = inputs

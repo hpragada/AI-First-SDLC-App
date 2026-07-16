@@ -52,6 +52,8 @@ class GithubCodeHost:
             url=data.get("html_url", ""), sha=head.get("sha"),
             merged=bool(data.get("merged") or data.get("merged_at")),
             draft=bool(data.get("draft")),
+            mergeable=data.get("mergeable"),
+            mergeable_state=data.get("mergeable_state", ""),
         )
 
     # ── CodeHost capability ─────────────────────────────────────────
@@ -141,6 +143,45 @@ class GithubCodeHost:
             if not (fresh or {}).get("draft"):
                 return
             time.sleep(1)
+
+    def _read_pr_settled(self, repo: str, number: int, *, tries: int = 6,
+                         delay: float = 1.0) -> dict:
+        """Read a PR, waiting (bounded) for GitHub to finish computing `mergeable` — it is `null`
+        for a brief window after the PR is opened or its branch mutated. Returns the last read
+        even if it stays null (the caller treats null as 'unknown', not a conflict)."""
+        import time
+
+        data = self._rest.request("GET", f"/repos/{repo}/pulls/{number}")
+        for _ in range(tries - 1):
+            if (data or {}).get("mergeable") is not None:
+                break
+            time.sleep(delay)
+            data = self._rest.request("GET", f"/repos/{repo}/pulls/{number}")
+        return data or {}
+
+    def update_branch(self, *, pr_ref: str) -> None:
+        """Update the PR's head branch with the latest base (GitHub 'Update branch' — merges base
+        into head) so a branch that is merely *behind* becomes mergeable (Bugs S.No 136).
+        Idempotent: a 422 'already up to date' is a no-op, safe on Temporal retries."""
+        repo, number = _split_pr_ref(pr_ref)
+        try:
+            self._rest.request("PUT", f"/repos/{repo}/pulls/{number}/update-branch")
+        except CapabilityError as exc:
+            if exc.status == 422:      # already up to date — nothing to do
+                return
+            raise
+
+    def ensure_mergeable(self, *, pr_ref: str) -> PullRequest:
+        """Resolve a PR's mergeability before the gated merge (Bugs S.No 136). If the branch is
+        merely *behind* its base (base moved, no conflict), update it against base and re-check;
+        return the PR with `mergeable`/`mergeable_state` resolved so the caller decides
+        merge-vs-conflict instead of blindly PUT-merging a `dirty` PR into a raw 405."""
+        repo, number = _split_pr_ref(pr_ref)
+        data = self._read_pr_settled(repo, number)
+        if (data or {}).get("mergeable_state") == "behind":
+            self.update_branch(pr_ref=pr_ref)
+            data = self._read_pr_settled(repo, number)
+        return self._pr(repo, data)
 
     def merge_pull_request(self, *, pr_ref: str, method: str = "squash") -> PullRequest:
         repo, number = _split_pr_ref(pr_ref)

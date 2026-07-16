@@ -264,6 +264,16 @@ class CompanionDaemon:
             # THIS build loudly on the platform, but keep the daemon serving other work items.
             self._report(report_path, {"status": "failed", "message": str(exc)})
             return
+        except EngineAuthError:
+            # Fail-closed: a subscription/API-key problem surfaced mid-run must ALWAYS halt the
+            # daemon, never be downgraded to a per-build failed report (mirrors the serve loop).
+            raise
+        except Exception as exc:  # noqa: BLE001
+            # Bugs S.No 133: a build-agent error must fail THIS build and be reported back, not
+            # crash the whole long-lived companion (which stopped polling and left the run
+            # dangling). Mirror the phase path (_run_engine_phase) — report failed, keep serving.
+            self._report(report_path, {"status": "failed", "message": str(exc)})
+            return
         self._report(report_path, to_build_report(result))
 
     def run_task(self, task: dict) -> None:

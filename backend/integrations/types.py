@@ -97,6 +97,11 @@ class PullRequest:
     sha: str | None = None
     merged: bool = False
     draft: bool = False
+    # GitHub computes these asynchronously (may be None right after a mutation). `mergeable_state`
+    # is the richer signal: "clean" | "behind" (base moved, no conflict) | "dirty" (conflict) |
+    # "blocked" | "unknown". Used by the merge gate to update-then-merge, never merge a conflict.
+    mergeable: bool | None = None
+    mergeable_state: str = ""
 
     @property
     def pr_ref(self) -> str:

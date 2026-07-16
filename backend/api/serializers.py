@@ -395,8 +395,10 @@ class EventSerializer(serializers.ModelSerializer):
         label = (obj.action or "event").replace(".", " ").replace("_", " ").strip()
         label = label[:1].upper() + label[1:]
         payload = obj.payload or {}
-        for key in ("message", "detail", "error", "comment", "phase", "execution_mode",
-                    "branch", "workflow_id"):
+        # `reason` covers build.failed/build.takeover (Bugs S.No 139 — the classified failure
+        # reason); without it the console showed a bare "Build failed" with no explanation.
+        for key in ("message", "detail", "error", "reason", "comment", "phase",
+                    "execution_mode", "branch", "workflow_id"):
             value = payload.get(key)
             if value:
                 return f"{label} — {value}"

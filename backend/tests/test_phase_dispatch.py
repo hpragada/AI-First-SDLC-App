@@ -255,6 +255,33 @@ def test_heartbeat_renews_claim_so_a_long_live_phase_is_not_reclaimed(world):
     assert Run.objects.get(id=world["run_id"]).inputs["dispatch"]["claim_count"] == 1
 
 
+def test_heartbeat_stops_renewing_a_claim_held_past_max_age(world):
+    """Bugs S.No 134: a wedged-but-heartbeating worker (agent hung, heartbeat thread still
+    ticking) must NOT renew its claim forever. Past MAX_CLAIM_AGE the heartbeat stops renewing,
+    so the lease ages out and the run becomes recoverable (re-claim / S.No 89 takeover) instead
+    of being masked indefinitely by mere process liveness. A young claim still renews (S.No 111)."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    activities.dispatch_phase_core(world["inp"], manifest="# Project\nm")
+    client = APIClient()
+    assert client.get("/api/runner/work/", **_auth(world)).status_code == 200   # claimed
+
+    run = Run.objects.get(id=world["run_id"])
+    dispatch = dict(run.inputs["dispatch"])
+    assert dispatch.get("first_claimed_at")                      # stamped at claim time
+    # Wedged: first claimed 90 min ago (past the 60-min cap), but still heartbeating (claimed_at
+    # fresh) — exactly the case liveness-only renewal would mask forever.
+    dispatch["first_claimed_at"] = (timezone.now() - timedelta(minutes=90)).isoformat()
+    dispatch["claimed_at"] = (timezone.now() - timedelta(minutes=1)).isoformat()
+    run.inputs = {**run.inputs, "dispatch": dispatch}
+    run.save(update_fields=["inputs"])
+
+    hb = client.post("/api/runner/heartbeat/", **_auth(world))
+    assert hb.status_code == 200 and hb.json()["claims_renewed"] == 0   # capped — not renewed
+
+
 def test_heartbeat_does_not_renew_a_reported_claim(world):
     """Renewal touches only in-flight (PENDING/RUNNING, still 'claimed') runs — a run that already
     reported must be left alone so a heartbeat can never revive finished work."""

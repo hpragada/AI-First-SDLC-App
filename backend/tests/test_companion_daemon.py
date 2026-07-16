@@ -9,7 +9,12 @@ from types import SimpleNamespace
 
 import pytest
 from runner.companion import daemon as daemon_mod
-from runner.companion.daemon import CompanionDaemon, DaemonError, ensure_local_engine_auth
+from runner.companion.daemon import (
+    CompanionDaemon,
+    DaemonError,
+    EngineAuthError,
+    ensure_local_engine_auth,
+)
 
 _PLAN_TASK = {"kind": "plan", "run_id": "r1", "payload": {
     "phase": "prd", "work_item_id": "w1", "project_id": "proj-1", "model": "claude-x",
@@ -212,6 +217,39 @@ def test_build_for_unmapped_repo_fails_loud_never_wrong_clone():
                 repo_paths={"acme/api": "/repos/api"})
     with pytest.raises(DaemonError, match="no local clone configured for repo 'acme/web'"):
         d._run_build(_build_task("acme/web"))
+
+
+def test_build_agent_error_is_reported_not_crash_daemon(monkeypatch):
+    """Bugs S.No 133: a build-agent error must fail THIS build (post a failed report) and let
+    the long-lived companion keep polling — not propagate out of serve and crash the process
+    (which stopped polling and left the run dangling). Mirrors the plan/review path."""
+    transport = _Transport([(200, _build_task("acme/api")), (204, None)])
+
+    async def _boom(task, *, driver, repo_path, worktrees_root, keep_worktree=False):
+        raise RuntimeError("agent exploded mid-build")
+
+    monkeypatch.setattr(daemon_mod, "run_build", _boom)
+    d = _daemon(transport, _FakeDriver(), repo_path="/repos/api", worktrees_root="/wt")
+    processed = d.serve(max_iterations=2)   # must NOT raise
+
+    assert processed == 1
+    url, body = transport.reports()[0]
+    assert url.endswith("/api/runner/builds/rb/report/")
+    assert body["status"] == "failed" and "agent exploded" in body["message"]
+
+
+def test_build_engine_auth_error_still_halts(monkeypatch):
+    """The S.No 133 generic catch must NOT swallow a fail-closed auth halt surfaced mid-build —
+    EngineAuthError still propagates out of serve, never downgraded to a failed report."""
+    transport = _Transport([(200, _build_task("acme/api")), (204, None)])
+
+    async def _auth(task, *, driver, repo_path, worktrees_root, keep_worktree=False):
+        raise EngineAuthError("subscription required")
+
+    monkeypatch.setattr(daemon_mod, "run_build", _auth)
+    d = _daemon(transport, _FakeDriver(), repo_path="/repos/api", worktrees_root="/wt")
+    with pytest.raises(EngineAuthError):
+        d.serve(max_iterations=2)
 
 
 def test_single_repo_shorthand_still_serves_any_repo():
