@@ -29,9 +29,24 @@ class AtlassianTaskTracker:
         self._cfg = config
         self._project = project
         self._rest = AtlassianRest(config, transport)
+        self._subtask_type: str | None = None
 
     def _browse(self, key: str) -> str:
         return f"{self._cfg.site_url}/browse/{key}"
+
+    def subtask_type_name(self) -> str:
+        """The project's sub-task issue-type NAME (varies: "Subtask" / "Sub-task"), resolved from
+        Jira and cached. Reconcile creates a platform task under its story as a sub-task, because
+        Jira rejects a standard Task parented to a Story (Bugs S.No 142). Falls back to "Subtask"
+        if the lookup fails."""
+        if self._subtask_type is None:
+            try:
+                meta = self._rest.request("GET", f"/rest/api/3/project/{self._project}")
+                subs = [t["name"] for t in meta.get("issueTypes", []) if t.get("subtask")]
+                self._subtask_type = subs[0] if subs else "Subtask"
+            except Exception:
+                self._subtask_type = "Subtask"
+        return self._subtask_type
 
     # ── TaskTracker capability ──────────────────────────────────────
     def create_issue(self, *, kind: str, summary: str, description: str,

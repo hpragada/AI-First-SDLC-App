@@ -1317,17 +1317,21 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
              "url": (r["external_ref"] or {}).get("url", "")}
             for r in result["items"]
         ]
+        failed = result.get("failed", [])
         artifact.status = Artifact.Status.PUBLISHED
         artifact.external_ref = {
             **(artifact.external_ref or {}),
             "export": {"sor": "jira", "reconciled": result["reconciled"],
-                       "created": result["created"]},
+                       "created": result["created"], "failed": len(failed)},
         }
         artifact.save(update_fields=["status", "external_ref", "updated_at"])
         return Response({
-            "status": "published",
+            # A partial push is not a clean success — say so honestly (Bugs S.No 143) so the UI can
+            # warn instead of showing an all-green "Published" while items silently didn't land.
+            "status": "partial" if failed else "published",
             "sor_link": next((i["url"] for i in items if i["url"]), None),
             "reconciled": result["reconciled"], "created": result["created"],
+            "failed": failed,
             "items": items,
         })
 

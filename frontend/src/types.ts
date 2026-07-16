@@ -619,6 +619,9 @@ export interface PublishResult {
   // tasktracker export (backlog reconciliation) summary:
   reconciled?: number;
   created?: number;
+  // Items that failed to reconcile to the SoR (e.g. a rejected Jira create) — reported, not
+  // hidden, so a partial push isn't shown as a clean success.
+  failed?: { work_item_id: string; type: string; error: string }[];
   items?: { work_item_id: string; key: string; url: string }[];
   // testmgmt export:
   test_key?: string;

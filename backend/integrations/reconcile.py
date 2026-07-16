@@ -47,11 +47,23 @@ def reconcile_work_item(*, tenant_id, tracker, work_item_id, project_key=None) -
         if wi.external_ref:  # already reconciled
             return {"work_item_id": str(wi.id), "external_ref": wi.external_ref,
                     "created": False, "skipped": True}
-        summary, description, kind = _summary(wi), wi.description or "", _KIND.get(wi.type, "Task")
+        summary, description = _summary(wi), wi.description or ""
+        wi_type, kind = wi.type, _KIND.get(wi.type, "Task")
         parent_ref = None
         if wi.parent_id:
             parent = WorkItem.objects.get(id=wi.parent_id, tenant_id=tenant_id)
             parent_ref = (parent.external_ref or {}).get("id")
+
+    # Jira hierarchy (Bugs S.No 142): a standard Task cannot be a child of a Story — only a
+    # Sub-task can. So a platform task WITH a reconciled parent (its story) is created as a Sub-task
+    # under it; a task with no (reconciled) parent stays a top-level Task with no parent. Epics and
+    # stories are unaffected (Story-under-Epic via `parent` is valid).
+    if wi_type == "task":
+        if parent_ref:
+            resolve = getattr(tracker, "subtask_type_name", None)
+            kind = resolve() if callable(resolve) else "Subtask"
+        else:
+            parent_ref = None
 
     # Network calls happen outside the DB cursor.
     existing = _find_existing(tracker, project_key, summary)
@@ -96,15 +108,27 @@ def reconcile_backlog(*, tenant_id, project_id, tracker=None, project_key=None) 
         )
     items.sort(key=lambda w: _ORDER.get(w.type, 9))
 
-    results = [
-        reconcile_work_item(
-            tenant_id=tenant_id, tracker=tracker,
-            work_item_id=str(w.id), project_key=project_key,
-        )
-        for w in items
-    ]
+    # Per-item isolation (Bugs S.No 143): a single item's SoR failure (e.g. a rejected Jira create)
+    # must NOT abort the whole backlog or be silently swallowed — record it and keep going, so the
+    # caller can report "N created, M failed: <reason>" honestly instead of a false "all published".
+    results: list = []
+    failed: list = []
+    for w in items:
+        try:
+            results.append(reconcile_work_item(
+                tenant_id=tenant_id, tracker=tracker,
+                work_item_id=str(w.id), project_key=project_key,
+            ))
+        except Exception as exc:  # noqa: BLE001 — any connector/SoR error, reported not raised
+            reason = str(getattr(exc, "detail", None) or exc) or exc.__class__.__name__
+            failed.append({"work_item_id": str(w.id), "type": w.type, "error": reason[:300]})
+            tools.log_event(
+                tenant_id, "reconciler", "workitem.reconcile_failed", "work_item", str(w.id),
+                {"error": reason[:300], "type": w.type},
+            )
     return {
         "reconciled": len(results),
         "created": sum(1 for r in results if r["created"]),
+        "failed": failed,
         "items": results,
     }

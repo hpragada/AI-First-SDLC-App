@@ -32,6 +32,24 @@ class _FakeTracker:
         return ExternalRef(sor="jira", id=key, url=f"https://x.atlassian.net/browse/{key}")
 
 
+class _SubtaskTracker(_FakeTracker):
+    """A tracker that reports its sub-task issue-type name, like the real Atlassian one."""
+
+    def subtask_type_name(self):
+        return "Sub-task"
+
+
+class _TaskFailsTracker(_FakeTracker):
+    """Rejects Task/Sub-task creates (mimics Jira's 'invalid parent' 400) but lets epics/stories
+    through — to prove per-item failures are captured, not aborting the whole backlog."""
+
+    def create_issue(self, *, kind, summary, description, parent_ref=None, fields=None):
+        if kind not in ("Epic", "Story"):
+            raise RuntimeError("Please select valid parent issue.")
+        return super().create_issue(kind=kind, summary=summary, description=description,
+                                    parent_ref=parent_ref, fields=fields)
+
+
 @pytest.fixture
 def project(db):
     t = Tenant.objects.create(name="Acme")
@@ -54,7 +72,7 @@ def test_reconcile_creates_issues_in_hierarchy_order(project):
         tracker=tracker, project_key="ST",
     )
 
-    assert out == {"reconciled": 2, "created": 2, "items": out["items"]}
+    assert out == {"reconciled": 2, "created": 2, "failed": [], "items": out["items"]}
     # Epic created before the story; the story references the epic's new key.
     assert [c["kind"] for c in tracker.created] == ["Epic", "Story"]
     assert tracker.created[1]["parent_ref"] == "ST-1"
@@ -63,6 +81,55 @@ def test_reconcile_creates_issues_in_hierarchy_order(project):
     story.refresh_from_db()
     assert epic.state == WorkItem.State.ACCEPTED and epic.external_ref["id"] == "ST-1"
     assert story.state == WorkItem.State.ACCEPTED and story.external_ref["id"] == "ST-2"
+
+
+def test_task_under_story_becomes_a_subtask(project):
+    """Bugs S.No 142: a platform task with a story parent must be created as a Jira SUB-TASK under
+    that story (Jira rejects a plain Task parented to a Story), using the project's sub-task type."""
+    epic = _wi(project, type=WorkItem.Type.EPIC, title="E")
+    story = _wi(project, type=WorkItem.Type.STORY, title="S", parent=epic)
+    task = _wi(project, type=WorkItem.Type.TASK, title="T", parent=story)
+    tracker = _SubtaskTracker()
+
+    reconcile_backlog(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                      tracker=tracker, project_key="ST")
+
+    created = {c["summary"]: c for c in tracker.created}
+    assert created["T"]["kind"] == "Sub-task"          # resolved sub-task type
+    assert created["T"]["parent_ref"] == created["S"]["parent_ref"] or created["T"]["parent_ref"]
+    # the task's parent is the story's key (ST-2), not the epic
+    assert created["T"]["parent_ref"] == "ST-2"
+    task.refresh_from_db()
+    assert task.state == WorkItem.State.ACCEPTED
+
+
+def test_parentless_task_stays_a_task_with_no_parent(project):
+    """A top-level task (no reconciled parent) can't be a sub-task (Jira sub-tasks require a
+    parent) — it's created as a plain Task with no parent."""
+    task = _wi(project, type=WorkItem.Type.TASK, title="Standalone")
+    tracker = _SubtaskTracker()
+
+    reconcile_backlog(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                      tracker=tracker, project_key="ST")
+
+    assert tracker.created[0]["kind"] == "Task"
+    assert tracker.created[0]["parent_ref"] is None
+
+
+def test_per_item_failure_is_captured_not_aborted(project):
+    """Bugs S.No 143: one item's SoR rejection must not abort the backlog or be swallowed — the
+    epic/story still land and the failed task is reported in `failed`."""
+    epic = _wi(project, type=WorkItem.Type.EPIC, title="E")
+    story = _wi(project, type=WorkItem.Type.STORY, title="S", parent=epic)
+    _wi(project, type=WorkItem.Type.TASK, title="T", parent=story)
+    tracker = _TaskFailsTracker()
+
+    out = reconcile_backlog(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                            tracker=tracker, project_key="ST")
+
+    assert out["created"] == 2 and out["reconciled"] == 2      # epic + story landed
+    assert len(out["failed"]) == 1 and out["failed"][0]["type"] == "task"
+    assert "valid parent" in out["failed"][0]["error"]
 
 
 def test_reconcile_is_idempotent(project):
@@ -76,7 +143,7 @@ def test_reconcile_is_idempotent(project):
 
     assert first["created"] == 1
     # Re-run finds nothing proposed (all accepted) and creates nothing new.
-    assert second == {"reconciled": 0, "created": 0, "items": []}
+    assert second == {"reconciled": 0, "created": 0, "failed": [], "items": []}
     assert len(tracker.created) == 1
 
 

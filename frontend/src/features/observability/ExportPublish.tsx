@@ -70,14 +70,23 @@ function ExportPublishLive() {
 
       <div className="modal-scrim">
         {publish.isSuccess ? (
-          <Modal inline title="Published" footer={<Button variant="primary" onClick={() => navigate(`/artifacts/${id}`)}>Done</Button>}>
-            <Banner variant="success" title="Published">
+          <Modal inline title={(publish.data?.failed?.length ?? 0) > 0 ? "Published — with issues" : "Published"} footer={<Button variant="primary" onClick={() => navigate(`/artifacts/${id}`)}>Done</Button>}>
+            <Banner
+              variant={(publish.data?.failed?.length ?? 0) > 0 ? "warning" : "success"}
+              title={(publish.data?.failed?.length ?? 0) > 0 ? "Published with some failures" : "Published"}
+            >
               {publish.data?.reconciled != null
-                ? `${publish.data.reconciled} work item${publish.data.reconciled === 1 ? "" : "s"} reconciled to the task tracker (${publish.data.created ?? 0} created).`
+                ? `${publish.data.reconciled} work item${publish.data.reconciled === 1 ? "" : "s"} reconciled to the task tracker (${publish.data.created ?? 0} created${(publish.data.failed?.length ?? 0) > 0 ? `, ${publish.data.failed?.length} failed` : ""}).`
                 : publish.data?.test_key
                   ? `Test case exported as ${publish.data.test_key}.`
                   : `Artifact v${data?.version} is now published.`}
             </Banner>
+            {(publish.data?.failed?.length ?? 0) > 0 && (
+              <Banner variant="danger" title={`${publish.data?.failed?.length} item(s) didn't reach the tracker`}>
+                {publish.data?.failed?.[0]?.error}
+                {(publish.data?.failed?.length ?? 0) > 1 ? " (and others — see the run/event log for the full list)." : ""}
+              </Banner>
+            )}
             {publish.data?.sor_link && (
               <div className="u-row" style={{ marginTop: "var(--space-3)" }}>
                 <span className="t-sm u-muted">View it in the system of record:</span>
