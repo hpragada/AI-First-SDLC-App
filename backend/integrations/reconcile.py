@@ -44,7 +44,11 @@ def reconcile_work_item(*, tenant_id, tracker, work_item_id, project_key=None) -
 
     with tenant_context(tenant_id):
         wi = WorkItem.objects.get(id=work_item_id, tenant_id=tenant_id)
-        if wi.external_ref:  # already reconciled
+        # Idempotency = a real SoR issue key already recorded (external_ref.id). NOT just any
+        # external_ref: a multi-repo work item carries external_ref.repo_assignment (the planner's
+        # repo suggestion, Option C) with NO SoR id — treating that as "already reconciled" made
+        # every repo-assigned task skip the Jira push entirely (Bugs S.No 142, real root cause).
+        if (wi.external_ref or {}).get("id"):
             return {"work_item_id": str(wi.id), "external_ref": wi.external_ref,
                     "created": False, "skipped": True}
         summary, description = _summary(wi), wi.description or ""
@@ -77,7 +81,8 @@ def reconcile_work_item(*, tenant_id, tracker, work_item_id, project_key=None) -
 
     with tenant_context(tenant_id):
         wi = WorkItem.objects.get(id=work_item_id, tenant_id=tenant_id)
-        wi.external_ref = {"sor": ref.sor, "id": ref.id, "url": ref.url}
+        # Merge, don't overwrite — keep any repo_assignment (multi-repo) alongside the new SoR ref.
+        wi.external_ref = {**(wi.external_ref or {}), "sor": ref.sor, "id": ref.id, "url": ref.url}
         wi.state = WorkItem.State.ACCEPTED
         wi.save(update_fields=["external_ref", "state", "updated_at"])
         tools.log_event(

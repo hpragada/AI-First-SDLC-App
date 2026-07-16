@@ -116,6 +116,27 @@ def test_parentless_task_stays_a_task_with_no_parent(project):
     assert tracker.created[0]["parent_ref"] is None
 
 
+def test_repo_assigned_task_is_not_mistaken_for_already_reconciled(project):
+    """Bugs S.No 142 (real root cause): a multi-repo task carries external_ref.repo_assignment
+    (the planner's repo pick) with NO SoR id. Reconcile must still push it (not treat it as
+    already-reconciled), and must PRESERVE the repo_assignment alongside the new Jira ref."""
+    epic = _wi(project, type=WorkItem.Type.EPIC, title="E")
+    story = _wi(project, type=WorkItem.Type.STORY, title="S", parent=epic)
+    task = _wi(project, type=WorkItem.Type.TASK, title="T", parent=story)
+    task.external_ref = {"repo_assignment": {"suggested_repo_id": "repo-1", "source": "agent"}}
+    task.save(update_fields=["external_ref"])
+    tracker = _SubtaskTracker()
+
+    out = reconcile_backlog(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                            tracker=tracker, project_key="ST")
+
+    assert out["created"] == 3          # epic + story + the task (NOT skipped)
+    task.refresh_from_db()
+    assert task.external_ref.get("id")                       # got a Jira key
+    assert task.external_ref["repo_assignment"]["suggested_repo_id"] == "repo-1"  # preserved
+    assert task.state == WorkItem.State.ACCEPTED
+
+
 def test_per_item_failure_is_captured_not_aborted(project):
     """Bugs S.No 143: one item's SoR rejection must not abort the backlog or be swallowed — the
     epic/story still land and the failed task is reported in `failed`."""
