@@ -88,6 +88,18 @@ export function useTestConnection() {
   return useMutation({ mutationFn: (id: string) => api.testIntegrationConnection(id) });
 }
 
+// Test credentials before they're saved (Bugs S.No 156).
+export function useTestCredentials() {
+  return useMutation({
+    mutationFn: (body: {
+      capability: string;
+      vendor: string;
+      binding?: Record<string, string>;
+      secrets?: Record<string, string>;
+    }) => api.testIntegrationCredentials(body),
+  });
+}
+
 // ── Repositories (S-13) ───────────────────────────────────────────────────
 export function useRepositories(projectId: string | undefined) {
   return useQuery({

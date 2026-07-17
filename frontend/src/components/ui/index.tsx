@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   ButtonHTMLAttributes,
   CSSProperties,
@@ -111,6 +111,137 @@ export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
 
 export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return <textarea {...props} className={cx("textarea", props.className)} />;
+}
+
+export type ComboboxOption = { value: string; label: string };
+
+/**
+ * A Select you can type to search (Bugs S.No 150). A plain <select> over a long list (e.g. every
+ * work item in a project) forces the user to scroll and eyeball dozens of entries; here the
+ * filtering happens in the dropdown itself.
+ *
+ * Keyboard: ↑/↓ move, Enter picks, Esc closes/reverts. Uses the standard combobox ARIA roles so
+ * screen readers announce it, and reuses the `.input` styling so it matches every other control.
+ */
+export function Combobox({
+  options,
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  emptyText = "No matches",
+  id,
+}: {
+  options: ComboboxOption[];
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  emptyText?: string;
+  id?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = options.find((o) => o.value === value) ?? null;
+
+  // While closed the box shows the current selection; typing filters the list.
+  const text = open ? query : selected?.label ?? "";
+  const matches = open
+    ? options.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase()))
+    : options;
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const pick = (option: ComboboxOption) => {
+    onChange(option.value);
+    setOpen(false);
+    setQuery("");
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!open) {
+        setOpen(true);
+        setQuery("");
+        return;
+      }
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      setActive((i) => (matches.length ? (i + step + matches.length) % matches.length : 0));
+    } else if (e.key === "Enter") {
+      if (open && matches[active]) {
+        e.preventDefault();
+        pick(matches[active]);
+      }
+    } else if (e.key === "Escape") {
+      setOpen(false);
+      setQuery("");
+    }
+  };
+
+  return (
+    <div className="combobox" ref={rootRef}>
+      <input
+        id={id}
+        className="input combobox__input"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={id ? `${id}-listbox` : undefined}
+        aria-autocomplete="list"
+        autoComplete="off"
+        disabled={disabled}
+        placeholder={placeholder}
+        value={text}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setActive(0);
+          setOpen(true);
+        }}
+        onFocus={() => {
+          setOpen(true);
+          setQuery("");
+        }}
+        onKeyDown={onKeyDown}
+      />
+      {open && (
+        <ul className="combobox__list" role="listbox" id={id ? `${id}-listbox` : undefined}>
+          {matches.length === 0 ? (
+            <li className="combobox__empty">{emptyText}</li>
+          ) : (
+            matches.map((o, i) => (
+              <li
+                key={o.value}
+                role="option"
+                aria-selected={o.value === value}
+                className={cx(
+                  "combobox__option",
+                  i === active && "combobox__option--active",
+                  o.value === value && "combobox__option--selected",
+                )}
+                onMouseEnter={() => setActive(i)}
+                // mousedown (not click): the input's blur would close the list first.
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(o);
+                }}
+              >
+                {o.label}
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 export function Check({

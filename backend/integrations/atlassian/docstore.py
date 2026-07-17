@@ -21,6 +21,13 @@ class AtlassianDocStore:
         self._rest = AtlassianRest(config, transport)
         self._space_ids: dict[str, str] = {}  # key -> numeric space id (cached)
 
+    def ping(self) -> str:
+        """Live reachability + auth check (Bugs S.No 156): who are we authenticated as? Cheap,
+        read-only, and touches no space content."""
+        me = self._rest.request("GET", "/wiki/rest/api/user/current") or {}
+        who = me.get("displayName") or me.get("email") or "the account"
+        return f"Signed in to Confluence at {self._cfg.site_url} as {who}."
+
     # ── helpers ─────────────────────────────────────────────────────
     def _space_id(self, space_key: str) -> str:
         if space_key not in self._space_ids:

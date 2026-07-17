@@ -458,6 +458,44 @@ def mark_phase_takeover_core(inp: AgentRunInput) -> dict:
     return {"status": "takeover"}
 
 
+def park_run_core(inp: AgentRunInput, reason: str, resume_from: str) -> dict:
+    """Bugs S.No 157: an error mid-phase PARKS the run instead of killing it, so a human can
+    resume from the failed step rather than re-running the whole phase. Marks the run STALLED
+    (non-terminal — the same park S.No 89 uses for a report timeout) with a reason + the step to
+    resume from, while the workflow stays ALIVE waiting for `resume_run` or `abandon_run`.
+
+    Also closes a silent-failure gap: `verify_writes` runs with maximum_attempts=1, so when it
+    raised, the workflow crashed BEFORE any fail_run — nothing ever wrote `run.outputs.error`, and
+    the run console (which reads exactly that field) showed a failed run with no reason at all.
+    Parking always records the reason. Idempotent."""
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.status = Run.Status.STALLED
+        run.outputs = {**(run.outputs or {}), "error": reason,
+                       "resume_from": resume_from, "resumable": True}
+        run.save(update_fields=["status", "outputs", "updated_at"])
+        tools.log_event(inp.tenant_id, "orchestrator", "run.parked", "run", inp.run_id,
+                        {"reason": reason, "resume_from": resume_from, "resumable": True})
+    return {"status": "parked", "reason": reason, "resume_from": resume_from}
+
+
+def resume_run_state_core(inp: AgentRunInput) -> dict:
+    """Bugs S.No 157: a human resumed a parked phase run — un-park it and clear the park markers
+    so the console stops showing a stale failure. Idempotent."""
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        outputs = {**(run.outputs or {})}
+        resume_from = outputs.get("resume_from", "")
+        for key in ("error", "resume_from", "resumable"):
+            outputs.pop(key, None)
+        run.status = Run.Status.RUNNING
+        run.outputs = outputs
+        run.save(update_fields=["status", "outputs", "updated_at"])
+        tools.log_event(inp.tenant_id, "orchestrator", "run.resumed", "run", inp.run_id,
+                        {"resume_from": resume_from})
+    return {"status": "resumed", "resume_from": resume_from}
+
+
 def fail_run_core(inp: AgentRunInput, reason: str) -> dict:
     """A companion reported a failed phase → flag the run failed (the body, if any, is on the
     report). Mirrors the execute_agent failure path."""
@@ -540,6 +578,16 @@ def fail_run_activity(inp: AgentRunInput, reason: str) -> dict:
     return _boundary(fail_run_core, inp, reason)
 
 
+@activity.defn(name="park_run")
+def park_run_activity(inp: AgentRunInput, reason: str, resume_from: str) -> dict:
+    return _boundary(park_run_core, inp, reason, resume_from)
+
+
+@activity.defn(name="resume_run_state")
+def resume_run_state_activity(inp: AgentRunInput) -> dict:
+    return _boundary(resume_run_state_core, inp)
+
+
 ALL_ACTIVITIES = [
     compose_manifest_activity,
     execute_agent_activity,
@@ -552,4 +600,6 @@ ALL_ACTIVITIES = [
     register_phase_result_activity,
     mark_phase_takeover_activity,
     fail_run_activity,
+    park_run_activity,
+    resume_run_state_activity,
 ]

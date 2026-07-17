@@ -17,6 +17,7 @@ from apps.workitems.models import WorkItem
 from integrations.types import PullRequest, PullRequestRef
 from orchestration import build_activities as ba
 from orchestration.build_types import BuildInput, BuildReport
+from storage.object_store import InMemoryObjectStore
 
 
 class _FakeCodeHost:
@@ -28,8 +29,11 @@ class _FakeCodeHost:
         self.mergeable_state = mergeable_state
         self.mergeable = mergeable
         self.update_branch_called = False
+        self.pr_title = ""
+        self.pr_body = ""
 
     def open_pull_request(self, *, repo, head, base, title, body, draft=True):
+        self.pr_title, self.pr_body = title, body
         return PullRequestRef(sor="git", repo=repo, number=7, head=head,
                               url=f"https://github.com/{repo}/pull/7", sha="abc")
 
@@ -150,19 +154,75 @@ def test_open_pr_reconciles_agent_pre_pr_pointer(world, monkeypatch):
     assert art.status == Artifact.Status.STAGED
 
 
-def test_merge_publishes_pointer_and_completes_run(world, monkeypatch):
+def test_merge_performs_the_gated_write_then_publish_completes_the_run(world, monkeypatch):
+    """S.No 152: merge does the gated SoR write only; publish_build_artifacts publishes the
+    artifacts and completes the run (mirroring the planning path's split)."""
     fake = _FakeCodeHost()
     _use_fake_codehost(monkeypatch, fake)
+    monkeypatch.setattr(ba, "get_object_store", InMemoryObjectStore)
     ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
 
     out = ba.merge_build_pr_core(_inp(world))
     assert out["merged"] is True and fake.merged is True
+    # Idempotent: a second merge on an already-merged PR is a no-op.
+    assert ba.merge_build_pr_core(_inp(world))["merged"] is True
+
+    ba.publish_build_artifacts_core(_inp(world))
     assert Artifact.objects.get(run_id=world.run.id, type="code").status == \
         Artifact.Status.PUBLISHED
     world.run.refresh_from_db()
     assert world.run.status == Run.Status.COMPLETED
-    # Idempotent: a second merge on an already-merged PR is a no-op.
-    assert ba.merge_build_pr_core(_inp(world))["merged"] is True
+
+
+def test_publish_build_artifacts_publishes_every_artifact_not_just_the_code_one(world,
+                                                                                monkeypatch):
+    """S.No 152: after gate approval the Assumptions + Code Review artifacts stayed DRAFT forever
+    — the build path published ONLY the `code` artifact, having no publish step of its own."""
+    _use_fake_codehost(monkeypatch, _FakeCodeHost())
+    store = InMemoryObjectStore()
+    monkeypatch.setattr(ba, "get_object_store", lambda: store)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+    # The other artifacts a build produces (registered by the agent / the review step).
+    store.put("bodies/review.md", b"# Review")
+    review = Artifact.objects.create(
+        tenant=world.t, project=world.p, run=world.run, phase="implementation",
+        type="code_review", sor=Artifact.SoR.INTERNAL, status=Artifact.Status.DRAFT,
+        s3_key="bodies/review.md", title="Code Review — Add login", content_hash="d1",
+    )
+    assumption = Artifact.objects.create(
+        tenant=world.t, project=world.p, run=world.run, phase="implementation",
+        type="assumption", sor=Artifact.SoR.INTERNAL, status=Artifact.Status.DRAFT,
+        title="Assumptions", content_hash="d2",
+    )
+
+    out = ba.publish_build_artifacts_core(_inp(world))
+
+    review.refresh_from_db()
+    assumption.refresh_from_db()
+    code = Artifact.objects.get(run_id=world.run.id, type="code")
+    assert review.status == Artifact.Status.PUBLISHED
+    assert assumption.status == Artifact.Status.PUBLISHED
+    assert code.status == Artifact.Status.PUBLISHED
+    assert len(out["published"]) == 3
+    # The code artifact's SoR pointer must survive — publishing only changes status.
+    assert code.sor == Artifact.SoR.GIT and code.external_ref["number"] == 7
+    assert review.sor == Artifact.SoR.INTERNAL
+    # A body-bearing artifact gets its immutable audit snapshot, as on the planning path.
+    assert any(k.startswith("snapshots/") for k in store._data)
+
+
+def test_publish_build_artifacts_is_idempotent(world, monkeypatch):
+    """Temporal retries/replays must not double-publish or fail on an already-published run."""
+    _use_fake_codehost(monkeypatch, _FakeCodeHost())
+    monkeypatch.setattr(ba, "get_object_store", InMemoryObjectStore)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+    first = ba.publish_build_artifacts_core(_inp(world))
+    second = ba.publish_build_artifacts_core(_inp(world))
+
+    assert first["published"] == second["published"]
+    world.run.refresh_from_db()
+    assert world.run.status == Run.Status.COMPLETED
 
 
 def test_merge_takes_draft_pr_out_of_draft_first(world, monkeypatch):
@@ -177,8 +237,6 @@ def test_merge_takes_draft_pr_out_of_draft_first(world, monkeypatch):
 
     assert fake.ready_called is True          # un-drafted before merge
     assert out["merged"] is True and fake.merged is True
-    world.run.refresh_from_db()
-    assert world.run.status == Run.Status.COMPLETED
 
 
 def test_reopen_merge_gate_resets_approval_and_records_conflict(world):
@@ -227,6 +285,52 @@ def test_build_failed_returns_workitem_to_in_progress(world):
     assert world.wi.state == WorkItem.State.IN_PROGRESS
 
 
+# ── S.No 157: park on error instead of ending the build ──────────────
+def test_park_build_keeps_the_run_recoverable_with_a_classified_reason(world):
+    """S.No 157: an error PARKS the build — STALLED (not terminal FAILED), with a classified
+    reason and the step to resume from, while the workflow stays alive waiting for the human.
+    Previously this path ran mark_build_failed and returned, which closed the Temporal history
+    for good — the only way forward was a whole new run that rebuilt everything from step 1."""
+    world.wi.state = WorkItem.State.IN_PROGRESS
+    world.wi.save(update_fields=["state"])
+
+    out = ba.park_build_core(_inp(world), "merge failed: 403 branch protection", "merge_build_pr")
+
+    world.run.refresh_from_db()
+    world.wi.refresh_from_db()
+    assert out["status"] == "parked"
+    assert world.run.status == Run.Status.STALLED             # recoverable, not FAILED
+    assert world.run.outputs["resumable"] is True
+    assert world.run.outputs["resume_from"] == "merge_build_pr"
+    # The reason is classified (S.No 139) — the user reads plain language, not a raw 403.
+    assert "branch protection" in world.run.outputs["error"]
+    assert "403" not in world.run.outputs["error"]
+    # The WorkItem is untouched — it is already in_progress, which stays true for a paused build.
+    assert world.wi.state == WorkItem.State.IN_PROGRESS
+
+
+def test_park_build_is_idempotent(world):
+    ba.park_build_core(_inp(world), "boom", "open_build_pr")
+    ba.park_build_core(_inp(world), "boom", "open_build_pr")     # Temporal may retry
+    world.run.refresh_from_db()
+    assert world.run.status == Run.Status.STALLED
+    assert world.run.outputs["resume_from"] == "open_build_pr"
+
+
+def test_resume_build_unparks_and_clears_the_markers(world):
+    """S.No 157: resuming puts the run back to RUNNING and clears the park markers, so the
+    console stops offering Resume / showing a stale failure once it is moving again."""
+    ba.park_build_core(_inp(world), "merge failed: 403", "merge_build_pr")
+
+    out = ba.resume_build_core(_inp(world))
+
+    world.run.refresh_from_db()
+    assert out["status"] == "resumed" and out["resume_from"] == "merge_build_pr"
+    assert world.run.status == Run.Status.RUNNING
+    assert "error" not in world.run.outputs and "resumable" not in world.run.outputs
+    assert "resume_from" not in world.run.outputs
+
+
 # ── S.No 136: never merge a stale/conflicted branch as-is ────────────
 def test_merge_updates_a_behind_branch_then_merges(world, monkeypatch):
     """The base moved since the branch was cut → mergeable_state='behind' (no conflict). The
@@ -239,8 +343,6 @@ def test_merge_updates_a_behind_branch_then_merges(world, monkeypatch):
 
     assert fake.update_branch_called is True     # updated against base before merging
     assert out["merged"] is True and fake.merged is True
-    world.run.refresh_from_db()
-    assert world.run.status == Run.Status.COMPLETED
 
 
 def test_merge_conflict_fails_clean_not_raw_405(world, monkeypatch):
@@ -280,6 +382,117 @@ def test_is_merge_conflict_detects_typed_cause_and_message():
     assert is_merge_conflict(SimpleNamespace(cause=RuntimeError("merge conflict: resolve it")))
     assert is_merge_conflict(SimpleNamespace(cause=RuntimeError("some other error"))) is False
     assert is_merge_conflict(RuntimeError("plain error")) is False
+
+
+def test_remediation_description_reads_as_a_real_brief(world):
+    """S.No 147: the remediation work item was created with a title and NO description at all —
+    every word of the reviewer's explanation was discarded. It must now carry the problem, the
+    fix, and where it is."""
+    finding = ba.Finding(
+        rem="REM-C1", severity="critical", title="Search filter is open to SQL injection",
+        file="api/search.py", line=42, category="Security — A03 Injection",
+        problem="The user's search text is pasted straight into the SQL statement.",
+        fix="Pass the search text as a query parameter.",
+    )
+
+    body = ba._remediation_description(finding)
+
+    assert "must be fixed before the code can merge" in body     # plain-language severity lead
+    assert "The user's search text is pasted straight into the SQL statement." in body
+    assert "Pass the search text as a query parameter." in body
+    assert "`api/search.py` line 42" in body                     # the technical nuance is kept
+    assert "Security — A03 Injection" in body and "REM-C1" in body
+
+
+def test_remediation_description_is_honest_when_the_review_gave_no_detail():
+    """A title-only finding must not imply a fuller brief that doesn't exist."""
+    body = ba._remediation_description(ba.Finding(rem="REM-W1", severity="warning", title="t"))
+    assert "did not provide further detail" in body
+    assert "should be fixed" in body and "REM-W1" in body
+
+
+def test_review_opens_remediation_items_with_a_readable_description(world, monkeypatch):
+    """S.No 147 end-to-end: the child work item the board shows carries the reviewer's words."""
+    _use_fake_codehost(monkeypatch, _FakeCodeHost())
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+    class _Provider:
+        def review(self, inp, pr_ref):
+            return [ba.Finding(rem="REM-C1", severity="critical", title="SQL injection in search",
+                               file="api/search.py", line=42, category="Security",
+                               problem="Input is concatenated into the query.",
+                               fix="Use a parameterized query.")]
+
+    ba.set_review_provider(_Provider())
+    try:
+        ba.run_code_review_core(_inp(world))
+    finally:
+        ba.set_review_provider(None)
+
+    child = WorkItem.objects.get(parent_id=world.wi.id, type=WorkItem.Type.TASK)
+    assert child.title == "SQL injection in search"
+    assert "Input is concatenated into the query." in child.description
+    assert "Use a parameterized query." in child.description
+
+
+def test_remediation_brief_gives_agent_07_the_review_detail(world):
+    """S.No 147: agent 07 was asked to fix each finding from its one-line title — the reviewer's
+    problem/fix detail never reached its manifest."""
+    section = ba._render_remediation_section([
+        {"rem": "REM-C1", "severity": "critical", "title": "SQL injection in search",
+         "file": "api/search.py", "line": 42,
+         "description": "**What's wrong**\n\nInput is concatenated.\n\n**What to do**\n\nUse a "
+                        "parameterized query."},
+    ])
+    assert "REM-C1" in section and "api/search.py:42" in section
+    assert "Input is concatenated." in section
+    assert "Use a parameterized query." in section
+
+
+def test_display_name_prefers_the_title_over_the_branch_slug():
+    """S.No 151: artifact + PR names must show the task's TITLE. work_item_key is a branch slug
+    and degrades to 'WI-<uuid8>' when the item has no SoR id — meaningless to a reader."""
+    from orchestration.build_types import display_name
+
+    assert display_name(SimpleNamespace(work_item_title="Add login",
+                                        work_item_key="WI-85bb350f")) == "Add login"
+    # No title (or a blank/whitespace one) → fall back to the key rather than an empty name.
+    assert display_name(SimpleNamespace(work_item_title="   ", work_item_key="TASK-003")) \
+        == "TASK-003"
+    assert display_name(SimpleNamespace(work_item_title="", work_item_key="TASK-003")) \
+        == "TASK-003"
+
+
+def test_build_artifacts_and_pr_are_named_with_the_task_title(world, monkeypatch):
+    """S.No 151: the platform's own fallback naming used the branch slug, so users saw
+    'Code Review — WI-85bb350f' instead of the task they triggered. The PR title leaked it to
+    GitHub too. All three now read the title."""
+    codehost = _FakeCodeHost()
+    _use_fake_codehost(monkeypatch, codehost)
+    inp = _inp(world)
+    inp.work_item_title = "Add login"
+    inp.work_item_key = "WI-85bb350f"
+
+    ba.open_build_pr_core(inp, BuildReport(status="ok", branch="feature/x", head_sha="abc",
+                                           changed_files=["a.py"]))
+
+    art = Artifact.objects.get(run_id=world.run.id, type="code")
+    assert art.title == "Code — Add login"
+    assert codehost.pr_title == "Add login: build"        # what a human sees in GitHub
+    assert "WI-85bb350f" in codehost.pr_body              # the key still identifies the branch
+
+
+def test_is_empty_build_detects_typed_cause_and_message():
+    """S.No 157: an EMPTY BUILD must never be parked for a Resume — the agent produced no changes,
+    so resuming would fail identically forever. The workflow tells it apart from a resumable error
+    with is_empty_build, which (like is_merge_conflict) catches the typed ApplicationError
+    (type='EmptyBuild', set by open_build_pr_core) and falls back to the message text."""
+    from orchestration.build_types import is_empty_build
+
+    assert is_empty_build(SimpleNamespace(cause=SimpleNamespace(type="EmptyBuild"))) is True
+    assert is_empty_build(SimpleNamespace(cause=RuntimeError("empty build: no commits between")))
+    assert is_empty_build(SimpleNamespace(cause=RuntimeError("merge conflict"))) is False
+    assert is_empty_build(RuntimeError("GitHub 403 branch protection")) is False
 
 
 def test_failure_reason_unwraps_activity_error_cause():

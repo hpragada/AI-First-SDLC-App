@@ -64,6 +64,13 @@ class FigmaDesignSource:
         self._default_file_key = default_file_key
         self._rest = FigmaRest(config, transport)
 
+    def ping(self) -> str:
+        """Live reachability + auth check (Bugs S.No 156): who is this token? Cheap, read-only,
+        and touches no design file."""
+        me = self._rest.request("GET", "/v1/me") or {}
+        who = me.get("handle") or me.get("email") or "the account"
+        return f"Signed in to Figma as {who}."
+
     def _file_key(self, file_key: str | None) -> str:
         file_key = file_key or self._default_file_key
         if not file_key:

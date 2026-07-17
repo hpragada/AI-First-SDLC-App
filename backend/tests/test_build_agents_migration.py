@@ -193,6 +193,32 @@ def test_parse_findings_maps_severities_and_synthesizes_rem_ids():
     assert by_rem["REM-S1"].severity == "suggestion"
 
 
+def test_parse_findings_carries_the_reviewers_problem_fix_and_category():
+    """S.No 147: parse_findings silently DROPPED problem/fix/category, so the reviewer's
+    explanation could never reach the remediation work item no matter how well 08 wrote it."""
+    text = """```json
+{"status": "CHANGES_REQUIRED", "findings": [
+  {"rem": "REM-C1", "severity": "critical", "title": "Search filter is open to SQL injection",
+   "file": "api/search.py", "line": 42, "category": "Security — A03 Injection",
+   "problem": "The user's search text is pasted straight into the SQL statement.",
+   "fix": "Pass the search text as a query parameter."}
+]}
+```"""
+    f = parse_findings(text)[0]
+    assert f.problem == "The user's search text is pasted straight into the SQL statement."
+    assert f.fix == "Pass the search text as a query parameter."
+    assert f.category == "Security — A03 Injection"
+
+
+def test_parse_findings_tolerates_a_finding_with_no_detail():
+    """A finding that omits problem/fix must still parse (empty strings, not a crash) — the
+    remediation item then says so plainly rather than implying a fuller brief."""
+    f = parse_findings(
+        '```json\n{"status": "CHANGES_REQUIRED", "findings": ['
+        '{"rem": "REM-W1", "severity": "warning", "title": "t"}]}\n```')[0]
+    assert f.problem == "" and f.fix == "" and f.category == ""
+
+
 def test_parse_findings_clean_review_returns_empty():
     assert parse_findings('```json\n{"status": "APPROVED", "findings": []}\n```') == []
     assert parse_findings("no json block here") == []

@@ -49,7 +49,8 @@ def release_takeover(*, tenant_id: str, work_item_id: str, actor: str = "develop
     return {"work_item_id": str(work_item_id), "takeover": False}
 
 
-def _default_abandon_sender(workflow_id: str) -> None:
+def _signal_sender(workflow_id: str, signal_name: str) -> None:
+    """Send one signal to a live workflow (the seam tests substitute)."""
     import asyncio
 
     from django.conf import settings
@@ -60,9 +61,17 @@ def _default_abandon_sender(workflow_id: str) -> None:
             settings.TEMPORAL_HOST, namespace=settings.TEMPORAL_NAMESPACE
         )
         handle = client.get_workflow_handle(workflow_id)
-        await handle.signal("abandon_run")
+        await handle.signal(signal_name)
 
     asyncio.run(_send())
+
+
+def _default_abandon_sender(workflow_id: str) -> None:
+    _signal_sender(workflow_id, "abandon_run")
+
+
+def _default_resume_sender(workflow_id: str) -> None:
+    _signal_sender(workflow_id, "resume_run")
 
 
 def abandon_stalled_run(*, tenant_id: str, run_id: str, signal_sender=None) -> dict:
@@ -91,3 +100,46 @@ def abandon_stalled_run(*, tenant_id: str, run_id: str, signal_sender=None) -> d
                     "note": "no live workflow to abandon"}
         raise
     return {"run_id": str(run_id), "abandoned": True}
+
+
+class ResumeError(Exception):
+    """The run cannot be resumed (not parked, or nothing left to resume)."""
+
+
+def resume_stalled_run(*, tenant_id: str, run_id: str, signal_sender=None) -> dict:
+    """Resume a run parked by an error, from the step that failed (Bugs S.No 157).
+
+    Before, any mid-run error ended the workflow terminally, so the only way forward was a whole
+    new run from step 1 — re-doing the expensive build/phase. A parked run's workflow is still
+    ALIVE and waiting on this signal, so resuming picks up at the failed step and keeps everything
+    already done (the build, the branch, the PR).
+
+    Only ever signals a genuinely parked-by-error run: STALLED **and** flagged `outputs.resumable`
+    by park_build/park_run. That flag is what distinguishes it from an S.No 89 report-timeout park,
+    which is not waiting on `resume_run` and whose recovery is the takeover path instead."""
+    from apps.runs.models import Run
+
+    signal_sender = signal_sender or _default_resume_sender
+    with tenant_context(tenant_id):
+        run = Run.objects.filter(id=run_id, tenant_id=tenant_id).first()
+        if run is None:
+            raise ResumeError(f"run {run_id} not found in tenant")
+        outputs = run.outputs or {}
+        if run.status != Run.Status.STALLED or not outputs.get("resumable"):
+            raise ResumeError(
+                "this run is not paused at a resumable error, so there is nothing to resume"
+            )
+        if not run.temporal_workflow_id:
+            raise ResumeError("this run has no live workflow to resume")
+        workflow_id, resume_from = run.temporal_workflow_id, outputs.get("resume_from", "")
+    try:
+        signal_sender(workflow_id)
+    except Exception as exc:  # noqa: BLE001
+        # A workflow that has since closed can't be resumed — say so plainly rather than 500.
+        if "already completed" in str(exc).lower() or "not found" in str(exc).lower():
+            raise ResumeError(
+                "this run's workflow is no longer running, so it can't be resumed — re-trigger "
+                "the phase instead"
+            ) from exc
+        raise
+    return {"run_id": str(run_id), "resumed": True, "resume_from": resume_from}

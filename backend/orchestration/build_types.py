@@ -18,6 +18,11 @@ class BuildInput:
     work_item_key: str          # branch name + run prompt
     repo: str                   # "owner/name"
     base: str                   # base branch the worktree forks from
+    # The work item's human title, for anything a PERSON reads: artifact titles and the PR title
+    # (Bugs S.No 151). Never use work_item_key for display — it is a branch slug, and when the
+    # item has no SoR id it falls back to "WI-<uuid8>", which is meaningless to a reader. Passed
+    # in on the input (not read from the DB inside an activity) to keep activities deterministic.
+    work_item_title: str = ""
     phase: str = "implementation"
     gate_type: str = "merge_gate"
     required_role: str = "reviewer"      # D6: the merge gate is a reviewer's call
@@ -60,6 +65,28 @@ def failure_reason(exc) -> str:
     `str(ActivityError)` returns. Without this the classifier and the S.No 136 merge-conflict
     message never reach the user. Django-free so the workflow sandbox can import it."""
     return str(getattr(exc, "cause", None) or exc)
+
+
+def display_name(inp) -> str:
+    """What a PERSON should see for this work item (Bugs S.No 151): its title, falling back to the
+    key only when there is no title. Artifact names and the PR title used work_item_key, which is a
+    BRANCH SLUG — and with no SoR id it degrades to "WI-85bb350f", so users saw an opaque uuid
+    instead of the task they triggered. (Agent-authored artifacts already read well: the platform
+    registers don't-recreate and never overwrites their title — this fixes the platform's own
+    fallback naming.) Django-free so the workflow sandbox can import it."""
+    return (getattr(inp, "work_item_title", "") or "").strip() or inp.work_item_key
+
+
+def is_empty_build(exc) -> bool:
+    """True when an ActivityError was an EMPTY BUILD — the agent produced no changes, so there is
+    nothing to open a PR for (raised by open_build_pr_core). This is NOT resumable (Bugs S.No 157):
+    parking it for a retry would fail identically forever, because no amount of waiting makes a
+    diff appear. It stays a terminal, clearly-explained failure. Same detection shape as
+    is_merge_conflict: prefer the structured ApplicationError `type`, fall back to the message."""
+    cause = getattr(exc, "cause", None)
+    if getattr(cause, "type", "") == "EmptyBuild":
+        return True
+    return "empty build" in failure_reason(exc).lower()
 
 
 def is_merge_conflict(exc) -> bool:

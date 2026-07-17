@@ -204,6 +204,81 @@ def test_fail_run_core(world):
     assert run.status == Run.Status.FAILED and run.outputs["error"] == "boom"
 
 
+# ── park / resume on error (Bugs S.No 157) ──────────────────────────
+def test_park_run_core_records_the_reason_and_stays_non_terminal(world):
+    """S.No 157: an error PARKS the run (STALLED, not FAILED) with a reason + the step to resume
+    from. Recording the reason also closes the silent-failure gap: verify_writes used to crash
+    the workflow before any fail_run, so nothing ever wrote run.outputs.error and the console
+    showed a failed run with no reason at all."""
+    out = activities.park_run_core(world["inp"], "write-completeness check failed: no artifact",
+                                   "verify_writes")
+    run = Run.objects.get(id=world["run_id"])
+    assert run.status == Run.Status.STALLED            # non-terminal — resumable
+    assert run.outputs["error"] == "write-completeness check failed: no artifact"
+    assert run.outputs["resume_from"] == "verify_writes" and run.outputs["resumable"] is True
+    assert out["status"] == "parked"
+    # Idempotent — Temporal may retry the activity.
+    activities.park_run_core(world["inp"], "write-completeness check failed: no artifact",
+                             "verify_writes")
+    assert Run.objects.get(id=world["run_id"]).outputs["resumable"] is True
+
+
+def test_resume_run_state_core_unparks_and_clears_the_markers(world):
+    """S.No 157: resuming un-parks the run and clears the park markers, so the console stops
+    showing a stale failure once the run is moving again."""
+    activities.park_run_core(world["inp"], "boom", "verify_writes")
+    out = activities.resume_run_state_core(world["inp"])
+    run = Run.objects.get(id=world["run_id"])
+    assert run.status == Run.Status.RUNNING
+    assert "error" not in run.outputs and "resume_from" not in run.outputs
+    assert "resumable" not in run.outputs
+    assert out["resume_from"] == "verify_writes"
+
+
+def test_resume_stalled_run_signals_only_a_run_parked_at_an_error(world):
+    """S.No 157: resume fires only for a run parked at a resumable ERROR. A running run, or a
+    companion-offline park (S.No 89 — STALLED but NOT waiting on `resume_run`), must be refused
+    with a plain-language reason rather than a stray signal to a workflow that isn't listening."""
+    from orchestration.takeover import ResumeError, resume_stalled_run
+
+    sent: list[str] = []
+    sender = lambda wf: sent.append(wf)  # noqa: E731
+
+    # Not parked (PENDING) -> refused.
+    with pytest.raises(ResumeError, match="nothing to resume"):
+        resume_stalled_run(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                           signal_sender=sender)
+
+    # Parked by a report TIMEOUT (S.No 89): STALLED but not flagged resumable -> still refused.
+    activities.mark_phase_takeover_core(world["inp"])
+    with pytest.raises(ResumeError, match="nothing to resume"):
+        resume_stalled_run(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                           signal_sender=sender)
+    assert sent == []
+
+    # Parked by an ERROR -> signals the run's live workflow to resume.
+    activities.park_run_core(world["inp"], "boom", "verify_writes")
+    out = resume_stalled_run(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                             signal_sender=sender)
+    assert out["resumed"] is True and out["resume_from"] == "verify_writes"
+    assert sent == ["wf-x"]
+
+
+def test_resume_stalled_run_explains_a_workflow_that_already_closed(world):
+    """S.No 157: a parked run whose workflow has since closed can't be resumed — say so plainly
+    instead of 500ing on the signal error."""
+    from orchestration.takeover import ResumeError, resume_stalled_run
+
+    activities.park_run_core(world["inp"], "boom", "verify_writes")
+
+    def _gone(_wf):
+        raise RuntimeError("workflow execution already completed")
+
+    with pytest.raises(ResumeError, match="no longer running"):
+        resume_stalled_run(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                           signal_sender=_gone)
+
+
 # ── report service ──────────────────────────────────────────────────
 def test_report_phase_records_and_signals(world):
     from orchestration.phase_report import report_phase
@@ -498,12 +573,18 @@ async def test_workflow_companion_branch_approved(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_workflow_fails_the_run_when_the_phase_document_is_unreviewable(monkeypatch):
-    """Testing-phase bug 4: Rule 11 must block the gate on a run with nothing to review — and
-    fail it WITH the reason. Previously verify's error escaped `run`, killing the workflow
-    without ever marking the run: stuck 'running', no gate, no explanation. The reason must
-    survive Temporal's ActivityError wrapper (S.No 139) or the console shows only "Activity
-    task failed"."""
+async def test_workflow_parks_and_never_gates_an_unreviewable_phase_document(monkeypatch):
+    """Testing-phase bug 4 × S.No 157 — the two fixes compose.
+
+    Rule 11 now rejects an EMPTY phase document (bug 4), and a Rule 11 failure now PARKS rather
+    than crashing the workflow (S.No 157). Together: a run whose engine returned no final text
+    never reaches a gate, the real reason survives Temporal's ActivityError wrapper (S.No 139)
+    so a human sees WHY, and abandoning ends it terminally.
+
+    Note the Resume affordance is futile for this particular reason — no amount of waiting makes
+    the engine's missing text appear — exactly as `is_empty_build` is terminal on the build side.
+    Classifying it that way is a follow-up, not this merge's call.
+    """
     from temporalio.worker import Worker
 
     from orchestration.workflows import AgentRunWorkflow
@@ -517,12 +598,18 @@ async def test_workflow_fails_the_run_when_the_phase_document_is_unreviewable(mo
         raise activities.WriteCompletenessError(
             "run r1 produced an EMPTY prd document — the engine returned no final text")
 
+    def _park(inp, reason, resume_from):
+        calls.append("park")
+        reasons.append(reason)
+        return {"status": "parked", "resume_from": resume_from}
+
     def _fail(inp, reason):
         calls.append("fail")
         reasons.append(reason)
         return {"status": "failed"}
 
     monkeypatch.setattr(activities, "verify_write_completeness_core", _verify)
+    monkeypatch.setattr(activities, "park_run_core", _park)
     monkeypatch.setattr(activities, "fail_run_core", _fail)
 
     client = await _client()
@@ -534,12 +621,14 @@ async def test_workflow_fails_the_run_when_the_phase_document_is_unreviewable(mo
                 AgentRunWorkflow.run, _companion_input(), id=f"wf-{uuid.uuid4()}", task_queue=tq)
             await handle.signal(AgentRunWorkflow.phase_reported,
                                 PhaseReport(status="ok", body=""))
+            # The run parks instead of dying, so it is still signallable — a human ends it.
+            await handle.signal(AgentRunWorkflow.abandon_run)
             result = await handle.result()
 
-    assert result["status"] == "incomplete"
-    # No gate was opened and nothing was published — the run ends at verify.
-    assert calls == ["compose", "dispatch", "register", "verify", "fail"]
-    assert "EMPTY prd document" in reasons[0]      # the real cause reaches the run/console
+    assert result["status"] == "failed"
+    # Parked at verify, then abandoned: no gate opened, nothing published.
+    assert calls == ["compose", "dispatch", "register", "verify", "park", "fail"]
+    assert all("EMPTY prd document" in r for r in reasons)   # the cause reaches the human
 
 
 @pytest.mark.asyncio

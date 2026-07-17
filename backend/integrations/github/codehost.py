@@ -37,6 +37,14 @@ class GithubCodeHost:
         self._default_repo = default_repo
         self._rest = GithubRest(config, transport)
 
+    def ping(self) -> str:
+        """Live reachability + auth check (Bugs S.No 156): who is this token? Cheap, read-only,
+        and touches no repository — "Test connection" previously only proved the connector was
+        constructible, so an expired or wrong-scope token still reported OK."""
+        me = self._rest.request("GET", "/user") or {}
+        who = me.get("login") or "the account"
+        return f"Signed in to GitHub as {who}."
+
     def _repo(self, repo: str | None) -> str:
         repo = repo or self._default_repo
         if not repo:

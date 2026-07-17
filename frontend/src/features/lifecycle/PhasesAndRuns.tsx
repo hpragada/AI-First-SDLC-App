@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Banner, Button, EmptyState, Field, Modal, Panel, Select, Spinner, Table } from "../../components/ui";
+import { Badge, Banner, Button, Combobox, EmptyState, Field, Modal, Panel, Select, Spinner, Table } from "../../components/ui";
 import { useRunners } from "../identity/hooks";
 import { roleLabel } from "../identity/roles";
 import { phaseLabel, statusLabel } from "./phases";
@@ -140,20 +140,20 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
                       <option>WI-540 · Verify Stripe signing secret (Task)</option>
                     </Select>
                   ) : (
-                    <Select
+                    // Searchable (Bugs S.No 150): a project can have dozens of work items, so
+                    // scrolling a plain <select> to find one is painful — type to filter instead.
+                    <Combobox
+                      id="work-item-picker"
                       value={activeWorkItemId ?? ""}
-                      onChange={(e) => setSelectedWorkItemId(e.target.value)}
-                    >
-                      {workItems.isLoading && <option disabled>Loading…</option>}
-                      {(workItems.data ?? []).map((wi) => (
-                        <option key={wi.id} value={wi.id}>
-                          {wi.key || wi.id.slice(0, 8)} · {wi.title || wi.type}
-                        </option>
-                      ))}
-                      {!workItems.isLoading && (workItems.data?.length ?? 0) === 0 && (
-                        <option disabled>No work items yet</option>
-                      )}
-                    </Select>
+                      onChange={setSelectedWorkItemId}
+                      disabled={workItems.isLoading}
+                      placeholder={workItems.isLoading ? "Loading…" : "Search work items…"}
+                      emptyText="No work items match"
+                      options={(workItems.data ?? []).map((wi) => ({
+                        value: wi.id,
+                        label: `${wi.key || wi.id.slice(0, 8)} · ${wi.title || wi.type}`,
+                      }))}
+                    />
                   )}
                 </Field>
                 <span

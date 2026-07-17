@@ -10,6 +10,7 @@ import {
   useIntegrationsCatalog,
   usePatchIntegration,
   useTestConnection,
+  useTestCredentials,
 } from "./hooks";
 
 // S-12 view states: empty · filled (secret configured) · testing · success · fail.
@@ -22,6 +23,7 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
   const createIntegration = useCreateIntegration();
   const patchIntegration = usePatchIntegration();
   const testConnection = useTestConnection();
+  const testCredentials = useTestCredentials();
 
   const capEntry = catalog.data?.find((c) => c.capability === capability);
   const vendors: ConnectorVendor[] = capEntry?.vendors ?? [];
@@ -33,6 +35,9 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
     () => ({ ...(existing?.binding as Record<string, string> | undefined) }),
   );
   const [secrets, setSecrets] = useState<Record<string, string>>({});
+  // Which stored secrets the admin has chosen to replace (Bugs S.No 156) — an explicit flag,
+  // because "has the user typed something?" can't decide whether to SHOW the box to type in.
+  const [rotating, setRotating] = useState<Record<string, boolean>>({});
   const [testResult, setTestResult] = useState<{ ok: boolean; detail: string; fix_hint?: string } | null>(null);
   const [saveResult, setSaveResult] = useState<{ ok: boolean; detail: string } | null>(null);
 
@@ -57,7 +62,7 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
 
   const view: ConnectView =
     forceView ??
-    (testConnection.isPending
+    (testConnection.isPending || testCredentials.isPending
       ? "testing"
       : testResult?.ok
         ? "success"
@@ -72,13 +77,21 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
     .every((f) => (binding[f.name] ?? "").trim().length > 0);
   const secretsComplete =
     vendor?.no_secret ||
-    alreadyConfigured ||
     (vendor?.secrets ?? [])
       .filter((f) => f.required)
-      .every((f) => (secrets[f.name] ?? "").trim().length > 0);
+      // A stored secret counts as filled — unless the admin opened it to Replace, in which case
+      // they must actually type the new value (Bugs S.No 156). Save is never blocked just
+      // because a rotation was started and cancelled.
+      .every((f) =>
+        (secrets[f.name] ?? "").trim().length > 0 ||
+        (alreadyConfigured && !rotating[f.name]),
+      );
   const canSave =
     Boolean(vendor) && bindingComplete && secretsComplete && !createIntegration.isPending &&
     !patchIntegration.isPending;
+  // Testable as soon as there's something to test — either credentials typed in now, or a
+  // credential already stored (Bugs S.No 156). No save required.
+  const canTest = canSave;
 
   const onSave = async () => {
     if (!vendor) return;
@@ -90,10 +103,20 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
     );
     try {
       if (savedId) {
+        // Omit `secrets` ENTIRELY when nothing was typed (Bugs S.No 156). Sending an empty
+        // object is not the same as sending nothing: `{}` is not None, so the server re-encrypted
+        // it and wiped the stored token — an admin editing only the project key silently lost
+        // their credential. (The server now ignores an empty object too; both ends are fixed.)
         await patchIntegration.mutateAsync({
           id: savedId,
-          body: { vendor: vendor.slug, binding, secrets: filledSecrets },
+          body: {
+            vendor: vendor.slug,
+            binding,
+            ...(Object.keys(filledSecrets).length > 0 ? { secrets: filledSecrets } : {}),
+          },
         });
+        setRotating({});          // the new value is stored; go back to "Configured ✓"
+        setSecrets({});
       } else {
         const created = await createIntegration.mutateAsync({
           capability,
@@ -113,13 +136,22 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
   };
 
   const onTest = async () => {
+    if (!vendor) return;
     setTestResult(null);
-    if (!savedId) {
-      setSaveResult({ ok: false, detail: "Save the connection first, then test it." });
-      return;
-    }
+    setSaveResult(null);
+    // Bugs S.No 156: you no longer have to save first. With credentials typed in, test them
+    // as-typed (server-side, on a connection that is never persisted); otherwise test what's
+    // already stored for this connection.
+    const typed = Object.fromEntries(
+      Object.entries(secrets).filter(([, v]) => v.trim().length > 0),
+    );
     try {
-      const result = await testConnection.mutateAsync(savedId);
+      const result =
+        savedId && Object.keys(typed).length === 0
+          ? await testConnection.mutateAsync(savedId)
+          : await testCredentials.mutateAsync({
+              capability, vendor: vendor.slug, binding, secrets: typed,
+            });
       setTestResult(result);
     } catch {
       setTestResult({ ok: false, detail: "The connection test could not be run." });
@@ -146,7 +178,14 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
         title={capEntry?.label ?? CAP_LABEL[capability]}
         footer={
           <>
-            <Button variant="secondary" onClick={onTest} disabled={view === "testing" || !savedId}>
+            {/* No longer gated on !savedId (Bugs S.No 156): credentials can be verified before
+                they're committed to the tenant. Needs a vendor + its required fields filled. */}
+            <Button
+              variant="secondary"
+              onClick={onTest}
+              disabled={view === "testing" || !canTest}
+              aria-disabled={view === "testing" || !canTest}
+            >
               {view === "testing" ? "Testing…" : testResult ? "Re-test" : "Test connection"}
             </Button>
             <Button variant="primary" onClick={onSave} disabled={!canSave} aria-disabled={!canSave}>
@@ -220,18 +259,44 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
                   label={f.label}
                   help={alreadyConfigured ? "Stored securely. Enter a new value only to rotate it." : undefined}
                 >
-                  {alreadyConfigured && !(secrets[f.name] ?? "") ? (
+                  {/* Bugs S.No 156: this used to key off `secrets[f.name]` being non-empty —
+                      but the only control that could set it was the input this condition hid,
+                      so the field could never be reached and a saved token was un-editable.
+                      An explicit Replace button breaks that deadlock. */}
+                  {alreadyConfigured && !rotating[f.name] ? (
                     <div className="u-row" style={{ gap: "var(--space-2)" }}>
                       <Input type="password" value="configured" disabled style={{ flex: 1 }} />
                       <Badge variant="done">Configured ✓</Badge>
+                      <Button
+                        variant="secondary"
+                        onClick={() => setRotating((r) => ({ ...r, [f.name]: true }))}
+                      >
+                        Replace
+                      </Button>
                     </div>
                   ) : (
-                    <Input
-                      type={f.type === "password" ? "password" : "text"}
-                      placeholder={f.placeholder}
-                      value={secrets[f.name] ?? ""}
-                      onChange={(e) => setSecrets((s) => ({ ...s, [f.name]: e.target.value }))}
-                    />
+                    <div className="u-row" style={{ gap: "var(--space-2)" }}>
+                      <Input
+                        type={f.type === "password" ? "password" : "text"}
+                        placeholder={f.placeholder}
+                        autoFocus={Boolean(rotating[f.name])}
+                        value={secrets[f.name] ?? ""}
+                        onChange={(e) => setSecrets((s) => ({ ...s, [f.name]: e.target.value }))}
+                        style={{ flex: 1 }}
+                      />
+                      {rotating[f.name] && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            // Cancel the rotation: drop what was typed and keep the stored value.
+                            setRotating((r) => ({ ...r, [f.name]: false }));
+                            setSecrets((s) => ({ ...s, [f.name]: "" }));
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                    </div>
                   )}
                 </Field>
               ))}

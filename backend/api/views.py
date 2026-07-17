@@ -30,6 +30,7 @@ from apps.integrations.models import DriftRecord, IntegrationConnection, SourceD
 from apps.integrations.services import (
     IntegrationError,
     create_integration,
+    test_credentials,
     test_integration_connection,
     update_integration,
 )
@@ -80,10 +81,12 @@ from integrations.onboarding import (
 from integrations.preview import read_artifact_preview
 from integrations.types import CapabilityUnavailable
 from orchestration.takeover import (
+    ResumeError,
     TakeoverError,
     abandon_stalled_run,
     release_takeover,
     request_takeover,
+    resume_stalled_run,
 )
 from orchestration.trigger import ActiveRunError, TriggerError, trigger_build, trigger_phase
 
@@ -101,6 +104,7 @@ from .serializers import (
     GateDecisionSerializer,
     IntegrationCreateSerializer,
     IntegrationSerializer,
+    IntegrationTestCredentialsSerializer,
     IntegrationUpdateSerializer,
     InvitationCreateSerializer,
     InvitationSerializer,
@@ -727,10 +731,24 @@ class IntegrationViewSet(
 
     @action(detail=True, methods=["post"], url_path="test-connection")
     def test_connection(self, request, pk=None):
-        """Validate the chosen vendor is wired + configured (no live network call yet — see
-        `apps.integrations.services.test_integration_connection`)."""
+        """Probe a SAVED connection live and record the outcome on `health`."""
         conn = self.get_object()
         return Response(test_integration_connection(conn))
+
+    @action(detail=False, methods=["post"], url_path="test-credentials")
+    def test_credentials_action(self, request):
+        """Test credentials BEFORE saving them (Bugs S.No 156).
+
+        `test-connection` is detail-routed, so it structurally requires a saved row — which is
+        why an admin had to commit credentials to the tenant before they could find out the
+        token was wrong. This probes an in-memory connection that is never saved."""
+        ser = IntegrationTestCredentialsSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        tenant = Tenant.objects.get(id=self.tenant_id)
+        try:
+            return Response(test_credentials(tenant=tenant, **ser.validated_data))
+        except IntegrationError as exc:
+            return Response({"detail": str(exc)}, status=exc.status)
 
     @action(detail=False, methods=["get"], url_path="catalog")
     def catalog(self, request):
@@ -1140,6 +1158,20 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
                 )
             abandon_stalled_run(tenant_id=self.tenant_id, run_id=str(run.id))
         except TakeoverError as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(out)
+
+    @action(detail=True, methods=["post"], url_path="resume")
+    def resume(self, request, pk=None):
+        """Resume a run parked at an error, from the step that failed (Bugs S.No 157).
+
+        The counterpart to "Take over": takeover ends a parked run terminally, resume continues
+        it. Everything already done (the build, the branch, the PR) is kept — only the failed
+        step is retried, so the user never re-runs a whole phase because of one error."""
+        run = self.get_object()
+        try:
+            out = resume_stalled_run(tenant_id=self.tenant_id, run_id=str(run.id))
+        except ResumeError as exc:
             raise ValidationError(str(exc)) from exc
         return Response(out)
 
