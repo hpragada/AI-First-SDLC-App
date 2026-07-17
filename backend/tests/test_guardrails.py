@@ -56,6 +56,30 @@ def test_scan_text_skips_placeholders_and_env_refs():
     assert scan_text("x = 1\nname = 'hello world'") == []
 
 
+@pytest.mark.parametrize("line", [
+    # the exact WI-32 false positive + the common hyphen/underscore/space variants that a bare
+    # `changeme` token missed (Bugs S.No 143).
+    "JWT_SECRET=change-me-minimum-32-characters-long",
+    "API_KEY=change_me_to_a_real_value_please_now",
+    "CLIENT_SECRET=replace-me-with-a-real-secret-here",
+    "TOKEN=secret-goes-here-replace-before-deploy",
+])
+def test_scan_text_recognizes_hyphenated_placeholders(line):
+    assert scan_text(line, path="backend/app/config.py") == []
+
+
+def test_template_files_skip_entropy_heuristic_but_keep_key_patterns():
+    # A committed template holds illustrative placeholders by design — the entropy heuristic is
+    # skipped there (S.No 143), so a placeholder-shaped value is NOT flagged...
+    assert scan_text(f'API_KEY={_RANDOM}', path="backend/.env.example") == []
+    assert scan_text("PWD=Zk9xQ2mL7vRt4Wp1Ns6Yb3Hd0Fj8Gc5", path="config.yaml.template") == []
+    # ...but a real key SHAPE (AWS/PEM/token) is still caught even inside a template file.
+    assert {f.kind for f in scan_text(f"AWS={_AWS}", path=".env.example")} == {"aws_access_key_id"}
+    assert scan_text(f"GH={_GH}", path="app/config.sample")[0].kind == "github_token"
+    # a NON-template real source file still gets the full entropy heuristic (no weakening).
+    assert scan_text(f'api_key = "{_RANDOM}"', path="backend/app/config.py")
+
+
 def test_scan_worktree_reads_changed_file_content(tmp_path, monkeypatch):
     (tmp_path / "new.py").write_text(f'KEY = "{_AWS}"\n', encoding="utf-8")
     (tmp_path / "clean.py").write_text("x = 1\n", encoding="utf-8")

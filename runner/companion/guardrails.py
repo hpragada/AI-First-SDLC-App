@@ -64,11 +64,28 @@ _ASSIGNMENT = re.compile(
 )
 _ENTROPY_MIN = 3.5
 _ENTROPY_LEN_MIN = 20
-# Obvious non-secrets that trip the entropy heuristic — don't cry wolf on placeholders.
+# Obvious non-secrets that trip the entropy heuristic — don't cry wolf on placeholders. The
+# `change[-_ ]?me` / `replace[-_ ]?me` alternatives cover the very common hyphenated env-template
+# convention (e.g. `change-me-minimum-32-characters-long`) that a bare `changeme` token missed.
 _PLACEHOLDERS = re.compile(
-    r"(?i)(?:x{8,}|0{8,}|your[_-]|example|placeholder|changeme|<[^>]+>|\$\{?[A-Za-z_]+\}?"
+    r"(?i)(?:x{8,}|0{8,}|your[_-]|example|placeholder|change[-_ ]?me|replace[-_ ]?me"
+    r"|to[-_ ]?be[-_ ]?(?:changed|set|replaced|filled|generated)|secret[-_ ]?(?:here|goes)"
+    r"|dummy|sample|redacted|<[^>]+>|\$\{?[A-Za-z_]+\}?"
     r"|os\.environ|getenv|process\.env)"
 )
+
+# Committed *template* files are meant to hold illustrative placeholders, so the generic entropy
+# heuristic (which guesses at "custom" secrets) is skipped for them — a placeholder there is by
+# design, not a leak. The high-precision `_PATTERNS` (AKIA…, ghp_…, PEM, JWT) STILL run, so a
+# real key shape pasted into an example file is still caught.
+_TEMPLATE_SUFFIXES = (".example", ".sample", ".template", ".dist", ".tpl")
+
+
+def _is_template_file(path: str) -> bool:
+    """True for committed placeholder templates (`.env.example`, `config.yaml.template`, …)."""
+    name = (path or "").lower().replace("\\", "/").rsplit("/", 1)[-1]
+    return (name.endswith(_TEMPLATE_SUFFIXES)
+            or ".example." in name or ".sample." in name or ".template." in name)
 
 
 def shannon_entropy(s: str) -> float:
@@ -93,13 +110,16 @@ def scan_text(text: str, *, path: str = "") -> list[SecretFinding]:
     catches custom tokens while skipping obvious placeholders / env-var references."""
     findings: list[SecretFinding] = []
     seen: set[tuple[int, str]] = set()
+    # In a template file the entropy heuristic is skipped (placeholders are expected); the
+    # high-precision format patterns below still run so a real key shape is never missed.
+    is_template = _is_template_file(path)
     for lineno, line in enumerate(text.splitlines(), start=1):
         for kind, pattern in _PATTERNS:
             match = pattern.search(line)
             if match and (lineno, kind) not in seen:
                 seen.add((lineno, kind))
                 findings.append(SecretFinding(kind, path, lineno, _redact(match.group(0))))
-        assignment = _ASSIGNMENT.search(line)
+        assignment = None if is_template else _ASSIGNMENT.search(line)
         if assignment:
             value = assignment.group(1)
             if (
