@@ -7,8 +7,10 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
+    from .build_types import failure_reason
     from .types import AgentRunInput, GateDecision, PhaseReport
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -97,12 +99,25 @@ class AgentRunWorkflow:
                 start_to_close_timeout=timedelta(minutes=30), retry_policy=_RETRY,
             )
         # Rule 11 write-completeness gate-precondition: the phase must have registered its
-        # expected artifact before a human is asked to review. Deterministic -> no retry.
-        await workflow.execute_activity(
-            "verify_writes", args=[inp, [inp.phase]],
-            start_to_close_timeout=timedelta(minutes=1),
-            retry_policy=RetryPolicy(maximum_attempts=1),
-        )
+        # expected artifact, with a body, before a human is asked to review. Deterministic ->
+        # no retry.
+        try:
+            await workflow.execute_activity(
+                "verify_writes", args=[inp, [inp.phase]],
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except ActivityError as exc:
+            # The run has nothing reviewable (missing or empty phase document). Fail it WITH
+            # the reason rather than letting the error escape `run`: an escaped error kills the
+            # workflow without ever marking the run, leaving it stuck 'running' forever — no
+            # gate, no explanation, nothing to act on. Unwrap to the real cause (S.No 139) so
+            # the console shows the Rule 11 message instead of "Activity task failed".
+            await workflow.execute_activity(
+                "fail_run", args=[inp, failure_reason(exc)],
+                start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+            )
+            return {"status": "incomplete", "run_id": inp.run_id}
         await workflow.execute_activity(
             "open_gate", inp,
             start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,

@@ -104,6 +104,49 @@ def _is_pr_ref(ref) -> bool:
     return bool(ref) and "repo" in ref and "number" in ref
 
 
+def import_build_test_results_core(inp: BuildInput, report: BuildReport) -> dict:
+    """Feed the build's own worktree suite results into the test loop (D4).
+
+    This is the seam that closes §8's loop: the companion ran the suite in the worktree and
+    reported its JUnit results, and here they become a `TestExecution` + `test_report` and
+    drive the defect loopback (a failing test opens a `defect` child WorkItem; a passing one
+    closes it) and the flaky quarantine.
+
+    Three deliberate bounds:
+      - **Only phases the catalog marks `imports_test_results`** (09b today). §5's loopback is
+        about the TEST phase's failing tests — a red unit test in 07's implementation build
+        fails that build as it always has, without opening defects.
+      - **No results ⇒ no-op.** `import_test_results` refuses an empty set, so a build that ran
+        no tests never registers a green execution nor closes a defect it said nothing about.
+      - **Internal only** (`push_to_sor=False`). Pushing results to Xray is a user-triggered
+        export (team decision 2026-07-07), never an automatic side-effect of a build report.
+
+    Idempotent: `import_test_results` upserts the execution by (run, work_item), so a Temporal
+    retry — or the remediation loop re-reporting — updates the same row rather than duplicating.
+    """
+    from apps.quality.services import import_test_results
+    from apps.registry.catalog import imports_test_results as _phase_imports
+    from apps.registry.models import AgentSpec
+
+    results = list(report.test_results or [])
+    if not results:
+        return {"imported": False, "reason": "no test results reported"}
+
+    with tenant_context(inp.tenant_id):
+        spec = AgentSpec.objects.filter(id=inp.agent_spec_id, tenant_id=inp.tenant_id).first()
+    agent_key = spec.key if spec else ""
+    if not _phase_imports(agent_key):
+        return {"imported": False, "reason": f"phase {agent_key!r} does not import test results"}
+
+    out = import_test_results(
+        tenant_id=inp.tenant_id, project_id=inp.project_id, work_item_id=inp.work_item_id,
+        run_id=inp.run_id, results=results, summary=report.test_summary, push_to_sor=False,
+    )
+    return {"imported": out["status"] != "skipped", "status": out["status"],
+            "defects_opened": out["defects_opened"], "defects_closed": out["defects_closed"],
+            "flaky": out["flaky"]}
+
+
 def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
     """Open the draft PR for the companion-pushed branch and register/reconcile the `code`
     pointer. Idempotent — only an artifact that already carries a real PR ref (repo+number) is
@@ -525,6 +568,11 @@ def open_build_pr_activity(inp: BuildInput, report: BuildReport) -> dict:
     return _boundary(open_build_pr_core, inp, report)
 
 
+@activity.defn(name="import_build_test_results")
+def import_build_test_results_activity(inp: BuildInput, report: BuildReport) -> dict:
+    return _boundary(import_build_test_results_core, inp, report)
+
+
 @activity.defn(name="open_merge_gate")
 def open_merge_gate_activity(inp: BuildInput) -> str:
     return _boundary(open_merge_gate_core, inp)
@@ -573,6 +621,7 @@ def reopen_merge_gate_activity(inp: BuildInput, reason: str) -> dict:
 BUILD_ACTIVITIES = [
     dispatch_build_activity,
     open_build_pr_activity,
+    import_build_test_results_activity,
     run_code_review_activity,
     dispatch_remediation_activity,
     open_merge_gate_activity,

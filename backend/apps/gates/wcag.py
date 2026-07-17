@@ -33,7 +33,7 @@ def wcag_aa_checklist() -> list[dict]:
     ]
 
 
-def conditions_for_phase(phase: str) -> list[dict]:
-    """The control-plane gate conditions for a phase — the WCAG checklist for the design
-    review (PG21), empty for every other phase. Keyed off phase so triggers stay generic."""
+def conditions_for_wcag_phase(phase: str) -> list[dict]:
+    """The WCAG checklist for the design review (PG21), empty for every other phase.
+    Composed with the other phases' conditions in `apps.gates.conditions`."""
     return wcag_aa_checklist() if phase in _WCAG_GATED_PHASES else []

@@ -93,6 +93,65 @@ def test_register_phase_result_backfills_agent_registered_artifact(monkeypatch, 
     assert again.get("idempotent") is True and again["artifact_ids"] == [pre["id"]]
 
 
+def test_phase_artifact_is_never_registered_titleless(monkeypatch, world):
+    """Testing-phase bug 4: the platform registered the phase's own document with title="",
+    so every UI surface fell back to humanizing the bare type — on the very artifact a
+    reviewer opens at the gate. register_artifact's contract says ALWAYS pass a title; the
+    platform must hold itself to what it tells agents."""
+    store = InMemoryObjectStore()
+    monkeypatch.setattr(activities, "get_object_store", lambda: store)
+    WorkItem.objects.filter(id=world["inp"].work_item_id).update(title="Add login")
+
+    out = activities.register_phase_result_core(
+        world["inp"], PhaseReport(status="ok", body="# PRD\nbody"))
+    assert Artifact.objects.get(id=out["artifact_ids"][0]).title == "Prd — Add login"
+
+
+def test_an_agent_registered_phase_artifact_gets_its_title_backfilled(monkeypatch, world):
+    """The agent may register the phase artifact itself (pointer-only). If it left the title
+    blank, the platform names it while attaching the staged body."""
+    from mcp_platform_state import tools
+
+    store = InMemoryObjectStore()
+    monkeypatch.setattr(activities, "get_object_store", lambda: store)
+    WorkItem.objects.filter(id=world["inp"].work_item_id).update(title="Add login")
+    pre = tools.register_artifact(
+        world["tenant_id"], world["project_id"], world["run_id"], "prd", "prd",
+        "internal", "sha256:agent",
+    )
+    activities.register_phase_result_core(
+        world["inp"], PhaseReport(status="ok", body="# PRD\nbody"))
+    assert Artifact.objects.get(id=pre["id"]).title == "Prd — Add login"
+
+
+def test_an_agent_supplied_title_is_kept(monkeypatch, world):
+    """A title the agent chose is better than the platform's fallback — never overwrite it."""
+    from mcp_platform_state import tools
+
+    store = InMemoryObjectStore()
+    monkeypatch.setattr(activities, "get_object_store", lambda: store)
+    pre = tools.register_artifact(
+        world["tenant_id"], world["project_id"], world["run_id"], "prd", "prd",
+        "internal", "sha256:agent", title="PRD — SpendLog MVP",
+    )
+    activities.register_phase_result_core(
+        world["inp"], PhaseReport(status="ok", body="# PRD\nbody"))
+    assert Artifact.objects.get(id=pre["id"]).title == "PRD — SpendLog MVP"
+
+
+def test_an_empty_phase_result_reads_as_a_warning_not_routine_progress(monkeypatch, world):
+    """The console rendered `phase.empty_result` in the same neutral colour as "Phase
+    reported", so a blank phase document looked like normal progress."""
+    from api.serializers import EventSerializer
+    from apps.ledger.models import Event
+
+    store = InMemoryObjectStore()
+    monkeypatch.setattr(activities, "get_object_store", lambda: store)
+    activities.register_phase_result_core(world["inp"], PhaseReport(status="ok", body=""))
+    event = Event.objects.get(tenant_id=world["tenant_id"], action="phase.empty_result")
+    assert EventSerializer(event).data["kind"] == "warn"
+
+
 def test_mark_phase_takeover_core_parks_run_non_terminally(world):
     """Bugs S.No 89: a report-timeout parks the run as STALLED (reconcilable), NOT terminal
     FAILED, and flags the WorkItem for takeover."""
@@ -436,6 +495,51 @@ async def test_workflow_companion_branch_approved(monkeypatch):
             result = await handle.result()
     assert result["status"] == "completed"
     assert calls == ["compose", "dispatch", "register", "verify", "open", "publish", "transition"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_fails_the_run_when_the_phase_document_is_unreviewable(monkeypatch):
+    """Testing-phase bug 4: Rule 11 must block the gate on a run with nothing to review — and
+    fail it WITH the reason. Previously verify's error escaped `run`, killing the workflow
+    without ever marking the run: stuck 'running', no gate, no explanation. The reason must
+    survive Temporal's ActivityError wrapper (S.No 139) or the console shows only "Activity
+    task failed"."""
+    from temporalio.worker import Worker
+
+    from orchestration.workflows import AgentRunWorkflow
+
+    calls: list[str] = []
+    _patch_cores(monkeypatch, calls)
+    reasons: list[str] = []
+
+    def _verify(*args, **kwargs):
+        calls.append("verify")
+        raise activities.WriteCompletenessError(
+            "run r1 produced an EMPTY prd document — the engine returned no final text")
+
+    def _fail(inp, reason):
+        calls.append("fail")
+        reasons.append(reason)
+        return {"status": "failed"}
+
+    monkeypatch.setattr(activities, "verify_write_completeness_core", _verify)
+    monkeypatch.setattr(activities, "fail_run_core", _fail)
+
+    client = await _client()
+    tq = f"test-{uuid.uuid4()}"
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        async with Worker(client, task_queue=tq, workflows=[AgentRunWorkflow],
+                          activities=activities.ALL_ACTIVITIES, activity_executor=executor):
+            handle = await client.start_workflow(
+                AgentRunWorkflow.run, _companion_input(), id=f"wf-{uuid.uuid4()}", task_queue=tq)
+            await handle.signal(AgentRunWorkflow.phase_reported,
+                                PhaseReport(status="ok", body=""))
+            result = await handle.result()
+
+    assert result["status"] == "incomplete"
+    # No gate was opened and nothing was published — the run ends at verify.
+    assert calls == ["compose", "dispatch", "register", "verify", "fail"]
+    assert "EMPTY prd document" in reasons[0]      # the real cause reaches the run/console
 
 
 @pytest.mark.asyncio

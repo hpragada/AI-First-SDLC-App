@@ -215,15 +215,21 @@ def test_acceptance_test_results_to_xray_and_traced_defect(monkeypatch):
     assert tm.imports == [None, "QA-100"]                                        # idempotent
     assert TestExecution.objects.filter(run_id=run.id, work_item_id=story.id).count() == 1
 
-    # The QA gate then advances the test phase (qa_lead, no WCAG conditions on this phase).
+    # The QA gate then advances the test phase (qa_lead). It carries the blocking-test rule
+    # (D9) rather than the design gate's WCAG checklist — and it is grantable here only
+    # because the re-run above closed the defect; a still-red suite would have held it shut
+    # (see test_test_gate_and_severity.py).
+    from apps.gates.testgate import BLOCKING_TESTS_KEY
     from orchestration.activities import open_gate_core
 
     inp = _input(t, p, story, spec, run, "testing", "qa_lead")
     approval_id = open_gate_core(inp)
-    assert Approval.objects.get(id=approval_id).conditions == []                 # no WCAG here
+    conditions = Approval.objects.get(id=approval_id).conditions
+    assert [c["key"] for c in conditions] == [BLOCKING_TESTS_KEY]                # no WCAG here
     res = decide_gate(tenant_id=str(t.id), approval_id=approval_id, user_id=str(qa.id),
                       decision="approved", signal_sender=lambda *a, **k: None)
     assert res["decision"] == "approved"
+    assert res["conditions"][0]["satisfied"] is True            # the loopback closed the defect
 
 
 # ── 4. standalone security loop (findings/SBOM → defect, D8) ─────────

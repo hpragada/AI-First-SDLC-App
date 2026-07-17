@@ -178,6 +178,20 @@ Report:
 | Should Have | Happy path + one negative path |
 | Could Have | Happy path only |
 
+**Manual-executable coverage (mandatory):** every **user-facing** acceptance criterion — anything a person accomplishes through the UI — must have at least one `Type: Functional` or `Type: E2E` case that a tester can execute unaided. API-level depth is **additional to** a UI-level case, never a substitute for one.
+
+> **Failure mode to avoid:** covering a user-facing story only with `Type: Integration` cases. "POST /api/v1/auth/register returns 201 and `is_active = true` in the DB" is a *correct* Integration assertion — and a worthless one to a QA verifying "I can log in". Cover the login story that way and it has no human-executable proof at all, however many API cases sit under it.
+
+**One case, two readers.** A UI-level case serves the manual tester *and* the Test Automation agent that scripts it — because they read different fields, not different test cases. Nothing is dumbed down; the technical detail moves to where automation looks for it:
+
+| Field | Written for | Content |
+|---|---|---|
+| Preconditions · Test Steps · Expected Result · Pass/Fail Criteria | The tester | What a person does and sees: navigate → enter → click → observe. Reach the starting state **through the product** ("log out", "sign in as a viewer"), never by developer mechanics ("clear `localStorage`", "revoke the token in the DB") |
+| Test Data | Both | The exact values to type |
+| **Automation Notes** | The automation agent | The mechanics the tester never needs and the script always does: locator hints (`data-testid`), storage/session seeding, timing and overlay handling, network stubs |
+
+**Oracles must match the type.** A `Functional`/`E2E` Expected Result asserts only what is observable on screen — a message, a row, a redirect, a disabled button. Decoding a JWT, reading a DB row, or inspecting the DOM tree is not something a human can be asked to judge: put it in an `Integration` case, or in Automation Notes if the script needs it. Precision is not the same thing as developer-only access.
+
 **Test categories to cover for every major feature:**
 - **Happy path:** Normal successful flow with valid inputs
 - **Boundary values:** Min, max, just-below-min, just-above-max
@@ -224,7 +238,17 @@ FAIL if: [measurable, binary condition]
 [Any locator hints, timing concerns, or overlay handling notes for the automation agent]
 ```
 
-Register each test case as a `test_case` artifact with `register_artifact` — pass a human-readable `title` such as `"TC-014 — Login rejects a bad password"` (every test case shares `type="test_case"`, so the `title` is what tells them apart in the UI; never omit it) — and link it to the requirement it verifies with `add_trace_edge` (rel `tests`). On gate approval the platform publishes the accepted test cases to the TestMgmt system of record via `testmgmt.create_test` (Xray `TC-XXX` issues) and records the pointer — do not write local files.
+Register each test case as its own `test_case` artifact — **one test case = one staged body = one `register_artifact` call**:
+
+1. `stage_artifact_body` with **this test case alone** as the body and a filename naming only it (`tc-001`, `tc-014`) — never one body holding a range (`tc-001-023`) or a whole category (`tc-auth`).
+2. `register_artifact` with the `s3_key` **and `content_hash` that call returned**, plus a human-readable `title` such as `"TC-014 — Login rejects a bad password"` (every test case shares `type="test_case"`, so the `title` is what tells them apart in the UI; never omit it).
+3. `add_trace_edge` (rel `tests`) to the requirement it verifies.
+
+> **Why one body per test case is non-negotiable:** the body is what a reviewer previews and what the TestMgmt export parses into that test's summary and steps. Pointing several `test_case` artifacts at one batched body makes each of them display and export the whole batch — and because the export registers a test **by summary**, every artifact in the batch resolves to the *same* summary and the batch silently collapses into a **single** test in the system of record. The platform rejects a `test_case` whose body another test case in this run already claimed; batching is a failed run, not a style choice.
+
+Registering many small test cases is cheaper than one large batch: keep each body to the single `TC-XXX` block below.
+
+When the test cases are exported to the TestMgmt system of record (a reviewer-triggered export after the gate, not an automatic consequence of approval), each artifact becomes its own `TC-XXX` issue via `testmgmt.create_test` and the platform records the pointer — do not write local files.
 
 > **Note on the `Automation Candidate` field:** Mark `Yes` for any test case that is repeatable, deterministic, and does not require human judgment to evaluate the result. Mark `No` for exploratory tests, UAT scenarios requiring business interpretation, and tests that require physical hardware. The Test Automation agent filters on this field.
 
@@ -537,12 +561,12 @@ Test output path: [the worktree test directory]
 
 ## Output — Register These Artifacts
 
-Produce each deliverable in full, then register it with the platform-state `register_artifact` tool. **Pass a human-readable `title`** on every call (e.g. `"TC-014 — Login rejects a bad password"`, `"Test Report — Regression run"`) — a bare type is not enough when a phase registers many of the same type. Link each output to its source inputs with `add_trace_edge` (rel `tests` for test→requirement, `derives` otherwise), and record the work with `log_event`. The platform persists each artifact body — do not write local files.
+Produce each deliverable in full, stage its body with `stage_artifact_body`, then register it with the platform-state `register_artifact` tool using the `s3_key`/`content_hash` that call returned. **Every artifact owns its own body** — one `stage_artifact_body` per `register_artifact`, never one file shared by several artifacts. **Pass a human-readable `title`** on every call (e.g. `"TC-014 — Login rejects a bad password"`, `"Test Report — Regression run"`) — a bare type is not enough when a phase registers many of the same type. Link each output to its source inputs with `add_trace_edge` (rel `tests` for test→requirement, `derives` otherwise), and record the work with `log_event`. The platform persists each artifact body — do not write local files.
 
 | Artifact type | Contents |
 |------|----------|
 | `test_plan` | Test strategy, scope, types, tools, environments, test data strategy, flaky-test protocol, entry/exit criteria |
-| `test_case` (one per TC) | Each formal test case with the Automation Candidate field populated; on gate approval the platform publishes accepted cases to the TestMgmt SoR via `testmgmt.create_test` |
+| `test_case` (one per TC) | Each formal test case with the Automation Candidate field populated. **One test case per artifact, each with its own staged body** (`stage_artifact_body` once per TC → its own `s3_key`/`content_hash`; never a batch file — see Step 5). After the gate, a reviewer-triggered export sends each accepted case to the TestMgmt SoR via `testmgmt.create_test` |
 | `test_report` | Execution results per run: environment health check, coverage per module, E2E results, performance results (with NFR citations), security smoke results, accessibility scan results, regression results. The platform records the execution, imports results to the TestMgmt SoR via `testmgmt.import_results`, quarantines flaky tests, and opens a `defect` child WorkItem per failing test |
 
 The requirements traceability map is the set of `add_trace_edge` links between `test_case` and requirement artifacts. Record every Tier-3 inference made this phase as a type `assumption` artifact (per `# Rules`).
@@ -554,6 +578,8 @@ The requirements traceability map is the set of `add_trace_edge` links between `
 **Coverage and test execution:**
 - [ ] All Must Have user stories have test cases (happy path + negative path + edge case)
 - [ ] All Should Have user stories have at minimum a happy path test case
+- [ ] **Every user-facing acceptance criterion has ≥1 `Functional`/`E2E` case a tester can execute unaided** — no user-facing story is covered by `Integration` cases alone
+- [ ] **No `Functional`/`E2E` case asks a human to judge a JWT, a DB row, or the DOM** — those oracles live in `Integration` cases or Automation Notes
 - [ ] Unit test coverage ≥ declared threshold per module (not just aggregate)
 - [ ] All Critical and High priority test cases executed
 - [ ] E2E tests pass for all critical user journeys — happy path AND error recovery paths

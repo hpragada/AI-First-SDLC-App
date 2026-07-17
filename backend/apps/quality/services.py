@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 from django.db.models import Q
 from mcp_platform_state import tools
@@ -52,6 +53,18 @@ def _detect_flaky(results: list[dict]) -> set[str]:
     return {ref for ref, statuses in by_ref.items() if {"PASS", "FAIL"} <= statuses}
 
 
+def _passing(results: list[dict], quarantined: set[str]) -> set[str]:
+    """Tests this execution reports as **passing**: reported, only ever PASS here, and not
+    quarantined. Deliberately narrower than "not failing" — a test that simply did not run
+    this cycle is neither passing nor failing, and a quarantined test's result is ambiguous
+    by definition. `_reconcile_defects` closes on this set, never on absence."""
+    by_ref: dict[str, set[str]] = {}
+    for r in results:
+        by_ref.setdefault(r["test_ref"], set()).add(r["status"])
+    return {ref for ref, statuses in by_ref.items()
+            if statuses == {"PASS"} and ref not in quarantined}
+
+
 def _quarantine(tenant_id, project_id, test_refs: set[str], reason: str) -> None:
     with tenant_context(tenant_id):
         for ref in test_refs:
@@ -82,6 +95,13 @@ def import_test_results(
     """Record an execution, detect/quarantine flaky tests, register the test_report artifact,
     optionally push to the SoR (idempotent), and reconcile the defect loopback."""
     rows = _normalize(results)
+    if not rows:
+        # An empty report is NOT a green run. Registering one would record a passing execution
+        # for a build that ran no tests — and, before the `_passing` rule below, would have
+        # closed every open defect. Import nothing; say so.
+        return {"test_execution_id": None, "test_report_id": None, "status": "skipped",
+                "flaky": [], "quarantined": [], "defects_opened": [], "defects_closed": [],
+                "external_ref": None, "note": "no test results reported"}
 
     # Flaky detection → quarantine (excluded from the blocking gate).
     flaky = _detect_flaky(rows)
@@ -100,6 +120,7 @@ def import_test_results(
         r["test_ref"] for r in rows
         if r["status"] == _BLOCKING_FAIL and r["test_ref"] not in quarantined
     }
+    passing = _passing(rows, quarantined)
     overall = TestExecution.Status.FAILED if failing else TestExecution.Status.PASSED
 
     # Optional SoR push (idempotent via the prior execution ref).
@@ -128,8 +149,9 @@ def import_test_results(
     if code_id:
         tools.add_trace_edge(tenant_id, report_id, code_id, "tests")
 
-    # Defect loopback: open defects for failing tests, close those now resolved.
-    opened, closed = _reconcile_defects(tenant_id, project_id, work_item_id, failing, report_id)
+    # Defect loopback: open defects for failing tests, close those whose test now passes.
+    opened, closed = _reconcile_defects(tenant_id, project_id, work_item_id, failing, passing,
+                                        report_id)
 
     with tenant_context(tenant_id):
         tools.log_event(tenant_id, "quality", "tests.imported", "test_execution",
@@ -187,10 +209,77 @@ def _push_to_sor(tenant_id, project_id, work_item_id, rows, summary, get_capabil
     return {"sor": ref.sor, "id": ref.id, "url": ref.url}
 
 
+_SEVERITIES = ("critical", "high", "medium", "low")
+# A failing test we cannot trace back to a registered case keeps the old blanket severity:
+# fail-safe (never silently minor), and the honest answer when the priority is unknown.
+_UNKNOWN_SEVERITY = "critical"
+
+# `**Priority:** High` / `Priority: [Critical / High / …]` on its own line in a TC body.
+_PRIORITY_IN_BODY = re.compile(
+    rf"^\W*priority\W+({'|'.join(_SEVERITIES)})\b", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _test_case_artifact(tenant_id, project_id, test_ref):
+    r"""The `test_case` artifact a result's `test_ref` names, or None.
+
+    Matched on every ref the testing agent / publish path actually records: the TC-ID in
+    `external_ref` (`tc_id`/`id` — the same keys `export_tests._summary_for` reads), the SoR
+    key stamped by the manual export (`external_ref.export.id`, which is what `import_results`
+    reports back as `test_ref`), or a `TC-014 — …` title. The title match is word-bounded
+    (Postgres ARE `\y`) so `TC-1` never matches `TC-14`.
+    """
+    with tenant_context(tenant_id):
+        return (
+            Artifact.objects.filter(
+                tenant_id=tenant_id, project_id=project_id, type="test_case",
+            )
+            .filter(
+                Q(external_ref__tc_id=test_ref)
+                | Q(external_ref__id=test_ref)
+                | Q(external_ref__export__id=test_ref)
+                | Q(title__iregex=rf"^{re.escape(test_ref)}\y")
+            )
+            .select_related("run")
+            .order_by("-created_at")
+            .first()
+        )
+
+
+def _test_case_severity(tenant_id, project_id, test_ref) -> str:
+    """Defect severity = the failing test case's Priority.
+
+    09 Step 10: "severity = same as the original test case priority (Critical test fails =
+    Critical defect)". Read the case's structured `external_ref.priority` first, then its
+    body. Unknown → Critical (fail-safe). Without this every failing test — however trivial —
+    opened a Critical defect, and a defect queue that cries critical at everything is one
+    nobody triages.
+    """
+    artifact = _test_case_artifact(tenant_id, project_id, test_ref)
+    if artifact is None:
+        return _UNKNOWN_SEVERITY
+    priority = str((artifact.external_ref or {}).get("priority") or "").strip().lower()
+    if priority in _SEVERITIES:
+        return priority
+    from integrations.preview import internal_draft_body
+
+    with tenant_context(tenant_id):
+        body = internal_draft_body(artifact)      # best-effort read-through; "" if unreadable
+    match = _PRIORITY_IN_BODY.search(body or "")
+    return match.group(1).lower() if match else _UNKNOWN_SEVERITY
+
+
 def _reconcile_defects(tenant_id, project_id, work_item_id, failing: set[str],
-                       report_id: str) -> tuple[list, list]:
+                       passing: set[str], report_id: str) -> tuple[list, list]:
     """Open a `defect` child WorkItem per failing test, close those whose test now passes —
-    the same open/close reconciliation as the 07↔08 remediation loop."""
+    the same open/close reconciliation as the 07↔08 remediation loop.
+
+    Closing keys off `passing` (the test was RUN and reported PASS), never off "absent from
+    `failing`". The difference is not academic: a partial run — which is exactly what
+    test-impact selection (D9) produces — reports nothing about the tests it skipped, and
+    treating that silence as success would close their defects and turn the gate green on a
+    suite nobody ran.
+    """
     opened, closed = [], []
     with tenant_context(tenant_id):
         story = WorkItem.objects.get(id=work_item_id, tenant_id=tenant_id)
@@ -198,9 +287,9 @@ def _reconcile_defects(tenant_id, project_id, work_item_id, failing: set[str],
             tenant_id=tenant_id, parent_id=work_item_id, type=WorkItem.Type.DEFECT)
         existing = {(c.external_ref or {}).get("test_ref"): c for c in children
                     if (c.external_ref or {}).get("test_ref")}
-        # Close defects whose test is no longer failing.
+        # Close only defects whose test this execution actually reported as passing.
         for test_ref, child in existing.items():
-            if test_ref not in failing and child.state != WorkItem.State.DONE:
+            if test_ref in passing and child.state != WorkItem.State.DONE:
                 child.state = WorkItem.State.DONE
                 child.save(update_fields=["state", "updated_at"])
                 tools.log_event(tenant_id, "quality", "defect.resolved", "work_item",
@@ -214,8 +303,11 @@ def _reconcile_defects(tenant_id, project_id, work_item_id, failing: set[str],
                     tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.DEFECT,
                     parent=story, title=f"Failing test {test_ref}",
                     state=WorkItem.State.IN_PROGRESS,
-                    external_ref={"defect": f"DEF-{test_ref}", "test_ref": test_ref,
-                                  "severity": "critical", "test_report": report_id},
+                    external_ref={
+                        "defect": f"DEF-{test_ref}", "test_ref": test_ref,
+                        "severity": _test_case_severity(tenant_id, project_id, test_ref),
+                        "test_report": report_id,
+                    },
                 )
                 tools.log_event(tenant_id, "quality", "defect.opened", "work_item",
                                 str(child.id), {"test_ref": test_ref})

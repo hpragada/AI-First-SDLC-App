@@ -182,6 +182,15 @@ def _profile(project: Project) -> dict:
     }
 
 
+#: Actions that belong in the run console but NOT in an agent's `# Recent Events`.
+#: `artifact.registered` fires once per artifact — a run that registers 90 test cases would
+#: otherwise fill the whole 20-event window of the NEXT run's manifest with the previous run's
+#: bookkeeping, pushing out the gate decisions and phase transitions that actually inform an
+#: agent. It is also pure duplication there: `# Relevant Artifacts` already lists every
+#: artifact. The ledger keeps them; the manifest just doesn't repeat them.
+_MANIFEST_MUTED_ACTIONS = {"artifact.registered"}
+
+
 # ── tools (spec §2 signatures; tenant_id is the bound scope) ─────────
 def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -> dict:
     """Inputs the Manifest Composer renders, incl. Knowledge-Index retrieval (Phase 4).
@@ -221,7 +230,11 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
                 Q(repo_id=repo.id) | Q(repo_id__isnull=True) | Q(type="api_contract")
             )
         artifacts = artifacts_qs.order_by("-created_at")[:50]
-        events = Event.objects.filter(tenant_id=tenant_id).order_by("-ts")[:20]
+        events = (
+            Event.objects.filter(tenant_id=tenant_id)
+            .exclude(action__in=_MANIFEST_MUTED_ACTIONS)
+            .order_by("-ts")[:20]
+        )
         query = " ".join(filter(None, [phase, getattr(wi, "title", ""),
                                        getattr(wi, "description", "")]))
         # Answered clarifications for this work item are replayed into the manifest so a
@@ -261,6 +274,43 @@ def _retrieve_knowledge(tenant_id, project_id, query) -> list[dict]:
         return []
 
 
+#: Types whose every artifact MUST own its body. A `test_case` is exported to the TestMgmt SoR
+#: one issue per artifact (`export_tests.parse_test_case` reads the body for that issue's
+#: summary + steps), so two test cases sharing a body is not a cosmetic problem: `create_test`
+#: is idempotent BY SUMMARY, so a batch body gives every artifact in it the same summary and the
+#: whole batch silently collapses into ONE Xray issue with the batch's merged steps — 23 test
+#: cases exported as 1, all marked published. Deliberately narrow: types that legitimately share
+#: or omit a body (e.g. a wireframe's per-state keys in external_ref) are not listed.
+_OWN_BODY_REQUIRED_TYPES = {"test_case"}
+
+
+def _assert_body_not_shared(tenant_id, run, type, s3_key, title) -> None:
+    """Fail loud when a per-item artifact points at a body another sibling already claimed.
+
+    Scoped to a *different title* on purpose: re-registering the SAME test case (v2 of
+    "TC-001 — …") legitimately reuses its own body — the version counter is title-scoped for
+    exactly that reason — while TC-002 pointing at TC-001's body is the defect.
+    """
+    if not s3_key or run is None or type not in _OWN_BODY_REQUIRED_TYPES:
+        return
+    clash = (
+        Artifact.objects.filter(tenant_id=tenant_id, run=run, type=type, s3_key=s3_key)
+        .exclude(title=title or "")
+        .order_by("created_at")            # name the body's ORIGINAL owner, not an arbitrary
+        .values_list("title", flat=True)   # sibling (Artifact has no Meta ordering)
+        .first()
+    )
+    if clash is not None:
+        raise ValueError(
+            f"{type} body is already claimed by another artifact in this run: s3_key "
+            f"{s3_key!r} belongs to {clash!r}. Every {type} must own its body — stage one "
+            f"body per {type} (one stage_artifact_body call each, named for that item alone, "
+            f"e.g. 'tc-001' then 'tc-002') and register each with the s3_key and content_hash "
+            f"that call returned. Batching several {type}s into one body collapses them into a "
+            f"single test in the test-management system."
+        )
+
+
 def register_artifact(
     tenant_id, project_id, run_id, phase, type, sor,
     content_hash, s3_key=None, external_ref=None, repo_id=None, title="",
@@ -273,6 +323,7 @@ def register_artifact(
         )
         if sor not in Artifact.SoR.values:
             raise ValueError(f"invalid sor: {sor}")
+        _assert_body_not_shared(tenant_id, run, type, s3_key, title)
         # Version across re-registrations (Bugs.xlsx row 28.2): re-running a phase should yield
         # v2, v3, … of the SAME artifact. But per-item types (adr, test_case, security_finding,
         # code, code_review, test_report) register many DISTINCT rows sharing (phase, type) in one
@@ -303,7 +354,35 @@ def register_artifact(
             external_ref=external_ref,
             version=(last or 0) + 1,
         )
+        _log_artifact_registered(tenant_id, run, artifact)
         return _artifact(artifact)
+
+
+def _log_artifact_registered(tenant_id, run, artifact) -> None:
+    """Stream the agent's progress to the run console.
+
+    Until this existed only orchestrator-level events reached the ledger, so a phase went
+    silent between `phase.dispatched` and `phase.reported` — 25 minutes and 90 artifacts of
+    nothing, during which a user cannot tell a working run from a dead one (and killed healthy
+    runs to find out).
+
+    **Targeted at the RUN, not the artifact**, because that is what the console streams
+    (`?target_type=run&target_id=…`); an artifact-targeted event would be invisible there,
+    which is the whole point. The artifact id travels in the payload instead — the same
+    convention `test.quarantined` uses for a non-UUID subject.
+
+    `payload["message"]` is pre-rendered because the event serializer looks for `message`
+    first and has no `type`/`title` key, so without it every line would read a bare "Artifact
+    registered". Structured `type`/`title`/`artifact_id` ride along for machine consumers.
+    """
+    if run is None:
+        return          # no run ⇒ no console to stream to; the row's own provenance stands
+    label = " — ".join(p for p in (artifact.type, artifact.title) if p)
+    log_event(
+        tenant_id, "agent", "artifact.registered", "run", str(run.id),
+        {"artifact_id": str(artifact.id), "type": artifact.type,
+         "title": artifact.title, "phase": artifact.phase, "message": label},
+    )
 
 
 def update_artifact(

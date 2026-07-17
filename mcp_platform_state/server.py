@@ -63,7 +63,14 @@ def stage_artifact_body(
     the object store and get back its pointer (`s3_key`, `content_hash`, `bytes`). Stage each
     big document here, then reference the returned `s3_key` from `register_artifact` —
     `register_artifact` never carries a body. project_id/run_id/phase are filled from this
-    run; you only pass `filename` + `body`. Call once per document to stay within limits."""
+    run; you only pass `filename` + `body`.
+
+    **One body per artifact — never batch.** Call this once for EACH artifact you are about to
+    register, so every artifact owns its own `s3_key` (filenames `tc-001`, `tc-002`, … — not
+    one `tc-001-023` holding 23 test cases). Bodies are what the UI previews and what the SoR
+    export parses, so several artifacts sharing one body means every one of them shows — and
+    exports as — the wrong content. Registering a `test_case` whose body another test case in
+    this run already claimed is rejected."""
     return tools.stage_artifact_body(
         _tenant(), project_id or _bound_project(), run_id or _bound_run(),
         phase, filename, body, content_type,

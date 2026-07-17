@@ -151,6 +151,190 @@ def test_register_artifact_bumps_version_across_re_registrations(world):
     assert other["version"] == 1
 
 
+# ── progress events: the run console streams the agent's work (bug 3) ──
+def test_register_artifact_streams_a_progress_event_to_the_run_console(world):
+    """Testing-phase bug 3: a 25-minute run registering 90 artifacts showed NOTHING between
+    phase.dispatched and phase.reported, so a healthy run was indistinguishable from a dead
+    one. The event must target the RUN — that is what the console queries
+    (?target_type=run&target_id=…); an artifact-targeted event would still be invisible."""
+    from apps.ledger.models import Event
+
+    created = tools.register_artifact(
+        world["t"].id, world["project"].id, world["run"].id, "testing", "test_case",
+        "internal", "h", title="TC-014 — Login rejects a bad password",
+    )
+    event = Event.objects.get(tenant_id=world["t"].id, action="artifact.registered")
+    # target_id is a UUIDField — the console filters ?target_id=<run uuid> against it.
+    assert event.target_type == "run" and str(event.target_id) == str(world["run"].id)
+    assert event.payload["artifact_id"] == created["id"]
+    assert event.payload["type"] == "test_case"
+    assert event.payload["title"] == "TC-014 — Login rejects a bad password"
+
+
+def test_the_console_line_names_the_artifact(world):
+    """The serializer renders `payload["message"]` (it checks `message` first and has no
+    type/title key), so without it every line would read a bare "Artifact registered"."""
+    from api.serializers import EventSerializer
+    from apps.ledger.models import Event
+
+    tools.register_artifact(
+        world["t"].id, world["project"].id, world["run"].id, "testing", "test_case",
+        "internal", "h", title="TC-014 — Login rejects a bad password",
+    )
+    event = Event.objects.get(tenant_id=world["t"].id, action="artifact.registered")
+    data = EventSerializer(event).data
+    assert data["message"] == (
+        "Artifact registered — test_case — TC-014 — Login rejects a bad password"
+    )
+    assert data["kind"] == "ok"
+
+
+def test_the_console_endpoint_returns_the_progress_events(world):
+    """End-to-end on the path the console actually uses:
+    GET /api/events/?target_type=run&target_id=<run>. This is the acceptance criterion — the
+    gap between phase.dispatched and phase.reported now carries progress."""
+    from rest_framework.test import APIClient
+
+    tools.log_event(world["t"].id, "orchestrator", "phase.dispatched", "run",
+                    str(world["run"].id), {"phase": "testing"})
+    for i in range(3):
+        tools.register_artifact(
+            world["t"].id, world["project"].id, world["run"].id, "testing", "test_case",
+            "internal", "h", title=f"TC-{i:03d} — case",
+        )
+    tools.log_event(world["t"].id, "orchestrator", "phase.reported", "run",
+                    str(world["run"].id), {})
+
+    resp = APIClient().get("/api/events/", {"target_type": "run",
+                                            "target_id": str(world["run"].id)},
+                           HTTP_X_TENANT_ID=str(world["t"].id))
+    assert resp.status_code == 200, resp.content
+    rows = resp.json()
+    rows = rows["results"] if isinstance(rows, dict) else rows
+    progress = [r for r in rows if r["action"] == "artifact.registered"]
+    assert len(progress) == 3                       # no longer silent between the two events
+    assert progress[0]["message"].startswith("Artifact registered — test_case — TC-")
+
+
+def test_an_untitled_artifact_still_streams_its_type(world):
+    from apps.ledger.models import Event
+
+    tools.register_artifact(
+        world["t"].id, world["project"].id, world["run"].id, "prd", "prd", "internal", "h",
+    )
+    event = Event.objects.get(tenant_id=world["t"].id, action="artifact.registered")
+    assert event.payload["message"] == "prd"
+
+
+def test_a_run_less_registration_logs_no_progress_event(world):
+    """No run ⇒ no console to stream to; the artifact row carries its own provenance."""
+    from apps.ledger.models import Event
+
+    tools.register_artifact(
+        world["t"].id, world["project"].id, None, "prd", "prd", "internal", "h", title="X",
+    )
+    assert not Event.objects.filter(tenant_id=world["t"].id,
+                                    action="artifact.registered").exists()
+
+
+def test_progress_events_are_muted_in_the_agent_manifest(world):
+    """The console wants all 90; an agent's `# Recent Events` must not be flooded by them —
+    the window is 20 tenant-wide, and `# Relevant Artifacts` already lists every artifact."""
+    for i in range(25):
+        tools.register_artifact(
+            world["t"].id, world["project"].id, world["run"].id, "testing", "test_case",
+            "internal", "h", title=f"TC-{i:03d} — case",
+        )
+    tools.log_event(world["t"].id, "system", "gate.opened", "run", str(world["run"].id), {})
+
+    ctx = tools.get_context(world["t"].id, world["project"].id, phase="testing")
+    actions = [e["action"] for e in ctx["recent_events"]]
+    assert "artifact.registered" not in actions          # not one of them crowds the window
+    assert "gate.opened" in actions                      # the decision-grade event survives
+
+
+# ── one body per test_case: no batching (Testing-phase bug 1) ───────
+def _tc(world, *, title, s3_key, type="test_case"):
+    return tools.register_artifact(
+        world["t"].id, world["project"].id, world["run"].id, "testing", type, "internal",
+        "sha256:x", s3_key=s3_key, title=title,
+    )
+
+
+def test_a_second_test_case_cannot_claim_another_test_cases_body(world):
+    """Run b0e6557b registered 90 test cases against 4 batch bodies. Because the TestMgmt
+    export derives an issue's summary FROM THE BODY and `create_test` is idempotent by summary,
+    all 23 cases in a batch resolved to one summary and would have collapsed into a single Xray
+    issue — 22 test cases silently lost. Registering the batch must fail loudly instead."""
+    _tc(world, title="TC-001 — Register new account", s3_key="drafts/t/p/r/testing/tc-batch.md")
+    with pytest.raises(ValueError, match="already claimed"):
+        _tc(world, title="TC-002 — Duplicate email rejected",
+            s3_key="drafts/t/p/r/testing/tc-batch.md")
+    assert Artifact.objects.filter(run_id=world["run"].id, type="test_case").count() == 1
+
+
+def test_the_error_tells_the_agent_what_to_do_instead(world):
+    """The agent only recovers if the message names the offending body, the sibling holding it,
+    and the fix — it is the sole feedback channel from a rejected MCP call."""
+    _tc(world, title="TC-001 — Register new account", s3_key="drafts/t/p/r/testing/tc-batch.md")
+    with pytest.raises(ValueError) as exc:
+        _tc(world, title="TC-002 — Duplicate email rejected",
+            s3_key="drafts/t/p/r/testing/tc-batch.md")
+    message = str(exc.value)
+    assert "tc-batch.md" in message                       # which body
+    assert "TC-001 — Register new account" in message     # who already owns it
+    assert "stage_artifact_body" in message               # what to do instead
+
+
+def test_re_registering_the_same_test_case_reuses_its_own_body(world):
+    """A retry/re-register of the SAME test case legitimately points at its own body — the
+    version counter is title-scoped for exactly this. The guard must not block v2."""
+    first = _tc(world, title="TC-001 — Register new account",
+                s3_key="drafts/t/p/r/testing/tc-001.md")
+    second = _tc(world, title="TC-001 — Register new account",
+                 s3_key="drafts/t/p/r/testing/tc-001.md")
+    assert first["version"] == 1 and second["version"] == 2
+
+
+def test_each_test_case_with_its_own_body_is_accepted(world):
+    """The intended shape: one staged body per test case."""
+    _tc(world, title="TC-001 — Register new account", s3_key="drafts/t/p/r/testing/tc-001.md")
+    _tc(world, title="TC-002 — Duplicate email rejected", s3_key="drafts/t/p/r/testing/tc-002.md")
+    tcs = Artifact.objects.filter(run_id=world["run"].id, type="test_case")
+    assert tcs.count() == 2
+    assert tcs.values("s3_key").distinct().count() == 2      # the acceptance criterion
+
+
+def test_the_guard_is_scoped_to_its_run(world):
+    """A later run legitimately re-stages the same draft key (run-scoped paths collide only
+    across runs when a caller passes an explicit key) — a different run must not be blocked."""
+    from apps.runs.models import Run
+
+    _tc(world, title="TC-001 — Register new account", s3_key="drafts/t/p/r/testing/tc-001.md")
+    other = Run.objects.create(tenant=world["t"], work_item=world["wi"],
+                               agent_spec=world["run"].agent_spec)
+    created = tools.register_artifact(
+        world["t"].id, world["project"].id, other.id, "testing", "test_case", "internal",
+        "sha256:x", s3_key="drafts/t/p/r/testing/tc-001.md", title="TC-002 — Other run",
+    )
+    assert created["id"]
+
+
+def test_other_types_may_still_share_a_body(world):
+    """Deliberately narrow: only `test_case` is exported one-issue-per-artifact from its body,
+    so only it carries this constraint. Nothing else changes behaviour."""
+    _tc(world, title="Wireframe — Login", s3_key="drafts/t/p/r/ux/shared.html", type="wireframe")
+    _tc(world, title="Wireframe — Signup", s3_key="drafts/t/p/r/ux/shared.html", type="wireframe")
+    assert Artifact.objects.filter(run_id=world["run"].id, type="wireframe").count() == 2
+
+
+def test_a_test_case_without_a_body_is_unaffected(world):
+    """Pointer-only registrations (no s3_key) never trip the guard."""
+    _tc(world, title="TC-001 — a", s3_key=None)
+    _tc(world, title="TC-002 — b", s3_key=None)
+    assert Artifact.objects.filter(run_id=world["run"].id, type="test_case").count() == 2
+
+
 def test_register_artifact_stores_and_returns_title(world):
     """Bugs S.No 120: the human-readable title is stored and echoed back."""
     t, project, run = world["t"], world["project"], world["run"]

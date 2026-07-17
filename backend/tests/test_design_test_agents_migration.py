@@ -117,6 +117,49 @@ def test_09_reroutes_to_testmgmt_and_platform():
     assert "/sdlc:security" not in body and "Reply APPROVED" not in body
 
 
+def test_09_requires_one_staged_body_per_test_case():
+    """Testing-phase bug 1: a run registered 90 test cases against 4 batched bodies, which the
+    TestMgmt export would have collapsed into 4 issues (create_test is idempotent by the summary
+    it parses out of the body). The body must direct one `stage_artifact_body` per test case;
+    the platform guard in `tools.register_artifact` enforces it, but intent lives here."""
+    body = _body("09_testing")
+    assert "stage_artifact_body" in body                   # the staging half is named at all
+    assert "one test case = one staged body" in body.lower()
+    assert "batch" in body.lower()                         # batching is called out as wrong
+
+
+def test_09_requires_a_manual_executable_case_per_user_facing_criterion():
+    """Testing-phase bug 2: run b0e6557b left US-002 (Log In) and US-012 (View Recent
+    Transactions) covered ONLY by API-level Integration cases — a manual QA had no way to
+    verify "I can log in". The agent already did the right thing for 11 of 13 stories, so the
+    body must make that a rule rather than leave it to chance."""
+    body = _body("09_testing")
+    lowered = body.lower()
+    assert "manual-executable coverage (mandatory)" in lowered
+    assert "user-facing" in lowered
+    # API depth is additional, never a substitute — the exact hole US-002 fell through.
+    assert "never a substitute" in lowered
+
+
+def test_09_keeps_automation_detail_out_of_the_testers_steps():
+    """The same case serves the tester and the 09b script, because they read different FIELDS.
+    Developer mechanics belong in Automation Notes (which 09b parses), not in the steps a
+    human follows — so precision is relocated, never lost."""
+    body = _body("09_testing")
+    assert "Automation Notes" in body
+    assert "One case, two readers" in body
+    # A Functional/E2E oracle must be observable on screen, not a JWT/DB/DOM assertion.
+    assert "observable on screen" in body.lower()
+
+
+def test_09_does_not_claim_the_gate_auto_publishes_to_the_sor():
+    """Doc/implementation drift: export is a reviewer-triggered action
+    (`api/views.py::_publish_testmgmt`, "manual export, team flow decision 2026-07-07"), not a
+    consequence of approval. The body must not promise the platform does it automatically."""
+    body = _body("09_testing")
+    assert "on gate approval the platform publishes" not in body.lower()
+
+
 def test_09b_preserves_playwright_pom_and_reroutes():
     body = _body("09b_test_automation")
     # the locator-discovery IP is preserved verbatim

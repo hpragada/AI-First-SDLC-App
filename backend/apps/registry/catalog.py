@@ -43,6 +43,14 @@ class AgentDefinition:
     # the build loop (dispatched by the workflow), never a standalone user trigger, so it is
     # False here too.
     rides_build: bool = False
+    # True ⇒ this phase's build report feeds the test loop (D4): the JUnit results its worktree
+    # suite emitted are imported → TestExecution + test_report + the defect loopback. Only the
+    # test-automation phase does. §5's loopback is about the TEST phase's failing tests, so a
+    # red unit test during 07's own implementation build fails that build exactly as it always
+    # has, without opening `defect` WorkItems and flooding the QA board with things that are
+    # not QA defects. The single source of truth for test-import routing — like `rides_build`
+    # for build routing — so the rule can never drift across call sites.
+    imports_test_results: bool = False
 
     @property
     def body_ref(self) -> str:
@@ -60,7 +68,7 @@ AGENT_CATALOG: list[AgentDefinition] = [
     AgentDefinition("07_implementation", "implement", "implementation", "07_implementation_agent.md", "P2", "tech_lead", rides_build=True),
     AgentDefinition("08_code_review", "code-review", "code_review", "08_code_review_agent.md", "P2", "reviewer"),
     AgentDefinition("09_testing", "test", "testing", "09_testing_agent.md", "P3", "qa_lead"),
-    AgentDefinition("09b_test_automation", "test-automation", "test_automation", "09b_test_automation_agent.md", "P3", "qa_lead", rides_build=True),
+    AgentDefinition("09b_test_automation", "test-automation", "test_automation", "09b_test_automation_agent.md", "P3", "qa_lead", rides_build=True, imports_test_results=True),
     AgentDefinition("10_security", "security", "security", "10-security-agent.md", "P3", "security_engineer"),
     AgentDefinition("11_cicd", "cicd", "cicd", "11_cicd_agent.md", "P2", "devops", rides_build=True),
     AgentDefinition("12_deployment", "deploy", "deployment", "12_deployment_agent.md", "P2", "devops"),
@@ -103,6 +111,14 @@ def rides_build(key: str) -> bool:
     a new build agent only sets `rides_build=True` on its catalog entry."""
     definition = _BY_KEY.get(key)
     return bool(definition and definition.rides_build)
+
+
+def imports_test_results(key: str) -> bool:
+    """True ⇒ this phase's build report feeds the test loop (D4): its worktree suite's results
+    are imported and drive the defect loopback. The single source of truth for test-import
+    routing — a new test-running phase only sets `imports_test_results=True` on its entry."""
+    definition = _BY_KEY.get(key)
+    return bool(definition and definition.imports_test_results)
 
 
 def gate_roles() -> list[str]:
