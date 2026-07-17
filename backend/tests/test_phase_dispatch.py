@@ -145,6 +145,81 @@ def test_fail_run_core(world):
     assert run.status == Run.Status.FAILED and run.outputs["error"] == "boom"
 
 
+# ── park / resume on error (Bugs S.No 157) ──────────────────────────
+def test_park_run_core_records_the_reason_and_stays_non_terminal(world):
+    """S.No 157: an error PARKS the run (STALLED, not FAILED) with a reason + the step to resume
+    from. Recording the reason also closes the silent-failure gap: verify_writes used to crash
+    the workflow before any fail_run, so nothing ever wrote run.outputs.error and the console
+    showed a failed run with no reason at all."""
+    out = activities.park_run_core(world["inp"], "write-completeness check failed: no artifact",
+                                   "verify_writes")
+    run = Run.objects.get(id=world["run_id"])
+    assert run.status == Run.Status.STALLED            # non-terminal — resumable
+    assert run.outputs["error"] == "write-completeness check failed: no artifact"
+    assert run.outputs["resume_from"] == "verify_writes" and run.outputs["resumable"] is True
+    assert out["status"] == "parked"
+    # Idempotent — Temporal may retry the activity.
+    activities.park_run_core(world["inp"], "write-completeness check failed: no artifact",
+                             "verify_writes")
+    assert Run.objects.get(id=world["run_id"]).outputs["resumable"] is True
+
+
+def test_resume_run_state_core_unparks_and_clears_the_markers(world):
+    """S.No 157: resuming un-parks the run and clears the park markers, so the console stops
+    showing a stale failure once the run is moving again."""
+    activities.park_run_core(world["inp"], "boom", "verify_writes")
+    out = activities.resume_run_state_core(world["inp"])
+    run = Run.objects.get(id=world["run_id"])
+    assert run.status == Run.Status.RUNNING
+    assert "error" not in run.outputs and "resume_from" not in run.outputs
+    assert "resumable" not in run.outputs
+    assert out["resume_from"] == "verify_writes"
+
+
+def test_resume_stalled_run_signals_only_a_run_parked_at_an_error(world):
+    """S.No 157: resume fires only for a run parked at a resumable ERROR. A running run, or a
+    companion-offline park (S.No 89 — STALLED but NOT waiting on `resume_run`), must be refused
+    with a plain-language reason rather than a stray signal to a workflow that isn't listening."""
+    from orchestration.takeover import ResumeError, resume_stalled_run
+
+    sent: list[str] = []
+    sender = lambda wf: sent.append(wf)  # noqa: E731
+
+    # Not parked (PENDING) -> refused.
+    with pytest.raises(ResumeError, match="nothing to resume"):
+        resume_stalled_run(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                           signal_sender=sender)
+
+    # Parked by a report TIMEOUT (S.No 89): STALLED but not flagged resumable -> still refused.
+    activities.mark_phase_takeover_core(world["inp"])
+    with pytest.raises(ResumeError, match="nothing to resume"):
+        resume_stalled_run(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                           signal_sender=sender)
+    assert sent == []
+
+    # Parked by an ERROR -> signals the run's live workflow to resume.
+    activities.park_run_core(world["inp"], "boom", "verify_writes")
+    out = resume_stalled_run(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                             signal_sender=sender)
+    assert out["resumed"] is True and out["resume_from"] == "verify_writes"
+    assert sent == ["wf-x"]
+
+
+def test_resume_stalled_run_explains_a_workflow_that_already_closed(world):
+    """S.No 157: a parked run whose workflow has since closed can't be resumed — say so plainly
+    instead of 500ing on the signal error."""
+    from orchestration.takeover import ResumeError, resume_stalled_run
+
+    activities.park_run_core(world["inp"], "boom", "verify_writes")
+
+    def _gone(_wf):
+        raise RuntimeError("workflow execution already completed")
+
+    with pytest.raises(ResumeError, match="no longer running"):
+        resume_stalled_run(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                           signal_sender=_gone)
+
+
 # ── report service ──────────────────────────────────────────────────
 def test_report_phase_records_and_signals(world):
     from orchestration.phase_report import report_phase

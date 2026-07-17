@@ -381,4 +381,11 @@ export const api = {
     runId: string,
     body: { release?: boolean; actor?: string; reason?: string } = {},
   ) => req<{ work_item_id: string; takeover: boolean }>("POST", `/runs/${runId}/take-over/`, { tenantId, body }),
+
+  // Resume a run parked at an error, from the step that failed (Bugs S.No 157) — the
+  // counterpart to take-over: continue the run instead of ending it.
+  resumeRun: (tenantId: string, runId: string) =>
+    req<{ run_id: string; resumed: boolean; resume_from: string }>(
+      "POST", `/runs/${runId}/resume/`, { tenantId },
+    ),
 };

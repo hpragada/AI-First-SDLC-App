@@ -129,6 +129,21 @@ export function useTriggerPhase(workItemId: string | undefined) {
   });
 }
 
+// Resume a run parked at an error (Bugs S.No 157): the workflow is still alive and waiting, so
+// this picks up at the failed step — the build/phase already done is kept, not re-run.
+export function useResumeRun(runId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resumeRun(tenantId, runId as string),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["run", runId] });
+      qc.invalidateQueries({ queryKey: ["run-events", runId] });
+      qc.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+}
+
 // ── Clarifications (S-20) ──────────────────────────────────────────────────
 export function useClarifications(q: { status?: string; work_item?: string; run?: string } = {}) {
   const tenantId = useTenantId();

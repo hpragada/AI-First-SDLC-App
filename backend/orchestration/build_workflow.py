@@ -15,7 +15,13 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
-    from .build_types import BuildInput, BuildReport, failure_reason, is_merge_conflict
+    from .build_types import (
+        BuildInput,
+        BuildReport,
+        failure_reason,
+        is_empty_build,
+        is_merge_conflict,
+    )
     from .types import GateDecision
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -27,6 +33,9 @@ class BuildWorkflow:
     def __init__(self) -> None:
         self._report: BuildReport | None = None
         self._decision: GateDecision | None = None
+        self._resume: bool = False
+        self._abandoned: bool = False
+        self._parked: bool = False
 
     @workflow.signal(name="build_reported")
     def build_reported(self, report: BuildReport) -> None:
@@ -36,11 +45,54 @@ class BuildWorkflow:
     def gate_decision(self, decision: GateDecision) -> None:
         self._decision = decision
 
+    @workflow.signal(name="resume_run")
+    def resume_run(self) -> None:
+        # A human resumed a build parked by an error (Bugs S.No 157) — retry the failed step
+        # instead of rebuilding from scratch.
+        self._resume = True
+
+    @workflow.signal(name="abandon_run")
+    def abandon_run(self) -> None:
+        # A human gave up on a parked build (Bugs S.No 157) — end it terminally, exactly as the
+        # old fail-and-return path did.
+        self._abandoned = True
+
     @workflow.query(name="status")
     def status(self) -> str:
+        if self._parked:
+            return "parked"
         if self._decision is not None:
             return "decided"
         return "reported" if self._report is not None else "awaiting_report"
+
+    async def _park(self, inp: BuildInput, reason: str, resume_from: str) -> bool:
+        """Park the build on an error and wait for a human (Bugs S.No 157). Returns True to
+        RESUME (retry `resume_from`), False to ABANDON (the caller ends the run terminally).
+
+        This is what replaces "mark_build_failed then return". That return CLOSED the Temporal
+        history, and a closed workflow can never be signalled — so the only way forward was a
+        brand-new run that redid the expensive build from step 1. Parking keeps the workflow
+        alive and waiting, so the work already done (the build, the branch, the PR) is kept.
+        Human-paced with no timeout, exactly like the merge gate."""
+        await workflow.execute_activity(
+            "park_build", args=[inp, reason, resume_from],
+            start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+        )
+        self._parked = True
+        await workflow.wait_condition(lambda: self._resume or self._abandoned)
+        self._parked = False
+        if self._abandoned:
+            await workflow.execute_activity(
+                "mark_build_failed", args=[inp, reason],
+                start_to_close_timeout=timedelta(minutes=1), retry_policy=_COMPENSATE,
+            )
+            return False
+        self._resume = False        # consume: each park waits for a fresh resume
+        await workflow.execute_activity(
+            "resume_build", inp,
+            start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+        )
+        return True
 
     @workflow.run
     async def run(self, inp: BuildInput) -> dict:
@@ -70,72 +122,90 @@ class BuildWorkflow:
             )
             return {"status": "build_failed", "run_id": inp.run_id}
 
-        # Open the draft PR, run the 07<->08 remediation loop, then the merge gate. On
-        # exhausted retries → compensate (dead-letter).
-        try:
-            await workflow.execute_activity(
-                "open_build_pr", args=[inp, report],
-                start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
-            )
-
-            # Build phases (§5): review → remediate → re-review until no blocking findings.
-            # The review activity waits (inside itself) up to inp.review_timeout_seconds for the
-            # companion's 08 verdict, so its Temporal start_to_close MUST comfortably exceed that
-            # window — otherwise Temporal kills the activity mid-poll and retries, re-dispatching
-            # the review and never seeing the report (Bugs S.No 110). Keep them consistent here.
-            review_activity_timeout = timedelta(seconds=inp.review_timeout_seconds + 600)
-            cycle = 0
-            while True:
-                review = await workflow.execute_activity(
-                    "run_code_review", inp,
-                    start_to_close_timeout=review_activity_timeout, retry_policy=_RETRY,
-                )
-                if review["open_blocking"] == 0:
-                    break
-                cycle += 1
-                if cycle > inp.max_remediation_cycles:
-                    await workflow.execute_activity(
-                        "mark_build_failed", args=[inp, "remediation cycles exhausted"],
-                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_COMPENSATE,
-                    )
-                    return {"status": "remediation_exhausted", "run_id": inp.run_id}
-                # Implementation re-runs in remediation mode on the same branch; await report.
+        # Open the draft PR, run the 07<->08 remediation loop, then the merge gate.
+        #
+        # An error here no longer ends the build (Bugs S.No 157): it PARKS for a human, who can
+        # Resume to retry this block or Take over to end it. Retrying the whole block is safe and
+        # cheap because every step is idempotent — open_build_pr is register-don't-recreate,
+        # open_merge_gate is get_or_create, and run_code_review re-dispatches correctly. Crucially
+        # `dispatch_build` sits OUTSIDE this loop, so the expensive build itself is never redone.
+        while True:
+            try:
                 await workflow.execute_activity(
-                    "dispatch_remediation", inp,
+                    "open_build_pr", args=[inp, report],
                     start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
                 )
-                self._report = None
-                try:
-                    await workflow.wait_condition(
-                        lambda: self._report is not None,
-                        timeout=timedelta(seconds=inp.report_timeout_seconds),
+
+                # Build phases (§5): review → remediate → re-review until no blocking findings.
+                # The review activity waits (inside itself) up to inp.review_timeout_seconds for
+                # the companion's 08 verdict, so its Temporal start_to_close MUST comfortably
+                # exceed that window — otherwise Temporal kills the activity mid-poll and retries,
+                # re-dispatching the review and never seeing the report (Bugs S.No 110). Keep them
+                # consistent here.
+                review_activity_timeout = timedelta(seconds=inp.review_timeout_seconds + 600)
+                cycle = 0
+                while True:
+                    review = await workflow.execute_activity(
+                        "run_code_review", inp,
+                        start_to_close_timeout=review_activity_timeout, retry_policy=_RETRY,
                     )
-                except TimeoutError:
+                    if review["open_blocking"] == 0:
+                        break
+                    cycle += 1
+                    if cycle > inp.max_remediation_cycles:
+                        await workflow.execute_activity(
+                            "mark_build_failed", args=[inp, "remediation cycles exhausted"],
+                            start_to_close_timeout=timedelta(minutes=1),
+                            retry_policy=_COMPENSATE,
+                        )
+                        return {"status": "remediation_exhausted", "run_id": inp.run_id}
+                    # Implementation re-runs in remediation mode on the same branch; await report.
                     await workflow.execute_activity(
-                        "mark_takeover", inp,
-                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                        "dispatch_remediation", inp,
+                        start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
                     )
-                    return {"status": "takeover", "run_id": inp.run_id}
-                if self._report.status != "ok":
+                    self._report = None
+                    try:
+                        await workflow.wait_condition(
+                            lambda: self._report is not None,
+                            timeout=timedelta(seconds=inp.report_timeout_seconds),
+                        )
+                    except TimeoutError:
+                        await workflow.execute_activity(
+                            "mark_takeover", inp,
+                            start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                        )
+                        return {"status": "takeover", "run_id": inp.run_id}
+                    if self._report.status != "ok":
+                        await workflow.execute_activity(
+                            "mark_build_failed",
+                            args=[inp, self._report.message or "remediation build failed"],
+                            start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                        )
+                        return {"status": "build_failed", "run_id": inp.run_id}
+
+                await workflow.execute_activity(
+                    "open_merge_gate", inp,
+                    start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                )
+                break
+            except ActivityError as exc:
+                # Unwrap the ActivityError to the real cause (S.No 139) so the classifier sees the
+                # actual error, not the generic "Activity task failed".
+                reason = f"pr/gate setup failed: {failure_reason(exc)}"
+                # An EMPTY BUILD is terminal, never parked (S.No 157): the agent produced no
+                # changes, so there is nothing to open a PR for and resuming would fail
+                # identically forever. Fail it with its clear reason instead of offering a
+                # Resume that cannot work.
+                if is_empty_build(exc):
                     await workflow.execute_activity(
-                        "mark_build_failed",
-                        args=[inp, self._report.message or "remediation build failed"],
-                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                        "mark_build_failed", args=[inp, reason],
+                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_COMPENSATE,
                     )
                     return {"status": "build_failed", "run_id": inp.run_id}
-
-            await workflow.execute_activity(
-                "open_merge_gate", inp,
-                start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
-            )
-        except ActivityError as exc:
-            # Unwrap the ActivityError to the real cause (S.No 139) so mark_build_failed's
-            # classifier sees the actual error, not the generic "Activity task failed".
-            await workflow.execute_activity(
-                "mark_build_failed", args=[inp, f"pr/gate setup failed: {failure_reason(exc)}"],
-                start_to_close_timeout=timedelta(minutes=1), retry_policy=_COMPENSATE,
-            )
-            return {"status": "build_failed", "run_id": inp.run_id}
+                if not await self._park(inp, reason, "open_build_pr"):
+                    return {"status": "build_failed", "run_id": inp.run_id}
+                continue        # resumed → retry the PR/review/gate block (build NOT redone)
 
         # Merge gate: block until a reviewer decides (human-paced; no timeout). On a MERGE
         # CONFLICT the build is NOT ended (Bugs S.No 141 / ENH-2): the gate re-opens so the
@@ -153,31 +223,40 @@ class BuildWorkflow:
                 )
                 return {"status": "rejected", "run_id": inp.run_id}
 
-            try:
-                await workflow.execute_activity(
-                    "merge_build_pr", inp,
-                    start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
-                )
-            except ActivityError as exc:
-                # Unwrap to the real cause (S.No 139) — surfaces the S.No 136 "merge conflict"
-                # message instead of the generic "Activity task failed".
-                reason = failure_reason(exc)
-                if is_merge_conflict(exc):
-                    # Non-terminal (ENH-2): re-open the gate for a resolve-then-retry (no rebuild),
-                    # then loop back and wait for the reviewer's next decision.
+            # Retry the merge until it succeeds, needs a fresh decision (conflict), or the human
+            # abandons a parked failure.
+            needs_new_decision = False
+            while True:
+                try:
                     await workflow.execute_activity(
-                        "reopen_merge_gate", args=[inp, reason],
-                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                        "merge_build_pr", inp,
+                        start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
                     )
+                except ActivityError as exc:
+                    # Unwrap to the real cause (S.No 139) — surfaces the S.No 136 "merge conflict"
+                    # message instead of the generic "Activity task failed".
+                    reason = failure_reason(exc)
+                    if is_merge_conflict(exc):
+                        # Non-terminal (ENH-2): re-open the gate for a resolve-then-retry (no
+                        # rebuild), then wait for the reviewer's next decision.
+                        await workflow.execute_activity(
+                            "reopen_merge_gate", args=[inp, reason],
+                            start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                        )
+                        needs_new_decision = True
+                        break
+                    # Any OTHER merge error parks instead of ending the build (S.No 157). On
+                    # resume the merge is retried under the SAME approval — the reviewer already
+                    # approved, and clicking Resume IS the human action.
+                    if not await self._park(inp, f"merge failed: {reason}", "merge_build_pr"):
+                        return {"status": "build_failed", "run_id": inp.run_id}
                     continue
-                await workflow.execute_activity(
-                    "mark_build_failed", args=[inp, f"merge failed: {reason}"],
-                    start_to_close_timeout=timedelta(minutes=1), retry_policy=_COMPENSATE,
-                )
-                return {"status": "build_failed", "run_id": inp.run_id}
 
-            await workflow.execute_activity(
-                "transition_build_work_item", args=[inp, "done"],
-                start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
-            )
-            return {"status": "completed", "run_id": inp.run_id}
+                await workflow.execute_activity(
+                    "transition_build_work_item", args=[inp, "done"],
+                    start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                )
+                return {"status": "completed", "run_id": inp.run_id}
+
+            if needs_new_decision:
+                continue

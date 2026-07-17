@@ -84,6 +84,42 @@ class _ConflictThenCleanCodeHost:
         pass
 
 
+class _MergeErrorThenOkCodeHost(_FakeCodeHost):
+    """The merge fails with a NON-conflict error on the first attempt, then succeeds — models a
+    transient upstream/permission failure the user fixes before hitting Resume (S.No 157)."""
+
+    def __init__(self):
+        super().__init__()
+        self.attempt = 0
+
+    def mark_ready_for_review(self, *, pr_ref):
+        pass
+
+    def ensure_mergeable(self, *, pr_ref):
+        return PullRequest(repo="acme/api", number=7, title="t", state="open",
+                           head="feature/ST-1", base="main", url="u", sha="abc",
+                           merged=self.merged, mergeable=True, mergeable_state="clean")
+
+    def merge_pull_request(self, *, pr_ref, method="squash"):
+        self.attempt += 1
+        if self.attempt == 1:
+            raise RuntimeError("GitHub PUT /pulls/7/merge -> 403 (branch protection)")
+        self.merged = True
+        return self.get_pull_request(pr_ref=pr_ref)
+
+
+def _parked(run_id):
+    """The run is parked at a resumable error (S.No 157)."""
+    from django.db import connection
+
+    try:
+        run = Run.objects.get(id=run_id)
+        return (run.status == Run.Status.STALLED
+                and bool((run.outputs or {}).get("resumable")))
+    finally:
+        connection.close()
+
+
 def _merge_conflict_recorded(run_id):
     from django.db import connection
 
@@ -311,6 +347,114 @@ def test_build_workflow_merge_conflict_reopens_gate_then_retries(monkeypatch):
     wi.refresh_from_db()
     assert run.status == Run.Status.COMPLETED and wi.state == WorkItem.State.DONE
     assert codehost.merged is True and codehost.attempt == 2   # conflicted once, then merged
+
+
+@pytest.mark.django_db(transaction=True)
+def test_build_workflow_merge_error_parks_then_resumes_without_rebuilding(monkeypatch):
+    """S.No 157: a NON-conflict merge error no longer ends the build. The run parks (STALLED +
+    resumable + a reason) with the workflow still alive; `resume_run` retries the merge under the
+    same approval and completes — the build is never re-dispatched."""
+    _skip_if_no_temporal(monkeypatch)
+    codehost = _MergeErrorThenOkCodeHost()
+    monkeypatch.setattr("integrations.registry.get_capability", lambda tid, cap: codehost)
+    tenant, _project, wi, run, reviewer, inp = _seed()
+
+    async def _drive():
+        client = await _temporal_client()
+        task_queue = f"build-{uuid.uuid4()}"
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            async with await _worker_ctx(client, task_queue, executor):
+                handle = await client.start_workflow(
+                    BuildWorkflow.run, inp, id=f"build-run-{run.id}", task_queue=task_queue,
+                )
+                await _poll(lambda: _run_status(str(run.id)) == Run.Status.RUNNING)
+                await handle.signal("build_reported", BuildReport(
+                    status="ok", branch="feature/ST-1", head_sha="abc",
+                    changed_files=["login.py"]))
+                approval_id = await _poll(lambda: _pending_merge_approval(str(run.id)))
+                await asyncio.to_thread(_approve, str(tenant.id), approval_id, str(reviewer.id))
+                # The merge errors → parked, NOT failed, and the workflow is still alive.
+                await _poll(lambda: _parked(str(run.id)))
+                assert await handle.query("status") == "parked"
+                await handle.signal("resume_run")
+                return await handle.result()
+
+    result = asyncio.run(_drive())
+    assert result["status"] == "completed"
+    run.refresh_from_db()
+    wi.refresh_from_db()
+    assert run.status == Run.Status.COMPLETED and wi.state == WorkItem.State.DONE
+    assert codehost.merged is True and codehost.attempt == 2   # errored once, then merged
+    # The park markers are cleared on resume, so the console shows no stale failure.
+    assert "error" not in (run.outputs or {}) and "resumable" not in (run.outputs or {})
+
+
+@pytest.mark.django_db(transaction=True)
+def test_build_workflow_parked_build_abandons_terminally(monkeypatch):
+    """S.No 157: Take over on a parked run ends it exactly as the old fail-and-return did —
+    FAILED, with the reason kept and the WorkItem handed back for human disposition."""
+    _skip_if_no_temporal(monkeypatch)
+    codehost = _MergeErrorThenOkCodeHost()
+    monkeypatch.setattr("integrations.registry.get_capability", lambda tid, cap: codehost)
+    tenant, _project, wi, run, reviewer, inp = _seed()
+
+    async def _drive():
+        client = await _temporal_client()
+        task_queue = f"build-{uuid.uuid4()}"
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            async with await _worker_ctx(client, task_queue, executor):
+                handle = await client.start_workflow(
+                    BuildWorkflow.run, inp, id=f"build-run-{run.id}", task_queue=task_queue,
+                )
+                await _poll(lambda: _run_status(str(run.id)) == Run.Status.RUNNING)
+                await handle.signal("build_reported", BuildReport(
+                    status="ok", branch="feature/ST-1", head_sha="abc",
+                    changed_files=["login.py"]))
+                approval_id = await _poll(lambda: _pending_merge_approval(str(run.id)))
+                await asyncio.to_thread(_approve, str(tenant.id), approval_id, str(reviewer.id))
+                await _poll(lambda: _parked(str(run.id)))
+                await handle.signal("abandon_run")
+                return await handle.result()
+
+    result = asyncio.run(_drive())
+    assert result["status"] == "build_failed"
+    run.refresh_from_db()
+    wi.refresh_from_db()
+    assert run.status == Run.Status.FAILED
+    # The reason is kept and classified (S.No 139) — plain language, not a raw 403.
+    assert "branch protection" in (run.outputs or {}).get("error", "")
+    assert wi.state == WorkItem.State.IN_PROGRESS               # handed back, as before
+
+
+@pytest.mark.django_db(transaction=True)
+def test_build_workflow_empty_build_fails_terminally_and_is_never_parked(monkeypatch):
+    """S.No 157: an EMPTY BUILD is not resumable — the agent produced no changes, so resuming
+    would fail identically forever. It must stay a terminal failure with its clear reason, never
+    park and offer a Resume that cannot work."""
+    _skip_if_no_temporal(monkeypatch)
+    monkeypatch.setattr("integrations.registry.get_capability", lambda tid, cap: _FakeCodeHost())
+    _tenant, _project, wi, run, _reviewer, inp = _seed()
+
+    async def _drive():
+        client = await _temporal_client()
+        task_queue = f"build-{uuid.uuid4()}"
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            async with await _worker_ctx(client, task_queue, executor):
+                handle = await client.start_workflow(
+                    BuildWorkflow.run, inp, id=f"build-run-{run.id}", task_queue=task_queue,
+                )
+                await _poll(lambda: _run_status(str(run.id)) == Run.Status.RUNNING)
+                # No head_sha / no changed files → open_build_pr raises EmptyBuild.
+                await handle.signal("build_reported", BuildReport(
+                    status="ok", branch="feature/ST-1", head_sha="", changed_files=[]))
+                return await handle.result()
+
+    result = asyncio.run(_drive())
+    assert result["status"] == "build_failed"
+    run.refresh_from_db()
+    assert run.status == Run.Status.FAILED                       # terminal, not STALLED
+    assert not (run.outputs or {}).get("resumable")              # no Resume offered
+    assert "no changes" in (run.outputs or {}).get("error", "").lower()
 
 
 @pytest.mark.django_db(transaction=True)

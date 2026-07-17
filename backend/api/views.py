@@ -80,10 +80,12 @@ from integrations.onboarding import (
 from integrations.preview import read_artifact_preview
 from integrations.types import CapabilityUnavailable
 from orchestration.takeover import (
+    ResumeError,
     TakeoverError,
     abandon_stalled_run,
     release_takeover,
     request_takeover,
+    resume_stalled_run,
 )
 from orchestration.trigger import ActiveRunError, TriggerError, trigger_build, trigger_phase
 
@@ -1140,6 +1142,20 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
                 )
             abandon_stalled_run(tenant_id=self.tenant_id, run_id=str(run.id))
         except TakeoverError as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(out)
+
+    @action(detail=True, methods=["post"], url_path="resume")
+    def resume(self, request, pk=None):
+        """Resume a run parked at an error, from the step that failed (Bugs S.No 157).
+
+        The counterpart to "Take over": takeover ends a parked run terminally, resume continues
+        it. Everything already done (the build, the branch, the PR) is kept — only the failed
+        step is retried, so the user never re-runs a whole phase because of one error."""
+        run = self.get_object()
+        try:
+            out = resume_stalled_run(tenant_id=self.tenant_id, run_id=str(run.id))
+        except ResumeError as exc:
             raise ValidationError(str(exc)) from exc
         return Response(out)
 

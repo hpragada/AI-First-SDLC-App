@@ -3,7 +3,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Badge, Banner, Breadcrumb, Button, Console, Panel, Spinner } from "../../components/ui";
 import type { RunEvent } from "../../types";
 import { phaseLabel } from "./phases";
-import { useClarifications, useRun, useRunEvents, useTriggerPhase, useWorkItem } from "./hooks";
+import {
+  useClarifications,
+  useResumeRun,
+  useRun,
+  useRunEvents,
+  useTriggerPhase,
+  useWorkItem,
+} from "./hooks";
 
 // S-19 view states: dispatched · running · needs-answer · awaiting-gate · completed ·
 // failed · parked.
@@ -61,6 +68,7 @@ function RunConsoleLive() {
   const workItem = useWorkItem(run.data?.work_item);
   const clarifications = useClarifications({ run: id, status: "pending" });
   const retry = useTriggerPhase(run.data?.work_item);
+  const resume = useResumeRun(id);
 
   if (run.isLoading) {
     return (
@@ -111,6 +119,13 @@ function RunConsoleLive() {
   const lastError = [...(events.data ?? [])].reverse().find((e) => e.kind === "err")?.message;
   const failureReason =
     (typeof outputsError === "string" && outputsError) || lastError || undefined;
+  // A run parked at an ERROR is resumable from the step that failed (Bugs S.No 157) — its
+  // workflow is still alive and waiting. That's what distinguishes it from a companion-offline
+  // park (S.No 89), which is only recoverable via reconnect/takeover.
+  const isResumable =
+    run.data.outputs && typeof run.data.outputs === "object"
+      ? (run.data.outputs as Record<string, unknown>).resumable === true
+      : false;
 
   const handleRetry = () => {
     // Re-trigger by the AgentSpec *key* (e.g. "04_architecture"), never the run's
@@ -180,6 +195,14 @@ function RunConsoleLive() {
                 : "The engine exited before reporting. No artifact was registered."}
           </Banner>
         )}
+        {view === "parked" && isResumable && (
+          <Banner variant="warning" title="Paused on an error — you can carry on from here">
+            {failureReason ? `Reason: ${failureReason}` : "This run hit an error and paused."}
+            {" "}Nothing you've done is lost — the work already finished is kept. Fix the cause if
+            you need to, then <strong>Resume</strong> to continue from the step that failed
+            instead of starting the phase over. Or take over to end this run.
+          </Banner>
+        )}
 
         <div style={{ marginTop: view === "running" ? 0 : "var(--space-3)" }}>
           {lines.length === 0 ? (
@@ -195,6 +218,27 @@ function RunConsoleLive() {
               {retry.isPending ? <Spinner /> : "Retry run"}
             </Button>
           </div>
+        )}
+        {view === "parked" && isResumable && (
+          <>
+            {resume.isError && (
+              <Banner variant="danger" title="Couldn't resume">
+                {resume.error instanceof Error ? resume.error.message : "Unknown error"}
+              </Banner>
+            )}
+            <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
+              <Button
+                variant="primary"
+                onClick={() => resume.mutate()}
+                disabled={resume.isPending}
+              >
+                {resume.isPending ? <Spinner /> : "Resume from where it stopped"}
+              </Button>
+              <Button variant="secondary" onClick={() => navigate("/recovery")}>
+                Take over instead
+              </Button>
+            </div>
+          </>
         )}
       </Panel>
     </div>

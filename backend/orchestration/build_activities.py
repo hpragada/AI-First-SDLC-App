@@ -340,6 +340,46 @@ def mark_build_failed_core(inp: BuildInput, reason: str) -> dict:
     return {"status": "build_failed", "reason": reason}
 
 
+def park_build_core(inp: BuildInput, reason: str, resume_from: str) -> dict:
+    """Bugs S.No 157: an error mid-build PARKS the run instead of killing it. Previously any such
+    error ran mark_build_failed and RETURNED, which closes the Temporal history for good — a closed
+    workflow cannot be signalled, so the only way forward was a brand-new run that rebuilt
+    everything from step 1. Parking marks the run STALLED (non-terminal, exactly like the S.No 89
+    report-timeout park) and records a classified reason + the step to resume from, while the
+    workflow stays ALIVE waiting for `resume_run` or `abandon_run`.
+
+    The WorkItem is deliberately NOT transitioned: it is already in_progress, which stays true for
+    a paused build (mark_build_failed's transition belongs to the terminal path — the abandon
+    branch still runs it). Idempotent: parking an already-parked run rewrites the same fields."""
+    reason = classify_build_failure(reason)
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.status = Run.Status.STALLED
+        run.outputs = {**(run.outputs or {}), "error": reason,
+                       "resume_from": resume_from, "resumable": True}
+        run.save(update_fields=["status", "outputs", "updated_at"])
+        tools.log_event(inp.tenant_id, "orchestrator", "build.parked", "run", inp.run_id,
+                        {"reason": reason, "resume_from": resume_from, "resumable": True})
+    return {"status": "parked", "reason": reason, "resume_from": resume_from}
+
+
+def resume_build_core(inp: BuildInput) -> dict:
+    """Bugs S.No 157: a human resumed a parked build — un-park it (back to RUNNING) and clear the
+    park markers so the console stops showing a stale failure. Idempotent."""
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        outputs = {**(run.outputs or {})}
+        resume_from = outputs.get("resume_from", "")
+        for key in ("error", "resume_from", "resumable"):
+            outputs.pop(key, None)
+        run.status = Run.Status.RUNNING
+        run.outputs = outputs
+        run.save(update_fields=["status", "outputs", "updated_at"])
+        tools.log_event(inp.tenant_id, "orchestrator", "build.resumed", "run", inp.run_id,
+                        {"resume_from": resume_from})
+    return {"status": "resumed", "resume_from": resume_from}
+
+
 def reject_build_core(inp: BuildInput, comment: str) -> dict:
     with tenant_context(inp.tenant_id):
         Run.objects.filter(id=inp.run_id, tenant_id=inp.tenant_id).update(
@@ -570,6 +610,16 @@ def reopen_merge_gate_activity(inp: BuildInput, reason: str) -> dict:
     return _boundary(reopen_merge_gate_core, inp, reason)
 
 
+@activity.defn(name="park_build")
+def park_build_activity(inp: BuildInput, reason: str, resume_from: str) -> dict:
+    return _boundary(park_build_core, inp, reason, resume_from)
+
+
+@activity.defn(name="resume_build")
+def resume_build_activity(inp: BuildInput) -> dict:
+    return _boundary(resume_build_core, inp)
+
+
 BUILD_ACTIVITIES = [
     dispatch_build_activity,
     open_build_pr_activity,
@@ -582,6 +632,8 @@ BUILD_ACTIVITIES = [
     mark_build_failed_activity,
     reject_build_activity,
     reopen_merge_gate_activity,
+    park_build_activity,
+    resume_build_activity,
 ]
 
 

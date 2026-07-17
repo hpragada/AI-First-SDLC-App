@@ -55,6 +55,18 @@ def failure_reason(exc) -> str:
     return str(getattr(exc, "cause", None) or exc)
 
 
+def is_empty_build(exc) -> bool:
+    """True when an ActivityError was an EMPTY BUILD — the agent produced no changes, so there is
+    nothing to open a PR for (raised by open_build_pr_core). This is NOT resumable (Bugs S.No 157):
+    parking it for a retry would fail identically forever, because no amount of waiting makes a
+    diff appear. It stays a terminal, clearly-explained failure. Same detection shape as
+    is_merge_conflict: prefer the structured ApplicationError `type`, fall back to the message."""
+    cause = getattr(exc, "cause", None)
+    if getattr(cause, "type", "") == "EmptyBuild":
+        return True
+    return "empty build" in failure_reason(exc).lower()
+
+
 def is_merge_conflict(exc) -> bool:
     """True when an ActivityError was a MERGE CONFLICT (Bugs S.No 141 / ENH-2), so the build can
     re-open the merge gate for a resolve-then-retry instead of failing. Prefers the structured

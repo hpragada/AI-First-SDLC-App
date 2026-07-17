@@ -227,6 +227,52 @@ def test_build_failed_returns_workitem_to_in_progress(world):
     assert world.wi.state == WorkItem.State.IN_PROGRESS
 
 
+# ── S.No 157: park on error instead of ending the build ──────────────
+def test_park_build_keeps_the_run_recoverable_with_a_classified_reason(world):
+    """S.No 157: an error PARKS the build — STALLED (not terminal FAILED), with a classified
+    reason and the step to resume from, while the workflow stays alive waiting for the human.
+    Previously this path ran mark_build_failed and returned, which closed the Temporal history
+    for good — the only way forward was a whole new run that rebuilt everything from step 1."""
+    world.wi.state = WorkItem.State.IN_PROGRESS
+    world.wi.save(update_fields=["state"])
+
+    out = ba.park_build_core(_inp(world), "merge failed: 403 branch protection", "merge_build_pr")
+
+    world.run.refresh_from_db()
+    world.wi.refresh_from_db()
+    assert out["status"] == "parked"
+    assert world.run.status == Run.Status.STALLED             # recoverable, not FAILED
+    assert world.run.outputs["resumable"] is True
+    assert world.run.outputs["resume_from"] == "merge_build_pr"
+    # The reason is classified (S.No 139) — the user reads plain language, not a raw 403.
+    assert "branch protection" in world.run.outputs["error"]
+    assert "403" not in world.run.outputs["error"]
+    # The WorkItem is untouched — it is already in_progress, which stays true for a paused build.
+    assert world.wi.state == WorkItem.State.IN_PROGRESS
+
+
+def test_park_build_is_idempotent(world):
+    ba.park_build_core(_inp(world), "boom", "open_build_pr")
+    ba.park_build_core(_inp(world), "boom", "open_build_pr")     # Temporal may retry
+    world.run.refresh_from_db()
+    assert world.run.status == Run.Status.STALLED
+    assert world.run.outputs["resume_from"] == "open_build_pr"
+
+
+def test_resume_build_unparks_and_clears_the_markers(world):
+    """S.No 157: resuming puts the run back to RUNNING and clears the park markers, so the
+    console stops offering Resume / showing a stale failure once it is moving again."""
+    ba.park_build_core(_inp(world), "merge failed: 403", "merge_build_pr")
+
+    out = ba.resume_build_core(_inp(world))
+
+    world.run.refresh_from_db()
+    assert out["status"] == "resumed" and out["resume_from"] == "merge_build_pr"
+    assert world.run.status == Run.Status.RUNNING
+    assert "error" not in world.run.outputs and "resumable" not in world.run.outputs
+    assert "resume_from" not in world.run.outputs
+
+
 # ── S.No 136: never merge a stale/conflicted branch as-is ────────────
 def test_merge_updates_a_behind_branch_then_merges(world, monkeypatch):
     """The base moved since the branch was cut → mergeable_state='behind' (no conflict). The
@@ -280,6 +326,19 @@ def test_is_merge_conflict_detects_typed_cause_and_message():
     assert is_merge_conflict(SimpleNamespace(cause=RuntimeError("merge conflict: resolve it")))
     assert is_merge_conflict(SimpleNamespace(cause=RuntimeError("some other error"))) is False
     assert is_merge_conflict(RuntimeError("plain error")) is False
+
+
+def test_is_empty_build_detects_typed_cause_and_message():
+    """S.No 157: an EMPTY BUILD must never be parked for a Resume — the agent produced no changes,
+    so resuming would fail identically forever. The workflow tells it apart from a resumable error
+    with is_empty_build, which (like is_merge_conflict) catches the typed ApplicationError
+    (type='EmptyBuild', set by open_build_pr_core) and falls back to the message text."""
+    from orchestration.build_types import is_empty_build
+
+    assert is_empty_build(SimpleNamespace(cause=SimpleNamespace(type="EmptyBuild"))) is True
+    assert is_empty_build(SimpleNamespace(cause=RuntimeError("empty build: no commits between")))
+    assert is_empty_build(SimpleNamespace(cause=RuntimeError("merge conflict"))) is False
+    assert is_empty_build(RuntimeError("GitHub 403 branch protection")) is False
 
 
 def test_failure_reason_unwraps_activity_error_cause():
