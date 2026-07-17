@@ -14,6 +14,7 @@ import os
 import shutil
 import sys
 import tempfile
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -77,6 +78,11 @@ _install_resilient_message_parser()
 # Detect which the *installed* SDK supports so we pin the CLI correctly on either — the daemon
 # machine and the server/CI can legitimately run different SDK versions.
 _OPTIONS_ACCEPTS_CLI_PATH = "cli_path" in inspect.signature(ClaudeAgentOptions).parameters
+# The SDK only pipes (and thus lets us capture) the engine CLI's stderr when a callback is
+# registered on options.stderr; otherwise ProcessError.stderr is the bare "Check stderr output
+# for details" placeholder and the real cause (e.g. a usage-limit notice) is lost (Bugs S.No 146).
+_OPTIONS_ACCEPTS_STDERR = "stderr" in inspect.signature(ClaudeAgentOptions).parameters
+_STDERR_TAIL_LINES = 40  # trailing engine-stderr lines kept for the failure reason
 
 if TYPE_CHECKING:
     from apps.registry.models import AgentSpec
@@ -159,6 +165,29 @@ class ClaudeDriver:
         # Use default CLI permission handling in container/root environments to avoid
         # Claude Code rejecting bypassPermissions under sudo/root.
         self._permission_mode = permission_mode
+        # Bounded tail of the engine CLI's stderr for the last run, so a launch/usage-limit
+        # failure carries a human-readable cause instead of the SDK's opaque placeholder.
+        self._stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
+
+    # ── engine stderr capture (Bugs S.No 146) ─────────────────────
+    def _collect_stderr(self, line: str) -> None:
+        """options.stderr callback: keep a bounded tail of the engine's stderr for the failure
+        reason, and echo it live to the companion console (registering this callback pipes stderr,
+        which would otherwise inherit the console — so we re-emit it to preserve live output)."""
+        text = line.rstrip("\n")
+        if text:
+            self._stderr_tail.append(text)
+        print(line, end="" if line.endswith("\n") else "\n", file=sys.stderr, flush=True)
+
+    def _with_stderr_tail(self, exc: Exception) -> Exception:
+        """Fold the captured engine-stderr tail into the error when the SDK only surfaced its
+        'Check stderr output for details' placeholder, so the platform can classify the failure
+        (e.g. a usage/rate limit) and a human can read WHY (Bugs S.No 146). Returns the original
+        exception unchanged when there is no extra stderr to add."""
+        tail = "\n".join(self._stderr_tail).strip()
+        if not tail or tail.lower() in str(exc).lower():
+            return exc
+        return RuntimeError(f"{exc}\nEngine stderr (tail):\n{tail[-1500:]}")
 
     # ── body resolution ────────────────────────────────────────────
     def _read_body_file(self, agent_spec: AgentSpec) -> str:
@@ -181,6 +210,9 @@ class ClaudeDriver:
         transport in _consume). This is what keeps the engine off the SDK's bundled binary."""
         if self._cli_path is not None and _OPTIONS_ACCEPTS_CLI_PATH:
             kwargs["cli_path"] = str(self._cli_path)
+        # Capture the engine's stderr (Bugs S.No 146) unless the caller wired its own sink.
+        if _OPTIONS_ACCEPTS_STDERR and "stderr" not in kwargs:
+            kwargs["stderr"] = self._collect_stderr
         return ClaudeAgentOptions(**kwargs)
 
     # ── system-prompt delivery (body + manifest, file-based) ───────
@@ -241,6 +273,7 @@ class ClaudeDriver:
         old large-body overflow can no longer occur here: the system prompt (body + manifest) is
         delivered via `--system-prompt-file`, so it never touches the command line at all."""
         last_exc: Exception | None = None
+        self._stderr_tail.clear()  # fresh capture per run (Bugs S.No 146)
         for attempt in range(_LAUNCH_RETRIES):
             try:
                 return await self._consume_stream(prompt, options)
@@ -251,9 +284,16 @@ class ClaudeDriver:
                     last_exc = exc
                     await asyncio.sleep(_LAUNCH_BACKOFF * (attempt + 1))
                     continue
-                raise
+                # Final failure — surface the engine's stderr tail so the platform can classify it.
+                enriched = self._with_stderr_tail(exc)
+                if enriched is exc:
+                    raise
+                raise enriched from exc
         assert last_exc is not None  # loop only exits early via return/raise
-        raise last_exc
+        enriched = self._with_stderr_tail(last_exc)
+        if enriched is last_exc:
+            raise last_exc
+        raise enriched from last_exc
 
     @staticmethod
     def _looks_like_launch_failure(exc: Exception) -> bool:

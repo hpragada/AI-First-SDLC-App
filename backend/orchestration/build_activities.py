@@ -287,6 +287,18 @@ def classify_build_failure(reason: str) -> str:
     r = (reason or "").lower()
     if "secret scan" in r or "secret_blocked" in r:
         return reason  # already a classified, redacted message (S.No 130) — keep it
+    # Engine (Claude Code) failures — Bugs S.No 146. Checked before the merge/permission paths
+    # (different signatures). The usage/rate-limit case is the most common and is transient: the
+    # engine's stderr tail (now captured by the driver) carries the notice.
+    if ("usage limit" in r or "usage_limit" in r or "rate limit" in r or "rate-limit" in r
+            or "429" in r or "too many requests" in r or "overloaded" in r or "quota" in r):
+        return ("The AI engine hit its usage or rate limit, so the build could not finish. "
+                "Wait for the limit to reset, then retry the build (no rebuild of earlier work "
+                "is needed once resume lands).")
+    if ("failed to start claude code" in r or "claude code not found" in r
+            or "open_process()" in r):
+        return ("The AI engine (Claude Code) could not start on the companion — check the engine "
+                "install and dependencies on the dev machine, then retry.")
     if ("merge conflict" in r or "mergeable_state" in r or "dirty" in r
             or "-> 405" in r or " 405 " in r or "merge_conflict" in r):
         return ("Merge conflict: the branch conflicts with its base and needs manual "
@@ -299,6 +311,13 @@ def classify_build_failure(reason: str) -> str:
                 "maximum retry cycles.")
     if "no changes" in r or "empty build" in r or "nothing to commit" in r:
         return "Empty build: the agent produced no changes to commit."
+    # Generic engine exit (Bugs S.No 146) — kept after the specific usage-limit/launch checks so a
+    # bare non-zero exit still reads clearly instead of as a raw "Command failed with exit code 1".
+    if ("exit code" in r or "command failed" in r or "processerror" in r
+            or "engine stderr" in r):
+        return ("The AI engine exited with an error before finishing the build. The most common "
+                "cause is a usage/rate limit; check the companion terminal for the engine output, "
+                "then retry.")
     if r.strip() in ("", "build reported failed", "remediation build failed"):
         return "The build agent failed without reporting a specific reason."
     return reason  # a specific message we don't need to reclassify

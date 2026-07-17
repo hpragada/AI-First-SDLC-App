@@ -399,3 +399,35 @@ def test_review_survives_duplicate_pre_pr_code_pointer(world, monkeypatch):
     monkeypatch.setattr(ba, "get_review_provider", lambda: _ScriptedReviewer([[]]))
     out = ba.run_code_review_core(_inp(world))         # must NOT raise "no opened PR to review"
     assert out["open_blocking"] == 0
+
+
+# ── classify_build_failure: engine / usage-limit reasons (Bugs S.No 146) ──────
+# Pure-function (no DB): the classifier turns raw engine-failure strings into human-readable
+# reasons, and must leave the already-classified paths untouched.
+@pytest.mark.parametrize("raw,expect_substr", [
+    # a usage/rate limit surfaced via the driver-captured engine stderr tail
+    ("Command failed with exit code 1\nEngine stderr (tail):\nClaude usage limit reached. "
+     "Your limit will reset at 5pm.", "usage or rate limit"),
+    ("Error: 429 Too Many Requests", "usage or rate limit"),
+    ("The engine is overloaded, try again", "usage or rate limit"),
+    # engine could not launch on the companion
+    ("Failed to start Claude Code: open_process() got an unexpected keyword argument 'user'",
+     "could not start"),
+    # bare non-zero exit with no captured stderr (the exact WI-32 symptom) still reads clearly
+    ("Command failed with exit code 1 (exit code: 1)\nError output: Check stderr output for "
+     "details", "exited with an error"),
+])
+def test_classify_build_failure_engine_reasons(raw, expect_substr):
+    assert expect_substr in ba.classify_build_failure(raw).lower()
+
+
+@pytest.mark.parametrize("raw,expect_substr", [
+    ("merge failed: GitHub PUT /repos/x/pulls/14/merge -> 405", "merge conflict"),
+    ("pr/gate setup failed: 403 Forbidden", "permission denied"),
+    ("Empty build: the agent produced no changes to commit.", "empty build"),
+    # the S.No 130 secret-scan message must pass through verbatim
+    ("secret scan blocked the push: 1 finding(s): [high_entropy_secret] a.env:2",
+     "secret scan blocked the push"),
+])
+def test_classify_build_failure_leaves_other_paths_intact(raw, expect_substr):
+    assert expect_substr in ba.classify_build_failure(raw).lower()
