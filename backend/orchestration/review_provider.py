@@ -135,6 +135,11 @@ def parse_findings(text: str) -> list[Finding]:
         findings.append(Finding(
             rem=rem, severity=severity, title=str(item.get("title") or rem),
             file=str(item.get("file") or ""), line=line,
+            # Carry the reviewer's own words through (Bugs S.No 147). These used to be dropped
+            # here, so no amount of good review writing could ever reach the remediation board.
+            problem=str(item.get("problem") or "").strip(),
+            fix=str(item.get("fix") or "").strip(),
+            category=str(item.get("category") or "").strip(),
         ))
     return findings
 

@@ -37,6 +37,7 @@ from orchestration import build_activities as ba
 from orchestration.build_activities import BUILD_ACTIVITIES
 from orchestration.build_types import BuildInput, BuildReport
 from orchestration.build_workflow import BuildWorkflow
+from storage.object_store import InMemoryObjectStore
 
 _TEMPORAL = "localhost:7233"
 
@@ -356,6 +357,10 @@ def test_acceptance_durability_idempotent_replay(monkeypatch):
     ba.open_merge_gate_core(inp)
     assert ba.merge_build_pr_core(inp)["merged"] is True
     assert ba.merge_build_pr_core(inp)["merged"] is True       # replayed merge is a no-op
+    # Publishing is its own step (Bugs S.No 152) and is likewise replay-safe.
+    monkeypatch.setattr(ba, "get_object_store", InMemoryObjectStore)
+    ba.publish_build_artifacts_core(inp)
+    ba.publish_build_artifacts_core(inp)                       # replayed publish is a no-op
     assert Artifact.objects.get(run_id=run.id, type="code").status == Artifact.Status.PUBLISHED
 
 

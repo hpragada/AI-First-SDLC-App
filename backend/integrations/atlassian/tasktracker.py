@@ -31,6 +31,14 @@ class AtlassianTaskTracker:
         self._rest = AtlassianRest(config, transport)
         self._subtask_type: str | None = None
 
+    def ping(self) -> str:
+        """Live reachability + auth check (Bugs S.No 156): who are we authenticated as? Cheap,
+        read-only, and touches no project data — "Test connection" previously only proved the
+        connector was constructible, so a wrong token or site URL still reported OK."""
+        me = self._rest.request("GET", "/rest/api/3/myself") or {}
+        who = me.get("displayName") or me.get("emailAddress") or "the account"
+        return f"Signed in to Jira at {self._cfg.site_url} as {who}."
+
     def _browse(self, key: str) -> str:
         return f"{self._cfg.site_url}/browse/{key}"
 

@@ -279,6 +279,8 @@ def trigger_build(
             run_id=str(run.id), tenant_id=str(tenant_id), project_id=str(project_id),
             work_item_id=str(work_item_id), agent_spec_id=str(spec.id),
             work_item_key=work_item_key, repo=repo, base=base, required_role=required_role,
+            # The human title, for what a PERSON reads (Bugs S.No 151) — artifact + PR titles.
+            work_item_title=work_item.title or "",
             enrollment_id=str(enrollment.id) if enrollment is not None else None,
         )
         tools.log_event(

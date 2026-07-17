@@ -204,6 +204,31 @@ finding use the mentor format: a concise title, the file and line, the category,
 the principle or failure mode that makes it matter), the situational code snippet per the rules
 above, and the rationale/impact. Call out positive observations too.
 
+### Writing standard — every finding's `title`, `problem` and `fix` MUST be humanized (read before authoring the verdict)
+
+Your findings do not stay in the review document. The platform turns **each blocking finding into a
+remediation work item on the Work Items board**: your `title` becomes the item's title, and your
+`problem` + `fix` become its description — the only brief the developer (and the 07 implementation
+agent) gets. So these three fields are read on their own, stripped of the surrounding review, by
+someone who has not read your report. Write them accordingly:
+
+- **Plain language that keeps the technical nuance.** State what is wrong and what to do in everyday
+  terms an engineer can act on immediately and a non-technical reviewer can still follow on the board
+  — without dropping the specifics. Same bar as the task breakdown (06) applies to descriptions.
+- **`title`: a specific, readable statement of the defect** — "SQL injection in the search filter",
+  not "Security issue" or a bare `REM-C1`. It is a board item's title; it must make sense alone.
+- **`problem`: what is wrong AND why it matters.** Name the concrete failure mode or the principle
+  it violates — not a restatement of the title. This is the field that makes an item actionable.
+- **`fix`: what to actually do**, concretely enough to start on. Not "handle this properly".
+- **Self-contained.** Never write "see above", "as discussed", or refer to your review's prose — the
+  reader of the work item cannot see it.
+- **No unexplained jargon or bare placeholders.** If a technical term is essential, use it and make
+  its meaning clear from context.
+
+A finding whose `problem`/`fix` are empty, or whose `title` is a bare id or a vague category label,
+is a **failed review**: it produces an un-actionable remediation item that reads as machine noise,
+and 07 is then asked to fix it from a one-line title.
+
 **Then end your reply with your machine-readable verdict — and nothing after it.** Your final
 message back to the platform MUST terminate with exactly one fenced `json` block (the verdict below).
 The platform parses **only this block, from the text of your final message** — so the closing fence
@@ -214,15 +239,18 @@ of the `json` block must be the very last thing you output:
   "status": "CHANGES_REQUIRED",
   "summary": "one line on the overall verdict",
   "findings": [
-    {"rem": "REM-C1", "severity": "critical", "title": "SQL injection in search filter",
+    {"rem": "REM-C1", "severity": "critical", "title": "Search filter is open to SQL injection",
      "file": "api/search.py", "line": 42, "category": "Security — A03 Injection",
-     "problem": "user input concatenated into the query text", "fix": "use a parameterized query"},
-    {"rem": "REM-W1", "severity": "warning", "title": "list endpoint missing pagination",
+     "problem": "The user's search text is pasted straight into the SQL statement, so anything they type is run as database code. A visitor could read or delete other customers' records by typing SQL into the search box.",
+     "fix": "Pass the search text as a query parameter instead of building the SQL string by hand, so the database always treats it as data and never as code."},
+    {"rem": "REM-W1", "severity": "warning", "title": "Orders list returns every order at once",
      "file": "api/orders.py", "line": 88, "category": "Performance",
-     "problem": "unbounded result set", "fix": "add limit/offset pagination"},
-    {"rem": "REM-S1", "severity": "suggestion", "title": "rename ambiguous variable",
+     "problem": "The endpoint has no page limit, so it loads the customer's entire order history in one response. It is fine for a test account, but it will slow down badly and can exhaust memory once an account has thousands of orders.",
+     "fix": "Add limit/offset pagination with a sensible default page size, and return the total count so the caller can page through."},
+    {"rem": "REM-S1", "severity": "suggestion", "title": "Variable `d` in the totals loop is hard to follow",
      "file": "api/orders.py", "line": 12, "category": "Readability",
-     "problem": "single-letter name", "fix": "use a descriptive name"}
+     "problem": "The single-letter name gives no clue that it holds the per-order discount, so the next reader has to trace the loop to work out what the maths is doing.",
+     "fix": "Rename it to `discount` (or `order_discount`) to say what it holds."}
   ]
 }
 ```
@@ -241,6 +269,7 @@ open and the run is halted for inspection), so follow these exactly:**
   `severity`. A `CHANGES_REQUIRED` status with an empty or missing `findings` array is a contract violation.
 
 **Findings contract — the platform consumes this, so be precise:**
+- `title`, `problem`, `fix` and `category` are **read by people on the Work Items board**, not just by the platform: `title` becomes the remediation item's title and `problem` + `fix` become its description (with `file`/`line`/`category`/`severity` shown as its "Where"). They are **required** on every blocking finding and must meet the Writing standard above — a finding with an empty `problem`/`fix` produces an un-actionable board item.
 - `severity` is one of `critical` | `warning` | `suggestion`. `critical` and `warning` are **blocking**; `suggestion` is **non-blocking**.
 - `rem` ids: `REM-C{n}` for criticals, `REM-W{n}` for warnings, `REM-S{n}` for suggestions. **On a re-review, reuse the same `rem` id for a finding that is still open, and omit any finding that is now resolved** — the platform keys the remediation child work items by `rem`, so a stable id is how it knows the same finding from a fixed one.
 - `status` is `APPROVED`, `APPROVED_WITH_CONDITIONS`, or `CHANGES_REQUIRED`, consistent with the severities present.

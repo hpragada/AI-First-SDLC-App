@@ -20,8 +20,8 @@ from apps.runs.models import Run
 from apps.tenancy.context import tenant_context
 from apps.workitems.models import WorkItem
 
-from .activities import _boundary, compose_manifest_core
-from .build_types import BuildInput, BuildReport
+from .activities import _boundary, compose_manifest_core, get_object_store
+from .build_types import BuildInput, BuildReport, display_name
 
 
 def _load_agent_body(agent_spec_id: str, tenant_id: str) -> tuple[str, str]:
@@ -130,7 +130,11 @@ def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
     try:
         ref = codehost.open_pull_request(
             repo=inp.repo, head=report.branch, base=inp.base,
-            title=f"{inp.work_item_key}: build", body=f"Build for WorkItem {inp.work_item_id}.",
+            # The PR title is read by humans in GitHub — use the task's title, not the branch slug
+            # (Bugs S.No 151). The key still identifies the branch in the body.
+            title=f"{display_name(inp)}: build",
+            body=f"Build for {display_name(inp)} ({inp.work_item_key}).\n\n"
+                 f"WorkItem {inp.work_item_id}.",
             draft=True,
         )
     except CapabilityError as exc:
@@ -153,7 +157,7 @@ def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
         artifact = tools.register_artifact(
             inp.tenant_id, inp.project_id, inp.run_id, inp.phase, "code", "git",
             content_hash=report.head_sha or "", external_ref=external_ref,
-            title=f"Code — {inp.work_item_key}",
+            title=f"Code — {display_name(inp)}",
         )
         tools.update_artifact(inp.tenant_id, artifact["id"], status=Artifact.Status.STAGED)
         artifact_id = artifact["id"]
@@ -245,13 +249,52 @@ def merge_build_pr_core(inp: BuildInput) -> dict:
                 )
         pr = codehost.merge_pull_request(pr_ref=pr_ref)
     with tenant_context(inp.tenant_id):
-        tools.update_artifact(inp.tenant_id, str(artifact.id), status=Artifact.Status.PUBLISHED)
+        tools.log_event(inp.tenant_id, "orchestrator", "build.merged", "run", inp.run_id,
+                        {"pr": pr_ref})
+    # Publishing every artifact + completing the run is publish_build_artifacts_core's job
+    # (Bugs S.No 152) — this activity only performs the gated SoR write.
+    return {"merged": True, "pr_ref": pr_ref}
+
+
+def publish_build_artifacts_core(inp: BuildInput) -> dict:
+    """After the merge gate is approved and the PR is merged, publish EVERY artifact of the run —
+    the mirror of the planning path's publish_artifacts_core (Bugs S.No 152).
+
+    The build path had no publish step at all: merge_build_pr published only the single `code`
+    artifact, so the Assumptions and Code Review artifacts stayed DRAFT forever even though their
+    gate was approved. That was a gap, not a decision — nothing marks them un-publishable
+    ("internal" is their SoR, not a lifecycle status, and the planning path publishes internal-SoR
+    artifacts too).
+
+    Only `status` changes: each artifact already carries its correct SoR from registration (code →
+    git, review → internal), and overwriting that would clobber the PR pointer's sor=git.
+    Idempotent — already-published artifacts are skipped, so Temporal retries/replays are safe."""
+    store = get_object_store()
+    with tenant_context(inp.tenant_id):
+        artifacts = list(Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id))
+
+    published: list[str] = []
+    for artifact in artifacts:
+        if artifact.status == Artifact.Status.PUBLISHED:
+            published.append(str(artifact.id))
+            continue
+        if artifact.s3_key:      # immutable audit snapshot, as on the planning path
+            snap = (
+                f"snapshots/{inp.tenant_id}/{inp.project_id}/{inp.run_id}/"
+                f"{artifact.phase}.v{artifact.version}.md"
+            )
+            store.copy(artifact.s3_key, snap)
+        tools.update_artifact(inp.tenant_id, str(artifact.id),
+                              status=Artifact.Status.PUBLISHED)
+        published.append(str(artifact.id))
+
+    with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         run.status = Run.Status.COMPLETED
         run.save(update_fields=["status", "updated_at"])
-        tools.log_event(inp.tenant_id, "orchestrator", "build.merged", "run", inp.run_id,
-                        {"pr": pr_ref})
-    return {"merged": True, "pr_ref": pr_ref}
+        tools.log_event(inp.tenant_id, "orchestrator", "artifacts.published", "run", inp.run_id,
+                        {"artifact_ids": published})
+    return {"published": published}
 
 
 def transition_build_work_item_core(inp: BuildInput, to_state: str) -> dict:
@@ -402,6 +445,47 @@ class Finding:
     title: str = ""
     file: str = ""
     line: int = 0
+    # What the review actually SAID (Bugs S.No 147). Without these the remediation WorkItem is a
+    # bare title with an empty body: the reviewer explains the problem and the fix, and the
+    # platform used to drop both on the floor, so the board read as terse and un-actionable.
+    problem: str = ""        # what is wrong, and why it matters
+    fix: str = ""            # what to do about it
+    category: str = ""       # which review dimension raised it (e.g. "security")
+
+
+_SEVERITY_LEAD = {
+    "critical": "This must be fixed before the code can merge.",
+    "warning": "This should be fixed before the code can merge.",
+    "suggestion": "Worth improving, but it is not blocking the merge.",
+}
+
+
+def _remediation_description(finding: Finding) -> str:
+    """Compose the remediation WorkItem's body from what the review actually said (Bugs S.No 147).
+
+    Remediation items read as terse and machine-generated because the platform created them with a
+    title and NO description at all — every word of the reviewer's explanation was discarded before
+    it got here. The reader is a developer, so this keeps the technical nuance (file:line, severity,
+    dimension) but leads with plain language: what's wrong, why it matters, what to do."""
+    parts: list[str] = [_SEVERITY_LEAD.get(finding.severity, "")]
+    if finding.problem:
+        parts.append(f"**What's wrong**\n\n{finding.problem}")
+    if finding.fix:
+        parts.append(f"**What to do**\n\n{finding.fix}")
+
+    where = []
+    if finding.file:
+        where.append(f"`{finding.file}`" + (f" line {finding.line}" if finding.line else ""))
+    if finding.category:
+        where.append(f"raised by the **{finding.category}** review check")
+    where.append(f"severity **{finding.severity}** (`{finding.rem}`)")
+    parts.append("**Where**\n\n" + " · ".join(where))
+
+    if not finding.problem and not finding.fix:
+        # The reviewer gave only a title — say so plainly rather than implying a fuller brief.
+        parts.append("_The code review did not provide further detail — open the Code Review "
+                     "artifact for the full context._")
+    return "\n\n".join(p for p in parts if p)
 
 
 class _NoFindingsReviewProvider:
@@ -450,7 +534,7 @@ def run_code_review_core(inp: BuildInput) -> dict:
     if review_art is None:
         created = tools.register_artifact(
             inp.tenant_id, inp.project_id, inp.run_id, inp.phase, "code_review", "internal",
-            content_hash=digest, title=f"Code Review — {inp.work_item_key}")
+            content_hash=digest, title=f"Code Review — {display_name(inp)}")
         review_art_id = created["id"]
         tools.add_trace_edge(inp.tenant_id, review_art_id, str(code.id), "tests")
     else:
@@ -477,6 +561,8 @@ def run_code_review_core(inp: BuildInput) -> dict:
                 child = WorkItem.objects.create(
                     tenant_id=inp.tenant_id, project_id=inp.project_id,
                     type=WorkItem.Type.TASK, parent=story, title=finding.title or rem,
+                    # A real, readable brief — not a bare title (Bugs S.No 147).
+                    description=_remediation_description(finding),
                     state=WorkItem.State.IN_PROGRESS,
                     external_ref={"rem": rem, "severity": finding.severity,
                                   "file": finding.file, "line": finding.line},
@@ -503,6 +589,10 @@ def _render_remediation_section(brief: list[dict]) -> str:
     for f in brief:
         loc = f"{f.get('file') or '?'}:{f.get('line') or 0}"
         lines.append(f"- **{f.get('rem')}** ({f.get('severity')}) — {f.get('title')}  [{loc}]")
+        # Include the reviewer's problem/fix detail, indented under its item (Bugs S.No 147) —
+        # 07 was previously asked to fix each finding from its one-line title alone.
+        for detail in (f.get("description") or "").splitlines():
+            lines.append(f"  {detail}" if detail.strip() else "")
     return "\n".join(lines)
 
 
@@ -522,7 +612,10 @@ def dispatch_remediation_core(inp: BuildInput) -> dict:
         brief = [{"rem": (c.external_ref or {}).get("rem"), "title": c.title,
                   "severity": (c.external_ref or {}).get("severity"),
                   "file": (c.external_ref or {}).get("file"),
-                  "line": (c.external_ref or {}).get("line")} for c in open_items]
+                  "line": (c.external_ref or {}).get("line"),
+                  # The reviewer's own explanation (Bugs S.No 147) — agent 07 was being asked to
+                  # fix findings from a one-line title, with the problem/fix detail discarded.
+                  "description": c.description or ""} for c in open_items]
 
     manifest = f"{compose_manifest_core(inp)}\n\n{_render_remediation_section(brief)}"
     agent_body, model = _load_agent_body(inp.agent_spec_id, inp.tenant_id)
@@ -610,6 +703,11 @@ def reopen_merge_gate_activity(inp: BuildInput, reason: str) -> dict:
     return _boundary(reopen_merge_gate_core, inp, reason)
 
 
+@activity.defn(name="publish_build_artifacts")
+def publish_build_artifacts_activity(inp: BuildInput) -> dict:
+    return _boundary(publish_build_artifacts_core, inp)
+
+
 @activity.defn(name="park_build")
 def park_build_activity(inp: BuildInput, reason: str, resume_from: str) -> dict:
     return _boundary(park_build_core, inp, reason, resume_from)
@@ -632,6 +730,7 @@ BUILD_ACTIVITIES = [
     mark_build_failed_activity,
     reject_build_activity,
     reopen_merge_gate_activity,
+    publish_build_artifacts_activity,
     park_build_activity,
     resume_build_activity,
 ]

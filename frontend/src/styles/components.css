@@ -91,6 +91,29 @@
   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%236B7385' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px;
 }
+/* Combobox (S.No 150) — a Select you can type to search. Borrows the .select chevron and the
+   .input frame so it sits identically next to the other controls. */
+.combobox { position: relative; width: 100%; }
+.combobox__input { background-image:
+  url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%236B7385' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px;
+  cursor: text;
+}
+.combobox__list {
+  position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0;
+  max-height: 260px; overflow-y: auto; margin: 0; padding: var(--space-1); list-style: none;
+  background: var(--bg-surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-md, 0 8px 24px rgb(0 0 0 / 12%));
+}
+.combobox__option {
+  padding: 8px 10px; border-radius: var(--radius-sm); cursor: pointer;
+  font-size: var(--fs-body); color: var(--text-strong);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.combobox__option--active { background: var(--bg-subtle, rgb(0 0 0 / 5%)); }
+.combobox__option--selected { font-weight: 600; }
+.combobox__empty { padding: 8px 10px; font-size: var(--fs-sm); color: var(--text-muted); }
+
 .field__help { font-size: var(--fs-xs); color: var(--text-muted); margin-top: var(--space-2); }
 .field__tip { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 50%; cursor: help; vertical-align: middle; }
 .field__tip:hover, .field__tip:focus-visible { color: var(--text-strong); border-color: var(--border-strong); outline: none; }

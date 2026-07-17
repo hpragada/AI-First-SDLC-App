@@ -191,6 +191,15 @@ export const api = {
   testIntegrationConnection: (id: string) =>
     req<TestConnectionResult>("POST", `/integrations/${id}/test-connection/`),
 
+  // Test credentials BEFORE saving them (Bugs S.No 156) — probed on a throwaway connection
+  // server-side; nothing is persisted to the tenant.
+  testIntegrationCredentials: (body: {
+    capability: string;
+    vendor: string;
+    binding?: Record<string, string>;
+    secrets?: Record<string, string>;
+  }) => req<TestConnectionResult>("POST", "/integrations/test-credentials/", { body }),
+
   // Phase 4.8 T3 — repositories (4.7 T7). Session-derived tenant; member-scoped reads,
   // tech_lead/admin writes.
   // Backend wraps the list: { repo_topology, repositories: [...] } — unwrap here.

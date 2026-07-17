@@ -252,6 +252,14 @@ class BuildWorkflow:
                         return {"status": "build_failed", "run_id": inp.run_id}
                     continue
 
+                # Publish EVERY artifact of the run now the gate is approved and the PR is merged
+                # (Bugs S.No 152) — the mirror of the planning path's publish_artifacts. Without
+                # this the Assumptions/Code Review artifacts stayed Draft forever; only the `code`
+                # artifact was ever published.
+                await workflow.execute_activity(
+                    "publish_build_artifacts", inp,
+                    start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
+                )
                 await workflow.execute_activity(
                     "transition_build_work_item", args=[inp, "done"],
                     start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,

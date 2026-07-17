@@ -179,6 +179,17 @@ class IntegrationUpdateSerializer(serializers.Serializer):
     secrets = serializers.DictField(required=False)
 
 
+class IntegrationTestCredentialsSerializer(serializers.Serializer):
+    """Input for POST /api/integrations/test-credentials/ (admin) — test BEFORE saving (Bugs
+    S.No 156). Same shape as create, but nothing is persisted: the credentials are probed on a
+    throwaway in-memory connection and never written to the tenant."""
+
+    capability = serializers.CharField()
+    vendor = serializers.CharField()
+    binding = serializers.DictField(required=False, default=dict)
+    secrets = serializers.DictField(required=False, default=dict)
+
+
 # ── Repositories (P4.7-T7) ────────────────────────────────────────────
 class RepositoryCreateSerializer(serializers.Serializer):
     """Input for POST /api/projects/{id}/repositories/ (tech_lead/admin)."""
