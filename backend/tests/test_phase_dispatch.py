@@ -19,6 +19,9 @@ from orchestration import activities
 from orchestration.types import AgentRunInput, PhaseReport
 from storage import InMemoryObjectStore
 
+# sha256 of b"" — the fingerprint every empty draft carried while S.No 160 was live.
+_EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
 
 @pytest.fixture
 def world(db):
@@ -67,6 +70,43 @@ def test_register_phase_result_core_drafts_and_is_idempotent(monkeypatch, world)
 
     again = activities.register_phase_result_core(world["inp"], report)
     assert again.get("idempotent") is True and again["artifact_ids"] == [art_id]
+
+
+def test_register_phase_result_core_reads_a_dict_report(monkeypatch, world):
+    """Bugs.xlsx S.No 160: Temporal hands an UNANNOTATED activity arg to the activity as a plain
+    dict, so the report reached the core as a dict and `getattr(report, "body", "")` read an
+    attribute that a dict does not have — silently returning the default. The companion's whole
+    document became "" and its cost 0.0: a 0-byte artifact, hash = sha256(""), and a gate opened
+    on a blank page.
+
+    Every existing test here passes a real PhaseReport, which is why they all stayed green while
+    production wrote empty drafts — they exercised a shape production never sends. This test sends
+    the dict, exactly as Temporal delivers it.
+    """
+    store = InMemoryObjectStore()
+    monkeypatch.setattr(activities, "get_object_store", lambda: store)
+    # The wire shape: what temporalio's converter produces for an unannotated parameter.
+    report = {"status": "ok", "body": "# PRD\nreal body", "cost_usd": 0.397562, "message": ""}
+
+    out = activities.register_phase_result_core(world["inp"], report)
+
+    art = Artifact.objects.get(id=out["artifact_ids"][0])
+    assert store.get(art.s3_key) == b"# PRD\nreal body"      # not b""
+    assert art.content_hash != "sha256:" + _EMPTY_SHA256      # not the empty-file hash
+    assert out["cost_usd"] == pytest.approx(0.397562)         # not 0.0
+    run = Run.objects.get(id=world["run_id"])
+    # Run.cost_usd is a 4dp Decimal column, so the stored value is the rounded one.
+    assert float(run.cost_usd) == pytest.approx(0.397562, abs=1e-4)
+
+
+def test_register_phase_result_activity_annotates_its_report_param():
+    """The annotation is the root fix (S.No 160) — Temporal converts an activity arg to its
+    parameter's annotated type and leaves an unannotated one as a dict. Assert it stays put, so
+    nobody drops it again and silently reintroduces empty drafts."""
+    import inspect
+
+    sig = inspect.signature(activities.register_phase_result_activity)
+    assert sig.parameters["report"].annotation is not inspect.Parameter.empty
 
 
 def test_register_phase_result_backfills_agent_registered_artifact(monkeypatch, world):

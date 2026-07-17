@@ -9,6 +9,7 @@ the non-superuser app role.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import sys
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -28,11 +29,35 @@ from manifest import compose_manifest
 from manifest.rules import get_prompt_rules
 from storage import content_hash, s3_from_settings
 
-from .types import AgentRunInput
+from .types import AgentRunInput, PhaseReport
 
 
 class WriteCompletenessError(Exception):
     """Rule 11: a run reached completion without registering an expected artifact."""
+
+
+def _as_phase_report(report) -> PhaseReport:
+    """Coerce a reported phase result to PhaseReport, whatever the caller handed us.
+
+    Temporal converts an activity argument to the type its parameter is ANNOTATED with; an
+    unannotated parameter arrives as the raw decoded JSON — a plain dict. `register_phase_result`
+    was unannotated, so `getattr(report, "body", "")` read an attribute off a dict, found none,
+    and silently returned the default: the companion's whole document became "" and its cost
+    became 0.0. The activity is annotated now, so this is belt-and-braces (the cores are also
+    called directly from tests and from the takeover path, which pass a real PhaseReport).
+    """
+    if isinstance(report, PhaseReport):
+        return report
+    if isinstance(report, dict):
+        known = {f.name for f in dataclasses.fields(PhaseReport)}
+        return PhaseReport(**{k: v for k, v in report.items() if k in known})
+    # Anything else (an object with the right attributes) — read it the old way, defensively.
+    return PhaseReport(
+        status=getattr(report, "status", "ok") or "ok",
+        body=getattr(report, "body", "") or "",
+        cost_usd=float(getattr(report, "cost_usd", 0.0) or 0.0),
+        message=getattr(report, "message", "") or "",
+    )
 
 _PLATFORM_TOOL_NAMES = [
     "get_context", "register_artifact", "stage_artifact_body", "get_artifact_body",
@@ -332,7 +357,12 @@ def register_phase_result_core(inp: AgentRunInput, report) -> dict:
     s3_key). When the agent's own registration matched (run, type==phase), the old guard
     returned early and the body was NEVER staged to S3 — every artifact of the run ended
     body-less and preview 404'd. Now the body is always staged, and an agent-registered
-    phase artifact gets its s3_key backfilled instead of blocking the staging step."""
+    phase artifact gets its s3_key backfilled instead of blocking the staging step.
+
+    Bugs.xlsx S.No 160: `report` arrived here as a dict (see `_as_phase_report`), so reading it
+    with getattr silently yielded ""/0.0 — the companion's entire document was dropped on the
+    floor and its cost misreported as zero. Read it through the coercion, never with getattr."""
+    report = _as_phase_report(report)
     with tenant_context(inp.tenant_id):
         existing = Artifact.objects.filter(
             run_id=inp.run_id, tenant_id=inp.tenant_id, type=inp.phase).first()
@@ -340,8 +370,8 @@ def register_phase_result_core(inp: AgentRunInput, report) -> dict:
         # True retry: the body was already staged and pointed at — nothing left to do.
         return {"artifact_ids": [str(existing.id)], "idempotent": True}
 
-    body = getattr(report, "body", "") or ""
-    cost = float(getattr(report, "cost_usd", 0.0) or 0.0)
+    body = report.body or ""
+    cost = float(report.cost_usd or 0.0)
     s3_key = f"drafts/{inp.tenant_id}/{inp.project_id}/{inp.run_id}/{inp.phase}.md"
     get_object_store().put(s3_key, body)
     digest = content_hash(body.encode("utf-8"))
@@ -386,7 +416,7 @@ def register_phase_result_core(inp: AgentRunInput, report) -> dict:
             tools.log_event(
                 inp.tenant_id, "orchestrator", "phase.empty_result", "run", inp.run_id,
                 {"phase": inp.phase,
-                 "message": getattr(report, "message", "") or
+                 "message": report.message or
                  "companion reported ok but the engine returned no final text; "
                  "the staged phase draft is empty"})
     return {"artifact_ids": [artifact["id"]], "cost_usd": cost}
@@ -515,7 +545,10 @@ def dispatch_phase_activity(inp: AgentRunInput, manifest: str) -> dict:
 
 
 @activity.defn(name="register_phase_result")
-def register_phase_result_activity(inp: AgentRunInput, report) -> dict:
+def register_phase_result_activity(inp: AgentRunInput, report: PhaseReport) -> dict:
+    # The annotation is load-bearing (Bugs.xlsx S.No 160): Temporal converts an activity arg to
+    # its parameter's annotated type, and hands an UNANNOTATED one back as a plain dict. Without
+    # it, `report` arrived as a dict and every attribute read silently returned a default.
     return _boundary(register_phase_result_core, inp, report)
 
 
