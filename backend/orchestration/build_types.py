@@ -49,6 +49,13 @@ class BuildReport:
     head_sha: str = ""
     changed_files: list = field(default_factory=list)
     message: str = ""
+    # The suite's own JUnit results from the worktree (D4: the companion worktree executes
+    # tests; results are imported on report). [{test_ref, status, evidence}] — a summary, never
+    # result bodies (#1/#3). The companion reports what it found for EVERY build; the control
+    # plane decides which phases actually import them (catalog `imports_test_results`), so the
+    # companion stays dumb and the routing rule lives in one place.
+    test_results: list = field(default_factory=list)
+    test_summary: str = ""      # "12 passed, 1 failed" — for the run console / build message
 
 
 def failure_reason(exc) -> str:

@@ -61,7 +61,14 @@ def build_server(
         to the object store; returns its pointer (`s3_key`, `content_hash`, `bytes`). Stage
         each big document here, then reference the returned `s3_key` from `register_artifact`
         — `register_artifact` never carries a body. project/run/phase are filled from this
-        run. Call once per document to stay within limits."""
+        run.
+
+        **One body per artifact — never batch.** Call this once for EACH artifact you are
+        about to register, so every artifact owns its own `s3_key` (filenames `tc-001`,
+        `tc-002`, … — not one `tc-001-023` holding 23 test cases). Bodies are what the UI
+        previews and what the SoR export parses, so several artifacts sharing one body means
+        every one of them shows — and exports as — the wrong content. Registering a
+        `test_case` whose body another test case in this run already claimed is rejected."""
         return client.call("stage_artifact_body", project_id=project_id_bound,
                            run_id=run_id_bound, phase=phase or phase_bound,
                            filename=filename, body=body, content_type=content_type)

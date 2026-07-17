@@ -21,6 +21,7 @@ from .guardrails import (
     check_command_egress,
     scan_worktree,
 )
+from .testresults import collect_test_results, summarize
 from .worktree import (
     assert_remote_matches,
     changed_files,
@@ -176,9 +177,14 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
             )
         files = changed_files(worktree)
         secret_findings = scan_worktree(worktree)
+        # D4: the worktree executed the suite — collect its JUnit report BEFORE teardown below
+        # (the worktree, and the report in it, are gone once the `finally` runs).
+        test_results = collect_test_results(worktree)
         out = {
             "run_id": task.run_id, "branch": branch, "worktree": str(worktree),
             "changed_files": files,
+            "test_results": test_results,
+            "test_summary": summarize(test_results),
             "cost_usd": getattr(result, "cost_usd", 0.0),
             "outputs": getattr(result, "outputs", {}),
             "egress_allowed_hosts": sorted(policy.allowed_hosts),
@@ -237,8 +243,13 @@ def to_build_report(result: dict) -> dict:
     if result.get("status") == "secret_blocked":
         findings = result.get("secret_findings", [])
         detail = "; ".join(_format_secret_findings(findings))
+        # No test_results on a blocked build: nothing was pushed, so the run's suite describes
+        # code that will never land. Opening defects off it would litter the board with
+        # findings about a discarded branch.
         return {"status": "failed", "branch": result.get("branch", ""),
                 "message": f"secret scan blocked the push: {len(findings)} finding(s): {detail}"}
     return {"status": "ok", "branch": result.get("branch", ""),
             "head_sha": result.get("head_sha", ""),
-            "changed_files": result.get("changed_files", [])}
+            "changed_files": result.get("changed_files", []),
+            "test_results": result.get("test_results", []),
+            "test_summary": result.get("test_summary", "")}

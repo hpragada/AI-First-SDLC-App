@@ -207,7 +207,7 @@ def execute_agent_core(inp: AgentRunInput, manifest: str) -> dict:
 
 
 def open_gate_core(inp: AgentRunInput) -> str:
-    from apps.gates.wcag import conditions_for_phase
+    from apps.gates.conditions import conditions_for_phase
 
     with tenant_context(inp.tenant_id):
         approval, created = Approval.objects.get_or_create(
@@ -216,7 +216,8 @@ def open_gate_core(inp: AgentRunInput) -> str:
                 "work_item_id": inp.work_item_id,
                 "required_role": inp.required_role,
                 "decision": Approval.Decision.PENDING,
-                # a11y/WCAG gate (D6): the design phase's gate carries the WCAG checklist.
+                # Control-plane gate conditions (#2/#5): the WCAG checklist on the design
+                # gate (D6), the blocking-test rule on the test gate (D9).
                 "conditions": conditions_for_phase(inp.phase),
             },
         )
@@ -297,18 +298,44 @@ def reject_run_core(inp: AgentRunInput, comment: str) -> dict:
     return {"status": "rejected"}
 
 
+#: The hash of a body staged from no text at all. `register_phase_result_core` always stamps
+#: the staged body's real digest, so an expected artifact carrying this is provably empty.
+_EMPTY_BODY_HASH = content_hash(b"")
+
+
 def verify_write_completeness_core(inp: AgentRunInput, expected_types: list[str]) -> dict:
-    """Rule 11 (platform-enforced): before the gate opens, confirm the run actually
-    registered the artifacts its phase was supposed to produce."""
+    """Rule 11 (platform-enforced): before the gate opens, confirm the run actually registered
+    the artifacts its phase was supposed to produce — **and that they say something**.
+
+    An empty expected artifact is not a write. Run b0e6557b spent its whole turn budget
+    registering 90 test cases and never wrote its phase document; the platform staged the empty
+    draft, logged `phase.empty_result` — and then opened the gate anyway, inviting a human to
+    approve a blank page. Presence was never the bar Rule 11 was reaching for; having something
+    to review is.
+
+    Only what we can know is judged: an artifact staged from the engine's text carries that
+    text's digest, so an empty one is provable. A pointer-only artifact registered with a
+    foreign hash makes no claim about its body and is left alone.
+    """
     with tenant_context(inp.tenant_id):
-        present = set(
+        artifacts = list(
             Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id)
-            .values_list("type", flat=True)
+            .values_list("type", "content_hash")
         )
+    present = {t for t, _ in artifacts}
     missing = [t for t in expected_types if t not in present]
     if missing:
         raise WriteCompletenessError(
             f"run {inp.run_id} reached the gate without expected artifact types {missing}"
+        )
+    empty = sorted({t for t, h in artifacts
+                    if t in expected_types and h == _EMPTY_BODY_HASH})
+    if empty:
+        raise WriteCompletenessError(
+            f"run {inp.run_id} produced an EMPTY {', '.join(empty)} document — the engine "
+            f"returned no final text (commonly the turn budget spent before writing it). "
+            f"There is nothing for a reviewer to approve, so no gate is opened; re-run the "
+            f"phase. Everything it did register stays in the registry as drafts."
         )
     return {"present": sorted(present), "expected": list(expected_types)}
 
@@ -348,6 +375,23 @@ def dispatch_phase_core(inp: AgentRunInput, manifest: str) -> dict:
     return {"dispatched": True}
 
 
+def _phase_artifact_title(inp: AgentRunInput) -> str:
+    """A human name for the phase's own document — "Testing — Add login".
+
+    The platform registers this artifact itself, and did so titleless: every UI surface then
+    had to fall back to humanizing the bare type (S.No 120), and a phase document is precisely
+    the artifact a reviewer opens at the gate. `register_artifact`'s own contract says ALWAYS
+    pass a title; the platform must hold itself to what it tells agents.
+    """
+    label = (inp.phase or "phase").replace("_", " ").strip().capitalize()
+    with tenant_context(inp.tenant_id):
+        work_item_title = (
+            WorkItem.objects.filter(id=inp.work_item_id, tenant_id=inp.tenant_id)
+            .values_list("title", flat=True).first() or ""
+        )
+    return f"{label} — {work_item_title}" if work_item_title else label
+
+
 def register_phase_result_core(inp: AgentRunInput, report) -> dict:
     """Register the companion's reported phase result: write the body to S3, register the
     draft artifact (pointer), record cost, clear the dispatch claim. Idempotent — an existing
@@ -377,16 +421,21 @@ def register_phase_result_core(inp: AgentRunInput, report) -> dict:
     digest = content_hash(body.encode("utf-8"))
     if existing is not None:
         # The agent registered the phase artifact itself (pointer-only). Attach the staged
-        # draft so the pointer + hash reference a real body (still S3, never the DB — #1/#3).
+        # draft so the pointer + hash reference a real body (still S3, never the DB — #1/#3),
+        # and give it a name if the agent left it untitled.
         with tenant_context(inp.tenant_id):
+            fields = ["s3_key", "content_hash", "updated_at"]
             existing.s3_key = s3_key
             existing.content_hash = digest
-            existing.save(update_fields=["s3_key", "content_hash", "updated_at"])
+            if not existing.title:
+                existing.title = _phase_artifact_title(inp)
+                fields.append("title")
+            existing.save(update_fields=fields)
         artifact = {"id": str(existing.id)}
     else:
         artifact = tools.register_artifact(
             inp.tenant_id, inp.project_id, inp.run_id, inp.phase, inp.phase,
-            "internal", digest, s3_key=s3_key,
+            "internal", digest, s3_key=s3_key, title=_phase_artifact_title(inp),
         )
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)

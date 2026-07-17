@@ -78,6 +78,61 @@ def test_failing_test_opens_defect_then_closes_on_pass(world):
     assert WorkItem.objects.filter(parent_id=story.id, type=WorkItem.Type.DEFECT).count() == 1
 
 
+# ── closing keys off a reported PASS, never off silence ─────────────
+def test_a_partial_run_does_not_close_the_defect_of_a_test_it_never_ran(world):
+    """The false-green test-impact selection (D9) would otherwise guarantee: a run reporting
+    only SOME tests says nothing about the rest, and silence must never read as success."""
+    t, p, story, run = world["t"], world["p"], world["story"], world["run"]
+    services.import_test_results(
+        tenant_id=t.id, project_id=p.id, work_item_id=story.id, run_id=run.id,
+        results=[{"test_ref": "PROJ-9", "status": "FAIL"}])
+    defect = WorkItem.objects.get(parent_id=story.id, type=WorkItem.Type.DEFECT)
+
+    # An impact-selected run covering only an unrelated test — PROJ-9 did not run at all.
+    out = services.import_test_results(
+        tenant_id=t.id, project_id=p.id, work_item_id=story.id, run_id=run.id,
+        results=[{"test_ref": "PROJ-2", "status": "PASS"}])
+    assert out["defects_closed"] == []
+    defect.refresh_from_db()
+    assert defect.state == WorkItem.State.IN_PROGRESS       # still open — it was never re-run
+
+
+def test_an_empty_report_is_not_a_green_run(world):
+    """A build that ran no tests must not register a passing execution, and must not close
+    the defects it said nothing about."""
+    t, p, story, run = world["t"], world["p"], world["story"], world["run"]
+    services.import_test_results(
+        tenant_id=t.id, project_id=p.id, work_item_id=story.id, run_id=run.id,
+        results=[{"test_ref": "PROJ-9", "status": "FAIL"}])
+    defect = WorkItem.objects.get(parent_id=story.id, type=WorkItem.Type.DEFECT)
+    executions = TestExecution.objects.filter(run_id=run.id).count()
+
+    out = services.import_test_results(
+        tenant_id=t.id, project_id=p.id, work_item_id=story.id, run_id=run.id, results=[])
+    assert out["status"] == "skipped" and out["test_execution_id"] is None
+    assert out["defects_closed"] == []
+    defect.refresh_from_db()
+    assert defect.state == WorkItem.State.IN_PROGRESS
+    assert TestExecution.objects.filter(run_id=run.id).count() == executions  # nothing recorded
+
+
+def test_a_quarantined_test_does_not_close_its_defect(world):
+    """A flip-flopping test's result is ambiguous by definition — it neither blocks the gate
+    nor counts as the PASS that resolves a defect."""
+    t, p, story, run = world["t"], world["p"], world["story"], world["run"]
+    services.import_test_results(
+        tenant_id=t.id, project_id=p.id, work_item_id=story.id, run_id=run.id,
+        results=[{"test_ref": "FLIP", "status": "FAIL"}])
+    defect = WorkItem.objects.get(parent_id=story.id, type=WorkItem.Type.DEFECT)
+
+    out = services.import_test_results(     # flips within this execution → quarantined
+        tenant_id=t.id, project_id=p.id, work_item_id=story.id, run_id=run.id,
+        results=[{"test_ref": "FLIP", "status": "PASS"}, {"test_ref": "FLIP", "status": "FAIL"}])
+    assert out["flaky"] == ["FLIP"] and out["defects_closed"] == []
+    defect.refresh_from_db()
+    assert defect.state == WorkItem.State.IN_PROGRESS
+
+
 # ── flaky quarantine: conflicting statuses within one import ────────
 def test_flaky_test_is_quarantined_and_does_not_open_a_defect(world):
     t, p, story, run = world["t"], world["p"], world["story"], world["run"]

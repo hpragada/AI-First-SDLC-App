@@ -95,3 +95,62 @@ def test_write_completeness_passes_when_expected_artifact_present(run_input):
 def test_write_completeness_raises_when_artifact_missing(run_input):
     with pytest.raises(WriteCompletenessError):
         verify_write_completeness_core(run_input, ["prd"])
+
+
+# ── an EMPTY expected artifact is not a write (Testing-phase bug 4) ──
+def test_write_completeness_rejects_an_empty_phase_document(run_input):
+    """Run b0e6557b staged a phase document from an engine that returned no final text, and
+    the platform opened the gate on it — asking a human to approve a blank page. Presence is
+    not the bar; there must be something to review."""
+    from mcp_platform_state import tools
+
+    from storage import content_hash
+
+    tools.register_artifact(
+        run_input.tenant_id, run_input.project_id, run_input.run_id,
+        "prd", "prd", "internal", content_hash(b""), s3_key="drafts/t/p/r/prd.md",
+    )
+    with pytest.raises(WriteCompletenessError, match="EMPTY"):
+        verify_write_completeness_core(run_input, ["prd"])
+
+
+def test_write_completeness_passes_a_phase_document_with_a_body(run_input):
+    from mcp_platform_state import tools
+
+    from storage import content_hash
+
+    tools.register_artifact(
+        run_input.tenant_id, run_input.project_id, run_input.run_id,
+        "prd", "prd", "internal", content_hash(b"# PRD\nreal content"),
+        s3_key="drafts/t/p/r/prd.md",
+    )
+    assert verify_write_completeness_core(run_input, ["prd"])["present"] == ["prd"]
+
+
+def test_a_pointer_only_artifact_is_not_judged_empty(run_input):
+    """Only what we can know: an artifact registered with a foreign hash makes no claim about
+    its body, so it is not accused of being empty (that would break every agent-registered
+    pointer)."""
+    from mcp_platform_state import tools
+
+    tools.register_artifact(
+        run_input.tenant_id, run_input.project_id, run_input.run_id,
+        "prd", "prd", "internal", "sha256:someagenthash",
+    )
+    assert verify_write_completeness_core(run_input, ["prd"])["present"] == ["prd"]
+
+
+def test_an_empty_non_expected_artifact_does_not_block(run_input):
+    """A run may legitimately register an empty side artifact; only the phase's own expected
+    document gates the review."""
+    from mcp_platform_state import tools
+
+    from storage import content_hash
+
+    tools.register_artifact(
+        run_input.tenant_id, run_input.project_id, run_input.run_id,
+        "prd", "prd", "internal", content_hash(b"# PRD\nreal"), s3_key="k1")
+    tools.register_artifact(
+        run_input.tenant_id, run_input.project_id, run_input.run_id,
+        "prd", "assumption", "internal", content_hash(b""), s3_key="k2")
+    assert verify_write_completeness_core(run_input, ["prd"])["present"] == ["assumption", "prd"]

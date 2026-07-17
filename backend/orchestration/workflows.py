@@ -136,7 +136,8 @@ class AgentRunWorkflow:
                 start_to_close_timeout=timedelta(minutes=30), retry_policy=_RETRY,
             )
         # Rule 11 write-completeness gate-precondition: the phase must have registered its
-        # expected artifact before a human is asked to review. Deterministic -> no retry.
+        # expected artifact — and that it has a BODY — before a human is asked to review.
+        # Deterministic -> no retry.
         #
         # A failure here used to CRASH the workflow (maximum_attempts=1 with nothing catching it),
         # so `fail_run` never ran and nothing ever wrote `run.outputs.error` — the run console,

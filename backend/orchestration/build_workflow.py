@@ -131,6 +131,15 @@ class BuildWorkflow:
         # `dispatch_build` sits OUTSIDE this loop, so the expensive build itself is never redone.
         while True:
             try:
+                # D4: the worktree ran the suite — import its results BEFORE the PR, so a failing
+                # test's `defect` exists (and the qa_lead gate is already blocked) from the moment
+                # the work becomes reviewable. A no-op for phases that don't import (07) and for a
+                # build that reported no results. Idempotent by (run, work_item), so a Resume that
+                # retries this block re-reconciles the defects rather than duplicating them.
+                await workflow.execute_activity(
+                    "import_build_test_results", args=[inp, report],
+                    start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY,
+                )
                 await workflow.execute_activity(
                     "open_build_pr", args=[inp, report],
                     start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
@@ -183,6 +192,13 @@ class BuildWorkflow:
                             start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
                         )
                         return {"status": "build_failed", "run_id": inp.run_id}
+                    # The remediation re-ran the suite: re-import so a test fixed this cycle
+                    # closes its defect (and one newly broken opens one) instead of the loop
+                    # reasoning from the first build's stale results.
+                    await workflow.execute_activity(
+                        "import_build_test_results", args=[inp, self._report],
+                        start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY,
+                    )
 
                 await workflow.execute_activity(
                     "open_merge_gate", inp,

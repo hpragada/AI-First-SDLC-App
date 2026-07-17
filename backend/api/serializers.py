@@ -396,7 +396,11 @@ class EventSerializer(serializers.ModelSerializer):
         action = (obj.action or "").lower()
         if any(w in action for w in ("failed", "rejected", "error", "denied", "blocked", "secret")):
             return "err"
-        if any(w in action for w in ("gate", "clarification", "takeover", "parked", "warning")):
+        # "empty" → phase.empty_result: the engine returned no final text. It rendered as
+        # neutral info, the same colour as "Phase reported", so a blank phase document read as
+        # routine progress in the console.
+        if any(w in action for w in ("gate", "clarification", "takeover", "parked", "warning",
+                                     "empty")):
             return "warn"
         if any(w in action for w in ("executed", "published", "merged", "approved", "registered", "resumed")):
             return "ok"

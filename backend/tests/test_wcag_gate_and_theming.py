@@ -10,9 +10,10 @@
 """
 import pytest
 
+from apps.gates.conditions import conditions_for_phase
 from apps.gates.models import Approval
 from apps.gates.services import GateConditionsError, decide_gate
-from apps.gates.wcag import conditions_for_phase, wcag_aa_checklist
+from apps.gates.wcag import wcag_aa_checklist
 from apps.projects.models import Project, ProjectProfile
 from apps.registry.models import AgentSpec
 from apps.runs.models import Run

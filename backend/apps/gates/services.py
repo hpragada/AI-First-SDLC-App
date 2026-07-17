@@ -15,6 +15,7 @@ from django.conf import settings
 from mcp_platform_state import tools
 
 from apps.base import Role
+from apps.gates.conditions import refresh_derived
 from apps.gates.models import Approval
 from apps.tenancy.context import tenant_context
 from apps.tenancy.models import Membership, User
@@ -36,13 +37,18 @@ class GateConditionsError(GateError):
 
 def _merge_conditions(existing: list, updates: list | None) -> list:
     """Fold the reviewer's `satisfied` updates (keyed by `key`) into the gate's conditions.
-    Unknown keys are appended; reasoning/labels on existing items are preserved."""
+    Unknown keys are appended; reasoning/labels on existing items are preserved.
+
+    A **derived** condition (D9 — platform-evaluated from live state, e.g. the blocking-test
+    rule) ignores the reviewer's `satisfied`: attesting it is not the reviewer's to do, and
+    `refresh_derived` recomputes it immediately after this merge regardless. The append path
+    below never carries `derived` through, so a payload cannot mint one either."""
     merged = [dict(c) for c in (existing or [])]
     by_key = {c.get("key"): c for c in merged}
     for upd in updates or []:
         key = upd.get("key")
         if key in by_key:
-            if "satisfied" in upd:
+            if "satisfied" in upd and not by_key[key].get("derived"):
                 by_key[key]["satisfied"] = bool(upd["satisfied"])
         else:
             merged.append({
@@ -88,7 +94,9 @@ def decide_gate(
     """Record a gate decision (after role check + condition check) and signal the workflow
     to resume. `conditions` carries the reviewer's `satisfied` updates for the gate's
     checklist (e.g. the WCAG 2.1 AA criteria on the design gate); an APPROVED decision is
-    rejected while any *required* condition is unsatisfied (D6)."""
+    rejected while any *required* condition is unsatisfied (D6). Derived conditions (e.g. the
+    test gate's blocking-test rule, D9) are recomputed from live state here and ignore the
+    reviewer's `satisfied` — they are the platform's finding, not the reviewer's."""
     if decision not in _VALID_DECISIONS:
         raise GateError(f"invalid decision: {decision!r}")
     signal_sender = signal_sender or _default_signal_sender
@@ -118,16 +126,27 @@ def decide_gate(
                 f"user {user_id} lacks role '{approval.required_role}' for this gate"
             )
 
-        # Fold in the reviewer's checklist updates, then enforce required conditions on APPROVE.
+        # Fold in the reviewer's checklist updates, re-derive the platform-evaluated ones from
+        # live state, then enforce required conditions on APPROVE.
         approval.conditions = _merge_conditions(approval.conditions, conditions)
+        approval.conditions = refresh_derived(
+            approval.conditions, tenant_id=tenant_id, work_item_id=approval.work_item_id,
+        )
         if decision == "approved":
             unmet = [
-                c.get("key") for c in (approval.conditions or [])
+                c for c in (approval.conditions or [])
                 if c.get("required") and not c.get("satisfied")
             ]
             if unmet:
+                # Nothing is persisted on a blocked approve (the approval stays untouched and
+                # PENDING), so a derived condition's `detail` — the tests actually holding the
+                # gate shut — has to travel in the error, or the reviewer is told only "no".
+                reasons = "; ".join(
+                    str(c.get("key")) + (f" ({c['detail']})" if c.get("detail") else "")
+                    for c in unmet
+                )
                 raise GateConditionsError(
-                    f"cannot approve: {len(unmet)} required gate condition(s) unmet: {unmet}"
+                    f"cannot approve: {len(unmet)} required gate condition(s) unmet: {reasons}"
                 )
 
         workflow_id = approval.run.temporal_workflow_id
