@@ -88,6 +88,24 @@ def _is_template_file(path: str) -> bool:
             or ".example." in name or ".sample." in name or ".template." in name)
 
 
+# Test files legitimately hold mock credentials — fake JWTs, dummy tokens, sample keys used as
+# fixtures. The generic entropy heuristic is skipped for them (Bugs S.No 144 class, extended to
+# tests) while the high-precision `_PATTERNS` STILL run, so a REAL key shape hardcoded in a test
+# (AKIA…, ghp_…, PEM, full JWT) is still blocked.
+_TEST_FILE_MARKERS = (".test.", ".spec.", "_test.", "test_")
+_TEST_DIR_SEGMENTS = ("/test/", "/tests/", "/__tests__/", "/__mocks__/", "/fixtures/")
+
+
+def _is_test_file(path: str) -> bool:
+    """True for test / fixture files (`foo.test.ts`, `test_foo.py`, anything under a tests dir,
+    `conftest.py`, …), where mock credentials are expected, not leaks."""
+    p = (path or "").lower().replace("\\", "/")
+    name = p.rsplit("/", 1)[-1]
+    return (name == "conftest.py"
+            or any(m in name for m in _TEST_FILE_MARKERS)
+            or any(seg in ("/" + p) for seg in _TEST_DIR_SEGMENTS))
+
+
 def shannon_entropy(s: str) -> float:
     if not s:
         return 0.0
@@ -110,16 +128,17 @@ def scan_text(text: str, *, path: str = "") -> list[SecretFinding]:
     catches custom tokens while skipping obvious placeholders / env-var references."""
     findings: list[SecretFinding] = []
     seen: set[tuple[int, str]] = set()
-    # In a template file the entropy heuristic is skipped (placeholders are expected); the
-    # high-precision format patterns below still run so a real key shape is never missed.
-    is_template = _is_template_file(path)
+    # In a template OR test file the entropy heuristic is skipped (placeholders / mock fixtures
+    # are expected); the high-precision format patterns below still run so a real key shape is
+    # never missed (Bugs S.No 144 + test-file extension).
+    skip_entropy = _is_template_file(path) or _is_test_file(path)
     for lineno, line in enumerate(text.splitlines(), start=1):
         for kind, pattern in _PATTERNS:
             match = pattern.search(line)
             if match and (lineno, kind) not in seen:
                 seen.add((lineno, kind))
                 findings.append(SecretFinding(kind, path, lineno, _redact(match.group(0))))
-        assignment = None if is_template else _ASSIGNMENT.search(line)
+        assignment = None if skip_entropy else _ASSIGNMENT.search(line)
         if assignment:
             value = assignment.group(1)
             if (
@@ -207,12 +226,44 @@ def check_command_egress(command, policy: EgressPolicy) -> None:
 # Substrings that must never appear in a build-phase tool name (CodeHost / arbitrary network).
 _FORBIDDEN_TOOL_HINTS = ("codehost", "web", "fetch", "http", "curl", "network")
 
+# The Playwright MCP browser tools 09b needs for Live Application Exploration (real-locator
+# discovery, spec §4). Permitted ONLY for the test-automation phase and bounded to the preview
+# host by EgressPolicy — a deliberate, phase-gated exception to the build phase's network-forbid
+# (D2): every other build phase (07/11) still gets FS/Bash + Platform-State only. Deliberately
+# the locator-discovery surface only — navigation + snapshot + interaction, NOT network/console/
+# evaluate inspection (not needed to find selectors, and keeps the exposed surface tight).
+PLAYWRIGHT_MCP_TOOLS = frozenset(
+    f"mcp__playwright__{name}" for name in (
+        "browser_navigate", "browser_navigate_back", "browser_snapshot",
+        "browser_click", "browser_hover", "browser_type", "browser_press_key",
+        "browser_select_option", "browser_wait_for", "browser_take_screenshot",
+        "browser_tabs", "browser_resize", "browser_close",
+    )
+)
 
-def assert_phase_allowlist(tools, *, allowed) -> None:
+
+def playwright_tools_for(phase: str) -> frozenset:
+    """The Playwright MCP tools permitted for `phase`: the 09b locator-discovery surface for the
+    test-automation phase, empty for every other build phase. Single source of truth so the driver
+    allowlist and the MCP-server wiring (runner.build_mcp_servers) can never disagree on which
+    phase gets a browser."""
+    return PLAYWRIGHT_MCP_TOOLS if phase == "test_automation" else frozenset()
+
+
+def assert_phase_allowlist(tools, *, allowed, phase: str = "") -> None:
     """PG12: the build phase gets only FS/Bash + remote Platform-State. Any tool that matches
-    a CodeHost/network hint, or that is not on the canonical allowlist, is a violation."""
-    allowed_set = set(allowed)
+    a CodeHost/network hint, or that is not on the canonical allowlist, is a violation.
+
+    For the test-automation phase (09b) the curated Playwright browser tools are additionally
+    permitted (`playwright_tools_for`) — an egress-bounded exception for Live Application
+    Exploration. They bypass the network-hint check because they ARE the curated exception; the
+    real network bound is EgressPolicy scoping the browser to the preview host, not the tool name.
+    """
+    phase_extra = playwright_tools_for(phase)
+    allowed_set = set(allowed) | phase_extra
     for tool in tools:
+        if tool in phase_extra:
+            continue        # curated phase-scoped browser tool — egress-bounded, not name-bounded
         low = tool.lower()
         if any(hint in low for hint in _FORBIDDEN_TOOL_HINTS):
             raise AllowlistViolation(f"tool {tool!r} is forbidden in the build phase (PG12)")

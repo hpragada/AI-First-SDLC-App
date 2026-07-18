@@ -179,3 +179,33 @@ async def test_run_build_clean_change_reports_ok(tmp_path):
     assert out["status"] == "ok" and "impl.py" in out["changed_files"]
     assert "api.github.com" in out["egress_allowed_hosts"]
     assert to_build_report(out)["status"] == "ok"
+
+
+# ── test-file mock fixtures skip the entropy heuristic (Bugs S.No 150) ────────
+# A test file legitimately holds mock JWTs / dummy tokens; the entropy heuristic is skipped there
+# (like template files) while the high-precision key patterns still run.
+@pytest.mark.parametrize("path", [
+    "frontend/src/test/authStore.test.ts",   # the exact WI-34 case
+    "src/auth.spec.ts",
+    "backend/tests/test_auth.py",
+    "backend/tests/conftest.py",
+    "app/__tests__/helpers.ts",
+    "app/fixtures/tokens.ts",
+])
+def test_scan_text_skips_entropy_in_test_files(path):
+    # a mock JWT / high-entropy token assigned to a token-ish var — a fixture, not a leak
+    assert scan_text('const accessToken = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOjEyMzR9xZ"', path=path) == []
+    assert scan_text('MOCK_TOKEN = "Zk9xQ2mL7vRt4Wp1Ns6Yb3Hd0Fj8Gc5"', path=path) == []
+
+
+def test_test_files_still_block_real_key_shapes():
+    # real key SHAPES are caught even inside a test file (the entropy skip does not weaken these)
+    assert {f.kind for f in scan_text(f'k = "{_AWS}"', path="backend/tests/test_x.py")} == {"aws_access_key_id"}
+    assert scan_text(f'gh = "{_GH}"', path="frontend/src/test/a.test.ts")[0].kind == "github_token"
+
+
+def test_non_test_source_keeps_full_entropy_scan():
+    # the identical fixture in IMPLEMENTATION code is still blocked (no weakening of real source)
+    assert scan_text('const accessToken = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOjEyMzR9xZ"',
+                     path="frontend/src/store/authStore.ts")
+    assert scan_text(f'api_key = "{_RANDOM}"', path="backend/app/config.py")
