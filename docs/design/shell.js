@@ -13,7 +13,7 @@
    shellMount(navId, opts?) — navId activates a sidebar item. opts (all optional):
      { tenant:"Acme Corp", project:"Payment Gateway v2",
        companion:"ready"|"offline"|"connecting", bell:4,
-       user:"You", admin:true }
+       user:"You", email:"you@acme.test", admin:true }
    Unauth screens (S-01..S-04) do NOT load shell.js — they render a centered card.
    ========================================================================== */
 (function () {
@@ -117,8 +117,45 @@
         '<button class="bell" aria-label="Notifications, ' + o.bell + ' unread">' +
           svg(ICON.bell) + (o.bell ? '<span class="bell__badge">' + o.bell + '</span>' : '') +
         '</button>' +
-        '<button class="avatar" aria-label="Account menu for ' + o.user + '">' + initials(o.user) + '</button>' +
+        // Account menu — the topbar avatar toggles a dropdown with the signed-in
+        // user + Sign out (mirrors the built React AppShell AccountMenu).
+        '<div class="account-menu" id="account-menu">' +
+          '<button class="avatar" id="account-menu-trigger" aria-label="Account menu for ' + o.user + '"' +
+            ' aria-haspopup="menu" aria-expanded="false">' + initials(o.user) + '</button>' +
+          '<div class="account-menu__pop" id="account-menu-pop" role="menu" aria-label="Account" hidden>' +
+            '<div class="account-menu__head">' +
+              '<div class="account-menu__name">' + o.user + '</div>' +
+              '<div class="account-menu__email">' + o.email + '</div>' +
+            '</div>' +
+            '<div class="account-menu__sep" role="separator"></div>' +
+            '<a class="account-menu__item account-menu__item--danger" role="menuitem" href="S-02-login.html">Sign out</a>' +
+          '</div>' +
+        '</div>' +
       '</header>';
+  }
+
+  // Wire the topbar account menu: toggle on the avatar, close on outside click / Esc —
+  // the same open/close lifecycle the built AppShell account menu uses.
+  function wireAccountMenu() {
+    var root = document.getElementById('account-menu');
+    var trigger = document.getElementById('account-menu-trigger');
+    var pop = document.getElementById('account-menu-pop');
+    if (!root || !trigger || !pop) return;
+
+    function setOpen(open) {
+      pop.hidden = !open;
+      trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    trigger.addEventListener('click', function (e) {
+      e.stopPropagation();
+      setOpen(pop.hidden);
+    });
+    document.addEventListener('click', function (e) {
+      if (!root.contains(e.target)) setOpen(false);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') setOpen(false);
+    });
   }
 
   window.shellMount = function (navId, opts) {
@@ -129,6 +166,7 @@
       companion: 'ready',
       bell: 4,
       user: 'You',
+      email: 'you@acme.test',
       admin: true
     }, opts || {});
     o.navId = navId;
@@ -143,5 +181,6 @@
 
     document.body.insertBefore(shell, screen);
     shell.querySelector('#app-canvas').appendChild(screen);
+    wireAccountMenu();
   };
 })();

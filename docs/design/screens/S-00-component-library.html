@@ -131,6 +131,25 @@
       </div>
     </section>
 
+    <!-- ACCOUNT MENU -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Account menu</h2></div>
+      <div class="panel__body">
+        <p class="t-sm u-muted" style="margin-bottom:var(--space-4)">Lives on the topbar avatar (every authenticated screen). Click the avatar to open; shows the signed-in user and Sign out. Closes on outside click, Esc, or navigation. Shown open below.</p>
+        <div class="account-menu" style="display:inline-block">
+          <button class="avatar" aria-label="Account menu for Sarah Chen" aria-haspopup="menu" aria-expanded="true">SC</button>
+          <div class="account-menu__pop" role="menu" aria-label="Account" style="position:static;margin-top:var(--space-2)">
+            <div class="account-menu__head">
+              <div class="account-menu__name">Sarah Chen</div>
+              <div class="account-menu__email">sarah.chen@acme.test</div>
+            </div>
+            <div class="account-menu__sep" role="separator"></div>
+            <button class="account-menu__item account-menu__item--danger" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- CARDS -->
     <section style="margin-bottom:var(--space-6)">
       <div class="grid grid--2">
