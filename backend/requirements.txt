@@ -14,8 +14,16 @@ gunicorn==23.0.0
 temporalio==1.9.0
 
 # Engine seam (non-negotiable #7) + MCP
-claude-agent-sdk==0.1.0
-mcp==1.2.0
+claude-agent-sdk==0.1.72
+# claude-agent-sdk launches the CLI via anyio.open_process(..., user=...), whose `user` kwarg
+# only exists in anyio >= 4.5.0. The old floor let a fresh install resolve anyio 4.4.0, which
+# crashed every companion build agent at start ("open_process() got an unexpected keyword
+# argument 'user'"). Pin the working version so a clean install reproduces it (Bugs S.No 135).
+anyio==4.14.2
+# mcp 1.2.0 was too old for claude-agent-sdk 0.1.72 (needs mcp>=1.19) AND it permitted the
+# broken anyio 4.4.0; mcp 1.27.0 requires anyio>=4.5 (already the running version). Bumped to the
+# known-good set so the three resolve together (Bugs S.No 135).
+mcp==1.27.0
 
 # Object store (artifact bodies in S3/MinIO)
 boto3==1.35.81
