@@ -213,8 +213,12 @@ export const api = {
   },
   createRepository: (
     projectId: string,
-    body: { name: string; role: string; base_branch: string },
+    body: { name: string; role: string; base_branch: string; preview_url?: string },
   ) => req<Repository>("POST", `/projects/${projectId}/repositories/`, { body }),
+  // PATCH edits an existing repo's settings (currently the manual preview URL); returns the
+  // refreshed repo list, same shape as GET.
+  updateRepository: (projectId: string, repoId: string, body: { preview_url?: string }) =>
+    req<Repository[]>("PATCH", `/projects/${projectId}/repositories/${repoId}/`, { body }),
   deleteRepository: (projectId: string, repoId: string) =>
     req<void>("DELETE", `/projects/${projectId}/repositories/${repoId}/`),
 

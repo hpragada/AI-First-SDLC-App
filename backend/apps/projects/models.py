@@ -79,6 +79,12 @@ class Repository(TenantScopedModel):
     # Empty ⇒ no preview; a test-automation build then fails loud rather than run without locators
     # (P3-09bR). Resolution is repo-first then ProjectProfile.preview_start. Spec §1.
     preview_start = models.JSONField(default=dict, blank=True)
+    # Preview URL — the manual "point at an already-running app" alternative to preview_start
+    # (P3-09bR follow-up). When set, the companion explores THIS URL (a local dev server or a
+    # staging site the user keeps running) instead of starting the app itself; auto-start via
+    # preview_start is the fallback when this is blank. One URL per repo — running the suite against
+    # many environments is a CI/run concern, not authoring. e.g. "http://127.0.0.1:5173".
+    preview_url = models.CharField(max_length=512, blank=True, default="")
     provenance = models.JSONField(default=dict, blank=True)    # onboarding origin
     # The repo build PRs target when a work item doesn't pin one (S-13 "Set default";
     # P4.7-T7). The first repo registered on a project is default until reassigned.

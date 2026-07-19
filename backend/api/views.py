@@ -43,6 +43,7 @@ from apps.projects.repos import (
     repositories_for,
     require_repo_manage_role,
     set_default_repository,
+    update_repository,
 )
 from apps.registry.catalog import gate_role_for
 from apps.registry.catalog import rides_build as catalog_rides_build
@@ -114,6 +115,7 @@ from .serializers import (
     ProjectProfileSerializer,
     ProjectSerializer,
     RepositoryCreateSerializer,
+    RepositoryUpdateSerializer,
     RunSerializer,
     SourceDocumentSerializer,
     TenantAdminSerializer,
@@ -184,7 +186,7 @@ class ProjectViewSet(
             return [IsTenantAdmin()]
         # Repositories (P4.7-T7): any authenticated member may read; add/remove/set-default
         # are further gated per-project (tech_lead/admin) inside the action itself.
-        if self.action in {"repositories", "delete_repository", "set_repository_default"}:
+        if self.action in {"repositories", "repository_detail", "set_repository_default"}:
             return [IsAuthenticatedMember()]
         # Brownfield onboarding (P4.7-T8): any authenticated member may read/build; code-intel
         # is further gated per-project (tech_lead/admin) inside the action itself.
@@ -573,6 +575,7 @@ class ProjectViewSet(
                 tenant_id=self.tenant_id, project_id=str(project.id),
                 name=ser.validated_data["name"], role=ser.validated_data["role"],
                 default_base=ser.validated_data["base_branch"],
+                preview_url=ser.validated_data["preview_url"],
             )
         except RepositoryError as exc:
             return Response({"detail": str(exc)}, status=exc.status)
@@ -586,15 +589,26 @@ class ProjectViewSet(
         created_row = next(r for r in rows if r["id"] == result["repository_id"])
         return Response(created_row, status=status.HTTP_201_CREATED)
 
-    @action(detail=True, methods=["delete"], url_path=r"repositories/(?P<rid>[^/.]+)")
-    def delete_repository(self, request, pk=None, rid=None):
-        """DELETE a repository (tech_lead/admin) — reconciles topology + default."""
+    @action(detail=True, methods=["delete", "patch"], url_path=r"repositories/(?P<rid>[^/.]+)")
+    def repository_detail(self, request, pk=None, rid=None):
+        """DELETE a repository (reconciles topology + default) or PATCH its settings — currently the
+        manual preview URL for 09b (tech_lead/admin either way)."""
         project = self.get_object()
         actor = resolve_actor(request, request.data.get("user_id"))
         try:
             require_repo_manage_role(
                 tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
             )
+            if request.method == "PATCH":
+                ser = RepositoryUpdateSerializer(data=request.data)
+                ser.is_valid(raise_exception=True)
+                update_repository(
+                    tenant_id=self.tenant_id, project_id=str(project.id), repository_id=rid,
+                    preview_url=ser.validated_data.get("preview_url"),
+                )
+                return Response(
+                    repositories_for(tenant_id=self.tenant_id, project_id=str(project.id))
+                )
             remove_repository(
                 tenant_id=self.tenant_id, project_id=str(project.id), repository_id=rid
             )

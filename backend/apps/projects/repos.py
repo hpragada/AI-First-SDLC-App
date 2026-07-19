@@ -79,7 +79,8 @@ def _recompute_topology(project: Project) -> str:
 
 
 def add_repository(*, tenant_id, project_id, name, role="", default_base="main",
-                   connector="", scopes=None, stack_overrides=None, provenance=None) -> dict:
+                   connector="", scopes=None, stack_overrides=None, provenance=None,
+                   preview_url="") -> dict:
     """Register a repo under a project (idempotent by name) and reconcile the topology. The
     first repo registered on a project becomes its default (S-13) until reassigned.
 
@@ -92,7 +93,8 @@ def add_repository(*, tenant_id, project_id, name, role="", default_base="main",
             tenant_id=tenant_id, project=project, name=name,
             defaults={"role": role, "default_base": default_base, "connector": connector,
                       "scopes": scopes or {}, "stack_overrides": stack_overrides or {},
-                      "provenance": provenance or {}, "is_default": is_first},
+                      "provenance": provenance or {}, "is_default": is_first,
+                      "preview_url": preview_url or ""},
         )
         topology = _recompute_topology(project)
         if created:
@@ -104,17 +106,39 @@ def add_repository(*, tenant_id, project_id, name, role="", default_base="main",
 
 def repositories_for(*, tenant_id, project_id) -> list[dict]:
     """The project's repositories (shared-memory siblings in the cross-repo DAG), in the S-13
-    wire shape: `id/name/role/default_base/status/is_default`."""
+    wire shape: `id/name/role/default_base/status/is_default` + `preview_url` (P3-09bR)."""
     with tenant_context(tenant_id):
         Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
         status = _codehost_status(tenant_id)
         return [
             {"id": str(r.id), "name": r.name, "role": r.role,
              "default_base": r.default_base, "connector": r.connector,
-             "status": status, "is_default": r.is_default}
+             "status": status, "is_default": r.is_default, "preview_url": r.preview_url}
             for r in Repository.objects.filter(
                 tenant_id=tenant_id, project_id=project_id).order_by("created_at")
         ]
+
+
+def update_repository(*, tenant_id, project_id, repository_id, preview_url=None) -> dict:
+    """Edit an existing repo's settings (S-13 follow-up). Currently `preview_url` — the manual
+    app-exploration target for 09b. Only the fields passed (non-None) are changed; others are left
+    untouched. 404s if the repo isn't this project's."""
+    with tenant_context(tenant_id):
+        Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
+        try:
+            repo = Repository.objects.get(
+                id=repository_id, tenant_id=tenant_id, project_id=project_id)
+        except Repository.DoesNotExist as exc:
+            raise RepositoryError("Unknown repository for this project.", status=404) from exc
+        fields = []
+        if preview_url is not None:
+            repo.preview_url = preview_url
+            fields.append("preview_url")
+        if fields:
+            repo.save(update_fields=[*fields, "updated_at"])
+            tools.log_event(tenant_id, "platform", "repository.updated", "repository",
+                            str(repo.id), {"fields": fields})
+    return {"id": str(repo.id), "name": repo.name, "preview_url": repo.preview_url}
 
 
 def remove_repository(*, tenant_id, project_id, repository_id) -> dict:

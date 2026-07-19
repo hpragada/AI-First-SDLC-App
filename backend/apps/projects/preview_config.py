@@ -38,3 +38,19 @@ def resolve_preview_start(*, tenant_id, project_id, repo_name: str | None) -> di
         if profile and profile.preview_start:
             return dict(profile.preview_start)
     return {}
+
+
+def resolve_preview_url(*, tenant_id, project_id, repo_name: str | None) -> str:
+    """The manual preview URL for a build: `Repository.preview_url` (matched by `repo_name`) if set,
+    else `""`. This is the "point at an already-running app" path — when non-empty the companion
+    explores it directly and skips auto-start (`preview_start`). One URL per repo; empty is a valid
+    answer the caller falls back on (auto-start, then fail-loud)."""
+    if not repo_name:
+        return ""
+    with tenant_context(tenant_id):
+        repo = (
+            Repository.objects
+            .filter(tenant_id=tenant_id, project_id=project_id, name=repo_name)
+            .first()
+        )
+        return (repo.preview_url or "") if repo else ""

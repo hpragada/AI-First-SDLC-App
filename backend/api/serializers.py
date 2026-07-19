@@ -207,6 +207,15 @@ class RepositoryCreateSerializer(serializers.Serializer):
     name = serializers.CharField()
     role = serializers.CharField(required=False, default="")
     base_branch = serializers.CharField(required=False, default="main")
+    # Manual "point 09b at a running app" URL (P3-09bR); optional at add time, editable later.
+    preview_url = serializers.CharField(required=False, default="", allow_blank=True)
+
+
+class RepositoryUpdateSerializer(serializers.Serializer):
+    """Input for PATCH /api/projects/{id}/repositories/{rid}/ (tech_lead/admin). Only the fields
+    provided are changed — currently the manual preview URL."""
+
+    preview_url = serializers.CharField(required=False, allow_blank=True)
 
 
 # ── Brownfield onboarding (P4.7-T8) ───────────────────────────────────

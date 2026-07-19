@@ -2,7 +2,7 @@
 import pytest
 
 from apps.projects.models import Project, ProjectProfile, Repository
-from apps.projects.preview_config import resolve_preview_start
+from apps.projects.preview_config import resolve_preview_start, resolve_preview_url
 from apps.projects.repos import add_repository
 from apps.tenancy.models import Tenant
 
@@ -52,3 +52,27 @@ def test_resolve_ignores_other_repos_config(world):
     # The backend repo has no config and no profile fallback → empty (caller handles fail-loud).
     assert resolve_preview_start(
         tenant_id=world["t"], project_id=world["p"], repo_name="acme/api") == {}
+
+
+# ── Manual preview URL (P3-09bR follow-up) ──────────────────────────
+def test_preview_url_empty_when_unset(world):
+    add_repository(tenant_id=world["t"], project_id=world["p"], name="acme/web")
+    assert resolve_preview_url(
+        tenant_id=world["t"], project_id=world["p"], repo_name="acme/web") == ""
+
+
+def test_preview_url_resolves_from_repository(world):
+    add_repository(tenant_id=world["t"], project_id=world["p"], name="acme/web",
+                   preview_url="http://127.0.0.1:5173")
+    assert resolve_preview_url(
+        tenant_id=world["t"], project_id=world["p"], repo_name="acme/web"
+    ) == "http://127.0.0.1:5173"
+
+
+def test_preview_url_does_not_leak_across_repos(world):
+    add_repository(tenant_id=world["t"], project_id=world["p"], name="acme/web",
+                   preview_url="http://127.0.0.1:5173")
+    add_repository(tenant_id=world["t"], project_id=world["p"], name="acme/api")
+    # The api repo has its own (empty) URL — the web repo's must not leak in.
+    assert resolve_preview_url(
+        tenant_id=world["t"], project_id=world["p"], repo_name="acme/api") == ""

@@ -190,6 +190,49 @@ def test_member_cannot_set_default_repository(client, project, member):
     assert resp.status_code == 403
 
 
+# ── preview URL (P3-09bR): create + inline edit ─────────────────────────
+def test_add_repository_accepts_preview_url(client, project, tech_lead):
+    _login(client, "lead@acme.com", "lead-pass!")
+    resp = client.post(
+        _url(project),
+        {"name": "acme/web", "preview_url": "http://127.0.0.1:5173"}, format="json",
+    )
+    assert resp.status_code == 201
+    listing = client.get(_url(project)).data["repositories"]
+    assert listing[0]["preview_url"] == "http://127.0.0.1:5173"
+
+
+def test_tech_lead_edits_preview_url(client, project, tech_lead):
+    _login(client, "lead@acme.com", "lead-pass!")
+    r = client.post(_url(project), {"name": "acme/web"}, format="json").data
+    assert client.get(_url(project)).data["repositories"][0]["preview_url"] == ""
+
+    resp = client.patch(
+        _url(project, f"{r['id']}/"), {"preview_url": "http://localhost:3000"}, format="json")
+    assert resp.status_code == 200
+    # PATCH returns the refreshed list with the new URL.
+    assert resp.data[0]["preview_url"] == "http://localhost:3000"
+    # And clearing it back to empty works.
+    resp2 = client.patch(_url(project, f"{r['id']}/"), {"preview_url": ""}, format="json")
+    assert resp2.data[0]["preview_url"] == ""
+
+
+def test_member_cannot_edit_preview_url(client, project, member):
+    repo = Repository.objects.create(tenant=project.tenant, project=project, name="acme/web")
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.patch(
+        _url(project, f"{repo.id}/"), {"preview_url": "http://x"}, format="json")
+    assert resp.status_code == 403
+
+
+def test_patch_unknown_repository_is_404(client, project, tech_lead):
+    _login(client, "lead@acme.com", "lead-pass!")
+    resp = client.patch(
+        _url(project, "00000000-0000-0000-0000-000000000000/"),
+        {"preview_url": "http://x"}, format="json")
+    assert resp.status_code == 404
+
+
 # ── tenant isolation ────────────────────────────────────────────────────
 def test_repositories_are_tenant_isolated(client, db):
     t1 = Tenant.objects.create(name="Acme")

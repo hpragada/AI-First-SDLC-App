@@ -87,9 +87,13 @@ describe("S-13 Repositories", () => {
     const { rerender } = renderWithProviders(<Repositories forceView="multi" />);
     expect(screen.getByText("Repositories")).toBeDefined();
     expect(screen.getByText(/Topology: multi/)).toBeDefined();
+    // The Preview URL column (manual 09b exploration target, P3-09bR) is present.
+    expect(screen.getByText("Preview URL")).toBeDefined();
 
     rerender(<Repositories forceView="add-form" />);
     expect(screen.getByPlaceholderText("acme/payments-jobs")).toBeDefined();
+    // The add form offers an optional Preview URL.
+    expect(screen.getByPlaceholderText("http://127.0.0.1:5173")).toBeDefined();
 
     rerender(<Repositories forceView="single" />);
     expect(screen.getByText(/Topology: single/)).toBeDefined();

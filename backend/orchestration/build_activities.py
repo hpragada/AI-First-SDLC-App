@@ -63,8 +63,12 @@ def dispatch_build_core(inp: BuildInput) -> dict:
     # Exploration + E2E, D7) — mirrors the companion's phase-gated Playwright wiring. The
     # companion turns an empty config into a fail-loud; 07/11 builds never carry it.
     if inp.phase == "test_automation":
-        from apps.projects.preview_config import resolve_preview_start
+        from apps.projects.preview_config import resolve_preview_start, resolve_preview_url
 
+        # Manual "point at a running app" URL takes precedence in the companion; auto-start
+        # (preview_start) is the fallback. Ship both — the companion picks (P3-09bR follow-up).
+        payload["preview_url"] = resolve_preview_url(
+            tenant_id=inp.tenant_id, project_id=inp.project_id, repo_name=inp.repo)
         payload["preview_start"] = resolve_preview_start(
             tenant_id=inp.tenant_id, project_id=inp.project_id, repo_name=inp.repo)
     with tenant_context(inp.tenant_id):

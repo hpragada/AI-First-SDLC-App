@@ -255,6 +255,33 @@ def test_provision_preview_fails_loud_without_config():
         provision_preview_app(Path("."), task, _pol(task))
 
 
+def test_provision_preview_uses_manual_url_and_starts_nothing(monkeypatch):
+    # A configured preview URL wins over auto-start: the URL is used as-is and NO process starts.
+    import runner.companion.runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "_http_ok", lambda url: True)
+
+    def _no_start(*a, **k):
+        raise AssertionError("must not start a process when a preview URL is set")
+
+    monkeypatch.setattr(subprocess, "Popen", _no_start)
+    task = _task(phase="test_automation", preview_url="http://127.0.0.1:4000/",
+                 preview_start={"command": "npm run dev", "port": 5173})
+    handle = provision_preview_app(Path("."), task, _pol(task))
+    assert handle.proc is None                       # borrowed, nothing to tear down
+    assert handle.url == "http://127.0.0.1:4000" and handle.port == 4000
+    teardown_preview_app(handle)                     # no-op, must not raise
+
+
+def test_provision_preview_manual_url_fails_loud_when_unreachable(monkeypatch):
+    import runner.companion.runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "_http_ok", lambda url: False)   # app not running
+    task = _task(phase="test_automation", preview_url="http://127.0.0.1:4000")
+    with pytest.raises(PreviewError, match="not reachable"):
+        provision_preview_app(Path("."), task, _pol(task))
+
+
 def test_provision_preview_ready_via_log(monkeypatch):
     import subprocess
 

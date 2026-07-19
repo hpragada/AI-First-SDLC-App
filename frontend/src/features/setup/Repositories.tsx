@@ -3,24 +3,89 @@
 import { ApiError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Button, Card, CardBody, Chip, EmptyState, Field, Input, Panel, Select, Table } from "../../components/ui";
-import { useCreateRepository, useDeleteRepository, useRepositories } from "./hooks";
+import type { Repository } from "../../types";
+import { useCreateRepository, useDeleteRepository, useRepositories, useUpdateRepository } from "./hooks";
 
 // S-13 view states: multi · add-form · single · duplicate · empty.
 export type RepositoriesView = "multi" | "add-form" | "single" | "duplicate" | "empty";
+
+// Inline "Preview URL" editor for one repo row — the manual app 09b explores (P3-09bR). Holds
+// its own edit state so the table map stays simple; saves via PATCH and refreshes the list.
+function PreviewUrlCell({ projectId, repo }: { projectId: string | undefined; repo: Repository }) {
+  const update = useUpdateRepository(projectId);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(repo.preview_url);
+
+  if (!editing) {
+    return (
+      <span className="u-row-tight" style={{ gap: "8px", alignItems: "center" }}>
+        {repo.preview_url ? (
+          <span className="table__id">{repo.preview_url}</span>
+        ) : (
+          <span style={{ color: "var(--text-muted)" }}>Not set</span>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setValue(repo.preview_url);
+            setEditing(true);
+          }}
+        >
+          Edit
+        </Button>
+      </span>
+    );
+  }
+
+  const onSave = async () => {
+    try {
+      await update.mutateAsync({ repoId: repo.id, body: { preview_url: value.trim() } });
+      setEditing(false);
+    } catch {
+      /* surfaced below */
+    }
+  };
+
+  return (
+    <span className="u-row-tight" style={{ gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+      <Input
+        value={value}
+        placeholder="http://127.0.0.1:5173"
+        aria-label={`Preview URL for ${repo.name}`}
+        onChange={(e) => setValue(e.target.value)}
+        style={{ minWidth: "200px" }}
+      />
+      <Button variant="primary" size="sm" disabled={update.isPending} onClick={onSave}>
+        {update.isPending ? "Saving…" : "Save"}
+      </Button>
+      <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
+        Cancel
+      </Button>
+      {update.isError && (
+        <span className="t-sm" style={{ color: "var(--danger)", width: "100%" }}>
+          {update.error instanceof ApiError ? update.error.message : "Couldn't save. Try again."}
+        </span>
+      )}
+    </span>
+  );
+}
 
 function AddRepoForm({ projectId, dup }: { projectId: string | undefined; dup?: boolean }) {
   const createRepo = useCreateRepository(projectId);
   const [name, setName] = useState(dup ? "acme/payments-api" : "");
   const [role, setRole] = useState("backend");
   const [baseBranch, setBaseBranch] = useState("main");
+  const [previewUrl, setPreviewUrl] = useState("");
 
   const duplicate = dup || (createRepo.error instanceof ApiError && createRepo.error.status === 409);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     try {
-      await createRepo.mutateAsync({ name, role, base_branch: baseBranch });
+      await createRepo.mutateAsync({ name, role, base_branch: baseBranch, preview_url: previewUrl.trim() });
       setName("");
+      setPreviewUrl("");
     } catch {
       /* duplicate surfaced inline */
     }
@@ -68,6 +133,17 @@ function AddRepoForm({ projectId, dup }: { projectId: string | undefined; dup?: 
               placeholder="main"
               value={baseBranch}
               onChange={(e) => setBaseBranch(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Preview URL (optional)"
+            help="A running app for 09b to explore while writing tests."
+            style={{ marginBottom: 0, minWidth: "200px" }}
+          >
+            <Input
+              placeholder="http://127.0.0.1:5173"
+              value={previewUrl}
+              onChange={(e) => setPreviewUrl(e.target.value)}
             />
           </Field>
           <Button variant="primary" type="submit" disabled={!name}>
@@ -137,7 +213,7 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
           </div>
           <Panel flush>
             <Table
-              headers={["Repository", "Role", "Default base", "Status", ""]}
+              headers={["Repository", "Role", "Default base", "Preview URL", "Status", ""]}
               rows={list.map((repo) => [
                 <span className="table__id" key="n">
                   {repo.name}
@@ -147,6 +223,7 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
                   {repo.default_base}
                   {repo.is_default ? " · default" : ""}
                 </span>,
+                <PreviewUrlCell key="p" projectId={projectId} repo={repo} />,
                 <Badge variant="done" key="s">
                   {repo.status}
                 </Badge>,

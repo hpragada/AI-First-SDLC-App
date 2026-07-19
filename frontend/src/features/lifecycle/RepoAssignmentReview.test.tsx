@@ -9,8 +9,8 @@ import { RepoAssignmentReview } from "./RepoAssignmentReview";
 import type { Repository, WorkItemCard } from "../../types";
 
 const repos: Repository[] = [
-  { id: "r-api", name: "acme/api", role: "backend", default_base: "main", status: "connected", is_default: true },
-  { id: "r-web", name: "acme/web", role: "frontend", default_base: "main", status: "connected", is_default: false },
+  { id: "r-api", name: "acme/api", role: "backend", default_base: "main", status: "connected", is_default: true, preview_url: "" },
+  { id: "r-web", name: "acme/web", role: "frontend", default_base: "main", status: "connected", is_default: false, preview_url: "" },
 ];
 
 function wi(id: string, repo: string, confidence: string, rationale: string): WorkItemCard {

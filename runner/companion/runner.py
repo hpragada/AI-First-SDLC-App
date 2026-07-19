@@ -86,6 +86,10 @@ class BuildTask:
     # (repo-first → profile) and shipped here; only carried for the test_automation phase.
     # {command, port, health_path, ready_timeout_s, ready_log}. Empty for a 09b build ⇒ fail loud.
     preview_start: dict = field(default_factory=dict)
+    # Manual preview URL — an already-running app to explore (a local dev server or staging the
+    # user keeps up). When set it WINS over preview_start: the companion uses this URL directly and
+    # starts nothing. Blank ⇒ fall back to auto-start (preview_start). One URL per repo (P3-09bR).
+    preview_url: str = ""
 
 
 @dataclass
@@ -239,6 +243,16 @@ def _http_ok(url: str) -> bool:
         return False
 
 
+def _url_port(url: str) -> int:
+    """The explicit port in a URL, or 0 if none (for the handle's diagnostics only)."""
+    import urllib.parse
+
+    try:
+        return urllib.parse.urlsplit(url).port or 0
+    except (ValueError, TypeError):
+        return 0
+
+
 def provision_preview_app(
     worktree: Path, task: BuildTask, policy: EgressPolicy) -> PreviewHandle | None:
     """Bring the project-declared app up from the worktree so 09b's Live App Exploration has a live
@@ -255,12 +269,25 @@ def provision_preview_app(
 
     if task.phase != "test_automation":
         return None                    # no browser phase → no app to serve
+
+    # Manual "point at a running app" URL wins: the user keeps a dev server / staging up, so use it
+    # directly and start nothing. We probe it once so a stopped app fails loud (a clear message)
+    # rather than the agent flailing against a dead target. A borrowed handle (proc=None) tears
+    # down to a no-op.
+    if task.preview_url:
+        url = task.preview_url.rstrip("/")
+        if not _http_ok(url):
+            raise PreviewError(
+                f"the configured preview URL {url} is not reachable — start the app there before "
+                "running test automation (with a preview URL set, nothing is auto-started)")
+        return PreviewHandle(url=url, proc=None, port=_url_port(url), log_tail=None)
+
     config = task.preview_start or {}
     command = config.get("command")
     if not command:
         raise PreviewError(
-            "no preview-start command configured for this repo — set Repository.preview_start "
-            "(or ProjectProfile.preview_start) before running test automation")
+            "no preview target for this repo — set the repo's Preview URL (point at a running app) "
+            "or a preview-start command before running test automation")
     # A start command that fetches from a denied host is blocked before anything runs (§6).
     check_command_egress(command, policy)
 

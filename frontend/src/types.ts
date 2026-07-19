@@ -389,6 +389,7 @@ export interface Repository {
   default_base: string;
   status: string;
   is_default: boolean;
+  preview_url: string; // manual app URL 09b explores (P3-09bR); "" = none
 }
 
 // CI ingest tokens (P3-09bX-1) — a per-project credential the client's CI uses to POST

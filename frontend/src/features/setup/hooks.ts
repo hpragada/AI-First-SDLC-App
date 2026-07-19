@@ -112,7 +112,7 @@ export function useRepositories(projectId: string | undefined) {
 export function useCreateRepository(projectId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name: string; role: string; base_branch: string }) =>
+    mutationFn: (body: { name: string; role: string; base_branch: string; preview_url?: string }) =>
       api.createRepository(projectId as string, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["repositories", projectId] }),
   });
@@ -122,6 +122,15 @@ export function useDeleteRepository(projectId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (repoId: string) => api.deleteRepository(projectId as string, repoId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["repositories", projectId] }),
+  });
+}
+
+export function useUpdateRepository(projectId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ repoId, body }: { repoId: string; body: { preview_url?: string } }) =>
+      api.updateRepository(projectId as string, repoId, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["repositories", projectId] }),
   });
 }
