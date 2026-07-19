@@ -73,6 +73,42 @@ _PLACEHOLDERS = re.compile(
     r"|dummy|sample|redacted|<[^>]+>|\$\{?[A-Za-z_]+\}?"
     r"|os\.environ|getenv|process\.env)"
 )
+# An unquoted *dotted identifier* on the RHS is code, not a credential — an attribute/name
+# reference like `self.refresh_token_expiry` or `settings.access_token_lifetime`. Because
+# `_ASSIGNMENT` admits `.` in the value, a long snake_case attribute chain after a `token`/`secret`
+# keyword otherwise trips the entropy heuristic (Bugs S.No 151: `self.…` on auth_service.py).
+_DOTTED_IDENTIFIER = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
+
+
+def _looks_encoded(seg: str) -> bool:
+    """A base64/hex-ish blob rather than a word — digit-dense, or many intra-word case flips with
+    digits present. Snake_case identifiers (`refresh_token_expiry`) are lowercase words with no
+    digits, so they read as NOT encoded; a token segment (`eyJhbGciOiJIUzI1NiJ9`) reads as encoded."""
+    if not seg:
+        return False
+    digits = sum(c.isdigit() for c in seg)
+    if digits / len(seg) >= 0.2:
+        return True
+    case_flips = sum(
+        1 for a, b in zip(seg, seg[1:])
+        if a.isalpha() and b.isalpha() and a.islower() != b.islower()
+    )
+    return case_flips >= 3 and digits >= 1
+
+
+def _is_code_reference(value: str) -> bool:
+    """True when the RHS is an attribute/name reference (code), not a credential literal.
+
+    Signature of code: a dotted identifier that is either receiver-prefixed (`self.`/`cls.`/`this.`)
+    or snake_case, and whose segments read as words rather than base64/hex blobs. This keeps a real
+    token that merely contains a dot (a JWT-ish `eyJ….eyJ…`, a base64url blob) flagged — those have
+    encoded-looking segments — while letting an attribute chain like `self.refresh_token_expiry`
+    through (JWTs are also caught independently by the high-precision `_PATTERNS`)."""
+    if not _DOTTED_IDENTIFIER.match(value):
+        return False
+    if not (value.startswith(("self.", "cls.", "this.")) or "_" in value):
+        return False
+    return not any(_looks_encoded(seg) for seg in value.split("."))
 
 # Committed *template* files are meant to hold illustrative placeholders, so the generic entropy
 # heuristic (which guesses at "custom" secrets) is skipped for them — a placeholder there is by
@@ -86,6 +122,24 @@ def _is_template_file(path: str) -> bool:
     name = (path or "").lower().replace("\\", "/").rsplit("/", 1)[-1]
     return (name.endswith(_TEMPLATE_SUFFIXES)
             or ".example." in name or ".sample." in name or ".template." in name)
+
+
+# Test files legitimately hold mock credentials — fake JWTs, dummy tokens, sample keys used as
+# fixtures. The generic entropy heuristic is skipped for them (Bugs S.No 144 class, extended to
+# tests) while the high-precision `_PATTERNS` STILL run, so a REAL key shape hardcoded in a test
+# (AKIA…, ghp_…, PEM, full JWT) is still blocked.
+_TEST_FILE_MARKERS = (".test.", ".spec.", "_test.", "test_")
+_TEST_DIR_SEGMENTS = ("/test/", "/tests/", "/__tests__/", "/__mocks__/", "/fixtures/")
+
+
+def _is_test_file(path: str) -> bool:
+    """True for test / fixture files (`foo.test.ts`, `test_foo.py`, anything under a tests dir,
+    `conftest.py`, …), where mock credentials are expected, not leaks."""
+    p = (path or "").lower().replace("\\", "/")
+    name = p.rsplit("/", 1)[-1]
+    return (name == "conftest.py"
+            or any(m in name for m in _TEST_FILE_MARKERS)
+            or any(seg in ("/" + p) for seg in _TEST_DIR_SEGMENTS))
 
 
 def shannon_entropy(s: str) -> float:
@@ -110,22 +164,24 @@ def scan_text(text: str, *, path: str = "") -> list[SecretFinding]:
     catches custom tokens while skipping obvious placeholders / env-var references."""
     findings: list[SecretFinding] = []
     seen: set[tuple[int, str]] = set()
-    # In a template file the entropy heuristic is skipped (placeholders are expected); the
-    # high-precision format patterns below still run so a real key shape is never missed.
-    is_template = _is_template_file(path)
+    # In a template OR test file the entropy heuristic is skipped (placeholders / mock fixtures
+    # are expected); the high-precision format patterns below still run so a real key shape is
+    # never missed (Bugs S.No 144 + test-file extension).
+    skip_entropy = _is_template_file(path) or _is_test_file(path)
     for lineno, line in enumerate(text.splitlines(), start=1):
         for kind, pattern in _PATTERNS:
             match = pattern.search(line)
             if match and (lineno, kind) not in seen:
                 seen.add((lineno, kind))
                 findings.append(SecretFinding(kind, path, lineno, _redact(match.group(0))))
-        assignment = None if is_template else _ASSIGNMENT.search(line)
+        assignment = None if skip_entropy else _ASSIGNMENT.search(line)
         if assignment:
             value = assignment.group(1)
             if (
                 len(value) >= _ENTROPY_LEN_MIN
                 and shannon_entropy(value) >= _ENTROPY_MIN
                 and not _PLACEHOLDERS.search(value)
+                and not _is_code_reference(value)   # attribute/name reference, not a literal (S.No 151)
                 and (lineno, "high_entropy_secret") not in seen
             ):
                 seen.add((lineno, "high_entropy_secret"))
@@ -207,12 +263,44 @@ def check_command_egress(command, policy: EgressPolicy) -> None:
 # Substrings that must never appear in a build-phase tool name (CodeHost / arbitrary network).
 _FORBIDDEN_TOOL_HINTS = ("codehost", "web", "fetch", "http", "curl", "network")
 
+# The Playwright MCP browser tools 09b needs for Live Application Exploration (real-locator
+# discovery, spec §4). Permitted ONLY for the test-automation phase and bounded to the preview
+# host by EgressPolicy — a deliberate, phase-gated exception to the build phase's network-forbid
+# (D2): every other build phase (07/11) still gets FS/Bash + Platform-State only. Deliberately
+# the locator-discovery surface only — navigation + snapshot + interaction, NOT network/console/
+# evaluate inspection (not needed to find selectors, and keeps the exposed surface tight).
+PLAYWRIGHT_MCP_TOOLS = frozenset(
+    f"mcp__playwright__{name}" for name in (
+        "browser_navigate", "browser_navigate_back", "browser_snapshot",
+        "browser_click", "browser_hover", "browser_type", "browser_press_key",
+        "browser_select_option", "browser_wait_for", "browser_take_screenshot",
+        "browser_tabs", "browser_resize", "browser_close",
+    )
+)
 
-def assert_phase_allowlist(tools, *, allowed) -> None:
+
+def playwright_tools_for(phase: str) -> frozenset:
+    """The Playwright MCP tools permitted for `phase`: the 09b locator-discovery surface for the
+    test-automation phase, empty for every other build phase. Single source of truth so the driver
+    allowlist and the MCP-server wiring (runner.build_mcp_servers) can never disagree on which
+    phase gets a browser."""
+    return PLAYWRIGHT_MCP_TOOLS if phase == "test_automation" else frozenset()
+
+
+def assert_phase_allowlist(tools, *, allowed, phase: str = "") -> None:
     """PG12: the build phase gets only FS/Bash + remote Platform-State. Any tool that matches
-    a CodeHost/network hint, or that is not on the canonical allowlist, is a violation."""
-    allowed_set = set(allowed)
+    a CodeHost/network hint, or that is not on the canonical allowlist, is a violation.
+
+    For the test-automation phase (09b) the curated Playwright browser tools are additionally
+    permitted (`playwright_tools_for`) — an egress-bounded exception for Live Application
+    Exploration. They bypass the network-hint check because they ARE the curated exception; the
+    real network bound is EgressPolicy scoping the browser to the preview host, not the tool name.
+    """
+    phase_extra = playwright_tools_for(phase)
+    allowed_set = set(allowed) | phase_extra
     for tool in tools:
+        if tool in phase_extra:
+            continue        # curated phase-scoped browser tool — egress-bounded, not name-bounded
         low = tool.lower()
         if any(hint in low for hint in _FORBIDDEN_TOOL_HINTS):
             raise AllowlistViolation(f"tool {tool!r} is forbidden in the build phase (PG12)")

@@ -19,6 +19,7 @@ from .guardrails import (
     EgressPolicy,
     assert_phase_allowlist,
     check_command_egress,
+    playwright_tools_for,
     scan_worktree,
 )
 from .testresults import collect_test_results, summarize
@@ -49,6 +50,14 @@ BUILD_ALLOWED_TOOLS = (
 )
 
 
+def allowed_tools_for(phase: str) -> list[str]:
+    """The tools handed to the driver for a build of `phase`: the canonical build set, plus the
+    curated Playwright browser tools for the test-automation phase (09b Live Application
+    Exploration, spec §4). Keyed off the same `playwright_tools_for` the allowlist assertion uses,
+    so what 09b is GIVEN and what PG12 PERMITS can never drift."""
+    return [*BUILD_ALLOWED_TOOLS, *sorted(playwright_tools_for(phase))]
+
+
 @dataclass
 class BuildTask:
     """Everything the platform sends the companion for one build run. Self-contained — the
@@ -72,6 +81,11 @@ class BuildTask:
     secrets: dict = field(default_factory=dict)   # injected as env, never written to repo
     provisioning_commands: list = field(default_factory=list)  # toolchain/test-db setup hooks
     extra_allowed_hosts: list = field(default_factory=list)  # declared registries (egress §6)
+    # Preview-start config for a test-automation build (D7 / P3-09bR): how to bring the app up
+    # from the worktree so Live App Exploration has a live target. Resolved platform-side
+    # (repo-first → profile) and shipped here; only carried for the test_automation phase.
+    # {command, port, health_path, ready_timeout_s, ready_log}. Empty for a 09b build ⇒ fail loud.
+    preview_start: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -90,11 +104,19 @@ class _WorkItemShim:
     feature_stream: str
 
 
-def build_mcp_servers(task: BuildTask, *, repo_root: str | None = None) -> dict:
+def build_mcp_servers(task: BuildTask, *, repo_root: str | None = None,
+                      preview_url: str = "") -> dict:
     """MCP config the agent uses: a local stdio server that proxies platform-state calls to
-    the platform over HTTP (carrying the runner token; tenant resolved server-side)."""
+    the platform over HTTP (carrying the runner token; tenant resolved server-side).
+
+    For the **test-automation phase** (09b) a second stdio server — Playwright MCP — is added so
+    Live Application Exploration can navigate the live app and discover real locators (spec §4).
+    It is phase-scoped (07/11 builds never launch a browser) and headless. When a `preview_url` is
+    known (bring-up resolved the port), the browser is **origin-scoped to that preview host** via
+    `--allowed-origins` — the tightest posture consistent with D2 (the browser can reach the app
+    under test, nothing else). The 09b body hard-halts Step 4 when these tools are absent."""
     root = repo_root or str(Path(__file__).resolve().parents[2])
-    return {
+    servers = {
         "platform-state": {
             "type": "stdio",
             "command": sys.executable,
@@ -113,6 +135,40 @@ def build_mcp_servers(task: BuildTask, *, repo_root: str | None = None) -> dict:
             },
         }
     }
+    if playwright_tools_for(task.phase):
+        # `npx @playwright/mcp` is a stdio MCP server; `--headless` runs without a visible window
+        # (the companion is a dev laptop, but the run is unattended). The package + browser
+        # binaries are an enrollment prerequisite (P3-09bR-6 docs); absent → Step 4's hard-halt.
+        args = ["-y", "@playwright/mcp@latest", "--headless"]
+        if preview_url:
+            # Scope the browser to the preview host only (semicolon-separated origin list).
+            args += ["--allowed-origins", preview_url]
+        servers["playwright"] = {"type": "stdio", "command": "npx", "args": args}
+    return servers
+
+
+# Placeholders the 09b body uses for the app under test (its Playwright examples). The composed
+# manifest is the run-specific seam the companion controls post-bring-up, so the resolved preview
+# URL is injected there (the body + manifest form one system prompt) — the platform supplies the
+# value at run time rather than the agent guessing it (spec §4).
+_BASE_URL_TOKENS = ("[base_url]", "[app_url]")
+
+
+def manifest_with_preview(manifest: str, preview_url: str) -> str:
+    """The composed manifest with the resolved preview URL made available to the agent: a leading
+    `# Preview Environment` section plus literal substitution of the body's base-URL placeholders.
+    A no-op when there is no preview URL (07/11, or a build that brought no app up)."""
+    if not preview_url:
+        return manifest
+    for token in _BASE_URL_TOKENS:
+        manifest = manifest.replace(token, preview_url)
+    header = (
+        "# Preview Environment\n"
+        f"- Base URL: {preview_url}\n"
+        "- This is the live app under test for this run. Use it wherever the role instructions "
+        "reference the application base URL (e.g. Playwright navigation).\n\n"
+    )
+    return header + manifest
 
 
 @contextmanager
@@ -142,6 +198,147 @@ def run_provisioning(worktree: Path, task: BuildTask, policy: EgressPolicy) -> N
         subprocess.run(cmd, cwd=str(worktree), shell=isinstance(cmd, str), check=True)
 
 
+class PreviewError(Exception):
+    """The preview app could not be brought up for a test-automation build (D7 / P3-09bR). Raised
+    to fail the build loud — a 09b run without a live target would only produce guessed locators."""
+
+
+@dataclass
+class PreviewHandle:
+    """A running companion-local preview app: its loopback URL (the E2E target) + the process to
+    tear down. `log_tail` is the captured server output, for teardown diagnostics."""
+
+    url: str
+    proc: object                       # subprocess.Popen — kept for teardown
+    port: int
+    log_tail: object = None            # collections.deque — drained server output
+
+
+def _readiness(config: dict, port) -> tuple[str, str]:
+    """The readiness signals from a preview-start config: (health_path, ready_log). Defaults to
+    polling `/` when neither is declared (but a port is), so a plain dev server is detectable."""
+    health_path = str(config.get("health_path") or "")
+    ready_log = str(config.get("ready_log") or "")
+    if not health_path and not ready_log and port:
+        health_path = "/"
+    return health_path, ready_log
+
+
+def _http_ok(url: str) -> bool:
+    """True if `url` answers with a non-5xx status. Loopback-only (the companion probing its own
+    preview) — not subject to the egress allowlist, which governs the *build's* outbound calls."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(url, timeout=2) as resp:      # noqa: S310 — loopback only
+            return resp.status < 500
+    except urllib.error.HTTPError as exc:
+        return exc.code < 500        # a 4xx means the server is up and routing
+    except Exception:  # noqa: BLE001 — not up yet / connection refused
+        return False
+
+
+def provision_preview_app(
+    worktree: Path, task: BuildTask, policy: EgressPolicy) -> PreviewHandle | None:
+    """Bring the project-declared app up from the worktree so 09b's Live App Exploration has a live
+    target (D7). Returns a `PreviewHandle`, or `None` for any phase that needs no preview (07/11).
+
+    Fail-loud for a test-automation build with no preview-start config — better a clear failure than
+    a run that guesses locators against nothing. Waits for readiness (health endpoint OR a ready-log
+    line) up to `ready_timeout_s`; a timeout or an early exit tears the process down and raises with
+    the captured log tail. Never hangs."""
+    import collections
+    import subprocess
+    import threading
+    import time
+
+    if task.phase != "test_automation":
+        return None                    # no browser phase → no app to serve
+    config = task.preview_start or {}
+    command = config.get("command")
+    if not command:
+        raise PreviewError(
+            "no preview-start command configured for this repo — set Repository.preview_start "
+            "(or ProjectProfile.preview_start) before running test automation")
+    # A start command that fetches from a denied host is blocked before anything runs (§6).
+    check_command_egress(command, policy)
+
+    port = config.get("port")
+    timeout_s = float(config.get("ready_timeout_s") or 120)
+    health_path, ready_log = _readiness(config, port)
+    url = f"http://127.0.0.1:{port}" if port else "http://127.0.0.1"
+
+    # A new session/process-group so teardown kills the whole server tree (dev servers spawn
+    # children). POSIX: start_new_session; Windows: a new process group.
+    popen_kwargs = {"cwd": str(worktree), "shell": isinstance(command, str),
+                    "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "text": True}
+    if os.name == "posix":
+        popen_kwargs["start_new_session"] = True
+    else:
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    proc = subprocess.Popen(command, **popen_kwargs)  # noqa: S603
+
+    log_tail: collections.deque = collections.deque(maxlen=200)
+
+    def _drain() -> None:
+        for line in iter(proc.stdout.readline, ""):
+            log_tail.append(line.rstrip("\n"))
+    threading.Thread(target=_drain, daemon=True).start()
+
+    handle = PreviewHandle(url=url, proc=proc, port=int(port) if port else 0, log_tail=log_tail)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            teardown_preview_app(handle)
+            raise PreviewError(
+                f"preview app exited before becoming ready (code {proc.returncode}). "
+                f"Last output:\n{_preview_log(log_tail)}")
+        if ready_log and any(ready_log in line for line in log_tail):
+            return handle
+        if health_path and _http_ok(url + health_path):
+            return handle
+        time.sleep(0.5)
+    teardown_preview_app(handle)
+    checked = ", ".join(
+        part for part in (f"log={ready_log}" if ready_log else "",
+                          f"GET {url + health_path}" if health_path else "") if part)
+    raise PreviewError(
+        f"preview app did not become ready within {timeout_s:.0f}s (checked {checked}). "
+        f"Last output:\n{_preview_log(log_tail)}")
+
+
+def _preview_log(log_tail) -> str:
+    """The captured preview-server output tail, for a failure message (bounded by the deque)."""
+    return "\n".join(log_tail) if log_tail else "(no output)"
+
+
+def teardown_preview_app(handle: PreviewHandle | None) -> None:
+    """Stop a preview app and free its port. Best-effort and idempotent — safe to call in a
+    `finally` whether the app is running, already gone, or was never started."""
+    import signal
+
+    if handle is None or handle.proc is None:
+        return
+    proc = handle.proc
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        else:
+            proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except Exception:  # noqa: BLE001 — didn't stop in time → force kill
+            if os.name == "posix":
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            else:
+                proc.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        pass        # already gone / not ours — nothing to tear down
+
+
 def _commit_message(task: BuildTask) -> str:
     """The Conventional-Commit message the platform derives from the WorkItem (07 agent §Commit
     convention). `<type>(<scope>): <subject>` — a defect maps to `fix`, everything else to `feat`;
@@ -157,22 +354,33 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
     collect → teardown. Guardrails v1 (§6): the per-phase allowlist is asserted (PG12), the
     egress allowlist gates provisioning, and the changed files are secret-scanned before the
     branch is reported pushable — a hit returns `status="secret_blocked"` and nothing is pushed."""
-    assert_phase_allowlist(BUILD_ALLOWED_TOOLS, allowed=BUILD_ALLOWED_TOOLS)  # PG12
+    # PG12: the tools we hand the driver must be within the phase's policy. For 09b that policy
+    # includes the curated Playwright browser tools; every other phase stays FS/Bash + state only.
+    allowed_tools = allowed_tools_for(task.phase)
+    assert_phase_allowlist(allowed_tools, allowed=BUILD_ALLOWED_TOOLS, phase=task.phase)
     policy = EgressPolicy.for_task(task)
     branch = f"feature/{task.work_item_key}"
     worktree = provision_worktree(
         repo_path=repo_path, branch=branch, base=task.base,
         worktree_path=Path(worktrees_root) / task.work_item_key,
     )
+    preview: PreviewHandle | None = None
     try:
         run_provisioning(worktree, task, policy)
         with inject_environment(task):
+            # D7: for a test-automation build, bring the app up from the worktree FIRST so Live App
+            # Exploration has a live target; the server inherits the injected secrets (started here,
+            # so it keeps them even after the env context restores). None for 07/11 (no browser).
+            preview = provision_preview_app(worktree, task, policy)
+            preview_url = preview.url if preview else ""
             result = await driver.run_build_task(
-                manifest=task.manifest,
+                # Inject the resolved preview URL into the run's prompt (R-4): the agent explores
+                # THIS live app instead of a placeholder, and Playwright is origin-scoped to it.
+                manifest=manifest_with_preview(task.manifest, preview_url),
                 agent_spec=_SpecShim(task.model, task.phase, task.work_item_key),
                 repo_workspace=worktree,
-                mcp_servers=build_mcp_servers(task),
-                allowed_tools=BUILD_ALLOWED_TOOLS,
+                mcp_servers=build_mcp_servers(task, preview_url=preview_url),
+                allowed_tools=allowed_tools,
                 work_item=_WorkItemShim(task.work_item_id, task.work_item_key),
             )
         files = changed_files(worktree)
@@ -185,6 +393,7 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
             "changed_files": files,
             "test_results": test_results,
             "test_summary": summarize(test_results),
+            "preview_url": preview.url if preview else "",
             "cost_usd": getattr(result, "cost_usd", 0.0),
             "outputs": getattr(result, "outputs", {}),
             "egress_allowed_hosts": sorted(policy.allowed_hosts),
@@ -212,6 +421,7 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
                 out["head_sha"] = head_sha(worktree)
         return out
     finally:
+        teardown_preview_app(preview)      # stop the app before the worktree it runs from is gone
         if not keep_worktree:
             teardown_worktree(repo_path=repo_path, worktree_path=worktree)
 
@@ -252,4 +462,5 @@ def to_build_report(result: dict) -> dict:
             "head_sha": result.get("head_sha", ""),
             "changed_files": result.get("changed_files", []),
             "test_results": result.get("test_results", []),
-            "test_summary": result.get("test_summary", "")}
+            "test_summary": result.get("test_summary", ""),
+            "preview_url": result.get("preview_url", "")}

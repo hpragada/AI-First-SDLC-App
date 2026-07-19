@@ -49,6 +49,12 @@ class ProjectProfile(TenantScopedModel):
     # this; empty dict = pure defaults. Exports are always user-triggered (team flow
     # decision 2026-07-07) — this only governs WHERE each phase's artifacts may go.
     export_policy = models.JSONField(default=dict, blank=True)
+    # Preview-start config — the FALLBACK for single-serve-target projects (Repository.preview_start
+    # is the primary home; the thing served is a repo). Same shape: how the companion brings the app
+    # up from the worktree so 09b/E2E have a live target (D7). {command, port, health_path,
+    # ready_timeout_s, ready_log}. Empty ⇒ no preview; a test-automation run then fails loud
+    # (P3-09bR). See docs/PHASE_3_09B_RUNNABLE_SPEC.md §1.
+    preview_start = models.JSONField(default=dict, blank=True)
     important_context = models.TextField(blank=True)
     version = models.IntegerField(default=1)
 
@@ -65,6 +71,14 @@ class Repository(TenantScopedModel):
     code_host_ref = models.CharField(max_length=512, blank=True)
     scopes = models.JSONField(default=dict, blank=True)
     stack_overrides = models.JSONField(default=dict, blank=True)
+    # Preview-start config — PRIMARY home (the served thing is a repo: the frontend repo runs the
+    # UI; a backend repo has no UI to preview). How the companion brings the app up from the
+    # worktree so 09b's Live Application Exploration + E2E have a live target (D7):
+    #   {"command": "npm run dev", "port": 5173, "health_path": "/",
+    #    "ready_timeout_s": 120, "ready_log": "Local:"}   # health_path OR ready_log satisfies ready
+    # Empty ⇒ no preview; a test-automation build then fails loud rather than run without locators
+    # (P3-09bR). Resolution is repo-first then ProjectProfile.preview_start. Spec §1.
+    preview_start = models.JSONField(default=dict, blank=True)
     provenance = models.JSONField(default=dict, blank=True)    # onboarding origin
     # The repo build PRs target when a work item doesn't pin one (S-13 "Set default";
     # P4.7-T7). The first repo registered on a project is default until reassigned.
@@ -72,3 +86,31 @@ class Repository(TenantScopedModel):
 
     def __str__(self) -> str:
         return self.name or f"{self.project_id}:{self.role}"
+
+
+class ProjectCIToken(TenantScopedModel):
+    """A per-project CI credential for pushing automated-test results (P3-09bX-1).
+
+    The client's CI pipeline posts its JUnit results to the ingestion endpoint authenticated by
+    this token; only the SHA-256 **hash** is stored (the secret is shown once on issue and never
+    recoverable). Scoped to results ingestion **only** — deliberately NOT a runner enrollment token
+    (CI is not a Claude Code companion). RLS keeps a tenant's tokens isolated (#6). Mirrors the
+    RunnerEnrollment token shape (`Status` enum, hashed secret) for consistency."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        REVOKED = "revoked", "Revoked"
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="ci_tokens"
+    )
+    label = models.CharField(max_length=120, blank=True)      # e.g. "GitHub Actions"
+    token_hash = models.CharField(max_length=128)             # SHA-256 hex; never the secret
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    def __str__(self) -> str:
+        return f"ci-token:{self.label or self.id} ({self.status})"

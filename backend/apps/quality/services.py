@@ -90,7 +90,7 @@ def _latest_code_artifact_id(tenant_id, work_item_id) -> str | None:
 
 def import_test_results(
     *, tenant_id, project_id, work_item_id, run_id=None, results: list,
-    summary: str = "", push_to_sor: bool = False, get_capability=None,
+    summary: str = "", push_to_sor: bool = False, get_capability=None, execution_ref: str = "",
 ) -> dict:
     """Record an execution, detect/quarantine flaky tests, register the test_report artifact,
     optionally push to the SoR (idempotent), and reconcile the defect loopback."""
@@ -129,13 +129,22 @@ def import_test_results(
         external_ref = _push_to_sor(tenant_id, project_id, work_item_id, rows, summary,
                                     get_capability)
 
-    # Record / update the TestExecution (idempotent by run+work_item when a run is given).
+    # Record / update the TestExecution. Idempotent by (run, work_item) for the build path; by
+    # (work_item, execution_ref) for a run-less CI import (P3-09bX-5) — a re-post of the same CI
+    # run updates the same row rather than stacking duplicate executions. Only a truly anonymous
+    # import (no run, no execution_ref) falls back to an unconditional create.
     with tenant_context(tenant_id):
         defaults = {"status": overall, "results": rows, "flaky": bool(flaky),
-                    "project_id": project_id, "external_ref": external_ref}
+                    "project_id": project_id, "external_ref": external_ref,
+                    "execution_ref": execution_ref}
         if run_id:
             execution, _ = TestExecution.objects.update_or_create(
                 tenant_id=tenant_id, run_id=run_id, work_item_id=work_item_id,
+                defaults=defaults,
+            )
+        elif execution_ref:
+            execution, _ = TestExecution.objects.update_or_create(
+                tenant_id=tenant_id, work_item_id=work_item_id, execution_ref=execution_ref,
                 defaults=defaults,
             )
         else:

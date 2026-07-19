@@ -1,16 +1,18 @@
-"""P3/D4 — the companion's JUnit report parser (`runner.companion.testresults`).
+"""P3/D4 — the shared JUnit parser (`apps.quality.junit`) + the companion's worktree collection.
 
 Results are read from the suite's own report file (machine truth), never from the agent's
 account of its run. The parser must be framework-agnostic (pytest / jest / Playwright / NUnit
 all emit JUnit) and, above all, must never manufacture a green result: no report, an
 unreadable report, or a malformed one all yield `[]`, which the platform declines to import.
+The parsing lives in one Django-free module (P3-09bX-2) so the companion collection and the CI
+ingestion endpoint can never drift; the companion module only adds worktree report discovery.
 """
-from runner.companion import testresults
-from runner.companion.testresults import collect_test_results, parse_junit, summarize
+from runner.companion.testresults import collect_test_results
 
-# Aliased under a private name on purpose: bound as `test_ref_for`, pytest would collect the
-# production function itself as a test case and error on its arguments as missing fixtures.
-_ref_for = testresults.test_ref_for
+# `test_ref_for` is imported under a private alias on purpose: as a module-level `test_*` name
+# pytest would collect the production function itself as a test case and error on its arguments.
+from apps.quality.junit import parse_junit, summarize
+from apps.quality.junit import test_ref_for as _ref_for
 
 _PYTEST = """<?xml version="1.0" encoding="utf-8"?>
 <testsuites>

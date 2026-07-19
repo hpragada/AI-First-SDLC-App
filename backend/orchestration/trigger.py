@@ -278,6 +278,13 @@ def trigger_build(
         inp = BuildInput(
             run_id=str(run.id), tenant_id=str(tenant_id), project_id=str(project_id),
             work_item_id=str(work_item_id), agent_spec_id=str(spec.id),
+            # The phase label from the catalog (via the spec), NOT the "implementation" default:
+            # a build can ride any build agent (07_implementation / 09b_test_automation /
+            # 11_cicd), and hardcoding "implementation" mislabeled 09b/CICD runs — their dispatch
+            # payload, RUNNER_PHASE, composed manifest and `code` artifact all read the wrong
+            # phase. Mirror trigger_phase (`spec.phase_label or agent_key`) so the one catalog
+            # value drives both trigger paths and can never drift.
+            phase=spec.phase_label or agent_key,
             work_item_key=work_item_key, repo=repo, base=base, required_role=required_role,
             # The human title, for what a PERSON reads (Bugs S.No 151) — artifact + PR titles.
             work_item_title=work_item.title or "",

@@ -179,3 +179,62 @@ async def test_run_build_clean_change_reports_ok(tmp_path):
     assert out["status"] == "ok" and "impl.py" in out["changed_files"]
     assert "api.github.com" in out["egress_allowed_hosts"]
     assert to_build_report(out)["status"] == "ok"
+
+
+# ── test-file mock fixtures skip the entropy heuristic (Bugs S.No 150) ────────
+# A test file legitimately holds mock JWTs / dummy tokens; the entropy heuristic is skipped there
+# (like template files) while the high-precision key patterns still run.
+@pytest.mark.parametrize("path", [
+    "frontend/src/test/authStore.test.ts",   # the exact WI-34 case
+    "src/auth.spec.ts",
+    "backend/tests/test_auth.py",
+    "backend/tests/conftest.py",
+    "app/__tests__/helpers.ts",
+    "app/fixtures/tokens.ts",
+])
+def test_scan_text_skips_entropy_in_test_files(path):
+    # a mock JWT / high-entropy token assigned to a token-ish var — a fixture, not a leak
+    assert scan_text('const accessToken = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOjEyMzR9xZ"', path=path) == []
+    assert scan_text('MOCK_TOKEN = "Zk9xQ2mL7vRt4Wp1Ns6Yb3Hd0Fj8Gc5"', path=path) == []
+
+
+def test_test_files_still_block_real_key_shapes():
+    # real key SHAPES are caught even inside a test file (the entropy skip does not weaken these)
+    assert {f.kind for f in scan_text(f'k = "{_AWS}"', path="backend/tests/test_x.py")} == {"aws_access_key_id"}
+    assert scan_text(f'gh = "{_GH}"', path="frontend/src/test/a.test.ts")[0].kind == "github_token"
+
+
+def test_non_test_source_keeps_full_entropy_scan():
+    # the identical fixture in IMPLEMENTATION code is still blocked (no weakening of real source)
+    assert scan_text('const accessToken = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOjEyMzR9xZ"',
+                     path="frontend/src/store/authStore.ts")
+    assert scan_text(f'api_key = "{_RANDOM}"', path="backend/app/config.py")
+
+
+# ── unquoted dotted-identifier RHS is code, not a secret (Bugs S.No 151) ──────
+# The WI-38 false positive: `_ASSIGNMENT` admits `.` in the value, so a `token`/`secret` keyword
+# followed by an attribute chain (`self.refresh_token_expiry`) tripped the entropy heuristic on an
+# ordinary code reference. A pure dotted identifier is never a credential literal.
+@pytest.mark.parametrize("line", [
+    "self.refresh_token = self.refresh_token_expiry_seconds",   # the WI-38 shape (auth_service.py)
+    "access_token = settings.access_token_lifetime_seconds",
+    "self._auth_token = self.default_token_generator_backend",
+    "client_secret = config.oauth.client_secret_reference",
+])
+def test_scan_text_skips_unquoted_dotted_identifier(line):
+    assert scan_text(line, path="backend/app/services/auth_service.py") == []
+
+
+def test_dotted_identifier_skip_does_not_weaken_real_tokens():
+    # a contiguous high-entropy token (no dotted-identifier structure) is STILL caught...
+    assert scan_text(f'api_key = {_RANDOM}', path="backend/app/services/auth_service.py")
+    # ...and a real JWT literal (which DOES contain dots) is still caught — the dotted-identifier
+    # skip must not let it through (its segments read as encoded blobs, and `_PATTERNS` flags it too).
+    assert "jwt" in {f.kind for f in scan_text(f"token = {_JWT}", path="backend/app/auth.py")}
+    # a base64url blob that is technically an identifier chain (long high-entropy segments, no
+    # receiver prefix) is a token, not code — the guard keeps it flagged.
+    assert scan_text('secret = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOjEyMzR9xZ',
+                     path="backend/app/services/auth_service.py")
+    # a base64url token that sneaks an underscore in still doesn't pass as "code" (segment entropy)
+    assert scan_text('token = A1b2C3d4E5f6G7h8_j9.K0l1M2n3O4p5Q6r7',
+                     path="backend/app/auth.py")

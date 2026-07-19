@@ -38,6 +38,10 @@ class TestExecution(TenantScopedModel):
     results = models.JSONField(default=list, blank=True)
     external_ref = models.JSONField(null=True, blank=True)   # the Xray execution pointer
     flaky = models.BooleanField(default=False)
+    # The external execution identity for a run-less import (a CI run id / commit sha, P3-09bX-5):
+    # CI results carry no platform Run, so idempotency keys on (work_item, execution_ref) instead
+    # of (run, work_item). Blank for the build-report path, which still keys on the run.
+    execution_ref = models.CharField(max_length=255, blank=True)
 
     def __str__(self) -> str:
         return f"test_exec:{self.id} ({self.status})"
