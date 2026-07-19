@@ -209,3 +209,32 @@ def test_non_test_source_keeps_full_entropy_scan():
     assert scan_text('const accessToken = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOjEyMzR9xZ"',
                      path="frontend/src/store/authStore.ts")
     assert scan_text(f'api_key = "{_RANDOM}"', path="backend/app/config.py")
+
+
+# ── unquoted dotted-identifier RHS is code, not a secret (Bugs S.No 151) ──────
+# The WI-38 false positive: `_ASSIGNMENT` admits `.` in the value, so a `token`/`secret` keyword
+# followed by an attribute chain (`self.refresh_token_expiry`) tripped the entropy heuristic on an
+# ordinary code reference. A pure dotted identifier is never a credential literal.
+@pytest.mark.parametrize("line", [
+    "self.refresh_token = self.refresh_token_expiry_seconds",   # the WI-38 shape (auth_service.py)
+    "access_token = settings.access_token_lifetime_seconds",
+    "self._auth_token = self.default_token_generator_backend",
+    "client_secret = config.oauth.client_secret_reference",
+])
+def test_scan_text_skips_unquoted_dotted_identifier(line):
+    assert scan_text(line, path="backend/app/services/auth_service.py") == []
+
+
+def test_dotted_identifier_skip_does_not_weaken_real_tokens():
+    # a contiguous high-entropy token (no dotted-identifier structure) is STILL caught...
+    assert scan_text(f'api_key = {_RANDOM}', path="backend/app/services/auth_service.py")
+    # ...and a real JWT literal (which DOES contain dots) is still caught — the dotted-identifier
+    # skip must not let it through (its segments read as encoded blobs, and `_PATTERNS` flags it too).
+    assert "jwt" in {f.kind for f in scan_text(f"token = {_JWT}", path="backend/app/auth.py")}
+    # a base64url blob that is technically an identifier chain (long high-entropy segments, no
+    # receiver prefix) is a token, not code — the guard keeps it flagged.
+    assert scan_text('secret = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOjEyMzR9xZ',
+                     path="backend/app/services/auth_service.py")
+    # a base64url token that sneaks an underscore in still doesn't pass as "code" (segment entropy)
+    assert scan_text('token = A1b2C3d4E5f6G7h8_j9.K0l1M2n3O4p5Q6r7',
+                     path="backend/app/auth.py")

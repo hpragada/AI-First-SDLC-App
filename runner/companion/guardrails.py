@@ -73,6 +73,42 @@ _PLACEHOLDERS = re.compile(
     r"|dummy|sample|redacted|<[^>]+>|\$\{?[A-Za-z_]+\}?"
     r"|os\.environ|getenv|process\.env)"
 )
+# An unquoted *dotted identifier* on the RHS is code, not a credential — an attribute/name
+# reference like `self.refresh_token_expiry` or `settings.access_token_lifetime`. Because
+# `_ASSIGNMENT` admits `.` in the value, a long snake_case attribute chain after a `token`/`secret`
+# keyword otherwise trips the entropy heuristic (Bugs S.No 151: `self.…` on auth_service.py).
+_DOTTED_IDENTIFIER = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
+
+
+def _looks_encoded(seg: str) -> bool:
+    """A base64/hex-ish blob rather than a word — digit-dense, or many intra-word case flips with
+    digits present. Snake_case identifiers (`refresh_token_expiry`) are lowercase words with no
+    digits, so they read as NOT encoded; a token segment (`eyJhbGciOiJIUzI1NiJ9`) reads as encoded."""
+    if not seg:
+        return False
+    digits = sum(c.isdigit() for c in seg)
+    if digits / len(seg) >= 0.2:
+        return True
+    case_flips = sum(
+        1 for a, b in zip(seg, seg[1:])
+        if a.isalpha() and b.isalpha() and a.islower() != b.islower()
+    )
+    return case_flips >= 3 and digits >= 1
+
+
+def _is_code_reference(value: str) -> bool:
+    """True when the RHS is an attribute/name reference (code), not a credential literal.
+
+    Signature of code: a dotted identifier that is either receiver-prefixed (`self.`/`cls.`/`this.`)
+    or snake_case, and whose segments read as words rather than base64/hex blobs. This keeps a real
+    token that merely contains a dot (a JWT-ish `eyJ….eyJ…`, a base64url blob) flagged — those have
+    encoded-looking segments — while letting an attribute chain like `self.refresh_token_expiry`
+    through (JWTs are also caught independently by the high-precision `_PATTERNS`)."""
+    if not _DOTTED_IDENTIFIER.match(value):
+        return False
+    if not (value.startswith(("self.", "cls.", "this.")) or "_" in value):
+        return False
+    return not any(_looks_encoded(seg) for seg in value.split("."))
 
 # Committed *template* files are meant to hold illustrative placeholders, so the generic entropy
 # heuristic (which guesses at "custom" secrets) is skipped for them — a placeholder there is by
@@ -145,6 +181,7 @@ def scan_text(text: str, *, path: str = "") -> list[SecretFinding]:
                 len(value) >= _ENTROPY_LEN_MIN
                 and shannon_entropy(value) >= _ENTROPY_MIN
                 and not _PLACEHOLDERS.search(value)
+                and not _is_code_reference(value)   # attribute/name reference, not a literal (S.No 151)
                 and (lineno, "high_entropy_secret") not in seen
             ):
                 seen.add((lineno, "high_entropy_secret"))
