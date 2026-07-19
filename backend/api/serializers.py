@@ -14,7 +14,7 @@ from apps.clarifications.models import Clarification
 from apps.gates.models import Approval
 from apps.integrations.models import DriftRecord, IntegrationConnection, SourceDocument
 from apps.ledger.models import Event
-from apps.projects.models import Project, ProjectProfile, Repository
+from apps.projects.models import Project, ProjectCIToken, ProjectProfile, Repository
 from apps.registry.models import Artifact, TraceEdge
 from apps.runs.models import Run
 from apps.tenancy.models import Invitation, Membership, Tenant
@@ -118,6 +118,16 @@ class MembershipCreateSerializer(serializers.Serializer):
 
     user_id = serializers.UUIDField()
     role = serializers.ChoiceField(choices=Role.choices)
+
+
+class ProjectCITokenSerializer(serializers.ModelSerializer):
+    """Read shape for a CI ingest token — **metadata only**. The secret (and its hash) is never
+    serialized; the raw token is returned once, separately, at issue time."""
+
+    class Meta:
+        model = ProjectCIToken
+        fields = ["id", "label", "status", "last_used_at", "created_at"]
+        read_only_fields = fields
 
 
 class TenantAdminSerializer(serializers.Serializer):

@@ -110,6 +110,7 @@ from .serializers import (
     InvitationSerializer,
     MembershipCreateSerializer,
     MembershipSerializer,
+    ProjectCITokenSerializer,
     ProjectProfileSerializer,
     ProjectSerializer,
     RepositoryCreateSerializer,
@@ -178,7 +179,8 @@ class ProjectViewSet(
     def get_permissions(self):
         # Admin-only surfaces for user/role management (P4.7-T4). Everything else keeps the
         # project viewset's default (AllowAny + tenant scoping / RLS).
-        if self.action in {"memberships", "delete_membership", "role_coverage"}:
+        if self.action in {"memberships", "delete_membership", "role_coverage",
+                           "ci_tokens", "revoke_ci_token"}:
             return [IsTenantAdmin()]
         # Repositories (P4.7-T7): any authenticated member may read; add/remove/set-default
         # are further gated per-project (tech_lead/admin) inside the action itself.
@@ -256,6 +258,39 @@ class ProjectViewSet(
         gate_blocked (+ note), and whether an admin fallback exists (admin approves any gate)."""
         project = self.get_object()
         return Response(project_role_coverage(tenant=project.tenant, project=project))
+
+    @action(detail=True, methods=["get", "post"], url_path="ci-tokens")
+    def ci_tokens(self, request, pk=None):
+        """GET the project's CI ingest tokens (metadata only) / POST to issue a new one (admin,
+        P3-09bX-1). The raw secret is returned **once** on issue and never again — the client
+        copies it into their CI secret store; only its hash is stored."""
+        from apps.projects.ci_tokens import issue_ci_token, list_ci_tokens
+
+        project = self.get_object()
+        if request.method == "GET":
+            rows = list_ci_tokens(tenant_id=self.tenant_id, project_id=str(project.id))
+            return Response(ProjectCITokenSerializer(rows, many=True).data)
+
+        user = current_user(request)
+        row, token = issue_ci_token(
+            tenant_id=self.tenant_id, project_id=str(project.id),
+            label=request.data.get("label", ""),
+            created_by_id=str(user.id) if user is not None else None,
+        )
+        data = ProjectCITokenSerializer(row).data
+        data["token"] = token       # shown ONCE — never stored, never returned again
+        return Response(data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["delete"], url_path=r"ci-tokens/(?P<token_id>[^/.]+)")
+    def revoke_ci_token(self, request, pk=None, token_id=None):
+        """Revoke a CI ingest token (admin). It stops authenticating immediately; the row is kept
+        for the audit trail (status=revoked)."""
+        from apps.projects.ci_tokens import revoke_ci_token
+
+        self.get_object()       # tenant-scopes + 404s if the project isn't the caller's
+        if not revoke_ci_token(tenant_id=self.tenant_id, token_id=token_id):
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["get", "put"])
     def profile(self, request, pk=None):

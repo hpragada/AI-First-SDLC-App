@@ -12,6 +12,7 @@ from .auth_views import (
     ResetView,
     SignupView,
 )
+from .ci_views import CITestResultsView
 from .runner_views import (
     RunnerBuildFetchView,
     RunnerBuildReportView,
@@ -62,6 +63,11 @@ router.register("drift", DriftRecordViewSet, basename="drift")
 
 urlpatterns = [
     path("tenants/", TenantCreateView.as_view(), name="tenant-create"),
+    # CI results ingestion (P3-09bX-3): CI-token authenticated, project-scoped. Explicit path
+    # (before the router include) so it wins over the projects viewset, and its non-session auth
+    # stays isolated from the session-authed project actions.
+    path("projects/<uuid:project_id>/test-results/", CITestResultsView.as_view(),
+         name="ci-test-results"),
     # Phase catalog (S-18 trigger picker, gap C): tenant-scoped via session / header.
     path("phases/", PhaseCatalogView.as_view(), name="phases"),
     # Server-session auth (P4.7-T1, DECISION-3). Tenant is resolved from the session

@@ -86,3 +86,31 @@ class Repository(TenantScopedModel):
 
     def __str__(self) -> str:
         return self.name or f"{self.project_id}:{self.role}"
+
+
+class ProjectCIToken(TenantScopedModel):
+    """A per-project CI credential for pushing automated-test results (P3-09bX-1).
+
+    The client's CI pipeline posts its JUnit results to the ingestion endpoint authenticated by
+    this token; only the SHA-256 **hash** is stored (the secret is shown once on issue and never
+    recoverable). Scoped to results ingestion **only** — deliberately NOT a runner enrollment token
+    (CI is not a Claude Code companion). RLS keeps a tenant's tokens isolated (#6). Mirrors the
+    RunnerEnrollment token shape (`Status` enum, hashed secret) for consistency."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        REVOKED = "revoked", "Revoked"
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="ci_tokens"
+    )
+    label = models.CharField(max_length=120, blank=True)      # e.g. "GitHub Actions"
+    token_hash = models.CharField(max_length=128)             # SHA-256 hex; never the secret
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    def __str__(self) -> str:
+        return f"ci-token:{self.label or self.id} ({self.status})"
