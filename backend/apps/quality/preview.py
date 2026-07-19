@@ -48,6 +48,23 @@ def teardown_preview(*, tenant_id, preview_id) -> dict:
     return {"preview_id": str(preview.id), "status": preview.status}
 
 
+def teardown_preview_for_run(*, tenant_id, project_id, work_item_id, run_id=None) -> dict:
+    """Tear down the build's preview env, located by work item (+ run). Best-effort and idempotent:
+    a no-op when nothing is READY (07/11, or already torn down). The BuildWorkflow calls this at
+    terminal states without tracking the preview_id itself (P3-09bR-5)."""
+    with tenant_context(tenant_id):
+        qs = PreviewEnv.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, work_item_id=work_item_id,
+            status=PreviewEnv.Status.READY)
+        if run_id:
+            qs = qs.filter(run_id=run_id)
+        preview = qs.order_by("-created_at").first()
+        if preview is None:
+            return {"torn_down": False}
+    teardown_preview(tenant_id=tenant_id, preview_id=preview.id)
+    return {"torn_down": True, "preview_id": str(preview.id)}
+
+
 def _comment_on_pr(tenant_id, pr_ref: str, url: str, get_capability) -> None:
     if get_capability is None:
         from integrations.registry import get_capability as _gc

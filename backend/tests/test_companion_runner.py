@@ -7,12 +7,25 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from runner.companion.guardrails import (
+    PLAYWRIGHT_MCP_TOOLS,
+    AllowlistViolation,
+    EgressPolicy,
+    assert_phase_allowlist,
+)
 from runner.companion.runner import (
     BUILD_ALLOWED_TOOLS,
     BuildTask,
+    PreviewError,
+    PreviewHandle,
+    allowed_tools_for,
     build_mcp_servers,
     inject_environment,
+    manifest_with_preview,
+    provision_preview_app,
     run_build,
+    teardown_preview_app,
+    to_build_report,
 )
 from runner.companion.state_client import RemoteStateClient, RemoteStateError
 from runner.companion.worktree import (
@@ -162,6 +175,157 @@ def test_build_mcp_servers_points_at_remote_proxy():
     assert cfg["env"]["RUNNER_TOKEN"] == "tok"
     assert cfg["env"]["RUNNER_TENANT_ID"] == "T"
     assert cfg["env"]["RUNNER_API_URL"] == "http://plat"
+
+
+# ── P3-09bR-3: Playwright MCP is phase-scoped to 09b ─────────────────
+def test_build_mcp_servers_adds_playwright_only_for_test_automation():
+    # 07 implementation build: no browser.
+    assert "playwright" not in build_mcp_servers(_task(phase="implementation"))
+    # 09b test-automation build: a headless Playwright stdio server is added.
+    servers = build_mcp_servers(_task(phase="test_automation"))
+    assert "platform-state" in servers        # still there
+    pw = servers["playwright"]
+    assert pw["command"] == "npx"
+    assert "@playwright/mcp@latest" in pw["args"] and "--headless" in pw["args"]
+
+
+def test_allowed_tools_for_extends_only_test_automation():
+    impl = allowed_tools_for("implementation")
+    assert impl == BUILD_ALLOWED_TOOLS                     # unchanged for 07/11
+    assert not any(t.startswith("mcp__playwright__") for t in impl)
+    auto = allowed_tools_for("test_automation")
+    assert set(BUILD_ALLOWED_TOOLS) <= set(auto)           # superset
+    assert set(PLAYWRIGHT_MCP_TOOLS) <= set(auto)          # + the browser surface
+
+
+def test_phase_allowlist_permits_playwright_for_09b_only():
+    nav = "mcp__playwright__browser_navigate"
+    # Allowed when the phase is test-automation…
+    assert_phase_allowlist([*BUILD_ALLOWED_TOOLS, nav],
+                           allowed=BUILD_ALLOWED_TOOLS, phase="test_automation")   # no raise
+    # …and rejected for any other phase (default/07).
+    with pytest.raises(AllowlistViolation):
+        assert_phase_allowlist([*BUILD_ALLOWED_TOOLS, nav], allowed=BUILD_ALLOWED_TOOLS)
+
+
+def test_phase_allowlist_still_blocks_codehost_and_network_in_09b():
+    # The 09b exception is ONLY the curated Playwright surface — CodeHost / arbitrary network
+    # stay forbidden even in the test-automation phase.
+    for rogue in ("mcp__codehost__merge_pull_request", "WebFetch",
+                  "mcp__playwright__browser_network_requests"):  # network tool NOT on the surface
+        with pytest.raises(AllowlistViolation):
+            assert_phase_allowlist([*BUILD_ALLOWED_TOOLS, rogue],
+                                   allowed=BUILD_ALLOWED_TOOLS, phase="test_automation")
+
+
+# ── P3-09bR-2: preview app bring-up ─────────────────────────────────
+class _FakeStdout:
+    def __init__(self, lines):
+        self._lines = list(lines)
+
+    def readline(self):
+        return self._lines.pop(0) if self._lines else ""
+
+
+class _FakePopen:
+    """A stand-in for a preview server process: yields `lines` on stdout, `poll()` returns
+    `returncode` (None ⇒ still running)."""
+
+    def __init__(self, *, lines=(), returncode=None):
+        self.stdout = _FakeStdout(lines)
+        self.returncode = returncode        # real Popen exposes this after poll()
+        self.pid = 999_999
+
+    def poll(self):
+        return self.returncode
+
+
+def _pol(task):
+    return EgressPolicy.for_task(task)
+
+
+def test_provision_preview_none_for_non_test_automation():
+    task = _task(phase="implementation", preview_start={"command": "npm run dev", "port": 5173})
+    assert provision_preview_app(Path("."), task, _pol(task)) is None
+
+
+def test_provision_preview_fails_loud_without_config():
+    task = _task(phase="test_automation", preview_start={})
+    with pytest.raises(PreviewError):
+        provision_preview_app(Path("."), task, _pol(task))
+
+
+def test_provision_preview_ready_via_log(monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(
+        subprocess, "Popen",
+        lambda *a, **k: _FakePopen(lines=["starting…", "Local: http://127.0.0.1:5173/"]))
+    task = _task(phase="test_automation",
+                 preview_start={"command": "npm run dev", "port": 5173,
+                                "ready_log": "Local:", "ready_timeout_s": 5})
+    handle = provision_preview_app(Path("."), task, _pol(task))
+    assert isinstance(handle, PreviewHandle)
+    assert handle.url == "http://127.0.0.1:5173" and handle.port == 5173
+
+
+def test_provision_preview_raises_on_early_exit(monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(
+        subprocess, "Popen",
+        lambda *a, **k: _FakePopen(lines=["boom: address already in use"], returncode=1))
+    task = _task(phase="test_automation",
+                 preview_start={"command": "npm run dev", "port": 5173,
+                                "ready_log": "Local:", "ready_timeout_s": 5})
+    with pytest.raises(PreviewError, match="exited before becoming ready"):
+        provision_preview_app(Path("."), task, _pol(task))
+
+
+def test_teardown_preview_app_stops_a_real_process():
+    import os
+    import subprocess
+    import sys
+
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                            start_new_session=(os.name == "posix"))
+    teardown_preview_app(PreviewHandle(url="http://127.0.0.1:1", proc=proc, port=1))
+    assert proc.poll() is not None                 # actually stopped
+
+
+def test_teardown_preview_app_is_noop_on_none():
+    teardown_preview_app(None)                      # no raise
+
+
+def test_to_build_report_carries_preview_url():
+    out = to_build_report({"status": "ok", "branch": "b",
+                           "preview_url": "http://127.0.0.1:5173"})
+    assert out["preview_url"] == "http://127.0.0.1:5173"
+
+
+# ── P3-09bR-4: base_url injection + Playwright origin scoping ────────
+def test_manifest_with_preview_injects_url_and_substitutes_tokens():
+    manifest = "# Project\nNavigate to [base_url]/login and [app_url].\n"
+    out = manifest_with_preview(manifest, "http://127.0.0.1:5173")
+    assert out.startswith("# Preview Environment")
+    assert "Base URL: http://127.0.0.1:5173" in out
+    assert "[base_url]" not in out and "[app_url]" not in out
+    assert "http://127.0.0.1:5173/login" in out          # token substituted in place
+
+
+def test_manifest_with_preview_is_noop_without_url():
+    manifest = "# Project\nNavigate to [base_url].\n"
+    assert manifest_with_preview(manifest, "") == manifest
+
+
+def test_build_mcp_servers_scopes_playwright_to_the_preview_origin():
+    task = _task(phase="test_automation")
+    # No URL yet → no origin restriction flag.
+    args_no_url = build_mcp_servers(task)["playwright"]["args"]
+    assert "--allowed-origins" not in args_no_url
+    # URL known → the browser is origin-scoped to exactly that preview host.
+    args = build_mcp_servers(task, preview_url="http://127.0.0.1:5173")["playwright"]["args"]
+    assert args[args.index("--allowed-origins") + 1] == "http://127.0.0.1:5173"
 
 
 def test_inject_environment_sets_and_restores(monkeypatch):

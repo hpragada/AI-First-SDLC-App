@@ -59,6 +59,14 @@ def dispatch_build_core(inp: BuildInput) -> dict:
         "manifest": manifest, "agent_body": agent_body, "model": model,
         "api_url": getattr(settings, "PLATFORM_API_URL", ""),
     }
+    # Ship the preview-start config ONLY for the phase that brings the app up (09b Live App
+    # Exploration + E2E, D7) — mirrors the companion's phase-gated Playwright wiring. The
+    # companion turns an empty config into a fail-loud; 07/11 builds never carry it.
+    if inp.phase == "test_automation":
+        from apps.projects.preview_config import resolve_preview_start
+
+        payload["preview_start"] = resolve_preview_start(
+            tenant_id=inp.tenant_id, project_id=inp.project_id, repo_name=inp.repo)
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         # Carry the WorkItem title/type so the companion derives a meaningful Conventional-Commit
@@ -145,6 +153,39 @@ def import_build_test_results_core(inp: BuildInput, report: BuildReport) -> dict
     return {"imported": out["status"] != "skipped", "status": out["status"],
             "defects_opened": out["defects_opened"], "defects_closed": out["defects_closed"],
             "flaky": out["flaky"]}
+
+
+def provision_preview_core(inp: BuildInput, report: BuildReport) -> dict:
+    """Record the companion-local preview env the build reported and link it on the PR (D7 /
+    P3-09bR-5). No-op unless the build reported a preview URL (only 09b brings an app up).
+
+    v1 lifetime note: the app PROCESS is ephemeral to the agent run — the companion tears it down
+    when its build finishes (P3-09bR-2) — so this records the exploration URL as provenance + a PR
+    link, and is the seam a persistent per-PR env (P5 cloud provider, behind `PreviewEnv.provider`)
+    drops into without changing callers. Idempotent: `provision_preview` upserts by (work_item,
+    pr_ref), so a Resume that retries the PR/gate block re-links rather than duplicating."""
+    url = getattr(report, "preview_url", "") or ""
+    if not url:
+        return {"provisioned": False}
+    from apps.quality.preview import provision_preview
+
+    code = _code_artifact(inp)
+    pr_ref = (f"{code.external_ref['repo']}#{code.external_ref['number']}"
+              if code is not None and _is_pr_ref(code.external_ref) else "")
+    out = provision_preview(
+        tenant_id=inp.tenant_id, project_id=inp.project_id, work_item_id=inp.work_item_id,
+        run_id=inp.run_id, pr_ref=pr_ref, url=url)
+    return {"provisioned": True, "preview_id": out["preview_id"], "url": url, "pr_ref": pr_ref}
+
+
+def teardown_preview_core(inp: BuildInput) -> dict:
+    """Mark the run's preview env torn down at a terminal build state (merge/close or compensation,
+    P3-09bR-5). Best-effort + idempotent — a no-op when no preview was recorded (07/11)."""
+    from apps.quality.preview import teardown_preview_for_run
+
+    return teardown_preview_for_run(
+        tenant_id=inp.tenant_id, project_id=inp.project_id,
+        work_item_id=inp.work_item_id, run_id=inp.run_id)
 
 
 def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
@@ -706,6 +747,16 @@ def import_build_test_results_activity(inp: BuildInput, report: BuildReport) -> 
     return _boundary(import_build_test_results_core, inp, report)
 
 
+@activity.defn(name="provision_preview")
+def provision_preview_activity(inp: BuildInput, report: BuildReport) -> dict:
+    return _boundary(provision_preview_core, inp, report)
+
+
+@activity.defn(name="teardown_preview")
+def teardown_preview_activity(inp: BuildInput) -> dict:
+    return _boundary(teardown_preview_core, inp)
+
+
 @activity.defn(name="open_merge_gate")
 def open_merge_gate_activity(inp: BuildInput) -> str:
     return _boundary(open_merge_gate_core, inp)
@@ -770,6 +821,8 @@ BUILD_ACTIVITIES = [
     dispatch_build_activity,
     open_build_pr_activity,
     import_build_test_results_activity,
+    provision_preview_activity,
+    teardown_preview_activity,
     run_code_review_activity,
     dispatch_remediation_activity,
     open_merge_gate_activity,

@@ -94,6 +94,18 @@ class BuildWorkflow:
         )
         return True
 
+    async def _teardown_preview(self, inp: BuildInput) -> None:
+        """Best-effort: mark the run's preview env torn down at a terminal state (P3-09bR-5).
+        Idempotent + a no-op when no preview was recorded (07/11). Never lets preview cleanup fail
+        or delay the terminal transition."""
+        try:
+            await workflow.execute_activity(
+                "teardown_preview", inp,
+                start_to_close_timeout=timedelta(minutes=1), retry_policy=_COMPENSATE,
+            )
+        except ActivityError:
+            pass
+
     @workflow.run
     async def run(self, inp: BuildInput) -> dict:
         await workflow.execute_activity(
@@ -144,6 +156,16 @@ class BuildWorkflow:
                     "open_build_pr", args=[inp, report],
                     start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
                 )
+                # D7: record the companion-local preview env the build reported and link it on the
+                # PR. Best-effort — linking a preview must never fail (or park) the build. No-op
+                # unless the build reported a preview URL (only 09b brings an app up).
+                try:
+                    await workflow.execute_activity(
+                        "provision_preview", args=[inp, report],
+                        start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY,
+                    )
+                except ActivityError:
+                    pass
 
                 # Build phases (§5): review → remediate → re-review until no blocking findings.
                 # The review activity waits (inside itself) up to inp.review_timeout_seconds for
@@ -167,6 +189,7 @@ class BuildWorkflow:
                             start_to_close_timeout=timedelta(minutes=1),
                             retry_policy=_COMPENSATE,
                         )
+                        await self._teardown_preview(inp)
                         return {"status": "remediation_exhausted", "run_id": inp.run_id}
                     # Implementation re-runs in remediation mode on the same branch; await report.
                     await workflow.execute_activity(
@@ -184,6 +207,7 @@ class BuildWorkflow:
                             "mark_takeover", inp,
                             start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
                         )
+                        await self._teardown_preview(inp)
                         return {"status": "takeover", "run_id": inp.run_id}
                     if self._report.status != "ok":
                         await workflow.execute_activity(
@@ -191,6 +215,7 @@ class BuildWorkflow:
                             args=[inp, self._report.message or "remediation build failed"],
                             start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
                         )
+                        await self._teardown_preview(inp)
                         return {"status": "build_failed", "run_id": inp.run_id}
                     # The remediation re-ran the suite: re-import so a test fixed this cycle
                     # closes its defect (and one newly broken opens one) instead of the loop
@@ -218,8 +243,10 @@ class BuildWorkflow:
                         "mark_build_failed", args=[inp, reason],
                         start_to_close_timeout=timedelta(minutes=1), retry_policy=_COMPENSATE,
                     )
+                    await self._teardown_preview(inp)
                     return {"status": "build_failed", "run_id": inp.run_id}
                 if not await self._park(inp, reason, "open_build_pr"):
+                    await self._teardown_preview(inp)
                     return {"status": "build_failed", "run_id": inp.run_id}
                 continue        # resumed → retry the PR/review/gate block (build NOT redone)
 
@@ -237,6 +264,7 @@ class BuildWorkflow:
                     "reject_build", args=[inp, decision.comment],
                     start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
                 )
+                await self._teardown_preview(inp)
                 return {"status": "rejected", "run_id": inp.run_id}
 
             # Retry the merge until it succeeds, needs a fresh decision (conflict), or the human
@@ -265,6 +293,7 @@ class BuildWorkflow:
                     # resume the merge is retried under the SAME approval — the reviewer already
                     # approved, and clicking Resume IS the human action.
                     if not await self._park(inp, f"merge failed: {reason}", "merge_build_pr"):
+                        await self._teardown_preview(inp)
                         return {"status": "build_failed", "run_id": inp.run_id}
                     continue
 
@@ -280,6 +309,7 @@ class BuildWorkflow:
                     "transition_build_work_item", args=[inp, "done"],
                     start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
                 )
+                await self._teardown_preview(inp)      # PR merged → close the preview env (D7)
                 return {"status": "completed", "run_id": inp.run_id}
 
             if needs_new_decision:
