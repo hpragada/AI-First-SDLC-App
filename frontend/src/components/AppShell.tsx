@@ -1,4 +1,5 @@
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
 import { useRunners } from "../features/identity/hooks";
@@ -106,6 +107,93 @@ function activeNav(pathname: string): NavId {
   return "dashboard";
 }
 
+// Account menu on the topbar avatar — the only affordance that invokes the (already
+// wired) AuthContext.logout(). Kept self-contained so its open/close state and the
+// sign-out lifecycle never leak into the shell.
+function AccountMenu({ name, email }: { name: string; email: string }) {
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const itemRef = useRef<HTMLButtonElement>(null);
+
+  // Close on outside click + Escape while open.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  // Move focus to the first item when the menu opens (keyboard users).
+  useEffect(() => {
+    if (open) itemRef.current?.focus();
+  }, [open]);
+
+  // Any navigation dismisses the menu.
+  useEffect(() => {
+    setOpen(false);
+  }, [location.pathname]);
+
+  const onSignOut = async () => {
+    if (signingOut) return; // guard double-clicks
+    setSigningOut(true);
+    try {
+      // logout() clears the query cache + selectedProjectId even if the network call
+      // fails (AuthContext onSettled), so redirect regardless of the outcome.
+      await logout();
+    } catch {
+      /* client session already cleared; fall through to the redirect */
+    } finally {
+      setOpen(false);
+      navigate("/login", { replace: true });
+    }
+  };
+
+  return (
+    <div className="account-menu" ref={rootRef}>
+      <button
+        className="avatar"
+        aria-label={`Account menu for ${name}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {initials(name)}
+      </button>
+      {open && (
+        <div className="account-menu__pop" role="menu" aria-label="Account">
+          <div className="account-menu__head">
+            <div className="account-menu__name">{name}</div>
+            <div className="account-menu__email">{email}</div>
+          </div>
+          <div className="account-menu__sep" role="separator" />
+          <button
+            ref={itemRef}
+            className="account-menu__item account-menu__item--danger"
+            role="menuitem"
+            onClick={onSignOut}
+            disabled={signingOut}
+          >
+            {signingOut ? "Signing out…" : "Sign out"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AppShell() {
   const location = useLocation();
   const { currentUser, selectedProject, setSelectedProjectId, isAdmin } = useAuth();
@@ -129,6 +217,7 @@ export function AppShell() {
   const tenant = currentUser?.tenant.name ?? "Acme Corp";
   const project = selectedProject?.project_name ?? "No project yet";
   const user = currentUser?.user.name ?? "You";
+  const userEmail = currentUser?.user.email ?? "";
 
   return (
     <div className="app-shell">
@@ -193,9 +282,7 @@ export function AppShell() {
             <SvgIcon path={ICON.bell} />
             {bellCount > 0 && <span className="bell__badge">{bellCount}</span>}
           </button>
-          <button className={cx("avatar")} aria-label={`Account menu for ${user}`}>
-            {initials(user)}
-          </button>
+          <AccountMenu name={user} email={userEmail} />
         </header>
         <div className="app-canvas">
           <Outlet />
