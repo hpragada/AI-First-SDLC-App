@@ -16,6 +16,7 @@ type NavId =
   | "onboarding"
   | "integrations"
   | "repositories"
+  | "test-reporting"
   | "admin"
   | "connect";
 
@@ -30,6 +31,7 @@ const ICON = {
   onboarding: "M12 3l9 5-9 5-9-5 9-5z M3 13l9 5 9-5",
   integrations: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
   repos: "M5 3h11l3 3v15H5z M9 7h6M9 11h6M9 15h4",
+  "test-reporting": "M9 3h6v2H9z M6 5h12v16H6z M9 12l2 2 4-4",
   admin: "M12 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8z M4 21v-1c0-3.3 3.6-5 8-5s8 1.7 8 5v1",
   bell: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9 M13.7 21a2 2 0 0 1-3.4 0",
 };
@@ -37,7 +39,7 @@ const ICON = {
 const NAV: Array<{
   section?: string;
   adminOnly?: boolean;
-  items: Array<{ id: NavId; label: string; icon: keyof typeof ICON; href: string; count?: number }>;
+  items: Array<{ id: NavId; label: string; icon: keyof typeof ICON; href: string; count?: number; adminOnly?: boolean }>;
 }> = [
   {
     items: [
@@ -56,6 +58,7 @@ const NAV: Array<{
       { id: "onboarding", label: "Onboarding", icon: "onboarding", href: "/onboarding" },
       { id: "integrations", label: "Integrations", icon: "integrations", href: "/integrations" },
       { id: "repositories", label: "Repositories", icon: "repos", href: "/repositories" },
+      { id: "test-reporting", label: "Test Reporting", icon: "test-reporting", href: "/test-reporting", adminOnly: true },
       { id: "connect", label: "Connect Machine", icon: "runs", href: "/connect" },
     ],
   },
@@ -97,6 +100,7 @@ function activeNav(pathname: string): NavId {
   if (pathname.startsWith("/onboarding")) return "onboarding";
   if (pathname.startsWith("/integrations")) return "integrations";
   if (pathname.startsWith("/repositories") || pathname.startsWith("/contracts")) return "repositories";
+  if (pathname.startsWith("/test-reporting")) return "test-reporting";
   if (pathname.startsWith("/admin")) return "admin";
   if (pathname.startsWith("/connect") || pathname.startsWith("/setup")) return "connect";
   return "dashboard";
@@ -140,6 +144,7 @@ export function AppShell() {
               <div key={group.section ?? index}>
                 {group.section && <div className="sidebar__section">{group.section}</div>}
                 {group.items.map((item) => {
+                  if (item.adminOnly && !isAdmin) return null;
                   const count = item.count ?? navCounts[item.id];
                   return (
                     <Link key={item.id} className="nav-item" to={item.href} aria-current={item.id === active ? "page" : undefined}>

@@ -391,6 +391,21 @@ export interface Repository {
   is_default: boolean;
 }
 
+// CI ingest tokens (P3-09bX-1) — a per-project credential the client's CI uses to POST
+// automated-test results back. Metadata only; the secret is never stored/returned after issue.
+export interface CIToken {
+  id: string;
+  label: string;
+  status: string; // "active" | "revoked"
+  last_used_at: string | null;
+  created_at: string;
+}
+
+// The one issue response that also carries the raw secret — shown ONCE, never again.
+export interface CITokenIssued extends CIToken {
+  token: string;
+}
+
 // ── Phase 4.8 T4 — lifecycle (bucket B + existing runs/artifacts/clarifications/approvals) ──
 
 // Work-item list card deltas + filters (gap B).

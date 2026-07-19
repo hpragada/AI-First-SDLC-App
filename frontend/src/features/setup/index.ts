@@ -4,3 +4,4 @@ export { ProjectProfileEditor } from "./ProjectProfileEditor";
 export { Integrations } from "./Integrations";
 export { ConnectCapability } from "./ConnectCapability";
 export { Repositories } from "./Repositories";
+export { TestReporting } from "./TestReporting";

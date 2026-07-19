@@ -9,6 +9,8 @@ import type {
   Artifact,
   ArtifactPreview,
   CapabilityCatalogEntry,
+  CIToken,
+  CITokenIssued,
   Clarification,
   CurrentUser,
   DashboardRollup,
@@ -215,6 +217,15 @@ export const api = {
   ) => req<Repository>("POST", `/projects/${projectId}/repositories/`, { body }),
   deleteRepository: (projectId: string, repoId: string) =>
     req<void>("DELETE", `/projects/${projectId}/repositories/${repoId}/`),
+
+  // Test reporting — per-project CI ingest tokens (P3-09bX-1). Admin-only; session-derived
+  // tenant. GET returns metadata only; POST returns the raw secret ONCE; DELETE revokes (204).
+  listCiTokens: (projectId: string) =>
+    req<CIToken[]>("GET", `/projects/${projectId}/ci-tokens/`),
+  createCiToken: (projectId: string, body: { label?: string }) =>
+    req<CITokenIssued>("POST", `/projects/${projectId}/ci-tokens/`, { body }),
+  revokeCiToken: (projectId: string, tokenId: string) =>
+    req<void>("DELETE", `/projects/${projectId}/ci-tokens/${tokenId}/`),
 
   // Tenants (bootstrap — no tenant context yet).
   createTenant: (name: string) => req<Tenant>("POST", "/tenants/", { body: { name } }),

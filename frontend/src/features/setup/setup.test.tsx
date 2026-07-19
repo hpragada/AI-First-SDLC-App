@@ -8,6 +8,7 @@ import { CreateProject } from "./CreateProject";
 import { Integrations } from "./Integrations";
 import { ProjectProfileEditor } from "./ProjectProfileEditor";
 import { Repositories } from "./Repositories";
+import { TestReporting } from "./TestReporting";
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(stubFetchJson(401, { detail: "no session" })));
@@ -98,5 +99,33 @@ describe("S-13 Repositories", () => {
 
     rerender(<Repositories forceView="empty" />);
     expect(screen.getByText("No repositories yet")).toBeDefined();
+  });
+});
+
+describe("P3-09bX Test reporting (CI tokens)", () => {
+  it("list · empty · add-form · revealed · revoke", () => {
+    const { rerender } = renderWithProviders(<TestReporting forceView="list" />);
+    expect(screen.getByText("Test reporting")).toBeDefined();
+    expect(screen.getByText("GitHub Actions")).toBeDefined();
+    // Active + revoked rows both render; revoked shows no Revoke action.
+    expect(screen.getAllByText("active").length).toBeGreaterThan(0);
+    expect(screen.getByText("revoked")).toBeDefined();
+
+    rerender(<TestReporting forceView="empty" />);
+    expect(screen.getByText("No tokens yet")).toBeDefined();
+
+    rerender(<TestReporting forceView="add-form" />);
+    expect(screen.getByPlaceholderText("GitHub Actions")).toBeDefined();
+    expect(screen.getByText("Generate token")).toBeDefined();
+
+    rerender(<TestReporting forceView="revealed" />);
+    expect(screen.getByText("Token created")).toBeDefined();
+    // The one-time secret + the CI snippet (project-scoped ingestion path) are both shown.
+    expect(screen.getByText(/shown only once/)).toBeDefined();
+    expect(screen.getByText(/\/test-results\//)).toBeDefined();
+
+    rerender(<TestReporting forceView="revoke" />);
+    expect(screen.getByText("Revoke token?")).toBeDefined();
+    expect(screen.getByText(/stops its CI from reporting/)).toBeDefined();
   });
 });

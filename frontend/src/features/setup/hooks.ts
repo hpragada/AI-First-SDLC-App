@@ -125,3 +125,28 @@ export function useDeleteRepository(projectId: string | undefined) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["repositories", projectId] }),
   });
 }
+
+// ── Test reporting — CI ingest tokens (P3-09bX) ────────────────────────────
+export function useCiTokens(projectId: string | undefined) {
+  return useQuery({
+    queryKey: ["ci-tokens", projectId],
+    queryFn: () => api.listCiTokens(projectId as string),
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useCreateCiToken(projectId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { label?: string }) => api.createCiToken(projectId as string, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ci-tokens", projectId] }),
+  });
+}
+
+export function useRevokeCiToken(projectId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tokenId: string) => api.revokeCiToken(projectId as string, tokenId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ci-tokens", projectId] }),
+  });
+}

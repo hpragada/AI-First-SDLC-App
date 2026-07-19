@@ -20,6 +20,7 @@ import {
   Integrations,
   ProjectProfileEditor,
   Repositories,
+  TestReporting,
 } from "./features/setup";
 import {
   Clarifications,
@@ -152,6 +153,9 @@ export function AppRoutes() {
             <Route path="/admin/users" element={<UsersInvites />} />
             <Route path="/admin/roles" element={<RolesMatrix />} />
             <Route path="/admin/*" element={<AppPlaceholder title="Workspace Admin" />} />
+            {/* Test reporting is a project resource but admin-only (mirrors the backend
+                IsTenantAdmin on /ci-tokens/); a non-admin deep-link gets the admin panel. */}
+            <Route path="/test-reporting" element={<TestReporting />} />
           </Route>
           <Route path="/connect" element={<ConnectMachine />} />
           <Route path="/recovery" element={<OfflineTakeover />} />
