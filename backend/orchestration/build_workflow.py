@@ -184,13 +184,29 @@ class BuildWorkflow:
                         break
                     cycle += 1
                     if cycle > inp.max_remediation_cycles:
-                        await workflow.execute_activity(
-                            "mark_build_failed", args=[inp, "remediation cycles exhausted"],
-                            start_to_close_timeout=timedelta(minutes=1),
+                        # Bugs S.No 161: remediation exhaustion used to be the ONE recoverable
+                        # failure in this workflow with no second chance — every other error here
+                        # (merge conflict, other merge errors) gets a retry or a park; this just
+                        # hard-failed with zero diagnostics. Now: auto-retry with a fresh agent
+                        # context seeded with what blocked this attempt (still fully automated),
+                        # and only park for a human after auto-retries are ALSO exhausted.
+                        outcome = await workflow.execute_activity(
+                            "handle_remediation_exhausted", inp,
+                            start_to_close_timeout=timedelta(minutes=2),
                             retry_policy=_COMPENSATE,
                         )
-                        await self._teardown_preview(inp)
-                        return {"status": "remediation_exhausted", "run_id": inp.run_id}
+                        if outcome["action"] == "retried":
+                            await self._teardown_preview(inp)
+                            return {"status": "remediation_exhausted_retried",
+                                    "run_id": inp.run_id,
+                                    "retry_run_id": outcome["retry_run_id"]}
+                        # Auto-retries exhausted too — park exactly like other recoverable
+                        # failures (S.No 157), so a human is the last resort, not the first.
+                        if not await self._park(inp, outcome["reason"], "run_code_review"):
+                            await self._teardown_preview(inp)
+                            return {"status": "build_failed", "run_id": inp.run_id}
+                        cycle = 0        # give the resumed attempt a fresh remediation budget
+                        continue
                     # Implementation re-runs in remediation mode on the same branch; await report.
                     await workflow.execute_activity(
                         "dispatch_remediation", inp,

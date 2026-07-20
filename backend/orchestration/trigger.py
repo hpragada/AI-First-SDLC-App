@@ -211,6 +211,10 @@ def trigger_build(
     required_role: str = "reviewer",
     triggered_by: str | None = None,
     workflow_starter=None,
+    # Bugs S.No 161: an auto-retry after remediation exhaustion passes these through so the new
+    # run's manifest carries what blocked the prior attempt (see BuildInput / dispatch_build_core).
+    attempt: int = 1,
+    prior_attempt_context: str = "",
 ) -> TriggerResult:
     """Start a BuildWorkflow for a WorkItem (resolves repo/base from its Repository). The build
     runs on the triggering user's enrolled companion (claimable via /api/runner/work/)."""
@@ -289,6 +293,7 @@ def trigger_build(
             # The human title, for what a PERSON reads (Bugs S.No 151) — artifact + PR titles.
             work_item_title=work_item.title or "",
             enrollment_id=str(enrollment.id) if enrollment is not None else None,
+            attempt=attempt, prior_attempt_context=prior_attempt_context,
         )
         tools.log_event(
             tenant_id, "platform", "build.triggered", "run", str(run.id),

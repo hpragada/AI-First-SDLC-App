@@ -38,6 +38,16 @@ class BuildInput:
     # Which enrolled companion to dispatch to (the triggering user's), so the build is
     # claimable via /api/runner/work/ like a planning phase (req #1).
     enrollment_id: str | None = None
+    # Bugs S.No 161: when remediation exhausts its cycles, the build auto-retries as a FRESH
+    # run (new agent context, no compounding bad decisions) instead of hard-failing with no
+    # recourse — `attempt` counts which try this is; auto-retry stops at `max_auto_attempts`
+    # and parks for a human only then (mirrors the merge-conflict/park patterns already in this
+    # workflow, so a human is the last resort, never the first response to one failure).
+    attempt: int = 1
+    max_auto_attempts: int = 2
+    # A human-readable digest of what blocked prior attempts (file/line/severity/title), fed
+    # into the next attempt's manifest so the agent doesn't walk into the same wall blind.
+    prior_attempt_context: str = ""
 
 
 @dataclass

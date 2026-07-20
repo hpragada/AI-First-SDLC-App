@@ -529,6 +529,73 @@ def test_mark_build_failed_classifies_and_writes_to_run_outputs(world):
     assert "merge conflict" in (world.run.outputs.get("error") or "").lower()
 
 
+# ── remediation-exhaustion auto-retry (Bugs S.No 161) ────────────────
+def test_review_persists_blocking_finding_detail_not_just_counts(world, monkeypatch):
+    """S.No 161: the run console (and an eventual auto-retry) used to see only
+    {blocking: N, findings: M} — no way to tell WHAT blocked. Each review cycle now appends the
+    actual finding detail to run.outputs.review_cycles."""
+    _open_pr(world, monkeypatch)
+    monkeypatch.setattr(ba, "get_review_provider", lambda: _ScriptedReviewer([
+        [ba.Finding(rem="REM-C1", severity="critical", title="SQL injection",
+                    file="db.py", line=42)],
+    ]))
+    ba.run_code_review_core(_inp(world))
+    world.run.refresh_from_db()
+    cycles = world.run.outputs["review_cycles"]
+    assert len(cycles) == 1
+    assert cycles[0]["blocking"] == [
+        {"rem": "REM-C1", "severity": "critical", "title": "SQL injection",
+         "file": "db.py", "line": 42}
+    ]
+
+
+def test_remediation_exhausted_auto_retries_with_seeded_context(world, monkeypatch):
+    """S.No 161: attempt 1 of 2 exhausting remediation auto-retries as a FRESH run instead of
+    hard-failing — the new run's BuildInput carries attempt=2 and a readable digest of what
+    blocked attempt 1, and the old run is marked failed (not left dangling)."""
+    from orchestration import trigger as trigger_mod
+
+    started = {}
+    monkeypatch.setattr(trigger_mod, "_default_build_starter",
+                        lambda workflow_id, inp: started.update(workflow_id=workflow_id, inp=inp))
+    world.run.outputs = {"review_cycles": [{
+        "blocking": [{"rem": "REM-C1", "severity": "critical", "title": "SQL injection",
+                      "file": "db.py", "line": 42}],
+        "blocking_count": 1, "findings_count": 1,
+    }]}
+    world.run.save(update_fields=["outputs"])
+
+    out = ba.handle_remediation_exhausted_core(_inp(world, attempt=1))
+
+    assert out["action"] == "retried"
+    assert started["inp"].attempt == 2
+    assert "SQL injection" in started["inp"].prior_attempt_context
+    assert "db.py:42" in started["inp"].prior_attempt_context
+    new_run = Run.objects.get(id=started["inp"].run_id)
+    assert new_run.id != world.run.id and new_run.work_item_id == world.wi.id
+    world.run.refresh_from_db()
+    assert world.run.status == Run.Status.FAILED
+    assert world.run.outputs["retry_run_id"] == str(new_run.id)
+
+
+def test_remediation_exhausted_parks_once_auto_retries_are_also_exhausted(world):
+    """S.No 161: only after `max_auto_attempts` auto-retried attempts have ALL exhausted does
+    this park for a human — the last resort, not the first response to one failed cycle."""
+    world.run.outputs = {"review_cycles": [{
+        "blocking": [{"rem": "REM-W1", "severity": "warning", "title": "naming",
+                      "file": "x.py", "line": 1}],
+        "blocking_count": 1, "findings_count": 1,
+    }]}
+    world.run.save(update_fields=["outputs"])
+
+    out = ba.handle_remediation_exhausted_core(_inp(world, attempt=2, max_auto_attempts=2))
+
+    assert out["action"] == "park"
+    assert "naming" in out["reason"] and "x.py:1" in out["reason"]
+    world.run.refresh_from_db()
+    assert world.run.status == Run.Status.PENDING     # untouched — the park activity does this
+
+
 # ── code review + remediation loop (07<->08) ────────────────────────
 class _ScriptedReviewer:
     """Returns successive finding lists per review call (last one repeats)."""

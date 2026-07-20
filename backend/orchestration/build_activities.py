@@ -51,6 +51,14 @@ def dispatch_build_core(inp: BuildInput) -> dict:
     from django.conf import settings
 
     manifest = compose_manifest_core(inp)            # duck-typed: reads work_item/project/phase
+    # Bugs S.No 161: an auto-retried attempt (after the prior attempt exhausted its remediation
+    # cycles) carries forward what blocked it, so the fresh agent context doesn't walk into the
+    # same wall blind — still fully automated, just a smarter retry instead of a blind one.
+    if inp.attempt > 1 and inp.prior_attempt_context:
+        manifest = (
+            f"{manifest}\n\n## Prior attempt (#{inp.attempt - 1}) failed code review\n"
+            f"{inp.prior_attempt_context}\n"
+        )
     agent_body, model = _load_agent_body(inp.agent_spec_id, inp.tenant_id)
     payload = {
         "run_id": inp.run_id, "tenant_id": inp.tenant_id, "project_id": inp.project_id,
@@ -471,6 +479,71 @@ def mark_build_failed_core(inp: BuildInput, reason: str) -> dict:
     return {"status": "build_failed", "reason": reason}
 
 
+def handle_remediation_exhausted_core(inp: BuildInput) -> dict:
+    """Bugs S.No 161: remediation exhausting its cycles used to be a dead end — hard-fail, no
+    diagnostics, no recourse; the only path forward was a blind re-trigger with a brand-new
+    agent context and zero memory of what went wrong. This is inconsistent with how every OTHER
+    recoverable failure in this workflow behaves (merge conflicts re-open the gate, other merge
+    errors park) — remediation-exhaustion was the one path with no second chance.
+
+    Two-tier response, both reusing existing patterns instead of inventing new ones:
+    1. Auto-retry (attempt < max_auto_attempts): mark this run terminally failed, then start a
+       FRESH run/workflow for the same WorkItem — new agent context, no compounding bad
+       decisions — seeded with a readable digest of what blocked the last attempt (from the
+       `review_cycles` this loop persisted). Still fully automated: no human involved.
+    2. Auto-retries exhausted too: park (the same `park_build` used for merge errors) so a human
+       is the LAST resort, not the first response to one failed review cycle.
+    """
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        cycles = (run.outputs or {}).get("review_cycles", [])
+    last_blocking = cycles[-1]["blocking"] if cycles else []
+    if last_blocking:
+        findings_summary = "\n".join(
+            f"- [{f.get('severity', '?')}] {f.get('title') or f.get('rem', '')} "
+            f"({f.get('file', '?')}:{f.get('line', '?')})"
+            for f in last_blocking
+        )
+    else:
+        findings_summary = "(no finding detail was captured for the last review cycle)"
+
+    if inp.attempt < inp.max_auto_attempts:
+        from .trigger import trigger_build
+
+        prior_context = (
+            (f"{inp.prior_attempt_context}\n\n" if inp.prior_attempt_context else "")
+            + f"Attempt {inp.attempt} failed code review after {inp.max_remediation_cycles} "
+              f"remediation cycles. Blocking findings on the last cycle:\n{findings_summary}\n"
+              "Avoid repeating these specific issues."
+        )
+        with tenant_context(inp.tenant_id):
+            run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+            run.status = Run.Status.FAILED
+            run.outputs = {
+                **(run.outputs or {}),
+                "error": (f"Remediation exhausted on attempt {inp.attempt}/"
+                          f"{inp.max_auto_attempts} — auto-retrying with a fresh agent attempt."),
+            }
+            run.save(update_fields=["status", "outputs", "updated_at"])
+            tools.log_event(inp.tenant_id, "orchestrator", "build.remediation_exhausted_retry",
+                            "run", inp.run_id, {"attempt": inp.attempt, "next_attempt": inp.attempt + 1})
+        result = trigger_build(
+            tenant_id=inp.tenant_id, project_id=inp.project_id, work_item_id=inp.work_item_id,
+            repo=inp.repo, base=inp.base, work_item_key=inp.work_item_key,
+            required_role=inp.required_role, attempt=inp.attempt + 1,
+            prior_attempt_context=prior_context,
+        )
+        with tenant_context(inp.tenant_id):
+            run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+            run.outputs = {**(run.outputs or {}), "retry_run_id": result.run_id}
+            run.save(update_fields=["outputs", "updated_at"])
+        return {"action": "retried", "retry_run_id": result.run_id}
+
+    reason = (f"remediation cycles exhausted after {inp.max_auto_attempts} auto-retried "
+              f"attempts — blocking findings on the last cycle:\n{findings_summary}")
+    return {"action": "park", "reason": reason}
+
+
 def park_build_core(inp: BuildInput, reason: str, resume_from: str) -> dict:
     """Bugs S.No 157: an error mid-build PARKS the run instead of killing it. Previously any such
     error ran mark_build_failed and RETURNED, which closes the Temporal history for good — a closed
@@ -663,6 +736,22 @@ def run_code_review_core(inp: BuildInput) -> dict:
                 child.save(update_fields=["state", "updated_at"])
         tools.log_event(inp.tenant_id, "orchestrator", "build.reviewed", "run", inp.run_id,
                         {"findings": len(findings), "blocking": len(blocking)})
+        # Bugs S.No 161: persist the actual blocking-finding text (not just counts) so a
+        # remediation-exhausted build has real diagnostic content to seed its auto-retry with,
+        # instead of the counts-only history the run console showed before (2 -> 1 -> 3 -> 3
+        # blocking with zero visibility into what those findings actually were).
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        cycles = list((run.outputs or {}).get("review_cycles", []))
+        cycles.append({
+            "blocking": [
+                {"rem": f.rem, "severity": f.severity, "title": f.title,
+                 "file": f.file, "line": f.line}
+                for f in blocking.values()
+            ],
+            "blocking_count": len(blocking), "findings_count": len(findings),
+        })
+        run.outputs = {**(run.outputs or {}), "review_cycles": cycles}
+        run.save(update_fields=["outputs", "updated_at"])
     return {"open_blocking": len(blocking), "findings": len(findings),
             "review_artifact_id": review_art_id}
 
@@ -796,6 +885,11 @@ def mark_build_failed_activity(inp: BuildInput, reason: str) -> dict:
     return _boundary(mark_build_failed_core, inp, reason)
 
 
+@activity.defn(name="handle_remediation_exhausted")
+def handle_remediation_exhausted_activity(inp: BuildInput) -> dict:
+    return _boundary(handle_remediation_exhausted_core, inp)
+
+
 @activity.defn(name="reject_build")
 def reject_build_activity(inp: BuildInput, comment: str) -> dict:
     return _boundary(reject_build_core, inp, comment)
@@ -834,6 +928,7 @@ BUILD_ACTIVITIES = [
     transition_build_work_item_activity,
     mark_takeover_activity,
     mark_build_failed_activity,
+    handle_remediation_exhausted_activity,
     reject_build_activity,
     reopen_merge_gate_activity,
     publish_build_artifacts_activity,
