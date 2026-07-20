@@ -23,6 +23,41 @@ import urllib.request
 from .runner import BuildTask, run_build
 
 
+def _engine_launch_supported() -> tuple[bool, str]:
+    """(ok, anyio_version): can this Python actually launch Claude Code? claude-agent-sdk starts
+    the CLI via `anyio.open_process(..., user=...)`, and that `user` kwarg only exists in
+    anyio >= 4.5. Returns whether the installed anyio has it, plus its version for the message."""
+    import inspect
+
+    try:
+        import anyio
+        from importlib.metadata import version
+
+        return "user" in inspect.signature(anyio.open_process).parameters, version("anyio")
+    except Exception as exc:  # anyio missing / unreadable — treat as unsupported
+        return False, f"(unavailable: {exc})"
+
+
+def _assert_engine_env() -> None:
+    """Fail fast at startup — never mid-build — if the environment can't launch Claude Code
+    (Bugs S.No 135). A shared/global Python can have anyio silently downgraded to 4.4.0 by another
+    project's `pip install` (e.g. an app pinning anyio==4.4.0), which otherwise surfaces only when
+    the first build tries to start the engine ('open_process() got an unexpected keyword argument
+    user'). Catching it here turns a cryptic demo-time failure into a clear, actionable startup
+    error. Run the companion from its dedicated venv so this can't happen."""
+    ok, ver = _engine_launch_supported()
+    if not ok:
+        sys.stderr.write(
+            "\n[companion] CANNOT START — this Python cannot launch Claude Code.\n"
+            f"  anyio {ver} lacks open_process(user=...), which claude-agent-sdk needs (anyio>=4.5).\n"
+            "  A shared/global Python often gets anyio downgraded by another project's install.\n"
+            "  Fix: launch the companion from its dedicated virtualenv, e.g.\n"
+            "    <sdlc-companion-venv>\\Scripts\\python.exe -m runner.companion serve ...\n"
+            "  (or, in this env:  python -m pip install \"anyio>=4.5\")\n\n"
+        )
+        raise SystemExit(2)
+
+
 def _enroll(args) -> int:
     url = args.api_url.rstrip("/") + "/api/runners/"
     body = json.dumps({"project_id": args.project, "label": args.label,
@@ -119,6 +154,10 @@ def main(argv=None) -> int:
     r.set_defaults(func=_run)
 
     args = parser.parse_args(argv)
+    # `serve`/`run` launch the engine — verify the runtime can before doing anything (S.No 135).
+    # `enroll` needs no engine, so it still works even in a broken env (e.g. first-time setup).
+    if args.cmd in ("serve", "run"):
+        _assert_engine_env()
     return args.func(args)
 
 

@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import runner.companion.__main__ as companion_main
 from runner.companion.guardrails import (
     PLAYWRIGHT_MCP_TOOLS,
     AllowlistViolation,
@@ -66,6 +67,41 @@ def _add_remote(repo: Path) -> Path:
     subprocess.run(["git", "-C", str(repo), "push", "-u", "origin", "main"],
                    check=True, capture_output=True)
     return bare
+
+
+# ── engine-env startup guard (Bugs S.No 135) ────────────────────────
+def test_engine_env_guard_raises_on_broken_anyio(monkeypatch):
+    """serve/run must fail fast at startup — not mid-build — when anyio can't launch Claude Code
+    (the recurring global-python downgrade to anyio 4.4.0)."""
+    monkeypatch.setattr(companion_main, "_engine_launch_supported", lambda: (False, "4.4.0"))
+    with pytest.raises(SystemExit) as exc:
+        companion_main._assert_engine_env()
+    assert exc.value.code == 2
+
+
+def test_engine_env_guard_passes_on_good_anyio(monkeypatch):
+    monkeypatch.setattr(companion_main, "_engine_launch_supported", lambda: (True, "4.14.2"))
+    companion_main._assert_engine_env()   # no raise
+
+
+def test_engine_env_guard_gates_serve_and_run_not_enroll(monkeypatch):
+    """The guard runs for serve/run (they launch the engine) but never for enroll (no engine)."""
+    called = {"n": 0}
+    monkeypatch.setattr(companion_main, "_assert_engine_env",
+                        lambda: called.__setitem__("n", called["n"] + 1))
+    # enroll dispatches to _enroll; stub it so we don't hit the network — the point is the guard.
+    monkeypatch.setattr(companion_main, "_enroll", lambda args: 0)
+    companion_main.main(["enroll", "--api-url", "http://x", "--tenant", "T", "--project", "P"])
+    assert called["n"] == 0        # enroll never triggers the engine check
+    monkeypatch.setattr(companion_main, "_run", lambda args: 0)
+    companion_main.main(["run", "--task", "t.json", "--repo-path", "r", "--worktrees", "w"])
+    assert called["n"] == 1        # run does
+
+
+def test_engine_launch_supported_reports_real_anyio():
+    """On this (test) environment the predicate returns a (bool, version) tuple without raising."""
+    ok, ver = companion_main._engine_launch_supported()
+    assert isinstance(ok, bool) and isinstance(ver, str)
 
 
 # ── remote state client ─────────────────────────────────────────────
