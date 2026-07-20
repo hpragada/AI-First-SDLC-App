@@ -7,6 +7,7 @@ import {
   CardBody,
   Kv,
   LifecycleRail,
+  Markdown,
   Panel,
   Spinner,
 } from "../../components/ui";
@@ -94,7 +95,11 @@ function WorkItemEpicLive() {
       <div className="grid grid--detail" style={{ marginTop: "var(--space-5)" }}>
         <div className="u-stack">
           <Panel title="Description & context">
-            <p className="t-body">{workItem.data.description || "No description yet."}</p>
+            {workItem.data.description ? (
+              <Markdown className="prose md-body">{workItem.data.description}</Markdown>
+            ) : (
+              <p className="t-body u-muted">No description yet.</p>
+            )}
             <Kv rows={[["Feature stream", workItem.data.feature_stream || "—"]]} />
           </Panel>
 

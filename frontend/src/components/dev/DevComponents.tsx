@@ -54,6 +54,43 @@ import {
   WiCard,
 } from "../ui";
 import { Clarifications } from "../../features/lifecycle/Clarifications";
+import { Markdown } from "../ui/Markdown";
+
+const DEMO_MD = [
+  "### Container Diagram (C4 Level 2)",
+  "",
+  "```mermaid",
+  "graph TD",
+  "  Browser[Browser SPA] --> API[FastAPI REST API]",
+  "  API --> DB[(PostgreSQL 16)]",
+  "  API --> Auth[Auth Service - JWT/bcrypt]",
+  "  API --> Cache[(Redis Cache)]",
+  "```",
+  "",
+  "### NFR-to-Architecture Traceability Matrix",
+  "",
+  "| NFR ID | NFR Statement | Target | Architectural Response | Decision / Pattern | ADR |",
+  "| --- | --- | --- | --- | --- | --- |",
+  "| NFR-PE-001 | API P95 latency all endpoints except registration | <= 300 ms | FastAPI `async def` endpoints + asyncpg connection pool (pool_size=10) + B-tree indexed PostgreSQL queries on (user_id, date) | Async I/O + Connection Pooling | ADR-002 |",
+  "| NFR-PE-002 | Registration P95 latency | <= 500 ms | `bcrypt.hashpw(cost=12)` in `asyncio.run_in_executor` (~150 ms) + single async DB INSERT (~5 ms) | bcrypt in executor (non-blocking) | ADR-004 |",
+].join("\n");
+
+// Realistic Task-Breakdown description (was shown as raw markdown before S.No 167).
+const WI_DESC_MD = [
+  "**Type:** Frontend | **Estimate:** S = 1 SP (~4h) | **Critical Path:** Yes",
+  "",
+  "**What to build:** A Zustand auth store (`src/stores/authStore.ts`) with persist middleware.",
+  "",
+  "State shape: `{ accessToken: string | null, isAuthenticated: boolean }`. Actions:",
+  "",
+  "- `setTokens(access, refresh)` — sets both tokens, sets `isAuthenticated=true`",
+  "- `logout()` — clears all state and removes the `spendlog_auth` localStorage key",
+  "",
+  "**Acceptance Criteria:**",
+  "",
+  "- [ ] After `setTokens()`, `localStorage` contains the tokens and `isAuthenticated=true`",
+  "- [ ] After `logout()`, the auth key is removed and `isAuthenticated=false`",
+].join("\n");
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -242,6 +279,16 @@ export function DevComponents() {
 
         <Section title="Clarifications — all-tiers gate">
           <Clarifications forceView="tiered" />
+        </Section>
+
+        <Section title="Artifact rendering — diagram + wide table (S.No 165)">
+          <Markdown>{DEMO_MD}</Markdown>
+        </Section>
+
+        <Section title="Work-item description — markdown rendered in a panel (S.No 167)">
+          <Panel title="Description">
+            <Markdown className="prose md-body">{WI_DESC_MD}</Markdown>
+          </Panel>
         </Section>
 
         <Section title="Toast, modal, empty, skeleton">

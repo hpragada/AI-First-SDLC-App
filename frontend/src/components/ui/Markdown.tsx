@@ -44,16 +44,28 @@ function Mermaid({ code }: { code: string }) {
 
   // If the diagram can't be parsed, fall back to the source so nothing is lost.
   if (failed) return <pre className="md-body__code">{code}</pre>;
-  return <div className="diagram-frame md-body__mermaid" dangerouslySetInnerHTML={{ __html: svg }} />;
+  // NOTE: do NOT reuse the `diagram-frame` class here — its `svg { width:40px }` placeholder
+  // rule would shrink the rendered diagram to a tiny smudge (Bugs S.No 165). This container
+  // owns its own sizing so real diagrams render full-size.
+  return <div className="md-body__mermaid" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
 function isMermaid(className: string | undefined): boolean {
   return /\blanguage-mermaid\b/.test(className ?? "");
 }
 
-export function Markdown({ children }: { children: string }) {
+// `className` defaults to the full artifact-preview card. Callers embedding markdown inside an
+// existing Panel (e.g. a work-item description) pass "prose md-body" to skip the nested card
+// while keeping typography + GFM styling (Bugs S.No 167).
+export function Markdown({
+  children,
+  className = "doc-preview prose md-body",
+}: {
+  children: string;
+  className?: string;
+}) {
   return (
-    <div className="doc-preview prose md-body">
+    <div className={className}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -73,6 +85,15 @@ export function Markdown({ children }: { children: string }) {
             const cls = (child as ReactElement<{ className?: string }>)?.props?.className;
             if (isMermaid(cls)) return <>{children}</>;
             return <pre {...props}>{children}</pre>;
+          },
+          // Wrap wide tables (e.g. the NFR traceability matrix) in a horizontal scroll
+          // container so they stay inside their pane instead of over-extending it (S.No 165).
+          table({ children, ...props }: ComponentPropsWithoutRef<"table">) {
+            return (
+              <div className="md-body__table-wrap">
+                <table {...props}>{children}</table>
+              </div>
+            );
           },
         }}
       >

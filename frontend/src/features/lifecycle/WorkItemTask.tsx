@@ -9,6 +9,7 @@ import {
   CardBody,
   Kv,
   LifecycleRail,
+  Markdown,
   Modal,
   Panel,
   Spinner,
@@ -131,7 +132,11 @@ function WorkItemTaskLive() {
       <div className="grid grid--detail" style={{ marginTop: "var(--space-5)" }}>
         <div className="u-stack">
           <Panel title="Description">
-            <p className="t-body">{workItem.data.description || "No description yet."}</p>
+            {workItem.data.description ? (
+              <Markdown className="prose md-body">{workItem.data.description}</Markdown>
+            ) : (
+              <p className="t-body u-muted">No description yet.</p>
+            )}
           </Panel>
 
           {latestRun && (
