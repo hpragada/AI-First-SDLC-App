@@ -45,23 +45,22 @@ def provision_worktree(*, repo_path, branch: str, base: str, worktree_path,
     if worktree_path.exists():
         return worktree_path
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
-    # Best-effort sync of the remote-tracking ref (force, so it always matches the remote). If the
-    # remote has no such branch — first build — or we are offline, this is a no-op and we fall back.
-    _git(repo_path, "fetch", remote, f"+{branch}:refs/remotes/{remote}/{branch}", check=False)
-    remote_ref = f"refs/remotes/{remote}/{branch}"
-    remote_sha = _git(repo_path, "rev-parse", "--verify", "--quiet", remote_ref,
-                      check=False).strip()
-    if remote_sha:
-        # Continue from the remote tip: `-B` creates the local branch or RESETS a stale one to
-        # `<remote>/<branch>`, checking it out in the fresh worktree (all prior cycles' commits,
-        # whichever companion pushed them).
-        _git(repo_path, "worktree", "add", "-B", branch, str(worktree_path), remote_ref)
+    # Ask the remote AUTHORITATIVELY whether the branch exists right now. `ls-remote` queries the
+    # server directly, so a stale local remote-tracking ref (left when the branch was deleted on
+    # the remote — `git fetch` does not prune it) can never resurrect a dead branch at an old
+    # commit. Offline/no-remote → empty → treated as "no remote branch", we branch from `base`.
+    ls = _git(repo_path, "ls-remote", "--heads", remote, branch, check=False).strip()
+    if ls:
+        # A prior cycle pushed this branch (possibly from another companion) — continue from its
+        # remote tip. Refresh the remote-tracking ref, then `-B` creates-or-RESETS the local branch
+        # to that tip and checks it out in the fresh worktree (all prior cycles' commits).
+        _git(repo_path, "fetch", remote, f"+{branch}:refs/remotes/{remote}/{branch}", check=False)
+        start = f"refs/remotes/{remote}/{branch}"
     else:
-        branch_exists = bool(_git(repo_path, "branch", "--list", branch).strip())
-        if branch_exists:
-            _git(repo_path, "worktree", "add", str(worktree_path), branch)
-        else:
-            _git(repo_path, "worktree", "add", "-b", branch, str(worktree_path), base)
+        # First build (or offline): start from `base`. `-B` still resets any stale local branch of
+        # the same name to `base`, so a leftover local branch can't cause an empty/wrong build (#145).
+        start = base
+    _git(repo_path, "worktree", "add", "-B", branch, str(worktree_path), start)
     _exclude_platform_scratch(worktree_path)
     return worktree_path
 

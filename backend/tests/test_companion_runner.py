@@ -167,6 +167,52 @@ def test_provision_continues_from_remote_tip_across_companions(tmp_path):
     assert _sha(origin, "feature/ST-9") == _sha(wt_b, "HEAD")    # remote advanced cleanly
 
 
+def test_provision_ignores_a_stale_remote_tracking_ref(tmp_path):
+    """Bugs S.No 162 (hardening): the remote check must be AUTHORITATIVE (`ls-remote`), not the
+    local `origin/<branch>` ref. Clone A pushes a branch, clone B fetches it, then the branch is
+    deleted on the remote — B still holds a stale `origin/<branch>`. Provisioning on B must branch
+    fresh from `main`, never resurrect the dead branch at its old commit (which would rebuild stale
+    or already-merged work)."""
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(origin)],
+                   check=True, capture_output=True)
+
+    def clone(name):
+        subprocess.run(["git", "clone", str(origin), str(tmp_path / name)],
+                       check=True, capture_output=True)
+        for k, v in (("user.email", "t@t.test"), ("user.name", "Tester")):
+            subprocess.run(["git", "-C", str(tmp_path / name), "config", k, v],
+                           check=True, capture_output=True)
+        return tmp_path / name
+
+    a = clone("cloneA")
+    (a / "README.md").write_text("hi\n")
+    subprocess.run(["git", "-C", str(a), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(a), "commit", "-m", "init"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(a), "push", "-u", "origin", "main"],
+                   check=True, capture_output=True)
+    b = clone("cloneB")
+
+    wt = provision_worktree(repo_path=a, branch="feature/DEAD", base="main",
+                            worktree_path=tmp_path / "wt1")
+    (wt / "x.py").write_text("stale\n")
+    stale_sha = commit_all(wt, "stale work")
+    push_branch(wt, "feature/DEAD")
+    teardown_worktree(repo_path=a, worktree_path=wt)
+    # B fetches the branch (gaining a remote-tracking ref), then A deletes it on the remote.
+    subprocess.run(["git", "-C", str(b), "fetch", "origin",
+                    "feature/DEAD:refs/remotes/origin/feature/DEAD"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(a), "push", "origin", "--delete", "feature/DEAD"],
+                   check=True, capture_output=True)
+    assert _sha(b, "refs/remotes/origin/feature/DEAD") == stale_sha   # B's stale ref lingers
+
+    subprocess.run(["git", "-C", str(b), "fetch", "origin", "main"], check=True, capture_output=True)
+    wt2 = provision_worktree(repo_path=b, branch="feature/DEAD", base="main",
+                             worktree_path=tmp_path / "wt2")
+    assert _sha(wt2, "HEAD") == _sha(b, "origin/main")   # fresh from main, NOT the stale commit
+    assert not (wt2 / "x.py").exists()                   # stale work never leaked in
+
+
 # ── multi-repo remote guard ─────────────────────────────────────────
 def test_assert_remote_matches_accepts_matching_hosted_remote(tmp_path):
     repo = _init_repo(tmp_path / "repo")
