@@ -447,6 +447,15 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .clar-card__why .lbl { color: var(--accent-purple); font-weight: 700; }
 .zero-cost { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-muted); }
 
+/* Surface-all-tiers gate: each tier is its own labelled section. */
+.clar-tier { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.clar-tier__head { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+.clar-tier__hint { font-size: var(--fs-xs); color: var(--text-muted); }
+.clar-tier__badge { font-size: var(--fs-xs); font-weight: 700; padding: 2px 8px; border-radius: var(--radius-pill); white-space: nowrap; }
+.clar-tier__badge--t1 { color: var(--danger); background: var(--danger-bg); }
+.clar-tier__badge--t2 { color: var(--warning); background: var(--warning-bg); }
+.clar-tier__badge--t3 { color: var(--accent-purple); background: var(--info-bg); }
+
 /* ============================================================================
    14. Artifact row + SoR chip
    ========================================================================== */

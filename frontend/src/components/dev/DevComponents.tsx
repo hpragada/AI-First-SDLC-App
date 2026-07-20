@@ -53,6 +53,7 @@ import {
   Vstep,
   WiCard,
 } from "../ui";
+import { Clarifications } from "../../features/lifecycle/Clarifications";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -237,6 +238,10 @@ export function DevComponents() {
             <Badge variant="done">Published</Badge><SorChip vendor="confluence">Confluence</SorChip>
           </ArtifactRow>
           <Console lines={["[10:42] Agent compiling requirements", "[10:43] Artifact registered as draft v0.9"]} />
+        </Section>
+
+        <Section title="Clarifications — all-tiers gate">
+          <Clarifications forceView="tiered" />
         </Section>
 
         <Section title="Toast, modal, empty, skeleton">

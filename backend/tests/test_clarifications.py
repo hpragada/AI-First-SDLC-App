@@ -102,6 +102,61 @@ def test_blank_required_answer_is_rejected(world):
         )
 
 
+# ── tiered gate: Tier-2/3 suggestion defaults (surface-all-tiers) ───────────
+_TIERED_QS = [
+    {"id": "billing_model", "text": "Which billing model?", "kind": "choice",
+     "options": ["subscription", "usage"], "required": True, "tier": 1},
+    {"id": "retention", "text": "Data retention window?", "kind": "text",
+     "required": False, "tier": 2, "suggestion": "90 days"},
+    {"id": "timestamps", "text": "Timestamp timezone?", "kind": "text",
+     "required": False, "tier": 3, "suggestion": "UTC"},
+]
+
+
+def _tiered_clar(world):
+    return create_clarification(
+        tenant_id=world["tenant_id"], run_id=world["run_id"], questions=_TIERED_QS,
+        context="front-loaded gate", phase="prd",
+    )["id"]
+
+
+def test_untouched_tier23_fall_back_to_suggestion(world):
+    cid = _tiered_clar(world)
+    # Human answers only the required Tier-1; leaves Tier-2/3 untouched.
+    answer_clarification(tenant_id=world["tenant_id"], clarification_id=cid,
+                         user_id=world["member_id"], answers={"billing_model": "usage"})
+    clar = Clarification.objects.get(id=cid)
+    assert clar.answers == {
+        "billing_model": "usage", "retention": "90 days", "timestamps": "UTC",
+    }
+
+
+def test_human_override_of_tier3_is_kept(world):
+    cid = _tiered_clar(world)
+    answer_clarification(
+        tenant_id=world["tenant_id"], clarification_id=cid, user_id=world["member_id"],
+        answers={"billing_model": "usage", "timestamps": "local time"},
+    )
+    clar = Clarification.objects.get(id=cid)
+    # overridden Tier-3 kept; untouched Tier-2 still defaults.
+    assert clar.answers["timestamps"] == "local time"
+    assert clar.answers["retention"] == "90 days"
+
+
+def test_blank_tier1_still_rejected_even_with_suggestions(world):
+    cid = _tiered_clar(world)
+    with pytest.raises(ClarificationError):
+        answer_clarification(tenant_id=world["tenant_id"], clarification_id=cid,
+                             user_id=world["member_id"], answers={"retention": "30 days"})
+    assert Clarification.objects.get(id=cid).status == Clarification.Status.PENDING
+
+
+def test_signature_differs_when_tier_changes(world):
+    q_t3 = [{"id": "x", "text": "?", "kind": "text", "required": False, "tier": 3}]
+    q_t1 = [{"id": "x", "text": "?", "kind": "text", "required": False, "tier": 1}]
+    assert question_signature(q_t3) != question_signature(q_t1)
+
+
 def test_non_member_cannot_answer(world):
     with pytest.raises(ClarificationRoleError):
         answer_clarification(
