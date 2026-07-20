@@ -34,6 +34,9 @@ def question_signature(questions: list) -> str:
                 "kind": q.get("kind", "text"),
                 "required": bool(q.get("required", True)),
                 "options": q.get("options"),
+                # `tier` is part of the question's meaning (a re-classified question must not
+                # dedupe onto its old tier), so it participates in the idempotency signature.
+                "tier": q.get("tier"),
             }
             for q in (questions or [])
         ),
@@ -106,11 +109,29 @@ def _missing_required(questions: list, answers: dict) -> list[str]:
     return missing
 
 
+def _apply_suggestion_defaults(questions: list, answers: dict) -> dict:
+    """Fill each unanswered question that carries a `suggestion` (Tier-2/3) with that
+    suggestion, so the agent always receives a concrete value even when the human left the
+    pre-filled item untouched — and the recorded answers reflect what was actually used.
+    A question the human DID answer (any non-blank value, including a `confirm` False) keeps
+    the human's value; `suggestion` never overrides a real answer or a required Tier-1 item."""
+    merged = dict(answers or {})
+    for q in questions or []:
+        if "suggestion" not in q:
+            continue
+        qid = q.get("id")
+        if qid in merged and str(merged.get(qid, "")).strip() != "":
+            continue  # human supplied a value — keep it
+        merged[qid] = q.get("suggestion")
+    return merged
+
+
 def answer_clarification(
     *, tenant_id: str, clarification_id: str, user_id: str, answers: dict
 ) -> dict:
     """Record a human's answers to a pending clarification (after a project-membership
-    check + a required-answer check). Idempotent guard: a non-pending clarification raises."""
+    check + a required-answer check). Unanswered Tier-2/3 items fall back to the agent's
+    `suggestion`. Idempotent guard: a non-pending clarification raises."""
     answers = dict(answers or {})
 
     with tenant_context(tenant_id):
@@ -131,6 +152,10 @@ def answer_clarification(
         missing = _missing_required(clar.questions, answers)
         if missing:
             raise ClarificationError(f"missing required answer(s): {missing}")
+
+        # Backfill untouched Tier-2/3 items from their suggestion (after the required check,
+        # so a blank Tier-1 still fails rather than being silently defaulted).
+        answers = _apply_suggestion_defaults(clar.questions, answers)
 
         clar.answers = answers
         clar.status = Clarification.Status.ANSWERED

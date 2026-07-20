@@ -142,6 +142,10 @@ export interface ClarificationQuestion {
   kind?: "text" | "choice" | "confirm";
   options?: string[];
   required?: boolean;
+  // Surface-all-tiers gate: 1 = must-answer, 2 = suggested, 3 = industry-standard inference.
+  // Absent → treated as Tier 1 (legacy questions). Tier 2/3 carry the agent's proposed answer.
+  tier?: 1 | 2 | 3;
+  suggestion?: unknown;
 }
 
 export interface Clarification {

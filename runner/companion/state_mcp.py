@@ -143,7 +143,14 @@ def build_server(
         then continue. Use this whenever you are missing information you need to proceed (a
         context gap, a decision between options, a pre-gate confirmation) — do NOT guess.
         While you wait, no cost is incurred. Each question: {id, text, kind: "text"|"choice"
-        |"confirm", options?: [...], required?: bool}. Returns answers keyed by question id.
+        |"confirm", options?: [...], required?: bool, tier?: 1|2|3, suggestion?: <answer>}.
+        Returns answers keyed by question id.
+
+        Front-load ALL three tiers in ONE call (see `# Rules`): `tier: 1` = must-ask, keep it
+        `required: true` with NO `suggestion`; `tier: 2`/`3` = set `required: false` and put
+        your proposed answer in `suggestion` (for kind="choice", `suggestion` must be one of
+        `options`). The human confirms/edits/overrides; any Tier-2/3 item left untouched falls
+        back to your `suggestion`, so you always get a concrete value back.
 
         Authoring rules — the reader is a busy human, not an engineer (Bugs S.No 60):
         - `text` is ONE short, plain-language question in sentence case. No preamble dumps,

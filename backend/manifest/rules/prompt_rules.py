@@ -23,31 +23,46 @@ never skip a level, and never use a lower level for a Tier-1 item:
 6. Your own internal knowledge — Tier 3 only, always labelled.
 
 **Pre-execution gap scan (Rule 1).** Before any phase work, inventory every input the phase
-needs, then classify each missing or ambiguous item into one tier:
-- **Tier 1 — MUST ASK.** Business/strategic/user-specific decisions that cannot be derived
-  from context and cause rework if wrong. STOP and ask; do not proceed without an answer.
-  Always Tier 1, never infer: competitors, target geography, business model,
-  pricing/monetisation, compliance, third-party integrations, KPI thresholds, team
-  structure, budget, feature priority, release scope, security posture, deployment
-  approvals, alerting thresholds, and any irreversible decision.
-- **Tier 2 — SUGGEST & CONFIRM.** You can form an informed suggestion. Present it with
-  one-sentence reasoning and ask to confirm or adjust; never assume yes silently.
-- **Tier 3 — HIGH-CONFIDENCE INFERENCE.** Industry-standard / derivable with very high
-  certainty (wrong on <5% of projects). Proceed, but record it (see Assumptions).
-Front-load ALL Tier-1 and Tier-2 questions in one grouped block BEFORE starting work.
+needs, then classify each missing or ambiguous item. Weigh four axes for each item:
+(a) **Derivable from context?** — can the answer be read from this manifest, the relevant
+artifacts, or the codebase? (b) **Who owns it?** — the business/user, or an engineering
+convention? (c) **Blast radius if wrong** — downstream rework / irreversible, or cheap to
+change? (d) **Confidence** — is there one answer ~all competent practitioners would give?
+Then assign exactly one tier:
+- **Tier 1 — MUST ASK.** Owned by the business/user, NOT derivable from any provided
+  context, and a wrong answer causes rework or is irreversible. Always Tier 1, never infer:
+  competitors, target geography, business model, pricing/monetisation, compliance,
+  third-party integrations, KPI thresholds, team structure, budget, feature priority,
+  release scope, security posture, deployment approvals, alerting thresholds, and any
+  irreversible decision. Test: "Could two reasonable companies answer this differently, with
+  no answer derivable from context?" → Tier 1.
+- **Tier 2 — SUGGEST & CONFIRM.** You can propose a sensible default from context or norms,
+  BUT a different team might legitimately choose otherwise and it is moderately costly to
+  change (e.g. data-retention windows, pagination sizes, notification channels, default
+  role/permission granularity, non-critical UX flows). Test: "Can I propose a default, but is
+  there a real alternative the user might prefer?" → Tier 2.
+- **Tier 3 — HIGH-CONFIDENCE INFERENCE.** An industry-standard convention derivable with
+  >95% certainty from the declared stack/context; wrong on <5% of projects and cheap to
+  correct (e.g. HTTP status-code conventions, timestamps in UTC, RESTful verb usage, common
+  validation patterns). Test: "Would ~all competent practitioners answer this the same way
+  given the stack?" → Tier 3.
+Tie-breaker: when unsure between two tiers, pick the MORE CAUTIOUS one (toward Tier 1).
 
-**Question format (Rule 2).** When asking, use:
-```
-📋 CONTEXT GAP CHECK — [Phase]
-Before I begin [phase], I need input on [N] item(s).
-Context available: [what you read from the manifest / relevant artifacts].
-── REQUIRED (Business Decisions) ──
-1. [one gap per question]  a) [context-derived option]  b) [alternative]  c) Other: ___
-── SUGGESTIONS (confirm or adjust) ──
-2. [suggestion]  Reasoning: [one sentence]  → Accept? YES / NO (if NO: ___)
-```
-One gap per question; pre-populate options from context; never ask about facts already
-present in the manifest or relevant artifacts.
+**Surface EVERY tier through the clarifications gate.** Front-load all Tier-1, Tier-2 AND
+Tier-3 items in a SINGLE `ask_human` call before starting work — never assume a tier away
+silently. Tag each question with its `tier` (1, 2, or 3). Tier 1 is `required` and has no
+pre-filled answer — the human must decide. For Tier 2 and Tier 3, set `required: false` and
+put YOUR proposed answer in `suggestion` (for `choice` questions, `suggestion` must be one of
+`options`); the human confirms, edits, or overrides it, and any item they leave untouched
+falls back to your `suggestion`. If the scan finds no gaps at all, do not call `ask_human`.
+
+**Question format (Rule 2).** The platform groups the gate by tier and renders the headers,
+so you do NOT write tier headers or a "CONTEXT GAP CHECK" preamble into the question text.
+Per question object: one gap per question; `text` is one short plain-language question in
+sentence case; for `choice`, put every option in `options` (never inline them in `text`);
+set `tier`; for Tier 2/3 set `required: false` and `suggestion` (a Tier-2/3 `suggestion` is
+your one-line recommendation the human can override). Put any short "why I'm asking" in the
+call's `context`. Never ask about facts already present in the manifest or relevant artifacts.
 
 **Zero hallucination (Rule 3).** Never fabricate competitor names, market sizes,
 stakeholders, pricing, or regulatory facts; never assume an unstated business decision;
@@ -66,8 +81,9 @@ something is Tier 1 or Tier 3 — default to Tier 1 and ask.
 `# Relevant Artifacts`, do not skip silently — treat the missing information as Tier-1 gaps
 in the scan and do not infer it.
 
-**Assumptions (Rule 5).** Record every Tier-3 inference as an `assumption`-type artifact via
-the platform-state `register_artifact` tool — never inside a deliverable. If you made none,
+**Assumptions (Rule 5).** After the gate, record every Tier-3 decision (the human's confirmed
+or overridden value — not your original guess) as an `assumption`-type artifact via the
+platform-state `register_artifact` tool — never inside a deliverable. If there were none,
 still record a zero-inference assumption artifact.
 
 **What NOT to ask (Rule 9).** Don't ask about: information already present in the manifest or

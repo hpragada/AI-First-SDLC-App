@@ -3,7 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 
 import { renderWithProviders, stubFetchJson } from "../../test/utils";
-import { Clarifications, isOtherOption } from "./Clarifications";
+import {
+  Clarifications,
+  groupByTier,
+  isOtherOption,
+  suggestionDefaults,
+  tierOf,
+} from "./Clarifications";
 import { CriteriaGate } from "./CriteriaGate";
 import { Gates } from "./Gates";
 import { PhasesAndRuns } from "./PhasesAndRuns";
@@ -137,6 +143,43 @@ describe("S-20 Clarifications", () => {
 
     rerender(<Clarifications forceView="empty" />);
     expect(screen.getByText("No questions waiting")).toBeDefined();
+  });
+});
+
+describe("S-20 Clarifications · all-tiers gate", () => {
+  it("renders every tier's header grouped in the gate", () => {
+    renderWithProviders(<Clarifications forceView="tiered" />);
+    expect(screen.getByText("Tier 1 · Must answer")).toBeDefined();
+    expect(screen.getByText("Tier 2 · Suggested")).toBeDefined();
+    expect(screen.getByText("Tier 3 · Industry-standard inference")).toBeDefined();
+    expect(screen.getByText(/Accept all suggestions/)).toBeDefined();
+  });
+
+  it("tierOf defaults a tier-less question to Tier 1 (no regression)", () => {
+    expect(tierOf({ id: "a", text: "?" })).toBe(1);
+    expect(tierOf({ id: "b", text: "?", tier: 2 })).toBe(2);
+    expect(tierOf({ id: "c", text: "?", tier: 3 })).toBe(3);
+  });
+
+  it("groupByTier keeps only non-empty tiers, in 1→2→3 order, preserving question order", () => {
+    const qs = [
+      { id: "t3", text: "?", tier: 3 as const },
+      { id: "t1a", text: "?", tier: 1 as const },
+      { id: "t1b", text: "?" }, // tier-less → Tier 1
+    ];
+    const groups = groupByTier(qs);
+    expect(groups.map((g) => g.tier)).toEqual([1, 3]); // no empty Tier 2
+    expect(groups[0].questions.map((q) => q.id)).toEqual(["t1a", "t1b"]);
+  });
+
+  it("suggestionDefaults pre-fills only Tier-2/3 questions that carry a suggestion", () => {
+    const defaults = suggestionDefaults([
+      { id: "t1", text: "?", tier: 1, required: true },
+      { id: "t2", text: "?", tier: 2, suggestion: "90 days" },
+      { id: "t3", text: "?", tier: 3, suggestion: "UTC" },
+      { id: "t3b", text: "?", tier: 3 }, // no suggestion → not pre-filled
+    ]);
+    expect(defaults).toEqual({ t2: "90 days", t3: "UTC" });
   });
 });
 
