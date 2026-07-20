@@ -32,7 +32,9 @@ from runner.companion.worktree import (
     WorktreeError,
     assert_remote_matches,
     changed_files,
+    commit_all,
     provision_worktree,
+    push_branch,
     teardown_worktree,
 )
 
@@ -109,6 +111,60 @@ def test_provision_creates_isolated_branch_and_excludes_scratch(tmp_path):
                               worktree_path=tmp_path / "wt" / "ST-1") == wt
     teardown_worktree(repo_path=repo, worktree_path=wt)
     assert not wt.exists()
+
+
+def _sha(repo: Path, ref: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), "rev-parse", ref],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+
+def test_provision_continues_from_remote_tip_across_companions(tmp_path):
+    """Bugs S.No 162: a remediation cycle claimed by a DIFFERENT companion than the original
+    build must continue from the branch's REMOTE tip — not recreate it from `main` and lose the
+    prior cycle's pushed commit (which got the push rejected non-fast-forward). Simulate two
+    clones sharing one bare origin: clone A pushes cycle 1; clone B (which has never seen the
+    branch) must provision a worktree that already contains A's commit."""
+    bare = subprocess.run(["git", "init", "--bare", "-b", "main", str(tmp_path / "origin.git")],
+                          check=True, capture_output=True)
+    origin = tmp_path / "origin.git"
+
+    def clone(name: str) -> Path:
+        subprocess.run(["git", "clone", str(origin), str(tmp_path / name)],
+                       check=True, capture_output=True)
+        for k, v in (("user.email", "t@t.test"), ("user.name", "Tester")):
+            subprocess.run(["git", "-C", str(tmp_path / name), "config", k, v],
+                           check=True, capture_output=True)
+        return tmp_path / name
+
+    # Seed origin/main from clone A.
+    a = clone("cloneA")
+    (a / "README.md").write_text("hi\n")
+    subprocess.run(["git", "-C", str(a), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(a), "commit", "-m", "init"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(a), "push", "-u", "origin", "main"],
+                   check=True, capture_output=True)
+    b = clone("cloneB")
+
+    # Cycle 1 on clone A: build + commit + push the feature branch.
+    wt_a = provision_worktree(repo_path=a, branch="feature/ST-9", base="main",
+                              worktree_path=tmp_path / "wtA")
+    (wt_a / "impl.py").write_text("cycle1 = True\n")
+    cycle1_sha = commit_all(wt_a, "cycle 1")
+    push_branch(wt_a, "feature/ST-9")
+    teardown_worktree(repo_path=a, worktree_path=wt_a)
+
+    # Cycle 2 (remediation) lands on clone B, which has NEVER seen this branch. Before the fix it
+    # would branch feature/ST-9 from its local main (no cycle-1 commit); now it bases on the remote
+    # tip, so the worktree already carries cycle 1 and the next push is a clean fast-forward.
+    subprocess.run(["git", "-C", str(b), "fetch", "origin", "main"], check=True, capture_output=True)
+    wt_b = provision_worktree(repo_path=b, branch="feature/ST-9", base="main",
+                              worktree_path=tmp_path / "wtB")
+    assert (wt_b / "impl.py").read_text() == "cycle1 = True\n"   # cycle 1's work is present
+    assert _sha(wt_b, "HEAD") == cycle1_sha                      # based on the remote tip, not main
+    (wt_b / "impl2.py").write_text("cycle2 = True\n")
+    commit_all(wt_b, "cycle 2")
+    push_branch(wt_b, "feature/ST-9")                            # must NOT be rejected
+    assert _sha(origin, "feature/ST-9") == _sha(wt_b, "HEAD")    # remote advanced cleanly
 
 
 # ── multi-repo remote guard ─────────────────────────────────────────

@@ -24,19 +24,44 @@ def _git(cwd, *args, check=True) -> str:
     return res.stdout
 
 
-def provision_worktree(*, repo_path, branch: str, base: str, worktree_path) -> Path:
-    """Create (or reuse) a worktree at `worktree_path` on `branch` (off `base`). Idempotent:
-    an existing worktree path is returned as-is; an existing branch is attached, not recreated."""
+def provision_worktree(*, repo_path, branch: str, base: str, worktree_path,
+                       remote: str = "origin") -> Path:
+    """Create (or reuse) a worktree at `worktree_path` on `branch`. Idempotent: an existing
+    worktree path is returned as-is.
+
+    Branch base selection (Bugs S.No 162 — cross-companion remediation continuity):
+    a remediation cycle can be claimed by a DIFFERENT companion than the one that ran the
+    original build (builds are claimable by any enrolled companion). That other clone either
+    lacks the feature branch — so it would be recreated from `base` (main) — or holds a stale
+    copy, either way MISSING the commits the earlier cycle already pushed. Building on that
+    wrong base then gets the push rejected non-fast-forward (or silently diverges). So when the
+    branch already exists on the REMOTE (a prior cycle pushed it), base the worktree on the
+    remote tip `<remote>/<branch>` — the true shared source of the work-in-progress — so ANY
+    companion continues exactly where the last cycle left off. This also subsumes the stale
+    local-branch empty-build case (#145): we no longer trust a leftover local branch. Only when
+    the remote has NO such branch (the very first build, or offline) do we branch from `base`."""
     repo_path = Path(repo_path)
     worktree_path = Path(worktree_path)
     if worktree_path.exists():
         return worktree_path
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
-    branch_exists = bool(_git(repo_path, "branch", "--list", branch).strip())
-    if branch_exists:
-        _git(repo_path, "worktree", "add", str(worktree_path), branch)
+    # Best-effort sync of the remote-tracking ref (force, so it always matches the remote). If the
+    # remote has no such branch — first build — or we are offline, this is a no-op and we fall back.
+    _git(repo_path, "fetch", remote, f"+{branch}:refs/remotes/{remote}/{branch}", check=False)
+    remote_ref = f"refs/remotes/{remote}/{branch}"
+    remote_sha = _git(repo_path, "rev-parse", "--verify", "--quiet", remote_ref,
+                      check=False).strip()
+    if remote_sha:
+        # Continue from the remote tip: `-B` creates the local branch or RESETS a stale one to
+        # `<remote>/<branch>`, checking it out in the fresh worktree (all prior cycles' commits,
+        # whichever companion pushed them).
+        _git(repo_path, "worktree", "add", "-B", branch, str(worktree_path), remote_ref)
     else:
-        _git(repo_path, "worktree", "add", "-b", branch, str(worktree_path), base)
+        branch_exists = bool(_git(repo_path, "branch", "--list", branch).strip())
+        if branch_exists:
+            _git(repo_path, "worktree", "add", str(worktree_path), branch)
+        else:
+            _git(repo_path, "worktree", "add", "-b", branch, str(worktree_path), base)
     _exclude_platform_scratch(worktree_path)
     return worktree_path
 
