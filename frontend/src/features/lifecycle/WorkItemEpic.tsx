@@ -116,7 +116,6 @@ function WorkItemEpicLive() {
                 rows={[
                   ["Phase", phaseLabel(latestRun.agent_phase ?? latestRun.agent_key)],
                   ["Status", statusLabel(latestRun.status)],
-                  ["Cost", latestRun.cost_usd ? `$${latestRun.cost_usd}` : "—"],
                 ]}
               />
             </Panel>
@@ -156,7 +155,7 @@ function WorkItemEpicLive() {
                   ? Clarification · {phaseLabel(pendingClar.phase)}
                 </span>
                 <h3 className="t-h3">1 question awaiting an answer</h3>
-                <p className="zero-cost">⏸ Paused — no usage billed while waiting</p>
+                <p className="zero-cost">⏸ Paused — waiting for your answer</p>
                 <div className="gate-panel__actions">
                   <a href="/clarifications" className="btn btn--primary">
                     Answer question
@@ -307,7 +306,7 @@ function WorkItemEpicGallery({ view }: { view: EpicView }) {
                   ? Clarification · WI-510
                 </span>
                 <h3 className="t-h3">1 question awaiting an answer</h3>
-                <p className="zero-cost">⏸ Paused — no usage billed while waiting · 6m</p>
+                <p className="zero-cost">⏸ Paused — waiting for your answer · 6m</p>
                 <div className="gate-panel__actions">
                   <a href="/clarifications" className="btn btn--primary">
                     Answer question

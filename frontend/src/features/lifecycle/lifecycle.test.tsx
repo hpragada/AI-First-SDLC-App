@@ -108,7 +108,7 @@ describe("S-19 Run console", () => {
     expect(screen.getByText("Running")).toBeDefined();
 
     rerender(<RunConsole forceView="needs-answer" />);
-    expect(screen.getByText(/Paused — no usage billed/)).toBeDefined();
+    expect(screen.getByText(/Paused — waiting for your answer/)).toBeDefined();
 
     rerender(<RunConsole forceView="awaiting-gate" />);
     expect(screen.getByText("Awaiting Architecture gate")).toBeDefined();

@@ -138,45 +138,45 @@ function RunConsoleLive() {
 
   return (
     <div className="canvas-pad">
-      <Breadcrumb items={[{ label: "Phases & Runs", href: "/runs" }, id]} />
+      <Breadcrumb items={[{ label: "Phases & Runs", href: "/runs" }, `Run ${id.slice(0, 8)}`]} />
       <div className="page-head">
         <div className="page-head__titles">
+          {/* Bugs S.No 172: lead with the work item (key + title) so the user can confirm the
+              right item is running; the raw IDs are labelled and kept for debugging. */}
           <h1 className="t-h1">
             Run console — {phaseLabel(run.data.agent_phase ?? run.data.agent_key)}
-            {workItem.data ? ` · ${workItem.data.title || workItem.data.id.slice(0, 8)}` : ""}
+            {workItem.data
+              ? ` · ${workItem.data.key ? `${workItem.data.key} ` : ""}${workItem.data.title || workItem.data.id.slice(0, 8)}`
+              : ""}
           </h1>
           <div className="meta-row" style={{ marginTop: "var(--space-2)" }}>
+            {workItem.data && (
+              <span className="meta-item" title={workItem.data.id}>
+                Work item <strong>{workItem.data.key || workItem.data.title || workItem.data.id.slice(0, 8)}</strong>
+              </span>
+            )}
+            <span className="meta-item" title={id}>
+              Run ID <strong>{id.slice(0, 8)}</strong>
+            </span>
             <span className="meta-item">
               Engine <strong>{run.data.engine} · {run.data.model}</strong>
             </span>
-            <span className="meta-item">
-              Workflow <strong>{run.data.temporal_workflow_id || "—"}</strong>
+            <span className="meta-item" title={run.data.temporal_workflow_id || undefined}>
+              Workflow <strong>{run.data.temporal_workflow_id ? run.data.temporal_workflow_id.slice(0, 16) : "—"}</strong>
             </span>
           </div>
         </div>
       </div>
 
       <Panel
-        title={id}
-        actions={
-          <>
-            {view === "completed" && run.data.cost_usd && (
-              <span
-                className="meta-item"
-                title="Computed Claude Code subscription-equivalent usage — for testing reference. The subscription is not billed per token (actual cost is $0)."
-              >
-                Cost (est.) <strong>${run.data.cost_usd}</strong>
-              </span>
-            )}
-            <Badge variant={BADGE_VARIANT[view]}>{BADGE_LABEL[view]}</Badge>
-          </>
-        }
+        title={<span title={id}>Run {id.slice(0, 8)}</span>}
+        actions={<Badge variant={BADGE_VARIANT[view]}>{BADGE_LABEL[view]}</Badge>}
       >
         {view === "dispatched" && (
           <Banner variant="info">Queued. It will start as soon as your companion claims it.</Banner>
         )}
         {view === "needs-answer" && (
-          <Banner variant="purple" title="Paused — no usage billed while waiting">
+          <Banner variant="purple" title="Paused — waiting for your answer">
             The agent asked a question. Answer it to resume in the same session.{" "}
             <a href="/clarifications">Answer now ↗</a>
           </Banner>
@@ -270,16 +270,7 @@ function RunConsoleGallery({ view }: { view: RunConsoleView }) {
 
       <Panel
         title={id}
-        actions={
-          <>
-            {view === "completed" && (
-              <span className="meta-item">
-                Cost <strong>$0.31</strong>
-              </span>
-            )}
-            <Badge variant={BADGE_VARIANT[view]}>{BADGE_LABEL[view]}</Badge>
-          </>
-        }
+        actions={<Badge variant={BADGE_VARIANT[view]}>{BADGE_LABEL[view]}</Badge>}
       >
         {view === "dispatched" && (
           <Banner variant="info">
@@ -288,7 +279,7 @@ function RunConsoleGallery({ view }: { view: RunConsoleView }) {
           </Banner>
         )}
         {view === "needs-answer" && (
-          <Banner variant="purple" title="Paused — no usage billed while waiting">
+          <Banner variant="purple" title="Paused — waiting for your answer">
             The agent asked a question. Answer it to resume in the same session.{" "}
             <a href="/clarifications">Answer now ↗</a>
           </Banner>

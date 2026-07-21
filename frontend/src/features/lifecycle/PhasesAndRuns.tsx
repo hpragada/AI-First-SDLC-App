@@ -122,8 +122,11 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
                 Phases can't run until your companion is online.{" "}
                 <Link to="/connect">Connect your machine ↗</Link>
               </Banner>
+              {/* Bugs S.No 173: show the FULL phase list even when offline (greyed + non-
+                  interactive) so the user can see every phase that exists — not just a 3-phase
+                  placeholder. They become clickable once the companion is online. */}
               <div className="phase-picker" style={{ opacity: 0.5, pointerEvents: "none" }}>
-                {phases.slice(3, 6).map((p) => (
+                {phases.map((p) => (
                   <button key={p.key} className="btn btn--secondary btn--sm" aria-disabled="true">
                     ▶ {phaseLabel(p.key)}
                   </button>
@@ -132,6 +135,8 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
             </div>
           ) : (
             <div className="u-stack">
+              {/* Bugs S.No 171: the companion status lives in the top bar only — no separate
+                  "Companion ready" box here. */}
               <div className="u-row u-wrap">
                 <Field label="Work item" style={{ marginBottom: 0, minWidth: "280px" }}>
                   {forceView ? (
@@ -156,12 +161,6 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
                     />
                   )}
                 </Field>
-                <span
-                  className="conn-status conn-status--connected"
-                  style={{ alignSelf: "flex-end" }}
-                >
-                  Companion ready — {runners.data?.[0]?.machine ?? "Sarah's MacBook"}
-                </span>
               </div>
               <div>
                 <span className="field__label">
@@ -218,28 +217,28 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
       <Panel
         flush={!showRunsEmpty}
         title="Runs"
+        // Bugs S.No 173: the selected work-item label shows only when the companion is online;
+        // it's hidden in the offline state.
         actions={
-          <span className="t-sm u-muted">
-            {forceView ? "WI-492" : (activeWorkItem?.title ?? activeWorkItemId?.slice(0, 8) ?? "—")}
-          </span>
+          view === "offline" ? undefined : (
+            <span className="t-sm u-muted">
+              {forceView ? "WI-492" : (activeWorkItem?.title ?? activeWorkItemId?.slice(0, 8) ?? "—")}
+            </span>
+          )
         }
       >
         {showRunsEmpty ? (
           <EmptyState
             title="No runs yet"
-            text="Trigger the first phase for this work item to see runs appear here with live status and cost."
+            text="Trigger the first phase for this work item to see runs appear here with live status."
           />
         ) : (
           <>
+            {/* Bugs S.No 175: the "Cost (est.)" column and its note were testing-only and have
+                been removed. */}
             <Table
               headers={[
                 "Run", "Phase", "Status", "Engine / model",
-                <span
-                  key="cost-h"
-                  title="Computed Claude Code subscription-equivalent usage — for testing reference. The subscription is not billed per token (actual cost is $0)."
-                >
-                  Cost (est.)
-                </span>,
                 "Workflow", "Created",
               ]}
               rows={(forceView ? sampleRuns : runs.data ?? []).map((r) => [
@@ -251,18 +250,12 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
                 <span className="table__primary" key="p">{phaseLabel(r.agent_phase ?? r.agent_key)}</span>,
                 <Badge variant={statusVariant(r.status)} key="s">{statusLabel(r.status)}</Badge>,
                 `${r.engine} · ${r.model}`,
-                <span className="table__id" key="c">{r.cost_usd ? `$${r.cost_usd}` : "—"}</span>,
                 <span className="table__id" title={r.temporal_workflow_id} key="w">
                   {shortRef(r.temporal_workflow_id)}
                 </span>,
                 formatWhen(r.created_at),
               ])}
             />
-            <p className="t-sm u-muted">
-              Cost is the computed Claude Code <strong>subscription-equivalent</strong> usage,
-              shown for the team's testing reference — the subscription itself is not billed per
-              token (actual charge is $0).
-            </p>
           </>
         )}
       </Panel>
