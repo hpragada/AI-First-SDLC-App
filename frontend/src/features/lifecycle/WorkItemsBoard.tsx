@@ -44,7 +44,9 @@ function statusBadge(card: WorkItemCard) {
 
 // Human-readable work-item type ("story" → "Story"). One place so the board card and list agree.
 function typeLabel(type: string | undefined): string {
-  return type ? type[0].toUpperCase() + type.slice(1) : "Item";
+  if (!type) return "Item";
+  const s = type.replace(/_/g, " ");        // "test_case" → "Test case"
+  return s[0].toUpperCase() + s.slice(1);
 }
 
 function WiCard({ card }: { card: WorkItemCard }) {

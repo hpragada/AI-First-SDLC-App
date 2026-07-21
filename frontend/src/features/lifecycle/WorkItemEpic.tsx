@@ -16,7 +16,9 @@ import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./pha
 import { useApprovals, useClarifications, useDecideApproval, useLifecycle, useRuns, useWorkItem } from "./hooks";
 
 function typeLabel(type: string): string {
-  return type ? type.charAt(0).toUpperCase() + type.slice(1) : "Item";
+  if (!type) return "Item";
+  const s = type.replace(/_/g, " ");        // "test_case" → "Test case"
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // S-15 view states: gate-pending (default) · running+needs-answer · all-complete.
