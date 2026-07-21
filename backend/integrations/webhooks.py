@@ -21,6 +21,10 @@ from mcp_platform_state import tools
 from apps.tenancy.context import tenant_context
 
 PROVIDER = "github"
+# The build saga's human merge gate (orchestration.build_types.BuildInput.gate_type default).
+# A merged-PR webhook must not transition a WorkItem past a gate of this type while it is still
+# PENDING — the control plane, not the webhook, owns that transition.
+_MERGE_GATE_TYPE = "merge_gate"
 
 
 def verify_github_signature(secret: str, body: bytes, signature_header: str | None) -> bool:
@@ -121,6 +125,7 @@ def _reconcile_push(tenant_id: str, payload: dict) -> dict:
 def _reconcile_pull_request(tenant_id: str, payload: dict) -> dict:
     """A human-merged/closed PR → transition the WorkItem (merge is the gated SoR write; a
     developer merging by hand is reconciled the same way the saga's merge would be)."""
+    from apps.gates.models import Approval
     from apps.registry.models import Artifact
     from apps.runs.models import Run
     from apps.workitems.models import WorkItem
@@ -143,8 +148,22 @@ def _reconcile_pull_request(tenant_id: str, payload: dict) -> dict:
             tools.update_artifact(tenant_id, str(artifact.id), status=Artifact.Status.PUBLISHED)
             with tenant_context(tenant_id):
                 run = Run.objects.filter(id=artifact.run_id, tenant_id=tenant_id).first()
-            if run is not None:
+                # A merged-PR webhook must NOT bypass an unapproved control-plane gate
+                # (non-negotiable #2/#5). If the saga is still holding this run at an un-decided
+                # merge gate, the saga owns the WorkItem transition — the webhook only records
+                # that the PR merged. Marking the WorkItem done here was the root cause of the
+                # "state=done while the run is still awaiting_gate, with no workitem.transitioned
+                # event" mislabel: this path set state directly and only logged webhook.pr_merged.
+                gate_pending = run is not None and Approval.objects.filter(
+                    run_id=run.id, tenant_id=tenant_id,
+                    gate_type=_MERGE_GATE_TYPE, decision=Approval.Decision.PENDING).exists()
+            if run is not None and not gate_pending:
                 tools.transition_work_item(tenant_id, str(run.work_item_id), WorkItem.State.DONE)
+                # Always emit the canonical transition event so state=done is never orphaned in
+                # the audit trail (the missing-event half of the mislabel bug).
+                tools.log_event(tenant_id, "orchestrator", "workitem.transitioned", "work_item",
+                                str(run.work_item_id),
+                                {"to_state": WorkItem.State.DONE, "via": "webhook_pr_merge"})
                 work_items.append(str(run.work_item_id))
 
     name = ("webhook.pr_merged" if (action == "closed" and merged)

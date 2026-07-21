@@ -100,6 +100,43 @@ def test_pull_request_merged_transitions_workitem_and_publishes(world):
     assert Event.objects.filter(tenant=world.t, action="webhook.pr_merged").exists()
 
 
+def test_pull_request_merged_logs_transition_event(world):
+    """The webhook transition must emit the canonical workitem.transitioned event, so a
+    state=done is never orphaned in the audit trail (the missing-event mislabel bug)."""
+    payload = {"action": "closed",
+               "pull_request": {"number": 7, "merged": True, "merged_at": "2026-06-24T00:00:00Z"},
+               "repository": {"full_name": "acme/api"}}
+    reconcile_github(tenant_id=str(world.t.id), event="pull_request", delivery_id="prX",
+                     payload=payload)
+    world.wi.refresh_from_db()
+    assert world.wi.state == WorkItem.State.DONE
+    ev = Event.objects.filter(tenant=world.t, action="workitem.transitioned").last()
+    assert ev is not None and ev.payload["to_state"] == WorkItem.State.DONE
+    assert ev.payload["via"] == "webhook_pr_merge"
+
+
+def test_pull_request_merge_does_not_bypass_pending_merge_gate(world):
+    """A merged-PR webhook must NOT mark the WorkItem done while its merge gate is still PENDING —
+    the saga owns that transition through the control-plane gate (non-negotiable #2/#5). This is
+    the root cause of the state=done-while-awaiting_gate mislabel."""
+    from apps.gates.models import Approval
+
+    Approval.objects.create(tenant=world.t, run=world.run, gate_type="merge_gate",
+                            decision=Approval.Decision.PENDING)
+    payload = {"action": "closed",
+               "pull_request": {"number": 7, "merged": True, "merged_at": "2026-06-24T00:00:00Z"},
+               "repository": {"full_name": "acme/api"}}
+    out = reconcile_github(tenant_id=str(world.t.id), event="pull_request", delivery_id="prG",
+                           payload=payload)
+    world.wi.refresh_from_db()
+    assert world.wi.state == WorkItem.State.IN_REVIEW              # gate not bypassed
+    assert out["work_items"] == []                                # nothing transitioned
+    # The merge is still observed/recorded, and the artifact still publishes.
+    assert Event.objects.filter(tenant=world.t, action="webhook.pr_merged").exists()
+    assert Artifact.objects.get(id=world.art_id).status == Artifact.Status.PUBLISHED
+    assert not Event.objects.filter(tenant=world.t, action="workitem.transitioned").exists()
+
+
 def test_pull_request_closed_unmerged_leaves_workitem(world):
     payload = {"action": "closed", "pull_request": {"number": 7, "merged": False},
                "repository": {"full_name": "acme/api"}}
