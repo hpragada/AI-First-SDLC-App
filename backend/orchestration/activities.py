@@ -144,6 +144,31 @@ def compose_manifest_core(inp: AgentRunInput) -> str:
 _EXECUTED_STATES = {Run.Status.AWAITING_GATE, Run.Status.APPROVED, Run.Status.COMPLETED}
 
 
+def classify_phase_failure(reason: str) -> str:
+    """Turn a raw planning/review failure into a plain-language reason (Bugs S.No 146, planning
+    path). Build failures already go through classify_build_failure; planning phases (including
+    10_security) wrote the raw exception verbatim — e.g. a bare 'Command failed with exit code 1
+    / Check stderr output for details' — so the run console showed no usable reason. An already
+    specific message passes through unchanged (never lost)."""
+    r = (reason or "").lower()
+    if ("usage limit" in r or "usage_limit" in r or "rate limit" in r or "rate-limit" in r
+            or "429" in r or "too many requests" in r or "overloaded" in r or "quota" in r):
+        return ("The AI engine hit its usage or rate limit, so the phase could not finish. "
+                "Wait for the limit to reset, then re-trigger the phase.")
+    if ("failed to start claude code" in r or "claude code not found" in r
+            or "open_process()" in r):
+        return ("The AI engine (Claude Code) could not start on the companion — check the engine "
+                "install on the dev machine, then re-trigger.")
+    if ("exit code" in r or "command failed" in r or "processerror" in r
+            or "engine stderr" in r):
+        return ("The AI engine exited with an error before finishing the phase. The most common "
+                "cause is a usage or rate limit; check the companion terminal for the engine "
+                "output, then re-trigger.")
+    if r.strip() in ("", "phase reported failed"):
+        return "The phase agent failed without reporting a specific reason."
+    return reason
+
+
 def execute_agent_core(inp: AgentRunInput, manifest: str) -> dict:
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
@@ -168,7 +193,9 @@ def execute_agent_core(inp: AgentRunInput, manifest: str) -> dict:
             )
         )
     except Exception as exc:
-        error_message = str(exc)
+        # Plain-language reason for the run console (Bugs S.No 146, planning path) — the raw
+        # 'Command failed with exit code 1 / Check stderr' told the user nothing.
+        error_message = classify_phase_failure(str(exc))
         with tenant_context(inp.tenant_id):
             run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
             run.status = Run.Status.FAILED
@@ -597,6 +624,10 @@ def resume_run_state_core(inp: AgentRunInput) -> dict:
 def fail_run_core(inp: AgentRunInput, reason: str) -> dict:
     """A companion reported a failed phase → flag the run failed (the body, if any, is on the
     report). Mirrors the execute_agent failure path."""
+    # Plain-language reason for the run console (Bugs S.No 146, planning path): the companion
+    # reports the raw engine error (e.g. 'Command failed with exit code 1'); classify it here so
+    # a security/planning failure reads like a build failure does, not as a raw exit code.
+    reason = classify_phase_failure(reason)
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         run.status = Run.Status.FAILED

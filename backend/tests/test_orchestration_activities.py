@@ -102,7 +102,9 @@ def test_execute_agent_core_marks_run_failed_on_engine_error(monkeypatch, run_in
 
     run = Run.objects.get(id=run_input.run_id)
     assert run.status == Run.Status.FAILED
-    assert run.outputs["error"] == "Claude Code not found"
+    # The run console stores a plain-language, classified reason (Bugs S.No 146, planning path),
+    # not the raw engine string. The raised exception itself is unchanged (asserted above).
+    assert "could not start" in run.outputs["error"]
 
 
 def test_open_gate_core_creates_pending_and_is_idempotent(wired, run_input):

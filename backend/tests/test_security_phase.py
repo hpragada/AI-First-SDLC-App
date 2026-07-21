@@ -26,6 +26,26 @@ from orchestration.types import AgentRunInput
 from storage import content_hash
 
 
+# ── Planning-path failure classification (Bugs S.No 146, no DB) ─────
+def test_classify_phase_failure_maps_bare_exit_code():
+    """The exact message the security run showed must become a plain, actionable reason."""
+    raw = ("Command failed with exit code 1 (exit code: 1)\n"
+           "Error output: Check stderr output for details")
+    msg = activities.classify_phase_failure(raw)
+    assert "exit code 1" not in msg
+    assert "usage or rate limit" in msg and "re-trigger" in msg
+
+
+def test_classify_phase_failure_names_usage_limit():
+    msg = activities.classify_phase_failure("Claude usage limit reached; try again later")
+    assert "usage or rate limit" in msg
+
+
+def test_classify_phase_failure_passes_specific_message_through():
+    specific = "no AgentSpec registered for key '10_security'"
+    assert activities.classify_phase_failure(specific) == specific
+
+
 # ── Catalog: the reads_code flag (no DB) ────────────────────────────
 def test_reads_code_true_only_for_security():
     assert catalog.reads_code("10_security") is True

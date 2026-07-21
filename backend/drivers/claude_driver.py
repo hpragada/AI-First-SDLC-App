@@ -125,16 +125,16 @@ _PLANNING_DISALLOWED_TOOLS = [
     "Agent", "Task", "Bash", "BashOutput", "KillShell", "Read", "Write", "Edit",
     "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch", "ToolSearch", "TodoWrite", "Skill",
 ]
-# Read-only variant for a REPO-SCOPED planning phase (catalog `reads_code`, e.g. 10_security):
-# the agent runs in a real git worktree and MUST be able to READ the source (Read/Grep/Glob),
-# but must never mutate it. So the denylist is the planning set MINUS Read/Grep/Glob, still
-# blocking every write path (Write/Edit/NotebookEdit) and Bash. The worktree is never committed
-# or pushed, so read-only is enforced at two layers: this denylist and the companion never
-# calling any git-write helper. (Built-in Read/Grep/Glob are governed by this denylist, not
-# `allowed_tools` — mirroring run_build_task, whose agent reads freely with MCP-only allow-list.)
-_READONLY_PLANNING_DISALLOWED_TOOLS = [
-    "Agent", "Task", "Bash", "BashOutput", "KillShell", "Write", "Edit",
-    "NotebookEdit", "WebFetch", "WebSearch", "ToolSearch", "TodoWrite", "Skill",
+# A REPO-SCOPED planning phase (catalog `reads_code`, e.g. 10_security) runs the agent in a git
+# worktree so it can scan real source. It needs full local tooling — Read/Grep/Glob AND Bash — to
+# run real security scanners (semgrep / pip-audit / syft for SAST/SCA/SBOM), so this denylist
+# blocks only the sandbox-hygiene tools (subagents + web + skills). The worktree is THROWAWAY and
+# is never committed or pushed (the companion calls no git-write helper and tears it down after),
+# so the "read-only-to-the-real-repo" guarantee comes from never-pushing, not from blocking Bash —
+# the same posture run_build_task already uses to run the repo's own code. (Built-in tools are
+# governed by this denylist, not `allowed_tools`.)
+_SCAN_DISALLOWED_TOOLS = [
+    "Agent", "Task", "WebFetch", "WebSearch", "ToolSearch", "TodoWrite", "Skill",
 ]
 _SANDBOX_SETTING_SOURCES = ["project"]
 
@@ -263,10 +263,11 @@ class ClaudeDriver:
     ) -> RunResult:
         """Run a planning agent. Default: sandboxed reasoning in an empty temp workdir (no
         filesystem). When `repo_workspace` is given (a repo-scoped `reads_code` phase like
-        10_security), run READ-ONLY inside that git worktree so the agent can scan real source:
-        cwd is the worktree, the denylist allows Read/Grep/Glob but blocks all writes + Bash, and
-        (mirroring run_build_task) no `setting_sources` so the scanned repo's own .claude/CLAUDE.md
-        is never loaded. The platform never commits/pushes the worktree — read-only end to end."""
+        10_security), run inside that git worktree so the agent can scan real source and run real
+        scanners: cwd is the worktree, the denylist allows the full local toolset (Read/Grep/Glob
+        /Bash) but blocks subagents + web + skills, and (mirroring run_build_task) no
+        `setting_sources` so the scanned repo's own .claude/CLAUDE.md is never loaded. The worktree
+        is throwaway and is never committed or pushed, so the real repo is never mutated."""
         if repo_workspace is not None:
             repo_workspace = Path(repo_workspace)
             # System prompt to .sdlc/ (kept out of the diff by the worktree's local exclude),
@@ -279,7 +280,7 @@ class ClaudeDriver:
                 extra_args={_SYSTEM_PROMPT_FLAG: sp_file},
                 mcp_servers=mcp_servers,
                 allowed_tools=allowed_tools,
-                disallowed_tools=_READONLY_PLANNING_DISALLOWED_TOOLS,  # read source, never write
+                disallowed_tools=_SCAN_DISALLOWED_TOOLS,  # full local toolset; never pushed
                 cwd=str(repo_workspace),
                 model=(agent_spec.recommended_model or None),
                 permission_mode=self._permission_mode,
