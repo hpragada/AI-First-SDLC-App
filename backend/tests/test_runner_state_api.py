@@ -56,6 +56,40 @@ def test_tool_outside_build_allowlist_is_403(db, client):
     assert r.status_code == 403
 
 
+def test_agent_cannot_transition_work_item_to_done(db, client):
+    """The build agent must not mark a WorkItem done — that is the control plane's job after an
+    approved merge gate (#2/#5). Blocking it here prevents the state=done-while-awaiting_gate
+    mislabel where the engine self-transitioned past the gate with no transition event."""
+    from apps.workitems.models import WorkItem
+
+    t = Tenant.objects.create(name="A")
+    p = Project.objects.create(tenant=t, name="App")
+    token = _enroll(client, t, p)
+    wi = WorkItem.objects.create(tenant=t, project=p, type=WorkItem.Type.TASK, title="X",
+                                 state=WorkItem.State.IN_PROGRESS)
+    r = _state(client, t, token, "transition_work_item", work_item_id=str(wi.id), to_state="done")
+    assert r.status_code == 403, r.content
+    wi.refresh_from_db()
+    assert wi.state == WorkItem.State.IN_PROGRESS               # unchanged — gate not bypassed
+
+
+def test_agent_may_transition_work_item_to_in_progress(db, client):
+    """The guard is scoped to gate-owned terminal states — the agent's legitimate
+    -> in_progress transition at build start still works."""
+    from apps.workitems.models import WorkItem
+
+    t = Tenant.objects.create(name="A")
+    p = Project.objects.create(tenant=t, name="App")
+    token = _enroll(client, t, p)
+    wi = WorkItem.objects.create(tenant=t, project=p, type=WorkItem.Type.TASK, title="X",
+                                 state=WorkItem.State.PROPOSED)
+    r = _state(client, t, token, "transition_work_item", work_item_id=str(wi.id),
+               to_state="in_progress")
+    assert r.status_code == 200, r.content
+    wi.refresh_from_db()
+    assert wi.state == WorkItem.State.IN_PROGRESS
+
+
 def test_token_with_mismatched_tenant_is_401(db, client):
     a = Tenant.objects.create(name="A")
     pa = Project.objects.create(tenant=a, name="A")

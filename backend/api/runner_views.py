@@ -70,6 +70,16 @@ _BUILD_STATE_TOOLS = {
     "transition_work_item": tools.transition_work_item,
 }
 
+# The build agent may move a WorkItem forward through working states (e.g. -> in_progress at
+# Step 1), but it must NEVER transition one to a gate-owned terminal state. Marking a WorkItem
+# `done` is a control-plane action that only happens after an APPROVED merge gate, via the saga's
+# transition_build_work_item activity (non-negotiables #2/#5). Letting the engine set `done`
+# itself bypassed the gate and left the WorkItem done with no workitem.transitioned event while
+# its run was still in review — the "state=done while awaiting_gate" mislabel. Blocked here at
+# the single agent/companion entry point; the orchestrator calls tools.transition_work_item
+# in-process (not through this view), so its legitimate `done` transition is unaffected.
+_AGENT_FORBIDDEN_TRANSITIONS = {"done"}
+
 
 def _tenant_id(request) -> str:
     tid = getattr(request, "tenant_id", None)
@@ -200,6 +210,14 @@ class RunnerStateView(APIView):
             return Response({"detail": f"tool '{tool}' is not in the build allowlist"},
                             status=status.HTTP_403_FORBIDDEN)
         args = request.data if isinstance(request.data, dict) else {}
+        # Guard: the engine may not transition a WorkItem to a gate-owned terminal state (`done`).
+        # That transition belongs to the control plane, after an approved merge gate (#2/#5).
+        if tool == "transition_work_item" and args.get("to_state") in _AGENT_FORBIDDEN_TRANSITIONS:
+            return Response(
+                {"detail": f"transition to '{args.get('to_state')}' is not permitted from a build "
+                           "agent — the platform transitions a WorkItem to done only after its "
+                           "merge gate is approved."},
+                status=status.HTTP_403_FORBIDDEN)
         try:
             result = fn(str(runner.tenant_id), **args)   # tenant bound server-side
         except TypeError as exc:

@@ -67,7 +67,7 @@ For each `REM-C` item, then each `REM-W` item:
 4. **Write or update tests** if the fix changes observable behaviour — a security fix, a corrected query, a missing validation all require test updates. A pure rename does not.
 5. **Run lint + type check + affected tests** (commands from `# Project`).
 6. **Verify the Acceptance condition** stated in the brief item — confirm it is met before marking the item complete.
-7. **Log completion** with the platform-state `log_event` tool: one line per item — what was done, acceptance condition met. Transition the item's child work item toward done with `transition_work_item` once its acceptance condition is verified.
+7. **Log completion** with the platform-state `log_event` tool: one line per item — what was done, acceptance condition met. Do **not** transition the work item to `done` yourself — completing a work item is a gated control-plane action the platform performs only after the merge gate is approved. The platform re-runs the review (08) and closes each remediation item automatically once its finding no longer appears; your job is to fix and log, not to mark the item done.
 
 **If a fix reveals unexpected scope expansion** (the fix requires touching files not listed in the brief, or resolves the stated issue but exposes a deeper problem):
 - STOP on the current item.
