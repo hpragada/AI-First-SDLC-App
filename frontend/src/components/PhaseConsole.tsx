@@ -147,7 +147,6 @@ export function PhaseConsole() {
                 <th>Run</th>
                 <th>Status</th>
                 <th>Engine / Model</th>
-                <th>Cost (USD)</th>
                 <th>Workflow</th>
                 <th>Created</th>
               </tr>
@@ -168,7 +167,6 @@ export function PhaseConsole() {
                     {r.engine}
                     {r.model ? ` / ${r.model}` : ""}
                   </td>
-                  <td className="mono">{r.cost_usd ?? "—"}</td>
                   <td className="mono">{r.temporal_workflow_id || "—"}</td>
                   <td className="muted">{new Date(r.created_at).toLocaleTimeString()}</td>
                 </tr>

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from mcp_platform_state import tools
 
-from apps.registry.catalog import gate_role_for
+from apps.registry.catalog import gate_role_for, reads_code
 from apps.registry.models import AgentSpec
 from apps.runs.models import Run
 from apps.tenancy.context import tenant_context
@@ -123,6 +123,42 @@ def _resolve_enrollment(tenant_id, project_id, user_id):
     return candidates[0]
 
 
+def _resolve_work_item_repo(
+    *, tenant_id, project_id, work_item, repo=None, base=None
+) -> tuple[str | None, str]:
+    """Resolve (repo_name, base_branch) for a work item. Shared by `trigger_build` and the
+    `reads_code` planning path so the two can never drift.
+
+    - Prefers the work item's pinned Repository, then the passed-in overrides, then the
+      project's single default repo.
+    - Multi-repo + unpinned ⇒ raises TriggerError (ambiguous — the repo is chosen by the
+      planner and confirmed at the Task Breakdown gate; never silently default it).
+    - Returns repo=None only when the project has NO repository at all (a doc-only project);
+      the caller decides whether that is fatal (build) or a graceful degrade (security scan)."""
+    repo = repo or (work_item.repo.name if work_item.repo else None)
+    base = base or (work_item.repo.default_base if work_item.repo else None)
+    if not repo:
+        from apps.projects.models import Repository
+
+        project_repos = Repository.objects.filter(
+            tenant_id=tenant_id, project_id=project_id
+        )
+        # Multi-repo (D5 / Hybrid Option C): NEVER silently default an unpinned work item —
+        # its repo is chosen by the planner and confirmed at the Task Breakdown gate.
+        if project_repos.count() > 1:
+            raise TriggerError(
+                "this work item has no repository assigned and the project has multiple "
+                "repositories — assign its repo (confirm it at the Task Breakdown gate or set "
+                "the work item's repo) before running."
+            )
+        # Single-repo: fall back to the project's default repository (S-13).
+        default_repo = project_repos.filter(is_default=True).first()
+        if default_repo is not None:
+            repo = default_repo.name
+            base = base or default_repo.default_base
+    return repo, (base or "main")
+
+
 def trigger_phase(
     *,
     tenant_id: str,
@@ -153,6 +189,16 @@ def trigger_phase(
 
         phase = spec.phase_label or agent_key
         role = required_role or gate_role_for(agent_key)
+        # Repo-scoped planning phases (catalog `reads_code`, e.g. 10_security) get a READ-ONLY
+        # worktree so the agent can scan real source. Every other planning phase resolves no
+        # repo → repo/base stay None → dispatch/companion behaviour is byte-identical to today.
+        # A doc-only project (no repository) degrades to manifest-only rather than failing.
+        repo: str | None = None
+        base: str | None = None
+        if reads_code(agent_key):
+            repo, base = _resolve_work_item_repo(
+                tenant_id=tenant_id, project_id=project_id, work_item=work_item
+            )
         enrollment = _resolve_enrollment(tenant_id, project_id, triggered_by)
         mode = execution_mode or ("companion" if enrollment is not None else "server")
         run = Run.objects.create(
@@ -170,10 +216,15 @@ def trigger_phase(
             work_item_id=str(work_item_id), agent_spec_id=str(spec.id), phase=phase,
             gate_type=gate_type, required_role=role, execution_mode=mode,
             enrollment_id=str(enrollment.id) if enrollment is not None else None,
+            repo=repo, base=base,
         )
+        event_payload = {
+            "agent_key": agent_key, "workflow_id": workflow_id, "execution_mode": mode,
+        }
+        if repo:
+            event_payload["repo"] = repo
         tools.log_event(
-            tenant_id, "platform", "run.triggered", "run", str(run.id),
-            {"agent_key": agent_key, "workflow_id": workflow_id, "execution_mode": mode},
+            tenant_id, "platform", "run.triggered", "run", str(run.id), event_payload,
         )
 
     workflow_starter(workflow_id, inp)
@@ -233,32 +284,12 @@ def trigger_build(
             id=work_item_id, tenant_id=tenant_id
         )
         _guard_no_active_run(tenant_id, work_item_id)
-        repo = repo or (work_item.repo.name if work_item.repo else None)
-        base = base or (work_item.repo.default_base if work_item.repo else None)
-        if not repo:
-            from apps.projects.models import Repository
-
-            project_repos = Repository.objects.filter(
-                tenant_id=tenant_id, project_id=project_id
-            )
-            repo_count = project_repos.count()
-            # Multi-repo (D5 / Hybrid Option C): NEVER silently default an unpinned work item —
-            # its repo is chosen by the planner and confirmed at the Task Breakdown gate, so a
-            # build with no repo means that assignment was missed. Fail loud rather than PR into
-            # whatever happens to be the default repo (e.g. backend code into the frontend repo).
-            if repo_count > 1:
-                raise TriggerError(
-                    "this work item has no repository assigned and the project has multiple "
-                    "repositories — assign its repo (confirm it at the Task Breakdown gate or set "
-                    "the work item's repo) before building."
-                )
-            # Single-repo: fall back to the project's default repository (S-13) so a task can be
-            # built from the UI without first pinning a repo (proposed items have none).
-            default_repo = project_repos.filter(is_default=True).first()
-            if default_repo is not None:
-                repo = default_repo.name
-                base = base or default_repo.default_base
-        base = base or "main"
+        # Shared with the reads_code planning path (_resolve_work_item_repo): pinned repo →
+        # overrides → single default; multi-repo unpinned raises. A build additionally requires
+        # a repo (fail-closed below); a security scan tolerates None (degrades to doc-only).
+        repo, base = _resolve_work_item_repo(
+            tenant_id=tenant_id, project_id=project_id, work_item=work_item, repo=repo, base=base
+        )
         if not repo:
             raise TriggerError(
                 "no target repository for this build — add a repository to the project "

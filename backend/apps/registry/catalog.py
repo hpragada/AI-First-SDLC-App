@@ -51,6 +51,13 @@ class AgentDefinition:
     # not QA defects. The single source of truth for test-import routing — like `rides_build`
     # for build routing — so the rule can never drift across call sites.
     imports_test_results: bool = False
+    # True ⇒ this repo-scoped PLANNING phase is given a READ-ONLY git worktree of the work
+    # item's repo so it can scan real source (SAST/SCA/SBOM/OWASP-in-code). It does NOT ride
+    # the build (`rides_build` stays False): no commit/push/PR/merge — the agent only reads.
+    # The single source of truth for worktree-on-planning routing, so security (and later
+    # 09_testing) get code access without hardcoding phase keys anywhere. Mutually exclusive
+    # with `rides_build` by construction (a build phase already has a worktree).
+    reads_code: bool = False
 
     @property
     def body_ref(self) -> str:
@@ -69,7 +76,7 @@ AGENT_CATALOG: list[AgentDefinition] = [
     AgentDefinition("08_code_review", "code-review", "code_review", "08_code_review_agent.md", "P2", "reviewer"),
     AgentDefinition("09_testing", "test", "testing", "09_testing_agent.md", "P3", "qa_lead"),
     AgentDefinition("09b_test_automation", "test-automation", "test_automation", "09b_test_automation_agent.md", "P3", "qa_lead", rides_build=True, imports_test_results=True),
-    AgentDefinition("10_security", "security", "security", "10-security-agent.md", "P3", "security_engineer"),
+    AgentDefinition("10_security", "security", "security", "10-security-agent.md", "P3", "security_engineer", reads_code=True),
     AgentDefinition("11_cicd", "cicd", "cicd", "11_cicd_agent.md", "P2", "devops", rides_build=True),
     AgentDefinition("12_deployment", "deploy", "deployment", "12_deployment_agent.md", "P2", "devops"),
     # ── Entry / onboarding agents (P4) ──────────────────────────────
@@ -111,6 +118,15 @@ def rides_build(key: str) -> bool:
     a new build agent only sets `rides_build=True` on its catalog entry."""
     definition = _BY_KEY.get(key)
     return bool(definition and definition.rides_build)
+
+
+def reads_code(key: str) -> bool:
+    """True ⇒ this repo-scoped PLANNING phase is handed a READ-ONLY worktree of the work
+    item's repo so it can scan real source, WITHOUT riding the build (no commit/push/PR).
+    The single source of truth for worktree-on-planning routing (10_security today, and
+    09_testing later) — so a new code-reading review phase only sets `reads_code=True`."""
+    definition = _BY_KEY.get(key)
+    return bool(definition and definition.reads_code)
 
 
 def imports_test_results(key: str) -> bool:

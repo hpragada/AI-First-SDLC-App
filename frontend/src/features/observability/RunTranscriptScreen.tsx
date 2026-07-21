@@ -117,7 +117,7 @@ function RunTranscriptLive() {
       ) : (
         <Panel flush>
           <Table
-            headers={["Run", "Phase", "Work item", "Status", "Cost", ""]}
+            headers={["Run", "Phase", "Work item", "Status", ""]}
             rows={completed.map((r) => [
               <span className="table__id" key="r">
                 {r.id.slice(0, 8)}
@@ -131,9 +131,6 @@ function RunTranscriptLive() {
               <Badge variant="done" key="s">
                 {r.status}
               </Badge>,
-              <span className="table__id" key="c">
-                {r.cost_usd ? `$${r.cost_usd}` : "—"}
-              </span>,
               <Link to={`/transcripts/${r.id}`} className="btn btn--ghost btn--sm" key="a">
                 Open transcript
               </Link>,

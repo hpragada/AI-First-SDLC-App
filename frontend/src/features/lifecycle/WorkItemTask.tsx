@@ -151,7 +151,6 @@ function WorkItemTaskLive() {
               <Kv
                 rows={[
                   ["Phase", phaseLabel(latestRun.agent_phase ?? latestRun.agent_key)],
-                  ["Cost", latestRun.cost_usd ? `$${latestRun.cost_usd}` : "—"],
                 ]}
               />
               <a href={`/runs/${latestRun.id}`} className="t-sm">

@@ -137,7 +137,6 @@ function AddRepoForm({ projectId, dup }: { projectId: string | undefined; dup?: 
           </Field>
           <Field
             label="Preview URL (optional)"
-            help="A running app for 09b to explore while writing tests."
             style={{ marginBottom: 0, minWidth: "200px" }}
           >
             <Input
@@ -150,6 +149,12 @@ function AddRepoForm({ projectId, dup }: { projectId: string | undefined; dup?: 
             Add
           </Button>
         </form>
+        {/* Bugs S.No 170: the Preview URL help text lives below the row (not on the Field) so
+            it doesn't break the bottom-alignment of the inputs; reworded to drop the "09b" jargon. */}
+        <p className="field__help" style={{ marginTop: "var(--space-2)" }}>
+          Preview URL is optional — if your app is already running somewhere, paste its address so
+          the testing phase can open it and write tests against the live app.
+        </p>
       </CardBody>
     </Card>
   );

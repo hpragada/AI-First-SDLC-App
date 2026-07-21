@@ -232,8 +232,7 @@ function ClarificationsLive() {
         <div className="page-head__titles">
           <h1 className="t-h1">Clarifications</h1>
           <p className="page-head__sub">
-            Questions your agents are waiting on. Answering resumes the run in the same session —
-            and nothing is billed while it waits.
+            Questions your agents are waiting on. Answering resumes the run in the same session.
           </p>
         </div>
       </div>
@@ -246,7 +245,7 @@ function ClarificationsLive() {
         <Panel>
           <EmptyState
             title="No questions waiting"
-            text="When an agent needs input, it pauses (billing $0) and the question appears here."
+            text="When an agent needs input, it pauses and the question appears here."
           />
           {justAnswered && (
             <Card style={{ marginTop: "var(--space-4)" }}>
@@ -266,7 +265,7 @@ function ClarificationsLive() {
               <span className="wi-card__id">{workItemLabel(current.work_item)}</span>
               <Badge variant="needs-answer">{phaseLabel(current.phase)} · needs answer</Badge>
               <span className="u-spacer" />
-              <span className="zero-cost">⏸ Paused — no usage billed while waiting</span>
+              <span className="zero-cost">⏸ Paused — waiting for your answer</span>
             </div>
             {current.context && <p className="clar-card__why">{current.context}</p>}
             {groupByTier(current.questions).map(({ tier, questions }) => (
@@ -316,8 +315,7 @@ function ClarificationsGallery({ view }: { view: ClarificationsView }) {
         <div className="page-head__titles">
           <h1 className="t-h1">Clarifications</h1>
           <p className="page-head__sub">
-            Questions your agents are waiting on. Answering resumes the run in the same session —
-            and nothing is billed while it waits.
+            Questions your agents are waiting on. Answering resumes the run in the same session.
           </p>
         </div>
       </div>
@@ -326,7 +324,7 @@ function ClarificationsGallery({ view }: { view: ClarificationsView }) {
         <Panel>
           <EmptyState
             title="No questions waiting"
-            text="When an agent needs input, it pauses (billing $0) and the question appears here."
+            text="When an agent needs input, it pauses and the question appears here."
           />
         </Panel>
       )}
@@ -338,7 +336,7 @@ function ClarificationsGallery({ view }: { view: ClarificationsView }) {
               <span className="wi-card__id">WI-510</span>
               <Badge variant="needs-answer">Requirements · needs answer</Badge>
               <span className="u-spacer" />
-              <span className="zero-cost">⏸ Paused — no usage billed while waiting · 6m</span>
+              <span className="zero-cost">⏸ Paused — waiting for your answer · 6m</span>
             </div>
             <p className="t-body u-strong">Should the analytics dashboard support CSV export in v1?</p>
             <p className="clar-card__why">

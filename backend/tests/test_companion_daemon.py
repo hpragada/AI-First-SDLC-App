@@ -463,3 +463,77 @@ def test_engine_auth_error_still_halts_the_loop():
     d.run_task = _auth_boom
     with pytest.raises(EngineAuthError):
         d.serve(max_iterations=2)
+
+
+# ── Security scan: read-only worktree on the planning path (Bugs S.No 176) ──
+_SCAN_TASK = {"kind": "plan", "run_id": "rsec", "payload": {
+    "phase": "security", "work_item_id": "w1", "project_id": "p1", "model": "claude-x",
+    "agent_body": "BODY", "manifest": "# Project\nm",
+    "repo": "acme/api", "base": "main", "reads_code": True}}
+
+
+class _ScanDriver:
+    """Records the repo_workspace it was handed (the read-only worktree) for a security scan."""
+
+    def __init__(self):
+        self.repo_workspace = "unset"
+
+    async def run_planning_task(self, *, manifest, agent_spec, mcp_servers, allowed_tools,
+                                work_item, repo_workspace=None):
+        self.repo_workspace = repo_workspace
+        return SimpleNamespace(outputs={"result": "# Security Review"}, cost_usd=0.0)
+
+    async def run_review_task(self, **kwargs):
+        return SimpleNamespace(outputs={"text": "x"}, cost_usd=0.0)
+
+
+def test_security_scan_provisions_readonly_worktree_and_tears_it_down(monkeypatch):
+    """A reads_code plan task provisions a scan worktree, runs the agent inside it, tears it
+    down after, and NEVER commits or pushes (read-only)."""
+    import runner.companion.worktree as wt
+
+    seen = {}
+
+    def _fake_provision(*, repo_path, branch, base, worktree_path):
+        seen["provision"] = {"repo_path": repo_path, "branch": branch, "base": base,
+                             "worktree_path": str(worktree_path)}
+        return worktree_path
+
+    def _fake_teardown(*, repo_path, worktree_path):
+        seen["teardown"] = str(worktree_path)
+
+    def _explode(*a, **k):  # any git-write helper must never be called on a scan
+        raise AssertionError("a security scan must never commit or push")
+
+    monkeypatch.setattr(wt, "provision_worktree", _fake_provision)
+    monkeypatch.setattr(wt, "teardown_worktree", _fake_teardown)
+    monkeypatch.setattr(wt, "commit_all", _explode)
+    monkeypatch.setattr(wt, "push_branch", _explode)
+
+    transport = _Transport([(200, _SCAN_TASK), (204, None)])
+    driver = _ScanDriver()
+    d = _daemon(transport, driver, worktrees_root="/wt", repo_path="/repos/api")
+    d.serve(max_iterations=2)
+
+    assert seen["provision"]["repo_path"] == "/repos/api"
+    assert seen["provision"]["branch"] == "sdlc-scan/rsec"   # disjoint from build's feature/*
+    assert seen["provision"]["base"] == "main"
+    # the driver ran inside the provisioned worktree
+    assert str(driver.repo_workspace).endswith("scan-rsec")
+    # torn down afterwards
+    assert seen["teardown"].endswith("scan-rsec")
+    # the phase result was still reported
+    url, body = transport.reports()[0]
+    assert url.endswith("/api/runner/phases/rsec/report/") and body["status"] == "ok"
+
+
+def test_security_scan_degrades_when_no_worktree_configured():
+    """No --worktrees/clone: the scan degrades to a manifest-only planning run (no worktree
+    passed to the driver) rather than failing — the phase still produces a document."""
+    transport = _Transport([(200, _SCAN_TASK), (204, None)])
+    driver = _ScanDriver()
+    d = _daemon(transport, driver)  # no worktrees_root, no repo_path
+    d.serve(max_iterations=2)
+    assert driver.repo_workspace is None            # ran without a worktree
+    url, body = transport.reports()[0]
+    assert url.endswith("/api/runner/phases/rsec/report/") and body["status"] == "ok"

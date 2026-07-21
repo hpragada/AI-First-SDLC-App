@@ -1,7 +1,6 @@
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { useRunners } from "../identity/hooks";
 import { Badge, Button, Card, CardBody, ConnStatus, EmptyState, Kv, Panel, Spinner, Tile, Todo } from "../../components/ui";
 import { roleLabel } from "../identity/roles";
 import { gateLabel, phaseLabel, statusLabel } from "../lifecycle/phases";
@@ -20,7 +19,6 @@ function DashboardLive() {
   const { selectedProject } = useAuth();
   const projectId = selectedProject?.project_id;
   const dashboard = useDashboard(projectId);
-  const runners = useRunners();
 
   if (!projectId) {
     return <DashboardGallery view="new-project" />;
@@ -41,8 +39,6 @@ function DashboardLive() {
   const clars = data?.needs_me.clarifications ?? [];
   const runs = data?.needs_me.my_runs ?? [];
   const needsCount = gates.length + clars.length + runs.length;
-  const online = (runners.data ?? []).some((r) => r.online);
-  const machine = runners.data?.find((r) => r.online)?.machine ?? runners.data?.[0]?.machine;
 
   return (
     <div className="canvas-pad">
@@ -118,7 +114,7 @@ function DashboardLive() {
                   icon="?"
                   type="clar"
                   title={`Question · ${c.work_item.slice(0, 8)}`}
-                  meta={`"${c.question}" · waiting ${Math.round(c.waiting_s / 60)}m · $0 while waiting`}
+                  meta={`"${c.question}" · waiting ${Math.round(c.waiting_s / 60)}m`}
                   action={
                     <Link to="/clarifications" className="btn btn--secondary btn--sm">
                       Answer
@@ -144,18 +140,9 @@ function DashboardLive() {
           )}
         </Panel>
 
+        {/* Bugs S.No 171: the companion status lives in the top bar only — the separate
+            Companion card was removed from the dashboard. */}
         <div className="u-stack">
-          <Card>
-            <CardBody>
-              <h3 className="t-h3" style={{ marginBottom: "var(--space-3)" }}>
-                Companion
-              </h3>
-              <ConnStatus state={online ? "connected" : "offline"}>
-                {online ? `Connected — ${machine ?? "your machine"}` : "Not connected"}
-              </ConnStatus>
-              <p className="field__help">Phases run on your machine. Keep it online.</p>
-            </CardBody>
-          </Card>
           <Card>
             <CardBody>
               <h3 className="t-h3" style={{ marginBottom: "var(--space-3)" }}>

@@ -125,6 +125,17 @@ _PLANNING_DISALLOWED_TOOLS = [
     "Agent", "Task", "Bash", "BashOutput", "KillShell", "Read", "Write", "Edit",
     "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch", "ToolSearch", "TodoWrite", "Skill",
 ]
+# Read-only variant for a REPO-SCOPED planning phase (catalog `reads_code`, e.g. 10_security):
+# the agent runs in a real git worktree and MUST be able to READ the source (Read/Grep/Glob),
+# but must never mutate it. So the denylist is the planning set MINUS Read/Grep/Glob, still
+# blocking every write path (Write/Edit/NotebookEdit) and Bash. The worktree is never committed
+# or pushed, so read-only is enforced at two layers: this denylist and the companion never
+# calling any git-write helper. (Built-in Read/Grep/Glob are governed by this denylist, not
+# `allowed_tools` — mirroring run_build_task, whose agent reads freely with MCP-only allow-list.)
+_READONLY_PLANNING_DISALLOWED_TOOLS = [
+    "Agent", "Task", "Bash", "BashOutput", "KillShell", "Write", "Edit",
+    "NotebookEdit", "WebFetch", "WebSearch", "ToolSearch", "TodoWrite", "Skill",
+]
 _SANDBOX_SETTING_SOURCES = ["project"]
 
 # Generic safety net: the engine subprocess can occasionally lose a launch race and surface as
@@ -248,21 +259,45 @@ class ClaudeDriver:
         mcp_servers: dict,
         allowed_tools: list[str],
         work_item: WorkItem,
+        repo_workspace: Path | None = None,
     ) -> RunResult:
-        workdir = self._prepare_workdir(work_item)
-        sp_file = self._write_system_prompt_file(
-            workdir, self._body_loader(agent_spec), manifest)
-
-        options = self._agent_options(
-            extra_args={_SYSTEM_PROMPT_FLAG: sp_file},
-            mcp_servers=mcp_servers,
-            allowed_tools=allowed_tools,
-            disallowed_tools=_PLANNING_DISALLOWED_TOOLS,   # sandbox: platform-state MCP only
-            setting_sources=_SANDBOX_SETTING_SOURCES,      # no user skills/subagents/MCP leak
-            cwd=str(workdir),
-            model=(agent_spec.recommended_model or None),
-            permission_mode=self._permission_mode,
-        )
+        """Run a planning agent. Default: sandboxed reasoning in an empty temp workdir (no
+        filesystem). When `repo_workspace` is given (a repo-scoped `reads_code` phase like
+        10_security), run READ-ONLY inside that git worktree so the agent can scan real source:
+        cwd is the worktree, the denylist allows Read/Grep/Glob but blocks all writes + Bash, and
+        (mirroring run_build_task) no `setting_sources` so the scanned repo's own .claude/CLAUDE.md
+        is never loaded. The platform never commits/pushes the worktree — read-only end to end."""
+        if repo_workspace is not None:
+            repo_workspace = Path(repo_workspace)
+            # System prompt to .sdlc/ (kept out of the diff by the worktree's local exclude),
+            # exactly like the build path — the worktree root stays pristine.
+            sdlc = repo_workspace / ".sdlc"
+            sdlc.mkdir(parents=True, exist_ok=True)
+            sp_file = self._write_system_prompt_file(
+                sdlc, self._body_loader(agent_spec), manifest)
+            options = self._agent_options(
+                extra_args={_SYSTEM_PROMPT_FLAG: sp_file},
+                mcp_servers=mcp_servers,
+                allowed_tools=allowed_tools,
+                disallowed_tools=_READONLY_PLANNING_DISALLOWED_TOOLS,  # read source, never write
+                cwd=str(repo_workspace),
+                model=(agent_spec.recommended_model or None),
+                permission_mode=self._permission_mode,
+            )
+        else:
+            workdir = self._prepare_workdir(work_item)
+            sp_file = self._write_system_prompt_file(
+                workdir, self._body_loader(agent_spec), manifest)
+            options = self._agent_options(
+                extra_args={_SYSTEM_PROMPT_FLAG: sp_file},
+                mcp_servers=mcp_servers,
+                allowed_tools=allowed_tools,
+                disallowed_tools=_PLANNING_DISALLOWED_TOOLS,   # sandbox: platform-state MCP only
+                setting_sources=_SANDBOX_SETTING_SOURCES,      # no user skills/subagents/MCP leak
+                cwd=str(workdir),
+                model=(agent_spec.recommended_model or None),
+                permission_mode=self._permission_mode,
+            )
         prompt = self._build_prompt(agent_spec, work_item)
         return await self._consume(prompt, options)
 

@@ -302,6 +302,15 @@ def reject_run_core(inp: AgentRunInput, comment: str) -> dict:
 #: the staged body's real digest, so an expected artifact carrying this is provably empty.
 _EMPTY_BODY_HASH = content_hash(b"")
 
+#: Phases whose real deliverable is a RICHER artifact than the platform's generic phase-typed
+#: blob. verify_writes requires these instead of the bare phase type so a run that produced only
+#: an empty/summary "<phase>" blob — but not the actual work product — fails loudly rather than
+#: opening the gate on nothing (Bugs S.No 179). Security must ship its actual review document,
+#: which the agent registers (stage_artifact_body → register_artifact) as `security_review`.
+_PHASE_REQUIRED_ARTIFACTS = {
+    "security": ["security_review"],
+}
+
 
 def verify_write_completeness_core(inp: AgentRunInput, expected_types: list[str]) -> dict:
     """Rule 11 (platform-enforced): before the gate opens, confirm the run actually registered
@@ -317,6 +326,14 @@ def verify_write_completeness_core(inp: AgentRunInput, expected_types: list[str]
     text's digest, so an empty one is provable. A pointer-only artifact registered with a
     foreign hash makes no claim about its body and is left alone.
     """
+    # Expand any phase whose real work product is a richer artifact (e.g. security → the actual
+    # security_review, not the generic "security" blob the platform always auto-registers). Other
+    # phases are unchanged (map returns the type itself).
+    required_types: list[str] = []
+    for t in expected_types:
+        required_types.extend(_PHASE_REQUIRED_ARTIFACTS.get(t, [t]))
+    expected_types = list(dict.fromkeys(required_types))  # dedupe, preserve order
+
     with tenant_context(inp.tenant_id):
         artifacts = list(
             Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id)
@@ -357,6 +374,14 @@ def dispatch_phase_core(inp: AgentRunInput, manifest: str) -> dict:
         "manifest": manifest, "agent_body": agent_body, "model": model,
         "api_url": getattr(settings, "PLATFORM_API_URL", ""),
     }
+    # Repo-scoped planning (catalog `reads_code`, e.g. 10_security): tell the companion which
+    # repo to check out READ-ONLY so the agent can scan real source. `kind` stays "plan" (the
+    # companion must NOT enter the build path); the presence of `repo` + `reads_code` is the
+    # discriminator. Absent for every other planning phase → payload identical to today.
+    if inp.repo:
+        payload["repo"] = inp.repo
+        payload["base"] = inp.base or "main"
+        payload["reads_code"] = True
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         run.inputs = {
@@ -468,7 +493,50 @@ def register_phase_result_core(inp: AgentRunInput, report) -> dict:
                  "message": report.message or
                  "companion reported ok but the engine returned no final text; "
                  "the staged phase draft is empty"})
+    # Bugs S.No 177 — security defect loopback: turn Critical/High security_finding artifacts
+    # this run registered into `defect` child WorkItems so findings become trackable work.
+    # Advisory gate stays (team decision) — this only surfaces findings, it does NOT block the
+    # gate. No-op for every other phase and when the run produced no structured findings.
+    if inp.phase == "security":
+        _record_security_findings_from_run(inp)
     return {"artifact_ids": [artifact["id"]], "cost_usd": cost}
+
+
+def _record_security_findings_from_run(inp: AgentRunInput) -> dict:
+    """Read the `security_finding` artifacts this security run registered and drive the defect
+    loopback (`record_security_findings`) so open Critical/High findings open (and resolved ones
+    close) `defect` child WorkItems. Findings carry their id + severity in the artifact's
+    `external_ref` (the agent registers them structured — agents/10_security/agent.md). A finding
+    without a structured id+severity is skipped rather than guessed, so nothing is fabricated;
+    if none carry structure the loopback simply does nothing."""
+    from apps.quality.services import record_security_findings
+
+    with tenant_context(inp.tenant_id):
+        rows = list(
+            Artifact.objects.filter(
+                run_id=inp.run_id, tenant_id=inp.tenant_id, type="security_finding"
+            ).values("title", "external_ref")
+        )
+        review_id = (
+            Artifact.objects.filter(
+                run_id=inp.run_id, tenant_id=inp.tenant_id, type="security_review"
+            ).values_list("id", flat=True).first()
+        )
+    findings = []
+    for r in rows:
+        ext = r.get("external_ref") or {}
+        fid = ext.get("finding_id") or ext.get("id")
+        sev = ext.get("severity")
+        if fid and sev:
+            findings.append(
+                {"id": str(fid), "severity": str(sev), "title": r.get("title") or str(fid)}
+            )
+    if not findings:
+        return {"opened": [], "closed": [], "blocking": []}
+    return record_security_findings(
+        tenant_id=inp.tenant_id, project_id=inp.project_id, work_item_id=inp.work_item_id,
+        findings=findings, review_artifact_id=str(review_id) if review_id else None,
+    )
 
 
 def mark_phase_takeover_core(inp: AgentRunInput) -> dict:
