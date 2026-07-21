@@ -13,6 +13,10 @@ class WorkItem(TenantScopedModel):
         # A defect raised by the test/quality loop — a first-class child of the story it
         # regresses (the defect-loopback DAG sub-work, P3 D5).
         DEFECT = "defect", "Defect"
+        # A test case — a first-class child of the story it verifies. Created from the Testing
+        # phase (09) output or by hand; Test Automation (09b) runs on it to generate its script
+        # (one TC per run). Sibling of DEFECT in the QA sub-DAG.
+        TEST_CASE = "test_case", "Test Case"
 
     class State(models.TextChoices):
         PROPOSED = "proposed", "Proposed"

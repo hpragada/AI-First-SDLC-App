@@ -139,6 +139,20 @@ def _render_work_item(work_item: dict, phase: str, budget: TokenBudget) -> str:
         f"- state: {wi.get('state', '')}",
         f"- feature_stream: {wi.get('feature_stream', '')}",
     ]
+    # Title + description carry what the item IS — for a test_case WI the description holds the
+    # TC spec/steps the agent automates (manual path); for any type it grounds the run. (An auto
+    # test case also gets its full TC-XXX block as a `test_case` artifact under Relevant Artifacts.)
+    if wi.get("title"):
+        lines.append(f"- title: {wi['title']}")
+    if wi.get("description"):
+        lines.append(f"- description: {wi['description']}")
+    # For an auto-materialized test case, point the agent at ITS specific `test_case` artifact —
+    # get_context's artifacts are project/repo-scoped (not per-WI), so this pointer is how 09b
+    # knows which TC is this run's. Fetch its full spec with get_artifact_body (P3-09b B3/B4).
+    ref = wi.get("external_ref") or {}
+    if ref.get("test_case_artifact_id"):
+        tc = ref.get("tc_id", "")
+        lines.append(f"- test_case: {tc} — get_artifact_body({ref['test_case_artifact_id']})")
     if wi.get("parent_id"):
         lines.append(f"- parent_id: {wi['parent_id']}")
     if wi.get("depends_on"):

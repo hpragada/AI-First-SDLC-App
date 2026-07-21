@@ -230,6 +230,19 @@ def execute_agent_core(inp: AgentRunInput, manifest: str) -> dict:
             inp.tenant_id, "orchestrator", "run.executed", "run", inp.run_id,
             {"artifact_id": artifact["id"]},
         )
+    # After a Testing (09) run records its output, turn the `test_case` artifacts it registered
+    # into child test_case WorkItems under the story, so Test Automation (09b) can run on each one
+    # (P3-09b B3). Best-effort — a materialization hiccup must never fail the run that succeeded.
+    if inp.phase == "testing":
+        try:
+            from apps.workitems.test_cases import materialize_test_cases
+
+            materialize_test_cases(
+                tenant_id=inp.tenant_id, project_id=inp.project_id,
+                run_id=inp.run_id, story_id=inp.work_item_id)
+        except Exception as exc:  # noqa: BLE001 — never break a completed run
+            tools.log_event(inp.tenant_id, "orchestrator", "test_cases.materialize_failed",
+                            "run", inp.run_id, {"error": str(exc)})
     return {"artifact_ids": [artifact["id"]], "cost_usd": result.cost_usd}
 
 
