@@ -26,6 +26,12 @@ class AgentRunInput:
     enrollment_id: str | None = None
     # If the companion never reports within this window, park the run for human takeover.
     report_timeout_seconds: int = 7200
+    # Repo-scoped PLANNING phases (catalog `reads_code`, e.g. 10_security) carry the target
+    # repo + base branch so the companion can check out a READ-ONLY worktree to scan the real
+    # source. None for every other planning phase → no worktree, behaviour unchanged. This is
+    # NOT the build path (no commit/push/PR); the run still rides AgentRunWorkflow.
+    repo: str | None = None
+    base: str | None = None
 
 
 @dataclass

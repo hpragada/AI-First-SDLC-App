@@ -195,11 +195,22 @@ class CompanionDaemon:
         report_path = (f"/api/runner/reviews/{run_id}/report/" if review
                        else f"/api/runner/phases/{run_id}/report/")
         runner = driver.run_review_task if review else driver.run_planning_task
+        run_kwargs = dict(
+            manifest=payload.get("manifest", ""), agent_spec=spec, mcp_servers=mcp,
+            allowed_tools=PLAN_ALLOWED_TOOLS, work_item=work_item,
+        )
+        # Repo-scoped planning (catalog `reads_code`, e.g. 10_security): provision a READ-ONLY
+        # git worktree of the target repo so the agent can scan real source. `kind` stays "plan"
+        # (this is NOT the build path) — the discriminator is `repo` + `reads_code` in the
+        # payload. If we can't provision one (no --worktrees / no clone / git error), degrade to
+        # the normal no-worktree planning run so the phase still produces a document.
+        scan_worktree = None
+        if not review and payload.get("repo") and payload.get("reads_code"):
+            scan_worktree = self._provision_scan_worktree(payload["repo"], run_id, payload)
+            if scan_worktree is not None:
+                run_kwargs["repo_workspace"] = scan_worktree
         try:
-            result = asyncio.run(runner(
-                manifest=payload.get("manifest", ""), agent_spec=spec, mcp_servers=mcp,
-                allowed_tools=PLAN_ALLOWED_TOOLS, work_item=work_item,
-            ))
+            result = asyncio.run(runner(**run_kwargs))
             outputs = getattr(result, "outputs", {}) or {}
             body = outputs.get("result") or outputs.get("text") or ""
             cost = getattr(result, "cost_usd", 0.0)
@@ -222,6 +233,47 @@ class CompanionDaemon:
         except Exception as exc:  # noqa: BLE001 — report the failure so the run never hangs
             self._report(report_path, {"status": "failed", "message": str(exc)})
             return
+        finally:
+            # Read-only scan worktree is throwaway — remove it (best-effort) whether the run
+            # succeeded or failed. Its local `sdlc-scan/<run_id>` branch was never pushed.
+            if scan_worktree is not None:
+                from runner.companion.worktree import teardown_worktree
+                try:
+                    teardown_worktree(
+                        repo_path=self._resolve_repo_path(payload["repo"]),
+                        worktree_path=scan_worktree)
+                except Exception:  # noqa: BLE001 — teardown must never mask the run result
+                    pass
+
+    def _provision_scan_worktree(self, repo: str, run_id: str, payload: dict):
+        """Provision a READ-ONLY git worktree of `repo` for a repo-scoped planning scan
+        (10_security). Returns the worktree Path, or None to DEGRADE gracefully (no --worktrees,
+        no clone, or a git error) so the phase still runs manifest-only rather than failing.
+
+        The branch/path namespace (`sdlc-scan/<run_id>`) is disjoint from a build's
+        `feature/<work_item_key>`, so a scan can never touch or reuse a build worktree; and the
+        branch is never pushed, so provision always bases it on `base` — read-only by construction."""
+        from pathlib import Path
+
+        from runner.companion.worktree import WorktreeError, provision_worktree
+
+        if not self._worktrees_root or not (self._repo_path or self._repo_paths):
+            print(f"[companion] security scan for run {run_id} has no worktree "
+                  "(--worktrees / --repo(-path) not configured); scanning manifest only",
+                  file=sys.stderr, flush=True)
+            return None
+        try:
+            repo_path = self._resolve_repo_path(repo)
+            return provision_worktree(
+                repo_path=repo_path,
+                branch=f"sdlc-scan/{run_id}",
+                base=payload.get("base", "main"),
+                worktree_path=Path(self._worktrees_root) / f"scan-{run_id}",
+            )
+        except (WorktreeError, DaemonError, OSError) as exc:
+            print(f"[companion] could not provision scan worktree for run {run_id} "
+                  f"({exc}); scanning manifest only", file=sys.stderr, flush=True)
+            return None
 
     def _resolve_repo_path(self, repo: str) -> str:
         """Pick the local clone this work item's repo (`task.repo`) must build against. On a

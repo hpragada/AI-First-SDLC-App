@@ -326,7 +326,12 @@ Example: **Attack Surface: [e.g., User Authentication Endpoint]**
 
 ## Output — Register These Artifacts
 
-Produce each deliverable in full, then register it with the platform-state `register_artifact` tool (`sor="internal"`). **Pass a human-readable `title`** on every call (e.g. `"Finding — SQL injection in search filter"`, `"SBOM — payments-api"`, `"Threat Model"`) — every `security_finding` shares the type, so the `title` is what tells them apart in the UI; never omit it. Link each output to its source inputs with `add_trace_edge` (rel `derives`), and record the work with `log_event`. The platform persists each artifact body — do not write local files. Each open Critical or High finding opens a `defect` child WorkItem through the platform's **defect loopback** (the same open/close reconciliation as the test loop); the gate is not grantable while any Critical or High remains open.
+Produce each deliverable in full, then persist it with the platform-state tools in **two steps** (the same protocol every phase uses — `register_artifact` takes a pointer, not an inline body):
+
+1. **`stage_artifact_body(filename, body, content_type)`** — stream the finished document to the platform's object store. It returns `{s3_key, content_hash, bytes}`. One document per call.
+2. **`register_artifact(...)`** — register the artifact using the `s3_key` and `content_hash` that call returned, with `sor="internal"`.
+
+**Pass a human-readable `title`** on every `register_artifact` call (e.g. `"Finding — SQL injection in search filter"`, `"SBOM — payments-api"`, `"Threat Model"`) — every `security_finding` shares the type, so the `title` is what tells them apart in the UI; never omit it. Link each output to its source inputs with `add_trace_edge` (rel `derives`), and record the work with `log_event`. The platform persists each artifact body — do not write local files. Each open Critical or High finding opens a `defect` child WorkItem through the platform's **defect loopback** (the same open/close reconciliation as the test loop), so it becomes tracked, assignable work on the board.
 
 ### 1. Security Review — type `security_review` (primary)
 
@@ -397,6 +402,14 @@ Produce each deliverable in full, then register it with the platform-state `regi
 **Remediation:** [Specific fix with code-level guidance]
 **Status:** Open / Resolved
 ```
+
+When you `register_artifact` each `security_finding`, ALSO pass a structured `external_ref` carrying the finding id and severity — this is what the platform's defect loopback reads to open a `defect` WorkItem for each open Critical/High:
+
+```
+external_ref = { "finding_id": "SEC-001", "severity": "critical" }   # severity: critical | high | medium | low
+```
+
+Use the same `finding_id` across re-runs for the same underlying issue, so a finding you fixed is reconciled (its defect closes) instead of a duplicate being opened.
 
 ### 3. Threat Model — type `threat_model`
 STRIDE analysis from Step 9: the derived DFD (markdown description of all elements and trust boundaries) and the per-element STRIDE analysis tables.
