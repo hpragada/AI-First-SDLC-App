@@ -337,9 +337,31 @@ class RunnerWorkClaimView(APIView):
             # A poll may claim a fresh `pending` dispatch OR re-claim one that a dead companion
             # left `claimed` past its lease (RC-3). Staleness is checked in Python on the ISO
             # claimed_at so we lean only on the proven exact JSON-key lookups in the query.
+            #
+            # Two kinds of dispatch are claimable by this runner:
+            #   1. OWNED — dispatch.enrollment_id == this runner's id (the normal routed case:
+            #      trigger resolved the triggering user's companion and pinned it).
+            #   2. BROADCAST — dispatch.enrollment_id is null. A trigger issued while no companion
+            #      was enrolled/available (e.g. the S.No 161 remediation auto-retry, which fires
+            #      with no triggering user, or a user who triggers before starting their
+            #      companion) stamps a null enrollment. Nothing matched enrollment_id, so the run
+            #      sat RUNNING+unclaimable forever and blocked new triggers for the WorkItem (S.No
+            #      169-adjacent build-dispatch binding bug). Let ANY active companion for the same
+            #      tenant+project claim it and bind itself on claim, so the run self-heals the
+            #      moment a companion is available. `=None` matches the JSON-null we store; the
+            #      __isnull covers a dispatch that omitted the key entirely. Broadcast is scoped to
+            #      the runner's project (via work_item) so a companion never steals another
+            #      project's work; skip_locked + bind-on-claim keep it claimed exactly once.
+            owned = Q(inputs__dispatch__enrollment_id=str(runner.id))
+            broadcast = (
+                Q(work_item__project_id=runner.project_id)
+                & (Q(inputs__dispatch__enrollment_id=None)
+                   | Q(inputs__dispatch__enrollment_id__isnull=True))
+            )
             candidates = (
                 Run.objects.select_for_update(skip_locked=True)
-                .filter(tenant_id=tid, inputs__dispatch__enrollment_id=str(runner.id))
+                .filter(tenant_id=tid)
+                .filter(owned | broadcast)
                 .filter(Q(inputs__dispatch__status="pending")
                         | Q(inputs__dispatch__status="claimed"))
                 .order_by("created_at")
@@ -366,6 +388,11 @@ class RunnerWorkClaimView(APIView):
                 return Response(status=status.HTTP_204_NO_CONTENT)
             inputs = dict(run.inputs or {})
             dispatch = dict(inputs.get("dispatch") or {})
+            # Bind a BROADCAST (null-enrollment) dispatch to the claiming runner so it is now
+            # OWNED — subsequent polls, heartbeat claim-renewal and lease-reclaim all key off
+            # enrollment_id, and only this companion should carry it from here.
+            if dispatch.get("enrollment_id") in (None, ""):
+                dispatch["enrollment_id"] = str(runner.id)
             dispatch["status"] = "claimed"
             dispatch["claimed_at"] = now.isoformat()
             # Bugs S.No 134: mark when THIS continuous claim started (reset on every fresh claim /

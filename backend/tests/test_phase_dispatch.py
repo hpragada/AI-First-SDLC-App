@@ -360,6 +360,65 @@ def test_work_claim_scoped_to_enrollment(world):
     assert r.status_code == 204
 
 
+def _null_the_enrollment(run_id):
+    """Reproduce the build-dispatch binding bug: a dispatch stamped with enrollment_id=None
+    (trigger issued while no companion was resolvable — the S.No 161 remediation retry, or a
+    user triggering before starting their companion)."""
+    run = Run.objects.get(id=run_id)
+    dispatch = dict(run.inputs["dispatch"])
+    dispatch["enrollment_id"] = None
+    run.inputs = {**run.inputs, "dispatch": dispatch}
+    run.save(update_fields=["inputs"])
+
+
+def test_broadcast_null_enrollment_is_claimed_and_bound_by_project_companion(world):
+    """A null-enrollment dispatch used to sit RUNNING+unclaimable forever (no runner matched
+    enrollment_id). Now any active companion for the same tenant+project claims it and binds
+    itself, so the run self-heals."""
+    activities.dispatch_phase_core(world["inp"], manifest="# Project\nm")
+    _null_the_enrollment(world["run_id"])
+    client = APIClient()
+    r = client.get("/api/runner/work/", **_auth(world))
+    assert r.status_code == 200, r.content
+    assert r.json()["run_id"] == world["run_id"]
+    # Bound to the claiming runner -> now OWNED (heartbeat/reclaim key off this).
+    assert Run.objects.get(id=world["run_id"]).inputs["dispatch"]["enrollment_id"] == \
+        world["enrollment_id"]
+    # Claimed exactly once -> the next poll finds nothing.
+    assert client.get("/api/runner/work/", **_auth(world)).status_code == 204
+
+
+def test_broadcast_null_enrollment_is_not_claimed_across_projects(world):
+    """Broadcast is scoped to the runner's project — a companion in a different project of the
+    same tenant must never steal the work."""
+    activities.dispatch_phase_core(world["inp"], manifest="# Project\nm")
+    _null_the_enrollment(world["run_id"])
+    from apps.projects.models import Project
+    other_project = Project.objects.create(
+        tenant_id=world["tenant_id"], name="Other")
+    _, other_token = enroll_runner(
+        tenant_id=world["tenant_id"], project_id=str(other_project.id), label="other-proj")
+    client = APIClient()
+    r = client.get("/api/runner/work/", HTTP_AUTHORIZATION=f"Runner {other_token}",
+                   HTTP_X_TENANT_ID=world["tenant_id"])
+    assert r.status_code == 204
+
+
+def test_broadcast_null_enrollment_claimed_by_only_one_of_two_companions(world):
+    """Two companions in the same project poll a single broadcast run — exactly one claims it,
+    the other gets 204 (skip_locked + bind-on-claim)."""
+    activities.dispatch_phase_core(world["inp"], manifest="# Project\nm")
+    _null_the_enrollment(world["run_id"])
+    _, other_token = enroll_runner(
+        tenant_id=world["tenant_id"], project_id=world["project_id"], label="second")
+    client = APIClient()
+    first = client.get("/api/runner/work/", **_auth(world))
+    second = client.get("/api/runner/work/", HTTP_AUTHORIZATION=f"Runner {other_token}",
+                        HTTP_X_TENANT_ID=world["tenant_id"])
+    codes = sorted([first.status_code, second.status_code])
+    assert codes == [200, 204], (first.status_code, second.status_code)
+
+
 def test_stale_claim_is_reclaimed_after_lease(world):
     """RC-3: if the companion that claimed a run dies before reporting, the claim goes stale and
     a later poll re-claims it. Without this the run stays 'running' with no artifacts, no gate."""

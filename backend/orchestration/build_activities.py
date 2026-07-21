@@ -518,6 +518,7 @@ def handle_remediation_exhausted_core(inp: BuildInput) -> dict:
         )
         with tenant_context(inp.tenant_id):
             run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+            triggered_by_id = str(run.triggered_by_id) if run.triggered_by_id else None
             run.status = Run.Status.FAILED
             run.outputs = {
                 **(run.outputs or {}),
@@ -527,11 +528,15 @@ def handle_remediation_exhausted_core(inp: BuildInput) -> dict:
             run.save(update_fields=["status", "outputs", "updated_at"])
             tools.log_event(inp.tenant_id, "orchestrator", "build.remediation_exhausted_retry",
                             "run", inp.run_id, {"attempt": inp.attempt, "next_attempt": inp.attempt + 1})
+        # Carry the original trigger's user forward so the retry resolves the SAME companion
+        # (req #1) instead of dispatching with a null enrollment. A null-enrollment retry was the
+        # main way a build got stuck RUNNING+unclaimable (the broadcast-claim fix in
+        # RunnerWorkClaimView now recovers it either way, but a routed retry is the correct path).
         result = trigger_build(
             tenant_id=inp.tenant_id, project_id=inp.project_id, work_item_id=inp.work_item_id,
             repo=inp.repo, base=inp.base, work_item_key=inp.work_item_key,
-            required_role=inp.required_role, attempt=inp.attempt + 1,
-            prior_attempt_context=prior_context,
+            required_role=inp.required_role, triggered_by=triggered_by_id,
+            attempt=inp.attempt + 1, prior_attempt_context=prior_context,
         )
         with tenant_context(inp.tenant_id):
             run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)

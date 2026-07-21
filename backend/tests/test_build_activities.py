@@ -553,21 +553,40 @@ def test_remediation_exhausted_auto_retries_with_seeded_context(world, monkeypat
     """S.No 161: attempt 1 of 2 exhausting remediation auto-retries as a FRESH run instead of
     hard-failing — the new run's BuildInput carries attempt=2 and a readable digest of what
     blocked attempt 1, and the old run is marked failed (not left dangling)."""
+    from apps.tenancy.models import User
     from orchestration import trigger as trigger_mod
 
+    # The retry must route to the SAME companion as the original trigger — carry triggered_by
+    # forward, or the new run dispatches with a null enrollment and sits unclaimable (the
+    # build-dispatch binding bug). Give the original run a triggering user to prove it flows.
+    user = User.objects.create_user(email="dev@acme.test", name="Dev", tenant=world.t,
+                                    password="p")
+    world.run.triggered_by = user
     started = {}
     monkeypatch.setattr(trigger_mod, "_default_build_starter",
                         lambda workflow_id, inp: started.update(workflow_id=workflow_id, inp=inp))
+    captured = {}
     world.run.outputs = {"review_cycles": [{
         "blocking": [{"rem": "REM-C1", "severity": "critical", "title": "SQL injection",
                       "file": "db.py", "line": 42}],
         "blocking_count": 1, "findings_count": 1,
     }]}
-    world.run.save(update_fields=["outputs"])
+    world.run.save(update_fields=["outputs", "triggered_by"])
+
+    import orchestration.trigger as _tm
+
+    real_trigger = _tm.trigger_build
+
+    def _spy(**kw):
+        captured.update(kw)
+        return real_trigger(**kw)
+
+    monkeypatch.setattr(_tm, "trigger_build", _spy)
 
     out = ba.handle_remediation_exhausted_core(_inp(world, attempt=1))
 
     assert out["action"] == "retried"
+    assert captured["triggered_by"] == str(user.id)   # routed to the original companion
     assert started["inp"].attempt == 2
     assert "SQL injection" in started["inp"].prior_attempt_context
     assert "db.py:42" in started["inp"].prior_attempt_context
