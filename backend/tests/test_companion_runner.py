@@ -34,6 +34,7 @@ from runner.companion.worktree import (
     assert_remote_matches,
     changed_files,
     commit_all,
+    commits_ahead_of_base,
     provision_worktree,
     push_branch,
     teardown_worktree,
@@ -573,6 +574,49 @@ async def test_run_build_secret_block_does_not_commit_or_push(tmp_path, monkeypa
     branches = subprocess.run(["git", "-C", str(bare), "branch", "--list", "feature/ST-9"],
                               check=True, capture_output=True, text=True).stdout.strip()
     assert branches == ""
+
+
+class _NoOpDriver:
+    """An agent that makes NO file change — e.g. a retry onto a branch whose work is already done."""
+
+    async def run_build_task(self, *, manifest, agent_spec, repo_workspace, mcp_servers,
+                             allowed_tools, work_item):
+        return RunResult(outputs={"result": "noop"}, artifacts=[], cost_usd=0.01, raw_messages=[])
+
+
+def test_commits_ahead_of_base_counts_branch_work(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    wt = provision_worktree(repo_path=repo, branch="feature/ST-1", base="main",
+                            worktree_path=tmp_path / "wt" / "ST-1")
+    assert commits_ahead_of_base(wt, "main") == 0          # fresh branch off main
+    (wt / "impl.py").write_text("x = 1\n")
+    commit_all(wt, "work")
+    assert commits_ahead_of_base(wt, "main") == 1          # one commit beyond base
+
+
+async def test_retry_onto_already_built_branch_reports_tip_not_empty(tmp_path):
+    """A build re-dispatched onto a branch a prior attempt already pushed must NOT fail as an
+    empty build just because THIS run added nothing. The worktree continues from the branch's
+    remote tip (S.No 162), the agent makes no new change, but the branch already carries real
+    work — so the companion reports the branch tip as head_sha and the saga opens the PR against
+    it (reproduces the 'Empty build' seen on Retry run)."""
+    repo = _init_repo(tmp_path / "repo")
+    bare = _add_remote(repo)
+
+    # Attempt 1: a real build commits + pushes feature/ST-7.
+    first = await run_build(_task(work_item_key="ST-7"), driver=_FakeDriver(), repo_path=repo,
+                            worktrees_root=tmp_path / "wt1")
+    assert first["status"] == "ok" and len(first["head_sha"]) == 40
+    tip = first["head_sha"]
+
+    # Retry: the agent makes NO change; the worktree continues from origin/feature/ST-7.
+    out = await run_build(_task(work_item_key="ST-7"), driver=_NoOpDriver(), repo_path=repo,
+                          worktrees_root=tmp_path / "wt2")
+    assert out["changed_files"] == []                      # nothing new this run
+    assert out["status"] == "ok"
+    assert out["head_sha"] == tip                          # reports the existing branch tip …
+    # … so the saga's empty-build guard (head_sha or changed_files) does NOT trip.
+    assert bool(out["head_sha"] or out["changed_files"])
 
 
 def test_to_build_report_surfaces_redacted_secret_findings():

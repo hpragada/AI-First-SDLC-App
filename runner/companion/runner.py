@@ -27,6 +27,7 @@ from .worktree import (
     assert_remote_matches,
     changed_files,
     commit_all,
+    commits_ahead_of_base,
     head_sha,
     provision_worktree,
     push_branch,
@@ -445,6 +446,13 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
                 # Multi-repo safety: never push a work item's branch to the wrong repo's remote.
                 assert_remote_matches(worktree, task.repo)
                 push_branch(worktree, branch)
+                out["head_sha"] = head_sha(worktree)
+            elif commits_ahead_of_base(worktree, task.base) > 0:
+                # No NEW change this run, but the feature branch already carries committed work a
+                # prior attempt pushed (a Retry / re-dispatch onto an already-built branch). Report
+                # the branch tip as head_sha so the saga opens the PR against that existing work
+                # instead of failing it as an empty build. Nothing new to push — the tip is already
+                # on the remote (that is why provisioning found it).
                 out["head_sha"] = head_sha(worktree)
         return out
     finally:

@@ -81,6 +81,25 @@ def head_sha(worktree_path) -> str:
     return _git(worktree_path, "rev-parse", "HEAD").strip()
 
 
+def commits_ahead_of_base(worktree_path, base: str, *, remote: str = "origin") -> int:
+    """How many commits the worktree's branch carries beyond `base`.
+
+    Bugs (retry/empty-build): a build re-dispatched onto a branch a PRIOR attempt already
+    pushed provisions from that branch's remote tip (S.No 162 continuity), so the agent — seeing
+    the work already done — correctly produces NO new diff. `changed_files` is then empty and
+    nothing new is committed, but the branch still carries real, reviewable work. The saga must
+    not treat that as an empty build. This counts the branch's commits that are not in `base` so
+    the caller can tell "already-built branch, no new change" apart from a genuinely empty build.
+
+    Prefers the authoritative remote base ref (`<remote>/<base>`); falls back to a local `base`
+    ref (offline). An unknown ref yields 0 rather than raising."""
+    for ref in (f"{remote}/{base}", base):
+        out = _git(worktree_path, "rev-list", "--count", f"{ref}..HEAD", check=False).strip()
+        if out.isdigit():
+            return int(out)
+    return 0
+
+
 def commit_all(worktree_path, message: str) -> str | None:
     """Stage and commit every change on the worktree's feature branch (D2: the platform owns
     Git side-effects — the agent never runs git). `.sdlc/` scratch is already git-excluded, so
