@@ -9,3 +9,4 @@ export { Clarifications } from "./Clarifications";
 export { Gates } from "./Gates";
 export { CriteriaGate } from "./CriteriaGate";
 export { TaskBreakdown } from "./TaskBreakdown";
+export { TestCases } from "./TestCases";

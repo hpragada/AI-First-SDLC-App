@@ -15,6 +15,7 @@ import { Gates } from "./Gates";
 import { PhasesAndRuns } from "./PhasesAndRuns";
 import { RunConsole } from "./RunConsole";
 import { TaskBreakdown } from "./TaskBreakdown";
+import { TestCases } from "./TestCases";
 import { WorkItemDefect } from "./WorkItemDefect";
 import { WorkItemEpic } from "./WorkItemEpic";
 import { WorkItemTask } from "./WorkItemTask";
@@ -235,5 +236,26 @@ describe("S-23 Task breakdown", () => {
 
     rerender(<TaskBreakdown forceView="internal" />);
     expect(screen.getByText("Saved in the platform")).toBeDefined();
+  });
+});
+
+describe("P3-09b Test cases (coverage screen)", () => {
+  it("populated · empty · add-form", () => {
+    const { rerender } = renderWithProviders(<TestCases forceView="populated" />);
+    expect(screen.getByText(/Child work items/)).toBeDefined();
+    expect(screen.getByText("Checkout with expired card")).toBeDefined();
+    // Every automation state renders + a Generate action for a not-automated one.
+    expect(screen.getByText("Not automated")).toBeDefined();
+    expect(screen.getByText("Generating…")).toBeDefined();
+    expect(screen.getByText("Script ready")).toBeDefined();
+    expect(screen.getByText("Generate script")).toBeDefined();
+    expect(screen.getByText(/of 3 automated/)).toBeDefined();
+
+    rerender(<TestCases forceView="empty" />);
+    expect(screen.getByText("No test cases yet")).toBeDefined();
+
+    rerender(<TestCases forceView="add-form" />);
+    expect(screen.getByText("Steps / spec")).toBeDefined();
+    expect(screen.getByText("Add test case")).toBeDefined();
   });
 });

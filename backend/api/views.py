@@ -857,7 +857,13 @@ class WorkItemViewSet(
         project_id = self.request.data.get("project")
         if not Project.objects.filter(id=project_id, tenant_id=self.tenant_id).exists():
             raise ValidationError({"project": "unknown project for this tenant"})
-        serializer.save(tenant_id=self.tenant_id, project_id=project_id)
+        # A manually-added test case carries its priority in external_ref (the model has no
+        # priority column); the steps live in `description` (rendered into the 09b manifest).
+        extra = {}
+        priority = self.request.data.get("priority")
+        if serializer.validated_data.get("type") == WorkItem.Type.TEST_CASE and priority:
+            extra["external_ref"] = {"priority": priority}
+        serializer.save(tenant_id=self.tenant_id, project_id=project_id, **extra)
 
     def perform_update(self, serializer):
         """Hybrid Option C: a work item may only target a repository on its OWN project — reject
@@ -866,6 +872,26 @@ class WorkItemViewSet(
         if repo is not None and str(repo.project_id) != str(serializer.instance.project_id):
             raise ValidationError({"repo": "repository is not on this work item's project"})
         serializer.save()
+
+    @action(detail=True, methods=["get"], url_path="test-cases")
+    def test_cases(self, request, pk=None):
+        """The story's child `test_case` work items + each one's automation status (P3-09b) —
+        backs the Test cases coverage screen. `tc_id`/`priority` come from `external_ref`."""
+        from apps.workitems.test_cases import automation_status_for
+
+        story = self.get_object()
+        kids = WorkItem.objects.filter(
+            tenant_id=self.tenant_id, parent_id=story.id, type=WorkItem.Type.TEST_CASE
+        ).order_by("created_at")
+        return Response([
+            {
+                "id": str(w.id), "key": w.key, "title": w.title, "state": w.state,
+                "tc_id": (w.external_ref or {}).get("tc_id", ""),
+                "priority": (w.external_ref or {}).get("priority", ""),
+                "automation_status": automation_status_for(w),
+            }
+            for w in kids
+        ])
 
     def _card_fields(self, work_items):
         """P4.8-T1 bucket-B gap B: artifact_count/owner/needs the board + detail cards render,

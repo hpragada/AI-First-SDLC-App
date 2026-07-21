@@ -38,6 +38,7 @@ import type {
   SignupRequest,
   SourceDocument,
   Tenant,
+  TestCase,
   TestConnectionResult,
   TraceEdge,
   TraceGraph,
@@ -271,10 +272,14 @@ export const api = {
       description?: string;
       feature_stream?: string;
       parent?: string;
+      priority?: string; // test_case only — stored in external_ref
     },
   ) => req<WorkItem>("POST", "/work-items/", { tenantId, body: { project: projectId, ...data } }),
   getWorkItem: (tenantId: string, workItemId: string) =>
     req<WorkItemCard>("GET", `/work-items/${workItemId}/`, { tenantId }),
+  // A story's child test_case work items + each one's automation status (P3-09b coverage screen).
+  listTestCases: (tenantId: string, storyId: string) =>
+    req<TestCase[]>("GET", `/work-items/${storyId}/test-cases/`, { tenantId }),
   patchWorkItem: (
     tenantId: string,
     workItemId: string,

@@ -32,8 +32,19 @@ export function useCreateWorkItem(projectId: string | undefined) {
       description?: string;
       feature_stream?: string;
       parent?: string;
+      priority?: string;
     }) => api.createWorkItem(tenantId, projectId as string, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["work-items", projectId] }),
+  });
+}
+
+// A story's child test_case work items + automation status (P3-09b coverage screen).
+export function useTestCases(storyId: string | undefined) {
+  const tenantId = useTenantId();
+  return useQuery({
+    queryKey: ["test-cases", storyId],
+    queryFn: () => api.listTestCases(tenantId, storyId as string),
+    enabled: Boolean(storyId),
   });
 }
 

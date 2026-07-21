@@ -23,7 +23,8 @@ export function WorkItemDetail() {
     );
   }
 
-  if (workItem.data?.type === "task") return <WorkItemTask />;
+  // A test case reuses the task detail layout (P3-09b) — same build-tier shape.
+  if (workItem.data?.type === "task" || workItem.data?.type === "test_case") return <WorkItemTask />;
   if (workItem.data?.type === "defect") return <WorkItemDefect />;
   return <WorkItemEpic />;
 }

@@ -396,6 +396,18 @@ export interface Repository {
   preview_url: string; // manual app URL 09b explores (P3-09bR); "" = none
 }
 
+// A story's child test_case work item + its automation status (P3-09b coverage screen).
+export type AutomationStatus = "not_automated" | "generating" | "ready";
+export interface TestCase {
+  id: string;
+  key: string;
+  title: string;
+  tc_id: string;
+  priority: string;
+  state: string;
+  automation_status: AutomationStatus;
+}
+
 // CI ingest tokens (P3-09bX-1) — a per-project credential the client's CI uses to POST
 // automated-test results back. Metadata only; the secret is never stored/returned after issue.
 export interface CIToken {

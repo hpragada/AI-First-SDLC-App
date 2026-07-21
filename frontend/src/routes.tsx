@@ -29,6 +29,7 @@ import {
   PhasesAndRuns,
   RunConsole,
   TaskBreakdown,
+  TestCases,
   WorkItemsBoard,
 } from "./features/lifecycle";
 import { WorkItemDetail } from "./features/lifecycle/WorkItemDetail";
@@ -131,6 +132,7 @@ export function AppRoutes() {
           <Route path="/work-items" element={<WorkItemsBoard />} />
           <Route path="/work-items/:id" element={<WorkItemDetail />} />
           <Route path="/work-items/:id/breakdown" element={<TaskBreakdown />} />
+          <Route path="/work-items/:id/test-cases" element={<TestCases />} />
           <Route path="/runs" element={<PhasesAndRuns />} />
           <Route path="/runs/:id" element={<RunConsole />} />
           <Route path="/gates" element={<Gates />} />
