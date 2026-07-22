@@ -18,6 +18,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.base import Role
+from apps.projects.models import Project
 from apps.registry.catalog import gate_roles, seed_agent_specs
 from apps.tenancy.context import tenant_context
 from apps.tenancy.emails import send_invitation_email, send_password_reset_email
@@ -143,6 +144,51 @@ def revoke_invitation(invitation: Invitation) -> Invitation:
     invitation.status = Invitation.Status.REVOKED
     invitation.save(update_fields=["status", "updated_at"])
     return invitation
+
+
+def get_invitation_preview(token: str) -> dict:
+    """Look up an invitation by its raw token for the pre-auth accept-invite page. Read-only —
+    unlike `accept_invitation()`, this never transitions `status` (not even on an expired
+    invite); it only reports what accepting would find. Same 409/410 semantics as accept.
+    The tenant-scoped display fields (org name, inviter, project names) are read inside the
+    invitation's own `tenant_context`, the same pre-auth-then-scoped pattern `accept_invitation()`
+    uses — the RLS bootstrap carve-out (0006) is what makes the initial token-hash lookup
+    itself possible before any tenant is known."""
+    invitation = Invitation.objects.filter(token_hash=_hash_token(token)).first()
+    if invitation is None:
+        raise InvitationError("This invitation link is not valid.", status=410)
+    if invitation.status == Invitation.Status.ACCEPTED:
+        raise InvitationError("This invitation has already been used.", status=409)
+    if invitation.status == Invitation.Status.REVOKED:
+        raise InvitationError("This invitation has been revoked.", status=410)
+    if invitation.is_expired:
+        raise InvitationError("This invitation has expired.", status=410)
+
+    with tenant_context(invitation.tenant_id):
+        tenant_name = invitation.tenant.name
+        inviter_name = invitation.invited_by.name if invitation.invited_by_id else None
+        project_names = {
+            str(p.id): p.name
+            for p in Project.objects.filter(
+                id__in=[g["project_id"] for g in invitation.grants]
+            )
+        }
+        grants = [
+            {
+                "project_id": g["project_id"],
+                "project_name": project_names.get(g["project_id"], ""),
+                "role": g["role"],
+                "role_label": Role(g["role"]).label,
+            }
+            for g in invitation.grants
+        ]
+    return {
+        "tenant_name": tenant_name,
+        "inviter_name": inviter_name,
+        "email": invitation.email,
+        "name": invitation.name,
+        "grants": grants,
+    }
 
 
 def accept_invitation(*, token: str, password: str, name: str | None = None) -> User:

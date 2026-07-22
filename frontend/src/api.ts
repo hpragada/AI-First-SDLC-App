@@ -20,6 +20,7 @@ import type {
   GateCriteria,
   Integration,
   Invitation,
+  InvitationPreview,
   Lifecycle,
   LoginRequest,
   OnboardingHub,
@@ -135,6 +136,11 @@ export const api = {
 
   // Phase 4.8 T2 — public auth (no session yet): signup, invite-accept, reset.
   signup: (body: SignupRequest) => req<CurrentUser>("POST", "/auth/signup/", { body }),
+  // The accept-invite page's pre-submit lookup — org/inviter/role/project to display
+  // before the user fills anything in. Public, pre-auth, never returns the token/hash. The
+  // token rides the POST body (like accept), not the URL, so it stays out of access logs.
+  getInvitationPreview: (token: string) =>
+    req<InvitationPreview>("POST", "/auth/invitations/preview/", { body: { token } }),
   acceptInvitation: (body: AcceptInviteRequest) =>
     req<CurrentUser>("POST", "/auth/accept-invitation/", { body }),
   requestReset: (email: string) =>

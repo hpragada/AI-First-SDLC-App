@@ -290,6 +290,63 @@ def test_invitations_are_tenant_isolated(client, admin, tenant, project):
     assert emails == {"local@acme.com"}
 
 
+# ── Bug fix: invitation preview (accept-invite page's pre-submit lookup) ───
+def _preview(client, raw):
+    """POST the token in the body (never the URL) — the accept-invite page's pre-submit lookup."""
+    return client.post("/api/auth/invitations/preview/", {"token": raw}, format="json")
+
+
+def test_invitation_preview_returns_display_fields(client, admin, project):
+    _inv, raw = create_invitation(
+        tenant=admin.tenant, invited_by=admin, email="newhire@acme.com", name="New Hire",
+        grants=[{"project_id": str(project.id), "role": "engineer"}],
+    )
+    resp = _preview(client, raw)
+    assert resp.status_code == 200
+    assert resp.data["tenant_name"] == "Acme"
+    assert resp.data["inviter_name"] == "Boss"
+    assert resp.data["email"] == "newhire@acme.com"
+    assert resp.data["name"] == "New Hire"
+    assert resp.data["grants"] == [
+        {
+            "project_id": str(project.id),
+            "project_name": "Payment Gateway v2",
+            "role": "engineer",
+            "role_label": "Engineer",
+        }
+    ]
+    # never leaks the token/hash
+    assert "token" not in resp.data
+    assert "token_hash" not in resp.data
+
+
+def test_invitation_preview_invalid_token_410(client, db):
+    resp = _preview(client, "not-a-real-token")
+    assert resp.status_code == 410
+
+
+def test_invitation_preview_accepted_invitation_409(client, admin):
+    _inv, raw = create_invitation(tenant=admin.tenant, invited_by=admin, email="used@acme.com")
+    assert client.post(
+        "/api/auth/accept-invitation/", {"token": raw, "password": "first-pass!"},
+        format="json",
+    ).status_code == 200
+    resp = _preview(client, raw)
+    assert resp.status_code == 409
+
+
+def test_invitation_preview_does_not_mutate_expired_status(client, admin):
+    """Unlike accept_invitation(), a mere preview must not transition status —
+    it's a read, not an action."""
+    inv, raw = create_invitation(tenant=admin.tenant, invited_by=admin, email="stale@acme.com")
+    inv.expires_at = timezone.now() - timedelta(days=1)
+    inv.save(update_fields=["expires_at"])
+    resp = _preview(client, raw)
+    assert resp.status_code == 410
+    inv.refresh_from_db()
+    assert inv.status == "pending"  # not silently flipped to "expired" by the read
+
+
 # ── P4.7-T3: accept-invitation ──────────────────────────────────────
 def test_accept_invitation_creates_user_and_memberships(client, admin, project):
     _inv, raw = create_invitation(
