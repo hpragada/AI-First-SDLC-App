@@ -12,6 +12,7 @@ from django.db import connection
 
 from apps.projects.models import Project
 from apps.tenancy.models import Tenant
+from apps.tenancy.services import create_invitation
 
 
 def _app_role_connection():
@@ -80,6 +81,31 @@ def test_rls_with_check_blocks_cross_tenant_write():
                     "now(), now())",
                     [str(b.id)],
                 )
+    finally:
+        raw.close()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_rls_invitation_lookup_works_pre_auth():
+    """Regression: accept-invitation looks up an invitation by token hash BEFORE any
+    tenant is known (like login by email) — this must not be silently zero-rowed by
+    RLS under the real app role. See 0006_invitation_rls_auth_bootstrap.py."""
+    tenant = Tenant.objects.create(name="Acme")
+    other = Tenant.objects.create(name="Globex")
+    inv, raw_token = create_invitation(tenant=tenant, invited_by=None, email="new@acme.com")
+    create_invitation(tenant=other, invited_by=None, email="alien@globex.com")
+    token_hash = inv.token_hash
+
+    raw = _app_role_connection()
+    try:
+        with raw.cursor() as cur:
+            # No tenant context set — the pre-auth window.
+            cur.execute("SELECT set_config('app.tenant_id', %s, false)", [""])
+            cur.execute(
+                "SELECT email FROM tenancy_invitation WHERE token_hash = %s", [token_hash]
+            )
+            row = cur.fetchone()
+            assert row is not None and row[0] == "new@acme.com"
     finally:
         raw.close()
 

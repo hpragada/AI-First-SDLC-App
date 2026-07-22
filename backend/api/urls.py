@@ -5,6 +5,7 @@ from rest_framework.routers import DefaultRouter
 
 from .auth_views import (
     AcceptInvitationView,
+    InvitationPreviewView,
     LoginView,
     LogoutView,
     MeView,
@@ -76,7 +77,9 @@ urlpatterns = [
     path("auth/login/", LoginView.as_view(), name="auth-login"),
     path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
     path("auth/me/", MeView.as_view(), name="auth-me"),
-    # Invitation accept + password reset (P4.7-T3) — public, pre-auth (CSRF-exempt).
+    # Invitation preview + accept + password reset (P4.7-T3) — public, pre-auth (CSRF-exempt).
+    path("auth/invitations/<str:token>/preview/", InvitationPreviewView.as_view(),
+         name="auth-invitation-preview"),
     path("auth/accept-invitation/", AcceptInvitationView.as_view(), name="auth-accept-invitation"),
     path("auth/request-reset/", RequestResetView.as_view(), name="auth-request-reset"),
     path("auth/reset/", ResetView.as_view(), name="auth-reset"),

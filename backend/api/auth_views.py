@@ -23,6 +23,7 @@ from apps.tenancy.services import (
     ResetError,
     SignupError,
     accept_invitation,
+    get_invitation_preview,
     request_password_reset,
     reset_password,
     signup,
@@ -95,6 +96,23 @@ class LoginView(APIView):
             request.session["tenant_id"] = str(user.tenant_id)
             body = serialize_me(user)
         return Response(body)
+
+
+class InvitationPreviewView(APIView):
+    """GET /api/auth/invitations/<token>/preview — the org/inviter/role/project display
+    fields the accept-invite page needs before the user submits anything. Public + no
+    session (the whole point is to work pre-auth). Never returns the token/hash/id —
+    just what the page displays. 409 used / 410 expired-revoked-invalid, same as accept."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def get(self, request, token):
+        try:
+            preview = get_invitation_preview(token)
+        except InvitationError as exc:
+            return Response({"detail": str(exc)}, status=exc.status)
+        return Response(preview)
 
 
 class AcceptInvitationView(APIView):

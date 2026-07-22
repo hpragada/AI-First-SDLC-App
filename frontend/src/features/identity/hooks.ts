@@ -14,6 +14,15 @@ export function useSignup() {
   return useMutation({ mutationFn: (body: SignupRequest) => api.signup(body) });
 }
 
+export function useInvitationPreview(token: string) {
+  return useQuery({
+    queryKey: ["invitation-preview", token],
+    queryFn: () => api.getInvitationPreview(token),
+    enabled: Boolean(token),
+    retry: false, // a 409/410 here is a real terminal state, not a transient failure
+  });
+}
+
 export function useAcceptInvitation() {
   return useMutation({ mutationFn: (body: AcceptInviteRequest) => api.acceptInvitation(body) });
 }
