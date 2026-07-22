@@ -69,6 +69,17 @@ function RunConsoleLive() {
   const clarifications = useClarifications({ run: id, status: "pending" });
   const retry = useTriggerPhase(run.data?.work_item);
   const resume = useResumeRun(id);
+  // Bugs S.No 161 follow-up: when a build exhausts remediation it is marked FAILED and the
+  // platform auto-starts a FRESH run for the same work item, storing that run's id on this
+  // run's outputs.retry_run_id. Nothing surfaced it — the console showed "Failed / auto-retrying"
+  // with no link and no sign the retry was actually running, which repeatedly confused users
+  // (they saw a failed run and a separate pending gate with nothing connecting them). Read the
+  // pointer and fetch the retry run so we can link to it and show its LIVE status.
+  const retryRunId =
+    run.data?.outputs && typeof run.data.outputs === "object"
+      ? (run.data.outputs as Record<string, unknown>).retry_run_id
+      : undefined;
+  const retryRun = useRun(typeof retryRunId === "string" ? retryRunId : undefined);
 
   if (run.isLoading) {
     return (
@@ -195,6 +206,16 @@ function RunConsoleLive() {
                 : "The engine exited before reporting. No artifact was registered."}
           </Banner>
         )}
+        {view === "failed" && typeof retryRunId === "string" && (
+          <Banner variant="info" title="Automatically retried">
+            The platform started a fresh attempt for this work item — you don't need to
+            re-trigger.{" "}
+            <a href={`/runs/${retryRunId}`}>
+              Continued as run {retryRunId.slice(0, 8)}
+              {retryRun.data ? ` (${retryRun.data.status.replace(/_/g, " ")})` : ""} ↗
+            </a>
+          </Banner>
+        )}
         {view === "parked" && isResumable && (
           <Banner variant="warning" title="Paused on an error — you can carry on from here">
             {failureReason ? `Reason: ${failureReason}` : "This run hit an error and paused."}
@@ -214,9 +235,17 @@ function RunConsoleLive() {
 
         {view === "failed" && (
           <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
-            <Button variant="primary" onClick={handleRetry} disabled={retry.isPending}>
-              {retry.isPending ? <Spinner /> : "Retry run"}
-            </Button>
+            {typeof retryRunId === "string" ? (
+              // Already auto-retried — sending the user to the live attempt, not spawning a
+              // duplicate run via a manual re-trigger.
+              <Button variant="primary" onClick={() => navigate(`/runs/${retryRunId}`)}>
+                Go to the retry run →
+              </Button>
+            ) : (
+              <Button variant="primary" onClick={handleRetry} disabled={retry.isPending}>
+                {retry.isPending ? <Spinner /> : "Retry run"}
+              </Button>
+            )}
           </div>
         )}
         {view === "parked" && isResumable && (
