@@ -120,6 +120,26 @@ SCAFFOLDING STATUS:
 
 **Rule:** Never overwrite an existing file. If a base class already exists, read it to understand available helpers before generating page objects that extend it. Only create scaffolding files that do not yet exist.
 
+### Ignore generated run artifacts (required)
+
+The platform commits **everything** in the worktree — you never run Git. So anything the dry run (Step 6) or Playwright MCP (Step 4) drops on disk gets committed unless it is ignored. **Report/results directories are bulky and often binary** (screenshots, videos, traces), and committing them bloats the PR and can break downstream processing. Before finishing, make sure a `.gitignore` at the **worktree root** excludes these generated outputs — create it if absent, or append any missing lines (never remove existing entries):
+
+```gitignore
+# Generated test-run artifacts — provenance is recorded by the platform, never committed here
+.playwright-mcp/          # Playwright MCP exploration snapshots
+**/playwright-report/     # Playwright HTML report (bulky; contains .png/.webm)
+**/test-results/          # Playwright per-test outputs (screenshots, videos, traces)
+**/blob-report/
+**/node_modules/
+**/__pycache__/
+**/.pytest_cache/
+**/target/                # Maven/Gradle build output (Java)
+**/bin/
+**/obj/                   # .NET build output (C#)
+```
+
+Keep only the entries relevant to the confirmed tech stack, but **always** include the framework's report/results directories — those are the ones that carry binary files. The **test scripts, page objects, and config you author still get committed**; only the generated run outputs are ignored.
+
 ---
 
 ## Step 4: Live Application Exploration via Playwright MCP
