@@ -370,6 +370,24 @@ def test_dispatch_remediation_arms_build_claim_and_manifest(world):
     assert len(world.run.inputs["remediation"]["items"]) == 2  # brief retained for provenance
 
 
+def test_dispatch_remediation_ships_preview_for_test_automation(world):
+    """A 09b remediation re-runs the test-automation agent, which brings the app up — so it must
+    carry the preview target like the initial dispatch. Without it the fix-build fails loud with
+    'no preview target for this repo'."""
+    from apps.projects.models import Repository
+
+    Repository.objects.create(tenant=world.t, project=world.p, name="acme/api",
+                              preview_url="http://127.0.0.1:5175/", is_default=True)
+    _open_rem_child(world, "REM-C1", "critical")
+    inp = _inp(world, enrollment_id=str(world.enrollment.id))
+    inp.phase = "test_automation"
+    ba.dispatch_remediation_core(inp)
+    world.run.refresh_from_db()
+    bt = world.run.inputs["build_task"]
+    assert bt["preview_url"] == "http://127.0.0.1:5175/"
+    assert "preview_start" in bt
+
+
 def test_work_claim_returns_the_remediation_build(world):
     """The whole point (S.No 115): after remediation dispatch, /api/runner/work/ actually hands
     the companion a build task carrying the REM brief — previously it returned 204 forever."""
