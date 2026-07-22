@@ -2,7 +2,7 @@
 
     python -m runner.companion enroll --api-url URL --tenant T --project P --label laptop
     python -m runner.companion serve  --api-url URL --tenant T --token TOK --worktrees ~/sdlc \
-                                      [--repo-path ~/repos/api]              # single-repo
+                                      [--repo-path ~/repos/api] [--headed]   # single-repo
     python -m runner.companion serve  --api-url URL --tenant T --token TOK --worktrees ~/sdlc \
         --repo acme/api=~/repos/api --repo acme/web=~/repos/web             # multi-repo
     python -m runner.companion run    --task task.json --repo-path ~/repos/api --worktrees ~/sdlc
@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import urllib.request
 
@@ -106,6 +107,13 @@ def _parse_repo_map(pairs) -> dict:
 def _serve(args) -> int:
     from .daemon import CompanionDaemon
 
+    # `--headed` is shorthand for exporting SDLC_COMPANION_HEADED=1 for this process, so it is
+    # inherited by the children that matter: the Playwright MCP (drops --headless) and the agent's
+    # `npx playwright test` run (its generated config keys headless off this var). Set in-process
+    # so "watch this run" needs no separate shell export. An explicit env var still works too.
+    if getattr(args, "headed", False):
+        os.environ["SDLC_COMPANION_HEADED"] = "1"
+
     repo_paths = _parse_repo_map(args.repo)
     daemon = CompanionDaemon(
         api_url=args.api_url, tenant_id=args.tenant, token=args.token,
@@ -140,6 +148,10 @@ def main(argv=None) -> int:
                    help="multi-repo: map a repo (owner/name) to its local clone; repeat once per "
                         "repo. The build routes each work item to the clone matching its repo.")
     s.add_argument("--worktrees", default=None)
+    s.add_argument("--headed", action="store_true",
+                   help="attended local run: show the browser during 09b test automation (the "
+                        "exploration browser AND the generated test suite run headed). Equivalent "
+                        "to setting SDLC_COMPANION_HEADED=1 for this process.")
     s.add_argument("--poll-interval", type=float, default=5.0)
     s.add_argument("--heartbeat-interval", type=float, default=30.0,
                    help="seconds between liveness pings that keep the companion 'online' while "

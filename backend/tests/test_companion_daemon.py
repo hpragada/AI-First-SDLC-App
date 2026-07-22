@@ -537,3 +537,30 @@ def test_security_scan_degrades_when_no_worktree_configured():
     assert driver.repo_workspace is None            # ran without a worktree
     url, body = transport.reports()[0]
     assert url.endswith("/api/runner/phases/rsec/report/") and body["status"] == "ok"
+
+
+def test_serve_headed_flag_exports_env(monkeypatch):
+    """`serve --headed` exports SDLC_COMPANION_HEADED=1 for the process so both the Playwright MCP
+    and the agent's `npx playwright test` run inherit it and go headed — no separate shell export
+    or .env needed (the companion never loads the backend .env)."""
+    from runner.companion import __main__ as cli
+
+    monkeypatch.delenv("SDLC_COMPANION_HEADED", raising=False)
+    monkeypatch.setattr(cli, "_assert_engine_env", lambda: None)
+
+    class _FakeDaemon:
+        def __init__(self, **kw):
+            pass
+
+        def serve(self):
+            return None
+
+    monkeypatch.setattr(daemon_mod, "CompanionDaemon", _FakeDaemon)
+
+    # Without --headed: not set.
+    cli.main(["serve", "--api-url", "http://x", "--tenant", "t", "--token", "tok"])
+    assert os.environ.get("SDLC_COMPANION_HEADED") is None
+
+    # With --headed: exported for this process.
+    cli.main(["serve", "--api-url", "http://x", "--tenant", "t", "--token", "tok", "--headed"])
+    assert os.environ.get("SDLC_COMPANION_HEADED") == "1"

@@ -109,6 +109,14 @@ class _WorkItemShim:
     feature_stream: str
 
 
+def _headed_enabled() -> bool:
+    """True when the operator asked for an attended, visible-browser local run
+    (SDLC_COMPANION_HEADED=1). Drives both the exploration browser (Playwright MCP `--headless`)
+    and the generated test config, so the whole 09b flow is watchable end to end. Default off —
+    a dispatched run is normally unattended."""
+    return os.environ.get("SDLC_COMPANION_HEADED", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def build_mcp_servers(task: BuildTask, *, repo_root: str | None = None,
                       preview_url: str = "") -> dict:
     """MCP config the agent uses: a local stdio server that proxies platform-state calls to
@@ -141,10 +149,14 @@ def build_mcp_servers(task: BuildTask, *, repo_root: str | None = None,
         }
     }
     if playwright_tools_for(task.phase):
-        # `npx @playwright/mcp` is a stdio MCP server; `--headless` runs without a visible window
-        # (the companion is a dev laptop, but the run is unattended). The package + browser
+        # `npx @playwright/mcp` is a stdio MCP server. By default `--headless` runs without a
+        # visible window — a dispatched run is normally unattended, even on a dev laptop. Set
+        # SDLC_COMPANION_HEADED=1 to drop `--headless` and watch the agent drive the browser live
+        # (Live Application Exploration) during an attended local run. The package + browser
         # binaries are an enrollment prerequisite (P3-09bR-6 docs); absent → Step 4's hard-halt.
-        args = ["-y", "@playwright/mcp@latest", "--headless"]
+        args = ["-y", "@playwright/mcp@latest"]
+        if not _headed_enabled():
+            args.append("--headless")
         if preview_url:
             # Scope the browser to the preview host only (semicolon-separated origin list).
             args += ["--allowed-origins", preview_url]
@@ -173,6 +185,20 @@ def manifest_with_preview(manifest: str, preview_url: str) -> str:
         "- This is the live app under test for this run. Use it wherever the role instructions "
         "reference the application base URL (e.g. Playwright navigation).\n\n"
     )
+    if _headed_enabled():
+        # Attended local run: the operator is watching. Make the generated Playwright config run
+        # the suite with a visible browser too (the MCP exploration browser is already headed via
+        # its own flag). Keyed off the env var so the SAME config still runs headless when this
+        # run is later executed unattended (e.g. in CI). The env var is present in the agent's
+        # Bash and in `process.env` at test time because the companion process exports it.
+        header += (
+            "# Run visibly (headed)\n"
+            "- This run is being watched live. In the Playwright config you generate "
+            "(`playwright.config.ts`), set the browser to headed so the test execution is "
+            "visible — use `use: { headless: !process.env.SDLC_COMPANION_HEADED }` so the SAME "
+            "config still runs headless when executed unattended. Do NOT hard-code `headless: "
+            "true`, and do not add `--headless` when you invoke `playwright test`.\n\n"
+        )
     return header + manifest
 
 

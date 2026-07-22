@@ -328,6 +328,18 @@ def test_build_mcp_servers_adds_playwright_only_for_test_automation():
     assert "@playwright/mcp@latest" in pw["args"] and "--headless" in pw["args"]
 
 
+def test_playwright_headed_toggle(monkeypatch):
+    # Default (unattended): headless so no window pops up on the dev laptop.
+    monkeypatch.delenv("SDLC_COMPANION_HEADED", raising=False)
+    assert "--headless" in build_mcp_servers(_task(phase="test_automation"))["playwright"]["args"]
+    # SDLC_COMPANION_HEADED=1 (attended local run): drop --headless to watch the agent drive
+    # the browser live.
+    monkeypatch.setenv("SDLC_COMPANION_HEADED", "1")
+    args = build_mcp_servers(_task(phase="test_automation"))["playwright"]["args"]
+    assert "--headless" not in args
+    assert "@playwright/mcp@latest" in args
+
+
 def test_allowed_tools_for_extends_only_test_automation():
     impl = allowed_tools_for("implementation")
     assert impl == BUILD_ALLOWED_TOOLS                     # unchanged for 07/11
@@ -482,6 +494,17 @@ def test_manifest_with_preview_injects_url_and_substitutes_tokens():
 def test_manifest_with_preview_is_noop_without_url():
     manifest = "# Project\nNavigate to [base_url].\n"
     assert manifest_with_preview(manifest, "") == manifest
+
+
+def test_manifest_headed_instruction_only_when_enabled(monkeypatch):
+    manifest = "# Project\nNavigate to [base_url].\n"
+    # Default (unattended): no headed instruction — the generated config stays headless.
+    monkeypatch.delenv("SDLC_COMPANION_HEADED", raising=False)
+    assert "headed" not in manifest_with_preview(manifest, "http://127.0.0.1:5173").lower()
+    # Attended: the agent is told to generate a headed (env-keyed) Playwright config.
+    monkeypatch.setenv("SDLC_COMPANION_HEADED", "1")
+    out = manifest_with_preview(manifest, "http://127.0.0.1:5173")
+    assert "headless: !process.env.SDLC_COMPANION_HEADED" in out
 
 
 def test_build_mcp_servers_scopes_playwright_to_the_preview_origin():
