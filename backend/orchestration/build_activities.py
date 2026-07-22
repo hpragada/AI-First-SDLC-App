@@ -809,6 +809,17 @@ def dispatch_remediation_core(inp: BuildInput) -> dict:
         "api_url": getattr(settings, "PLATFORM_API_URL", ""),
         "remediation": True,
     }
+    # A 09b remediation re-runs the test-automation agent, which brings the app up again — so it
+    # needs the same preview target as the initial dispatch. Without this the fix-build fails loud
+    # with "no preview target for this repo". Phase-gated exactly like dispatch_build (07/11 never
+    # carry it).
+    if inp.phase == "test_automation":
+        from apps.projects.preview_config import resolve_preview_start, resolve_preview_url
+
+        payload["preview_url"] = resolve_preview_url(
+            tenant_id=inp.tenant_id, project_id=inp.project_id, repo_name=inp.repo)
+        payload["preview_start"] = resolve_preview_start(
+            tenant_id=inp.tenant_id, project_id=inp.project_id, repo_name=inp.repo)
     with tenant_context(inp.tenant_id):
         wi = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
         payload["work_item_title"] = wi.title

@@ -8,34 +8,13 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from .build_types import BuildReport
+# Shared NUL scrubber (Postgres text/jsonb cannot store the NUL code point). Companion reports and PR diffs
+# both carry stray NUL; scrub at every JSON-write boundary. See build_types.scrub_nul.
+from .build_types import BuildReport, scrub_nul as _scrub_nul
 
 
 class BuildReportError(Exception):
     """The report could not be applied (e.g. run has no workflow to signal)."""
-
-
-def _scrub_nul(value):
-    """Recursively strip NUL (``\\x00``) from every string in a report payload.
-
-    Postgres ``text``/``jsonb`` cannot store ``\\u0000`` ("unsupported Unicode escape
-    sequence — \\u0000 cannot be converted to text"), and companion-reported text can carry
-    stray NUL bytes: 09b captures live browser/app/terminal output (a failing Playwright
-    assertion's diagnostic, a snapshot, a log tail), and any NUL in there later flows into a
-    Postgres JSON write (run.outputs here, and the defect brief / run.inputs the workflow
-    derives from this report). One NUL then fails the whole write and parks the run for
-    takeover — after the real work (PR, artifacts) already landed. Scrubbing at this single
-    ingestion funnel keeps the run recording cleanly. Only NUL is removed; every other byte
-    (including the U+FFFD replacement char) is valid in Postgres text and left untouched."""
-    if isinstance(value, str):
-        return value.replace("\x00", "")
-    if isinstance(value, dict):
-        return {k: _scrub_nul(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_scrub_nul(v) for v in value]
-    if isinstance(value, tuple):
-        return tuple(_scrub_nul(v) for v in value)
-    return value
 
 
 def _default_signal_sender(workflow_id: str, report: BuildReport) -> None:
