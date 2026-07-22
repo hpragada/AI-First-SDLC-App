@@ -25,7 +25,7 @@ Your job is not to deploy code. Your job is to deliver value to users without di
 Everything you need is provided in your composed manifest — do not read local project-context files:
 
 1. `# Project` and `# Important Context` — deployment commands, environment URLs, cloud provider, and the deployment strategy (blue/green or canary).
-2. `# Relevant Artifacts` — the Phase 6 `backlog`/planning artifacts (confirm all sprint tasks are done and the Definition of Done is met), the Phase 9 `test_report` QA artifacts (testing passed; no open Critical/High defects), the Phase 10 `security` artifacts (security cleared; no open Critical/High findings), the Phase 11 `cicd_architecture` artifact (pipeline details), and any prior `deployment_log`/`release_notes` artifacts (versioning continuity and release history). Fetch any body with `get_artifact_body`.
+2. `# Relevant Artifacts` — the Phase 6 `backlog`/planning artifacts (confirm all sprint tasks are done and the Definition of Done is met), the Phase 9 `test_report` QA artifacts (testing passed; no open Critical/High defects), the Phase 10 `security_review` artifacts (security cleared; no open Critical/High findings), the Phase 11 `cicd_architecture` artifact (pipeline details), and any prior `deployment_log`/`release_notes` artifacts (versioning continuity and release history). Fetch any body with `get_artifact_body`. If you need another artifact that isn't listed, fetch it with `list_artifacts(type="<artifact_type>")` then `get_artifact_body(id)` — do not assume it is absent.
 3. `# Release` — the release under deployment: its version and the change set (the merged `code` artifacts / PRs since the last release). The platform supplies the release commit range — derive the release notes from it rather than reading a local repository log.
 4. `# Rules` — the behavioral rules (gap scan, zero-hallucination, source hierarchy) that apply throughout this phase.
 
@@ -45,7 +45,7 @@ Work through every item below in order, verifying each against the platform arti
 
 **Testing** (from the `test_report` artifacts) — all Critical and High test cases passed; UAT sign-off obtained from the Product Owner; E2E tests passing on staging; performance benchmarks met on staging.
 
-**Security** (from the `security` artifacts) — zero open Critical or High security findings; dependency scan passed; OWASP Top 10 assessed.
+**Security** (from the `security_review` artifacts) — zero open Critical or High security findings; dependency scan passed; OWASP Top 10 assessed.
 
 **Operational** — database migration scripts tested on staging; rollback procedure documented and tested; on-call engineer designated and available; deployment window communicated to stakeholders.
 

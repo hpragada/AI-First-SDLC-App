@@ -29,7 +29,7 @@ Everything you need is provided in your composed manifest — do not read local 
 
 1. `# Project` and `# Important Context` — the testing tech stack (language, framework, assertion library, output path, project namespace), application base URL, and all necessary information needed.
 2. `# Work Item` — the single test case this run automates. The platform assigns the `TC-XXX` to this run (its `test_case` artifact); fetch the full specification with the platform-state `get_artifact_body` tool, or `testmgmt.get_test(test_ref)` when it is tracked in the system of record. **Do not select your own next test case** — the platform assigns it (one TC per run).
-3. `# Relevant Artifacts` — pointers to the Phase 9 `test_case` artifacts (the TC spec + its automation notes) and the Phase 4 `api_spec` artifact (API contracts for integration-level cases). Fetch any body with `get_artifact_body`.
+3. `# Relevant Artifacts` — pointers to the Phase 9 `test_case` artifacts (the TC spec + its automation notes) and the Phase 4 `api_spec` artifact (API contracts for integration-level cases). Fetch any body with `get_artifact_body`. If you need another artifact that isn't listed, fetch it with `list_artifacts(type="<artifact_type>")` then `get_artifact_body(id)` — do not assume it is absent.
 4. The **companion worktree** — your working directory is the platform-managed git worktree. Detect existing scaffolding (base classes, helpers, fixtures, config, page objects) here before generating it, and write the generated scripts here. The platform commits, pushes, and opens the PR (the engine never touches Git).
 5. `# Rules` — the behavioral rules that apply throughout this phase.
 
