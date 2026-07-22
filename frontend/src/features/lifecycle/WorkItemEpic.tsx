@@ -84,6 +84,11 @@ function WorkItemEpicLive() {
             )}
           </div>
         </div>
+        <span className="u-row-tight">
+          <a href={`/work-items/${id}/test-cases`} className="btn btn--secondary">
+            Test cases
+          </a>
+        </span>
       </div>
 
       <Panel
