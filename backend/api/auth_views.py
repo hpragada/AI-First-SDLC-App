@@ -99,15 +99,17 @@ class LoginView(APIView):
 
 
 class InvitationPreviewView(APIView):
-    """GET /api/auth/invitations/<token>/preview — the org/inviter/role/project display
-    fields the accept-invite page needs before the user submits anything. Public + no
-    session (the whole point is to work pre-auth). Never returns the token/hash/id —
-    just what the page displays. 409 used / 410 expired-revoked-invalid, same as accept."""
+    """POST /api/auth/invitations/preview — {token} → the org/inviter/role/project display
+    fields the accept-invite page needs before the user submits anything. Public + no session
+    (the whole point is to work pre-auth). The token rides the request body (like accept), not
+    the URL, so it never lands in access/proxy logs. Never returns the token/hash/id — just what
+    the page displays. 409 used / 410 expired-revoked-invalid, same as accept."""
 
     authentication_classes: list = []
     permission_classes: list = []
 
-    def get(self, request, token):
+    def post(self, request):
+        token = request.data.get("token") or ""
         try:
             preview = get_invitation_preview(token)
         except InvitationError as exc:

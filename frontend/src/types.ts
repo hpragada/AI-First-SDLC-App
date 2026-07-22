@@ -258,7 +258,7 @@ export interface ResetRequest {
   password: string;
 }
 
-// GET /auth/invitations/{token}/preview — the accept-invite page's pre-submit lookup
+// POST /auth/invitations/preview {token} — the accept-invite page's pre-submit lookup
 // (public, pre-auth). Never carries the token/hash/id — just what the page displays.
 export interface InvitationPreviewGrant {
   project_id: string;

@@ -78,7 +78,7 @@ urlpatterns = [
     path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
     path("auth/me/", MeView.as_view(), name="auth-me"),
     # Invitation preview + accept + password reset (P4.7-T3) — public, pre-auth (CSRF-exempt).
-    path("auth/invitations/<str:token>/preview/", InvitationPreviewView.as_view(),
+    path("auth/invitations/preview/", InvitationPreviewView.as_view(),
          name="auth-invitation-preview"),
     path("auth/accept-invitation/", AcceptInvitationView.as_view(), name="auth-accept-invitation"),
     path("auth/request-reset/", RequestResetView.as_view(), name="auth-request-reset"),
