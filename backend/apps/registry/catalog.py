@@ -58,6 +58,16 @@ class AgentDefinition:
     # 09_testing) get code access without hardcoding phase keys anywhere. Mutually exclusive
     # with `rides_build` by construction (a build phase already has a worktree).
     reads_code: bool = False
+    # The upstream artifact TYPES this agent depends on — its declared inputs (Bugs S.No 190).
+    # `get_context` GUARANTEES the latest version of each of these reaches the manifest's
+    # `# Relevant Artifacts` (the "required tier"), never evicted by the recency tail, so a
+    # late-lifecycle phase always gets the specific upstream inputs its body names instead of a
+    # blind newest-N slice that can drop the oldest-but-required ones. Anything NOT declared here
+    # the agent can still pull on demand by type (list_artifacts(type=…) → get_artifact_body).
+    # These are exact `type` strings as the producing agents register them (e.g. 04 registers
+    # `architecture`/`adr`, 10 registers `security_review`, 09b registers `test_report`). The
+    # single source of truth — the composer/get_context read this, so it never drifts per site.
+    needs_artifacts: tuple[str, ...] = ()
 
     @property
     def body_ref(self) -> str:
@@ -67,18 +77,30 @@ class AgentDefinition:
 AGENT_CATALOG: list[AgentDefinition] = [
     # ── Phase agents (planning 01–04 migrated in P0) ────────────────
     AgentDefinition("01_ideation", "ideate", "ideation", "01_ideation_agent.md", "P0", "product_owner"),
-    AgentDefinition("02_requirements", "requirements", "requirements", "02_requirements_agent.md", "P0", "product_owner"),
-    AgentDefinition("03_prd", "prd", "prd", "03_prd_agent.md", "P0", "product_owner"),
-    AgentDefinition("04_architecture", "architecture", "architecture", "04_architecture_agent.md", "P0", "architect"),
-    AgentDefinition("05_ux_design", "ux-design", "ux_design", "05_ux_design_agent.md", "P3", "designer"),
-    AgentDefinition("06_task_breakdown", "task-breakdown", "task_breakdown", "06_task_breakdown_agent.md", "P1", "tech_lead"),
-    AgentDefinition("07_implementation", "implement", "implementation", "07_implementation_agent.md", "P2", "tech_lead", rides_build=True),
-    AgentDefinition("08_code_review", "code-review", "code_review", "08_code_review_agent.md", "P2", "reviewer"),
-    AgentDefinition("09_testing", "test", "testing", "09_testing_agent.md", "P3", "qa_lead"),
-    AgentDefinition("09b_test_automation", "test-automation", "test_automation", "09b_test_automation_agent.md", "P3", "qa_lead", rides_build=True, imports_test_results=True),
-    AgentDefinition("10_security", "security", "security", "10-security-agent.md", "P3", "security_engineer", reads_code=True),
-    AgentDefinition("11_cicd", "cicd", "cicd", "11_cicd_agent.md", "P2", "devops", rides_build=True),
-    AgentDefinition("12_deployment", "deploy", "deployment", "12_deployment_agent.md", "P2", "devops"),
+    AgentDefinition("02_requirements", "requirements", "requirements", "02_requirements_agent.md", "P0", "product_owner",
+                    needs_artifacts=("ideation",)),
+    AgentDefinition("03_prd", "prd", "prd", "03_prd_agent.md", "P0", "product_owner",
+                    needs_artifacts=("requirements", "user_stories", "ideation")),
+    AgentDefinition("04_architecture", "architecture", "architecture", "04_architecture_agent.md", "P0", "architect",
+                    needs_artifacts=("prd", "requirements", "user_stories")),
+    AgentDefinition("05_ux_design", "ux-design", "ux_design", "05_ux_design_agent.md", "P3", "designer",
+                    needs_artifacts=("prd", "requirements", "architecture")),
+    AgentDefinition("06_task_breakdown", "task-breakdown", "task_breakdown", "06_task_breakdown_agent.md", "P1", "tech_lead",
+                    needs_artifacts=("prd", "architecture", "adr", "ux_design", "wireframe")),
+    AgentDefinition("07_implementation", "implement", "implementation", "07_implementation_agent.md", "P2", "tech_lead", rides_build=True,
+                    needs_artifacts=("architecture", "adr", "api_spec", "data_model", "wireframe")),
+    AgentDefinition("08_code_review", "code-review", "code_review", "08_code_review_agent.md", "P2", "reviewer",
+                    needs_artifacts=("architecture", "adr", "api_spec")),
+    AgentDefinition("09_testing", "test", "testing", "09_testing_agent.md", "P3", "qa_lead",
+                    needs_artifacts=("prd", "requirements", "architecture", "api_spec")),
+    AgentDefinition("09b_test_automation", "test-automation", "test_automation", "09b_test_automation_agent.md", "P3", "qa_lead", rides_build=True, imports_test_results=True,
+                    needs_artifacts=("architecture", "api_spec", "test_case")),
+    AgentDefinition("10_security", "security", "security", "10-security-agent.md", "P3", "security_engineer", reads_code=True,
+                    needs_artifacts=("architecture", "adr", "security_architecture", "api_spec")),
+    AgentDefinition("11_cicd", "cicd", "cicd", "11_cicd_agent.md", "P2", "devops", rides_build=True,
+                    needs_artifacts=("architecture", "adr", "security_review", "test_report")),
+    AgentDefinition("12_deployment", "deploy", "deployment", "12_deployment_agent.md", "P2", "devops",
+                    needs_artifacts=("cicd_architecture", "pipeline_config", "architecture", "secrets_manifest", "security_review")),
     # ── Entry / onboarding agents (P4) ──────────────────────────────
     AgentDefinition("00_onboarding", "onboard", "onboarding", "00_onboarding_agent.md", "P4", "product_owner"),
     AgentDefinition("00b_context_bridge", "context-bridge", "context_bridge", "00b_context_bridge_agent.md", "P4", "architect"),
@@ -96,6 +118,7 @@ ACTIVE_AGENT_CATALOG: list[AgentDefinition] = [d for d in AGENT_CATALOG if not d
 
 _BY_KEY = {d.key: d for d in AGENT_CATALOG}
 _BY_COMMAND = {d.command: d for d in AGENT_CATALOG}
+_BY_PHASE_LABEL = {d.phase_label: d for d in AGENT_CATALOG}
 
 
 def get_by_key(key: str) -> AgentDefinition | None:
@@ -118,6 +141,15 @@ def rides_build(key: str) -> bool:
     a new build agent only sets `rides_build=True` on its catalog entry."""
     definition = _BY_KEY.get(key)
     return bool(definition and definition.rides_build)
+
+
+def needs_artifacts_for(phase_or_key: str) -> tuple[str, ...]:
+    """The upstream artifact types an agent requires (Bugs S.No 190). Accepts either the agent
+    key (`11_cicd`) or the phase label (`cicd`) — the run's `phase` is the phase_label, so
+    `get_context`/the composer can resolve the required tier straight from the phase string with
+    no extra plumbing. Unknown phase/key → empty tuple (agent gets only the situational tail)."""
+    d = _BY_KEY.get(phase_or_key) or _BY_PHASE_LABEL.get(phase_or_key)
+    return d.needs_artifacts if d else ()
 
 
 def reads_code(key: str) -> bool:

@@ -190,10 +190,22 @@ def _profile(project: Project) -> dict:
 #: artifact. The ledger keeps them; the manifest just doesn't repeat them.
 _MANIFEST_MUTED_ACTIONS = {"artifact.registered"}
 
+#: How many recent artifacts to include as the "situational tail" — peripheral awareness on top
+#: of an agent's guaranteed required tier (Bugs S.No 190). The required inputs are always present
+#: and never counted against this; only this recency window is capped.
+_SITUATIONAL_TAIL = 12
+
 
 # ── tools (spec §2 signatures; tenant_id is the bound scope) ─────────
 def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -> dict:
     """Inputs the Manifest Composer renders, incl. Knowledge-Index retrieval (Phase 4).
+
+    **Dependency-driven artifacts (Bugs S.No 190).** `relevant_artifacts` is a *required tier*
+    (the latest version of each type the running agent declares in its catalog `needs_artifacts`,
+    resolved from `phase`) that is always present and never evicted, followed by a small capped
+    situational-recency tail. Each pointer carries `required: bool`; `missing_required_artifacts`
+    lists declared types with no artifact yet. Anything else the agent pulls on demand by type
+    via `list_artifacts(type=…)` → `get_artifact_body`.
 
     **Per-repo scoping (D5).** When the run targets a repo (explicit `repo_id`, else the work
     item's repo), `relevant_artifacts` is scoped to that repo: its own artifacts **+** the
@@ -223,13 +235,35 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
             tenant_id=tenant_id, project_id=project_id
         ).order_by("-is_default", "role", "name")
 
-        artifacts_qs = Artifact.objects.filter(tenant_id=tenant_id, project_id=project_id)
+        # Dependency-driven selection (Bugs S.No 190). Replaces the old "newest 50 → cap 20"
+        # recency slice, which could evict an agent's oldest-but-required upstream inputs.
+        from apps.registry.catalog import needs_artifacts_for
+
+        needs = needs_artifacts_for(phase)
+        base_qs = Artifact.objects.filter(tenant_id=tenant_id, project_id=project_id)
         if repo is not None:
             # this repo + repo-agnostic project artifacts + the shared cross-repo contract
-            artifacts_qs = artifacts_qs.filter(
+            base_qs = base_qs.filter(
                 Q(repo_id=repo.id) | Q(repo_id__isnull=True) | Q(type="api_contract")
             )
-        artifacts = artifacts_qs.order_by("-created_at")[:50]
+        # Required tier: the latest version of each declared upstream type is ALWAYS injected
+        # and never evicted, so a late phase gets its named inputs regardless of how many newer
+        # artifacts exist. A declared type with no artifact yet is surfaced (missing_types) so
+        # the agent treats it as a gap per # Rules instead of silently proceeding.
+        required, required_ids, missing_types = [], set(), []
+        for t in needs:
+            a = base_qs.filter(type=t).order_by("-version", "-created_at").first()
+            if a is not None:
+                required.append(a)
+                required_ids.add(a.id)
+            else:
+                missing_types.append(t)
+        # Situational tail: a small recency window for peripheral awareness, excluding anything
+        # already pinned in the required tier and capped (team-approved: keep a safe tail).
+        tail = list(
+            base_qs.exclude(id__in=required_ids).order_by("-created_at")[:_SITUATIONAL_TAIL]
+        )
+        artifacts = required + tail
         events = (
             Event.objects.filter(tenant_id=tenant_id)
             .exclude(action__in=_MANIFEST_MUTED_ACTIONS)
@@ -255,7 +289,11 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
             # Knowledge Index = project-scoped shared memory (D5) — retrieve across all repos.
             # Pointers only (bodies fetched via get_artifact_body) so many artifacts with large
             # external_ref bodies don't blow the MCP token budget (Bugs.xlsx row 69).
-            "relevant_artifacts": [_artifact_pointer(a) for a in artifacts],
+            "relevant_artifacts": [
+                {**_artifact_pointer(a), "required": a.id in required_ids} for a in artifacts
+            ],
+            # Declared inputs with no artifact yet — the composer renders these as a named gap.
+            "missing_required_artifacts": missing_types,
             "recent_events": [_event(e) for e in events],
             "retrieved_knowledge": _retrieve_knowledge(tenant_id, project_id, query),
             "answered_clarifications": [_clarification(c) for c in answered],
@@ -599,11 +637,18 @@ def get_artifact_body(tenant_id, artifact_id, state=None, object_store=None) -> 
             max_bytes=_MAX_BODY_READ_BYTES)
 
 
-def list_artifacts(tenant_id, project_id, phase=None, status=None) -> list[dict]:
+def list_artifacts(tenant_id, project_id, phase=None, status=None, type=None) -> list[dict]:
+    """List artifact pointers, optionally filtered by `phase`, `status`, and/or `type`. The
+    `type` filter (Bugs S.No 191) is how an agent accurately pulls a specific upstream input on
+    demand — e.g. `list_artifacts(type="architecture")` returns the architecture pointer(s),
+    newest first, then `get_artifact_body(id)` fetches the body. This is the on-demand companion
+    to get_context's guaranteed required tier (S.No 190)."""
     with tenant_context(tenant_id):
         qs = Artifact.objects.filter(tenant_id=tenant_id, project_id=project_id)
         if phase is not None:
             qs = qs.filter(phase=phase)
+        if type is not None:
+            qs = qs.filter(type=type)
         if status is not None:
             if status not in Artifact.Status.values:
                 raise ValueError(f"invalid status: {status}")

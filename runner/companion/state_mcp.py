@@ -50,9 +50,12 @@ def build_server(
 
     @server.tool()
     def list_artifacts(project_id: str, phase: str | None = None,
-                       status: str | None = None) -> list:
+                       status: str | None = None, type: str | None = None) -> list:
+        """List artifact pointers, optionally filtered. Pass `type` to fetch a specific upstream
+        input accurately — e.g. list_artifacts(type="architecture") → get_artifact_body(id) —
+        when it isn't already in your manifest's # Relevant Artifacts (Bugs S.No 191)."""
         return client.call("list_artifacts", project_id=project_id_bound or project_id,
-                           phase=phase, status=status)
+                           phase=phase, status=status, type=type)
 
     @server.tool()
     def stage_artifact_body(filename: str, body: str, content_type: str = "text/html",

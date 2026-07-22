@@ -186,25 +186,57 @@ def _render_clarifications(clarifications: list[dict], budget: TokenBudget) -> s
     return _section("Answered Clarifications", "\n".join(lines), budget.answered_clarifications)
 
 
-def _render_artifacts(artifacts: list[dict], budget: TokenBudget) -> str:
-    if not artifacts:
+def _artifact_ptr_line(a: dict) -> str:
+    ptr = a.get("s3_key") or (
+        json.dumps(a.get("external_ref")) if a.get("external_ref") else "—"
+    )
+    return (
+        f"- [{a.get('type')} v{a.get('version')}] {a.get('id')} — "
+        f"phase={a.get('phase')}, status={a.get('status')}, sor={a.get('sor')}, ptr={ptr}"
+    )
+
+
+def _render_artifacts(
+    artifacts: list[dict], budget: TokenBudget, missing_required: list[str] | None = None
+) -> str:
+    """Render required-first (Bugs S.No 190). The agent's declared inputs (`required: True`) are
+    always shown and never truncated by the count budget; only the situational tail is capped.
+    Missing declared inputs are named as a gap, and the fetch-by-type fallback (S.No 191) is
+    stated before the tail so it survives any token-budget truncation of the section."""
+    required = [a for a in artifacts if a.get("required")]
+    tail = [a for a in artifacts if not a.get("required")]
+    missing_required = missing_required or []
+    if not artifacts and not missing_required:
         return _section("Relevant Artifacts", "", budget.relevant_artifacts)
-    shown = artifacts[: budget.max_artifacts]
     lines = [
         "Pointers only — fetch full bodies with the platform-state "
         "`get_artifact_body(artifact_id)` tool.",
         "",
     ]
-    for a in shown:
-        ptr = a.get("s3_key") or (
-            json.dumps(a.get("external_ref")) if a.get("external_ref") else "—"
-        )
+    if required:
         lines.append(
-            f"- [{a.get('type')} v{a.get('version')}] {a.get('id')} — "
-            f"phase={a.get('phase')}, status={a.get('status')}, sor={a.get('sor')}, ptr={ptr}"
+            "**Required inputs for this phase** (your declared upstream dependencies — always "
+            "the latest version):"
         )
-    if len(artifacts) > len(shown):
-        lines.append(f"\n… {len(artifacts) - len(shown)} more not shown (budget).")
+        lines += [_artifact_ptr_line(a) for a in required]
+        lines.append("")
+    if missing_required:
+        lines.append(
+            "**Declared inputs NOT found** (the producing phase may not have run yet — treat as "
+            "a gap per `# Rules`): " + ", ".join(f"`{t}`" for t in missing_required)
+        )
+        lines.append("")
+    lines.append(
+        "Need an artifact that isn't listed here? Fetch it precisely by type with "
+        '`list_artifacts(type="<artifact_type>")`, then `get_artifact_body(id)`.'
+    )
+    if tail:
+        shown = tail[: budget.max_artifacts]
+        lines.append("")
+        lines.append("**Other recent artifacts** (situational):")
+        lines += [_artifact_ptr_line(a) for a in shown]
+        if len(tail) > len(shown):
+            lines.append(f"… {len(tail) - len(shown)} more not shown (budget).")
     return _section("Relevant Artifacts", "\n".join(lines), budget.relevant_artifacts)
 
 
@@ -266,7 +298,10 @@ def compose_manifest(
     if clarifications:  # only when prior answers exist (req #2 durability) — else omitted
         sections.append(_render_clarifications(clarifications, budget))
     sections += [
-        _render_artifacts(context.get("relevant_artifacts") or [], budget),
+        _render_artifacts(
+            context.get("relevant_artifacts") or [], budget,
+            missing_required=context.get("missing_required_artifacts") or [],
+        ),
         _render_events(context.get("recent_events") or [], budget),
         _render_knowledge(context.get("retrieved_knowledge") or [], budget),
         _render_rules(rules, budget),

@@ -162,6 +162,38 @@ def test_artifact_count_capped():
     assert "40 more not shown (budget)." in md
 
 
+def test_required_artifacts_pinned_first_and_gap_named():
+    """Bugs S.No 190/191: declared inputs render first (never capped away), missing ones are
+    named as a gap, and the fetch-by-type fallback appears before the situational tail."""
+    required = [
+        {"id": "arch", "type": "architecture", "version": 3, "phase": "architecture",
+         "status": "approved", "sor": "internal", "s3_key": "s3://b/arch", "required": True},
+    ]
+    tail = [
+        {"id": f"c{i}", "type": "code", "version": 1, "phase": "implementation",
+         "status": "approved", "sor": "git", "s3_key": f"s3://b/c{i}", "external_ref": None,
+         "required": False}
+        for i in range(15)
+    ]
+    md = compose_manifest(
+        context=_context(relevant_artifacts=required + tail,
+                         missing_required_artifacts=["security_review", "test_report"]),
+        work_item=_work_item(), phase="cicd",
+        budget=TokenBudget(max_artifacts=5, relevant_artifacts=100_000),
+    )
+    # required rendered, and before the situational tail
+    assert "**Required inputs for this phase**" in md and "arch" in md
+    assert md.index("**Required inputs") < md.index("**Other recent artifacts**")
+    # missing declared inputs surfaced as a gap
+    assert "Declared inputs NOT found" in md
+    assert "`security_review`" in md and "`test_report`" in md
+    # fetch-by-type fallback present, before the tail so it survives truncation
+    assert 'list_artifacts(type="<artifact_type>")' in md
+    assert md.index("Fetch it precisely by type") < md.index("**Other recent artifacts**")
+    # only the TAIL is capped (5 of 15 shown → 10 more), never the required input
+    assert "10 more not shown (budget)." in md
+
+
 def test_estimate_tokens_is_monotonic():
     assert estimate_tokens("") == 0
     assert estimate_tokens("abcd") == 1

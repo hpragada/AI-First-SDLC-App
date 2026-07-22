@@ -510,14 +510,59 @@ def test_get_context_shape(world):
 
     ctx = tools.get_context(t.id, project.id, phase="prd")
     assert set(ctx) == {"profile", "repo", "repositories", "relevant_artifacts",
-                        "recent_events", "retrieved_knowledge", "answered_clarifications"}
+                        "missing_required_artifacts", "recent_events", "retrieved_knowledge",
+                        "answered_clarifications"}
     assert ctx["repo"] is None  # repo-less run → no per-repo scoping (D5)
     assert ctx["repositories"] == []  # no repos on this project → no assignment options
     assert ctx["profile"]["important_context"] == "ctx" and ctx["profile"]["version"] == 2
     assert len(ctx["relevant_artifacts"]) == 1
+    # Dependency-driven provisioning (Bugs S.No 190): prd declares needs (requirements,
+    # user_stories, ideation). The one registered `requirements` artifact is pinned as a
+    # required input; the two undelivered types are surfaced as a named gap.
+    assert ctx["relevant_artifacts"][0]["type"] == "requirements"
+    assert ctx["relevant_artifacts"][0]["required"] is True
+    assert set(ctx["missing_required_artifacts"]) == {"user_stories", "ideation"}
     assert len(ctx["recent_events"]) == 1
     assert ctx["retrieved_knowledge"] == []  # Phase 4
     assert ctx["answered_clarifications"] == []  # none asked yet
+
+
+def test_get_context_pins_required_input_past_the_recency_tail(world):
+    """Bugs S.No 190: a declared upstream input is guaranteed in the manifest even when many
+    newer artifacts would push it out of a recency-capped window. cicd declares
+    architecture/adr/security_review/test_report — only architecture is registered here, buried
+    under 20 newer `code` artifacts."""
+    t, project, run = world["t"], world["project"], world["run"]
+    arch = tools.register_artifact(
+        t.id, project.id, run.id, phase="architecture", type="architecture",
+        sor="internal", content_hash="h", s3_key="k/arch",
+    )
+    for i in range(20):  # more than the situational-tail cap (12)
+        tools.register_artifact(
+            t.id, project.id, run.id, phase="implementation", type="code",
+            sor="git", content_hash=f"h{i}", s3_key=f"k/c{i}",
+        )
+    ctx = tools.get_context(t.id, project.id, phase="cicd")
+    arts = {a["id"]: a for a in ctx["relevant_artifacts"]}
+    # the old architecture input is present and flagged required, despite 20 newer artifacts
+    assert arch["id"] in arts and arts[arch["id"]]["required"] is True
+    # its declared-but-absent siblings are surfaced as a named gap
+    assert set(ctx["missing_required_artifacts"]) == {"adr", "security_review", "test_report"}
+    # the situational tail is capped — the required input is never one of the capped-away items
+    tail = [a for a in ctx["relevant_artifacts"] if not a["required"]]
+    assert len(tail) <= 12
+
+
+def test_list_artifacts_filters_by_type(world):
+    """Bugs S.No 191: an agent pulls a specific upstream input accurately by type."""
+    t, project, run = world["t"], world["project"], world["run"]
+    a = tools.register_artifact(t.id, project.id, run.id, phase="architecture",
+                                type="architecture", sor="internal", content_hash="h1")
+    tools.register_artifact(t.id, project.id, run.id, phase="implementation",
+                            type="code", sor="git", content_hash="h2")
+    listed = tools.list_artifacts(t.id, project.id, type="architecture")
+    assert [x["id"] for x in listed] == [a["id"]]
+    assert tools.list_artifacts(t.id, project.id, type="nonexistent") == []
 
 
 def test_get_context_replays_answered_clarifications(world):

@@ -182,9 +182,10 @@ def get_artifact(artifact_id: str) -> dict:
 
 @server.tool()
 def list_artifacts(
-    project_id: str, phase: str | None = None, status: str | None = None
+    project_id: str, phase: str | None = None, status: str | None = None,
+    type: str | None = None,
 ) -> list[dict]:
-    return tools.list_artifacts(_tenant(), _resolve_project(project_id), phase, status)
+    return tools.list_artifacts(_tenant(), _resolve_project(project_id), phase, status, type)
 
 
 @server.tool()
