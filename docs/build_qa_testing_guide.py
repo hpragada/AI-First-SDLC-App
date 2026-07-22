@@ -814,6 +814,9 @@ def section_8():
         ["--repo NAME=PATH", "<b>Multi-repo:</b> maps each repo (e.g. <tt>acme/api=C:\\repos\\api</tt>) "
          "to its local clone. Repeat once per repo. An explicit map always wins over "
          "<tt>--repo-path</tt>."],
+        ["--headed", "<b>Optional, for watching a test run:</b> shows the browser on screen during "
+         "the Test Automation phase (09b) instead of running it invisibly, so you can watch the AI "
+         "drive the app. Leave it off for normal testing."],
         ["--poll-interval / --heartbeat-interval", "How often it checks for work / signals it is "
          "alive. Defaults are fine; leave them."],
     ], [4.6 * cm, 11.8 * cm], font=8.3)
