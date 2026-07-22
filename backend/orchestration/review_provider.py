@@ -34,6 +34,7 @@ from .activities import (
     get_driver,
 )
 from .build_activities import _BLOCKING, Finding
+from .build_types import contains_nul, scrub_nul
 from .types import AgentRunInput
 
 if TYPE_CHECKING:
@@ -237,6 +238,14 @@ class AgentReviewProvider:
                     content = codehost.get_file(repo=pr.repo, path=path, ref=ref)
                 except Exception:  # noqa: BLE001 — a single unreadable file must not fail review
                     continue
+                # Skip binary files (a NUL byte marks binary). 09b commits Playwright report
+                # artifacts (.png/.webm under playwright-report/) into the PR; inlining their
+                # bytes both wrecks the review and — since this manifest is stored in the JSON
+                # run.inputs — hits Postgres' "\\u0000 cannot be converted to text" and parks the
+                # run. A reviewer can't read binary anyway, so note it and move on.
+                if contains_nul(content):
+                    lines += [f"## {path}", "(binary file — omitted from review)", ""]
+                    continue
                 if len(content) > _MAX_FILE_CHARS:
                     content = content[:_MAX_FILE_CHARS] + "\n… (truncated)"
                 lines += [f"## {path}", "```", content, "```", ""]
@@ -261,12 +270,15 @@ def dispatch_review_task(inp, *, manifest: str, agent_body: str, model: str = ""
     companion pulls it via /api/runner/work/, and clear any prior cycle's review body."""
     from django.conf import settings
 
-    payload = {
+    # Defense-in-depth: even with binary files skipped in the manifest, scrub NUL from the whole
+    # payload before it lands in the JSON run.inputs column, so no stray NUL from any source can
+    # fail the write and park the run (see build_types.scrub_nul).
+    payload = scrub_nul({
         "run_id": inp.run_id, "tenant_id": inp.tenant_id, "project_id": inp.project_id,
         "work_item_id": inp.work_item_id, "phase": _REVIEW_PHASE, "kind": "review",
         "manifest": manifest, "agent_body": agent_body, "model": model,
         "api_url": getattr(settings, "PLATFORM_API_URL", ""),
-    }
+    })
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         inputs = dict(run.inputs or {})

@@ -72,6 +72,32 @@ class BuildReport:
     preview_url: str = ""
 
 
+def contains_nul(value) -> bool:
+    """True if `value` is a str with a NUL (``\\x00``) — i.e. binary content that Postgres
+    text/jsonb cannot store. Used to skip inlining binary PR files into a review manifest."""
+    return isinstance(value, str) and "\x00" in value
+
+
+def scrub_nul(value):
+    """Recursively strip NUL (``\\x00``) from every string in a value (str / dict / list / tuple).
+
+    Postgres text/jsonb cannot store ``\\u0000`` ("unsupported Unicode escape sequence — \\u0000
+    cannot be converted to text"). Companion-reported text and PR diffs (09b commits Playwright
+    report binaries: .png/.webm) can carry NUL, and any NUL written into a JSON column (run.inputs
+    / run.outputs) fails the whole write and parks the run. Scrub it at the write boundaries so the
+    run records cleanly. Only NUL is removed; every other byte is valid Postgres text. Django-free
+    so the workflow sandbox and review provider can both import it."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {k: scrub_nul(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub_nul(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(scrub_nul(v) for v in value)
+    return value
+
+
 def failure_reason(exc) -> str:
     """The human-meaningful message from a Temporal ActivityError (Bugs S.No 139): its `.cause`
     (the real ApplicationError / exception raised inside the activity — e.g. "merge conflict: …"

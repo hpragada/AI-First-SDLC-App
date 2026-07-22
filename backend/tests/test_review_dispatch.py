@@ -94,6 +94,41 @@ def test_dispatch_review_task_sets_block_and_clears_prior_body(world):
     assert "review_body" not in world.run.outputs   # prior cycle's body cleared
 
 
+def test_dispatch_review_task_scrubs_nul(world):
+    """A NUL byte in the manifest (a 09b PR can commit binary Playwright report files) must be
+    stripped before the review_task lands in the JSON run.inputs — otherwise the write fails with
+    "\\u0000 cannot be converted to text" and parks the run. The write must succeed and be clean."""
+    dispatch_review_task(_inp(world), manifest="diff\x00with\x00nul", agent_body="08\x00body")
+    world.run.refresh_from_db()
+    assert world.run.inputs["review_task"]["manifest"] == "diffwithnul"
+    assert "\x00" not in world.run.inputs["review_task"]["agent_body"]
+
+
+def test_render_pr_section_omits_binary_files():
+    """The review manifest inlines changed-file contents; a binary file (NUL present) must be
+    skipped with a placeholder, never inlined — that is the root cause of the run park."""
+    class _BinCodeHost:
+        def list_pr_files(self, *, pr_ref):
+            return ["src/app.py", "tests/automated/playwright-report/data/shot.png"]
+
+        def get_pull_request(self, *, pr_ref):
+            return PullRequest(repo="acme/api", number=7, title="t", state="open",
+                               head="feature/ST-1", base="main", url="u", sha="abc")
+
+        def get_file(self, *, repo, path, ref):
+            return "print('hi')" if path.endswith(".py") else "PNG\x00\x01\x02binary"
+
+    prov = rp.AgentReviewProvider(get_capability=lambda t, c: _BinCodeHost(),
+                                  compose_manifest=lambda inp: "# base manifest")
+    inp = BuildInput(run_id="r", tenant_id="t", project_id="p", work_item_id="w",
+                     agent_spec_id="s", work_item_key="ST-1", repo="acme/api", base="main")
+    manifest = prov._build_review_manifest(inp, "acme/api#7")
+    assert "\x00" not in manifest
+    assert "print('hi')" in manifest                       # text file still inlined
+    assert "(binary file — omitted from review)" in manifest
+    assert "binary" not in manifest.split("shot.png")[1]   # png bytes not inlined
+
+
 def test_poll_returns_body_else_none(world):
     inp = _inp(world)
     assert poll_review_body(inp, sleep=lambda _s: None, poll_interval=1, timeout=0) is None
