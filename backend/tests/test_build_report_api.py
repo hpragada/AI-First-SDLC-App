@@ -60,3 +60,42 @@ def test_report_records_and_signals_the_workflow(dispatched, monkeypatch):
     assert sent == {"workflow_id": "build-run-x", "status": "ok", "branch": "feature/ST-1"}
     run.refresh_from_db()
     assert run.outputs["report"]["branch"] == "feature/ST-1"
+
+
+def test_report_scrubs_nul_bytes_before_persisting(dispatched):
+    """A NUL (\\x00) in companion-reported text — 09b captures live browser/app output that can
+    carry one — must be stripped at ingestion. Otherwise the Postgres JSON write ("run.outputs"
+    here, and later the defect brief / run.inputs the workflow derives) fails with "\\u0000
+    cannot be converted to text" and parks the run after the real work already landed."""
+    from dataclasses import asdict
+
+    from orchestration.build_report import report_build
+
+    t, run, _token = dispatched
+    sent = {}
+    report = {
+        "status": "ok",
+        "branch": "feature/ST-1",
+        "message": "assertion failed:\x00 dashboard error\x00",
+        "test_results": [
+            {"test_ref": "TC-001", "status": "failed",
+             "evidence": "snapshot bytes \x00\x01\x18 here"},
+        ],
+        "test_summary": "0 passed, 1 failed\x00",
+    }
+    out = report_build(
+        tenant_id=str(t.id), run_id=str(run.id), report=report,
+        signal_sender=lambda wf, rep: sent.update(report=asdict(rep)),
+    )
+    assert out["signaled"] is True
+
+    # Nothing persisted or signalled may still carry a NUL.
+    run.refresh_from_db()
+    persisted = run.outputs["report"]
+    assert "\x00" not in persisted["message"]
+    assert "\x00" not in persisted["test_summary"]
+    assert "\x00" not in persisted["test_results"][0]["evidence"]
+    # The non-NUL control byte (\x01/\x18) is valid Postgres text and is left intact.
+    assert "\x18" in persisted["test_results"][0]["evidence"]
+    assert "\x00" not in sent["report"]["message"]
+    assert "\x00" not in sent["report"]["test_results"][0]["evidence"]

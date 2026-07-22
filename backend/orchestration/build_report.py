@@ -15,6 +15,29 @@ class BuildReportError(Exception):
     """The report could not be applied (e.g. run has no workflow to signal)."""
 
 
+def _scrub_nul(value):
+    """Recursively strip NUL (``\\x00``) from every string in a report payload.
+
+    Postgres ``text``/``jsonb`` cannot store ``\\u0000`` ("unsupported Unicode escape
+    sequence — \\u0000 cannot be converted to text"), and companion-reported text can carry
+    stray NUL bytes: 09b captures live browser/app/terminal output (a failing Playwright
+    assertion's diagnostic, a snapshot, a log tail), and any NUL in there later flows into a
+    Postgres JSON write (run.outputs here, and the defect brief / run.inputs the workflow
+    derives from this report). One NUL then fails the whole write and parks the run for
+    takeover — after the real work (PR, artifacts) already landed. Scrubbing at this single
+    ingestion funnel keeps the run recording cleanly. Only NUL is removed; every other byte
+    (including the U+FFFD replacement char) is valid in Postgres text and left untouched."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {k: _scrub_nul(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_nul(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_scrub_nul(v) for v in value)
+    return value
+
+
 def _default_signal_sender(workflow_id: str, report: BuildReport) -> None:
     import asyncio
 
@@ -39,8 +62,12 @@ def report_build(*, tenant_id, run_id, report, signal_sender=None) -> dict:
     from apps.tenancy.context import tenant_context
 
     signal_sender = signal_sender or _default_signal_sender
+    # Scrub NUL before the report touches the DB or the workflow signal — see _scrub_nul.
     if isinstance(report, dict):
-        report = BuildReport(**{k: report[k] for k in report if k in BuildReport.__annotations__})
+        fields = {k: report[k] for k in report if k in BuildReport.__annotations__}
+        report = BuildReport(**_scrub_nul(fields))
+    else:
+        report = BuildReport(**_scrub_nul(asdict(report)))
 
     with tenant_context(tenant_id):
         run = Run.objects.get(id=run_id, tenant_id=tenant_id)
