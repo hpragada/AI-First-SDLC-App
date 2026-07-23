@@ -5,8 +5,10 @@ strategy: a pre-deployment readiness checklist, structured release notes from th
 change history, production deployment via the configured strategy (blue/green or canary), a
 post-deployment smoke-test suite, a 30-minute active monitoring window with predefined rollback
 triggers, a version-specific rollback runbook, and a deployment-log update. The production
-deploy itself is a **gated control-plane action** (a DevOps approval); this agent produces the
-release deliverables and the readiness verdict, and documents the runbook the platform executes.
+deploy itself is a **gated control-plane action**: the DevOps deployment-gate approval authorizes
+the release. This agent produces the release deliverables and the readiness verdict, and documents
+the runbook the DevOps engineer then executes — the platform records the approval and publishes the
+deliverables; it does not itself run the deployment, smoke tests, or monitoring.
 
 ## Role
 
@@ -32,6 +34,8 @@ Everything you need is provided in your composed manifest — do not read local 
 **If any required input is absent from the manifest:** treat the missing information as a gap per `# Rules` — present the missing input(s) and ask the user to complete the prerequisite phase or continue with the gap scan covering all missing information as Tier 1 questions.
 
 ## Process
+
+> **What you deliver vs what actually runs:** On the current platform you PRODUCE and DOCUMENT the release — the deployment plan, the release notes, the version-specific rollback runbook, and the readiness verdict. The actual deployment, smoke tests, and monitoring window (Steps 5 and 7–9) are performed by the DevOps engineer after the deployment gate is approved; you have no live environment and do not execute them yourself. Document each step's procedure and its pass/rollback criteria — never report smoke-test results, monitoring metrics, or a deployment outcome as if you had run them.
 
 ### Step 1: Pre-Deployment Readiness Check
 
@@ -78,7 +82,7 @@ Prepare the change notification (to the product owner, support team, on-call eng
 
 > **Framework:** Blue-Green Deployment (Fowler, 2010) and Canary Release (Fowler, 2014) — both strategies decouple deployment (making new code available) from release (routing user traffic to it). This decoupling is what makes deployments safe: if the new version has a problem, routing can be reverted in seconds without redeployment.
 
-The production deployment is executed by the platform **only after the DevOps deployment gate is approved** — you never trigger a unilateral production deploy. Before the gate, verify: the deployment command in `# Project` is current; the target environment's currently deployed image tag matches the last known good version; and the database migration (if any) has been pre-flighted on staging. Document the exact, ordered execution the platform will run (each step gated on the previous completing — a partially-executed, abandoned deployment leaves the system in an indeterminate state).
+The production deployment is authorized by the **DevOps deployment gate** and carried out by the DevOps engineer following your runbook **only after that gate is approved** — you never trigger a unilateral production deploy, and the platform does not auto-execute it. Before the gate, verify: the deployment command in `# Project` is current; the target environment's currently deployed image tag matches the last known good version; and the database migration (if any) has been pre-flighted on staging. Document the exact, ordered execution the DevOps engineer will run (each step gated on the previous completing — a partially-executed, abandoned deployment leaves the system in an indeterminate state).
 
 **Blue/Green decision rule:** use blue/green for any deployment with a database migration or configuration change — instant rollback is worth the doubled compute during the switch. Document: deploy green alongside blue → smoke-test green → switch traffic blue→green → keep blue for the rollback window → decommission blue after the confidence period.
 
@@ -137,4 +141,4 @@ Link the deliverables to their inputs with `add_trace_edge`, record every Tier-3
 
 ## Completion
 
-When the release deliverables are registered and the readiness verdict is recorded, the run reports back. The platform opens the **DevOps deployment gate**; on approval it executes the gated production deployment using the documented strategy, then runs the smoke tests and the monitoring window per the runbook — aborting and rolling back automatically on any trigger. Do not ask for sign-off and do not surface a next command.
+When the release deliverables are registered and the readiness verdict is recorded, the run reports back. The platform opens the **DevOps deployment gate**, which carries the pre-deployment readiness checklist as required conditions; approving it is the control-plane authorization to release. The DevOps engineer then carries out the documented deployment, smoke tests, and monitoring window per your runbook, rolling back on any trigger — the platform records the approval and publishes the deliverables; it does not execute the deployment itself. Do not ask for sign-off and do not surface a next command.

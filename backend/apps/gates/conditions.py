@@ -3,8 +3,9 @@
 A gate condition is a checklist item on the `Approval` that must be satisfied before an
 APPROVED decision is accepted. Never an engine hook. Two kinds compose here:
 
-  - **reviewer-attested** (D6) — the WCAG 2.1 AA checklist on the design gate: a human
-    inspects and marks each criterion satisfied.
+  - **reviewer-attested** (D6) — the WCAG 2.1 AA checklist on the design gate and the
+    pre-deployment readiness checklist on the deployment gate: a human inspects and marks
+    each criterion satisfied.
   - **derived** (D9) — the blocking-test rule on the test gate: the platform evaluates it
     from live state at decide time; a reviewer cannot attest it.
 
@@ -12,6 +13,7 @@ Keyed off phase so triggers stay generic — a phase with no conditions gets `[]
 """
 from __future__ import annotations
 
+from .readiness import conditions_for_readiness_phase
 from .testgate import conditions_for_test_phase
 from .testgate import evaluate as _evaluate_test_condition
 from .wcag import conditions_for_wcag_phase
@@ -19,7 +21,11 @@ from .wcag import conditions_for_wcag_phase
 
 def conditions_for_phase(phase: str) -> list[dict]:
     """Every control-plane condition this phase's gate carries (empty for most phases)."""
-    return conditions_for_wcag_phase(phase) + conditions_for_test_phase(phase)
+    return (
+        conditions_for_wcag_phase(phase)
+        + conditions_for_test_phase(phase)
+        + conditions_for_readiness_phase(phase)
+    )
 
 
 def refresh_derived(conditions, *, tenant_id, work_item_id) -> list[dict]:
