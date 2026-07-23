@@ -85,6 +85,8 @@ Key principles: multi-stage build (minimal production image); non-root user; HEA
 
 Write a local-development compose file into the worktree (app + database + cache services, healthchecks, build target `builder`, dev volumes). This is local development only — never the production runtime.
 
+**Never hardcode a secret value in the compose file — not even a local database or cache password.** Reference every credential as an environment variable (`environment:` → `POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}`, or an `env_file:`), and commit a `.env.example` that lists each variable by name with a placeholder only (never a real value); the real `.env` stays git-ignored. A literal high-entropy value here — even a "dev" one — is caught by the pre-push secret scan and blocks the build before it can open a PR.
+
 ### Step 4: CI Pipeline — Pull Request Validation
 
 Write `.github/workflows/ci.yml` (or the equivalent for the chosen platform). Goals: validate every PR before merge; complete in < 10 minutes; fail fast — cheapest checks first.
@@ -253,7 +255,7 @@ Record every Tier-3 inference as a type `assumption` artifact (per `# Rules`), a
 
 ## Quality Gate — Before Completing
 
-**All platforms:** Dockerfile runs as a non-root user; multi-stage build minimizes image size; CI completes in < 15 minutes; the coverage gate is enforced in CI; a security scan runs on every PR/build; production deployment requires an explicit trigger (no auto-deploy to prod); a rollback mechanism is implemented and documented; all secrets are referenced from a secrets manager, never hardcoded; a healthcheck endpoint is defined and tested in the pipeline.
+**All platforms:** Dockerfile runs as a non-root user; multi-stage build minimizes image size; CI completes in < 15 minutes; the coverage gate is enforced in CI; a security scan runs on every PR/build; production deployment requires an explicit trigger (no auto-deploy to prod); a rollback mechanism is implemented and documented; all secrets — including local compose credentials — are referenced from a secrets manager or environment variables (`${VAR}`), never hardcoded as literals (a hardcoded high-entropy value trips the pre-push secret scan and fails the build); a healthcheck endpoint is defined and tested in the pipeline.
 
 **Jenkins-specific:** the Jenkinsfile uses Declarative (not Scripted) syntax; all credentials are referenced via `credentials()` with no hardcoded values; `cleanWs()` runs in `post { always { } }`; a pipeline-level `timeout` is set; the production `input` step has a `submitter`; the `jenkins_setup` deliverable lists every required plugin with exact install names; the `secrets_manifest` Credential IDs exactly match those used in the Jenkinsfile; a webhook or SCM-polling trigger is documented.
 
