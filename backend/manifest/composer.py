@@ -35,7 +35,7 @@ class TokenBudget:
 
     project: int = 800
     important_context: int = 1500
-    current_work_item: int = 300
+    current_work_item: int = 650
     relevant_artifacts: int = 1200
     recent_events: int = 600
     retrieved_knowledge: int = 1500

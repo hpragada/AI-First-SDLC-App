@@ -114,12 +114,27 @@ def test_code_review_hygiene_findings_are_non_blocking():
 
 def test_task_breakdown_descriptions_and_ac_are_humanized():
     """Bugs S.No 118: 06 must require plain-language-with-technical-nuance, implement-by-reading
-    descriptions + acceptance criteria — not just an engineer-only precision bar."""
+    descriptions + acceptance criteria — not just an engineer-only precision bar.
+
+    The 2026-07-15 fix set the *instruction* but left technical exemplars, so Tasks stayed terse.
+    This asserts the follow-up: a plain-language *intent-lead* requirement AND worked Story + Task
+    exemplars the model can imitate (few-shot copies exemplars, not rules)."""
     body = _body("06_task_breakdown")
     assert "Writing standard" in body
     low = body.lower()
     assert "plain language" in low or "plain-language" in low
     assert "implement" in low and "acceptance criteria" in low
+
+    # The intent-lead requirement: every Story/Task Description opens with a plain-language
+    # statement of intent BEFORE the implementation detail.
+    assert "statement of intent" in low
+    assert "worked" in low and "example" in low  # worked exemplars are present
+
+    # Worked exemplars the model imitates — a Story and a Task, both leading with intent and
+    # carrying concrete given/when/then acceptance criteria.
+    assert "US-021" in body  # worked User Story exemplar
+    assert "Let a signed-in user change their email address" in body  # worked Task exemplar
+    assert low.count("given ") >= 3 and "when " in low and "then " in low  # given/when/then AC
 
 
 def test_per_item_agents_author_artifact_titles():

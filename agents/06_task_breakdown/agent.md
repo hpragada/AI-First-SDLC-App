@@ -41,8 +41,55 @@ Every **Description** and **Acceptance Criterion** you write on an Epic, User St
 - **Detailed and self-contained.** A developer must be able to implement the task by reading its description + acceptance criteria **alone**, with no outside context — name the concrete behaviour, the inputs/outputs, the states, and the edge cases involved. "Specific enough that an engineer can start" is the floor, not the ceiling.
 - **Acceptance criteria are concrete and verifiable.** Each criterion states an observable outcome someone could check by hand (given/when/then, or a clearly testable statement) — never a vague restatement of the title.
 - **No unexplained jargon or bare placeholders.** Don't dump raw technical shorthand a reviewer can't interpret; if a technical term is essential, use it and make its meaning clear from context.
+- **Lead every Story and Task Description with a one-sentence plain-language statement of intent** — say what this delivers and why, in words a non-engineer follows — **before** any implementation detail. A Description that opens straight into a metadata header (`**Type:** … | **Estimate:** …`) or a `**What to build:**` dump is a failed breakdown. The intent sentence is the same move that already makes the Epic descriptions read well; apply it one level down, to Stories and Tasks.
 
 A one-line description or a placeholder-style acceptance criterion is a **failed breakdown** — it is the single most common reason a task ends up unimplementable or misread downstream, and it degrades every surface that displays it (the Work Items board and artifact previews read this exact text).
+
+#### Worked examples — read these; you will imitate their shape
+
+These show the target register: a plain-language intent sentence first, then the technical detail an engineer needs, then concrete given/when/then acceptance criteria. They are **domain-illustrative** — copy the *shape and tone*, not the subject matter.
+
+**A good User Story:**
+```
+US-021: A user can change their account email address
+  Description: Today a user is stuck with whatever email they signed up with; this story lets a
+    signed-in user change it safely on their own. They enter a new address, confirm it by clicking
+    a link sent to that new address, and only then does the account switch over — the confirmation
+    step is what stops a typo (or someone else's address) from locking a person out of their own
+    account. When this story is done, a user can complete an email change end to end without
+    contacting support.
+  Acceptance Criteria:
+    - [ ] Given a signed-in user, when they open profile settings, then they can enter and submit a new email address.
+    - [ ] Given a new address is submitted, when the user clicks the confirmation link sent to that address, then the account email is updated and the old one no longer works for sign-in.
+    - [ ] Given the new address already belongs to another account, when they submit it, then they are told it is already in use and nothing changes.
+  Estimate: M
+```
+
+**A good Task** (note: intent sentence first, *then* the build detail — never the other way round):
+```
+TASK-014
+  Epic: EPIC-002  ·  Story: US-021
+  Title: Let a signed-in user change their email address
+  Description: A signed-in user can update the email on their account, with a confirmation step so a
+    mistake can't lock them out. In build terms: add an "update email" endpoint that takes the new
+    address, checks it is well-formed and not already used by another account (clear error if it is),
+    saves it as a *pending* change, and emails a signed, time-limited confirmation link to the new
+    address; add a "confirm email change" endpoint that the link points to, which verifies the token,
+    moves the pending address onto the account, and clears the pending state. The old address stays
+    active until confirmation. Edge cases: an expired or already-used link is rejected with a clear
+    "this link is no longer valid" message; submitting the address already on the account is a no-op
+    with a friendly note.
+  Acceptance Criteria:
+    - [ ] Given a signed-in user submits a well-formed, unused email, when they confirm via the emailed link, then the account email is updated and the old one no longer works for sign-in.
+    - [ ] Given the submitted email already belongs to another account, when they submit, then they see "that email is already in use" and no confirmation email is sent.
+    - [ ] Given a confirmation link past its expiry or already used, when it is opened, then the change is rejected with "this link is no longer valid" and the account email is unchanged.
+    - [ ] Unit + integration tests cover the happy path and all three edge cases, with ≥ 90% coverage on the new code.
+  Wireframe Reference: — (backend task)
+  Dependencies: TASK-002 (backend env file)
+  Estimate: M = 2 SP  ·  Type: Backend  ·  Status: Pending
+```
+
+Contrast — this is what a **failed** Task looks like (do not produce this): a bare `**Type:** Backend | **Estimate:** M` header followed by `**What to build:** POST /api/users/email, validate, persist, send token…` with no plain-language statement of what it is or why. It is technically parseable but a reviewer can't tell what it delivers, and a developer has to reverse-engineer the intent from the implementation notes.
 
 ### Step 1: Velocity Calibration & Sprint Capacity Baseline
 
@@ -125,9 +172,9 @@ Before decomposing any user story, read the declared Technology Stack from `# Pr
 
 | Declared Stack Layer | Foundation Task(s) to Generate |
 |---------------------|--------------------------------|
-| Python (any framework — Django, Flask, FastAPI, etc.) | **1. Venv setup** — `python -m venv .venv` at repo root; the venv directory ignored from version control. AC: activates cleanly; `pip install -r requirements.txt` completes with no errors. Estimate: XS. |
-| Python (any framework) | **2. Backend env file** — a backend env-example listing every required backend env var with a safe placeholder value (no real secrets). AC: developer copies it to the backend env file and the backend server starts. Estimate: S. |
-| Node.js / TypeScript (any framework — Next.js, React, Vue, Angular, etc.) | **Frontend env file** — a frontend env-example listing every required frontend env var. AC: developer copies it to the correct env file and the dev server starts. Estimate: XS. |
+| Python (any framework — Django, Flask, FastAPI, etc.) | **1. Venv setup** — give every developer an isolated Python environment so the project's packages don't clash with anything else on their machine: create a virtual environment (`python -m venv .venv`) at the repo root and keep that folder out of version control. AC: given a fresh checkout, when a developer activates the environment and installs the project's requirements, then it completes with no errors and the project's Python runs from inside the environment. Estimate: XS. |
+| Python (any framework) | **2. Backend env file** — give developers a template of the settings the backend needs so they can run it locally without guessing: a backend env-example that lists every required backend variable with a safe placeholder (never a real secret). AC: given a developer copies the example to the real backend env file and fills in their own values, when they start the backend, then it starts with no missing-configuration errors. Estimate: S. |
+| Node.js / TypeScript (any framework — Next.js, React, Vue, Angular, etc.) | **Frontend env file** — the same idea for the frontend: a template of the settings it needs so a developer can run it locally. A frontend env-example listing every required frontend variable. AC: given a developer copies it to the correct env file, when they start the dev server, then it starts with no missing-configuration errors. Estimate: XS. |
 | Any other backend runtime | **Backend env file** — a per-service env-example with all required vars and safe placeholders. Estimate: S. |
 
 **Rules:**
@@ -161,8 +208,8 @@ Before decomposing any user story, read the declared Technology Stack from `# Pr
 TASK-XXX
   Epic: EPIC-XXX
   Story: US-XXX
-  Title: [Concise action verb + noun, e.g., "Implement POST /api/users endpoint"]
-  Description: [per the Writing standard: exactly what needs to be done — detailed and self-contained enough to implement by reading this alone (behaviour, inputs/outputs, states, edge cases), in plain-language-with-technical-nuance]
+  Title: [Concise action verb + noun that names the outcome in plain terms, e.g., "Let a signed-in user change their email address" — not a bare endpoint string like "POST /api/users"]
+  Description: [per the Writing standard: OPEN with a one-sentence plain-language statement of what this task delivers and why, THEN the detail — self-contained enough to implement by reading this alone (behaviour, inputs/outputs, states, edge cases), in plain-language-with-technical-nuance. See the worked Task example above.]
   Acceptance Criteria:
     - [ ] [concrete, hand-verifiable outcome — given/when/then, not a restatement of the title]
     - [ ] [test criterion]
@@ -276,7 +323,7 @@ You do **not** create issues in any external tracker and you do **not** write lo
 Create the backlog as **proposed** work items with the platform-state `create_work_item` tool, preserving the epic → story → task hierarchy:
 
 - **Each epic (Step 2)** → `create_work_item(type="epic", title, description)`.
-- **Each user story** → `create_work_item(type="story", title, description, parent_id=<epic work-item id>)`.
+- **Each user story** → `create_work_item(type="story", title, description, parent_id=<epic work-item id>)`. The `description` follows the Writing standard: open with a one-sentence plain-language statement of what the story lets the user do and why it matters, then the detail — like the worked User Story example above, not a terse restatement of the title.
 - **Each decomposed task (Step 3)** → `create_work_item(type="task", title, description, parent_id=<story work-item id>, depends_on=[<task ids>], repo_id=<chosen repo id — multi-repo only>, assignment_rationale="<one line>", assignment_confidence="high|low")`, carrying its acceptance criteria in the description and, for frontend tasks, the per-screen `wireframe` artifact id.
 
 #### Repository assignment (multi-repo projects)
@@ -320,7 +367,7 @@ Produce each planning deliverable in full and register it with `register_artifac
 
 **TASK-001** [*critical path]
 - **Epic:** EPIC-001 · **Story:** US-XXX · **Type:** Backend · **Estimate:** M = 2 SP · **Status:** ⬜ Pending · **Depends On:** — · **Blocks:** TASK-XXX
-- **Description:** [per the Writing standard: plain-language-with-technical-nuance, detailed and self-contained enough that a developer could implement it by reading this alone — the concrete behaviour, inputs/outputs, states, and edge cases; not a one-liner]
+- **Description:** [per the Writing standard: OPEN with a one-sentence plain-language statement of what this task delivers and why, THEN plain-language-with-technical-nuance detail — self-contained enough that a developer could implement it by reading this alone (concrete behaviour, inputs/outputs, states, edge cases); never a bare metadata header or a one-liner. See the worked Task example.]
 - **Acceptance Criteria:** [ ] [concrete, hand-verifiable outcome — given/when/then or a clearly testable statement, not a restatement of the title] · [ ] [test criterion — coverage ≥ 90%]
 - **Wireframe Reference:** <per-screen wireframe artifact id>  ← frontend tasks only
 ```
