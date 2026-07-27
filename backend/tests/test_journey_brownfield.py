@@ -12,7 +12,7 @@ from apps.gates.services import GateRoleError, decide_gate
 from apps.integrations.models import DriftRecord, IntegrationConnection, SourceDocument
 from apps.projects.models import Project, Repository
 from apps.registry.models import Artifact, TraceEdge
-from apps.runs.models import Run
+from apps.runs.models import CodeIntelJob, Run
 from apps.tenancy.models import Membership, Tenant, User
 from apps.tenancy.services import seed_agent_specs
 from apps.workitems.models import WorkItem
@@ -205,16 +205,17 @@ class TestSourceDocumentOnboarding:
 # ── BF-A-3: Atlassian registration ───────────────────────────────────────────
 
 class TestAtlassianRegistration:
-    def test_onboard_atlassian_with_no_integration_returns_error(
+    def test_onboard_atlassian_with_no_integration_skips_gracefully(
         self, client, sarah, brownfield_project
     ):
-        """No Confluence connected → CapabilityUnavailable → 400/503.
-        INTEGRATION_FAILURE: docstore/confluence not available — noting and continuing."""
+        """B3-1: no Jira connected → graceful skip (HTTP 200, tasktracker_connected=false), NOT a
+        dead-end 400. Onboarding must never hard-error just because a tool isn't linked yet — the
+        hub drives the connect affordance from the connection status instead."""
         _login(client, "sarah@acme.com", "Str0ng-Pass!")
         r = client.post(f"/api/projects/{brownfield_project.id}/onboard-atlassian/")
-        # Without integration configured, expect 400 or 422
-        assert r.status_code in (400, 422, 503), \
-            f"Expected error without Confluence, got {r.status_code}: {r.data}"
+        assert r.status_code == 200, f"Expected graceful 200, got {r.status_code}: {r.data}"
+        assert r.data.get("tasktracker_connected") is False
+        assert r.data.get("registered_issues") == []
 
     def test_onboard_atlassian_with_integration_configured(
         self, client, sarah, acme, brownfield_project
@@ -255,17 +256,22 @@ class TestCodeIntelligence:
         assert r.status_code == 403, \
             f"Expected 403 for non-tech_lead, got {r.status_code}"
 
-    def test_code_intel_by_tech_lead_succeeds(
+    def test_code_intel_by_tech_lead_dispatches_and_never_fabricates(
         self, client, dev_patel, acme, brownfield_project, monolith_repo, memberships
     ):
-        """Tech lead can trigger code intelligence indexing."""
+        """B4: a tech lead can DISPATCH code-intel indexing (202). The endpoint creates a job for
+        the companion to run; a client-supplied index is ignored (fabrication closed, B4-2)."""
         _login(client, "dev@acme.com", "Dev-Pass!")
         r = client.post(f"/api/projects/{brownfield_project.id}/code-intel/", {
             "repo_id": str(monolith_repo.id),
-            "index": {"file_count": 1284, "language": "python"},
+            "index": {"file_count": 1284, "language": "python"},  # ignored — never persisted
             "summary": "Django monolith, 5 apps",
         }, format="json")
-        assert r.status_code in (200, 202), f"Expected success: {r.data}"
+        assert r.status_code == 202 and r.data["status"] == "dispatched", f"Expected dispatch: {r.data}"
+        assert CodeIntelJob.objects.filter(
+            project=brownfield_project, repo=monolith_repo).exists()
+        assert not Artifact.objects.filter(
+            project=brownfield_project, type="codebase_intelligence").exists()
 
     def test_code_intel_requires_existing_repository(
         self, client, dev_patel, acme, brownfield_project, memberships

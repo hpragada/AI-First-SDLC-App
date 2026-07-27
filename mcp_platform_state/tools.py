@@ -425,12 +425,18 @@ def _log_artifact_registered(tenant_id, run, artifact) -> None:
 
 def update_artifact(
     tenant_id, artifact_id, status=None, sor=None,
-    external_ref=None, content_hash=None, version=None, title=None,
+    external_ref=None, content_hash=None, version=None, title=None, type=None,
 ) -> dict:
     with tenant_context(tenant_id):
         artifact = Artifact.objects.get(id=artifact_id, tenant_id=tenant_id)
         if title is not None:
             artifact.title = title
+        # Reclassify an artifact's lifecycle type. Used by the onboarding adopt gate to turn a
+        # generic extracted `document` into its declared type (requirements/prd/architecture/…)
+        # so the gap report recognises it as phase evidence (Brownfield B2-1). Type is free-text
+        # (no DB enum), so no validation constraint here — callers pass a canonical value.
+        if type is not None:
+            artifact.type = type
         if status is not None:
             if status not in Artifact.Status.values:
                 raise ValueError(f"invalid status: {status}")

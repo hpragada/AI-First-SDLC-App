@@ -231,6 +231,35 @@ def trigger_phase(
     return TriggerResult(run_id=str(run.id), workflow_id=workflow_id)
 
 
+def trigger_code_intel(*, tenant_id, project_id, repo_id, triggered_by=None) -> dict:
+    """Dispatch a code-intelligence indexing job to the triggering user's enrolled companion (B4).
+
+    Creates a PENDING `CodeIntelJob`; the companion claims it, runs the built-in analyzer in a
+    read-only worktree, and reports the index back (the report sink persists the artifact). No
+    WorkItem/AgentSpec/Temporal — code intelligence is mechanical, repo-scoped analysis, not an
+    agent run, so it rides its own dispatch channel (Option C) instead of the Run/gate machinery.
+    Enrollment is resolved like the Run path: the triggering user's active companion, else a
+    broadcast job any active companion for the tenant+project may claim."""
+    from apps.projects.models import Project, Repository
+    from apps.runs.models import CodeIntelJob
+
+    with tenant_context(tenant_id):
+        project = Project.objects.get(id=project_id, tenant_id=tenant_id)
+        repo = Repository.objects.get(id=repo_id, tenant_id=tenant_id, project_id=project_id)
+        enrollment = _resolve_enrollment(tenant_id, project_id, triggered_by)
+        job = CodeIntelJob.objects.create(
+            tenant_id=tenant_id, project=project, repo=repo,
+            enrollment=enrollment, triggered_by_id=triggered_by,
+            status=CodeIntelJob.Status.PENDING,
+        )
+        tools.log_event(
+            tenant_id, "platform", "code_intel.dispatched", "code_intel_job", str(job.id),
+            {"repo": repo.name,
+             "enrollment_id": str(enrollment.id) if enrollment is not None else None},
+        )
+    return {"job_id": str(job.id), "repo_id": str(repo.id), "status": "dispatched"}
+
+
 def _default_build_starter(workflow_id: str, inp) -> None:
     import asyncio
 

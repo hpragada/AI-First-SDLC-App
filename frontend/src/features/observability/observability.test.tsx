@@ -13,13 +13,27 @@ import { GapReportScreen } from "./GapReportScreen";
 import { OfflineTakeover } from "./OfflineTakeover";
 import { OnboardingHub } from "./OnboardingHub";
 import { RunTranscriptScreen } from "./RunTranscriptScreen";
-import { SourceDocuments } from "./SourceDocuments";
+import { guessAdoptType, SourceDocuments } from "./SourceDocuments";
 import { TraceabilityView } from "./TraceabilityView";
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(stubFetchJson(401, { detail: "no session" })));
 });
 afterEach(() => vi.unstubAllGlobals());
+
+describe("S-25 adopt — guessAdoptType (Brownfield B2-1)", () => {
+  it("pre-selects a canonical type from the filename", () => {
+    expect(guessAdoptType("System Architecture v2.pdf")).toBe("architecture");
+    expect(guessAdoptType("Billing ADR-004.docx")).toBe("architecture");
+    expect(guessAdoptType("Product PRD.docx")).toBe("prd");
+    expect(guessAdoptType("Login wireframe.pdf")).toBe("ux_design");
+    expect(guessAdoptType("UX design notes.docx")).toBe("ux_design");
+    expect(guessAdoptType("Product Vision.pdf")).toBe("ideation");
+    // Everything else defaults to requirements (the most common upload).
+    expect(guessAdoptType("Legacy Billing Requirements v3.docx")).toBe("requirements");
+    expect(guessAdoptType("random notes.docx")).toBe("requirements");
+  });
+});
 
 describe("S-24 Onboarding hub", () => {
   it("nothing-done · in-progress · gap-ready", () => {

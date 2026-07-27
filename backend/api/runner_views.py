@@ -525,3 +525,106 @@ class RunnerBuildReportView(APIView):
         except BuildReportError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(out)
+
+
+class RunnerCodeIntelClaimView(APIView):
+    """GET /api/runner/code-intel/ — the companion claims the next pending code-intel job
+    dispatched to its enrollment (Brownfield B4). Separate from the Run claim path (/work/) so
+    the proven plan/review/build dispatch is untouched. Skip-locked so two daemons never grab the
+    same job; a job a dead companion left `claimed` past the lease is re-claimable. Returns
+    `{job_id, repo, base}` or 204 when idle."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def get(self, request):
+        from django.db import transaction
+        from django.db.models import Q
+        from django.utils import timezone
+
+        from apps.runs.models import CodeIntelJob
+
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        tid = str(runner.tenant_id)
+        now = timezone.now()
+        stale_before = now - CLAIM_LEASE
+        with tenant_context(tid), transaction.atomic():
+            # OWNED (routed here) OR BROADCAST (null enrollment, same project) — mirrors the Run
+            # claim's self-healing so a job dispatched before a companion is up still runs.
+            owned = Q(enrollment_id=runner.id)
+            broadcast = Q(project_id=runner.project_id) & Q(enrollment__isnull=True)
+            candidates = (
+                CodeIntelJob.objects.select_for_update(skip_locked=True)
+                .filter(tenant_id=tid)
+                .filter(owned | broadcast)
+                .filter(Q(status=CodeIntelJob.Status.PENDING)
+                        | Q(status=CodeIntelJob.Status.CLAIMED))
+                .order_by("created_at")
+            )
+            job = None
+            for cand in candidates:
+                if cand.status == CodeIntelJob.Status.PENDING:
+                    job = cand
+                    break
+                if (cand.status == CodeIntelJob.Status.CLAIMED
+                        and cand.claimed_at is not None and cand.claimed_at < stale_before):
+                    job = cand   # a dead companion's stale claim → re-claim
+                    break
+            if job is None:
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            if job.enrollment_id is None:
+                job.enrollment_id = runner.id          # bind broadcast → owned on claim
+            job.status = CodeIntelJob.Status.CLAIMED
+            job.claimed_at = now
+            job.save(update_fields=["enrollment", "status", "claimed_at", "updated_at"])
+            return Response({
+                "job_id": str(job.id),
+                "repo": job.repo.name,
+                "base": job.repo.default_base or "main",
+            })
+
+
+class RunnerCodeIntelReportView(APIView):
+    """POST /api/runner/code-intel/<job_id>/report/ — the companion reports its code-intel result
+    (B4). The server-side sink persists the `codebase_intelligence` artifact + Knowledge-Index
+    chunk (`record_code_intel_index`). Only this companion-authenticated path can write a real
+    index — the web dispatch endpoint no longer accepts one (B4-2). `{status:"failed", error}`
+    marks the job failed without persisting anything."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request, job_id):
+        from apps.runs.models import CodeIntelJob
+        from integrations.onboarding import record_code_intel_index
+
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        tid = str(runner.tenant_id)
+        args = request.data if isinstance(request.data, dict) else {}
+        with tenant_context(tid):
+            job = CodeIntelJob.objects.filter(id=job_id, tenant_id=tid).first()
+        if job is None:
+            return Response({"detail": "job not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if args.get("status") == "failed":
+            with tenant_context(tid):
+                job.status = CodeIntelJob.Status.FAILED
+                job.error = str(args.get("error", ""))[:512]
+                job.save(update_fields=["status", "error", "updated_at"])
+            return Response({"status": "failed"})
+
+        index = args.get("index") if isinstance(args.get("index"), dict) else {}
+        out = record_code_intel_index(
+            tenant_id=tid, project_id=str(job.project_id), repo_id=str(job.repo_id),
+            index=index, summary=args.get("summary", ""))
+        with tenant_context(tid):
+            job.status = CodeIntelJob.Status.INDEXED
+            job.result = {"artifact_id": out.get("artifact_id")}
+            job.save(update_fields=["status", "result", "updated_at"])
+        return Response(out)

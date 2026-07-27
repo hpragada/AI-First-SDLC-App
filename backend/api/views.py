@@ -74,9 +74,9 @@ from integrations.onboarding import (
     adopt_source_document,
     build_gap_report,
     ingest_source_document,
+    link_confluence_pages,
     onboarding_hub,
     read_gap_report,
-    record_code_intel_index,
     register_atlassian,
 )
 from integrations.preview import read_artifact_preview
@@ -89,7 +89,13 @@ from orchestration.takeover import (
     request_takeover,
     resume_stalled_run,
 )
-from orchestration.trigger import ActiveRunError, TriggerError, trigger_build, trigger_phase
+from orchestration.trigger import (
+    ActiveRunError,
+    TriggerError,
+    trigger_build,
+    trigger_code_intel,
+    trigger_phase,
+)
 
 from .serializers import (
     AdoptSerializer,
@@ -98,7 +104,7 @@ from .serializers import (
     BuildTriggerSerializer,
     ClarificationAnswerSerializer,
     ClarificationSerializer,
-    CodeIntelIndexSerializer,
+    CodeIntelDispatchSerializer,
     DriftDecisionSerializer,
     DriftRecordSerializer,
     EventSerializer,
@@ -109,6 +115,7 @@ from .serializers import (
     IntegrationUpdateSerializer,
     InvitationCreateSerializer,
     InvitationSerializer,
+    LinkConfluenceSerializer,
     MembershipCreateSerializer,
     MembershipSerializer,
     ProjectCITokenSerializer,
@@ -189,8 +196,9 @@ class ProjectViewSet(
         if self.action in {"repositories", "repository_detail", "set_repository_default"}:
             return [IsAuthenticatedMember()]
         # Brownfield onboarding (P4.7-T8): any authenticated member may read/build; code-intel
-        # is further gated per-project (tech_lead/admin) inside the action itself.
-        if self.action in {"onboarding", "code_intel", "gap_report"}:
+        # is further gated per-project (tech_lead/admin) inside the action itself. link_confluence
+        # (B3-4) is a new mutating endpoint — gate it from the start rather than ship a new hole.
+        if self.action in {"onboarding", "code_intel", "gap_report", "link_confluence"}:
             return [IsAuthenticatedMember()]
         # API contracts & drift (P4.7-T9): any authenticated member may read.
         if self.action in {"api_contracts", "api_contract_detail", "drift"}:
@@ -390,10 +398,28 @@ class ProjectViewSet(
 
     @action(detail=True, methods=["post"], url_path="onboard-atlassian")
     def onboard_atlassian(self, request, pk=None):
-        """Register-don't-recreate against the tenant's Confluence/Jira (spec §6)."""
+        """Import the existing Jira backlog (register-don't-recreate, spec §6). B3-1: graceful —
+        if Jira isn't connected the service skips it and returns 200 (`tasktracker_connected:
+        false`); no dead-end 400. The hub drives the connect affordance from the connection
+        status, and Confluence docs are linked separately + typed via `link-confluence`."""
         project = self.get_object()
+        out = register_atlassian(tenant_id=self.tenant_id, project_id=str(project.id))
+        return Response(out)
+
+    @action(detail=True, methods=["post"], url_path="link-confluence")
+    def link_confluence(self, request, pk=None):
+        """B3-4 — register user-provided Confluence pages as *typed* pointers so they feed the
+        gap report (unlike the old untyped whole-space crawl). Body: `{"links": [{"page":
+        <url-or-id>, "type": <canonical lifecycle type>}, ...]}`. Returns per-row `linked` +
+        `errors`. A missing docstore connector surfaces as a friendly 400 (no tenant id)."""
+        project = self.get_object()
+        ser = LinkConfluenceSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
         try:
-            out = register_atlassian(tenant_id=self.tenant_id, project_id=str(project.id))
+            out = link_confluence_pages(
+                tenant_id=self.tenant_id, project_id=str(project.id),
+                links=ser.validated_data["links"],
+            )
         except CapabilityUnavailable as exc:
             raise ValidationError(str(exc)) from exc
         return Response(out)
@@ -407,21 +433,22 @@ class ProjectViewSet(
 
     @action(detail=True, methods=["post"], url_path="code-intel")
     def code_intel(self, request, pk=None):
-        """POST — persist a code-intel analysis result as a `codebase_intelligence` artifact +
-        Knowledge-Index chunk (S-24 step 3; tech_lead/admin). Accepts an **already-computed**
-        result — real dispatch to the companion worktree is deferred (spec T8 notes)."""
+        """POST — **dispatch** a code-intelligence indexing job for a repo (B4; tech_lead/admin).
+        The enrolled companion claims it, runs the built-in analyzer in a read-only worktree, and
+        reports the real index back (the companion report sink persists the `codebase_intelligence`
+        artifact + Knowledge-Index chunk). B4-2: this endpoint no longer accepts a client-supplied
+        index — the fabrication path is closed; only the companion can write a real analysis."""
         project = self.get_object()
-        ser = CodeIntelIndexSerializer(data=request.data)
+        ser = CodeIntelDispatchSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
-        actor = resolve_actor(request, request.data.get("user_id"))
+        actor = resolve_actor(request, ser.validated_data.get("user_id"))
         try:
             require_repo_manage_role(
                 tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
             )
-            out = record_code_intel_index(
+            out = trigger_code_intel(
                 tenant_id=self.tenant_id, project_id=str(project.id),
-                repo_id=ser.validated_data["repo_id"], index=ser.validated_data["index"],
-                summary=ser.validated_data["summary"],
+                repo_id=ser.validated_data["repo_id"], triggered_by=actor,
             )
         except RepositoryError as exc:
             return Response({"detail": str(exc)}, status=exc.status)
@@ -643,14 +670,22 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["post"])
     def adopt(self, request, pk=None):
-        """Review gate: a product_owner publishes the extracted draft artifacts."""
+        """Review gate: a product_owner publishes the extracted draft artifacts, classifying the
+        document into its lifecycle type (Brownfield B2-1). The acting user is the session user
+        when present (Brownfield B2-2), falling back to the `user_id` body for pre-auth/test
+        callers; the service still enforces the product_owner/admin gate role on that actor.
+        (Hard authentication-gating of this endpoint is tracked separately as X-1, not this batch.)"""
         src = self.get_object()
         ser = AdoptSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        actor = resolve_actor(request, ser.validated_data.get("user_id"))
+        if not actor:
+            raise ValidationError({"user_id": "an authenticated session or user_id is required"})
+        target_type = ser.validated_data.get("target_type") or None
         try:
             out = adopt_source_document(
                 tenant_id=self.tenant_id, source_document_id=str(src.id),
-                user_id=str(ser.validated_data["user_id"]),
+                user_id=actor, target_type=target_type,
             )
         except OnboardingRoleError as exc:
             raise PermissionDenied(str(exc)) from exc

@@ -10,10 +10,9 @@ export function useCreateProject() {
   const { currentUser } = useAuth();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name: string; track: "greenfield" | "brownfield"; repo_topology: "single" | "multi" }) =>
+    mutationFn: (body: { name: string; track: "greenfield" | "brownfield" }) =>
       api.createProject(currentUser?.tenant.id ?? "", body.name, {
         track: body.track,
-        repo_topology: body.repo_topology,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["auth", "me"] }),
   });

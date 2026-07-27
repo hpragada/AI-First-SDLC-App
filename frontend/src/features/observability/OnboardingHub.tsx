@@ -1,9 +1,21 @@
 import type { ReactNode } from "react";
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Button, Card, CardBody, Chip, ConnStatus, Panel, Spinner } from "../../components/ui";
-import { useOnboardAtlassian, useOnboardingHub, useRunGapReport } from "./hooks";
+import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Select, Spinner } from "../../components/ui";
+import type { Capability, OnboardingRegister } from "../../types";
+import { ConnectCapability } from "../setup/ConnectCapability";
+import { useRepositories } from "../setup/hooks";
+import { ADOPT_TYPES } from "./SourceDocuments";
+import {
+  useLinkConfluencePages,
+  useOnboardAtlassian,
+  useOnboardingHub,
+  useRunGapReport,
+  useStartCodeIntel,
+} from "./hooks";
 
 // S-24 view states: nothing-done (resume=Ideation) · in-progress (extracting/
 // indexing) · gap-ready (resume=Architecture).
@@ -39,12 +51,215 @@ export function OnboardingHub({ forceView }: { forceView?: OnboardingView }) {
   return <OnboardingHubLive />;
 }
 
+// ── Step 2: Register existing tools (B3-1 graceful connect + B3-4 typed Confluence linking) ──
+// A per-tool state machine driven by the connection status the hub already returns:
+//   not connected → inline Connect drawer (Option B — reuses ConnectCapability, no page hop);
+//   connected     → Jira: "Import backlog" (bulk); Confluence: the typed "Link docs" form.
+function RegisterToolsStep({ projectId, register }: { projectId: string; register: OnboardingRegister }) {
+  const onboardAtlassian = useOnboardAtlassian(projectId);
+  const qc = useQueryClient();
+  const [connectCap, setConnectCap] = useState<Capability | null>(null);
+
+  const registerDone = register.docstore_connected || register.tasktracker_connected;
+
+  const onConnected = () => {
+    setConnectCap(null);
+    qc.invalidateQueries({ queryKey: ["onboarding", projectId] });
+  };
+
+  return (
+    <Vstep
+      num="2"
+      title="Register existing tools"
+      desc="Bring your existing Jira backlog and Confluence docs in — register, don't recreate."
+      state={registerDone ? "done" : undefined}
+    >
+      <div className="u-stack" style={{ marginTop: "var(--space-2)", gap: "var(--space-3)" }}>
+        {/* Jira — a backlog is meant to arrive whole, so it's a bulk import. */}
+        <div>
+          <div className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
+            <span className="u-strong">Jira</span>
+            {register.tasktracker_connected ? <Badge variant="done">Connected</Badge> : <Badge>Not connected</Badge>}
+            {register.tasktracker_connected && (
+              <span className="t-sm u-muted">
+                {register.issues_registered} issue{register.issues_registered === 1 ? "" : "s"} imported
+              </span>
+            )}
+          </div>
+          <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
+            {register.tasktracker_connected ? (
+              <Button variant="secondary" onClick={() => onboardAtlassian.mutate()} disabled={onboardAtlassian.isPending}>
+                {onboardAtlassian.isPending
+                  ? <Spinner />
+                  : register.issues_registered > 0 ? "Re-import backlog" : "Import Jira backlog"}
+              </Button>
+            ) : (
+              <Button variant="secondary" onClick={() => setConnectCap("tasktracker")}>Connect Jira</Button>
+            )}
+          </div>
+        </div>
+
+        {/* Confluence — the user provides the specific typed page links (B3-4), no space crawl. */}
+        <div>
+          <div className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
+            <span className="u-strong">Confluence</span>
+            {register.docstore_connected ? <Badge variant="done">Connected</Badge> : <Badge>Not connected</Badge>}
+            {register.docstore_connected && (
+              <span className="t-sm u-muted">
+                {register.pages_registered} page{register.pages_registered === 1 ? "" : "s"} linked
+              </span>
+            )}
+          </div>
+          {register.docstore_connected ? (
+            <ConfluenceLinkForm projectId={projectId} />
+          ) : (
+            <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
+              <Button variant="secondary" onClick={() => setConnectCap("docstore")}>Connect Confluence</Button>
+            </div>
+          )}
+        </div>
+
+        {/* B3-1 Option B: connect inline, without leaving onboarding. */}
+        {connectCap && (
+          <div style={{ marginTop: "var(--space-2)" }}>
+            <ConnectCapability embedded capability={connectCap} onConnected={onConnected} />
+            <Button variant="ghost" onClick={() => setConnectCap(null)}>Cancel</Button>
+          </div>
+        )}
+      </div>
+    </Vstep>
+  );
+}
+
+function ConfluenceLinkForm({ projectId }: { projectId: string }) {
+  const linkPages = useLinkConfluencePages(projectId);
+  const [rows, setRows] = useState<{ page: string; type: string }[]>([
+    { page: "", type: ADOPT_TYPES[0].value },
+  ]);
+  const [result, setResult] = useState<{ linked: number; errors: { page: string; error: string }[] } | null>(null);
+
+  const setRow = (i: number, patch: Partial<{ page: string; type: string }>) =>
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const addRow = () => setRows((rs) => [...rs, { page: "", type: ADOPT_TYPES[0].value }]);
+  const removeRow = (i: number) => setRows((rs) => (rs.length > 1 ? rs.filter((_, j) => j !== i) : rs));
+
+  const submit = async () => {
+    const clean = rows.filter((r) => r.page.trim());
+    if (clean.length === 0) return;
+    try {
+      const out = await linkPages.mutateAsync(clean);
+      setResult({ linked: out.linked.length, errors: out.errors });
+      if (out.errors.length === 0) setRows([{ page: "", type: ADOPT_TYPES[0].value }]);
+    } catch (e) {
+      setResult({ linked: 0, errors: [{ page: "", error: e instanceof Error ? e.message : "Could not link pages." }] });
+    }
+  };
+
+  return (
+    <div className="u-stack" style={{ marginTop: "var(--space-2)" }}>
+      <p className="t-sm u-muted">
+        Paste the Confluence page link (or page ID) for each doc the flow needs, and pick its type.
+      </p>
+      {rows.map((r, i) => (
+        <div key={i} className="u-row" style={{ gap: "var(--space-2)" }}>
+          <Input
+            placeholder="https://…/wiki/…/pages/12345  ·  or  12345"
+            value={r.page}
+            onChange={(e) => setRow(i, { page: e.target.value })}
+            style={{ flex: 1 }}
+          />
+          <Select value={r.type} onChange={(e) => setRow(i, { type: e.target.value })}>
+            {ADOPT_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </Select>
+          {rows.length > 1 && (
+            <Button variant="ghost" onClick={() => removeRow(i)}>Remove</Button>
+          )}
+        </div>
+      ))}
+      <div className="u-row" style={{ gap: "var(--space-2)" }}>
+        <Button variant="ghost" onClick={addRow}>＋ Add another</Button>
+        <Button variant="secondary" onClick={submit} disabled={linkPages.isPending}>
+          {linkPages.isPending ? <Spinner /> : "Link documents"}
+        </Button>
+      </div>
+      {result && (
+        <div className="t-sm">
+          {result.linked > 0 && (
+            <p style={{ color: "var(--success)" }}>
+              Linked {result.linked} page{result.linked === 1 ? "" : "s"}.
+            </p>
+          )}
+          {result.errors.map((er, i) => (
+            <p key={i} style={{ color: "var(--danger)" }}>
+              {er.page ? `${er.page}: ` : ""}{er.error}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Step 4: Index code (B4-1) — dispatch real code intelligence per repo ──
+// The button dispatches an indexing job to the connected companion, which analyses the repo in
+// a read-only worktree and reports the index back (nothing is copied off the machine). The web
+// endpoint only dispatches — it can't fabricate an index (B4-2).
+function IndexCodeStep({ projectId, repos, indexDone }: {
+  projectId: string;
+  repos: { id: string; name: string }[];
+  indexDone: boolean;
+}) {
+  const startCodeIntel = useStartCodeIntel(projectId);
+  const [dispatched, setDispatched] = useState<Record<string, boolean>>({});
+
+  const onIndex = (repoId: string) => {
+    setDispatched((d) => ({ ...d, [repoId]: true }));
+    startCodeIntel.mutate(repoId);
+  };
+
+  return (
+    <Vstep
+      num="4"
+      title="Index code"
+      desc={
+        indexDone
+          ? "Code intelligence indexed."
+          : "Analyse each repository on your connected companion — the built-in code-intel runs in a read-only worktree and reports back. Nothing is copied off your machine."
+      }
+      state={indexDone ? "done" : undefined}
+    >
+      {repos.length === 0 ? (
+        <p className="t-sm u-muted" style={{ marginTop: "var(--space-2)" }}>
+          Register a repository first (step 3) to index code.
+        </p>
+      ) : (
+        <div className="u-stack" style={{ marginTop: "var(--space-2)" }}>
+          {repos.map((r) => (
+            <div key={r.id} className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
+              <span className="u-strong">{r.name}</span>
+              <Button variant="secondary" onClick={() => onIndex(r.id)} disabled={startCodeIntel.isPending}>
+                {dispatched[r.id] ? "Indexing dispatched…" : "Index code"}
+              </Button>
+            </div>
+          ))}
+          <p className="t-sm u-muted">
+            Requires your companion online. It runs the analysis and reports back — the result
+            appears here and feeds the gap report.
+          </p>
+        </div>
+      )}
+    </Vstep>
+  );
+}
+
 // ── Live: the real onboarding state for the selected project ───────────────
 function OnboardingHubLive() {
   const { selectedProject } = useAuth();
   const projectId = selectedProject?.project_id;
   const hub = useOnboardingHub(projectId);
-  const onboardAtlassian = useOnboardAtlassian(projectId);
+  const repos = useRepositories(projectId);
   const runGapReport = useRunGapReport(projectId);
 
   if (!projectId || hub.isLoading) {
@@ -67,7 +282,8 @@ function OnboardingHubLive() {
   }
 
   const uploadDone = data.upload.length > 0 && data.upload.every((d) => d.status === "extracted" || d.status === "adopted");
-  const registerDone = data.register.docstore_connected || data.register.tasktracker_connected;
+  const repoCount = repos.data?.length ?? 0;
+  const reposDone = repoCount > 0;
   const indexDone = data.index.status === "indexed";
 
   return (
@@ -121,45 +337,34 @@ function OnboardingHubLive() {
             )}
           </Vstep>
 
+          <RegisterToolsStep projectId={projectId} register={data.register} />
+
+          {/* B0-3: repos must be registered before code indexing / the gap report can use them.
+              This step reads the project's repositories and points you to the Repositories screen
+              when none exist yet — placed before "Index code". */}
           <Vstep
-            num="2"
-            title="Register existing tools"
+            num="3"
+            title="Register repositories"
             desc={
-              registerDone
-                ? `${data.register.docstore_connected ? "Confluence" : ""}${
-                    data.register.docstore_connected && data.register.tasktracker_connected ? " + " : ""
-                  }${data.register.tasktracker_connected ? "Jira" : ""} — ${data.register.pages_registered} pages, ${data.register.issues_registered} issues registered.`
-                : "Link existing Confluence / Jira — register, don't recreate."
+              reposDone
+                ? `${repoCount} repositor${repoCount === 1 ? "y" : "ies"} registered.`
+                : "Add the repositories the platform should analyse — code indexing and the gap report need at least one."
             }
-            state={registerDone ? "done" : undefined}
+            state={reposDone ? "done" : undefined}
           >
-            {!registerDone && (
+            {!reposDone && (
               <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
-                <Button variant="secondary" onClick={() => onboardAtlassian.mutate()} disabled={onboardAtlassian.isPending}>
-                  {onboardAtlassian.isPending ? <Spinner /> : "Register Confluence & Jira"}
-                </Button>
+                <Link to="/repositories" className="btn btn--secondary">
+                  Add a repository
+                </Link>
               </div>
-            )}
-            {onboardAtlassian.isError && (
-              <p className="t-sm" style={{ color: "var(--danger)" }}>
-                {onboardAtlassian.error instanceof Error ? onboardAtlassian.error.message : "Registration failed — no connector configured for this tenant?"}
-              </p>
             )}
           </Vstep>
 
-          <Vstep
-            num="3"
-            title="Index code"
-            desc={
-              indexDone
-                ? "Code intelligence indexed."
-                : "Point your companion at a repo clone — the built-in code-intel indexes it (companion CLI; see Section 3 of the guide)."
-            }
-            state={indexDone ? "done" : undefined}
-          />
+          <IndexCodeStep projectId={projectId} repos={repos.data ?? []} indexDone={indexDone} />
 
           <Vstep
-            num="4"
+            num="5"
             title="Gap report"
             desc={data.gap.ready ? `Ready — resume at ${data.gap.resume_phase}.` : "What exists, what's missing, and where to resume."}
             state={data.gap.ready ? "done" : undefined}
@@ -186,7 +391,7 @@ function OnboardingHubLive() {
           </Vstep>
 
           <Vstep
-            num="5"
+            num="6"
             title="Resume"
             desc={data.gap.ready ? `Trigger ${data.gap.resume_phase} on a work item to enter the pipeline.` : "Available after the gap report."}
             state={data.gap.ready ? "active" : undefined}

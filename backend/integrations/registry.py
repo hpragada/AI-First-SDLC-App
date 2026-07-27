@@ -144,8 +144,11 @@ def get_capability(
     """Return the tenant's connector for a capability, or raise CapabilityUnavailable."""
     conn = get_connection(tenant_id, capability)
     if conn is None:
+        # B3-2/X-2: never embed the tenant id in a user-facing error — this message can surface
+        # in the UI (onboarding register, publish). Say what's wrong + how to fix, no identifiers.
         raise CapabilityUnavailable(
-            f"no {capability!r} connector configured for tenant {tenant_id}"
+            f"No {capability} connector is configured for this workspace. "
+            "Connect one on the Integrations page first."
         )
     builder = _BUILDERS.get((conn.capability, conn.connector))
     if builder is None:

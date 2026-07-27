@@ -539,6 +539,95 @@ def test_security_scan_degrades_when_no_worktree_configured():
     assert url.endswith("/api/runner/phases/rsec/report/") and body["status"] == "ok"
 
 
+# ── Code intelligence dispatch (B4): read-only worktree → analyze → report ──
+_CI_JOB = {"job_id": "ci1", "repo": "acme/api", "base": "main"}
+
+
+class _CodeIntelTransport:
+    """No /work/ tasks; one code-intel job on the first /code-intel/ poll, then idle. Records
+    every call so the report POST can be asserted."""
+
+    def __init__(self):
+        self._ci = [(200, _CI_JOB), (204, None)]
+        self.calls = []
+
+    def __call__(self, method, url, headers, body):
+        self.calls.append((method, url, body))
+        if method == "GET" and url.endswith("/api/runner/work/"):
+            return 204, None
+        if method == "GET" and url.endswith("/api/runner/code-intel/"):
+            return self._ci.pop(0) if self._ci else (204, None)
+        return 200, {"artifact_id": "art1", "status": "indexed"}
+
+    def reports(self):
+        return [(url, body) for (m, url, body) in self.calls if m == "POST"]
+
+
+def test_code_intel_job_analyzes_in_readonly_worktree_and_reports(monkeypatch):
+    """B4: a claimed code-intel job provisions a throwaway read-only worktree, runs the built-in
+    analyzer inside it, reports the index, and tears the worktree down — the source never leaves
+    the machine (only the index is posted)."""
+    import runner.companion.worktree as wt
+
+    seen = {}
+
+    def _fake_provision(*, repo_path, branch, base, worktree_path):
+        seen["provision"] = {"repo_path": repo_path, "branch": branch, "base": base}
+        return worktree_path
+
+    def _fake_teardown(*, repo_path, worktree_path):
+        seen["teardown"] = str(worktree_path)
+
+    monkeypatch.setattr(wt, "provision_worktree", _fake_provision)
+    monkeypatch.setattr(wt, "teardown_worktree", _fake_teardown)
+
+    class _FakeIntel:  # stub the analyzer so the test needs no real repo/git
+        def index(self, *, workspace, repo):
+            seen["workspace"] = str(workspace)
+            seen["repo"] = repo
+            return SimpleNamespace(file_count=4, commits=1, hotspots=1,
+                                   languages={".py": 4}, indexed_at="2026-07-27")
+
+        def get_overview(self, *, repo):
+            return {"authors": 2, "communities": 1, "entry_points": ["main.py"],
+                    "top_modules": ["pkg/a.py"],
+                    "hotspots": [{"file": "pkg/a.py", "score": 9, "churn": 3, "complexity": 3}]}
+
+        def get_dead_code(self, *, repo):
+            return [{"file": "pkg/dead.py"}]
+
+        def get_why(self, *, repo):
+            return [{"title": "Switch to X", "ref": "ADR-1"}]
+
+    import integrations.codeintel.builtin as builtin_mod
+    monkeypatch.setattr(builtin_mod, "BuiltinCodeIntel", _FakeIntel)
+
+    transport = _CodeIntelTransport()
+    d = _daemon(transport, _FakeDriver(), worktrees_root="/wt", repo_path="/repos/api")
+    d.serve(max_iterations=2)
+
+    assert seen["provision"]["repo_path"] == "/repos/api"
+    assert seen["provision"]["branch"] == "sdlc-codeintel/ci1"   # disjoint from scan/build branches
+    assert seen["repo"] == "acme/api"
+    url, body = transport.reports()[0]
+    assert url.endswith("/api/runner/code-intel/ci1/report/")
+    assert body["status"] == "ok" and body["index"]["file_count"] == 4
+    # The enrichment: the companion reports the analyzer's deep layers, not just counts.
+    assert body["index"]["communities"] == 1 and body["index"]["hotspot_files"]
+    assert body["index"]["dead_code"] and body["index"]["decisions"]
+    assert seen["teardown"]                                       # torn down after
+
+
+def test_code_intel_without_worktrees_reports_failed(monkeypatch):
+    """No --worktrees configured → the job is reported failed (never left hanging)."""
+    transport = _CodeIntelTransport()
+    d = _daemon(transport, _FakeDriver())   # no worktrees_root / repo_path
+    d.serve(max_iterations=2)
+    url, body = transport.reports()[0]
+    assert url.endswith("/api/runner/code-intel/ci1/report/")
+    assert body["status"] == "failed" and "worktrees" in body["error"]
+
+
 def test_serve_headed_flag_exports_env(monkeypatch):
     """`serve --headed` exports SDLC_COMPANION_HEADED=1 for the process so both the Playwright MCP
     and the agent's `npx playwright test` run inherit it and go headed — no separate shell export

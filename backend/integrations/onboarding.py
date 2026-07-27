@@ -18,10 +18,13 @@ product_owner gate, #5). Gap-*fill* generation is then the normal phase agents, 
 """
 from __future__ import annotations
 
+from urllib.parse import parse_qs, urlparse
+
 from mcp_platform_state import tools
 
 from .extract import extract
 from .registry import get_capability, get_connection
+from .types import CapabilityUnavailable
 
 
 class OnboardingError(Exception):
@@ -70,33 +73,61 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
 
     body_key = f"onboarding/{tenant_id}/{project_id}/{src.id}/extracted.md"
     store.put(body_key, body)
-    artifact = tools.register_artifact(
-        tenant_id, project_id, None, phase="onboarding", type=artifact_type,
-        sor="internal", content_hash=content_hash(body.encode("utf-8")), s3_key=body_key,
-        external_ref={"source": "static_file", "filename": filename,
-                      "source_document_id": str(src.id), "source_s3_key": src_key},
-    )
-    with tenant_context(tenant_id):
-        src = SourceDocument.objects.get(id=src.id, tenant_id=tenant_id)
-        src.s3_key = src_key
-        src.status = SourceDocument.Status.EXTRACTED
-        src.extracted_artifact_ids = [artifact["id"]]
-        src.provenance = {"filename": filename, "mime": mime, "source_s3_key": src_key,
-                          "title": title}
-        src.save(update_fields=["s3_key", "status", "extracted_artifact_ids",
-                                "provenance", "updated_at"])
-        tools.log_event(tenant_id, "onboarding", "source_document.extracted",
-                        "source_document", str(src.id),
-                        {"artifact_id": artifact["id"], "filename": filename})
+    # B1-3: register the artifact + flip the doc to EXTRACTED as one unit. If anything fails we
+    # never leave a half-written ingest — the doc is marked FAILED and any orphaned artifact +
+    # extracted body are removed, so a retry starts clean.
+    artifact = None
+    try:
+        artifact = tools.register_artifact(
+            tenant_id, project_id, None, phase="onboarding", type=artifact_type,
+            sor="internal", content_hash=content_hash(body.encode("utf-8")), s3_key=body_key,
+            title=title,  # B1-2: carry the extracted title onto the artifact
+            external_ref={"source": "static_file", "filename": filename,
+                          "source_document_id": str(src.id), "source_s3_key": src_key},
+        )
+        with tenant_context(tenant_id):
+            src = SourceDocument.objects.get(id=src.id, tenant_id=tenant_id)
+            src.s3_key = src_key
+            src.status = SourceDocument.Status.EXTRACTED
+            src.extracted_artifact_ids = [artifact["id"]]
+            src.provenance = {"filename": filename, "mime": mime, "source_s3_key": src_key,
+                              "title": title}
+            src.save(update_fields=["s3_key", "status", "extracted_artifact_ids",
+                                    "provenance", "updated_at"])
+            tools.log_event(tenant_id, "onboarding", "source_document.extracted",
+                            "source_document", str(src.id),
+                            {"artifact_id": artifact["id"], "filename": filename})
+    except Exception:
+        from apps.registry.models import Artifact
+        with tenant_context(tenant_id):
+            SourceDocument.objects.filter(id=src.id, tenant_id=tenant_id).update(
+                status=SourceDocument.Status.FAILED, s3_key=src_key)
+            if artifact is not None:
+                Artifact.objects.filter(id=artifact["id"], tenant_id=tenant_id).delete()
+        try:
+            store.delete(body_key)
+        except Exception:
+            pass
+        raise
     return {"source_document_id": str(src.id), "status": "extracted",
             "artifact_ids": [artifact["id"]], "title": title}
 
 
-def adopt_source_document(*, tenant_id, source_document_id, user_id) -> dict:
-    """Review gate: a product_owner publishes the extracted draft artifacts (idempotent)."""
+def adopt_source_document(*, tenant_id, source_document_id, user_id, target_type=None) -> dict:
+    """Review gate: a product_owner publishes the extracted draft artifacts (idempotent).
+
+    Brownfield B2-1 — the human classifies the document here: `target_type` (one of
+    ``ADOPTABLE_ARTIFACT_TYPES``) reclassifies the generic extracted ``document`` into its real
+    lifecycle type so the gap report recognises it as phase evidence. When omitted, the artifact
+    keeps its current type (backward-compatible with pre-B2-1 callers)."""
     from apps.integrations.models import SourceDocument
     from apps.tenancy.context import tenant_context
     from apps.tenancy.models import Membership, User
+
+    if target_type is not None and target_type not in ADOPTABLE_ARTIFACT_TYPES:
+        raise OnboardingError(
+            f"invalid target_type '{target_type}'; expected one of {ADOPTABLE_ARTIFACT_TYPES}"
+        )
 
     with tenant_context(tenant_id):
         src = SourceDocument.objects.get(id=source_document_id, tenant_id=tenant_id)
@@ -123,15 +154,16 @@ def adopt_source_document(*, tenant_id, source_document_id, user_id) -> dict:
             )
 
     for aid in artifact_ids:
-        tools.update_artifact(tenant_id, aid, status="published")
+        tools.update_artifact(tenant_id, aid, status="published", type=target_type)
     with tenant_context(tenant_id):
         src = SourceDocument.objects.get(id=source_document_id, tenant_id=tenant_id)
         src.status = SourceDocument.Status.ADOPTED
         src.save(update_fields=["status", "updated_at"])
         tools.log_event(tenant_id, f"user:{user_id}", "source_document.adopted",
-                        "source_document", str(src.id), {"artifact_ids": artifact_ids})
+                        "source_document", str(src.id),
+                        {"artifact_ids": artifact_ids, "target_type": target_type})
     return {"source_document_id": str(source_document_id), "status": "adopted",
-            "artifact_ids": artifact_ids}
+            "artifact_ids": artifact_ids, "target_type": target_type}
 
 
 # ── Atlassian register-don't-recreate ───────────────────────────────
@@ -139,49 +171,36 @@ _ISSUE_TYPE = {"Epic": "epic", "Story": "story", "Task": "task",
                "Sub-task": "task", "Subtask": "task"}
 
 
-def register_atlassian(*, tenant_id, project_id, docstore=None, tasktracker=None,
-                       space=None, project_key=None) -> dict:
-    """Index existing Confluence pages + Jira issues as pointers, creating nothing (B1)."""
+def register_atlassian(*, tenant_id, project_id, tasktracker=None, project_key=None) -> dict:
+    """Import an existing **Jira backlog** as work-item pointers, creating nothing in Jira (B1).
+
+    Brownfield redesign (B3-1/B3-4): this no longer crawls the whole Confluence space. A backlog
+    is meant to arrive whole, so Jira stays a bulk import; but a Confluence space of hundreds of
+    pages can't be auto-typed, and crawling it registered every page as an untyped `document`
+    that the gap report ignores. Confluence docs are now linked individually + typed via
+    `link_confluence_pages` (B3-4). Graceful (B3-1): if Jira isn't connected this **skips**
+    (no error) and reports it — mirroring the publish path — so onboarding never hits a dead-end
+    400; the hub drives the "connect Jira" affordance from the connection status instead."""
     from apps.projects.models import Project
-    from apps.registry.models import Artifact
     from apps.tenancy.context import tenant_context
     from apps.workitems.models import WorkItem
 
-    if docstore is None:
-        docstore = get_capability(tenant_id, "docstore")
     if tasktracker is None:
-        tasktracker = get_capability(tenant_id, "tasktracker")
-    if space is None:
-        conn = get_connection(tenant_id, "docstore")
-        space = (conn.scopes or {}).get("space_key") if conn else None
+        try:
+            tasktracker = get_capability(tenant_id, "tasktracker")
+        except CapabilityUnavailable:
+            return {"registered_issues": [], "tasktracker_connected": False}
     if project_key is None:
         conn = get_connection(tenant_id, "tasktracker")
         project_key = (conn.scopes or {}).get("project_key") if conn else None
 
     with tenant_context(tenant_id):
         Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
-        existing_pages = {
-            (a.external_ref or {}).get("id")
-            for a in Artifact.objects.filter(
-                tenant_id=tenant_id, project_id=project_id, sor="confluence")
-        }
         existing_issues = {
             (w.external_ref or {}).get("id")
             for w in WorkItem.objects.filter(tenant_id=tenant_id, project_id=project_id)
             if w.external_ref
         }
-
-    registered_pages: list[str] = []
-    for hit in (docstore.search(query="", space=space) if space else []):
-        if hit.id in existing_pages:
-            continue
-        art = tools.register_artifact(
-            tenant_id, project_id, None, phase="onboarding", type="document",
-            sor="confluence", content_hash="",
-            external_ref={"sor": "confluence", "id": hit.id, "url": hit.url, "title": hit.title},
-        )
-        tools.update_artifact(tenant_id, art["id"], status="published")
-        registered_pages.append(art["id"])
 
     registered_issues: list[str] = []
     for hit in (tasktracker.search(jql=f'project = "{project_key}"') if project_key else []):
@@ -200,7 +219,97 @@ def register_atlassian(*, tenant_id, project_id, docstore=None, tasktracker=None
                             str(wi.id), {"issue": issue.key})
         registered_issues.append(hit.key)
 
-    return {"registered_pages": registered_pages, "registered_issues": registered_issues}
+    return {"registered_issues": registered_issues, "tasktracker_connected": True}
+
+
+def _parse_confluence_page_id(raw: str) -> str | None:
+    """Extract a Confluence page id from a pasted link or a bare id (B3-4). Handles Cloud
+    (`/wiki/spaces/<SPACE>/pages/<id>/<slug>` or `.../pages/<id>`) and Server/DC
+    (`viewpage.action?pageId=<id>`); a bare numeric id passes through. Returns `None` if no id
+    can be found — the caller then shows a "paste the full URL or the page ID" error. "Tiny"
+    share links (`/x/<code>`) can't be resolved offline, so those fall back to that message."""
+    if not raw:
+        return None
+    raw = raw.strip()
+    if raw.isdigit():
+        return raw
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return None
+    # Server/DC: ...viewpage.action?pageId=12345
+    page_id_qs = parse_qs(parsed.query or "").get("pageId", [])
+    if page_id_qs and page_id_qs[0].isdigit():
+        return page_id_qs[0]
+    # Cloud: .../pages/<id>/<slug> — the numeric segment immediately after "pages".
+    segments = [s for s in (parsed.path or "").split("/") if s]
+    for i, seg in enumerate(segments):
+        if seg == "pages" and i + 1 < len(segments) and segments[i + 1].isdigit():
+            return segments[i + 1]
+    return None
+
+
+def link_confluence_pages(*, tenant_id, project_id, links, docstore=None) -> dict:
+    """B3-4 — register user-provided Confluence pages as **typed** pointers so the gap report
+    sees them as phase evidence. Each `links` row = `{"page": <url-or-id>, "type": <canonical
+    lifecycle type>}`. Register-don't-recreate: stores a pointer (id/url/title), never the page
+    body; idempotent by page id (re-linking updates the declared type, never duplicates). Shares
+    the canonical type set (`ADOPTABLE_ARTIFACT_TYPES`) + the typed-registration path with
+    uploaded-doc adoption (B2-1) — one classification path, two sources. Per-row errors are
+    collected, not raised, so one bad link doesn't fail the whole batch."""
+    from apps.projects.models import Project
+    from apps.registry.models import Artifact
+    from apps.tenancy.context import tenant_context
+
+    if docstore is None:
+        # No docstore connector → CapabilityUnavailable, mapped to a friendly 4xx at the view.
+        docstore = get_capability(tenant_id, "docstore")
+
+    with tenant_context(tenant_id):
+        Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
+        existing = {
+            (a.external_ref or {}).get("id"): a
+            for a in Artifact.objects.filter(
+                tenant_id=tenant_id, project_id=project_id, sor="confluence")
+        }
+
+    linked: list[dict] = []
+    errors: list[dict] = []
+    for row in links:
+        raw = (row or {}).get("page", "")
+        target_type = (row or {}).get("type", "")
+        if target_type not in ADOPTABLE_ARTIFACT_TYPES:
+            errors.append({"page": raw, "error": f"unknown type {target_type!r}"})
+            continue
+        page_id = _parse_confluence_page_id(raw)
+        if not page_id:
+            errors.append({"page": raw,
+                           "error": "couldn't find that page — paste the full URL or the page ID"})
+            continue
+        try:
+            page = docstore.get_page(page_ref=page_id)
+        except Exception:  # noqa: BLE001 — per-row error; don't fail the batch
+            errors.append({"page": raw, "error": "couldn't read that page from Confluence"})
+            continue
+        existing_art = existing.get(page_id)
+        if existing_art is not None:
+            # Idempotent: update the declared type on the existing pointer, never duplicate.
+            tools.update_artifact(tenant_id, str(existing_art.id),
+                                  status="published", type=target_type)
+            linked.append({"page_id": page_id, "artifact_id": str(existing_art.id),
+                           "type": target_type, "title": page.title, "created": False})
+            continue
+        art = tools.register_artifact(
+            tenant_id, project_id, None, phase="onboarding", type=target_type,
+            sor="confluence", content_hash="",
+            external_ref={"sor": "confluence", "id": page_id, "url": page.url,
+                          "title": page.title},
+        )
+        tools.update_artifact(tenant_id, art["id"], status="published")
+        linked.append({"page_id": page_id, "artifact_id": art["id"], "type": target_type,
+                       "title": page.title, "created": True})
+
+    return {"linked": linked, "errors": errors}
 
 
 # ── full onboarding: reconcile → gap report → resume (D7) ────────────
@@ -224,6 +333,16 @@ _LIFECYCLE: list[tuple[str, str, tuple[str, ...]]] = [
     ("deployment", "12. Deployment", ("deployment", "release")),
 ]
 _BACKLOG_TYPES = ("epic", "story", "task")
+
+# Brownfield B2-1: the lifecycle phases a human can classify an *uploaded document* as at the
+# adopt gate. Derived from _LIFECYCLE (the FIRST/primary type of each document-authored phase) so
+# every adoptable type is one the gap-report assessor already recognises — a single source of
+# truth, so the two can never drift apart. Code/test/security/cicd/deployment phases are produced
+# by agent runs, not uploaded, so they are intentionally excluded.
+_ADOPTABLE_DOC_PHASES = ("ideation", "requirements", "prd", "architecture", "ux_design")
+ADOPTABLE_ARTIFACT_TYPES = tuple(
+    types[0] for phase, _label, types in _LIFECYCLE if phase in _ADOPTABLE_DOC_PHASES
+)
 
 
 def _assess_phase(phase, types, by_type, *, has_backlog, intel_present):
@@ -392,26 +511,109 @@ def record_code_intel_index(*, tenant_id, project_id, repo_id, index=None, summa
     body = _render_code_intel_summary(repo.name, index, text)
     body_key = f"onboarding/{tenant_id}/{project_id}/code_intel/{repo.id}.md"
     store.put(body_key, body)
+    # Keep the registry POINTER lean — scalar summary only; the rich detail (hotspot files, dead
+    # code, decisions) lives in the body in S3, never bloating the external_ref (#3).
+    ref_summary = {k: index[k] for k in ("file_count", "commits", "hotspots", "authors",
+                                         "communities", "languages") if k in index}
     artifact = tools.register_artifact(
         tenant_id, project_id, None, phase="context_extraction", type="codebase_intelligence",
         sor="internal", content_hash=content_hash(body.encode("utf-8")), s3_key=body_key,
-        external_ref={"source": "code_intel", "repo": repo.name, **index}, repo_id=str(repo.id),
+        external_ref={"source": "code_intel", "repo": repo.name, **ref_summary},
+        repo_id=str(repo.id),
     )
+    # Index the rich rendered body (not just the one-line summary) so the hotspot files, dead
+    # code and decisions are retrievable knowledge for downstream agents.
     index_artifact(tenant_id=tenant_id, project_id=project_id, artifact_id=artifact["id"],
-                   text=text, repo_id=str(repo.id), source="code_intel")
+                   text=body, repo_id=str(repo.id), source="code_intel")
     tools.log_event(tenant_id, "onboarding", "code_intel.indexed", "artifact", artifact["id"],
                     {"repo_id": str(repo.id), "file_count": index.get("file_count")})
     return {"artifact_id": artifact["id"], "repo_id": str(repo.id), "status": "indexed"}
 
 
+_LANG_NAMES = {
+    ".py": "Python", ".ts": "TypeScript", ".tsx": "TypeScript (React)", ".js": "JavaScript",
+    ".jsx": "JavaScript (React)", ".go": "Go", ".java": "Java", ".rb": "Ruby",
+    ".rs": "Rust", ".kt": "Kotlin",
+}
+
+
+def _fmt_languages(languages: dict) -> str:
+    """A readable language breakdown from the analyzer's `{'.py': 4}` extension counts."""
+    if not languages:
+        return "—"
+    return ", ".join(f"{_LANG_NAMES.get(ext, ext)} ({cnt})"
+                     for ext, cnt in sorted(languages.items(), key=lambda kv: -kv[1]))
+
+
+def _dead_name(entry) -> str:
+    if isinstance(entry, dict):
+        return entry.get("file") or entry.get("path") or next(iter(entry.values()), "?")
+    return str(entry)
+
+
 def _render_code_intel_summary(repo_name: str, index: dict, summary: str) -> str:
-    return "\n".join([
-        f"# Code Intelligence — {repo_name}", "", summary, "",
-        f"- files: {index.get('file_count', '—')}",
-        f"- commits: {index.get('commits', '—')}",
-        f"- hotspots: {index.get('hotspots', '—')}",
-        f"- languages: {index.get('languages', {})}",
-    ]) + "\n"
+    """Render the code-intelligence index into a human-readable report that shows the analyzer's
+    real depth — the five intelligence layers (git activity · architecture/dependency graph · risk
+    hotspots · dead code · decision archaeology) — not just counts. Degrades gracefully to a basic
+    summary when only counts were reported (older/thin payloads)."""
+    g = index.get
+    lines = [
+        f"# Code Intelligence — {repo_name}", "",
+        summary or ("Static analysis of the existing codebase — computed on your companion in a "
+                    "read-only worktree; only this index is stored, never your source."),
+        "",
+        "## Overview", "",
+        f"- **Files analysed:** {g('file_count', '—')}",
+        (f"- **Commits:** {g('commits', '—')}"
+         + (f" · **Authors:** {g('authors')}" if g("authors") is not None else "")),
+        f"- **Languages:** {_fmt_languages(g('languages') or {})}",
+    ]
+    entry_points = g("entry_points") or []
+    if entry_points:
+        shown = ", ".join(f"`{e}`" for e in entry_points[:8])
+        lines.append(f"- **Entry points:** {shown}" + (" …" if len(entry_points) > 8 else ""))
+
+    # Architecture — dependency communities + the most-depended-on modules (PageRank).
+    communities, top_modules = g("communities"), g("top_modules") or []
+    if communities is not None or top_modules:
+        lines += ["", "## Architecture", ""]
+        if communities is not None:
+            lines.append(f"- **Cohesive modules (dependency communities):** {communities}")
+        if top_modules:
+            lines.append("- **Most-depended-on files (PageRank):**")
+            lines += [f"  - `{m}`" for m in top_modules[:8]]
+
+    # Risk hotspots — churn × complexity (Tornhill), the highest-signal quality indicator.
+    hotspots = g("hotspot_files") or []
+    if hotspots:
+        lines += ["", "## Risk hotspots (churn × complexity)", "",
+                  "| File | Score | Churn | Complexity |", "|------|------:|------:|-----------:|"]
+        lines += [f"| `{h.get('file', '?')}` | {h.get('score', '—')} | "
+                  f"{h.get('churn', '—')} | {h.get('complexity', '—')} |" for h in hotspots[:10]]
+
+    # Dead code — files nothing imports (excluding entry points).
+    dead = g("dead_code") or []
+    if dead:
+        names = [_dead_name(d) for d in dead]
+        lines += ["", f"## Likely dead code ({len(names)})", ""]
+        lines += [f"- `{n}`" for n in names[:15]]
+        if len(names) > 15:
+            lines.append(f"- …and {len(names) - 15} more")
+
+    # Decision archaeology — ADRs + notable commit messages.
+    decisions = g("decisions") or []
+    if decisions:
+        lines += ["", f"## Decisions found ({len(decisions)})", ""]
+        for d in decisions[:10]:
+            title = d.get("title") or d.get("ref") or "decision"
+            ref = d.get("ref", "")
+            lines.append(f"- {title}" + (f" ({ref})" if ref and ref != title else ""))
+
+    # Thin/older payload (counts only) — surface the hotspot count so the body is never bare.
+    if not hotspots and g("hotspots") is not None:
+        lines += ["", f"- **Hotspots:** {g('hotspots')}"]
+
+    return "\n".join(lines) + "\n"
 
 
 def onboarding_hub(*, tenant_id, project_id) -> dict:

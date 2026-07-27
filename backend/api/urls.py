@@ -19,6 +19,8 @@ from .runner_views import (
     RunnerBuildReportView,
     RunnerClarificationCreateView,
     RunnerClarificationPollView,
+    RunnerCodeIntelClaimView,
+    RunnerCodeIntelReportView,
     RunnerEnrollmentView,
     RunnerHeartbeatView,
     RunnerPhaseFetchView,
@@ -106,6 +108,10 @@ urlpatterns = [
          name="runner-phase-report"),
     path("runner/reviews/<uuid:run_id>/report/", RunnerReviewReportView.as_view(),
          name="runner-review-report"),
+    # Code-intelligence dispatch (B4): claim a job + report the analysis (companion-token auth).
+    path("runner/code-intel/", RunnerCodeIntelClaimView.as_view(), name="runner-codeintel-claim"),
+    path("runner/code-intel/<uuid:job_id>/report/", RunnerCodeIntelReportView.as_view(),
+         name="runner-codeintel-report"),
     # Signed Git-webhook ingestion (Phase 2 §7) — tenant in the path, signature-authenticated.
     path("webhooks/github/<uuid:tenant_id>/", GithubWebhookView.as_view(), name="github-webhook"),
     path("", include(router.urls)),

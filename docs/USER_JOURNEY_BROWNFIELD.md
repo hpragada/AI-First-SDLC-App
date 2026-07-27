@@ -78,19 +78,20 @@ Business rules:
 **Actor:** Sarah
 
 Steps:
-1. Review extracted artifact preview
-2. Click "Adopt as Requirements artifact"
-3. `POST /api/source-documents/{id}/adopt/` `{ user_id: <sarah_id> }`
+1. Review the extracted draft artifact
+2. Choose the document's type in the "Adopt as …" picker (Requirements / PRD / Architecture / UX Design / Ideation — pre-filled from the filename, editable), then click "Adopt"
+3. `POST /api/source-documents/{id}/adopt/` `{ target_type: "requirements" }` (session-authenticated; `user_id` is an optional pre-auth/test fallback)
 4. Platform:
-   - Creates `Artifact(type="requirements_doc", status="staged", sor="internal")`
-   - Creates `TraceEdge(from=source_doc_artifact, to=requirements_artifact, rel="extracted_from")`
+   - Reclassifies the extracted draft into `Artifact(type=<target_type>, status="published", sor="internal")` — so the gap report recognises it as phase evidence
+   - Provenance to the original is kept via the artifact's `external_ref` (`source_document_id`)
 5. SourceDocument `status` → `adopted`
 
 Screen state: `adopt-gate` (awaiting product_owner) → `adopted`
 
 Business rules:
-- Only `product_owner` role may adopt (405/403 for other roles)
-- Already-adopted document cannot be re-adopted
+- Only `product_owner` (or a project-admin / tenant-admin, who may approve any gate) may adopt (403 otherwise)
+- `target_type` must be one of the document-authored lifecycle types (`ideation`, `requirements`, `prd`, `architecture`, `ux_design`)
+- Re-adopting an already-adopted document is **idempotent** — it returns `200 {"idempotent": true}` and changes nothing
 
 ---
 

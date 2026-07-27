@@ -16,9 +16,10 @@ from integrations.onboarding import (
     adopt_source_document,
     build_gap_report,
     ingest_source_document,
+    link_confluence_pages,
     register_atlassian,
 )
-from integrations.types import DocHit, Issue, IssueHit
+from integrations.types import DocPage, Issue, IssueHit
 from storage import InMemoryObjectStore
 
 
@@ -109,13 +110,71 @@ def test_ingest_unsupported_marks_failed(world):
         SourceDocument.Status.FAILED
 
 
+def test_ingest_carries_title_onto_artifact(world):
+    """Brownfield B1-2: the extracted document title is threaded onto the artifact (was blank)."""
+    out = ingest_source_document(
+        tenant_id=str(world["t"].id), project_id=str(world["project"].id),
+        filename="PRD.docx", mime="", content=_docx_bytes(), object_store=world["store"],
+    )
+    assert out["title"]
+    assert Artifact.objects.get(id=out["artifact_ids"][0]).title == out["title"]
+
+
+def test_adopt_with_target_type_reclassifies_so_gap_report_sees_it(world):
+    """Brownfield B2-1 / B5-1 (headline): an uploaded doc is typed `document`; adopting it AS
+    `requirements` reclassifies + publishes it so the gap report counts it as requirements
+    evidence. Before the fix the doc was invisible and every phase read 'missing'."""
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    out = ingest_source_document(
+        tenant_id=tid, project_id=pid, filename="Reqs.docx", mime="",
+        content=_docx_bytes(), object_store=world["store"],  # default artifact_type -> "document"
+    )
+    assert Artifact.objects.get(id=out["artifact_ids"][0]).type == "document"
+
+    # Blind before classification: requirements has no matching-typed evidence.
+    before = build_gap_report(tenant_id=tid, project_id=pid, object_store=world["store"])
+    assert next(p for p in before["phases"] if p["phase"] == "requirements")["status"] == "missing"
+
+    res = adopt_source_document(
+        tenant_id=tid, source_document_id=out["source_document_id"],
+        user_id=str(world["po"].id), target_type="requirements",
+    )
+    assert res["target_type"] == "requirements"
+    art = Artifact.objects.get(id=out["artifact_ids"][0])
+    assert art.type == "requirements" and art.status == Artifact.Status.PUBLISHED
+
+    # Now the gap report recognises it as complete evidence for requirements.
+    after = build_gap_report(tenant_id=tid, project_id=pid, object_store=world["store"])
+    req = next(p for p in after["phases"] if p["phase"] == "requirements")
+    assert req["status"] == "complete"
+    assert out["artifact_ids"][0] in [e["artifact_id"] for e in req["evidence"]]
+
+
+def test_adopt_rejects_invalid_target_type(world):
+    """Brownfield B2-1: only canonical document-authored types may be chosen at adopt."""
+    from integrations.onboarding import OnboardingError
+
+    out = ingest_source_document(
+        tenant_id=str(world["t"].id), project_id=str(world["project"].id),
+        filename="PRD.docx", mime="", content=_docx_bytes(), object_store=world["store"],
+    )
+    with pytest.raises(OnboardingError):
+        adopt_source_document(
+            tenant_id=str(world["t"].id), source_document_id=out["source_document_id"],
+            user_id=str(world["po"].id), target_type="not_a_phase",
+        )
+
+
 # ── Atlassian register-don't-recreate ───────────────────────────────
 class _FakeDocStore:
-    def __init__(self, hits):
-        self._hits = hits
+    """B3-4: Confluence is no longer crawled — pages are resolved by id via get_page for typed
+    linking. `pages` maps page id → DocPage."""
 
-    def search(self, *, query, space=None):
-        return self._hits
+    def __init__(self, pages):
+        self._pages = pages
+
+    def get_page(self, *, page_ref):
+        return self._pages[page_ref]
 
 
 class _FakeTaskTracker:
@@ -130,11 +189,7 @@ class _FakeTaskTracker:
         return self._issues[issue_ref]
 
 
-def test_register_atlassian_indexes_pointers_idempotently(world):
-    docstore = _FakeDocStore([
-        DocHit(id="100", title="Existing PRD", url="https://x/wiki/100"),
-        DocHit(id="101", title="Notes", url="https://x/wiki/101"),
-    ])
+def test_register_atlassian_imports_jira_backlog_idempotently(world):
     tasktracker = _FakeTaskTracker(
         [IssueHit(key="ST-1", summary="Login"), IssueHit(key="ST-2", summary="Logout")],
         {"ST-1": Issue(key="ST-1", summary="Login", status="To Do", issue_type="Story",
@@ -143,23 +198,120 @@ def test_register_atlassian_indexes_pointers_idempotently(world):
                        url="https://x/browse/ST-2")},
     )
     kw = dict(tenant_id=str(world["t"].id), project_id=str(world["project"].id),
-              docstore=docstore, tasktracker=tasktracker, space="SDLC", project_key="ST")
+              tasktracker=tasktracker, project_key="ST")
 
     out = register_atlassian(**kw)
-    assert len(out["registered_pages"]) == 2 and len(out["registered_issues"]) == 2
+    assert out["registered_issues"] == ["ST-1", "ST-2"] and out["tasktracker_connected"] is True
 
-    # Pages → published Confluence-pointer artifacts; issues → accepted WorkItems.
-    pages = Artifact.objects.filter(project=world["project"], sor="confluence")
-    assert pages.count() == 2 and all(p.status == "published" for p in pages)
+    # Issues → accepted WorkItems (register-don't-recreate; B3-4 no longer crawls Confluence).
     issues = WorkItem.objects.filter(project=world["project"], external_ref__isnull=False)
     assert issues.count() == 2 and {w.external_ref["id"] for w in issues} == {"ST-1", "ST-2"}
     assert all(w.state == WorkItem.State.ACCEPTED for w in issues)
 
     # Register-don't-recreate: a second run adds nothing.
     again = register_atlassian(**kw)
-    assert again == {"registered_pages": [], "registered_issues": []}
-    assert Artifact.objects.filter(project=world["project"], sor="confluence").count() == 2
+    assert again["registered_issues"] == []
     assert WorkItem.objects.filter(project=world["project"]).count() == 2
+
+
+def test_register_atlassian_skips_gracefully_when_jira_not_connected(world):
+    # B3-1: no tasktracker connected → graceful skip (no error), so onboarding never dead-ends.
+    out = register_atlassian(
+        tenant_id=str(world["t"].id), project_id=str(world["project"].id))
+    assert out == {"registered_issues": [], "tasktracker_connected": False}
+    assert WorkItem.objects.filter(project=world["project"]).count() == 0
+
+
+def _docpage(pid, title):
+    return DocPage(id=pid, title=title, body_html="<p/>", version=1,
+                   url=f"https://x/wiki/spaces/BILL/pages/{pid}")
+
+
+def test_link_confluence_pages_registers_typed_pointers_idempotently(world):
+    # B3-4: user-provided links, each typed → typed Confluence-pointer artifacts (no body copied).
+    docstore = _FakeDocStore({"100": _docpage("100", "Billing PRD"),
+                              "200": _docpage("200", "Arch Overview")})
+    out = link_confluence_pages(
+        tenant_id=str(world["t"].id), project_id=str(world["project"].id), docstore=docstore,
+        links=[{"page": "https://x/wiki/spaces/BILL/pages/100/Billing-PRD", "type": "prd"},
+               {"page": "200", "type": "architecture"}],
+    )
+    assert len(out["linked"]) == 2 and out["errors"] == []
+
+    arts = list(Artifact.objects.filter(project=world["project"], sor="confluence"))
+    by_type = {a.type: a for a in arts}
+    assert set(by_type) == {"prd", "architecture"}
+    assert all(a.status == "published" for a in arts)
+    assert by_type["prd"].external_ref["id"] == "100"
+    assert by_type["prd"].external_ref["title"] == "Billing PRD"
+
+    # Idempotent by page id: re-linking updates the declared type, never duplicates.
+    again = link_confluence_pages(
+        tenant_id=str(world["t"].id), project_id=str(world["project"].id), docstore=docstore,
+        links=[{"page": "100", "type": "requirements"}],
+    )
+    assert len(again["linked"]) == 1 and again["linked"][0]["created"] is False
+    arts2 = list(Artifact.objects.filter(project=world["project"], sor="confluence"))
+    assert len(arts2) == 2
+    a100 = next(a for a in arts2 if (a.external_ref or {}).get("id") == "100")
+    assert a100.type == "requirements"
+
+
+def test_link_confluence_bad_input_returns_per_row_errors(world):
+    docstore = _FakeDocStore({})
+    out = link_confluence_pages(
+        tenant_id=str(world["t"].id), project_id=str(world["project"].id), docstore=docstore,
+        links=[{"page": "https://x/wiki/no-page-id-here", "type": "prd"},   # unparseable link
+               {"page": "100", "type": "code"}],                            # non-adoptable type
+    )
+    assert out["linked"] == [] and len(out["errors"]) == 2
+    assert Artifact.objects.filter(project=world["project"], sor="confluence").count() == 0
+
+
+def test_code_intel_summary_renders_a_deep_readable_report():
+    # B4 enrichment: the persisted code-intel artifact shows the analyzer's real depth (the five
+    # layers), rendered readably — not just raw counts / a Python-dict repr.
+    from integrations.onboarding import _render_code_intel_summary
+
+    body = _render_code_intel_summary("acme/api", {
+        "file_count": 1284, "commits": 412, "authors": 7,
+        "languages": {".py": 900, ".ts": 384},
+        "communities": 5, "top_modules": ["core/app.py"], "entry_points": ["main.py"],
+        "hotspot_files": [
+            {"file": "billing/charge.py", "score": 88, "churn": 40, "complexity": 22}],
+        "dead_code": [{"file": "legacy/unused.py"}],
+        "decisions": [{"title": "Move to Stripe", "ref": "ADR-004"}],
+    }, "acme/api overview")
+    assert "## Risk hotspots" in body and "billing/charge.py" in body
+    assert "## Architecture" in body and "core/app.py" in body
+    assert "## Likely dead code" in body and "legacy/unused.py" in body
+    assert "## Decisions found" in body and "ADR-004" in body
+    assert "Python (900)" in body and "TypeScript (384)" in body   # readable, not a raw dict
+    assert "{'.py'" not in body                                    # never a bare dict repr
+
+
+def test_code_intel_summary_degrades_for_a_thin_payload():
+    from integrations.onboarding import _render_code_intel_summary
+
+    body = _render_code_intel_summary(
+        "acme/api", {"file_count": 10, "commits": 3, "hotspots": 2, "languages": {".py": 10}}, "")
+    assert "Files analysed:** 10" in body and "Hotspots:** 2" in body
+    assert "Python (10)" in body
+
+
+def test_linked_confluence_page_feeds_gap_report(world):
+    # B3-4 headline (Q-1 sibling for Confluence): a typed linked page is real gap-report evidence,
+    # so the resume point moves off the phase it covers — the whole point of typed linking.
+    docstore = _FakeDocStore({"300": _docpage("300", "Requirements")})
+    link_confluence_pages(
+        tenant_id=str(world["t"].id), project_id=str(world["project"].id), docstore=docstore,
+        links=[{"page": "300", "type": "requirements"}],
+    )
+    report = build_gap_report(tenant_id=str(world["t"].id), project_id=str(world["project"].id),
+                              object_store=world["store"])
+    status = {p["phase"]: p["status"] for p in report["phases"]}
+    assert status["requirements"] == "complete"
+    assert report["resume_phase"] != "requirements"
 
 
 # ── full onboarding: reconcile → gap report → resume (D7) ───────────
@@ -232,32 +384,30 @@ def _live_config():
 
 @pytest.mark.skipif(_live_config() is None, reason="Atlassian creds not configured in .env")
 @pytest.mark.django_db
-def test_register_atlassian_live_discovers_existing_space():
+def test_register_atlassian_live_imports_jira_backlog():
     from django.conf import settings
 
     from integrations.atlassian.config import AtlassianConfig
-    from integrations.atlassian.docstore import AtlassianDocStore
     from integrations.atlassian.tasktracker import AtlassianTaskTracker
 
     cfg = AtlassianConfig.from_settings()
     t = Tenant.objects.create(name="Brownfield Co")
     project = Project.objects.create(tenant=t, name="Existing")
 
+    # B3-4: register_atlassian is Jira-only now (Confluence is linked + typed separately).
     out = register_atlassian(
         tenant_id=str(t.id), project_id=str(project.id),
-        docstore=AtlassianDocStore(cfg),
         tasktracker=AtlassianTaskTracker(cfg, project=settings.JIRA_PROJECT_KEY),
-        space=settings.CONFLUENCE_SPACE_KEY, project_key=settings.JIRA_PROJECT_KEY,
+        project_key=settings.JIRA_PROJECT_KEY,
     )
-    # The SDLC space has pages → at least one registered, each a Confluence pointer.
-    assert len(out["registered_pages"]) >= 1
-    for art in Artifact.objects.filter(project=project, sor="confluence"):
-        assert art.external_ref["id"] and art.external_ref["url"]
-    # Idempotent: re-running registers nothing new.
+    assert out["tasktracker_connected"] is True
+    # Any imported issue is a Jira-pointer WorkItem (register-don't-recreate; no body copied).
+    for wi in WorkItem.objects.filter(project=project, external_ref__isnull=False):
+        assert wi.external_ref["id"] and wi.external_ref["url"]
+    # Idempotent: re-running imports nothing new.
     again = register_atlassian(
         tenant_id=str(t.id), project_id=str(project.id),
-        docstore=AtlassianDocStore(cfg),
         tasktracker=AtlassianTaskTracker(cfg, project=settings.JIRA_PROJECT_KEY),
-        space=settings.CONFLUENCE_SPACE_KEY, project_key=settings.JIRA_PROJECT_KEY,
+        project_key=settings.JIRA_PROJECT_KEY,
     )
-    assert again["registered_pages"] == []
+    assert again["registered_issues"] == []

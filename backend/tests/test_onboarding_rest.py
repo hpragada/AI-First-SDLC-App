@@ -13,6 +13,7 @@ from apps.integrations.models import SourceDocument
 from apps.knowledge.models import KnowledgeChunk
 from apps.projects.models import Project, Repository
 from apps.registry.models import Artifact
+from apps.runs.models import CodeIntelJob
 from apps.tenancy.models import Membership, Tenant, User
 
 
@@ -78,31 +79,55 @@ def _publish(project, type_):
                             type=type_, sor="internal", status="published")
 
 
-# ── code-intel ──────────────────────────────────────────────────────
-def test_tech_lead_indexes_code_creates_artifact_and_knowledge_chunk(client, project, repo,
-                                                                     tech_lead):
+def _index_code(project, repo, index=None, summary=""):
+    """Create a codebase_intelligence artifact the way the COMPANION report sink does (B4). The
+    web code-intel endpoint only *dispatches* now, so tests that need the artifact to already
+    exist go through the sink directly (an InMemory store keeps them off MinIO)."""
+    from integrations.onboarding import record_code_intel_index
+    from storage import InMemoryObjectStore
+
+    return record_code_intel_index(
+        tenant_id=str(project.tenant_id), project_id=str(project.id), repo_id=str(repo.id),
+        index=index or {"file_count": 1284, "commits": 412}, summary=summary,
+        object_store=InMemoryObjectStore(),
+    )
+
+
+# ── code-intel (B4: the endpoint DISPATCHES; the companion report sink PERSISTS) ──
+def test_code_intel_endpoint_dispatches_a_job_and_never_fabricates(client, project, repo,
+                                                                   tech_lead):
+    """B4-1/B4-2: the web endpoint dispatches a job (202) — it does NOT persist an artifact, and
+    a client-supplied index is ignored (the fabrication path is closed)."""
     _login(client, "lead@acme.com", "lead-pass!")
     resp = client.post(
         _ci_url(project),
-        {"repo_id": str(repo.id), "index": {"file_count": 1284, "commits": 412},
-         "summary": "A legacy billing service exposing invoice + payment endpoints."},
+        {"repo_id": str(repo.id), "index": {"file_count": 99999}},  # fabricated — must be ignored
         format="json",
     )
     assert resp.status_code == 202
-    assert resp.data["status"] == "indexed"
-    artifact = Artifact.objects.get(id=resp.data["artifact_id"])
+    assert resp.data["status"] == "dispatched"
+    # A pending job was created for the repo …
+    job = CodeIntelJob.objects.get(id=resp.data["job_id"])
+    assert job.status == CodeIntelJob.Status.PENDING and job.repo_id == repo.id
+    # … and NOTHING was persisted from the client index.
+    assert not Artifact.objects.filter(project=project, type="codebase_intelligence").exists()
+
+
+def test_code_intel_report_sink_persists_artifact_and_chunk(client, project, repo):
+    """The real artifact + Knowledge-Index chunk are created only via the companion report sink."""
+    out = _index_code(project, repo,
+                      summary="A legacy billing service exposing invoice + payment endpoints.")
+    assert out["status"] == "indexed"
+    artifact = Artifact.objects.get(id=out["artifact_id"])
     assert artifact.type == "codebase_intelligence"   # never "code" (no source copied)
     assert artifact.repo_id == repo.id
     chunks = KnowledgeChunk.objects.filter(artifact_id=artifact.id)
-    assert chunks.exists()
-    assert chunks.first().source == "code_intel"
+    assert chunks.exists() and chunks.first().source == "code_intel"
 
 
-def test_code_intel_without_summary_still_indexes_a_chunk(client, project, repo, tech_lead):
-    _login(client, "lead@acme.com", "lead-pass!")
-    resp = client.post(_ci_url(project), {"repo_id": str(repo.id)}, format="json")
-    assert resp.status_code == 202
-    assert KnowledgeChunk.objects.filter(artifact_id=resp.data["artifact_id"]).exists()
+def test_code_intel_report_sink_without_summary_still_indexes_a_chunk(client, project, repo):
+    out = _index_code(project, repo, index={"file_count": 12}, summary="")
+    assert KnowledgeChunk.objects.filter(artifact_id=out["artifact_id"]).exists()
 
 
 def test_admin_can_index_code(client, project, repo, tenant):
@@ -146,7 +171,7 @@ def test_gap_report_resume_point_moves_as_evidence_is_added(client, project, rep
     get0 = client.get(_gap_url(project))
     assert get0.status_code == 200
     assert get0.data["resume_phase"] == "ideation"
-    assert get0.data["phases"][0]["assessment"] == "Missing"
+    assert get0.data["phases"][0]["assessment"] == "missing"
     assert get0.data["intel_present"] is False
 
     # +requirements (ideation still missing) -> resume unchanged
@@ -155,7 +180,7 @@ def test_gap_report_resume_point_moves_as_evidence_is_added(client, project, rep
     build1 = client.post(_gap_url(project))
     assert build1.data["resume_phase"] == "prd"
     by_phase = {p["phase"]: p["assessment"] for p in build1.data["phases"]}
-    assert by_phase["ideation"] == "Complete" and by_phase["requirements"] == "Complete"
+    assert by_phase["ideation"] == "complete" and by_phase["requirements"] == "complete"
 
     # +prd -> resume moves to architecture
     _publish(project, "prd")
@@ -163,9 +188,8 @@ def test_gap_report_resume_point_moves_as_evidence_is_added(client, project, rep
     assert build2.data["resume_phase"] == "architecture"
     assert "architecture" in build2.data["blocking"]
 
-    # +intel (code-intel indexed) -> intel_present flips true on the next read-through
-    ci = client.post(_ci_url(project), {"repo_id": str(repo.id)}, format="json")
-    assert ci.status_code == 202
+    # +intel (via the companion report sink; B4 endpoint only dispatches) -> intel_present flips
+    _index_code(project, repo)
     build3 = client.post(_gap_url(project))
     assert build3.data["intel_present"] is True
 
@@ -180,7 +204,7 @@ def test_gap_report_evidence_carries_artifact_refs(client, project, member):
     client.post(_gap_url(project))
     resp = client.get(_gap_url(project))
     ideation = next(p for p in resp.data["phases"] if p["phase"] == "ideation")
-    assert ideation["assessment"] == "Complete"
+    assert ideation["assessment"] == "complete"
     assert ideation["evidence"] and ideation["evidence"][0]["type"] == "ideation"
 
 
@@ -205,7 +229,7 @@ def test_onboarding_hub_reflects_uploads_index_and_gap(client, project, repo, te
                                   status=SourceDocument.Status.ADOPTED)
     _login(client, "lead@acme.com", "lead-pass!")
 
-    client.post(_ci_url(project), {"repo_id": str(repo.id)}, format="json")
+    _index_code(project, repo)
     client.post(_gap_url(project))
 
     resp = client.get(_hub_url(project))

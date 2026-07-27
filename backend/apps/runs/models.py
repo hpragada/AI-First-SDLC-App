@@ -71,3 +71,43 @@ class RunnerEnrollment(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"runner:{self.label or self.id} ({self.status})"
+
+
+class CodeIntelJob(TenantScopedModel):
+    """A dispatched code-intelligence indexing job (Brownfield B4).
+
+    Unlike an agent `Run`, this has NO WorkItem and NO AgentSpec — code intelligence is
+    mechanical, repo-scoped analysis, not an agent reasoning task. So it rides its own dispatch
+    channel instead of the Run/gate/Temporal machinery: the platform creates a PENDING job, the
+    enrolled companion claims it, runs the built-in analyzer in a **read-only worktree** (the
+    client's source never reaches the platform — non-negotiable #1), and reports the resulting
+    index back (the server-side sink persists the `codebase_intelligence` artifact + knowledge
+    chunk). RLS-isolated per tenant like every table (#6)."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        CLAIMED = "claimed", "Claimed"
+        INDEXED = "indexed", "Indexed"
+        FAILED = "failed", "Failed"
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="code_intel_jobs"
+    )
+    repo = models.ForeignKey(
+        "projects.Repository", on_delete=models.CASCADE, related_name="code_intel_jobs"
+    )
+    # The companion this job was routed to (the triggering user's enrolled machine). Null = a
+    # broadcast job any active companion for the tenant+project may claim (mirrors the Run path).
+    enrollment = models.ForeignKey(
+        "runs.RunnerEnrollment", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    triggered_by = models.ForeignKey(
+        "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    result = models.JSONField(default=dict, blank=True)
+    error = models.CharField(max_length=512, blank=True)
+
+    def __str__(self) -> str:
+        return f"codeintel:{self.id} ({self.status})"

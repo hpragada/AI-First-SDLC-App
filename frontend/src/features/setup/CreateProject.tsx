@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ApiError } from "../../api";
+import { useAuth } from "../../auth/AuthContext";
 import { Banner, Button, Card, CardBody, Field, Input } from "../../components/ui";
 import { useCreateProject } from "./hooks";
 
@@ -14,13 +15,11 @@ const TRACK_HELP =
 
 export function CreateProject({ forceView }: { forceView?: CreateProjectView }) {
   const navigate = useNavigate();
+  const { refresh, setSelectedProjectId } = useAuth();
   const createProject = useCreateProject();
   const [name, setName] = useState("");
   const [track, setTrack] = useState<"greenfield" | "brownfield">(
     forceView === "brownfield" ? "brownfield" : "greenfield",
-  );
-  const [topology, setTopology] = useState<"single" | "multi">(
-    forceView === "brownfield" ? "multi" : "single",
   );
 
   const collision =
@@ -31,7 +30,12 @@ export function CreateProject({ forceView }: { forceView?: CreateProjectView }) 
 
   const onCreate = async () => {
     try {
-      const project = await createProject.mutateAsync({ name, track, repo_topology: topology });
+      const project = await createProject.mutateAsync({ name, track });
+      // B0-1: make the new project the active one so onboarding/profile open on IT, not the
+      // previously-selected project. Refresh /me first so the new membership is present, then
+      // select it before navigating.
+      await refresh();
+      setSelectedProjectId(project.id);
       navigate(track === "brownfield" ? "/onboarding" : `/profile?project=${project.id}&setup=1`);
     } catch {
       /* collision surfaced via createProject.error */
@@ -114,25 +118,10 @@ export function CreateProject({ forceView }: { forceView?: CreateProjectView }) 
                 </Banner>
               )}
 
-              <div className="field">
-                <span className="field__label">Repository topology</span>
-                <span className="segmented">
-                  <button
-                    type="button"
-                    aria-pressed={topology === "single"}
-                    onClick={() => setTopology("single")}
-                  >
-                    Single repo
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={topology === "multi"}
-                    onClick={() => setTopology("multi")}
-                  >
-                    Multi-repo
-                  </button>
-                </span>
-              </div>
+              {/* B0-2: no repo-topology picker here — topology is derived from the repos you
+                  register (0-1 single · 2 split · ≥3 multi), reconciled server-side, so a
+                  create-time choice would be a fiction. Repos are added in onboarding / the
+                  Repositories screen. */}
 
               <div className="gate-panel__actions">
                 <Button

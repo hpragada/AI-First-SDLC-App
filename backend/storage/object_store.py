@@ -23,6 +23,7 @@ class ObjectStore(Protocol):
     def put(self, key: str, body: bytes | str, content_type: str = "text/markdown") -> str: ...
     def get(self, key: str) -> bytes: ...
     def copy(self, src_key: str, dst_key: str) -> str: ...
+    def delete(self, key: str) -> None: ...
 
 
 class InMemoryObjectStore:
@@ -41,6 +42,9 @@ class InMemoryObjectStore:
     def copy(self, src_key: str, dst_key: str) -> str:
         self._data[dst_key] = self._data[src_key]
         return dst_key
+
+    def delete(self, key: str) -> None:
+        self._data.pop(key, None)
 
 
 class S3ObjectStore:
@@ -75,6 +79,9 @@ class S3ObjectStore:
             Key=dst_key,
         )
         return dst_key
+
+    def delete(self, key: str) -> None:
+        self._s3.delete_object(Bucket=self._bucket, Key=key)
 
 
 def s3_from_settings() -> S3ObjectStore:

@@ -148,6 +148,21 @@ class CompanionDaemon:
             raise DaemonError(f"claim work -> {status}: {data}")
         return data
 
+    def claim_code_intel(self) -> dict | None:
+        """Claim the next dispatched code-intel job (B4), or None when idle (204). A separate
+        endpoint from /work/ so the proven plan/review/build claim path is untouched."""
+        status, data = self._transport(
+            "GET", f"{self._base}/api/runner/code-intel/", self._headers(), None)
+        if status == 204 or not data:
+            return None
+        if status >= 400:
+            raise DaemonError(f"claim code-intel -> {status}: {data}")
+        # Only a real job payload (carries job_id) is work; treat anything else as idle so a
+        # permissive/unexpected 200 can never be mistaken for a job to run.
+        if not isinstance(data, dict) or "job_id" not in data:
+            return None
+        return data
+
     # Transient-outage policy (Bugs S.No 105): a backend/worker restart drops the HTTP
     # connection mid-poll; that surfaces as an OSError (URLError / ConnectionError / timeout),
     # NOT as an HTTP status. Those must be retried with backoff, never treated as fatal —
@@ -330,6 +345,69 @@ class CompanionDaemon:
             return
         self._report(report_path, to_build_report(result))
 
+    def _run_code_intel(self, job: dict) -> None:
+        """Run the built-in analyzer for a code-intel job (B4) in a THROWAWAY read-only worktree
+        of the repo, and report the computed index back. The client's source never leaves the
+        machine — only the index (file/commit/hotspot counts, languages) is posted. Mirrors the
+        reads_code security-scan pattern; no engine/LLM is involved, so it needs no auth check.
+        Failures are reported (never left hanging), and the worktree is always torn down."""
+        from pathlib import Path
+
+        from runner.companion.worktree import provision_worktree, teardown_worktree
+
+        job_id = job["job_id"]
+        repo = job["repo"]
+        base = job.get("base", "main")
+        report_path = f"/api/runner/code-intel/{job_id}/report/"
+        if not self._worktrees_root:
+            self._report(report_path,
+                         {"status": "failed", "error": "no --worktrees configured for code-intel"})
+            return
+        try:
+            repo_path = self._resolve_repo_path(repo)
+        except DaemonError as exc:
+            self._report(report_path, {"status": "failed", "error": str(exc)})
+            return
+
+        worktree = None
+        try:
+            worktree = provision_worktree(
+                repo_path=repo_path, branch=f"sdlc-codeintel/{job_id}", base=base,
+                worktree_path=Path(self._worktrees_root) / f"codeintel-{job_id}")
+            # The built-in analyzer runs companion-side (D2) — pure analysis, persists nothing.
+            from integrations.codeintel.builtin import BuiltinCodeIntel
+
+            analyzer = BuiltinCodeIntel()
+            idx = analyzer.index(workspace=str(worktree), repo=repo)
+            # Report the analyzer's real depth, not just counts (B4 enrichment): the overview
+            # (architecture communities, most-depended-on modules, top hotspots), dead code, and
+            # decision archaeology — so the persisted artifact shows how deep the analysis went.
+            overview = analyzer.get_overview(repo=repo)
+            index = {
+                "file_count": idx.file_count, "commits": idx.commits, "hotspots": idx.hotspots,
+                "languages": idx.languages, "indexed_at": idx.indexed_at,
+                "authors": overview.get("authors"),
+                "communities": overview.get("communities"),
+                "entry_points": (overview.get("entry_points") or [])[:20],
+                "top_modules": overview.get("top_modules") or [],
+                "hotspot_files": overview.get("hotspots") or [],
+                "dead_code": analyzer.get_dead_code(repo=repo)[:50],
+                "decisions": analyzer.get_why(repo=repo)[:20],
+            }
+            summary = (f"{repo}: {idx.file_count} files, {idx.commits} commits, "
+                       f"{overview.get('communities', 0)} modules, {idx.hotspots} risk hotspots.")
+            self._report(report_path, {"status": "ok", "index": index, "summary": summary})
+        except DaemonError:
+            raise   # a failed REPORT (backend problem) bubbles to serve(); it logs + keeps serving
+        except Exception as exc:  # noqa: BLE001 — provision/analysis failure: report it, move on
+            self._report(report_path, {"status": "failed", "error": str(exc)})
+        finally:
+            if worktree is not None:
+                try:
+                    teardown_worktree(repo_path=repo_path, worktree_path=worktree)
+                except Exception:  # noqa: BLE001 — teardown must never mask the result
+                    pass
+
     def run_task(self, task: dict) -> None:
         # Re-assert subscription-only auth before EVERY run, not just at startup — a
         # long-lived daemon must notice a key configured after it started (fail-closed).
@@ -393,6 +471,19 @@ class CompanionDaemon:
                           file=sys.stderr, flush=True)
                     reconnect_delay = 0.0
                 if task is None:
+                    # No agent-run work — check for a code-intel job (B4) before idling.
+                    try:
+                        job = self.claim_code_intel()
+                    except OSError:
+                        job = None   # transient; the main-claim backoff handles reconnect
+                    if job is not None:
+                        try:
+                            self._run_code_intel(job)
+                            processed += 1
+                        except DaemonError as exc:
+                            print(f"[companion] code-intel job {job.get('job_id')} failed, "
+                                  f"continuing: {exc}", file=sys.stderr, flush=True)
+                        continue
                     self._sleep(self._poll_interval)
                     continue
                 try:

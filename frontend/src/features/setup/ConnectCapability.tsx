@@ -16,8 +16,24 @@ import {
 // S-12 view states: empty · filled (secret configured) · testing · success · fail.
 export type ConnectView = "empty" | "filled" | "testing" | "success" | "fail";
 
-export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
-  const { capability = "docstore" } = useParams<{ capability: Capability }>();
+// Brownfield B3-1: the same connect form serves two callers — the /integrations/:capability route
+// (full page, capability from the URL) AND an inline drawer embedded in the onboarding hub. When
+// `embedded`, the page chrome (breadcrumb/title/back-link) is dropped and `capability` is passed
+// as a prop; `onConnected` fires after a successful save so the host can refresh + close.
+export function ConnectCapability({
+  forceView,
+  capability: capabilityProp,
+  embedded = false,
+  onConnected,
+}: {
+  forceView?: ConnectView;
+  capability?: Capability;
+  embedded?: boolean;
+  onConnected?: () => void;
+}) {
+  // useParams is always called (hooks can't be conditional); the prop wins when embedded.
+  const params = useParams<{ capability: Capability }>();
+  const capability: Capability = capabilityProp ?? params.capability ?? "docstore";
   const integrations = useIntegrations();
   const catalog = useIntegrationsCatalog();
   const createIntegration = useCreateIntegration();
@@ -127,6 +143,8 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
         setSavedId(created.id);
       }
       setSaveResult({ ok: true, detail: `${vendor.label} saved. Test the connection to verify it.` });
+      // B3-1: let an embedding host (onboarding drawer) refresh its state + close on connect.
+      onConnected?.();
     } catch (err) {
       setSaveResult({
         ok: false,
@@ -161,18 +179,7 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
   // forceView is a demo/test affordance (routes never pass it) — don't block it on fetches.
   const loading = !forceView && (catalog.isLoading || integrations.isLoading);
 
-  return (
-    <div className="canvas-pad">
-      <Breadcrumb items={[{ label: "Integrations", href: "/integrations" }, CAP_LABEL[capability]]} />
-      <div className="page-head">
-        <div className="page-head__titles">
-          <h1 className="t-h1">Connect a capability</h1>
-          <p className="page-head__sub">
-            Choose a vendor and binding. Secrets are write-only — stored securely, never shown again.
-          </p>
-        </div>
-      </div>
-
+  const drawer = (
       <Drawer
         inline
         title={capEntry?.label ?? CAP_LABEL[capability]}
@@ -309,6 +316,21 @@ export function ConnectCapability({ forceView }: { forceView?: ConnectView }) {
           </>
         )}
       </Drawer>
+  );
+
+  if (embedded) return drawer;
+  return (
+    <div className="canvas-pad">
+      <Breadcrumb items={[{ label: "Integrations", href: "/integrations" }, CAP_LABEL[capability]]} />
+      <div className="page-head">
+        <div className="page-head__titles">
+          <h1 className="t-h1">Connect a capability</h1>
+          <p className="page-head__sub">
+            Choose a vendor and binding. Secrets are write-only — stored securely, never shown again.
+          </p>
+        </div>
+      </div>
+      {drawer}
       <Link to="/integrations" className="t-sm">
         Back to integrations
       </Link>

@@ -219,14 +219,30 @@ class RepositoryUpdateSerializer(serializers.Serializer):
 
 
 # ── Brownfield onboarding (P4.7-T8) ───────────────────────────────────
-class CodeIntelIndexSerializer(serializers.Serializer):
-    """Input for POST /api/projects/{id}/code-intel/ (tech_lead/admin). `index`/`summary` carry
-    an **already-computed** analysis result — real companion-side dispatch is deferred (see
-    PHASE_4.7_BUILD_SPEC.md T8 implementation notes)."""
+class CodeIntelDispatchSerializer(serializers.Serializer):
+    """Input for POST /api/projects/{id}/code-intel/ (tech_lead/admin). B4: this endpoint now
+    only **dispatches** an indexing job for a repo — it no longer accepts a client-supplied
+    analysis result. The real index can arrive only from the companion report sink, so a
+    fabricated `{"file_count": 99999}` from the web can no longer be persisted (B4-2)."""
 
     repo_id = serializers.CharField()
-    index = serializers.DictField(required=False, default=dict)
-    summary = serializers.CharField(required=False, default="", allow_blank=True)
+    user_id = serializers.CharField(required=False, allow_blank=True)
+
+
+class _ConfluenceLinkSerializer(serializers.Serializer):
+    """One row of the B3-4 "Link your existing docs" form: a Confluence page reference (full URL
+    or bare page id) + the lifecycle type the user declares it as."""
+
+    page = serializers.CharField()
+    type = serializers.CharField()
+
+
+class LinkConfluenceSerializer(serializers.Serializer):
+    """Input for POST /api/projects/{id}/link-confluence/ (B3-4) — register user-provided
+    Confluence pages as typed pointers. Validation of the type against the canonical set happens
+    in the service (`link_confluence_pages`), so one bad row returns a per-row error, not a 400."""
+
+    links = _ConfluenceLinkSerializer(many=True)
 
 
 # ── API contracts & drift (P4.7-T9) ───────────────────────────────────
@@ -278,7 +294,11 @@ class ProjectSerializer(serializers.ModelSerializer):
     class Meta:
         model = Project
         fields = ["id", "name", "track", "repo_topology", "status", "created_at"]
-        read_only_fields = ["id", "created_at"]
+        # B0-2: repo_topology is DERIVED from the project's repo count (apps.projects.repos.
+        # _recompute_topology reconciles it on every repo add/remove). The client must not be
+        # able to assert it — otherwise a project persists as e.g. "multi" with zero repos.
+        # Read-only means it's still returned to the client, just never written from a request.
+        read_only_fields = ["id", "repo_topology", "created_at"]
 
 
 class ProjectProfileSerializer(serializers.ModelSerializer):
@@ -526,6 +546,9 @@ class SourceDocumentSerializer(serializers.ModelSerializer):
 
 
 class AdoptSerializer(serializers.Serializer):
-    """Input for the onboarding review gate. `user_id` must hold product_owner."""
+    """Input for the onboarding review gate. The acting user is the session user (P4.7-T5);
+    `user_id` is an optional pre-auth/test fallback. `target_type` (Brownfield B2-1) classifies
+    the uploaded document into its lifecycle type so the gap report recognises it as evidence."""
 
-    user_id = serializers.UUIDField()
+    user_id = serializers.UUIDField(required=False)
+    target_type = serializers.CharField(required=False, allow_blank=True)

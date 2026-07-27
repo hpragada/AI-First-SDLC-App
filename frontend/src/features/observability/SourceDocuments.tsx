@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
@@ -7,6 +7,63 @@ import { useAdoptSourceDocument, useSourceDocuments, useUploadSourceDocument } f
 
 // S-25 view states: empty · uploading · extracted (adopt-gate) · adopted.
 export type SourceDocsView = "empty" | "uploading" | "extracted" | "adopt-gate" | "adopted";
+
+// Brownfield B2-1: the lifecycle types a human can classify an uploaded document as at adopt.
+// These MUST match the backend's ADOPTABLE_ARTIFACT_TYPES (derived from the gap-report lifecycle).
+// Exported so the B3-4 "Link Confluence docs" form reuses the exact same canonical set (one
+// classification vocabulary, two sources: uploaded docs + linked Confluence pages).
+export const ADOPT_TYPES: { value: string; label: string }[] = [
+  { value: "requirements", label: "Requirements" },
+  { value: "prd", label: "PRD" },
+  { value: "architecture", label: "Architecture" },
+  { value: "ux_design", label: "UX Design" },
+  { value: "ideation", label: "Ideation" },
+];
+
+// Pre-select a sensible type from the filename; the user can still change it before adopting.
+export function guessAdoptType(filename: string): string {
+  const f = filename.toLowerCase();
+  if (f.includes("architecture") || f.includes("adr")) return "architecture";
+  if (f.includes("prd")) return "prd";
+  if (f.includes("ux") || f.includes("design") || f.includes("wireframe")) return "ux_design";
+  if (f.includes("vision") || f.includes("idea")) return "ideation";
+  return "requirements";
+}
+
+// Per-row adopt control (its own component so each row can hold its own selected type).
+function AdoptControls({
+  filename,
+  pending,
+  disabled,
+  onAdopt,
+}: {
+  filename: string;
+  pending: boolean;
+  disabled: boolean;
+  onAdopt: (targetType: string) => void;
+}) {
+  const [type, setType] = useState(() => guessAdoptType(filename));
+  return (
+    <span style={{ display: "inline-flex", gap: "var(--space-2)", alignItems: "center" }}>
+      <select
+        className="select"
+        aria-label="Adopt as artifact type"
+        value={type}
+        onChange={(e) => setType(e.target.value)}
+        disabled={pending}
+      >
+        {ADOPT_TYPES.map((t) => (
+          <option key={t.value} value={t.value}>
+            {t.label}
+          </option>
+        ))}
+      </select>
+      <Button variant="primary" size="sm" disabled={disabled} onClick={() => onAdopt(type)}>
+        {pending ? <Spinner /> : "Adopt"}
+      </Button>
+    </span>
+  );
+}
 
 export function SourceDocuments({ forceView }: { forceView?: SourceDocsView }) {
   if (forceView) return <SourceDocumentsGallery view={forceView} />;
@@ -123,14 +180,15 @@ function SourceDocumentsLive() {
                     {doc.status === "extracting" ? "Extracting…" : doc.status === "extracted" ? "Extracted" : doc.status}
                   </Badge>
                   {doc.status === "extracted" && (
-                    <Button
-                      variant="primary"
-                      size="sm"
+                    <AdoptControls
+                      filename={doc.filename}
+                      pending={adopt.isPending && adopt.variables?.id === doc.id}
                       disabled={adopt.isPending || !currentUser}
-                      onClick={() => currentUser && adopt.mutate({ id: doc.id, userId: currentUser.user.id })}
-                    >
-                      {adopt.isPending && adopt.variables?.id === doc.id ? <Spinner /> : "Adopt"}
-                    </Button>
+                      onAdopt={(targetType) =>
+                        currentUser &&
+                        adopt.mutate({ id: doc.id, targetType, userId: currentUser.user.id })
+                      }
+                    />
                   )}
                   {doc.status === "adopted" && (
                     <Link to="/artifacts" className="btn btn--ghost btn--sm">

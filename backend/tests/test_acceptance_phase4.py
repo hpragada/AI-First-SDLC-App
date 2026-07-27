@@ -31,7 +31,7 @@ from integrations.api_contract import export_api_contract, read_api_contract, re
 from integrations.codeintel.builtin import BuiltinCodeIntel
 from integrations.drift import decide_drift, detect_contract_drift
 from integrations.onboarding import build_gap_report, register_atlassian
-from integrations.types import DocHit, Issue, IssueHit
+from integrations.types import Issue, IssueHit
 from integrations.webhooks import reconcile_github
 from orchestration.trigger import trigger_phase
 from storage import InMemoryObjectStore
@@ -57,11 +57,6 @@ def _be_repo(tmp_path):
     _git(ws, "add", "-A")
     _git(ws, "commit", "-m", "init")
     return ws
-
-
-class _FakeDocStore:
-    def search(self, *, query, space=None):
-        return [DocHit(id="100", title="Existing PRD", url="https://x/wiki/100")]
 
 
 class _FakeTaskTracker:
@@ -102,15 +97,14 @@ def test_onboard_split_fe_be_registers_intel_and_gap_report(world):
     # split topology from the two repos
     assert Project.objects.get(id=world["p"]).repo_topology == Project.RepoTopology.SPLIT
 
-    # register-don't-recreate against Atlassian (fakes)
+    # register-don't-recreate: bulk-import the Jira backlog (fake). B3-4: Confluence is no longer
+    # crawled here — pages are linked + typed individually (covered in test_onboarding.py).
     out = register_atlassian(tenant_id=world["t"], project_id=world["p"],
-                             docstore=_FakeDocStore(), tasktracker=_FakeTaskTracker(),
-                             space="SDLC", project_key="ST")
-    assert len(out["registered_pages"]) == 1 and len(out["registered_issues"]) == 1
+                             tasktracker=_FakeTaskTracker(), project_key="ST")
+    assert len(out["registered_issues"]) == 1
     again = register_atlassian(tenant_id=world["t"], project_id=world["p"],
-                               docstore=_FakeDocStore(), tasktracker=_FakeTaskTracker(),
-                               space="SDLC", project_key="ST")
-    assert again == {"registered_pages": [], "registered_issues": []}   # idempotent
+                               tasktracker=_FakeTaskTracker(), project_key="ST")
+    assert again["registered_issues"] == []   # idempotent
 
     # built-in code-intel runs for real in the companion worktree (temp git repo)
     idx = BuiltinCodeIntel().index(workspace=world["be_ws"], repo="acme/api")

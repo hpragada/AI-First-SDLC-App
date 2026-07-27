@@ -246,7 +246,7 @@ export const api = {
   createProject: (
     tenantId: string,
     name: string,
-    opts?: { track?: string; repo_topology?: string },
+    opts?: { track?: string }, // B0-2: repo_topology is derived server-side, never client-set.
   ) => req<Project>("POST", "/projects/", { tenantId, body: { name, ...opts } }),
   getProfile: async (tenantId: string, projectId: string): Promise<ProjectProfile | null> => {
     try {
@@ -360,13 +360,19 @@ export const api = {
     req<OnboardingHub>("GET", `/projects/${projectId}/onboarding/`),
   onboardAtlassian: (projectId: string) =>
     req<Record<string, unknown>>("POST", `/projects/${projectId}/onboard-atlassian/`),
+  // B3-4: register user-provided Confluence pages as typed pointers (feeds the gap report).
+  linkConfluencePages: (projectId: string, links: { page: string; type: string }[]) =>
+    req<{
+      linked: { page_id: string; artifact_id: string; type: string; title: string; created: boolean }[];
+      errors: { page: string; error: string }[];
+    }>("POST", `/projects/${projectId}/link-confluence/`, { body: { links } }),
   listSourceDocuments: (projectId: string) =>
     req<SourceDocument[]>("GET", `/projects/${projectId}/source-documents/`),
   uploadSourceDocument: (projectId: string, file: File) =>
     uploadFile<Record<string, unknown>>(`/projects/${projectId}/source-documents/`, file),
-  adoptSourceDocument: (sourceDocumentId: string, userId: string) =>
+  adoptSourceDocument: (sourceDocumentId: string, targetType: string, userId?: string) =>
     req<Record<string, unknown>>("POST", `/source-documents/${sourceDocumentId}/adopt/`, {
-      body: { user_id: userId },
+      body: { target_type: targetType, ...(userId ? { user_id: userId } : {}) },
     }),
   startCodeIntel: (projectId: string, repoId: string) =>
     req<Record<string, unknown>>("POST", `/projects/${projectId}/code-intel/`, {

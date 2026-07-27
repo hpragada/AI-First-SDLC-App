@@ -42,7 +42,8 @@ export function useUploadSourceDocument(projectId: string | undefined) {
 export function useAdoptSourceDocument(projectId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, userId }: { id: string; userId: string }) => api.adoptSourceDocument(id, userId),
+    mutationFn: ({ id, targetType, userId }: { id: string; targetType: string; userId?: string }) =>
+      api.adoptSourceDocument(id, targetType, userId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["source-documents", projectId] });
       qc.invalidateQueries({ queryKey: ["onboarding", projectId] });
@@ -54,6 +55,16 @@ export function useOnboardAtlassian(projectId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.onboardAtlassian(projectId as string),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["onboarding", projectId] }),
+  });
+}
+
+// B3-4: link user-provided Confluence pages as typed pointers; refresh the hub on success.
+export function useLinkConfluencePages(projectId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (links: { page: string; type: string }[]) =>
+      api.linkConfluencePages(projectId as string, links),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["onboarding", projectId] }),
   });
 }
