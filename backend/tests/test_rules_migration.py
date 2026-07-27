@@ -27,6 +27,20 @@ def test_distilled_rules_preserve_reasoning():
         assert needle in rules, f"missing distilled rule content: {needle!r}"
 
 
+def test_gap_scan_is_a_question_never_an_artifact():
+    """Regression: a planning agent (01_ideation on the Test09 tenant) wrote its Context Gap
+    Scan into an `ideation` artifact instead of calling ask_human. The distilled rules must now
+    forbid that unambiguously for every phase (the rule is rendered into every manifest)."""
+    rules = get_prompt_rules().lower()
+    for needle in [
+        "never a deliverable",              # the gap scan is a question, not an artifact
+        "wait for the answers before",      # block before producing/registering
+        "only channel for a gap is the",    # ask_human is the sole channel
+        "failed run",                       # dumping the scan / unanswered Tier-1 = failure
+    ]:
+        assert needle in rules, f"missing gap-scan enforcement: {needle!r}"
+
+
 def test_distilled_rules_have_no_local_file_references():
     """The §8 sweep applies to rules too: references must be rerouted to the platform."""
     rules = get_prompt_rules().lower()

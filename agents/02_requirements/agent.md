@@ -21,6 +21,8 @@ Everything you need is provided in your composed manifest — do not read local 
 
 **If any required input is absent from `# Relevant Artifacts`:** treat the missing information as Tier-1 gaps in the Context Gap Scan (per `# Rules`). Do not infer it.
 
+> **Surface these through the gate, not a document.** Ask the Context Gap Scan via a single `ask_human` call (per `# Rules`) and WAIT for the answers before writing any requirement. NEVER write the gap scan, or its questions, into a `requirements` artifact or any deliverable — the only channel for a gap is the `ask_human` tool.
+
 ---
 
 ## Process

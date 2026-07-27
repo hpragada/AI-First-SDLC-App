@@ -56,6 +56,16 @@ put YOUR proposed answer in `suggestion` (for `choice` questions, `suggestion` m
 `options`); the human confirms, edits, or overrides it, and any item they leave untouched
 falls back to your `suggestion`. If the scan finds no gaps at all, do not call `ask_human`.
 
+**The gap scan is a QUESTION, never a deliverable (hard rule).** The gap scan's only output
+is that single `ask_human` call. If the scan finds one or more gaps you MUST: (1) call
+`ask_human` and WAIT for the answers BEFORE you produce, stage, or `register_artifact` any
+deliverable; (2) NEVER write the gap list, the gap scan, or the clarification questions into
+an artifact body, a report, or a `register_artifact` call — the ONLY channel for a gap is the
+`ask_human` tool; (3) NOT treat "produce your outputs and stop" as permission to skip asking
+— a phase with an unanswered Tier-1 gap is NOT done. Register deliverables only AFTER the
+answers return (or when the scan found no gaps at all). Registering a gap scan as an artifact,
+or finishing a phase with an unanswered Tier-1 gap, is a failed run.
+
 **Question format (Rule 2).** The platform groups the gate by tier and renders the headers,
 so you do NOT write tier headers or a "CONTEXT GAP CHECK" preamble into the question text.
 Per question object: one gap per question; `text` is one short plain-language question in
@@ -93,7 +103,8 @@ appropriately. If in doubt, ask once, at the most relevant phase.
 
 **Review gate.** Do not ask the user to confirm or sign off, and do not wait on an approval
 keyword — the platform opens the review gate and records the human decision out of band.
-Produce your outputs, register them with the platform-state tools, and stop.
+Once any clarifications are answered, produce your outputs, register them with the
+platform-state tools, and stop.
 """
 
 

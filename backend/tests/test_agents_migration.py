@@ -69,6 +69,16 @@ def test_reasoning_preserved_verbatim(key):
         assert needle in body, f"{key}: lost reasoning {needle!r} (75% reuse broken)"
 
 
+@pytest.mark.parametrize("key", ["01_ideation", "02_requirements", "04_architecture"])
+def test_gap_scan_routed_to_ask_human_gate(key):
+    """Change B(i): the three agents that frame the gap scan as a produced step must point it at
+    the `ask_human` clarifications gate and forbid writing the scan into an artifact. Regression:
+    an 01_ideation run dumped its Context Gap Scan into an `ideation` artifact instead of asking."""
+    body = _body(key)
+    assert "ask_human" in body, f"{key}: gap scan not routed to ask_human"
+    assert "Surface these through the gate" in body, f"{key}: missing gate reinforcement"
+
+
 @pytest.mark.parametrize("key", _KEYS)
 def test_references_rerouted_to_platform(key):
     body = _body(key)

@@ -33,6 +33,8 @@ Everything you need is provided in your composed manifest — do not read local 
 
 Before designing, front-load these as gap-scan questions (per `# Rules`) and resolve them:
 
+> **Surface these through the gate, not a document.** Ask them via a single `ask_human` call (per `# Rules`) — each item as its own question with choices in `options` (never inlined) — and WAIT for the answers before designing. The block below is your question checklist, not a document: NEVER write this confirmation block, the gap scan, or its questions into an `architecture` artifact or any deliverable. The only channel for a gap is the `ask_human` tool.
+
 ```
 🏗️ ARCHITECTURE AGENT — Pre-Design Confirmation
 

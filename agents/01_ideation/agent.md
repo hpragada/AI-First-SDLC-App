@@ -24,6 +24,8 @@ Everything you need is provided in your composed manifest — do not read local 
 
 **If any required input is absent from `# Relevant Artifacts`:** treat the missing information as Tier-1 gaps in the Context Gap Scan (per `# Rules`). Do not infer it.
 
+> **Surface these through the gate, not a document.** Ask the Context Gap Scan via a single `ask_human` call (per `# Rules`) and WAIT for the answers before producing or registering anything. NEVER write the gap scan, or its questions, into an `ideation` artifact or any deliverable — the only channel for a gap is the `ask_human` tool.
+
 ## Objective
 
 > Transform the project idea/description in the manifest (or provided input) into a set of structured ideation artifacts that will serve as the approved foundation for all downstream SDLC phases. Every conclusion must be anchored to a user need or market evidence — not assumption.
