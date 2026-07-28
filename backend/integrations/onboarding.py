@@ -245,11 +245,51 @@ def adopt_source_document(*, tenant_id, source_document_id, user_id, target_type
         src = SourceDocument.objects.get(id=source_document_id, tenant_id=tenant_id)
         src.status = SourceDocument.Status.ADOPTED
         src.save(update_fields=["status", "updated_at"])
+        filename = src.filename
+        project_id = str(src.project_id)
         tools.log_event(tenant_id, f"user:{user_id}", "source_document.adopted",
                         "source_document", str(src.id),
                         {"artifact_ids": artifact_ids, "target_type": target_type})
+    # Part B (B3): read the adopted document's visual content into faithful text on the companion
+    # (document-vision, 00e), auto-applied. Best-effort and non-blocking — adoption has already
+    # succeeded and must never fail on this enhancement.
+    _maybe_trigger_vision(
+        tenant_id=tenant_id, project_id=project_id, source_document_id=str(source_document_id),
+        artifact_ids=artifact_ids, filename=filename, user_id=user_id,
+    )
     return {"source_document_id": str(source_document_id), "status": "adopted",
             "artifact_ids": artifact_ids, "target_type": target_type}
+
+
+def _maybe_trigger_vision(*, tenant_id, project_id, source_document_id, artifact_ids, filename,
+                          user_id):
+    """Kick off the document-vision agent (00e) for an adopted document — but only when there is
+    something visual to read (the artifact has preserved `page_images`); a pure-text upload with no
+    images would give vision nothing to do, so it is skipped. Fully best-effort: no enrolled
+    companion, an already-running vision pass for this document, or any other error just skips.
+    Adoption succeeded regardless — vision only enriches the extracted text."""
+    from apps.registry.models import Artifact
+    from apps.tenancy.context import tenant_context
+
+    if not artifact_ids:
+        return
+    artifact_id = str(artifact_ids[0])
+    with tenant_context(tenant_id):
+        art = Artifact.objects.filter(id=artifact_id, tenant_id=tenant_id).first()
+    if art is None or not (art.external_ref or {}).get("page_images"):
+        return  # nothing visual to read → vision would be a no-op
+    try:
+        from orchestration.trigger import TriggerError, trigger_vision
+
+        trigger_vision(
+            tenant_id=tenant_id, project_id=project_id, source_document_id=source_document_id,
+            artifact_id=artifact_id, filename=filename, triggered_by=user_id,
+        )
+    except TriggerError:
+        return  # no companion enrolled / a vision run already in flight for this doc — expected
+    except Exception as exc:  # noqa: BLE001 — vision is an enhancement; never fail adoption
+        tools.log_event(tenant_id, "platform", "document_vision.trigger_failed",
+                        "source_document", source_document_id, {"error": str(exc)[:300]})
 
 
 # ── Atlassian register-don't-recreate ───────────────────────────────
