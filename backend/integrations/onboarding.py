@@ -98,7 +98,8 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
     store.put(src_key, content)
 
     try:
-        title, body = extract(filename=filename, mime=mime, content=content)
+        # A1: extract() now also returns embedded images; A2 persists them + page renders.
+        title, body, _images = extract(filename=filename, mime=mime, content=content)
     except Exception:
         with tenant_context(tenant_id):
             SourceDocument.objects.filter(id=src.id, tenant_id=tenant_id).update(
