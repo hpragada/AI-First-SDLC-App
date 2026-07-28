@@ -73,6 +73,15 @@ function getCsrfToken(): string {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+// A3: fetch a binary read-through (original upload / captured page image) with the session
+// cookie, and return an object URL for an <iframe>/<img>. A raw cross-origin `<img src>` to the
+// API would not carry the session, so we fetch-with-credentials then hand back a blob URL.
+async function fetchBlobUrl(path: string): Promise<string> {
+  const res = await fetch(BASE + path, { method: "GET", credentials: "include" });
+  if (!res.ok) throw new ApiError(res.status, `Failed to load ${path}`);
+  return URL.createObjectURL(await res.blob());
+}
+
 async function req<T>(method: string, path: string, opts: ReqOpts = {}): Promise<T> {
   const headers: Record<string, string> = {};
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
@@ -374,6 +383,11 @@ export const api = {
     req<Record<string, unknown>>("POST", `/source-documents/${sourceDocumentId}/adopt/`, {
       body: { target_type: targetType, ...(userId ? { user_id: userId } : {}) },
     }),
+  // A3: view the original upload and captured page images (blob URLs — revoke when done).
+  getSourceOriginalUrl: (sourceDocumentId: string) =>
+    fetchBlobUrl(`/source-documents/${sourceDocumentId}/original/`),
+  getSourcePageUrl: (sourceDocumentId: string, name: string) =>
+    fetchBlobUrl(`/source-documents/${sourceDocumentId}/page/?name=${encodeURIComponent(name)}`),
   startCodeIntel: (projectId: string, repoId: string) =>
     // mode "agent" → the 00c agent runs on the companion; "mechanical" → the CodeIntelJob
     // fallback (no companion enrolled for this user).

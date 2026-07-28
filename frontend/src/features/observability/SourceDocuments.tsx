@@ -1,8 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { api } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Banner, Breadcrumb, Button, Dropzone, Panel, Spinner } from "../../components/ui";
+import type { SourceDocument } from "../../types";
 import {
   useAdoptSourceDocument,
   useOnboardingHub,
@@ -121,6 +123,121 @@ function AdoptControls({
   );
 }
 
+// A4: an honest status badge — for an extracted doc, distinguish real text from image-only
+// (needs AI read) and empty, instead of a blanket "Extracted".
+export function badgeFor(doc: SourceDocument): { label: string; variant: string } {
+  if (doc.status === "extracting") return { label: "Extracting…", variant: "running" };
+  if (doc.status === "failed") return { label: "Failed", variant: "failed" };
+  if (doc.status === "adopted") return { label: "Adopted", variant: "done" };
+  if (doc.status === "extracted") {
+    if (doc.fidelity === "images_only") return { label: "Needs AI read", variant: "waiting" };
+    if (doc.fidelity === "empty") return { label: "No text found", variant: "waiting" };
+    return { label: "Extracted", variant: "info-hue" };
+  }
+  return { label: doc.status, variant: "info-hue" };
+}
+
+type PreviewState = { url: string; kind: "pdf" | "image" | "other" } | null;
+
+// A3: one source-document row + a "Preview" that shows the ORIGINAL upload (PDF/image) so the
+// user can confirm exactly what was captured, next to the extracted artifact.
+function SourceDocRow({
+  doc,
+  adopt,
+  adoptTypes,
+  userId,
+}: {
+  doc: SourceDocument;
+  adopt: ReturnType<typeof useAdoptSourceDocument>;
+  adoptTypes: { value: string; label: string }[];
+  userId?: string;
+}) {
+  const [preview, setPreview] = useState<PreviewState>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const badge = badgeFor(doc);
+  const pageCount = doc.page_images?.length ?? 0;
+
+  // Revoke the object URL when it changes or the row unmounts (no leaked blobs).
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
+
+  async function togglePreview() {
+    if (preview) {
+      setPreview(null);
+      return;
+    }
+    setLoading(true);
+    setErr("");
+    try {
+      const url = await api.getSourceOriginalUrl(doc.id);
+      const kind = doc.mime.includes("pdf") ? "pdf" : doc.mime.startsWith("image/") ? "image" : "other";
+      setPreview({ url, kind });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Couldn't load the original");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ marginBottom: "var(--space-3)" }}>
+      <Panel flush>
+        <div className="artifact-row">
+          <div className="artifact-row__main">
+            <div className="artifact-row__title">{doc.filename}</div>
+            <div className="artifact-row__meta">
+              {fileKindLabel(doc.mime, doc.filename)}
+              {pageCount > 0 && ` · ${pageCount} page${pageCount > 1 ? "s" : ""} captured`}
+            </div>
+          </div>
+          <Badge variant={badge.variant as never}>{badge.label}</Badge>
+          {doc.has_original && (
+            <Button variant="ghost" size="sm" onClick={togglePreview} disabled={loading}>
+              {loading ? <Spinner /> : preview ? "Hide" : "Preview"}
+            </Button>
+          )}
+          {doc.status === "extracted" && (
+            <AdoptControls
+              filename={doc.filename}
+              types={adoptTypes}
+              pending={adopt.isPending && adopt.variables?.id === doc.id}
+              disabled={adopt.isPending || !userId}
+              onAdopt={(targetType) => userId && adopt.mutate({ id: doc.id, targetType, userId })}
+            />
+          )}
+          {doc.status === "adopted" && (
+            <Link to="/artifacts" className="btn btn--ghost btn--sm">
+              View artifact
+            </Link>
+          )}
+        </div>
+        {err && (
+          <div className="t-sm" style={{ color: "var(--danger)", padding: "0 var(--space-3) var(--space-3)" }}>
+            {err}
+          </div>
+        )}
+        {preview && (
+          <div style={{ padding: "var(--space-3)", borderTop: "1px solid var(--border)" }}>
+            {preview.kind === "pdf" ? (
+              <iframe
+                title={doc.filename}
+                src={preview.url}
+                style={{ width: "100%", height: "620px", border: "1px solid var(--border)", borderRadius: "6px" }}
+              />
+            ) : preview.kind === "image" ? (
+              <img alt={doc.filename} src={preview.url} style={{ maxWidth: "100%", borderRadius: "6px" }} />
+            ) : (
+              <a href={preview.url} download={doc.filename}>
+                Download original
+              </a>
+            )}
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 export function SourceDocuments({ forceView }: { forceView?: SourceDocsView }) {
   if (forceView) return <SourceDocumentsGallery view={forceView} />;
   return <SourceDocumentsLive />;
@@ -219,46 +336,13 @@ function SourceDocumentsLive() {
       {list.length > 0 && (
         <div style={{ marginTop: "var(--space-4)" }}>
           {list.map((doc) => (
-            <div key={doc.id} style={{ marginBottom: "var(--space-3)" }}>
-              <Panel flush>
-                <div className="artifact-row">
-                  <div className="artifact-row__main">
-                    <div className="artifact-row__title">{doc.filename}</div>
-                    <div className="artifact-row__meta">{fileKindLabel(doc.mime, doc.filename)}</div>
-                  </div>
-                  <Badge
-                    variant={
-                      doc.status === "extracting"
-                        ? "running"
-                        : doc.status === "failed"
-                          ? "failed"
-                          : doc.status === "adopted"
-                            ? "done"
-                            : "info-hue"
-                    }
-                  >
-                    {doc.status === "extracting" ? "Extracting…" : doc.status === "extracted" ? "Extracted" : doc.status}
-                  </Badge>
-                  {doc.status === "extracted" && (
-                    <AdoptControls
-                      filename={doc.filename}
-                      types={adoptTypes}
-                      pending={adopt.isPending && adopt.variables?.id === doc.id}
-                      disabled={adopt.isPending || !currentUser}
-                      onAdopt={(targetType) =>
-                        currentUser &&
-                        adopt.mutate({ id: doc.id, targetType, userId: currentUser.user.id })
-                      }
-                    />
-                  )}
-                  {doc.status === "adopted" && (
-                    <Link to="/artifacts" className="btn btn--ghost btn--sm">
-                      View artifact
-                    </Link>
-                  )}
-                </div>
-              </Panel>
-            </div>
+            <SourceDocRow
+              key={doc.id}
+              doc={doc}
+              adopt={adopt}
+              adoptTypes={adoptTypes}
+              userId={currentUser?.user.id}
+            />
           ))}
           {adopt.isError && (
             <Banner variant="danger" title="Couldn't adopt this document">

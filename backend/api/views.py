@@ -702,6 +702,59 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = SourceDocumentSerializer
     queryset = SourceDocument.objects.all().order_by("-created_at")
 
+    def get_permissions(self):
+        # A3: streaming the original file / captured page images is member-gated (these serve raw
+        # uploaded bytes — never AllowAny).
+        if self.action in {"original", "page"}:
+            return [IsAuthenticatedMember()]
+        return super().get_permissions()
+
+    @action(detail=True, methods=["get"])
+    def original(self, request, pk=None):
+        """A3: stream the original uploaded file so the user sees exactly what they uploaded
+        (the browser renders a PDF/image inline). Read-through from S3, never stored back."""
+        from django.http import HttpResponse
+
+        from storage import s3_from_settings
+
+        src = self.get_object()
+        if not src.s3_key:
+            raise NotFound("no original file stored for this document")
+        try:
+            data = s3_from_settings().get(src.s3_key)
+        except Exception as exc:  # noqa: BLE001 — missing object → 404, not 500
+            raise NotFound("original file is unavailable") from exc
+        resp = HttpResponse(data, content_type=src.mime or "application/octet-stream")
+        resp["Content-Disposition"] = f'inline; filename="{src.filename}"'
+        return resp
+
+    @action(detail=True, methods=["get"], url_path="page")
+    def page(self, request, pk=None):
+        """A3: stream one captured page render / embedded image (external_ref.page_images),
+        selected by its `name`. Validates the name against the artifact so no arbitrary key can
+        be read."""
+        from django.http import HttpResponse
+
+        from storage import s3_from_settings
+
+        src = self.get_object()
+        name = request.query_params.get("name") or ""
+        aids = list(src.extracted_artifact_ids or [])
+        art = None
+        if aids:
+            art = Artifact.objects.filter(id=aids[0], tenant_id=self.tenant_id).first()
+        images = ((art.external_ref or {}).get("page_images") if art else None) or []
+        match = next((im for im in images if im.get("name") == name), None)
+        if not match or not match.get("s3_key"):
+            raise NotFound("no such page image")
+        try:
+            data = s3_from_settings().get(match["s3_key"])
+        except Exception as exc:  # noqa: BLE001
+            raise NotFound("page image is unavailable") from exc
+        resp = HttpResponse(data, content_type=match.get("mime") or "image/png")
+        resp["Content-Disposition"] = f'inline; filename="{name}"'
+        return resp
+
     @action(detail=True, methods=["post"])
     def adopt(self, request, pk=None):
         """Review gate: a product_owner publishes the extracted draft artifacts, classifying the

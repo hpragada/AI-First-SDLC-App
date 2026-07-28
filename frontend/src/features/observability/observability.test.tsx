@@ -13,7 +13,8 @@ import { GapReportScreen } from "./GapReportScreen";
 import { OfflineTakeover } from "./OfflineTakeover";
 import { OnboardingHub } from "./OnboardingHub";
 import { RunTranscriptScreen } from "./RunTranscriptScreen";
-import { fileKindLabel, guessAdoptType, SourceDocuments } from "./SourceDocuments";
+import { badgeFor, fileKindLabel, guessAdoptType, SourceDocuments } from "./SourceDocuments";
+import type { SourceDocument } from "../../types";
 import { TraceabilityView } from "./TraceabilityView";
 
 beforeEach(() => {
@@ -48,6 +49,20 @@ describe("S-25 source doc — fileKindLabel (BF-BUG-1)", () => {
     expect(fileKindLabel("text/plain", "notes.txt")).toBe("Text");
     // falls back to the extension when the MIME is empty/unknown
     expect(fileKindLabel("", "backlog.xlsx")).toBe("Excel (XLSX)");
+  });
+});
+
+describe("S-25 source doc — honest status badge (A4)", () => {
+  const base: SourceDocument = {
+    id: "d1", project: "p1", filename: "x.pdf", mime: "application/pdf",
+    status: "extracted", extracted_artifact_ids: [], provenance: {}, created_at: "",
+    has_original: true, page_images: [], fidelity: "text",
+  };
+  it("distinguishes text / images-only / empty instead of a blanket 'Extracted'", () => {
+    expect(badgeFor({ ...base, fidelity: "text" }).label).toBe("Extracted");
+    expect(badgeFor({ ...base, fidelity: "images_only" }).label).toBe("Needs AI read");
+    expect(badgeFor({ ...base, fidelity: "empty" }).label).toBe("No text found");
+    expect(badgeFor({ ...base, status: "adopted" }).label).toBe("Adopted");
   });
 });
 

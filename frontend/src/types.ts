@@ -535,6 +535,10 @@ export interface RunEvent {
 // ── Phase 4.8 T5 — brownfield onboarding + observability (4.7 T8/T9/T10 + bucket B) ──
 
 // Source documents (S-25, spec §6). Mirrors `SourceDocumentSerializer` exactly.
+export interface SourcePageImage {
+  name: string;
+  page: number | null;
+}
 export interface SourceDocument {
   id: string;
   project: string;
@@ -544,6 +548,10 @@ export interface SourceDocument {
   extracted_artifact_ids: string[];
   provenance: Record<string, unknown>;
   created_at: string;
+  // A3/A4: view the original + captured pages, and the honest extraction fidelity.
+  has_original: boolean;
+  page_images: SourcePageImage[];
+  fidelity: "" | "text" | "images_only" | "empty";
 }
 
 // Onboarding hub (S-24, 4.7-T8). Mirrors `integrations/onboarding.py::onboarding_hub()` exactly.

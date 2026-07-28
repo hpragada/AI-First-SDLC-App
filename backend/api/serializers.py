@@ -536,13 +536,37 @@ class ClarificationAnswerSerializer(serializers.Serializer):
 
 # ── Brownfield-lite onboarding ──────────────────────────────────────
 class SourceDocumentSerializer(serializers.ModelSerializer):
+    # A3/A4: whether the original file can be viewed, the captured page images (name+page only —
+    # never the S3 key), and the derived extraction fidelity for an honest status badge.
+    has_original = serializers.SerializerMethodField()
+    page_images = serializers.SerializerMethodField()
+    fidelity = serializers.SerializerMethodField()
+
     class Meta:
         model = SourceDocument
         fields = [
             "id", "project", "filename", "mime", "status",
             "extracted_artifact_ids", "provenance", "created_at",
+            "has_original", "page_images", "fidelity",
         ]
         read_only_fields = fields
+
+    def get_has_original(self, obj) -> bool:
+        return bool(obj.s3_key)
+
+    def get_fidelity(self, obj) -> str:
+        # 'text' (real body) · 'images_only' (needs AI read) · 'empty' · '' (pre-A4 rows).
+        return (obj.provenance or {}).get("fidelity", "")
+
+    def get_page_images(self, obj) -> list:
+        aids = list(obj.extracted_artifact_ids or [])
+        if not aids:
+            return []
+        from apps.registry.models import Artifact
+
+        art = Artifact.objects.filter(id=aids[0], tenant_id=obj.tenant_id).first()
+        imgs = ((art.external_ref or {}).get("page_images") if art else None) or []
+        return [{"name": im.get("name"), "page": im.get("page")} for im in imgs]
 
 
 class AdoptSerializer(serializers.Serializer):

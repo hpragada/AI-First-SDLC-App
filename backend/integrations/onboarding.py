@@ -128,21 +128,26 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
         page_images.append({"name": name, "s3_key": vkey,
                             "mime": im.get("mime") or "image/png", "page": im.get("page")})
 
-    # BF-BUG-3b: no extractable text (e.g. an image-only PDF). Store a clear note — but now the
-    # page images ARE captured (above), so point the user at them rather than saying it's lost.
-    if not body.strip():
-        if page_images:
-            body = (
-                f"> **No selectable text in `{filename}` — it's image-based.**\n>\n"
-                f"> Its {len(page_images)} page image(s) are captured and shown below. Run AI "
-                "extraction (on adopt) to read the screens/diagrams into text."
-            )
-        else:
-            body = (
-                f"> **No text could be extracted from `{filename}`.**\n>\n"
-                "> Upload a text-based PDF or DOCX, or link the original design source, if you "
-                "need this content as an artifact."
-            )
+    # A4: derive an honest fidelity marker from what actually came out — text (real body),
+    # images_only (no text but page images captured → needs AI read), or empty. Stored in
+    # provenance (derived, no DB migration) so the UI badge and gap counting tell the truth.
+    if body.strip():
+        fidelity = "text"
+    elif page_images:
+        fidelity = "images_only"
+        # BF-BUG-3b: the page images ARE captured now — point the user at them, don't say "lost".
+        body = (
+            f"> **No selectable text in `{filename}` — it's image-based.**\n>\n"
+            f"> Its {len(page_images)} page image(s) are captured and shown below. Run AI "
+            "extraction (on adopt) to read the screens/diagrams into text."
+        )
+    else:
+        fidelity = "empty"
+        body = (
+            f"> **No text could be extracted from `{filename}`.**\n>\n"
+            "> Upload a text-based PDF or DOCX, or link the original design source, if you "
+            "need this content as an artifact."
+        )
 
     body_key = f"onboarding/{tenant_id}/{project_id}/{src.id}/extracted.md"
     store.put(body_key, body)
@@ -165,7 +170,8 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
             src.status = SourceDocument.Status.EXTRACTED
             src.extracted_artifact_ids = [artifact["id"]]
             src.provenance = {"filename": filename, "mime": mime, "source_s3_key": src_key,
-                              "title": title}
+                              "title": title, "fidelity": fidelity,
+                              "page_count": len(page_images)}
             src.save(update_fields=["s3_key", "status", "extracted_artifact_ids",
                                     "provenance", "updated_at"])
             tools.log_event(tenant_id, "onboarding", "source_document.extracted",
