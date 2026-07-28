@@ -281,6 +281,18 @@ function IndexCodeStep({ projectId, repos, indexDone }: {
             Requires your companion online. It runs the analysis and reports back — the result
             appears here and feeds the gap report.
           </p>
+          {startCodeIntel.data && (
+            <p className="t-sm" style={{ color: "var(--success)" }}>
+              {startCodeIntel.data.mode === "agent"
+                ? "Running the code-intelligence agent (00c) on your companion — track it in Phases & Runs; its result feeds the gap report."
+                : "Indexing dispatched to a companion — the result appears here and feeds the gap report."}
+            </p>
+          )}
+          {startCodeIntel.isError && (
+            <p className="t-sm" style={{ color: "var(--danger)" }}>
+              {startCodeIntel.error instanceof Error ? startCodeIntel.error.message : "Could not start indexing."}
+            </p>
+          )}
         </div>
       )}
     </Vstep>
@@ -419,10 +431,24 @@ function OnboardingHubLive() {
                 </CardBody>
               </Card>
             ) : (
-              <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
-                <Button variant="secondary" onClick={() => runGapReport.mutate()} disabled={runGapReport.isPending}>
-                  {runGapReport.isPending ? <Spinner /> : "Run gap report"}
-                </Button>
+              <div className="u-stack" style={{ marginTop: "var(--space-2)" }}>
+                <div className="gate-panel__actions">
+                  <Button variant="secondary" onClick={() => runGapReport.mutate()} disabled={runGapReport.isPending}>
+                    {runGapReport.isPending ? <Spinner /> : "Run gap report"}
+                  </Button>
+                </div>
+                {runGapReport.data?.mode === "agent" && (
+                  <p className="t-sm">
+                    The onboarding agent (00_onboarding) is assessing your project on your companion.
+                    The report appears here once its review gate is approved —{" "}
+                    <Link to="/runs">track it in Phases &amp; Runs</Link>.
+                  </p>
+                )}
+                {runGapReport.isError && (
+                  <p className="t-sm" style={{ color: "var(--danger)" }}>
+                    {runGapReport.error instanceof Error ? runGapReport.error.message : "Could not run the gap report."}
+                  </p>
+                )}
               </div>
             )}
           </Vstep>

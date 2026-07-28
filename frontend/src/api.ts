@@ -375,11 +375,15 @@ export const api = {
       body: { target_type: targetType, ...(userId ? { user_id: userId } : {}) },
     }),
   startCodeIntel: (projectId: string, repoId: string) =>
-    req<Record<string, unknown>>("POST", `/projects/${projectId}/code-intel/`, {
-      body: { repo_id: repoId },
-    }),
+    // mode "agent" → the 00c agent runs on the companion; "mechanical" → the CodeIntelJob
+    // fallback (no companion enrolled for this user).
+    req<{ mode: "agent" | "mechanical"; run_id?: string; job_id?: string }>(
+      "POST", `/projects/${projectId}/code-intel/`, { body: { repo_id: repoId } }),
   runGapReport: (projectId: string) =>
-    req<Record<string, unknown>>("POST", `/projects/${projectId}/gap-report/`),
+    // mode "agent" → the 00_onboarding agent assesses on the companion (async, 202); "deterministic"
+    // → the report is built inline and ready to read (200).
+    req<{ mode: "agent" | "deterministic"; run_id?: string; resume_phase?: string }>(
+      "POST", `/projects/${projectId}/gap-report/`),
   getGapReport: (projectId: string) =>
     req<GapReport>("GET", `/projects/${projectId}/gap-report/`),
 

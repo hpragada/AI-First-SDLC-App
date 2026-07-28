@@ -89,7 +89,12 @@ export function useRunGapReport(projectId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.runGapReport(projectId as string),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["gap-report", projectId] }),
+    onSuccess: () => {
+      // The deterministic path builds the report inline (hub.gap flips ready); the agent path
+      // is async. Refresh both so whichever ran surfaces without a manual reload.
+      qc.invalidateQueries({ queryKey: ["gap-report", projectId] });
+      qc.invalidateQueries({ queryKey: ["onboarding", projectId] });
+    },
   });
 }
 
