@@ -53,6 +53,23 @@ Walk these **in order** against the running stack. Update the **Status** cell as
 | S2.2 | Adopt assigns canonical type | Adopting relabels the artifact to the chosen canonical lifecycle type (not `document`), keeps the `extracted_from` provenance edge, uses the **session user** (no hand-passed `user_id`). | both | B2-1 + B2-2 | 🔲 OPEN |
 | S2.3 | Backend/frontend never drift | Adopt vocabulary comes from one server-derived source (`_LIFECYCLE`); UI renders it — changing `_LIFECYCLE` changes both. | both | Slice 2 | 🔲 OPEN |
 
+## Step 1c / 2b — Lossless capture (Part A) & document vision (Part B)
+
+The crux of trust: whatever is uploaded (text, tables, diagrams, screenshots) must reach the agents **in full**, and the user must **see** it captured correctly. Detail + slice log: `onboarding_fidelity_plan.md`; live fix log: `Bugs-fix.md`.
+
+| # | Step | What to verify | Path | Delivered by | Status |
+|---|------|----------------|------|--------------|--------|
+| A.1 | High-fidelity extraction | PDF text + tables reconstructed (pymupdf4llm), embedded images captured (PDF/DOCX/HTML); no wall-of-text, no `## Page N`, no `<br>` literals, no empty-table grids. | both | Part A1 + A-fix | ✅ DONE |
+| A.2 | Page renders preserved | Every PDF page (and embedded images) rendered + stored in S3 as `external_ref.page_images`. | both | Part A2 | ✅ DONE |
+| A.3 | See the original | Gated viewer streams the original file + page images next to the extracted text. | both | Part A3 | ✅ DONE |
+| A.4 | Honest status | Row badge = truth (`text` / `Needs AI read` / `No text`), not a blanket "Extracted"; image-only PDF shows a plain-language "pages preserved, AI reads them" message (dynamic page count). | both | Part A4 | ✅ DONE |
+| B.0 | Vision capability | The MCP tool-result **image pipe reaches the model on the subscription CLI** (spike proven — model read a secret off a returned image). | agent | Part B0 | ✅ DONE (spike) |
+| B.1 | Image pipe tool | `get_page_images(artifact_id)` streams a doc's page images as image blocks (paginated ≤4/call, downscaled ≤1568px). | agent | Part B1 | ✅ unit-tested |
+| B.2 | Vision agent on adopt | Adopting a doc with visuals runs **`00e_document_vision`** on the companion; it transcribes screenshots/tables/diagrams into faithful text, **auto-applied** as a new version (no 2nd gate); per-doc carrier hidden from the backlog. | agent | Part B2 | 🔲 OPEN (built; needs seed + companion) |
+| B.3 | Trigger + universal seed | Adopt fires vision only when page images exist; `00e` seeded on every tenant via the `0004` data migration (+ on-create hook for new tenants). | agent | Part B3 + migration | 🔲 OPEN (run migrate + restart companion) |
+
+> **Part A: ✅ team-verified live** ("strongly completed… everything works"). **Part B: built + unit-tested, not yet live** — to exercise it: run migrations (seeds `00e`) and restart the companion, then adopt the Architecture / wireframes PDF and confirm diagrams/screens arrive as text.
+
 ## Step 3 — Connect → Import Jira backlog → Link Confluence docs (typed) → Figma
 
 | # | Step | What to verify | Path | Delivered by | Status |
