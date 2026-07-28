@@ -81,8 +81,8 @@ _REF_POINTER_KEYS = {
     "project_id", "run_id", "work_item_id", "repo_id", "space", "space_key",
     # Ingest provenance (a static-file upload's external_ref) — pointers, never content.
     # Without these an image-only PDF (no extractable body) would render its filename/s3-key
-    # provenance as if it were the document (BF-BUG-3b).
-    "source", "filename", "source_document_id", "source_s3_key",
+    # provenance as if it were the document (BF-BUG-3b). `page_images` (A2) is a pointer list.
+    "source", "filename", "source_document_id", "source_s3_key", "page_images",
 }
 
 
@@ -99,9 +99,9 @@ def _scalar(value) -> str:
 def _render_fields(item: dict) -> list[str]:
     lines = []
     for k, v in item.items():
-        if isinstance(v, list) and v and all(not isinstance(x, (dict, list)) for x in v):
+        if isinstance(v, list) and v and all(not isinstance(x, (dict | list)) for x in v):
             lines.append(f"- **{_humanize_key(k)}:** {', '.join(_scalar(x) for x in v)}")
-        elif isinstance(v, (dict, list)):
+        elif isinstance(v, dict | list):
             lines.append(f"- **{_humanize_key(k)}:** {json.dumps(v, ensure_ascii=False)}")
         else:
             lines.append(f"- **{_humanize_key(k)}:** {_scalar(v)}")

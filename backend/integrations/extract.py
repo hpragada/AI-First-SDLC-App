@@ -190,6 +190,24 @@ def _extract_pdf(content: bytes) -> tuple[str, list[Image]]:
     return "\n\n".join(parts), images
 
 
+def pdf_page_pngs(content: bytes, *, dpi: int = 130) -> list[Image]:
+    """Render each PDF page to a PNG — the faithful visual of the upload, for the 'see your
+    original' viewer (A3) and the vision step (Part B). Best-effort per page; `dpi` kept modest
+    so storage + downstream vision cost stay sane."""
+    import pymupdf
+
+    out: list[Image] = []
+    with pymupdf.open(stream=content, filetype="pdf") as doc:
+        for pno, page in enumerate(doc, start=1):
+            try:
+                pix = page.get_pixmap(dpi=dpi)
+                out.append({"name": f"page{pno}.png", "bytes": pix.tobytes("png"),
+                            "mime": "image/png", "page": pno})
+            except Exception:  # noqa: BLE001 — one bad page must not lose the rest
+                continue
+    return out
+
+
 def _extract_txt(content: bytes) -> tuple[str, list[Image]]:
     """Plain text is already the artifact-body format — decode and return as-is."""
     return content.decode("utf-8", "replace").strip(), []

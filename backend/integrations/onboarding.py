@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 from mcp_platform_state import tools
 
-from .extract import extract
+from .extract import extract, pdf_page_pngs
 from .registry import get_capability, get_connection
 from .types import CapabilityUnavailable
 
@@ -98,8 +98,8 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
     store.put(src_key, content)
 
     try:
-        # A1: extract() now also returns embedded images; A2 persists them + page renders.
-        title, body, _images = extract(filename=filename, mime=mime, content=content)
+        # A1: extract() also returns embedded raster images.
+        title, body, images = extract(filename=filename, mime=mime, content=content)
     except Exception:
         with tenant_context(tenant_id):
             SourceDocument.objects.filter(id=src.id, tenant_id=tenant_id).update(
@@ -107,15 +107,42 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
             )
         raise
 
-    # BF-BUG-3b: an image-only PDF (or any file with no extractable text) yields an empty body.
-    # Store a clear note so the preview is helpful instead of blank/pointer-metadata.
+    # A2: persist the pictorial content so nothing is dropped. For PDFs the faithful visual is a
+    # render of each page (it holds tables/diagrams the text can't); for other sources we keep the
+    # embedded images. Best-effort — a render failure never fails the upload (text still ingests).
+    is_pdf = filename.lower().endswith(".pdf") or (mime or "").lower() == "application/pdf"
+    try:
+        raw_views = pdf_page_pngs(content) if is_pdf else [im for im in images if im.get("bytes")]
+    except Exception:  # noqa: BLE001 — image capture is best-effort
+        raw_views = []
+    view_keys: list[str] = []
+    page_images: list[dict] = []
+    for i, im in enumerate(raw_views, start=1):
+        name = im.get("name") or f"view{i}.png"
+        vkey = f"onboarding/{tenant_id}/{project_id}/{src.id}/views/{name}"
+        try:
+            store.put(vkey, im["bytes"])
+        except Exception:  # noqa: BLE001
+            continue
+        view_keys.append(vkey)
+        page_images.append({"name": name, "s3_key": vkey,
+                            "mime": im.get("mime") or "image/png", "page": im.get("page")})
+
+    # BF-BUG-3b: no extractable text (e.g. an image-only PDF). Store a clear note — but now the
+    # page images ARE captured (above), so point the user at them rather than saying it's lost.
     if not body.strip():
-        body = (
-            f"> **No text could be extracted from `{filename}`.**\n>\n"
-            "> This file appears to be image-only (a scanned or image-exported PDF), so there "
-            "is no text to review. Upload a text-based PDF or DOCX, or link the original "
-            "design source, if you need this content as an artifact."
-        )
+        if page_images:
+            body = (
+                f"> **No selectable text in `{filename}` — it's image-based.**\n>\n"
+                f"> Its {len(page_images)} page image(s) are captured and shown below. Run AI "
+                "extraction (on adopt) to read the screens/diagrams into text."
+            )
+        else:
+            body = (
+                f"> **No text could be extracted from `{filename}`.**\n>\n"
+                "> Upload a text-based PDF or DOCX, or link the original design source, if you "
+                "need this content as an artifact."
+            )
 
     body_key = f"onboarding/{tenant_id}/{project_id}/{src.id}/extracted.md"
     store.put(body_key, body)
@@ -129,7 +156,8 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
             sor="internal", content_hash=content_hash(body.encode("utf-8")), s3_key=body_key,
             title=title,  # B1-2: carry the extracted title onto the artifact
             external_ref={"source": "static_file", "filename": filename,
-                          "source_document_id": str(src.id), "source_s3_key": src_key},
+                          "source_document_id": str(src.id), "source_s3_key": src_key,
+                          "page_images": page_images},
         )
         with tenant_context(tenant_id):
             src = SourceDocument.objects.get(id=src.id, tenant_id=tenant_id)
@@ -150,10 +178,11 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
                 status=SourceDocument.Status.FAILED, s3_key=src_key)
             if artifact is not None:
                 Artifact.objects.filter(id=artifact["id"], tenant_id=tenant_id).delete()
-        try:
-            store.delete(body_key)
-        except Exception:
-            pass
+        for key in [body_key, *view_keys]:
+            try:
+                store.delete(key)
+            except Exception:  # noqa: BLE001
+                pass
         raise
     return {"source_document_id": str(src.id), "status": "extracted",
             "artifact_ids": [artifact["id"]], "title": title}

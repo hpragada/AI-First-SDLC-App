@@ -137,6 +137,20 @@ def test_extract_pdf_empty_when_no_text_or_image():
     assert body == "" and images == []
 
 
+def test_pdf_page_pngs_one_per_page():
+    """A2: each PDF page renders to a PNG (the faithful visual for the viewer + vision step)."""
+    from integrations.extract import pdf_page_pngs
+
+    import pymupdf
+
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 90), "Page one")
+    doc.new_page().insert_text((72, 90), "Page two")
+    pngs = pdf_page_pngs(doc.tobytes())
+    assert [p["page"] for p in pngs] == [1, 2]
+    assert all(p["mime"] == "image/png" and p["bytes"][:8] == b"\x89PNG\r\n\x1a\n" for p in pngs)
+
+
 def test_unsupported_type_raises():
     with pytest.raises(ExtractionError):
         extract(filename="logo.png", mime="image/png", content=b"\x89PNG\r\n")
