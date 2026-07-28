@@ -86,6 +86,39 @@ def get_artifact_body(artifact_id: str, state: str | None = None) -> dict:
 
 
 @server.tool()
+def get_page_images(artifact_id: str, start: int = 0) -> list:
+    """SEE the original uploaded pages of a document artifact as images — the diagrams,
+    screenshots, wireframes, scanned pages and tables-as-pictures the extracted markdown
+    (get_artifact_body) can't carry. Returns a one-line text summary then the page images as
+    viewable image blocks. Paginated: a few pages per call; the summary gives a `next_start`,
+    so call get_page_images(artifact_id, start=<next_start>) until it is the last batch. Read
+    the images, then transcribe what you see into faithful text."""
+    import base64
+
+    from mcp.server.fastmcp import Image as McpImage
+
+    res = tools.get_page_images(_tenant(), artifact_id, start) or {}
+    images = res.get("images") or []
+    total = res.get("total", 0)
+    nxt = res.get("next_start")
+    summary = (
+        f"{res.get('returned', len(images))} of {total} page image(s) for artifact "
+        f"{artifact_id}, starting at index {res.get('start', start)}. "
+        + (f"Call get_page_images(artifact_id, start={nxt}) for the next batch."
+           if nxt is not None else "This is the last batch.")
+    )
+    blocks: list = [summary]
+    for im in images:
+        try:
+            raw = base64.b64decode(im.get("data_base64") or "")
+        except Exception:  # noqa: BLE001 — skip one unreadable image, keep the rest
+            continue
+        if raw:
+            blocks.append(McpImage(data=raw, format=(im.get("mime") or "image/png").split("/")[-1]))
+    return blocks
+
+
+@server.tool()
 def register_artifact(
     phase: str,
     type: str,

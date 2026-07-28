@@ -10,6 +10,8 @@ tools and injects the tenant from the launch context.
 """
 from __future__ import annotations
 
+import base64
+
 from apps.clarifications.models import Clarification
 from apps.ledger.models import Event
 from apps.projects.models import Project, Repository
@@ -654,6 +656,67 @@ def get_artifact_body(tenant_id, artifact_id, state=None, object_store=None) -> 
         return artifact_body_for_agent(
             artifact, state=state, object_store=object_store,
             max_bytes=_MAX_BODY_READ_BYTES)
+
+
+# How many page images one get_page_images call returns — a small window so a many-page upload
+# is read page-by-page (like get_artifact_body's one-state-per-call), keeping each MCP payload
+# well within budget. The vision agent pages through with `next_start`.
+_MAX_VISION_IMAGES_PER_CALL = 4
+
+
+def _build_page_image_window(pages: list, store, start: int) -> dict:
+    """Pure assembly (no DB): take the ordered `page_images` pointers, read one small window's
+    bytes from the object store, downscale each to a vision-sane size, and base64-encode them.
+    Split out from get_page_images so the fetch/downscale/pagination is unit-testable with an
+    in-memory store, while the DB read stays in get_page_images."""
+    from integrations.extract import downscale_image_for_vision
+
+    total = len(pages)
+    start = max(0, int(start or 0))
+    window = pages[start:start + _MAX_VISION_IMAGES_PER_CALL]
+    out = []
+    for pi in window:
+        key = pi.get("s3_key") if isinstance(pi, dict) else None
+        if not key:
+            continue
+        try:
+            raw = store.get(key)
+        except Exception:  # noqa: BLE001 — one missing object must not fail the whole read
+            continue
+        png = downscale_image_for_vision(raw)
+        out.append({
+            "name": pi.get("name"),
+            "page": pi.get("page"),
+            "mime": "image/png",
+            "data_base64": base64.b64encode(png).decode("ascii"),
+        })
+    nxt = start + _MAX_VISION_IMAGES_PER_CALL
+    return {"images": out, "total": total, "start": start, "returned": len(out),
+            "next_start": nxt if nxt < total else None}
+
+
+def get_page_images(tenant_id, artifact_id, start=0, object_store=None) -> dict:
+    """Return the stored page / embedded images of a document artifact as base64 PNG blocks — the
+    vision pipe (onboarding_fidelity_plan Part B). Text extraction can't carry diagrams,
+    screenshots, wireframes, scanned pages, or tables-as-pictures; those were rendered and kept at
+    ingest as `external_ref.page_images` pointers. This reads their bytes from the object store
+    (never copied onto the row — #1/#3), downscales each to a vision-sane size, and hands them
+    back for a multimodal agent to SEE.
+
+    Paginated: returns up to a few images from `start`, plus `total` and `next_start` (null on the
+    last batch) — call again until `next_start` is null. JSON-safe (base64) so it rides the same
+    HTTP proxy the companion uses; the MCP layer turns each into an image content block."""
+    from django.core.exceptions import ValidationError
+
+    with tenant_context(tenant_id):
+        try:
+            artifact = Artifact.objects.get(id=artifact_id, tenant_id=tenant_id)
+        except (Artifact.DoesNotExist, ValidationError):
+            return {"images": [], "total": 0, "start": start, "returned": 0, "next_start": None,
+                    "error": f"no artifact '{artifact_id}' — pass the full id (a UUID) from "
+                             "list_artifacts / get_context."}
+        pages = (artifact.external_ref or {}).get("page_images") or []
+        return _build_page_image_window(pages, _obj_store(object_store), start)
 
 
 def list_artifacts(tenant_id, project_id, phase=None, status=None, type=None) -> list[dict]:

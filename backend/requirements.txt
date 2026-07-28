@@ -43,6 +43,9 @@ pypdf==6.14.1
 # clean PDF→markdown (paragraphs + reconstructed tables); pymupdf does images + page renders.
 pymupdf==1.28.0
 pymupdf4llm==1.28.0
+# Downscale page images to a vision-sane size before the onboarding vision agent reads them
+# (onboarding_fidelity_plan Part B — LANCZOS resize keeps diagram/screenshot text crisp).
+Pillow==12.3.0
 
 # Secret-store encryption for IntegrationConnection (P4.7-T6, DECISION-4)
 cryptography==46.0.7

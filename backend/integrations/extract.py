@@ -163,6 +163,38 @@ def pdf_page_pngs(content: bytes, *, dpi: int = 130) -> list[Image]:
     return out
 
 
+# Long-edge ceiling for images handed to the vision engine (Part B). Claude downsamples anything
+# larger than ~1568px on the long edge before it ever reaches the model, so shrinking to this only
+# trims upload size + tokens — it never costs the model any detail. Guards the on-adopt vision
+# volume the plan calls for (onboarding_fidelity_plan Part B guards).
+_VISION_MAX_PX = 1568
+
+
+def downscale_image_for_vision(data: bytes, *, max_px: int = _VISION_MAX_PX) -> bytes:
+    """Shrink an image so its long edge is ≤ ``max_px``, re-encoded as PNG (lossless — keeps a
+    diagram's / screenshot's text crisp for the reader model). Only ever downscales; a smaller
+    image is returned unchanged. Best-effort: if the bytes can't be decoded, they pass through
+    untouched so the pipe never fails on one odd image."""
+    try:
+        from PIL import Image as PILImage
+
+        with PILImage.open(io.BytesIO(data)) as im:
+            if im.mode not in ("RGB", "RGBA", "L"):
+                im = im.convert("RGB")
+            long_edge = max(im.size)
+            if long_edge > max_px:
+                ratio = max_px / long_edge
+                im = im.resize(
+                    (max(1, round(im.width * ratio)), max(1, round(im.height * ratio))),
+                    PILImage.LANCZOS,
+                )
+            out = io.BytesIO()
+            im.save(out, format="PNG")
+            return out.getvalue()
+    except Exception:  # noqa: BLE001 — a bad image must not break the vision pipe
+        return data
+
+
 def _extract_txt(content: bytes) -> tuple[str, list[Image]]:
     """Plain text is already the artifact-body format — decode and return as-is."""
     return content.decode("utf-8", "replace").strip(), []

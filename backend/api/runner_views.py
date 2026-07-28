@@ -62,6 +62,9 @@ _BUILD_STATE_TOOLS = {
     "register_artifact": tools.register_artifact,
     "stage_artifact_body": tools.stage_artifact_body,
     "get_artifact_body": tools.get_artifact_body,
+    # Vision pipe (onboarding_fidelity_plan Part B): read a document's stored page images so a
+    # multimodal onboarding/vision agent can SEE what text extraction can't carry.
+    "get_page_images": tools.get_page_images,
     "update_artifact": tools.update_artifact,
     "add_trace_edge": tools.add_trace_edge,
     "log_event": tools.log_event,
