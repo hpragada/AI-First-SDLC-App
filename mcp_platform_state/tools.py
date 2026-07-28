@@ -471,6 +471,19 @@ def add_trace_edge(tenant_id, from_artifact_id, to_artifact_id, rel) -> dict:
         return _edge(edge)
 
 
+def submit_gap_report(tenant_id, project_id, phases, resume_phase=None, blockers=None) -> dict:
+    """Agent-authored gap report (00_onboarding). Hands the agent's reasoned per-phase assessment
+    to the shared normalizer+writer, which coerces it to the exact `external_ref` shape
+    `read_gap_report` + the whole UI depend on — so a model typo can never degrade the screen.
+    The bound `project_id` travels from the run; `tenant_id` is bound server-side."""
+    from integrations.onboarding import submit_agent_gap_report
+
+    return submit_agent_gap_report(
+        tenant_id=tenant_id, project_id=project_id, phases=phases,
+        resume_phase=resume_phase, blockers=blockers,
+    )
+
+
 def log_event(tenant_id, actor, action, target_type, target_id, payload=None) -> dict:
     with tenant_context(tenant_id):
         event = Event.objects.create(

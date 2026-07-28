@@ -85,6 +85,26 @@ def state_mcp_servers(*, api_url: str, tenant_id: str, token: str, run_id: str,
     }
 
 
+def codeintel_mcp_servers(*, workspace: str, repo: str, repo_root: str | None = None) -> dict:
+    """MCP config for the companion CodeIntel server, bound to a `reads_code` run's throwaway
+    worktree + repo. Launches `runner.companion.codeintel_mcp` (stdio); that module adds
+    `backend/` to its own path and wraps one `BuiltinCodeIntel` over the worktree, so the agent
+    calls `codeintel.*` (index + the 8 read tools) without handling a path or repo it can't know."""
+    root = repo_root or str(Path(__file__).resolve().parents[2])
+    return {
+        "codeintel": {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": ["-m", "runner.companion.codeintel_mcp"],
+            "env": {
+                "RUNNER_WORKSPACE": workspace,
+                "RUNNER_REPO": repo,
+                "PYTHONPATH": root,
+            },
+        }
+    }
+
+
 def ensure_backend_importable() -> None:
     """Put the repo's `backend/` on sys.path so `drivers.*` resolves. The companion runs as
     `python -m runner.companion` from the repo root, which only puts the root on the path —
@@ -225,6 +245,14 @@ class CompanionDaemon:
             scan_worktree = self._provision_scan_worktree(payload["repo"], run_id, payload)
             if scan_worktree is not None:
                 run_kwargs["repo_workspace"] = scan_worktree
+                # Give the agent the CodeIntel tool surface over a second MCP server bound to the
+                # worktree: 00c / 00_onboarding query the codebase via `codeintel.*`, not raw file
+                # tools (planning has no filesystem/Bash). Only wired when a worktree exists.
+                from .codeintel_mcp import CODEINTEL_TOOL_NAMES
+                mcp.update(codeintel_mcp_servers(
+                    workspace=str(scan_worktree), repo=payload["repo"]))
+                run_kwargs["allowed_tools"] = PLAN_ALLOWED_TOOLS + [
+                    f"mcp__codeintel__{n}" for n in CODEINTEL_TOOL_NAMES]
         try:
             result = asyncio.run(runner(**run_kwargs))
             outputs = getattr(result, "outputs", {}) or {}

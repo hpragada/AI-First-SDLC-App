@@ -28,6 +28,13 @@ class ActiveRunError(TriggerError):
     this to HTTP 409 so the UI can offer 'wait / take over' rather than silently double-running."""
 
 
+class NoCompanionError(TriggerError):
+    """An onboarding agent was triggered but the user has no companion enrolled. These agents
+    require the companion (00c reads a repo worktree; both use ask_human), so we FAIL CLOSED
+    instead of falling back to a server-mode run that has neither tool. The view maps this to a
+    'start your companion' message; onboarding keeps a deterministic/mechanical fallback."""
+
+
 # Statuses that mean a run is still live for a work item — re-triggering while one of these is
 # open would spawn a second concurrent run against the same branch/PR (Bugs S.No 77). STALLED is
 # intentionally excluded: it is parked for human takeover (S.No 89) and a re-trigger is a valid
@@ -229,6 +236,34 @@ def trigger_phase(
 
     workflow_starter(workflow_id, inp)
     return TriggerResult(run_id=str(run.id), workflow_id=workflow_id)
+
+
+def trigger_onboarding_agent(
+    *, tenant_id, project_id, agent_key, repo_id=None, triggered_by=None, workflow_starter=None,
+) -> TriggerResult:
+    """Run an onboarding agent (00c code intelligence / 00_onboarding assessment) against the
+    per-project carrier work item, on the triggering user's companion.
+
+    Fail-closed on execution mode: these agents need the companion (00c reads a repo worktree;
+    both use ask_human), so with no companion enrolled we raise `NoCompanionError` rather than
+    let `trigger_phase` silently fall back to a server-mode run that has neither tool. The REST
+    caller catches this and keeps the deterministic/mechanical path as the fallback."""
+    from integrations.onboarding import ensure_onboarding_work_item
+
+    enrollment = _resolve_enrollment(tenant_id, project_id, triggered_by)
+    if enrollment is None:
+        raise NoCompanionError(
+            "This step runs on your local companion — it reads your code and can ask you "
+            "questions. Start your companion for this project, then try again."
+        )
+    work_item = ensure_onboarding_work_item(
+        tenant_id=tenant_id, project_id=project_id, repo_id=repo_id
+    )
+    return trigger_phase(
+        tenant_id=tenant_id, project_id=project_id, work_item_id=str(work_item.id),
+        agent_key=agent_key, triggered_by=triggered_by, execution_mode="companion",
+        workflow_starter=workflow_starter,
+    )
 
 
 def trigger_code_intel(*, tenant_id, project_id, repo_id, triggered_by=None) -> dict:

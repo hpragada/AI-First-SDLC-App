@@ -477,10 +477,14 @@ class _ScanDriver:
 
     def __init__(self):
         self.repo_workspace = "unset"
+        self.mcp_servers = {}
+        self.allowed_tools = []
 
     async def run_planning_task(self, *, manifest, agent_spec, mcp_servers, allowed_tools,
                                 work_item, repo_workspace=None):
         self.repo_workspace = repo_workspace
+        self.mcp_servers = mcp_servers
+        self.allowed_tools = allowed_tools
         return SimpleNamespace(outputs={"result": "# Security Review"}, cost_usd=0.0)
 
     async def run_review_task(self, **kwargs):
@@ -522,6 +526,13 @@ def test_security_scan_provisions_readonly_worktree_and_tears_it_down(monkeypatc
     assert str(driver.repo_workspace).endswith("scan-rsec")
     # torn down afterwards
     assert seen["teardown"].endswith("scan-rsec")
+    # a reads_code run with a worktree also wires the CodeIntel MCP bound to that worktree, and
+    # adds its tools to the planning allowlist (agent-driven onboarding reuses this seam).
+    assert "platform-state" in driver.mcp_servers and "codeintel" in driver.mcp_servers
+    assert driver.mcp_servers["codeintel"]["env"]["RUNNER_WORKSPACE"].endswith("scan-rsec")
+    assert driver.mcp_servers["codeintel"]["env"]["RUNNER_REPO"] == "acme/api"
+    assert "mcp__codeintel__index" in driver.allowed_tools
+    assert "mcp__codeintel__get_overview" in driver.allowed_tools
     # the phase result was still reported
     url, body = transport.reports()[0]
     assert url.endswith("/api/runner/phases/rsec/report/") and body["status"] == "ok"

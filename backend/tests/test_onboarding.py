@@ -15,11 +15,16 @@ from integrations.onboarding import (
     OnboardingRoleError,
     adopt_source_document,
     build_gap_report,
+    ensure_onboarding_work_item,
     ingest_source_document,
     link_confluence_pages,
+    read_gap_report,
     register_atlassian,
+    submit_agent_gap_report,
+    write_gap_report_artifact,
 )
 from integrations.types import DocPage, Issue, IssueHit
+from orchestration.trigger import NoCompanionError, trigger_onboarding_agent
 from storage import InMemoryObjectStore
 
 
@@ -411,3 +416,85 @@ def test_register_atlassian_live_imports_jira_backlog():
         project_key=settings.JIRA_PROJECT_KEY,
     )
     assert again["registered_issues"] == []
+
+
+# ── Agent-driven onboarding (Slices 3–5) ─────────────────────────────
+def test_write_gap_report_artifact_produces_readable_external_ref(world):
+    """The ONE writer of the gap_report external_ref (shared by build_gap_report AND the agent
+    path): read_gap_report must parse exactly what it writes."""
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    phases = [{"phase": "ideation", "label": "1. Ideation", "status": "complete", "evidence": []},
+              {"phase": "requirements", "label": "2. Requirements", "status": "missing",
+               "evidence": []}]
+    out = write_gap_report_artifact(
+        tenant_id=tid, project_id=pid, phases=phases, resume="requirements",
+        blockers=["requirements"], intel_present=False, object_store=world["store"])
+    art = Artifact.objects.get(id=out["gap_report_id"])
+    assert set(art.external_ref) == {
+        "source", "resume_phase", "phases", "blockers", "intel_present"}
+    assert set(art.external_ref["phases"][0]) >= {"phase", "label", "status", "evidence"}
+    read = read_gap_report(tenant_id=tid, project_id=pid)
+    assert read["resume_phase"] == "requirements"
+    assert read["phases"][0]["assessment"] == "complete"
+
+
+def test_submit_agent_gap_report_normalizes_and_reads_back(world):
+    """The agent supplies a loose per-phase assessment; the tool coerces it to the full 12-phase
+    canonical shape (omitted → missing, unknown phase ignored) and derives the resume phase."""
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    submit_agent_gap_report(
+        tenant_id=tid, project_id=pid,
+        phases=[{"phase": "ideation", "status": "complete"},
+                {"phase": "requirements", "status": "complete"},
+                {"phase": "bogus_phase", "status": "complete"}],  # unknown → ignored
+        resume_phase=None, blockers=None, object_store=world["store"])
+    read = read_gap_report(tenant_id=tid, project_id=pid)
+    assert len(read["phases"]) == 12                        # every lifecycle phase present
+    by = {p["phase"]: p["assessment"] for p in read["phases"]}
+    assert by["ideation"] == "complete" and by["requirements"] == "complete"
+    assert by["prd"] == "missing"                           # omitted → missing
+    assert read["resume_phase"] == "prd"                    # first non-complete
+    assert "bogus_phase" not in by
+
+
+def test_ensure_onboarding_work_item_idempotent_per_repo(world):
+    from apps.projects.models import Repository
+
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    a = ensure_onboarding_work_item(tenant_id=tid, project_id=pid)
+    b = ensure_onboarding_work_item(tenant_id=tid, project_id=pid)
+    assert a.id == b.id and a.type == WorkItem.Type.EPIC     # one repo-agnostic carrier
+    repo = Repository.objects.create(tenant=world["t"], project=world["project"], name="acme/api")
+    r1 = ensure_onboarding_work_item(tenant_id=tid, project_id=pid, repo_id=str(repo.id))
+    r2 = ensure_onboarding_work_item(tenant_id=tid, project_id=pid, repo_id=str(repo.id))
+    assert r1.id == r2.id and r1.id != a.id and r1.repo_id == repo.id  # a separate pinned carrier
+
+
+def test_trigger_onboarding_agent_fails_closed_without_companion(world):
+    """No companion enrolled → NoCompanionError (never a silent server-mode run that lacks the
+    worktree + ask_human tools)."""
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    with pytest.raises(NoCompanionError):
+        trigger_onboarding_agent(
+            tenant_id=tid, project_id=pid, agent_key="00_onboarding",
+            triggered_by=str(world["po"].id), workflow_starter=lambda *a, **k: None)
+
+
+def test_trigger_onboarding_agent_dispatches_companion_run_when_enrolled(world):
+    from apps.registry.catalog import seed_agent_specs
+    from apps.runs.enrollment import enroll_runner
+    from apps.runs.models import Run
+
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    seed_agent_specs(world["t"])
+    enroll_runner(tenant_id=tid, project_id=pid, developer_id=str(world["po"].id), label="l")
+    seen = {}
+    res = trigger_onboarding_agent(
+        tenant_id=tid, project_id=pid, agent_key="00_onboarding",
+        triggered_by=str(world["po"].id),
+        workflow_starter=lambda wf_id, inp: seen.update(inp=inp))
+    assert seen["inp"].execution_mode == "companion"        # fail-closed to the companion
+    carrier = WorkItem.objects.get(
+        tenant=world["t"], project=world["project"], type=WorkItem.Type.EPIC)
+    assert seen["inp"].work_item_id == str(carrier.id)      # ran against the carrier WI
+    assert Run.objects.filter(id=res.run_id).exists()

@@ -104,7 +104,7 @@ AGENT_CATALOG: list[AgentDefinition] = [
     # ── Entry / onboarding agents (P4) ──────────────────────────────
     AgentDefinition("00_onboarding", "onboard", "onboarding", "00_onboarding_agent.md", "P4", "product_owner"),
     AgentDefinition("00b_context_bridge", "context-bridge", "context_bridge", "00b_context_bridge_agent.md", "P4", "architect"),
-    AgentDefinition("00c_intelligent_context_extractor", "analyze", "context_extraction", "00c_intelligent_context_extractor_agent.md", "P4", "tech_lead"),
+    AgentDefinition("00c_intelligent_context_extractor", "analyze", "context_extraction", "00c_intelligent_context_extractor_agent.md", "P4", "tech_lead", reads_code=True),
     # 00d Context Snapshot — RETIRED (spec §6 / D8 LOCKED): session continuity is now the
     # platform DB (WorkItem state, Approvals, the Events ledger, the registry) + Temporal
     # resumable runs. The legacy agent only captured state into a snapshot file + a context

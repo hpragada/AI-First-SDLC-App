@@ -91,9 +91,11 @@ from orchestration.takeover import (
 )
 from orchestration.trigger import (
     ActiveRunError,
+    NoCompanionError,
     TriggerError,
     trigger_build,
     trigger_code_intel,
+    trigger_onboarding_agent,
     trigger_phase,
 )
 
@@ -442,14 +444,30 @@ class ProjectViewSet(
         ser = CodeIntelDispatchSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         actor = resolve_actor(request, ser.validated_data.get("user_id"))
+        repo_id = ser.validated_data["repo_id"]
         try:
             require_repo_manage_role(
                 tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
             )
-            out = trigger_code_intel(
-                tenant_id=self.tenant_id, project_id=str(project.id),
-                repo_id=ser.validated_data["repo_id"], triggered_by=actor,
-            )
+            try:
+                # Agent-driven (primary): the 00c agent runs on the triggering user's companion,
+                # analyses the repo in a read-only worktree via the CodeIntel MCP, and registers
+                # the intelligence artifacts (gated).
+                res = trigger_onboarding_agent(
+                    tenant_id=self.tenant_id, project_id=str(project.id),
+                    agent_key="00c_intelligent_context_extractor", repo_id=repo_id,
+                    triggered_by=actor,
+                )
+                out = {"mode": "agent", "run_id": res.run_id, "workflow_id": res.workflow_id}
+            except NoCompanionError:
+                # No companion enrolled for this user → the mechanical CodeIntelJob dispatch
+                # (broadcast; any tenant companion may claim) so onboarding never dead-ends.
+                out = {"mode": "mechanical", **trigger_code_intel(
+                    tenant_id=self.tenant_id, project_id=str(project.id),
+                    repo_id=repo_id, triggered_by=actor,
+                )}
+        except ActiveRunError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except RepositoryError as exc:
             return Response({"detail": str(exc)}, status=exc.status)
         except Repository.DoesNotExist:
@@ -467,10 +485,26 @@ class ProjectViewSet(
             if out is None:
                 return Response(status=status.HTTP_404_NOT_FOUND)
             return Response(out)
-        build_gap_report(tenant_id=self.tenant_id, project_id=str(project.id))
-        # Re-read through the same shape GET returns — one representation for this resource.
-        out = read_gap_report(tenant_id=self.tenant_id, project_id=str(project.id))
-        return Response(out, status=status.HTTP_200_OK)
+        # POST — (re)build the gap report. Agent-driven (primary): the 00_onboarding agent runs on
+        # the companion, reasons over every phase's evidence + the code intelligence, and submits
+        # the report through the shape-safe writer (async → 202). No companion → the deterministic
+        # build_gap_report fallback runs inline and returns the report (200), so onboarding never
+        # dead-ends.
+        try:
+            res = trigger_onboarding_agent(
+                tenant_id=self.tenant_id, project_id=str(project.id),
+                agent_key="00_onboarding", triggered_by=resolve_actor(request, None),
+            )
+            return Response(
+                {"mode": "agent", "run_id": res.run_id, "workflow_id": res.workflow_id},
+                status=status.HTTP_202_ACCEPTED)
+        except ActiveRunError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except NoCompanionError:
+            build_gap_report(tenant_id=self.tenant_id, project_id=str(project.id))
+            # Re-read through the same shape GET returns — one representation for this resource.
+            out = read_gap_report(tenant_id=self.tenant_id, project_id=str(project.id))
+            return Response({"mode": "deterministic", **(out or {})}, status=status.HTTP_200_OK)
 
     # ── API contracts & drift (P4.7-T9, backs S-27) ──────────────────
     @action(detail=True, methods=["get"], url_path="api-contracts")

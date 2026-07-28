@@ -42,6 +42,8 @@ BUILD_STATE_TOOLS = [
     "register_artifact", "stage_artifact_body",
     "update_artifact", "add_trace_edge", "log_event", "list_work_items",
     "create_work_item", "transition_work_item", "ask_human",
+    # Agent-driven onboarding: 00_onboarding submits its gap report through the shape-safe writer.
+    "submit_gap_report",
 ]
 # Filesystem + shell for editing/testing the worktree; platform-state over MCP.
 # Deliberately NO CodeHost and no networked tools — the platform owns Git side-effects (D2).

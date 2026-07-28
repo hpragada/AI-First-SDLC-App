@@ -113,6 +113,19 @@ def build_server(
                            to_artifact_id=to_artifact_id, rel=rel)
 
     @server.tool()
+    def submit_gap_report(phases: list, resume_phase: str | None = None,
+                          blockers: list | None = None) -> dict:
+        """Submit your Onboarding Gap Report: your Complete/Partial/Missing assessment of each
+        SDLC phase and the recommended resume phase. Call this ONCE, at the end, instead of
+        writing the gap report into a document. Each `phases` item:
+        {phase: <lifecycle key>, status: "complete"|"partial"|"missing", evidence?: [...]}.
+        `resume_phase` = the first phase that is not complete; `blockers` = phase keys still
+        missing that gate progress. The platform fills the project from this run and guarantees
+        the report's shape — you provide the reasoning, not the format."""
+        return client.call("submit_gap_report", project_id=project_id_bound,
+                           phases=phases, resume_phase=resume_phase, blockers=blockers)
+
+    @server.tool()
     def log_event(actor: str, action: str, target_type: str, target_id: str | None = None,
                   payload: dict | None = None) -> dict:
         return client.call("log_event", actor=actor, action=action, target_type=target_type,

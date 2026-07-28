@@ -388,6 +388,41 @@ def adoptable_type_choices() -> list[dict]:
     return choices
 
 
+def ensure_onboarding_work_item(*, tenant_id, project_id, repo_id=None):
+    """Get-or-create the per-project carrier work item the onboarding AGENTS run against.
+
+    Onboarding is project-scoped, but the agent machinery (`trigger_phase` → `AgentRunWorkflow`
+    → gate → verify_writes) is per-WorkItem. So the platform holds ONE carrier `epic` per
+    onboarding target: a repo-agnostic carrier for the whole-project assessment (00_onboarding),
+    and one carrier pinned to each repo for its code intelligence (00c) — the pin is what lets a
+    multi-repo project index the right repo without tripping the planner-ambiguity guard.
+    Idempotent by (project, marker, repo)."""
+    from apps.projects.models import Project, Repository
+    from apps.tenancy.context import tenant_context
+    from apps.workitems.models import WorkItem
+
+    repo_key = str(repo_id) if repo_id else None
+    with tenant_context(tenant_id):
+        Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
+        existing = WorkItem.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.EPIC,
+            external_ref__source="onboarding_carrier", external_ref__repo_id=repo_key,
+        ).first()
+        if existing is not None:
+            return existing
+        repo = None
+        title = "Onboarding — project assessment"
+        if repo_key:
+            repo = Repository.objects.filter(
+                id=repo_id, tenant_id=tenant_id, project_id=project_id).first()
+            title = f"Onboarding — code intelligence ({repo.name if repo else repo_key})"
+        return WorkItem.objects.create(
+            tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.EPIC,
+            state=WorkItem.State.ACCEPTED, title=title, repo=repo,
+            external_ref={"source": "onboarding_carrier", "repo_id": repo_key},
+        )
+
+
 def _assess_phase(phase, types, by_type, *, has_backlog, intel_present):
     """Complete / Partial / Missing for one lifecycle phase, with its evidence artifacts.
 
@@ -409,19 +444,59 @@ def _assess_phase(phase, types, by_type, *, has_backlog, intel_present):
     return status, evidence
 
 
+def write_gap_report_artifact(
+    *, tenant_id, project_id, phases, resume, blockers, intel_present,
+    evidence_ids=(), object_store=None,
+) -> dict:
+    """Render + persist the canonical draft `gap_report` artifact and return the REST-shaped
+    result. This is the ONE writer of the `external_ref` shape that `read_gap_report` + the whole
+    UI depend on — shared by the deterministic `build_gap_report` AND the agent path's
+    `submit_gap_report` tool, so neither can emit a shape the reader can't parse.
+
+    `phases` is the canonical list [{phase, label, status, evidence:[...]}]; `evidence_ids` are
+    the artifact ids the report derives from (trace edges)."""
+    from storage import content_hash
+
+    store = _object_store(object_store)
+    # _render_gap_report shows an evidence count per phase; fill it from the evidence list so the
+    # agent path (which may omit it) renders identically to the deterministic path.
+    render_phases = [
+        {**p, "evidence_count": p.get("evidence_count", len(p.get("evidence") or []))}
+        for p in phases
+    ]
+    resume_label = next(
+        (p["label"] for p in phases if p["phase"] == resume), "Pipeline complete")
+    body = _render_gap_report(render_phases, resume_label, blockers, intel_present)
+    body_key = f"onboarding/{tenant_id}/{project_id}/gap_report.md"
+    store.put(body_key, body)
+    report = tools.register_artifact(
+        tenant_id, project_id, None, phase="onboarding", type="gap_report",
+        sor="internal", content_hash=content_hash(body.encode("utf-8")), s3_key=body_key,
+        external_ref={"source": "onboarding", "resume_phase": resume,
+                      "phases": [{"phase": p["phase"], "label": p["label"], "status": p["status"],
+                                 "evidence": p.get("evidence", [])} for p in phases],
+                      "blockers": blockers, "intel_present": intel_present},
+    )
+    for aid in list(dict.fromkeys(evidence_ids))[:200]:
+        tools.add_trace_edge(tenant_id, report["id"], aid, "derives")
+    tools.log_event(tenant_id, "onboarding", "gap_report.built", "artifact", report["id"],
+                    {"resume_phase": resume, "blockers": blockers})
+    return {"gap_report_id": report["id"], "resume_phase": resume, "phases": phases,
+            "blockers": blockers, "intel_present": intel_present}
+
+
 def build_gap_report(*, tenant_id, project_id, object_store=None) -> dict:
     """Reconcile what onboarding discovered into a **gap report** (D7) and pick the resume
-    phase. Assesses every lifecycle phase from the registered artifacts + code-intel + work
-    items, then registers a *draft* `gap_report` artifact (published on the product_owner
-    gate, #5) linked to the evidence it weighed. Builds on `register_atlassian` /
+    phase — the DETERMINISTIC fallback for when no companion is enrolled (the agent path,
+    `00_onboarding` → `submit_gap_report`, is primary). Assesses every lifecycle phase from the
+    registered artifacts + code-intel + work items, then writes the same canonical draft
+    `gap_report` via `write_gap_report_artifact`. Builds on `register_atlassian` /
     `ingest_source_document` / 00c — it never re-creates content, only reports on it."""
     from apps.projects.models import Project
     from apps.registry.models import Artifact
     from apps.tenancy.context import tenant_context
     from apps.workitems.models import WorkItem
-    from storage import content_hash
 
-    store = _object_store(object_store)
     with tenant_context(tenant_id):
         Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
         artifacts = list(
@@ -450,29 +525,15 @@ def build_gap_report(*, tenant_id, project_id, object_store=None) -> dict:
         evidence_ids.extend(str(a.id) for a in evidence)
 
     resume = next((p["phase"] for p in phases if p["status"] != "complete"), "done")
-    resume_label = next((p["label"] for p in phases if p["phase"] == resume), "Pipeline complete")
     # Blockers: phases still Missing at or before the resume point — they gate forward progress.
     resume_idx = next((i for i, p in enumerate(phases) if p["phase"] == resume), len(phases))
     blockers = [p["phase"] for p in phases[: resume_idx + 1] if p["status"] == "missing"]
 
-    body = _render_gap_report(phases, resume_label, blockers, intel_present)
-    body_key = f"onboarding/{tenant_id}/{project_id}/gap_report.md"
-    store.put(body_key, body)
-    report = tools.register_artifact(
-        tenant_id, project_id, None, phase="onboarding", type="gap_report",
-        sor="internal", content_hash=content_hash(body.encode("utf-8")), s3_key=body_key,
-        external_ref={"source": "onboarding", "resume_phase": resume,
-                      "phases": [{"phase": p["phase"], "label": p["label"], "status": p["status"],
-                                 "evidence": p["evidence"]} for p in phases],
-                      "blockers": blockers, "intel_present": intel_present},
+    return write_gap_report_artifact(
+        tenant_id=tenant_id, project_id=project_id, phases=phases, resume=resume,
+        blockers=blockers, intel_present=intel_present, evidence_ids=evidence_ids,
+        object_store=object_store,
     )
-    # The report derives from the evidence it weighed (dedup; cap to keep the graph sane).
-    for aid in list(dict.fromkeys(evidence_ids))[:200]:
-        tools.add_trace_edge(tenant_id, report["id"], aid, "derives")
-    tools.log_event(tenant_id, "onboarding", "gap_report.built", "artifact", report["id"],
-                    {"resume_phase": resume, "blockers": blockers})
-    return {"gap_report_id": report["id"], "resume_phase": resume, "phases": phases,
-            "blockers": blockers, "intel_present": intel_present}
 
 
 def _render_gap_report(phases, resume_label, blockers, intel_present) -> str:
@@ -530,6 +591,57 @@ def read_gap_report(*, tenant_id, project_id) -> dict | None:
         ],
         "blocking": ext.get("blockers", []),
     }
+
+
+def submit_agent_gap_report(
+    *, tenant_id, project_id, phases, resume_phase=None, blockers=None, object_store=None,
+) -> dict:
+    """Normalize an AGENT's phase assessment (00_onboarding) into the canonical draft
+    `gap_report`. The agent supplies reasoned per-phase statuses (+ optional evidence refs); this
+    coerces to the exact `_LIFECYCLE` shape `read_gap_report` expects — filling any omitted phase
+    as 'missing', validating statuses, and deriving `resume`/`blockers` when the agent's are
+    unusable — then writes via the shared writer, so the REST/UI contract is guaranteed no matter
+    what the model emitted."""
+    from apps.registry.models import Artifact
+    from apps.tenancy.context import tenant_context
+
+    valid = {"complete", "partial", "missing"}
+    supplied: dict[str, dict] = {}
+    for p in (phases or []):
+        if isinstance(p, dict) and p.get("phase") and p.get("status") in valid:
+            ev = p.get("evidence")
+            supplied[p["phase"]] = {
+                "status": p["status"], "evidence": ev if isinstance(ev, list) else [],
+            }
+    canonical = []
+    for phase, label, _types in _LIFECYCLE:
+        s = supplied.get(phase, {"status": "missing", "evidence": []})
+        canonical.append({"phase": phase, "label": label, "status": s["status"],
+                          "evidence": s["evidence"]})
+
+    known = {p["phase"] for p in canonical}
+    derived_resume = next((p["phase"] for p in canonical if p["status"] != "complete"), "done")
+    resume = resume_phase if resume_phase in known else derived_resume
+    if isinstance(blockers, list) and blockers:
+        blockers = [b for b in blockers if b in known]
+    else:
+        idx = next((i for i, p in enumerate(canonical) if p["phase"] == resume), len(canonical))
+        blockers = [p["phase"] for p in canonical[: idx + 1] if p["status"] == "missing"]
+
+    with tenant_context(tenant_id):
+        intel_present = Artifact.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, type="codebase_intelligence"
+        ).exists()
+
+    evidence_ids = [
+        e.get("artifact_id") for p in canonical for e in p["evidence"]
+        if isinstance(e, dict) and e.get("artifact_id")
+    ]
+    return write_gap_report_artifact(
+        tenant_id=tenant_id, project_id=project_id, phases=canonical, resume=resume,
+        blockers=blockers, intel_present=intel_present, evidence_ids=evidence_ids,
+        object_store=object_store,
+    )
 
 
 def record_code_intel_index(*, tenant_id, project_id, repo_id, index=None, summary="",

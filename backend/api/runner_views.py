@@ -68,6 +68,9 @@ _BUILD_STATE_TOOLS = {
     "list_work_items": tools.list_work_items,
     "create_work_item": tools.create_work_item,
     "transition_work_item": tools.transition_work_item,
+    # Agent-driven onboarding: 00_onboarding writes its gap report through the shared, shape-safe
+    # writer (never a raw external_ref).
+    "submit_gap_report": tools.submit_gap_report,
 }
 
 # The build agent may move a WorkItem forward through working states (e.g. -> in_progress at

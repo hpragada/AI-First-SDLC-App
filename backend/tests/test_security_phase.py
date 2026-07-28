@@ -47,10 +47,15 @@ def test_classify_phase_failure_passes_specific_message_through():
 
 
 # ── Catalog: the reads_code flag (no DB) ────────────────────────────
-def test_reads_code_true_only_for_security():
+def test_reads_code_true_for_security_and_code_intel():
+    # reads_code = a repo-scoped planning phase gets a throwaway read-only worktree. 10_security
+    # scans source directly; 00c queries the codebase via the CodeIntel MCP bound to that
+    # worktree (agent-driven onboarding). Every other planning phase reasons over registered
+    # context only — no worktree.
     assert catalog.reads_code("10_security") is True
+    assert catalog.reads_code("00c_intelligent_context_extractor") is True
     for key in ("01_ideation", "02_requirements", "07_implementation", "09b_test_automation",
-                "11_cicd", "08_code_review"):
+                "11_cicd", "08_code_review", "00_onboarding", "00b_context_bridge"):
         assert catalog.reads_code(key) is False
 
 
