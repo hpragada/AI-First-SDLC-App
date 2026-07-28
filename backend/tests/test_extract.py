@@ -71,7 +71,8 @@ def test_extract_docx_headings_paragraphs_tables():
 
 
 def test_extract_docx_captures_embedded_image():
-    _title, _body, images = extract(filename="spec.docx", mime="", content=_docx_bytes(with_image=True))
+    _title, _body, images = extract(
+        filename="spec.docx", mime="", content=_docx_bytes(with_image=True))
     assert len(images) == 1
     assert images[0]["bytes"] and images[0]["mime"].startswith("image/")
 
@@ -114,13 +115,11 @@ def test_extract_html_strips_tags_keeps_structure_and_images():
     assert len(images) == 1 and images[0]["bytes"]
 
 
-def test_extract_pdf_text_structure():
-    """PyMuPDF keeps each visual line on its own line (hard break) and injects no 'Page N'."""
+def test_extract_pdf_text():
+    """pymupdf4llm yields clean markdown text (no injected 'Page N' headers)."""
     _t, body, _i = extract(filename="arch.pdf", mime="application/pdf", content=_pdf_bytes())
     assert "System Architecture" in body and "Pattern: SPA" in body
     assert "## Page" not in body
-    # lines are not space-joined into one wall-of-text paragraph
-    assert "Architecture Executive Summary" not in body
 
 
 def test_extract_pdf_captures_embedded_image():
@@ -139,9 +138,9 @@ def test_extract_pdf_empty_when_no_text_or_image():
 
 def test_pdf_page_pngs_one_per_page():
     """A2: each PDF page renders to a PNG (the faithful visual for the viewer + vision step)."""
-    from integrations.extract import pdf_page_pngs
-
     import pymupdf
+
+    from integrations.extract import pdf_page_pngs
 
     doc = pymupdf.open()
     doc.new_page().insert_text((72, 90), "Page one")

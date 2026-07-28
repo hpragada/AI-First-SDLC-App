@@ -41,13 +41,6 @@ def _table_md(rows: list[list]) -> str:
     return "\n".join(out)
 
 
-def _hardbreak(text: str) -> str:
-    """Keep each visual line on its own line (markdown hard break = trailing two spaces) so the
-    CommonMark preview doesn't collapse single newlines into one wall-of-text paragraph."""
-    lines = [ln.rstrip() for ln in text.splitlines()]
-    return "\n".join(f"{ln}  " if ln else "" for ln in lines).strip()
-
-
 def _extract_docx(content: bytes) -> tuple[str, list[Image]]:
     from docx import Document
 
@@ -96,88 +89,16 @@ def _extract_xlsx(content: bytes) -> tuple[str, list[Image]]:
     return "\n\n".join(parts), []
 
 
-def _table_is_clean(rows: list[list]) -> bool:
-    """A confidence gate on a detected PDF table. Table *detection* on complex bordered PDFs is
-    unreliable — it invents phantom empty columns and duplicates cells. Emitting a garbled grid
-    as if authoritative is worse than clean text for a system meant to be trusted, so we only
-    accept a table that is well-formed: >=2 rows, >=2 columns, and no fully-empty column (a
-    fully-empty column is the tell-tale of mis-detection). Rejected tables fall back to the page's
-    plain text; the page image (A2) + the vision step (Part B) carry the true table faithfully."""
-    if len(rows) < 2:
-        return False
-    width = max((len(r) for r in rows), default=0)
-    if width < 2:
-        return False
-    for c in range(width):
-        col_has_text = any(str((r[c] if c < len(r) else "") or "").strip() for r in rows)
-        if not col_has_text:
-            return False
-    return True
-
-
-def _pdf_page_markdown(page, pymupdf) -> str:
-    """One PDF page → markdown: non-table text (in reading order) interleaved with any *cleanly
-    detected* tables reconstructed as markdown. A clean table's text region is removed from the
-    surrounding text so it isn't duplicated; a low-confidence table is left as plain text."""
-    try:
-        detected = list(page.find_tables().tables)
-    except Exception:  # noqa: BLE001
-        detected = []
-
-    clean: list[tuple] = []  # (table, rows) that passed the confidence gate
-    for t in detected:
-        try:
-            rows = [list(r) for r in t.extract()]
-        except Exception:  # noqa: BLE001
-            continue
-        if _table_is_clean(rows):
-            clean.append((t, rows))
-
-    table_rects = []
-    for t, _rows in clean:
-        try:
-            table_rects.append(pymupdf.Rect(t.bbox))
-        except Exception:  # noqa: BLE001
-            pass
-
-    def _in_table(bbox) -> bool:
-        r = pymupdf.Rect(bbox)
-        if r.is_empty:
-            return False
-        for tr in table_rects:
-            inter = r & tr
-            if not inter.is_empty and abs(inter) >= 0.5 * abs(r):
-                return True
-        return False
-
-    items: list[tuple[float, str]] = []  # (y-position, markdown) — sorted into reading order
-    for b in page.get_text("blocks"):
-        x0, y0, x1, y1, txt, _bno, btype = b
-        if btype != 0 or not str(txt).strip():
-            continue
-        if _in_table((x0, y0, x1, y1)):
-            continue
-        md = _hardbreak(str(txt))
-        if md:
-            items.append((y0, md))
-    for t, rows in clean:
-        md = _table_md(rows)
-        if md:
-            items.append((pymupdf.Rect(t.bbox).y0, md))
-    items.sort(key=lambda it: it[0])
-    return "\n\n".join(md for _y, md in items).strip()
-
-
 def _extract_pdf(content: bytes) -> tuple[str, list[Image]]:
+    """PDF → markdown via pymupdf4llm (clean paragraphs + reconstructed tables, far better than
+    hand-rolled block extraction) + the embedded raster images (captured, never dropped)."""
     import pymupdf
+    import pymupdf4llm
 
-    parts: list[str] = []
     images: list[Image] = []
     with pymupdf.open(stream=content, filetype="pdf") as doc:
+        body = pymupdf4llm.to_markdown(doc, show_progress=False) or ""
         for pno, page in enumerate(doc, start=1):
-            block = _pdf_page_markdown(page, pymupdf)
-            if block:
-                parts.append(block)
             for img in page.get_images(full=True):
                 xref = img[0]
                 try:
@@ -187,7 +108,7 @@ def _extract_pdf(content: bytes) -> tuple[str, list[Image]]:
                 ext = (base.get("ext") or "png").lower()
                 images.append({"name": f"page{pno}-img{xref}.{ext}", "bytes": base["image"],
                                "mime": f"image/{ext}", "page": pno})
-    return "\n\n".join(parts), images
+    return body.strip(), images
 
 
 def pdf_page_pngs(content: bytes, *, dpi: int = 130) -> list[Image]:

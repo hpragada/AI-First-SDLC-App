@@ -135,18 +135,23 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
         fidelity = "text"
     elif page_images:
         fidelity = "images_only"
-        # BF-BUG-3b: the page images ARE captured now — point the user at them, don't say "lost".
+        # BF-BUG-3b: a visual/image-based document. Reassure the user in plain language — the
+        # pages ARE preserved and shown below; the AI reads them during onboarding.
+        pages = len(page_images)
         body = (
-            f"> **No selectable text in `{filename}` — it's image-based.**\n>\n"
-            f"> Its {len(page_images)} page image(s) are captured and shown below. Run AI "
-            "extraction (on adopt) to read the screens/diagrams into text."
+            f"> **Your document is preserved.** `{filename}` is a visual document "
+            f"(image-based, with no selectable text). All **{pages} page"
+            f"{'s' if pages != 1 else ''}** are saved exactly as you uploaded them — you can "
+            "view them from the upload.\n>\n"
+            "> During onboarding, the AI reads each screen and diagram into structured text, "
+            "so nothing is lost."
         )
     else:
         fidelity = "empty"
         body = (
-            f"> **No text could be extracted from `{filename}`.**\n>\n"
-            "> Upload a text-based PDF or DOCX, or link the original design source, if you "
-            "need this content as an artifact."
+            f"> **`{filename}` was saved, but no content could be read from it.**\n>\n"
+            "> If it should carry content, upload a text-based PDF or DOCX, or link the "
+            "original design source."
         )
 
     body_key = f"onboarding/{tenant_id}/{project_id}/{src.id}/extracted.md"
