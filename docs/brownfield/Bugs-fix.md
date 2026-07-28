@@ -67,8 +67,8 @@ Three distinct sub-causes, verified by running the platform's own `extract()` on
 | BF-BUG-1 | MIME label wraps / misaligns badge | 🔧 FIX WRITTEN (unit-verified) |
 | BF-BUG-2 | Re-upload duplicates | 🔧 FIX WRITTEN (awaiting live re-test) |
 | BF-BUG-3a | PDF wall-of-text + Page N noise | 🔧 FIX WRITTEN (real-file verified) |
-| BF-BUG-3b | Image-only PDF dumps pointer metadata | 🔧 FIX WRITTEN (unit-verified) |
-| BF-BUG-3c | PDF tables/diagrams lost (limitation) | ✅ documented |
+| BF-BUG-3b | Image-only PDF dumps pointer metadata | 🔧 SUPERSEDED by Part A — real preservation (page images captured + viewable + honest status); awaiting live re-test |
+| BF-BUG-3c | PDF tables/diagrams lost | 🔧 REOPENED → Part A: PDF tables reconstructed (confidence-gated) + page images preserved; diagrams/scans fully handled by Part B vision. See `onboarding_fidelity_plan.md` |
 | T-1 | Test PDFs: dashes → � | ✅ FIXED (regenerated) |
 | T-2 | Wireframes image-only → add HTML | ✅ FIXED (HTML added) |
 
