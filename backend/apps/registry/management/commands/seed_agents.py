@@ -60,5 +60,5 @@ class Command(BaseCommand):
         if "00e_document_vision" in after:
             self.stdout.write(self.style.SUCCESS("  document vision (00e): present"))
         else:
-            self.stdout.write(
-                self.style.WARNING("  document vision (00e): NOT present — is the catalog updated?"))
+            self.stdout.write(self.style.WARNING(
+                "  document vision (00e): NOT present — is the catalog updated?"))
