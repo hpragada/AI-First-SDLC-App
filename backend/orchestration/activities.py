@@ -64,6 +64,8 @@ _PLATFORM_TOOL_NAMES = [
     "update_artifact", "add_trace_edge", "log_event",
     "list_work_items", "create_work_item", "transition_work_item", "get_artifact",
     "list_artifacts", "detect_drift",
+    # Vision pipe (Part B): the document-vision agent reads a document's page images.
+    "get_page_images",
 ]
 PLATFORM_TOOLS = [f"mcp__platform-state__{name}" for name in _PLATFORM_TOOL_NAMES]
 

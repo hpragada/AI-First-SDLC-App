@@ -41,8 +41,12 @@ def test_v6_inconsistencies_fixed():
 
 
 def test_legacy_body_files_exist():
-    """Every catalog entry maps to a real legacy file (validates the fixes)."""
+    """Every MIGRATED catalog entry maps to a real legacy file (validates the fixes). Native
+    agents (00e Document Vision) have no v6 source — they're excluded by construction."""
     for d in AGENT_CATALOG:
+        if d.native:
+            assert d.legacy_body_file == "", f"native agent {d.key} should have no legacy file"
+            continue
         assert (_LEGACY_AGENTS / d.legacy_body_file).exists(), f"missing {d.legacy_body_file}"
 
 

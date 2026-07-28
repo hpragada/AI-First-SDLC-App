@@ -35,6 +35,11 @@ class AgentDefinition:
     recommended_model: str = DEFAULT_MODEL
     recommended_engine: str = DEFAULT_ENGINE
     retired: bool = False  # D8: 00d Snapshot — no migrated body; not seeded/triggered
+    # True ⇒ a PLATFORM-NATIVE agent with NO legacy v6 source to migrate (it implements a
+    # capability the legacy suite never had). Its body is authored fresh under /agents, so the
+    # legacy-file invariant (every catalog entry maps to a /legacy_suite file) does not apply.
+    # 00e Document Vision is the first: it reads uploaded page images the platform now preserves.
+    native: bool = False
     # True ⇒ this phase runs through the BuildWorkflow (worktree → commit → push → PR →
     # review → merge gate), so a user trigger must route to `trigger_build`, not `trigger_phase`.
     # Set from each agent body's execution model ("the platform commits/pushes/opens the PR"):
@@ -105,6 +110,11 @@ AGENT_CATALOG: list[AgentDefinition] = [
     AgentDefinition("00_onboarding", "onboard", "onboarding", "00_onboarding_agent.md", "P4", "product_owner"),
     AgentDefinition("00b_context_bridge", "context-bridge", "context_bridge", "00b_context_bridge_agent.md", "P4", "architect"),
     AgentDefinition("00c_intelligent_context_extractor", "analyze", "context_extraction", "00c_intelligent_context_extractor_agent.md", "P4", "tech_lead", reads_code=True),
+    # 00e Document Vision (Part B, brownfield lossless capture) — platform-native, no legacy
+    # source. On adopt it reads a document's preserved page images and writes faithful markdown
+    # (diagrams/screenshots/tables text extraction can't carry), auto-applied as a new version of
+    # the document artifact. legacy_body_file is unused (native); body authored under /agents.
+    AgentDefinition("00e_document_vision", "document-vision", "document_vision", "", "P4", "product_owner", native=True),
     # 00d Context Snapshot — RETIRED (spec §6 / D8 LOCKED): session continuity is now the
     # platform DB (WorkItem state, Approvals, the Events ledger, the registry) + Temporal
     # resumable runs. The legacy agent only captured state into a snapshot file + a context
