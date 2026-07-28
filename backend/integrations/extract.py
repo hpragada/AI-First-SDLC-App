@@ -89,6 +89,40 @@ def _extract_xlsx(content: bytes) -> tuple[str, list[Image]]:
     return "\n\n".join(parts), []
 
 
+def _clean_pdf_markdown(md: str) -> str:
+    """Tidy pymupdf4llm output for the markdown preview + downstream agents:
+    - `<br>` (used for in-cell line breaks) renders as *literal* text in the preview
+      (react-markdown escapes raw HTML), so flatten it to a space.
+    - Drop fully-empty tables and bare `#` headings — an image-only page (e.g. wireframes)
+      yields only an empty table skeleton, which otherwise renders as blank grids and is
+      mistaken for real text. Real tables (any cell with word content) are kept.
+    """
+    md = re.sub(r"<br\s*/?>", " ", md)
+    lines = md.splitlines()
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].lstrip().startswith("|"):
+            j = i
+            while j < len(lines) and lines[j].lstrip().startswith("|"):
+                j += 1
+            block = lines[i:j]
+            has_content = any(
+                re.search(r"[A-Za-z0-9]", row) and not re.fullmatch(r"[\s|:\-]+", row.strip())
+                for row in block
+            )
+            if has_content:
+                out.extend(block)
+            i = j
+            continue
+        if re.fullmatch(r"#+\s*", lines[i].strip()):  # bare heading, no title
+            i += 1
+            continue
+        out.append(lines[i].rstrip())
+        i += 1
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
 def _extract_pdf(content: bytes) -> tuple[str, list[Image]]:
     """PDF → markdown via pymupdf4llm (clean paragraphs + reconstructed tables, far better than
     hand-rolled block extraction) + the embedded raster images (captured, never dropped)."""
@@ -97,7 +131,7 @@ def _extract_pdf(content: bytes) -> tuple[str, list[Image]]:
 
     images: list[Image] = []
     with pymupdf.open(stream=content, filetype="pdf") as doc:
-        body = pymupdf4llm.to_markdown(doc, show_progress=False) or ""
+        body = _clean_pdf_markdown(pymupdf4llm.to_markdown(doc, show_progress=False) or "")
         for pno, page in enumerate(doc, start=1):
             for img in page.get_images(full=True):
                 xref = img[0]

@@ -150,6 +150,16 @@ def test_pdf_page_pngs_one_per_page():
     assert all(p["mime"] == "image/png" and p["bytes"][:8] == b"\x89PNG\r\n\x1a\n" for p in pngs)
 
 
+def test_clean_pdf_markdown_flattens_br_and_drops_empty_tables():
+    from integrations.extract import _clean_pdf_markdown
+
+    # <br> (pymupdf4llm in-cell breaks) → space; a real table with content is kept.
+    real = _clean_pdf_markdown("|A|B|\n|---|---|\n|x<br>y|z|")
+    assert "<br>" not in real and "x y" in real and "|A|B|" in real
+    # an image-only page's empty-table skeleton + bare heading → nothing (→ ingest shows a note).
+    assert _clean_pdf_markdown("# \n\n||||\n|---|---|---|\n||||\n\n|||\n|---|---|\n|||") == ""
+
+
 def test_unsupported_type_raises():
     with pytest.raises(ExtractionError):
         extract(filename="logo.png", mime="image/png", content=b"\x89PNG\r\n")
