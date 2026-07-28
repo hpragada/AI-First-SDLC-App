@@ -157,6 +157,21 @@ class AgentRunWorkflow:
                 if not await self._park(inp, reason, "verify_writes"):
                     return {"status": "failed", "run_id": inp.run_id}
                 continue        # resumed → re-check (the phase itself is NOT re-run)
+        # Auto-apply (Part B, 00e document vision): the human already adopted the document these
+        # pages came from, so the faithful transcription is published WITHOUT a second human gate.
+        # No Approval is opened; publish + complete directly. Default is False for every other
+        # phase, so their gated path below is byte-for-byte unchanged.
+        if inp.auto_approve:
+            await workflow.execute_activity(
+                "publish_artifacts", inp,
+                start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
+            )
+            await workflow.execute_activity(
+                "transition_work_item", args=[inp, "done"],
+                start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+            )
+            return {"status": "completed", "run_id": inp.run_id, "auto_approved": True}
+
         await workflow.execute_activity(
             "open_gate", inp,
             start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,

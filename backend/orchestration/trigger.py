@@ -176,11 +176,15 @@ def trigger_phase(
     required_role: str | None = None,
     triggered_by: str | None = None,
     execution_mode: str | None = None,
+    auto_approve: bool = False,
     workflow_starter=None,
 ) -> TriggerResult:
     """Start an agent run for a work item and kick off its Temporal workflow. The phase runs
     on the triggering user's enrolled local companion when one exists (`execution_mode`
-    auto-resolves to "companion"), else server-side (the CI/test fallback)."""
+    auto-resolves to "companion"), else server-side (the CI/test fallback).
+
+    `auto_approve` (Part B, 00e) publishes the run's result without a human gate — default False,
+    so every normal phase still opens its review gate unchanged."""
     workflow_starter = workflow_starter or _default_workflow_starter
 
     with tenant_context(tenant_id):
@@ -223,7 +227,7 @@ def trigger_phase(
             work_item_id=str(work_item_id), agent_spec_id=str(spec.id), phase=phase,
             gate_type=gate_type, required_role=role, execution_mode=mode,
             enrollment_id=str(enrollment.id) if enrollment is not None else None,
-            repo=repo, base=base,
+            repo=repo, base=base, auto_approve=auto_approve,
         )
         event_payload = {
             "agent_key": agent_key, "workflow_id": workflow_id, "execution_mode": mode,
@@ -263,6 +267,39 @@ def trigger_onboarding_agent(
         tenant_id=tenant_id, project_id=project_id, work_item_id=str(work_item.id),
         agent_key=agent_key, triggered_by=triggered_by, execution_mode="companion",
         workflow_starter=workflow_starter,
+    )
+
+
+_VISION_AGENT_KEY = "00e_document_vision"
+
+
+def trigger_vision(
+    *, tenant_id, project_id, source_document_id, artifact_id, filename,
+    triggered_by=None, workflow_starter=None,
+) -> TriggerResult:
+    """Run the document-vision agent (00e) on the user's companion for ONE adopted document
+    (Part B). Reads the document's preserved page images and re-registers it as a faithful new
+    version, published automatically (no gate — the human already adopted these pages).
+
+    Fail-closed like `trigger_onboarding_agent`: vision runs the engine on the companion
+    subscription, so with no companion enrolled we raise `NoCompanionError` (the adopt hook
+    catches it and simply skips — the document stays adopted with its extracted text)."""
+    from integrations.onboarding import ensure_vision_work_item
+
+    enrollment = _resolve_enrollment(tenant_id, project_id, triggered_by)
+    if enrollment is None:
+        raise NoCompanionError(
+            "Document vision runs on your local companion. Start your companion for this "
+            "project to have uploaded diagrams and screenshots read into text."
+        )
+    work_item = ensure_vision_work_item(
+        tenant_id=tenant_id, project_id=project_id, source_document_id=source_document_id,
+        artifact_id=artifact_id, filename=filename,
+    )
+    return trigger_phase(
+        tenant_id=tenant_id, project_id=project_id, work_item_id=str(work_item.id),
+        agent_key=_VISION_AGENT_KEY, triggered_by=triggered_by, execution_mode="companion",
+        auto_approve=True, workflow_starter=workflow_starter,
     )
 
 

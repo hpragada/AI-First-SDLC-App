@@ -509,6 +509,54 @@ def ensure_onboarding_work_item(*, tenant_id, project_id, repo_id=None):
         )
 
 
+# Work-item `external_ref.source` markers that identify a CARRIER — an internal plumbing work
+# item that only exists to host an onboarding/vision agent run, never a backlog item a human
+# authored. The user-facing work-item list hides these (api WorkItemViewSet) so they never clutter
+# the backlog; the trigger/run machinery still resolves them by their external_ref markers.
+CARRIER_SOURCES = ("onboarding_carrier", "vision_carrier")
+
+
+def ensure_vision_work_item(*, tenant_id, project_id, source_document_id, artifact_id, filename):
+    """Get-or-create the per-DOCUMENT carrier work item a document-vision (00e) run executes
+    against — one per adopted document, so concurrent adopts never collide on a shared carrier and
+    the run's completion `done`-transition is harmless. Hidden from the backlog (CARRIER_SOURCES).
+    The description names the target artifact so the agent reads it straight from its manifest.
+    Idempotent by (project, source, source_document_id)."""
+    from apps.projects.models import Project
+    from apps.tenancy.context import tenant_context
+    from apps.workitems.models import WorkItem
+
+    with tenant_context(tenant_id):
+        Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
+        existing = WorkItem.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.EPIC,
+            external_ref__source="vision_carrier",
+            external_ref__source_document_id=str(source_document_id),
+        ).first()
+        description = (
+            "Transcribe the adopted document into faithful text. Target document artifact: "
+            f"{artifact_id} (file: {filename}). Read its pages with get_page_images, then "
+            "re-register it as a new version with the same phase/type/title carrying your "
+            "faithful transcription."
+        )
+        if existing is not None:
+            # Keep the pointer fresh if the doc was re-adopted (the artifact id can change).
+            existing.description = description
+            existing.external_ref = {"source": "vision_carrier",
+                                     "source_document_id": str(source_document_id),
+                                     "artifact_id": str(artifact_id), "filename": filename}
+            existing.save(update_fields=["description", "external_ref", "updated_at"])
+            return existing
+        return WorkItem.objects.create(
+            tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.EPIC,
+            state=WorkItem.State.ACCEPTED, title=f"Document vision — {filename}",
+            description=description,
+            external_ref={"source": "vision_carrier",
+                          "source_document_id": str(source_document_id),
+                          "artifact_id": str(artifact_id), "filename": filename},
+        )
+
+
 def _assess_phase(phase, types, by_type, *, has_backlog, intel_present):
     """Complete / Partial / Missing for one lifecycle phase, with its evidence artifacts.
 

@@ -32,6 +32,12 @@ class AgentRunInput:
     # NOT the build path (no commit/push/PR); the run still rides AgentRunWorkflow.
     repo: str | None = None
     base: str | None = None
+    # Auto-apply (no human gate). Default False → every existing phase is byte-identical: it
+    # opens a gate and waits for a human decision. True only for the document-vision agent (00e,
+    # Part B): the human already adopted the document these pages came from, so the faithful
+    # transcription is published automatically instead of waiting on a second gate. The workflow
+    # branches on this after write-completeness; nothing else changes.
+    auto_approve: bool = False
 
 
 @dataclass

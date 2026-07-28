@@ -368,6 +368,24 @@ def verify_write_completeness_core(inp: AgentRunInput, expected_types: list[str]
     text's digest, so an empty one is provable. A pointer-only artifact registered with a
     foreign hash makes no claim about its body and is left alone.
     """
+    # Auto-apply runs (00e document vision, Part B) don't register a phase-typed artifact — they
+    # re-register the TARGET document as a new version carrying its own type, then publish without
+    # a gate. So the bar here is "the run actually produced content", not a phase-type match:
+    # require at least one non-empty artifact this run, so an empty/failed vision pass can never
+    # auto-publish nothing over the adopted document.
+    if getattr(inp, "auto_approve", False):
+        with tenant_context(inp.tenant_id):
+            hashes = list(
+                Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id)
+                .values_list("content_hash", flat=True)
+            )
+        if not any(h and h != _EMPTY_BODY_HASH for h in hashes):
+            raise WriteCompletenessError(
+                f"run {inp.run_id} (auto-apply) registered no non-empty artifact — the vision "
+                "pass produced nothing to apply, so nothing is published."
+            )
+        return {"present": ["non-empty artifact"], "expected": ["non-empty artifact"]}
+
     # Expand any phase whose real work product is a richer artifact (e.g. security → the actual
     # security_review, not the generic "security" blob the platform always auto-registers). Other
     # phases are unchanged (map returns the type itself).

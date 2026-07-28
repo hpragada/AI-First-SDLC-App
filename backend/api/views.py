@@ -960,7 +960,16 @@ class WorkItemViewSet(
         return WorkItemSerializer
 
     def get_queryset(self):
+        from integrations.onboarding import CARRIER_SOURCES
+
         qs = super().get_queryset()
+        # Carrier work items (onboarding + document-vision) are internal plumbing that only host
+        # an agent run — never backlog items a human authored — so they are hidden from the
+        # user-facing work-item LIST (backlog/board). Direct retrieval by id still resolves (in
+        # case a run detail links to one), and the trigger/run machinery resolves them by their
+        # external_ref markers regardless; this only affects what the backlog shows.
+        if self.action == "list":
+            qs = qs.exclude(external_ref__source__in=CARRIER_SOURCES)
         project = self.request.query_params.get("project")
         state = self.request.query_params.get("state")
         type_ = self.request.query_params.get("type")
