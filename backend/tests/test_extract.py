@@ -78,6 +78,49 @@ def test_extract_html_strips_tags_keeps_structure():
     assert "alert" not in body and "color:red" not in body
 
 
+def test_extract_pdf_preserves_line_structure(monkeypatch):
+    """BF-BUG-3a: PDF text arrives one line per visual line. The extractor must keep each line
+    on its own line (markdown hard break) so the preview doesn't collapse a page into one
+    wall-of-text paragraph, and must not inject '## Page N' noise."""
+    import pypdf
+
+    class _FakePage:
+        def __init__(self, text):
+            self._text = text
+
+        def extract_text(self):
+            return self._text
+
+    class _FakeReader:
+        def __init__(self, *_a, **_k):
+            self.pages = [
+                _FakePage("System Architecture\nExecutive Summary\nPattern: SPA"),
+                _FakePage("Second page opening line"),
+            ]
+
+    monkeypatch.setattr(pypdf, "PdfReader", _FakeReader)
+    _title, body = extract(filename="arch.pdf", mime="application/pdf", content=b"%PDF-1.4")
+    assert "## Page" not in body  # no page-number noise
+    # each visual line stays on its own line via a markdown hard break (trailing two spaces)
+    assert "System Architecture  \nExecutive Summary  \nPattern: SPA" in body
+    # the lines are NOT space-joined into one paragraph (the wall-of-text failure)
+    assert "System Architecture Executive Summary" not in body
+
+
+def test_extract_pdf_empty_when_no_text(monkeypatch):
+    """An image-only PDF yields no text — the extractor returns '' (the ingest layer turns that
+    into a helpful note; BF-BUG-3b)."""
+    import pypdf
+
+    class _BlankReader:
+        def __init__(self, *_a, **_k):
+            self.pages = [type("P", (), {"extract_text": lambda self: ""})()]
+
+    monkeypatch.setattr(pypdf, "PdfReader", _BlankReader)
+    _title, body = extract(filename="scan.pdf", mime="application/pdf", content=b"%PDF-1.4")
+    assert body == ""
+
+
 def test_unsupported_type_raises():
     with pytest.raises(ExtractionError):
         extract(filename="logo.png", mime="image/png", content=b"\x89PNG\r\n")

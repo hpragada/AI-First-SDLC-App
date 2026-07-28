@@ -79,6 +79,10 @@ def _s3_body(key, object_store) -> str:
 _REF_POINTER_KEYS = {
     "body", "format", "title", "url", "id", "key", "sor", "export", "project",
     "project_id", "run_id", "work_item_id", "repo_id", "space", "space_key",
+    # Ingest provenance (a static-file upload's external_ref) — pointers, never content.
+    # Without these an image-only PDF (no extractable body) would render its filename/s3-key
+    # provenance as if it were the document (BF-BUG-3b).
+    "source", "filename", "source_document_id", "source_s3_key",
 }
 
 

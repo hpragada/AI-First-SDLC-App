@@ -73,10 +73,18 @@ def _extract_pdf(content: bytes) -> str:
 
     reader = PdfReader(io.BytesIO(content))
     parts: list[str] = []
-    for i, page in enumerate(reader.pages, start=1):
-        text = (page.extract_text() or "").strip()
-        if text:
-            parts.append(f"## Page {i}\n\n{text}")
+    for page in reader.pages:
+        text = page.extract_text() or ""
+        if not text.strip():
+            continue
+        # PDF text arrives one line per visual line, but CommonMark (react-markdown/remark-gfm,
+        # no `breaks`) collapses single newlines into spaces — which turns a whole page into one
+        # wall-of-text paragraph. Preserve the visual line structure: emit each line with a
+        # markdown hard break (trailing two spaces) so headings/rows stay on their own line, and
+        # keep blank lines as paragraph breaks. No "Page N" headers (page breaks are arbitrary).
+        lines = [ln.rstrip() for ln in text.splitlines()]
+        rendered = "\n".join(f"{ln}  " if ln else "" for ln in lines)
+        parts.append(rendered.strip())
     return "\n\n".join(parts)
 
 

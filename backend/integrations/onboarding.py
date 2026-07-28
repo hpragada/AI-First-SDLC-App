@@ -44,6 +44,35 @@ def _object_store(injected):
 
 
 # ── static-file extraction ──────────────────────────────────────────
+def _supersede_prior_uploads(*, tenant_id, project_id, filename, store) -> None:
+    """Replace-on-reupload (BF-BUG-2): delete any existing same-name SourceDocument(s) for this
+    project and their extracted artifacts + S3 bodies, so a re-upload leaves exactly one row per
+    filename. Runs inside the caller's tenant_context; S3 deletes are best-effort. Artifact
+    delete cascades its TraceEdges (registry.TraceEdge FK on_delete=CASCADE)."""
+    from apps.integrations.models import SourceDocument
+    from apps.registry.models import Artifact
+
+    for prior in SourceDocument.objects.filter(
+        tenant_id=tenant_id, project_id=project_id, filename=filename
+    ):
+        for aid in (prior.extracted_artifact_ids or []):
+            art = Artifact.objects.filter(id=aid, tenant_id=tenant_id).first()
+            if art is None:
+                continue
+            if art.s3_key:
+                try:
+                    store.delete(art.s3_key)
+                except Exception:  # noqa: BLE001 — best-effort body cleanup
+                    pass
+            art.delete()
+        if prior.s3_key:
+            try:
+                store.delete(prior.s3_key)
+            except Exception:  # noqa: BLE001 — best-effort source cleanup
+                pass
+        prior.delete()
+
+
 def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
                            artifact_type="document", object_store=None) -> dict:
     """Store + extract an uploaded file into a draft internal artifact (provenance kept)."""
@@ -55,6 +84,12 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
     store = _object_store(object_store)
     with tenant_context(tenant_id):
         project = Project.objects.get(id=project_id, tenant_id=tenant_id)
+        # BF-BUG-2: re-uploading a file replaces the prior upload of the same name instead of
+        # duplicating it. Supersede any existing same-name source docs + their extracted
+        # artifacts (TraceEdge FK is CASCADE, so this is clean) so there is exactly one row per
+        # filename. If a prior was already adopted, it is superseded and must be re-adopted.
+        _supersede_prior_uploads(tenant_id=tenant_id, project_id=project_id,
+                                 filename=filename, store=store)
         src = SourceDocument.objects.create(
             tenant_id=tenant_id, project=project, filename=filename, mime=mime,
             status=SourceDocument.Status.EXTRACTING,
@@ -70,6 +105,16 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
                 status=SourceDocument.Status.FAILED, s3_key=src_key
             )
         raise
+
+    # BF-BUG-3b: an image-only PDF (or any file with no extractable text) yields an empty body.
+    # Store a clear note so the preview is helpful instead of blank/pointer-metadata.
+    if not body.strip():
+        body = (
+            f"> **No text could be extracted from `{filename}`.**\n>\n"
+            "> This file appears to be image-only (a scanned or image-exported PDF), so there "
+            "is no text to review. Upload a text-based PDF or DOCX, or link the original "
+            "design source, if you need this content as an artifact."
+        )
 
     body_key = f"onboarding/{tenant_id}/{project_id}/{src.id}/extracted.md"
     store.put(body_key, body)

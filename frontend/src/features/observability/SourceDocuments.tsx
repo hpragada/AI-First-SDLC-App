@@ -48,6 +48,20 @@ export const ADOPT_TYPES: { value: string; label: string }[] = [
   { value: "release", label: "Release (Deployment)" },
 ];
 
+// BF-BUG-1: show a short, human file-type label instead of the raw MIME string — the DOCX
+// content-type is 70 chars and wraps, misaligning the status badge. Derives from MIME first,
+// then the filename extension as a fallback.
+export function fileKindLabel(mime: string, filename: string): string {
+  const m = (mime || "").toLowerCase();
+  const ext = filename.includes(".") ? filename.split(".").pop()!.toLowerCase() : "";
+  if (m.includes("wordprocessingml") || ext === "docx") return "Word (DOCX)";
+  if (m.includes("spreadsheetml") || ext === "xlsx") return "Excel (XLSX)";
+  if (m === "application/pdf" || ext === "pdf") return "PDF";
+  if (m === "text/html" || ext === "html" || ext === "htm") return "HTML";
+  if (m === "text/plain" || ext === "txt") return "Text";
+  return ext ? ext.toUpperCase() : "File";
+}
+
 // Pre-select a sensible type from the filename; the user can still change it before adopting.
 export function guessAdoptType(filename: string): string {
   const f = filename.toLowerCase();
@@ -210,7 +224,7 @@ function SourceDocumentsLive() {
                 <div className="artifact-row">
                   <div className="artifact-row__main">
                     <div className="artifact-row__title">{doc.filename}</div>
-                    <div className="artifact-row__meta">{doc.mime}</div>
+                    <div className="artifact-row__meta">{fileKindLabel(doc.mime, doc.filename)}</div>
                   </div>
                   <Badge
                     variant={

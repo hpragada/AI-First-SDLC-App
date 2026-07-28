@@ -13,7 +13,7 @@ import { GapReportScreen } from "./GapReportScreen";
 import { OfflineTakeover } from "./OfflineTakeover";
 import { OnboardingHub } from "./OnboardingHub";
 import { RunTranscriptScreen } from "./RunTranscriptScreen";
-import { guessAdoptType, SourceDocuments } from "./SourceDocuments";
+import { fileKindLabel, guessAdoptType, SourceDocuments } from "./SourceDocuments";
 import { TraceabilityView } from "./TraceabilityView";
 
 beforeEach(() => {
@@ -35,6 +35,19 @@ describe("S-25 adopt — guessAdoptType (Brownfield B2-1)", () => {
     // Everything else defaults to requirements (the most common upload).
     expect(guessAdoptType("Legacy Billing Requirements v3.docx")).toBe("requirements");
     expect(guessAdoptType("random notes.docx")).toBe("requirements");
+  });
+});
+
+describe("S-25 source doc — fileKindLabel (BF-BUG-1)", () => {
+  it("shows a short human label, never the raw MIME string", () => {
+    const docxMime =
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    expect(fileKindLabel(docxMime, "05_Deployment.docx")).toBe("Word (DOCX)");
+    expect(fileKindLabel("application/pdf", "06_PRD.pdf")).toBe("PDF");
+    expect(fileKindLabel("text/html", "wireframes.html")).toBe("HTML");
+    expect(fileKindLabel("text/plain", "notes.txt")).toBe("Text");
+    // falls back to the extension when the MIME is empty/unknown
+    expect(fileKindLabel("", "backlog.xlsx")).toBe("Excel (XLSX)");
   });
 });
 
