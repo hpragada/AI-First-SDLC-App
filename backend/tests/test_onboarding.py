@@ -104,7 +104,7 @@ def test_ingest_unsupported_marks_failed(world):
     with pytest.raises(ExtractionError):
         ingest_source_document(
             tenant_id=str(world["t"].id), project_id=str(world["project"].id),
-            filename="notes.txt", mime="text/plain", content=b"hi", object_store=world["store"],
+            filename="logo.png", mime="image/png", content=b"\x89PNG", object_store=world["store"],
         )
     assert SourceDocument.objects.get(project=world["project"]).status == \
         SourceDocument.Status.FAILED

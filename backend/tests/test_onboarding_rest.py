@@ -213,11 +213,16 @@ def test_onboarding_hub_shape_before_anything(client, project, member):
     _login(client, "dev@acme.com", "dev-pass!")
     resp = client.get(_hub_url(project))
     assert resp.status_code == 200
-    assert set(resp.data.keys()) == {"upload", "adopt", "register", "index", "gap"}
+    assert set(resp.data.keys()) == {"upload", "adopt", "register", "index", "gap", "adopt_types"}
     assert resp.data["upload"] == [] and resp.data["adopt"] == []
     assert resp.data["index"] == {"status": "not_started", "artifact_id": None}
     assert resp.data["gap"] == {"ready": False}
     assert resp.data["register"]["pages_registered"] == 0
+    # Served adopt vocabulary: humanized "Type (Phase)", full lifecycle minus implementation.
+    types = resp.data["adopt_types"]
+    assert {"value", "label", "phase", "phase_label"} <= set(types[0].keys())
+    assert any(t["label"] == "Wireframe (UX Design)" for t in types)
+    assert all(t["value"] != "code" for t in types)
 
 
 def test_onboarding_hub_reflects_uploads_index_and_gap(client, project, repo, tech_lead):

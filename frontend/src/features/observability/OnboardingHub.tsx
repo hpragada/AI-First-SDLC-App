@@ -55,12 +55,21 @@ export function OnboardingHub({ forceView }: { forceView?: OnboardingView }) {
 // A per-tool state machine driven by the connection status the hub already returns:
 //   not connected → inline Connect drawer (Option B — reuses ConnectCapability, no page hop);
 //   connected     → Jira: "Import backlog" (bulk); Confluence: the typed "Link docs" form.
-function RegisterToolsStep({ projectId, register }: { projectId: string; register: OnboardingRegister }) {
+function RegisterToolsStep({
+  projectId,
+  register,
+  adoptTypes,
+}: {
+  projectId: string;
+  register: OnboardingRegister;
+  adoptTypes: { value: string; label: string }[];
+}) {
   const onboardAtlassian = useOnboardAtlassian(projectId);
   const qc = useQueryClient();
   const [connectCap, setConnectCap] = useState<Capability | null>(null);
 
-  const registerDone = register.docstore_connected || register.tasktracker_connected;
+  const registerDone =
+    register.docstore_connected || register.tasktracker_connected || register.designsource_connected;
 
   const onConnected = () => {
     setConnectCap(null);
@@ -111,12 +120,30 @@ function RegisterToolsStep({ projectId, register }: { projectId: string; registe
             )}
           </div>
           {register.docstore_connected ? (
-            <ConfluenceLinkForm projectId={projectId} />
+            <ConfluenceLinkForm projectId={projectId} adoptTypes={adoptTypes} />
           ) : (
             <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
               <Button variant="secondary" onClick={() => setConnectCap("docstore")}>Connect Confluence</Button>
             </div>
           )}
+        </div>
+
+        {/* Figma / design source — surface the already-built designsource capability so a team
+            can import screens instead of uploading them as PDFs (connect only here). */}
+        <div>
+          <div className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
+            <span className="u-strong">Figma</span>
+            {register.designsource_connected ? <Badge variant="done">Connected</Badge> : <Badge>Not connected</Badge>}
+          </div>
+          <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
+            {register.designsource_connected ? (
+              <span className="t-sm u-muted">
+                Connected — design screens can come from Figma instead of uploaded PDFs.
+              </span>
+            ) : (
+              <Button variant="secondary" onClick={() => setConnectCap("designsource")}>Connect Figma</Button>
+            )}
+          </div>
         </div>
 
         {/* B3-1 Option B: connect inline, without leaving onboarding. */}
@@ -131,16 +158,22 @@ function RegisterToolsStep({ projectId, register }: { projectId: string; registe
   );
 }
 
-function ConfluenceLinkForm({ projectId }: { projectId: string }) {
+function ConfluenceLinkForm({
+  projectId,
+  adoptTypes = ADOPT_TYPES,
+}: {
+  projectId: string;
+  adoptTypes?: { value: string; label: string }[];
+}) {
   const linkPages = useLinkConfluencePages(projectId);
   const [rows, setRows] = useState<{ page: string; type: string }[]>([
-    { page: "", type: ADOPT_TYPES[0].value },
+    { page: "", type: adoptTypes[0].value },
   ]);
   const [result, setResult] = useState<{ linked: number; errors: { page: string; error: string }[] } | null>(null);
 
   const setRow = (i: number, patch: Partial<{ page: string; type: string }>) =>
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const addRow = () => setRows((rs) => [...rs, { page: "", type: ADOPT_TYPES[0].value }]);
+  const addRow = () => setRows((rs) => [...rs, { page: "", type: adoptTypes[0].value }]);
   const removeRow = (i: number) => setRows((rs) => (rs.length > 1 ? rs.filter((_, j) => j !== i) : rs));
 
   const submit = async () => {
@@ -149,7 +182,7 @@ function ConfluenceLinkForm({ projectId }: { projectId: string }) {
     try {
       const out = await linkPages.mutateAsync(clean);
       setResult({ linked: out.linked.length, errors: out.errors });
-      if (out.errors.length === 0) setRows([{ page: "", type: ADOPT_TYPES[0].value }]);
+      if (out.errors.length === 0) setRows([{ page: "", type: adoptTypes[0].value }]);
     } catch (e) {
       setResult({ linked: 0, errors: [{ page: "", error: e instanceof Error ? e.message : "Could not link pages." }] });
     }
@@ -169,7 +202,7 @@ function ConfluenceLinkForm({ projectId }: { projectId: string }) {
             style={{ flex: 1 }}
           />
           <Select value={r.type} onChange={(e) => setRow(i, { type: e.target.value })}>
-            {ADOPT_TYPES.map((t) => (
+            {adoptTypes.map((t) => (
               <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </Select>
@@ -308,7 +341,7 @@ function OnboardingHubLive() {
             title="Upload resources"
             desc={
               data.upload.length === 0
-                ? "Drag in existing specs, PRDs, designs (.docx · .pdf · .xlsx)."
+                ? "Drag in existing specs, PRDs, designs (.docx · .pdf · .xlsx · .txt · .html)."
                 : `${data.upload.length} document${data.upload.length === 1 ? "" : "s"} uploaded.`
             }
             state={uploadDone ? "done" : data.upload.length > 0 ? "running" : "active"}
@@ -337,7 +370,11 @@ function OnboardingHubLive() {
             )}
           </Vstep>
 
-          <RegisterToolsStep projectId={projectId} register={data.register} />
+          <RegisterToolsStep
+            projectId={projectId}
+            register={data.register}
+            adoptTypes={data.adopt_types ?? ADOPT_TYPES}
+          />
 
           {/* B0-3: repos must be registered before code indexing / the gap report can use them.
               This step reads the project's repositories and points you to the Repositories screen

@@ -561,8 +561,19 @@ export interface OnboardingAdoptDoc {
 export interface OnboardingRegister {
   docstore_connected: boolean;
   tasktracker_connected: boolean;
+  designsource_connected: boolean;
   pages_registered: number;
   issues_registered: number;
+}
+
+// One adopt/link vocabulary option, served from the backend (derived from the gap-report
+// lifecycle) so the dropdown can never drift from what the assessor recognises.
+export interface AdoptType {
+  value: string;
+  type_label: string;
+  phase: string;
+  phase_label: string;
+  label: string; // "<Type> (<Phase>)"
 }
 
 export interface OnboardingHub {
@@ -571,6 +582,7 @@ export interface OnboardingHub {
   register: OnboardingRegister;
   index: { status: "not_started" | "indexed"; artifact_id?: string | null };
   gap: { ready: boolean; resume_phase?: string };
+  adopt_types: AdoptType[];
 }
 
 // Gap report (S-26, 4.7-T8).

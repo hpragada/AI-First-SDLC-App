@@ -334,15 +334,58 @@ _LIFECYCLE: list[tuple[str, str, tuple[str, ...]]] = [
 ]
 _BACKLOG_TYPES = ("epic", "story", "task")
 
-# Brownfield B2-1: the lifecycle phases a human can classify an *uploaded document* as at the
-# adopt gate. Derived from _LIFECYCLE (the FIRST/primary type of each document-authored phase) so
-# every adoptable type is one the gap-report assessor already recognises — a single source of
-# truth, so the two can never drift apart. Code/test/security/cicd/deployment phases are produced
-# by agent runs, not uploaded, so they are intentionally excluded.
-_ADOPTABLE_DOC_PHASES = ("ideation", "requirements", "prd", "architecture", "ux_design")
+# Brownfield: a client can hold ANY phase's evidence as a document — test cases in a
+# spreadsheet, a code review in a Word doc, a threat model as a PDF — so adoption spans the
+# FULL lifecycle vocabulary. The ONE exclusion is the implementation phase (`code`): a running
+# codebase is evidenced from git via code intelligence, never an uploaded file. Derived from
+# _LIFECYCLE so the adopt vocabulary can never drift from what the gap-report assessor reads.
+_NON_ADOPTABLE_PHASES = ("implementation",)
 ADOPTABLE_ARTIFACT_TYPES = tuple(
-    types[0] for phase, _label, types in _LIFECYCLE if phase in _ADOPTABLE_DOC_PHASES
+    t
+    for phase, _label, types in _LIFECYCLE
+    if phase not in _NON_ADOPTABLE_PHASES
+    for t in types
 )
+
+# Human-readable labels per artifact type (falls back to Title-Case of the slug). Kept beside
+# the vocabulary it labels so a new _LIFECYCLE type is a one-line addition.
+_TYPE_LABELS = {
+    "ideation": "Ideation", "requirements": "Requirements", "prd": "PRD",
+    "architecture": "Architecture", "adr": "ADR", "data_model": "Data Model",
+    "api_spec": "API Spec", "tech_stack": "Tech Stack",
+    "security_architecture": "Security Architecture", "ux_design": "UX Design",
+    "user_journey": "User Journey", "wireframe": "Wireframe",
+    "design_system": "Design System", "accessibility": "Accessibility",
+    "task_breakdown": "Task Breakdown", "code_review": "Code Review",
+    "test_case": "Test Case", "test_report": "Test Report",
+    "security_review": "Security Review", "security_finding": "Security Finding",
+    "threat_model": "Threat Model", "sbom": "SBOM", "cicd": "CI/CD",
+    "pipeline": "Pipeline", "deployment": "Deployment", "release": "Release",
+}
+
+
+def _humanize_type(value: str) -> str:
+    return _TYPE_LABELS.get(value) or value.replace("_", " ").title()
+
+
+def adoptable_type_choices() -> list[dict]:
+    """The adopt/link dropdown vocabulary, served so the frontend never drifts from the backend.
+    One entry per adoptable type, labelled '<Type> (<Phase>)' so each option is self-describing.
+    Single source of truth = _LIFECYCLE (minus the git-only implementation phase)."""
+    choices: list[dict] = []
+    for phase, label, types in _LIFECYCLE:
+        if phase in _NON_ADOPTABLE_PHASES:
+            continue
+        phase_label = label.split(". ", 1)[-1]  # "5. UX Design" -> "UX Design"
+        for t in types:
+            choices.append({
+                "value": t,
+                "type_label": _humanize_type(t),
+                "phase": phase,
+                "phase_label": phase_label,
+                "label": f"{_humanize_type(t)} ({phase_label})",
+            })
+    return choices
 
 
 def _assess_phase(phase, types, by_type, *, has_backlog, intel_present):
@@ -641,7 +684,7 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
         connected = {
             cap: IntegrationConnection.objects.filter(
                 tenant_id=tenant_id, capability=cap).first()
-            for cap in ("docstore", "tasktracker")
+            for cap in ("docstore", "tasktracker", "designsource")
         }
 
     gap = read_gap_report(tenant_id=tenant_id, project_id=project_id)
@@ -654,8 +697,11 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
                 connected["docstore"] and connected["docstore"].is_configured),
             "tasktracker_connected": bool(
                 connected["tasktracker"] and connected["tasktracker"].is_configured),
+            "designsource_connected": bool(
+                connected["designsource"] and connected["designsource"].is_configured),
             "pages_registered": pages_registered, "issues_registered": issues_registered,
         },
+        "adopt_types": adoptable_type_choices(),
         "index": {
             "status": "indexed" if intel_artifact else "not_started",
             "artifact_id": str(intel_artifact.id) if intel_artifact else None,

@@ -24,10 +24,13 @@ afterEach(() => vi.unstubAllGlobals());
 describe("S-25 adopt — guessAdoptType (Brownfield B2-1)", () => {
   it("pre-selects a canonical type from the filename", () => {
     expect(guessAdoptType("System Architecture v2.pdf")).toBe("architecture");
-    expect(guessAdoptType("Billing ADR-004.docx")).toBe("architecture");
+    // Full lifecycle vocabulary now supports finer types than the original 5.
+    expect(guessAdoptType("Billing ADR-004.docx")).toBe("adr");
     expect(guessAdoptType("Product PRD.docx")).toBe("prd");
-    expect(guessAdoptType("Login wireframe.pdf")).toBe("ux_design");
+    expect(guessAdoptType("Login wireframe.pdf")).toBe("wireframe");
     expect(guessAdoptType("UX design notes.docx")).toBe("ux_design");
+    expect(guessAdoptType("Q3 Test Cases.xlsx")).toBe("test_case");
+    expect(guessAdoptType("Security Review 2026.docx")).toBe("security_review");
     expect(guessAdoptType("Product Vision.pdf")).toBe("ideation");
     // Everything else defaults to requirements (the most common upload).
     expect(guessAdoptType("Legacy Billing Requirements v3.docx")).toBe("requirements");

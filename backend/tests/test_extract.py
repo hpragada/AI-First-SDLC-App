@@ -52,9 +52,35 @@ def test_extract_xlsx_sheets_as_tables():
     assert "US-1" in body and "US-2" in body
 
 
+def test_extract_txt_returns_body_as_is():
+    title, body = extract(
+        filename="context.txt", mime="text/plain",
+        content=b"# Notes\n\nThe billing service handles invoices.\n",
+    )
+    assert title == "context"
+    assert "# Notes" in body
+    assert "The billing service handles invoices." in body
+
+
+def test_extract_html_strips_tags_keeps_structure():
+    html = (
+        b"<html><head><style>.x{color:red}</style><title>t</title></head>"
+        b"<body><h1>Design</h1><p>Screens for <b>login</b>.</p>"
+        b"<ul><li>Home</li><li>Profile</li></ul>"
+        b"<script>alert('x')</script></body></html>"
+    )
+    title, body = extract(filename="ux.html", mime="text/html", content=html)
+    assert title == "ux"
+    assert "# Design" in body
+    assert "Screens for login." in body
+    assert "- Home" in body and "- Profile" in body
+    # script/style contents are dropped
+    assert "alert" not in body and "color:red" not in body
+
+
 def test_unsupported_type_raises():
     with pytest.raises(ExtractionError):
-        extract(filename="notes.txt", mime="text/plain", content=b"hello")
+        extract(filename="logo.png", mime="image/png", content=b"\x89PNG\r\n")
 
 
 def test_corrupt_pdf_wrapped_as_extraction_error():
