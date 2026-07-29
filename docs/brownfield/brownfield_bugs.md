@@ -70,25 +70,31 @@ The crux of trust: whatever is uploaded (text, tables, diagrams, screenshots) mu
 | B.9 | One upload → one artifact at v1 | Upload registers **no** artifact; adopt registers exactly one, `v1`, published, correctly typed — carrying the transcription when pages were read, the plain extraction when not. Retry also lands on v1. | both | PB-7 / PB-8 | ✅ DONE (live) |
 | B.10 | Never stranded, never silent | A failed reading recovers to the extracted text rather than leaving the document empty; every outcome reports a plain sentence and a retry. | both | PB-3/4/10/12 | ✅ DONE (live) |
 
-| B.4 | No silent content loss | An auto-applied vision version that is materially **shorter** than the one it replaces is refused: the run fails with a plain reason and the adopted version stays live. Emptiness alone was never a sufficient bar for a publish with no human gate. | agent | Part B fix 1 | ✅ built + tested |
-| B.5 | Version, not duplicate | `register_artifact(supersedes=<id>)` takes phase/type/title off the target, so the new version can't fork a second document when the agent restates a title imperfectly. | agent | Part B fix 2 | ✅ built + tested |
-| B.6 | Honest vision status | Adopt returns a `vision` state + a finished human sentence (running / no visuals / no companion / already running / failed). The no-companion explanation — previously written and then discarded — now reaches the user. | both | Part B fix 3 | ✅ built + tested |
-| B.7 | Failed run stays visible | A vision run that dies **after** dispatch shows on the document row on every page load, not just in the adopt response (the carrier is hidden from the backlog, so nothing else surfaced it). | both | Part B fix 4 | ✅ built + tested |
-| B.8 | One row per document | Artifacts list collapses to the newest version per artifact (`?latest=1`); prior versions stay readable as history. 20 uploads read as 20 rows, not 40. Preview's version history now groups by title too, so distinct documents of one type stop listing each other as versions. | both | Part B fix 5 | ✅ built |
+| B.4 | No silent content loss | An auto-applied vision version that is materially **shorter** than the one it replaces is refused: the run fails with a plain reason and the adopted version stays live. Emptiness alone was never a sufficient bar for a publish with no human gate. | agent | Part B fix 1 | ✅ DONE (live — fired for real on a 93% loss) |
+| B.5 | Version, not duplicate | `register_artifact(supersedes=<id>)` takes phase/type/title off the target, so the new version can't fork a second document when the agent restates a title imperfectly. | agent | Part B fix 2 | ✅ DONE (live) |
+| B.6 | Honest vision status | Adopt returns a `vision` state + a finished human sentence (running / no visuals / no companion / already running / failed). The no-companion explanation — previously written and then discarded — now reaches the user. | both | Part B fix 3 | ✅ DONE (live) |
+| B.7 | Failed run stays visible | A vision run that dies **after** dispatch shows on the document row on every page load, not just in the adopt response (the carrier is hidden from the backlog, so nothing else surfaced it). | both | Part B fix 4 | ✅ DONE (live) |
+| B.8 | One row per document | Artifacts list collapses to the newest version per artifact (`?latest=1`); prior versions stay readable as history. 20 uploads read as 20 rows, not 40. Preview's version history now groups by title too, so distinct documents of one type stop listing each other as versions. | both | Part B fix 5 | ✅ DONE (live) |
 
 > **STATE AS OF 2026-07-29 — Steps 1 & 2 (upload · extract · adopt · vision) are GREEN and live.**
 > Part A verified earlier; Part B taken live this session — see *Part B live bring-up* below for
 > the 25 defects found and fixed. **Next: Step 3, the connectors (Confluence / Jira / Figma).**
 > Carried forward, deliberately, as non-blockers for step-3 testing:
-> **(a)** transcription *quality* is unmeasured — the pipeline works, how well it reads a diagram
-> is a judgement on real documents (architecture PDF pending team review);
+> **(a)** ~~transcription quality unmeasured~~ → **✅ team-reviewed 2026-07-29: the architecture
+> transcription is "the best one and very good".** This was the one thing the platform could not
+> judge for itself — the guard can prove text was not LOST, never that a diagram was read WELL.
+> Quality is now confirmed on a real client-shaped document by the people who own it;
 > **(b)** 3 backend test files still assert the pre-PB-7 "upload registers the artifact" behaviour
 > and will fail in CI — needs `ALTER ROLE sdlc_app CREATEDB;` before they can even run;
 > **(c)** the **auth pass (X-1 / B7-1)** — team decision: build it once the whole onboarding flow
 > is green end to end, not step by step. It remains the merge gate to `develop`;
 > **(d)** PB-16 — vision runs on every PDF, including text-only ones (open decision).
 >
-> **Part A: ✅ team-verified live** ("strongly completed… everything works"). **Part B: built + unit-tested, not yet live** — to exercise it: run migrations (seeds `00e`) and restart the companion, then adopt the Architecture / wireframes PDF and confirm diagrams/screens arrive as text.
+> **Part A: ✅ team-verified live** ("strongly completed… everything works").
+> **Part B: ✅ team-verified live 2026-07-29** — the full document set (Architecture, wireframes,
+> Security, PRD) was adopted end to end on the team's own machine: text-and-diagram PDFs, the
+> image-only wireframes, and a retry after a deliberate failure. The PRD and Architecture
+> transcriptions were reviewed and accepted by the team. **Parts A and B are CLOSED.**
 
 ## Step 3 — Connect → Import Jira backlog → Link Confluence docs (typed) → Figma
 
