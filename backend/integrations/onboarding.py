@@ -299,9 +299,16 @@ def _readopt(*, tenant_id, project_id, source_document_id, artifact_ids, filenam
         tenant_id=tenant_id, project_id=project_id,
         source_document_ids=[str(source_document_id)])
     last = states.get(str(source_document_id))
-    if last is None or last["state"] != "failed":
-        # Nothing failed → nothing to retry. `vision: None` = this call started nothing; the key
-        # stays present in every adopt response so the UI never special-cases its absence.
+    # Retry when the last reading FAILED — and equally when one never started at all. The second
+    # case is the one the user actually meets: adopting with no machine connected dispatches
+    # nothing, so there is no run to have failed, and the message tells them to connect their
+    # machine and adopt again. Without this that instruction was a dead end.
+    never_ran = last is None and _holds_only_extraction(
+        tenant_id=tenant_id, source_document_id=source_document_id)
+    if not never_ran and (last is None or last["state"] != "failed"):
+        # A reading is running or already done → nothing to retry. `vision: None` = this call
+        # started nothing; the key stays present in every adopt response so the UI never has to
+        # special-case its absence.
         return {"source_document_id": str(source_document_id), "status": "adopted",
                 "artifact_ids": artifact_ids, "idempotent": True, "vision": None}
     # Stand the document back down to "no artifact yet" before retrying, so the retry REGISTERS
@@ -327,6 +334,28 @@ def _readopt(*, tenant_id, project_id, source_document_id, artifact_ids, filenam
         artifact_ids = []
     return {"source_document_id": str(source_document_id), "status": "adopted",
             "artifact_ids": artifact_ids, "idempotent": True, "retried": True, "vision": vision}
+
+
+def _holds_only_extraction(*, tenant_id, source_document_id) -> bool:
+    """True when the document has pages worth reading but its artifact is still just the plain
+    extraction — i.e. a reading is worth (re)starting."""
+    from apps.integrations.models import SourceDocument
+    from apps.registry.models import Artifact
+    from apps.tenancy.context import tenant_context
+
+    with tenant_context(tenant_id):
+        src = SourceDocument.objects.filter(
+            id=source_document_id, tenant_id=tenant_id).first()
+        if src is None:
+            return False
+        prov = src.provenance or {}
+        if not (prov.get("page_images") or []):
+            return False        # nothing visual → a reading would be a no-op
+        ids = [str(x) for x in (src.extracted_artifact_ids or [])]
+        if not ids:
+            return True
+        art = Artifact.objects.filter(id=ids[0], tenant_id=tenant_id).first()
+        return art is not None and art.s3_key == prov.get("extracted_s3_key")
 
 
 def _clear_extraction_fallback(*, tenant_id, source_document_id) -> bool:

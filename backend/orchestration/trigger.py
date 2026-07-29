@@ -254,7 +254,12 @@ def trigger_onboarding_agent(
     caller catches this and keeps the deterministic/mechanical path as the fallback."""
     from integrations.onboarding import ensure_onboarding_work_item
 
-    enrollment = _resolve_enrollment(tenant_id, project_id, triggered_by)
+    # Inside the tenant's context, like every other enrollment lookup (see trigger_code_intel):
+    # forced row-level security hides every enrollment row from a query with no tenant context,
+    # so this resolved to None however many companions were connected — and the agent path
+    # silently fell back to the deterministic one every single time.
+    with tenant_context(tenant_id):
+        enrollment = _resolve_enrollment(tenant_id, project_id, triggered_by)
     if enrollment is None:
         raise NoCompanionError(
             "This step runs on your local companion — it reads your code and can ask you "
@@ -286,7 +291,9 @@ def trigger_vision(
     catches it and simply skips — the document stays adopted with its extracted text)."""
     from integrations.onboarding import ensure_vision_work_item
 
-    enrollment = _resolve_enrollment(tenant_id, project_id, triggered_by)
+    # Inside the tenant's context — see the same fix in trigger_onboarding_agent above.
+    with tenant_context(tenant_id):
+        enrollment = _resolve_enrollment(tenant_id, project_id, triggered_by)
     if enrollment is None:
         raise NoCompanionError(
             # "Your machine", not "companion" — the rest of the product calls it that ("Connect
