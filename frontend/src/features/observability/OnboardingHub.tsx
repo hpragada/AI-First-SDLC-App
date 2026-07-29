@@ -307,9 +307,15 @@ function IndexCodeStep({ projectId, repos, indexDone }: {
 // a document, using a word ("companion") that appears nowhere else in the product. This puts the
 // same step in front of them on arrival, in the app's own vocabulary, with the button right here.
 function ConnectMachineStep() {
-  const runners = useRunners();
+  // Polled, because this reports a LIVE connection: a companion that stops while the page is
+  // open must stop claiming to be connected without a manual reload.
+  const runners = useRunners(true);
   if (runners.isLoading) return null;
-  const connected = Boolean(runners.data?.some((r) => r.online || r.last_seen));
+  // `online` only — deliberately NOT "has ever checked in". That weaker test is right on the
+  // setup checklist, where the question is "did you complete this step once", and wrong here,
+  // where the question is "can this document's diagrams be read right now". Using it made the
+  // page report a connected machine while the header showed the companion offline.
+  const connected = Boolean(runners.data?.some((r) => r.online));
   if (connected) {
     return (
       <Card>
@@ -326,20 +332,25 @@ function ConnectMachineStep() {
       </Card>
     );
   }
+  // Enrolled once but not answering now is a different problem from never having set it up, and
+  // it has a different fix — start the companion, rather than go and connect a machine.
+  const everConnected = Boolean(runners.data?.some((r) => r.last_seen));
   return (
     <Card>
       <CardBody className="u-row" style={{ gap: "var(--space-3)", alignItems: "center" }}>
         <span className="vstep__num vstep__num--active">1</span>
         <div style={{ flex: "1 1 auto" }}>
-          <div className="t-body u-strong">Connect your machine first</div>
+          <div className="t-body u-strong">
+            {everConnected ? "Your machine isn't running right now" : "Connect your machine first"}
+          </div>
           <div className="t-sm u-muted">
-            Some of this work runs on your own machine so nothing leaves it — reading the diagrams
-            and screenshots inside your documents, and analysing your code. You can upload
-            documents without it, but their diagrams won't be read.
+            {everConnected
+              ? "Start your companion again to have the diagrams and screenshots in your documents read into text. You can still upload documents — their diagrams just won't be read until it's back."
+              : "Some of this work runs on your own machine so nothing leaves it — reading the diagrams and screenshots inside your documents, and analysing your code. You can upload documents without it, but their diagrams won't be read."}
           </div>
         </div>
         <Link to="/connect" className="btn btn--primary">
-          Connect your machine
+          {everConnected ? "Machine setup" : "Connect your machine"}
         </Link>
       </CardBody>
     </Card>
