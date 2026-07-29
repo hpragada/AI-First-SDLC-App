@@ -1401,7 +1401,13 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         return super().get_permissions()
 
     def get_queryset(self):
+        from integrations.onboarding import RUN_RECORD_ARTIFACT_TYPES
+
         qs = super().get_queryset()
+        # A run's own record is not a project deliverable — see RUN_RECORD_ARTIFACT_TYPES. Without
+        # this, every document the vision agent rewrote appeared twice in the registry: the
+        # document itself, and the phase blob holding the agent's closing message.
+        qs = qs.exclude(type__in=RUN_RECORD_ARTIFACT_TYPES)
         for field in ("project", "phase", "status"):
             value = self.request.query_params.get(field)
             if value:

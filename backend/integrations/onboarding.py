@@ -820,6 +820,15 @@ def ensure_onboarding_work_item(*, tenant_id, project_id, repo_id=None):
 # the backlog; the trigger/run machinery still resolves them by their external_ref markers.
 CARRIER_SOURCES = ("onboarding_carrier", "vision_carrier")
 
+#: Artifact types that are a RUN's own record rather than a project deliverable, and so are hidden
+#: from the registry list — the same reasoning that hides the carrier work items above.
+#: `document_vision` is the phase blob the platform registers for every run, holding the agent's
+#: closing message. For a vision run the deliverable is the DOCUMENT the agent rewrote; the blob
+#: sitting beside it made one uploaded file read as two published artifacts, which is precisely
+#: the duplication adopt-time registration was meant to end. It is still stored, still on the run,
+#: and still what the run console reads — it just isn't a thing the user owns.
+RUN_RECORD_ARTIFACT_TYPES = ("document_vision",)
+
 
 def ensure_vision_work_item(*, tenant_id, project_id, source_document_id, artifact_id, filename,
                             target_type=None, title=None):
@@ -869,7 +878,10 @@ def ensure_vision_work_item(*, tenant_id, project_id, source_document_id, artifa
             return existing
         return WorkItem.objects.create(
             tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.EPIC,
-            state=WorkItem.State.ACCEPTED, title=f"Document vision — {filename}",
+            # Just the filename: the platform names a run's own artifact
+            # "{phase label} — {work item title}", so carrying the phase in the title too
+            # produced "Document vision — Document vision — 09_Security.pdf".
+            state=WorkItem.State.ACCEPTED, title=filename,
             description=description,
             external_ref={"source": "vision_carrier",
                           "source_document_id": str(source_document_id),

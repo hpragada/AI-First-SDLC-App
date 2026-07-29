@@ -761,11 +761,20 @@ def get_source_extraction(tenant_id, source_document_id, object_store=None) -> d
         return {"body": "", "filename": filename, "title": title, "fidelity": fidelity,
                 "error": "this document has no staged extraction"}
     try:
-        body = _obj_store(object_store).get(key).decode("utf-8", "replace")
+        raw = _obj_store(object_store).get(key)
     except Exception as exc:  # noqa: BLE001
         return {"body": "", "filename": filename, "title": title, "fidelity": fidelity,
                 "error": f"the extraction could not be read: {exc}"}
-    return {"body": body, "filename": filename, "title": title, "fidelity": fidelity}
+    # Capped like every other body read (`get_artifact_body`). This one shipped uncapped, and a
+    # text-heavy document's extraction then overflowed the MCP transport's 1 MiB message limit —
+    # killing the run with "JSON message exceeded maximum buffer size" on a document with only
+    # three pages, where the page images were far too small to be the cause. `truncated` tells the
+    # agent it is not seeing the whole thing, so it can say so rather than silently transcribe a
+    # document it only half read.
+    truncated = len(raw) > _MAX_BODY_READ_BYTES
+    body = raw[:_MAX_BODY_READ_BYTES].decode("utf-8", "replace")
+    return {"body": body, "filename": filename, "title": title, "fidelity": fidelity,
+            "truncated": truncated}
 
 
 def page_images_for(tenant_id, subject_id):
