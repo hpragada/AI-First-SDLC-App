@@ -89,6 +89,50 @@ class AtlassianDocStore:
         """Not part of the DocStore capability; used for test cleanup."""
         self._rest.request("DELETE", f"/wiki/api/v2/pages/{page_ref}")
 
+    # ── attachments (S3-7) ──────────────────────────────────────────
+    # A Confluence page does not carry its diagrams inline the way an HTML document does: an
+    # embedded image is an ATTACHMENT, referenced from the body as
+    # `<ac:image><ri:attachment ri:filename="…"/></ac:image>`. Reading a page's text alone
+    # therefore drops every diagram, screenshot and table-as-picture on it — the same loss that
+    # uploaded PDFs suffered before the vision pass. These two methods are what let a linked page
+    # hand its pictures to `00e_document_vision` exactly as an upload hands over its page renders.
+
+    def list_attachments(self, *, page_ref: str) -> list[dict]:
+        """Every attachment on a page: `{id, title, mime, size, download_path}`. Paginated by
+        Confluence; followed to the end here so a page never reports only its first images."""
+        out: list[dict] = []
+        path = f"/wiki/api/v2/pages/{page_ref}/attachments"
+        query: dict | None = {"limit": 50}
+        while path:
+            data = self._rest.request("GET", path, query=query) or {}
+            for att in data.get("results", []):
+                links = att.get("_links") or {}
+                out.append({
+                    "id": str(att.get("id", "")),
+                    "title": att.get("title") or "",
+                    "mime": att.get("mediaType") or "",
+                    "size": int(att.get("fileSize") or 0),
+                    "download_path": links.get("download") or "",
+                })
+            # `next` is a path relative to the site root and already carries its own cursor.
+            nxt = (data.get("_links") or {}).get("next") or ""
+            path, query = (nxt, None) if nxt else ("", None)
+        return out
+
+    def download_attachment(self, *, download_path: str) -> bytes:
+        """The raw bytes of one attachment, from the `download_path` `list_attachments` gave.
+
+        Confluence serves these from `/wiki/download/...`, which 302s to a signed media URL —
+        urllib follows that for us. Returns b"" rather than raising when the body doesn't come
+        back as bytes, so one unreadable image can never cost the whole page."""
+        if not download_path:
+            return b""
+        path = download_path if download_path.startswith("/") else f"/{download_path}"
+        if not path.startswith("/wiki"):
+            path = f"/wiki{path}"
+        data = self._rest.request("GET", path)
+        return data if isinstance(data, bytes) else b""
+
     def search(self, *, query: str, space: str | None = None) -> list[DocHit]:
         # Empty query => list all pages in the space (used for brownfield discovery).
         clauses = []

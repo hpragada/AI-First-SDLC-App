@@ -12,8 +12,24 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 
-# transport(method, url, headers, body) -> (status, parsed_json_or_None)
+# transport(method, url, headers, body) -> (status, parsed_json | bytes | None)
 Transport = Callable[[str, str, dict, object | None], "tuple[int, object]"]
+
+
+def _parse(raw: bytes):
+    """JSON when it is JSON, raw bytes when it is not.
+
+    Every REST call this transport carries returns JSON, so that stays the fast path. Binary
+    responses became necessary once a connector had to DOWNLOAD something rather than describe it
+    (Confluence attachments — the images a page's diagrams live in). Falling back to bytes is
+    strictly additive: anything that parsed as JSON before still parses as JSON, and a payload
+    that never could (a PNG) now arrives intact instead of raising inside the transport."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return raw
 
 
 def urllib_transport(method: str, url: str, headers: dict, body: object | None):
@@ -21,13 +37,11 @@ def urllib_transport(method: str, url: str, headers: dict, body: object | None):
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-            return resp.status, (json.loads(raw) if raw else None)
+            return resp.status, _parse(resp.read())
     except urllib.error.HTTPError as exc:
         raw = exc.read()
-        try:
-            parsed = json.loads(raw) if raw else None
-        except ValueError:
+        parsed = _parse(raw)
+        if isinstance(parsed, bytes):
             parsed = raw.decode("utf-8", "replace")
         return exc.code, parsed
 

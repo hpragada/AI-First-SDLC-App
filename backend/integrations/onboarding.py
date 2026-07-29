@@ -201,6 +201,157 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
             "artifact_ids": [], "title": title}
 
 
+#: Attachment media types worth handing to the vision pass. A page's other attachments (a linked
+#: spreadsheet, a PDF) are not page renders and would only bloat the payload.
+_VISION_IMAGE_MIMES = ("image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp")
+
+
+def ingest_confluence_page(*, tenant_id, project_id, page_id, artifact_type="document",
+                           docstore=None, object_store=None) -> dict:
+    """The Confluence sibling of `ingest_source_document` (S3-6).
+
+    A linked page used to be registered as a bare pointer: typed, published, counted by the gap
+    report as evidence — and **empty to every agent**, because the live read-through that fills a
+    Confluence body is wired only into the human preview panel. A phase could be marked complete
+    on a document nothing could read.
+
+    Rather than teach the agent path to read Confluence, this gives a linked page the same
+    `SourceDocument` an upload gets. Everything downstream then applies unchanged and un-rewritten:
+    the adopt gate, one artifact registered at **v1**, the vision pass over its images, the
+    content-loss guard, the honest fidelity badge, and retry. None of that machinery was ever
+    upload-specific — it keys off the source document.
+
+    **Idempotent by page id.** Re-linking a page updates the existing document in place instead of
+    minting a second one, which would otherwise adopt into a second artifact and re-create exactly
+    the duplicate-registry problem the upload flow was restructured to remove.
+
+    Content is **snapshotted** here, not read live (team decision, 2026-07-29): vision needs
+    durable images to transcribe and the content-loss guard needs a prior version to measure
+    against, and a live read gives neither — besides making every agent read depend on Atlassian
+    being reachable at that moment.
+    """
+    from apps.integrations.models import SourceDocument
+    from apps.projects.models import Project
+    from apps.tenancy.context import tenant_context
+    from integrations.confluence_body import confluence_storage_to_markdown
+    from storage import content_hash
+
+    store = _object_store(object_store)
+    if docstore is None:
+        docstore = get_capability(tenant_id, "docstore")
+
+    page = docstore.get_page(page_ref=str(page_id))
+    body, referenced = confluence_storage_to_markdown(page.body_html or "")
+    title = page.title or f"Confluence page {page_id}"
+
+    with tenant_context(tenant_id):
+        project = Project.objects.get(id=project_id, tenant_id=tenant_id)
+        src = next(
+            (d for d in SourceDocument.objects.filter(tenant_id=tenant_id, project_id=project_id)
+             if str((d.provenance or {}).get("confluence_page_id") or "") == str(page_id)),
+            None,
+        )
+        if src is None:
+            src = SourceDocument.objects.create(
+                tenant_id=tenant_id, project=project, filename=title,
+                mime="text/confluence-storage",
+                status=SourceDocument.Status.EXTRACTING,
+            )
+        else:
+            src.filename = title
+            src.status = SourceDocument.Status.EXTRACTING
+            src.save(update_fields=["filename", "status", "updated_at"])
+    src_id = str(src.id)
+
+    # Keep the untouched storage body as the "original", the way an upload keeps its file — it is
+    # what a human is shown when they ask to see the source.
+    src_key = f"onboarding/{tenant_id}/{project_id}/{src_id}/source/{page_id}.xhtml"
+    store.put(src_key, (page.body_html or "").encode("utf-8"))
+
+    # A Confluence page carries its diagrams as ATTACHMENTS, not inline — so the images the vision
+    # pass reads have to be fetched one by one. Best-effort per image: one unreadable attachment
+    # must not cost the page.
+    page_images: list[dict] = []
+    try:
+        attachments = docstore.list_attachments(page_ref=str(page_id))
+    except Exception:  # noqa: BLE001 — a page with unreadable attachments still ingests its text
+        attachments = []
+    # Images the body actually references come first and in document order; anything else attached
+    # to the page follows, since a diagram is sometimes attached without an inline reference.
+    order = {name: i for i, name in enumerate(referenced)}
+    attachments.sort(key=lambda a: order.get(a.get("title", ""), len(order)))
+    for i, att in enumerate(attachments, start=1):
+        if (att.get("mime") or "").lower() not in _VISION_IMAGE_MIMES:
+            continue
+        try:
+            raw = docstore.download_attachment(download_path=att.get("download_path", ""))
+        except Exception:  # noqa: BLE001
+            continue
+        if not raw:
+            continue
+        name = att.get("title") or f"attachment{i}.png"
+        vkey = f"onboarding/{tenant_id}/{project_id}/{src_id}/views/{name}"
+        try:
+            store.put(vkey, raw)
+        except Exception:  # noqa: BLE001
+            continue
+        page_images.append({"name": name, "s3_key": vkey,
+                            "mime": att.get("mime") or "image/png", "page": i})
+
+    # Same honest fidelity marker the upload path derives (A4), from the same three cases.
+    if body.strip():
+        fidelity = "text"
+    elif page_images:
+        fidelity = "images_only"
+        n = len(page_images)
+        body = (
+            f"> **This page is preserved.** “{title}” holds no readable text — its content is in "
+            f"**{n} image{'s' if n != 1 else ''}** attached to the page, saved exactly as they "
+            "are in Confluence.\n>\n"
+            "> During onboarding, the AI reads each diagram and screen into structured text, so "
+            "nothing is lost."
+        )
+    else:
+        fidelity = "empty"
+        body = (
+            f"> **“{title}” was linked, but it has no content yet.**\n>\n"
+            "> The page is empty in Confluence (an unfilled template counts as empty). Add its "
+            "content there, then link it again."
+        )
+
+    body_key = f"onboarding/{tenant_id}/{project_id}/{src_id}/extracted.md"
+    store.put(body_key, body)
+
+    with tenant_context(tenant_id):
+        src = SourceDocument.objects.get(id=src_id, tenant_id=tenant_id)
+        src.s3_key = src_key
+        src.status = SourceDocument.Status.EXTRACTED
+        src.extracted_artifact_ids = []      # filled at adopt, exactly like an upload
+        src.provenance = {
+            "filename": title, "mime": "text/confluence-storage", "source_s3_key": src_key,
+            "title": title, "fidelity": fidelity, "page_count": len(page_images),
+            "page_images": page_images,
+            "extracted_s3_key": body_key,
+            "extracted_hash": content_hash(body.encode("utf-8")),
+            "artifact_type": artifact_type,
+            # What makes this document a Confluence page: the id is the idempotency key, and the
+            # hash is what a later drift check would compare against the live page (the team's
+            # reserved hybrid option).
+            "origin": "confluence",
+            "confluence_page_id": str(page_id),
+            "confluence_url": page.url,
+            "confluence_version": page.version,
+        }
+        src.save(update_fields=["s3_key", "status", "extracted_artifact_ids", "provenance",
+                                "updated_at"])
+        tools.log_event(tenant_id, "onboarding", "source_document.extracted", "source_document",
+                        src_id, {"filename": title, "fidelity": fidelity,
+                                 "origin": "confluence", "page_id": str(page_id)})
+
+    return {"source_document_id": src_id, "status": "extracted", "artifact_ids": [],
+            "title": title, "fidelity": fidelity, "page_count": len(page_images)}
+
+
 def adopt_source_document(*, tenant_id, source_document_id, user_id, target_type=None) -> dict:
     """Review gate: a product_owner publishes the extracted draft artifacts (idempotent).
 
@@ -640,16 +791,25 @@ def _parse_confluence_page_id(raw: str) -> str | None:
     return None
 
 
-def link_confluence_pages(*, tenant_id, project_id, links, docstore=None) -> dict:
-    """B3-4 — register user-provided Confluence pages as **typed** pointers so the gap report
-    sees them as phase evidence. Each `links` row = `{"page": <url-or-id>, "type": <canonical
-    lifecycle type>}`. Register-don't-recreate: stores a pointer (id/url/title), never the page
-    body; idempotent by page id (re-linking updates the declared type, never duplicates). Shares
-    the canonical type set (`ADOPTABLE_ARTIFACT_TYPES`) + the typed-registration path with
-    uploaded-doc adoption (B2-1) — one classification path, two sources. Per-row errors are
-    collected, not raised, so one bad link doesn't fail the whole batch."""
+def link_confluence_pages(*, tenant_id, project_id, links, docstore=None,
+                          object_store=None) -> dict:
+    """B3-4 / S3-6 — bring user-provided Confluence pages in as **source documents** awaiting
+    adoption. Each `links` row = `{"page": <url-or-id>, "type": <canonical lifecycle type>}`.
+
+    **This no longer registers an artifact.** It used to: a linked page became a published, typed
+    registry row on the spot. That row was a pointer with no body, and the read-through that fills
+    a Confluence body is wired only into the human preview — so the gap report counted the page as
+    phase evidence while every agent opening it read an empty string (S3-6).
+
+    A link now does exactly what an upload does: snapshot the content into a `SourceDocument` and
+    stop, leaving the human to review the extraction and adopt it. Adoption is the ONLY place an
+    artifact is created — one per document, at v1 — which is the same invariant the upload flow was
+    restructured to hold (PB-7). Registering here as well would put two artifacts behind one page.
+
+    Idempotent by page id: re-linking re-snapshots the same source document rather than making a
+    second one. Per-row errors are collected, not raised, so one bad link doesn't fail the batch.
+    """
     from apps.projects.models import Project
-    from apps.registry.models import Artifact
     from apps.tenancy.context import tenant_context
 
     if docstore is None:
@@ -658,18 +818,17 @@ def link_confluence_pages(*, tenant_id, project_id, links, docstore=None) -> dic
 
     with tenant_context(tenant_id):
         Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
-        existing = {
-            (a.external_ref or {}).get("id"): a
-            for a in Artifact.objects.filter(
-                tenant_id=tenant_id, project_id=project_id, sor="confluence")
-        }
 
     linked: list[dict] = []
     errors: list[dict] = []
     for row in links:
         raw = (row or {}).get("page", "")
-        target_type = (row or {}).get("type", "")
-        if target_type not in ADOPTABLE_ARTIFACT_TYPES:
+        # The type is now declared at ADOPT, the way an upload declares it — so a link does not
+        # have to carry one. When it does (an API caller, or a pre-classified batch) it is
+        # validated and pre-selects the adopt dropdown; when it doesn't, the document waits as a
+        # generic `document` exactly as a freshly uploaded file does.
+        target_type = (row or {}).get("type", "") or "document"
+        if target_type != "document" and target_type not in ADOPTABLE_ARTIFACT_TYPES:
             errors.append({"page": raw, "error": f"unknown type {target_type!r}"})
             continue
         page_id = _parse_confluence_page_id(raw)
@@ -678,27 +837,18 @@ def link_confluence_pages(*, tenant_id, project_id, links, docstore=None) -> dic
                            "error": "couldn't find that page — paste the full URL or the page ID"})
             continue
         try:
-            page = docstore.get_page(page_ref=page_id)
+            out = ingest_confluence_page(
+                tenant_id=tenant_id, project_id=project_id, page_id=page_id,
+                artifact_type=target_type, docstore=docstore, object_store=object_store,
+            )
         except Exception:  # noqa: BLE001 — per-row error; don't fail the batch
             errors.append({"page": raw, "error": "couldn't read that page from Confluence"})
             continue
-        existing_art = existing.get(page_id)
-        if existing_art is not None:
-            # Idempotent: update the declared type on the existing pointer, never duplicate.
-            tools.update_artifact(tenant_id, str(existing_art.id),
-                                  status="published", type=target_type)
-            linked.append({"page_id": page_id, "artifact_id": str(existing_art.id),
-                           "type": target_type, "title": page.title, "created": False})
-            continue
-        art = tools.register_artifact(
-            tenant_id, project_id, None, phase="onboarding", type=target_type,
-            sor="confluence", content_hash="",
-            external_ref={"sor": "confluence", "id": page_id, "url": page.url,
-                          "title": page.title},
-        )
-        tools.update_artifact(tenant_id, art["id"], status="published")
-        linked.append({"page_id": page_id, "artifact_id": art["id"], "type": target_type,
-                       "title": page.title, "created": True})
+        linked.append({"page_id": page_id, "source_document_id": out["source_document_id"],
+                       "type": target_type, "title": out["title"],
+                       "fidelity": out["fidelity"], "page_count": out["page_count"],
+                       # No artifact exists yet, and that is the point — adoption makes it.
+                       "artifact_id": None, "status": "awaiting_adoption"})
 
     return {"linked": linked, "errors": errors}
 
@@ -769,12 +919,18 @@ def adoptable_type_choices() -> list[dict]:
             continue
         phase_label = label.split(". ", 1)[-1]  # "5. UX Design" -> "UX Design"
         for t in types:
+            type_label = _humanize_type(t)
+            # The phase suffix exists to disambiguate ("ADR (Architecture)"). When the type IS
+            # the phase it disambiguates nothing and reads as a mistake — "Ideation (Ideation)",
+            # "PRD (PRD)". Drop the suffix in that case.
+            option_label = (type_label if type_label.casefold() == phase_label.casefold()
+                            else f"{type_label} ({phase_label})")
             choices.append({
                 "value": t,
-                "type_label": _humanize_type(t),
+                "type_label": type_label,
                 "phase": phase,
                 "phase_label": phase_label,
-                "label": f"{_humanize_type(t)} ({phase_label})",
+                "label": option_label,
             })
     return choices
 
@@ -1250,8 +1406,13 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
         Project.objects.get(id=project_id, tenant_id=tenant_id)  # validate + scope
         docs = list(SourceDocument.objects.filter(
             tenant_id=tenant_id, project_id=project_id).order_by("-created_at"))
-        pages_registered = Artifact.objects.filter(
-            tenant_id=tenant_id, project_id=project_id, sor="confluence").count()
+        # Count the linked PAGES, not artifacts with `sor="confluence"` (S3-6). A linked page is
+        # now snapshotted into a source document and adopted like an upload, so its artifact is an
+        # internal one holding the snapshot — the old query would report 0 however many pages were
+        # linked, and the step would never look done.
+        pages_registered = sum(
+            1 for d in docs if (d.provenance or {}).get("origin") == "confluence"
+        )
         issues_registered = sum(
             1 for w in WorkItem.objects.filter(tenant_id=tenant_id, project_id=project_id)
             if (w.external_ref or {}).get("sor") == "jira"

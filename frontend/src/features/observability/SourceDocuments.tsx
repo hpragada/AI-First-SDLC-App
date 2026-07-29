@@ -18,35 +18,37 @@ export type SourceDocsView = "empty" | "uploading" | "extracted" | "adopt-gate" 
 // Brownfield: the FULL SDLC vocabulary a human can classify an uploaded document (or linked
 // Confluence page) as at the adopt gate — every lifecycle type except implementation (`code`),
 // which is evidenced only from git. Labels read "<Type> (<Phase>)" so each option is
-// self-describing. At runtime the live screen PREFERS the backend-served list
-// (OnboardingHub.adopt_types) so this can never drift; this constant is the fallback the
-// gallery/tests use and MUST mirror the backend's adoptable_type_choices().
+// self-describing — EXCEPT where the type is its own phase, where the suffix disambiguates
+// nothing and reads as a mistake ("Ideation (Ideation)"), so it is dropped. At runtime the live
+// screen PREFERS the backend-served list (OnboardingHub.adopt_types) so this can never drift;
+// this constant is the fallback the gallery/tests use and MUST mirror the backend's
+// adoptable_type_choices().
 export const ADOPT_TYPES: { value: string; label: string }[] = [
-  { value: "ideation", label: "Ideation (Ideation)" },
-  { value: "requirements", label: "Requirements (Requirements)" },
-  { value: "prd", label: "PRD (PRD)" },
-  { value: "architecture", label: "Architecture (Architecture)" },
+  { value: "ideation", label: "Ideation" },
+  { value: "requirements", label: "Requirements" },
+  { value: "prd", label: "PRD" },
+  { value: "architecture", label: "Architecture" },
   { value: "adr", label: "ADR (Architecture)" },
   { value: "data_model", label: "Data Model (Architecture)" },
   { value: "api_spec", label: "API Spec (Architecture)" },
   { value: "tech_stack", label: "Tech Stack (Architecture)" },
   { value: "security_architecture", label: "Security Architecture (Architecture)" },
-  { value: "ux_design", label: "UX Design (UX Design)" },
+  { value: "ux_design", label: "UX Design" },
   { value: "user_journey", label: "User Journey (UX Design)" },
   { value: "wireframe", label: "Wireframe (UX Design)" },
   { value: "design_system", label: "Design System (UX Design)" },
   { value: "accessibility", label: "Accessibility (UX Design)" },
-  { value: "task_breakdown", label: "Task Breakdown (Task Breakdown)" },
-  { value: "code_review", label: "Code Review (Code Review)" },
+  { value: "task_breakdown", label: "Task Breakdown" },
+  { value: "code_review", label: "Code Review" },
   { value: "test_case", label: "Test Case (Testing & QA)" },
   { value: "test_report", label: "Test Report (Testing & QA)" },
   { value: "security_review", label: "Security Review (Security)" },
   { value: "security_finding", label: "Security Finding (Security)" },
   { value: "threat_model", label: "Threat Model (Security)" },
   { value: "sbom", label: "SBOM (Security)" },
-  { value: "cicd", label: "CI/CD (CI/CD)" },
+  { value: "cicd", label: "CI/CD" },
   { value: "pipeline", label: "Pipeline (CI/CD)" },
-  { value: "deployment", label: "Deployment (Deployment)" },
+  { value: "deployment", label: "Deployment" },
   { value: "release", label: "Release (Deployment)" },
 ];
 

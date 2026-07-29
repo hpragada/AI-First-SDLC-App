@@ -4,12 +4,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Select, Spinner } from "../../components/ui";
+import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Spinner } from "../../components/ui";
 import type { Capability, OnboardingRegister } from "../../types";
 import { useRunners } from "../identity/hooks";
 import { ConnectCapability } from "../setup/ConnectCapability";
 import { useRepositories } from "../setup/hooks";
-import { ADOPT_TYPES } from "./SourceDocuments";
+
 import {
   useLinkConfluencePages,
   useOnboardAtlassian,
@@ -54,16 +54,14 @@ export function OnboardingHub({ forceView }: { forceView?: OnboardingView }) {
 
 // ── Step 2: Register existing tools (B3-1 graceful connect + B3-4 typed Confluence linking) ──
 // A per-tool state machine driven by the connection status the hub already returns:
-//   not connected → inline Connect drawer (Option B — reuses ConnectCapability, no page hop);
-//   connected     → Jira: "Import backlog" (bulk); Confluence: the typed "Link docs" form.
+//   not connected → Connect pop-up (reuses ConnectCapability, no page hop);
+//   connected     → Jira: "Import backlog" (bulk); Confluence: the "bring in docs" form.
 function RegisterToolsStep({
   projectId,
   register,
-  adoptTypes,
 }: {
   projectId: string;
   register: OnboardingRegister;
-  adoptTypes: { value: string; label: string }[];
 }) {
   const onboardAtlassian = useOnboardAtlassian(projectId);
   const qc = useQueryClient();
@@ -72,8 +70,11 @@ function RegisterToolsStep({
   const registerDone =
     register.docstore_connected || register.tasktracker_connected || register.designsource_connected;
 
+  // B3-6: refresh the checklist behind the modal, but do NOT close it. Saving sets a banner that
+  // says "…saved. Test the connection to verify it." — closing here destroyed that banner in the
+  // same tick, so the instruction was literally unreachable and nobody ever tested a connection
+  // they had just entered. The user closes it themselves once they're satisfied ("Done").
   const onConnected = () => {
-    setConnectCap(null);
     qc.invalidateQueries({ queryKey: ["onboarding", projectId] });
   };
 
@@ -121,7 +122,7 @@ function RegisterToolsStep({
             )}
           </div>
           {register.docstore_connected ? (
-            <ConfluenceLinkForm projectId={projectId} adoptTypes={adoptTypes} />
+            <ConfluenceLinkForm projectId={projectId} />
           ) : (
             <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
               <Button variant="secondary" onClick={() => setConnectCap("docstore")}>Connect Confluence</Button>
@@ -147,34 +148,34 @@ function RegisterToolsStep({
           </div>
         </div>
 
-        {/* B3-1 Option B: connect inline, without leaving onboarding. */}
+        {/* B3-1 Option B: connect without leaving onboarding — as a pop-up (B3-6), so the steps
+            below don't get pushed down the page while the form is open. */}
         {connectCap && (
-          <div style={{ marginTop: "var(--space-2)" }}>
-            <ConnectCapability embedded capability={connectCap} onConnected={onConnected} />
-            <Button variant="ghost" onClick={() => setConnectCap(null)}>Cancel</Button>
-          </div>
+          <ConnectCapability
+            embedded
+            capability={connectCap}
+            onConnected={onConnected}
+            onClose={() => setConnectCap(null)}
+          />
         )}
       </div>
     </Vstep>
   );
 }
 
-function ConfluenceLinkForm({
-  projectId,
-  adoptTypes = ADOPT_TYPES,
-}: {
-  projectId: string;
-  adoptTypes?: { value: string; label: string }[];
-}) {
+// S3-6: a linked page is brought in as a DOCUMENT awaiting adoption, not registered on the spot.
+// The type dropdown that used to sit in this row is gone: classification happens at the adopt
+// gate, next to the extraction it applies to, exactly as it does for an uploaded file. Asking
+// here as well would ask the same question twice, and would ask it before the user has seen what
+// actually came through from the page.
+function ConfluenceLinkForm({ projectId }: { projectId: string }) {
   const linkPages = useLinkConfluencePages(projectId);
-  const [rows, setRows] = useState<{ page: string; type: string }[]>([
-    { page: "", type: adoptTypes[0].value },
-  ]);
+  const [rows, setRows] = useState<{ page: string }[]>([{ page: "" }]);
   const [result, setResult] = useState<{ linked: number; errors: { page: string; error: string }[] } | null>(null);
 
-  const setRow = (i: number, patch: Partial<{ page: string; type: string }>) =>
+  const setRow = (i: number, patch: Partial<{ page: string }>) =>
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const addRow = () => setRows((rs) => [...rs, { page: "", type: adoptTypes[0].value }]);
+  const addRow = () => setRows((rs) => [...rs, { page: "" }]);
   const removeRow = (i: number) => setRows((rs) => (rs.length > 1 ? rs.filter((_, j) => j !== i) : rs));
 
   const submit = async () => {
@@ -183,30 +184,31 @@ function ConfluenceLinkForm({
     try {
       const out = await linkPages.mutateAsync(clean);
       setResult({ linked: out.linked.length, errors: out.errors });
-      if (out.errors.length === 0) setRows([{ page: "", type: adoptTypes[0].value }]);
+      if (out.errors.length === 0) setRows([{ page: "" }]);
     } catch (e) {
-      setResult({ linked: 0, errors: [{ page: "", error: e instanceof Error ? e.message : "Could not link pages." }] });
+      setResult({ linked: 0, errors: [{ page: "", error: e instanceof Error ? e.message : "Could not bring those pages in." }] });
     }
   };
 
   return (
     <div className="u-stack" style={{ marginTop: "var(--space-2)" }}>
       <p className="t-sm u-muted">
-        Paste the Confluence page link (or page ID) for each doc the flow needs, and pick its type.
+        Paste the Confluence page link (or page ID) for each doc the flow needs. We bring in the
+        page’s text and any diagrams attached to it; you review what came through and choose its
+        type when you adopt it — the same way as an uploaded file.
       </p>
       {rows.map((r, i) => (
-        <div key={i} className="u-row" style={{ gap: "var(--space-2)" }}>
+        <div key={i} className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
+          {/* Both .input and .select are `width: 100%`. Left alone in a flex row a sibling select
+              keeps that full width while the input's `flex: 1` starts it from zero — which is how
+              this paste box once collapsed to an unusable sliver. `minWidth: 0` lets it actually
+              shrink-to-fit rather than be forced wide by its placeholder. */}
           <Input
             placeholder="https://…/wiki/…/pages/12345  ·  or  12345"
             value={r.page}
             onChange={(e) => setRow(i, { page: e.target.value })}
-            style={{ flex: 1 }}
+            style={{ flex: "1 1 auto", minWidth: 0 }}
           />
-          <Select value={r.type} onChange={(e) => setRow(i, { type: e.target.value })}>
-            {adoptTypes.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-          </Select>
           {rows.length > 1 && (
             <Button variant="ghost" onClick={() => removeRow(i)}>Remove</Button>
           )}
@@ -215,14 +217,15 @@ function ConfluenceLinkForm({
       <div className="u-row" style={{ gap: "var(--space-2)" }}>
         <Button variant="ghost" onClick={addRow}>＋ Add another</Button>
         <Button variant="secondary" onClick={submit} disabled={linkPages.isPending}>
-          {linkPages.isPending ? <Spinner /> : "Link documents"}
+          {linkPages.isPending ? <Spinner /> : "Bring in documents"}
         </Button>
       </div>
       {result && (
         <div className="t-sm">
           {result.linked > 0 && (
             <p style={{ color: "var(--success)" }}>
-              Linked {result.linked} page{result.linked === 1 ? "" : "s"}.
+              Brought in {result.linked} page{result.linked === 1 ? "" : "s"}.{" "}
+              <Link to="/onboarding/documents">Review and adopt {result.linked === 1 ? "it" : "them"} ↗</Link>
             </p>
           )}
           {result.errors.map((er, i) => (
@@ -442,11 +445,7 @@ function OnboardingHubLive() {
             )}
           </Vstep>
 
-          <RegisterToolsStep
-            projectId={projectId}
-            register={data.register}
-            adoptTypes={data.adopt_types ?? ADOPT_TYPES}
-          />
+          <RegisterToolsStep projectId={projectId} register={data.register} />
 
           {/* B0-3: repos must be registered before code indexing / the gap report can use them.
               This step reads the project's repositories and points you to the Repositories screen

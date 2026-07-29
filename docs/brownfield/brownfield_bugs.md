@@ -100,10 +100,10 @@ The crux of trust: whatever is uploaded (text, tables, diagrams, screenshots) mu
 
 | # | Step | What to verify | Path | Delivered by | Status |
 |---|------|----------------|------|--------------|--------|
-| S3.1 | Graceful connect (no 400) | Not-connected → **inline connect drawer** in Step 3 (no hard 400, no raw error, no tenant UUID leaked); after connect the step advances in place. | both | B3-1/B3-2/B3-3 | 🔲 OPEN |
-| S3.2 | Import Jira backlog | Bulk import registers issues as epics/stories/tasks (work items). | both | existing | 🔲 OPEN |
-| S3.3 | Link Confluence docs (typed) | Per-row paste link + choose type → **typed pointer** artifact (`sor=confluence`, no body copied), idempotent by page id. Feeds the gap report. | both | B3-4 | 🔲 OPEN |
-| S3.4 | Surface Figma (designsource) | Step 3 shows a **Figma / UX-design** connect row via the existing `designsource` capability; `onboarding_hub` reports `designsource_connected`. | both | Slice 2 (surface only) | 🔲 OPEN |
+| S3.1 | Graceful connect (no 400) | Not-connected → connect **pop-up** in Step 3 (no hard 400, no raw error, no tenant UUID leaked); the checklist below does not move while it is open; after connect the step advances in place. | both | B3-1/B3-2/B3-3 + S3-2/S3-4 | ✅ DONE (live) |
+| S3.2 | Import Jira backlog | Bulk import registers issues as epics/stories/tasks (work items). No adopt step — a Jira issue already declares its type. | both | existing | ✅ DONE (live — 13 real issues) |
+| S3.3 | Bring in Confluence docs | Paste link → the page is snapshotted into a **source document** awaiting adoption (no artifact yet); review the extraction, adopt with a type, vision reads its attached diagrams. One artifact at v1. Idempotent by page id. | both | B3-4 + S3-1/S3-3 + S3-6/7/8 | ✅ DONE (live) |
+| S3.4 | Surface Figma (designsource) | Step 3 shows a **Figma / UX-design** connect row via the existing `designsource` capability; `onboarding_hub` reports `designsource_connected`. | both | Slice 2 (surface only) | 🟡 connect pop-up verified; **no Figma account yet — import untested** |
 
 ## Step 4 — Index the codebase → **`00c` agent** (or mechanical fallback)
 
@@ -216,6 +216,7 @@ The crux of trust: whatever is uploaded (text, tables, diagrams, screenshots) mu
 - **B3-2 · 🟡 Raw error + tenant UUID leaked to UI.** — **✅ resolved (done)** · re-confirm at **S3.1/X.2**.
 - **B3-3 · ⚪ "Register" offered with no precondition signal.** Fix: status-driven step. — **✅ resolved (done)** · re-confirm at **S3.1**.
 - **B3-4 · 🔴 Confluence pages register as untyped `document`.** Fix: user-provided typed links (SoR sibling of B2-1). — **✅ resolved (done)** · re-confirm at **S3.3**.
+- **S3-6 · 🔴 NEW BLOCKER: a linked Confluence page's content never reaches the agents.** Typing it fixed *classification*; the body was never carried. Proven live: agent reads **0 chars** where an uploaded doc of the same type reads 84,896. See *Step 3 live bring-up* for root cause, the recommended fix, and the two design options awaiting a team decision.
 - *(new)* Figma/UX-design connector surfaced in Step 3 — **added (Slice 2)** · verify at **S3.4**.
 
 ### Step 4 — Index the codebase
@@ -433,3 +434,308 @@ not have been found any other way — they only appear when a run genuinely reac
   (`start` / `next_start` / `total_bytes`), like `get_page_images` already was, so the agent
   receives every byte in pieces. The 400 KB per-message ceiling is deliberately **unchanged** —
   raising it trades a certain small problem for an occasional large one. — **✅ fixed**
+
+---
+
+# Step 3 live bring-up — connectors (2026-07-29)
+
+Tested live against the team's real Atlassian Cloud site (Jira + Confluence connected, both
+probing healthy). Figma untested — no account yet.
+
+> **STATE: connect + import are GREEN. Linking a Confluence doc is NOT — see S3-6, the blocker.**
+
+## Fixed this session
+
+- **S3-1 · 🔴 The Confluence page-link box was crushed to an unusable sliver.** The paste box
+  rendered ~30 px wide, so there was visibly nowhere to put the page link the instruction asked
+  for. **Root cause:** `.input` and `.select` both carry `width: 100%` (`components.css`). In that
+  flex row the input asked for `flex: 1` — *start from zero and grow* — while the type dropdown
+  carried no flex rule at all and kept its full width, claiming the entire row. There was no free
+  space left to grow into. The box was never broken; the dropdown ate it. Fix: dropdown pinned to
+  a fixed 200 px track, input takes the remainder with `minWidth: 0`.
+  — **✅ fixed** · verified live: input **30 px → 574 px**.
+
+- **S3-2 · 🟠 The connect form expanded inline and rearranged the checklist.** Opening it pushed
+  every step below it down the page and snapped them back on close, so connecting a tool visually
+  reshuffled the page around it. Fix: the embedded form is now a centred **modal over a scrim**
+  (the `Modal` component already existed), bringing scrim-click / Esc / ✕ dismissal with it.
+  — **✅ fixed** · verified live: page height **1313 px before opening and after** — nothing moves.
+
+- **S3-3 · 🟠 A linked Confluence page registered with a blank title.** The page title was written
+  into `external_ref` but never onto the artifact's own `title` column — the one every UI surface
+  renders and the field the platform uses to tell sibling artifacts of one type apart. A linked
+  page listed as an empty row. Fix: title carried onto the artifact; re-linking repairs rows
+  registered before the fix. — **✅ fixed** · verified live.
+
+- **S3-4 · 🟠 "Test the connection to verify it" was unreachable.** Saving set that banner and
+  closed the modal in the same tick, so the instruction was destroyed before it could be read and
+  nobody ever tested a connection they had just entered. Fix: the modal stays open after save and
+  the user closes it ("Cancel" becomes **"Done"**). Found while fixing it: a failed test *replaced*
+  the form with the error, so the one screen telling you the token was wrong was also the screen
+  where you could not retype it — outcome banners now sit **above** a form that stays put.
+  — **✅ fixed** · verified live, including the failed-test path.
+
+- **S3-5 · ⚪ "Ideation (Ideation)", "PRD (PRD)".** The `(Phase)` suffix exists to disambiguate —
+  "ADR (Architecture)" earns it — but where the type *is* its own phase it disambiguates nothing
+  and reads as a bug. Fix: suffix dropped only in that case, in the backend (source of truth) and
+  the frontend fallback together. — **✅ fixed** · verified live: 0 redundant labels remain.
+
+- **S3-M · misdiagnosis, reverted not shipped.** A linked page's URL pointed at
+  `/spaces/SDLC/overview` rather than the page, and a "fix" plus a speculative draft-page guard
+  were written before checking: the page is `status: current` with a 2115-char body — it is the
+  **space homepage**, whose canonical URL legitimately *is* the space overview. Nothing was broken;
+  the change rewrote a correct URL into a legacy one. Both reverted. Recorded because the pattern
+  matters: only the finding that was *demonstrated* survived.
+
+## Verified working
+
+- **Jira import** — 13 real issues imported as work items; button flips to "Re-import backlog".
+  Issues arrive as `WorkItem` at state `ACCEPTED` with `external_ref={"sor":"jira", …}`.
+  **No adopt step needed, and that is correct**: adopt exists to answer *"what kind of document is
+  this?"*, and a Jira issue already declares its own type.
+- **Confluence link** — accepts a bare page ID *or* a pasted URL; idempotent by page id.
+- **Live credential probe** — a deliberately wrong token is correctly rejected with a plain-English
+  reason, and the connection test reaches Atlassian for real.
+
+---
+
+# S3-6 · 🔴 BLOCKER — a linked Confluence document is invisible to the agents — **✅ FIXED**
+
+> **RESOLVED 2026-07-29, verified live** on a real 141,273-char Requirements page (97 tables, one
+> attached system-context PNG). Agent-readable body went **0 → 37,192 chars**; the diagram was
+> transcribed into structured text; three re-links produced **one** document; adopting produced
+> **one artifact at v1, published**. The fix and the two design decisions behind it are below.
+
+**A linked page is registered, counted as evidence, and marked complete — while every agent that
+opens it reads an empty string.**
+
+## Evidence
+
+A real page linked, then read back through the exact call an agent makes:
+
+```
+artifact: type=prd  status=published  s3_key=''  content_hash=''
+
+=== WHAT AN AGENT GETS FROM get_artifact_body ===
+body length: 0
+body: ''
+```
+
+Beside an uploaded-and-adopted document of the same type in the same project:
+
+| | Uploaded + adopted | Linked from Confluence |
+|---|---|---|
+| Agent reads | **84,896 chars** of real PRD text | **0 chars** |
+| `s3_key` | set | empty |
+| `content_hash` | set | empty |
+
+## Root cause
+
+A live read-through for Confluence **exists and works** — `_read_confluence` (`preview.py`). It is
+wired into exactly one caller: `read_artifact_preview`, the **human** preview panel. The agent path,
+`artifact_body_for_agent`, falls through to `_read_internal`, which looks for an S3 body, an inline
+`external_ref.body`, or a run output. A linked page has none of the three, so it returns `""`.
+
+**The human sees the page. The agents see nothing.**
+
+## Why it is a blocker and not a cosmetic gap
+
+`build_gap_report` counts evidence **by type, never by content**:
+
+```python
+by_type.setdefault(a.type, []).append(a)
+```
+
+So a linked Confluence PRD marks the PRD phase **complete** and moves the resume point past it —
+on the strength of a document no agent can read. The lifecycle then resumes at a later phase
+believing requirements are covered, and the downstream agent receives an empty string.
+
+Same failure shape as the vision defects: **silent, and confidently wrong.** No error, no warning.
+
+> **Honesty about the evidence:** the empty body is proven through the exact tool call an agent
+> makes. The downstream consequence — a phase resuming on empty evidence — is reasoned from the
+> code, **not yet observed in a live run**. Worth confirming that way once fixed.
+
+## Two further gaps in the same area
+
+- **S3-7 · 🟠 No vision on linked pages.** Confluence carries diagrams as **attachments**
+  (`<ac:image><ri:attachment/>`), not as `<img src>`. The existing HTML extractor only understands
+  `<img>`, and the connector has **no attachment support at all** (`get_page`, `create_page`,
+  `update_page`, `search`, `delete_page` — nothing else). So a linked architecture page's diagrams
+  are dropped exactly the way uploaded PDFs' diagrams were before Part B. The attachments REST
+  endpoint was confirmed reachable on the team's site, so this is buildable, not blocked.
+
+- **S3-8 · 🟠 Confluence storage format is not HTML, and reusing the HTML extractor leaks macro
+  internals.** Running a real page through the existing extractor produced real content *mixed
+  with* machine noise:
+
+  ```
+  ## Description
+  #F4F5F7                                              ← a background-colour parameter
+  In a sentence or two, describe the purpose of this space.
+  ## Project Tracker
+  com.atlassian.confluence.project-linker … 3781a39a-…  ← macro internals
+  page,whiteboard,database,blog 10 concise true         ← macro parameters
+  ```
+
+  The team's four pages carry 0, 3, 5 and 8 `<ac:structured-macro>` elements, so this is typical,
+  not an edge case. A Confluence-aware pass (unwrap `ac:rich-text-body`, drop `ac:parameter`) is
+  needed, or agents read colour codes as requirements.
+
+---
+
+# The fix as built — a linked page is a first-class document (**✅ shipped**)
+
+**Requirement (team, 2026-07-29): linking a Confluence doc must run the same end-to-end adoption as
+an upload in Step 2, with the same clear messages, including the vision pass.**
+
+The one-branch patch (`artifact_body_for_agent` branching on `sor == "confluence"`) fixes the empty
+body **only**. It does not give the page a version, a diagram read, a fidelity badge, or drift
+detection. It is not enough for the requirement above.
+
+The structural fix is to route a linked page into the **pipeline that already exists**: create a
+`SourceDocument` for it, so everything downstream — adopt, artifact-at-v1, vision, the content-loss
+guard, the honest status badges, retry — works unchanged, because none of it is upload-specific.
+`SourceDocument` is origin-agnostic today except that `s3_key` assumes an uploaded file.
+
+Work required:
+
+1. **Connector — attachments.** `list_attachments(page_ref)` + `download_attachment(id)` on the
+   Atlassian docstore. (Endpoint confirmed live.) — *new*
+2. **A Confluence-aware body pass.** Storage XHTML → clean markdown, unwrapping macro rich-text and
+   discarding macro parameters (S3-8). — *new*
+3. **`ingest_confluence_page`** — the sibling of `ingest_source_document`: fetch page, convert body,
+   download attachments as `page_images`, create the `SourceDocument` with the same provenance
+   shape (`fidelity`, `page_count`, `extracted_s3_key`, `extracted_hash`, `artifact_type`). — *new*
+4. **Adopt + vision** — *no change*. Both already key off the `SourceDocument`.
+5. **UI** — linked pages appear in the same documents list with the same badges and messages.
+
+Steps 4 and 5 are close to free, which is the argument for this shape over the one-branch patch.
+
+## ✅ Team decision — TWO STEPS (option B), taken 2026-07-29
+
+Uploads are deliberately **two steps** — upload, look at what was extracted, *then* adopt with a
+type — because nobody can classify a file before seeing inside it. Linking already asks for the type
+**up front**, in the dropdown beside the paste box. So which does "just like Step 2" mean?
+
+- **Option A — one step.** Link (with type) → ingest, adopt, run vision immediately. Fewest clicks;
+  the existing type dropdown is kept and does the classifying.
+- **Option B — two steps.** Link → the page appears in the documents list as *extracted, awaiting
+  adopt* → the user reviews what was pulled in and adopts it there. Literally identical to Step 2;
+  the user sees the extraction (and any macro noise) **before** committing. The link-row type
+  dropdown becomes redundant and should be removed, or it asks the same question twice.
+
+**Recommendation: Option B.** The review beat is the whole point of adopt, and it is worth more for
+Confluence than for uploads — a Confluence page's extraction is *less* predictable than a PDF's
+(macros, attachments, templates), so seeing it before it becomes project evidence catches exactly
+the class of problem S3-8 describes. It also means one adopt path and one set of messages, rather
+than a second flow to keep in step.
+
+---
+
+# Design decision — snapshot at link time vs live read at agent time
+
+The question underneath both options: when a linked page's content is needed, do we **store a copy
+at link time** or **fetch it live from Confluence each time**?
+
+| | **A · Snapshot at link time** | **B · Live read at agent time** |
+|---|---|---|
+| **How** | Fetch once, store the body in S3 like an upload | Fetch from Confluence on every agent read |
+| **Content is** | Fixed at the moment you linked it | Always current |
+| **If Confluence is down / token expires** | Runs continue — the copy is local | **Runs fail mid-flight**, and the read is best-effort so it may fail *silently* to `""` — the current bug's exact shape |
+| **Reproducibility** | A re-run reads what the first run read | Two runs of the same phase can read different text |
+| **Versioning** | v1, v2… like uploads; diffs visible | No versions — nothing to diff |
+| **Vision** | Works: pages exist as stored images | Blocked: nothing durable to attach renders to |
+| **Content-loss guard** | Works: there is a baseline to compare against | **Cannot work** — no prior version exists |
+| **Drift** | Detectable (stored hash vs live page) — you can *tell the user* the page changed | Invisible: content silently changes underfoot |
+| **Staleness** | Real. Needs a re-link / refresh to pick up edits | None |
+| **Rate limits** | One fetch per link | Every agent read hits Atlassian |
+| **Blueprint rule 1** *(platform owns state, tools own content)* | Consistent — the same pointer + S3 draft pattern uploads already use | Also consistent |
+| **Effort** | Moderate — reuses the whole upload pipeline | Small for text, but **cannot deliver the team's vision requirement** |
+
+**Recommendation: A — snapshot at link time.**
+
+Three reasons, in order of weight:
+
+1. **B cannot satisfy the requirement the team just set.** Vision needs durable page images to
+   transcribe, and the content-loss guard needs a prior version to measure against. Live reading
+   provides neither. Choosing B means dropping vision for Confluence.
+2. **B makes runs depend on Atlassian being up at the moment an agent reads.** A token expiring
+   mid-lifecycle turns into a phase built on an empty document — and because the read-through is
+   best-effort, it degrades to `""` rather than raising. That is the bug this section documents,
+   re-introduced by design.
+3. **A makes a linked page behave *identically* to an uploaded one.** Same versioning, same badges,
+   same guard, same retry, same messages — one pipeline to reason about and to maintain.
+
+**The honest cost of A: staleness.** Someone edits the Confluence page and the platform keeps
+reading the version you linked. The mitigation is what a snapshot uniquely makes possible — you
+have a stored hash, so the platform can **compare it against the live page and tell the user the
+source has changed since they linked it**, offering a re-link. Drift detection already exists
+(`detect_drift`). Under B this problem does not exist, but neither does any way to notice it: the
+content just changes underneath the project with nobody informed.
+
+**Hybrid, if the team wants both:** snapshot for content (so vision, versioning and the guard all
+work) **plus** a periodic or on-demand drift check against the live page. That is strictly A with a
+freshness signal added, and is the recommendation if staleness is the main worry.
+
+> ## ✅ TEAM DECISION — 2026-07-29
+>
+> **Content: SNAPSHOT at link time** (option A). **Flow: TWO STEPS** (option B) — link → the page
+> appears in the documents list awaiting adopt → the user reviews the extraction → adopts.
+>
+> **The hybrid is explicitly held in reserve:** the team agreed to snapshot now and *"if needed we
+> can shift to hybrid"* — snapshot plus a drift check against the live page. Nothing in the
+> snapshot design forecloses it; the stored `content_hash` is precisely what a later drift check
+> would compare against, so adding it is additive, not a rewrite. Revisit when staleness is
+> observed in real use rather than anticipated.
+
+## S3-7 / S3-8 — closed with S3-6
+
+- **S3-7 · 🟠 No vision on linked pages — ✅ fixed.** The Atlassian docstore gained
+  `list_attachments` (followed to the end of Confluence's paging, so a page never reports only its
+  first images) and `download_attachment`. That needed the SHARED transport to stop assuming every
+  response is JSON — it now falls back to raw bytes, which is strictly additive (anything that
+  parsed as JSON still does) and was regression-checked against Jira and Confluence. Verified live:
+  a 383,205-byte PNG downloaded intact and opened as a 2720×2240 image.
+
+- **S3-8 · 🟠 Storage format leaked macro internals — ✅ fixed.** New module
+  `integrations/confluence_body.py` converts Confluence storage XHTML to markdown. Three
+  judgements worth keeping in mind when editing it:
+  1. **A macro parameter is not automatically noise.** `<ac:parameter ac:name="title">Not started`
+     on a `status` macro is that cell's whole content; `colour` beside it is presentation. Filtered
+     by NAME, not dropped wholesale.
+  2. **Some macros hold no content at all** (`recently-updated`, `project-linker`, …) — they render
+     server-side, so storage holds only their configuration. Dropped entire.
+  3. **`ac:placeholder` is dropped on purpose.** It is the grey hint text an empty template shows
+     ("Add action items to close the loop…"), addressed to a human author. An agent ingesting it
+     reads instructions-to-the-writer as requirements. Consequence, and it is the honest one: an
+     unfilled template now comes back **empty**, and the existing `fidelity: empty` path says so.
+
+  Two bugs here were only exposed by a REAL page, never by the four Confluence templates:
+  the page had **zero `<h1>/<h2>/<h3>` and 140 `<strong>`** (its author wrote headings as bold, so
+  dropping emphasis flattened the document), and its tables used `<td>` for header rows with no
+  `<th>` anywhere (so the renderer emitted an empty header and pushed "Version | Date | Author"
+  into the body). Both fixed. Known cosmetic residue: **2 of 140 bold runs** render with a stray
+  space inside the markers; the text is intact, so nothing an agent reads is affected.
+
+## S3-9 · 🔴 Runs execute on other developers' machines — INFRASTRUCTURE, not code
+
+Every developer's Temporal worker polls the **same** task queue (`sdlc-planning` on a shared
+remote Temporal). A workflow's steps are therefore handed to whichever worker is free — including
+one running a **different branch's code**.
+
+Caught directly: one vision run's history listed **three** worker identities, only one of which was
+this machine. A step ran on a worker predating the auto-apply branch, so the run **opened a review
+gate** instead of publishing — for a phase that is deliberately gate-free. Four identical runs
+earlier the same day had auto-published correctly.
+
+**Why it matters beyond the one run:** it is non-deterministic and silent. The same code passes or
+fails depending on which machine picks up the job, which means a green test proves less than it
+appears to. Proven by isolation: same document and same code, the run on the shared queue gated;
+the run on a private queue published at v1.
+
+**Not fixed in code** — the queue name is already environment-driven (`TEMPORAL_TASK_QUEUE`), so a
+per-developer queue needs no change here, and `.env` is gitignored. Team decision (2026-07-29): the
+shared queue is only dangerous while people run different code, so it is left as-is and owned by
+the team going forward. Worth re-reading this entry the next time a workflow behaves differently
+between two runs of the same code.

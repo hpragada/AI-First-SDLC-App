@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { Badge, Banner, Breadcrumb, Button, Drawer, Field, Input, Select, Spinner } from "../../components/ui";
+import { Badge, Banner, Breadcrumb, Button, Drawer, Field, Input, Modal, Select, Spinner } from "../../components/ui";
 import type { Capability, ConnectorVendor } from "../../types";
 import { CAP_LABEL } from "./Integrations";
 import {
@@ -17,19 +17,27 @@ import {
 export type ConnectView = "empty" | "filled" | "testing" | "success" | "fail";
 
 // Brownfield B3-1: the same connect form serves two callers — the /integrations/:capability route
-// (full page, capability from the URL) AND an inline drawer embedded in the onboarding hub. When
-// `embedded`, the page chrome (breadcrumb/title/back-link) is dropped and `capability` is passed
-// as a prop; `onConnected` fires after a successful save so the host can refresh + close.
+// (full page, capability from the URL) AND the onboarding hub. When `embedded`, the page chrome
+// (breadcrumb/title/back-link) is dropped and `capability` is passed as a prop; `onConnected`
+// fires after a successful save so the host can refresh + close.
+//
+// B3-6: embedded now renders as a centred MODAL over a scrim, not an inline drawer. The inline
+// drawer expanded in the page flow — it shoved every step below it down the screen while open and
+// snapped them back on close, so connecting a tool visually rearranged the checklist around it.
+// A modal keeps the checklist still and puts the focus on the one task, and it brings
+// scrim-click / Esc / ✕ dismissal for free.
 export function ConnectCapability({
   forceView,
   capability: capabilityProp,
   embedded = false,
   onConnected,
+  onClose,
 }: {
   forceView?: ConnectView;
   capability?: Capability;
   embedded?: boolean;
   onConnected?: () => void;
+  onClose?: () => void;
 }) {
   // useParams is always called (hooks can't be conditional); the prop wins when embedded.
   const params = useParams<{ capability: Capability }>();
@@ -179,12 +187,18 @@ export function ConnectCapability({
   // forceView is a demo/test affordance (routes never pass it) — don't block it on fetches.
   const loading = !forceView && (catalog.isLoading || integrations.isLoading);
 
-  const drawer = (
-      <Drawer
-        inline
-        title={capEntry?.label ?? CAP_LABEL[capability]}
-        footer={
+  const footer = (
           <>
+            {/* Cancel only exists in the modal — the full page has its own "Back to integrations"
+                link, and an inline drawer had nothing to dismiss to. Once a connection exists
+                there is nothing left to cancel, so it becomes the way out: "Done". Keyed on
+                `savedId` rather than the save banner, which a subsequent test clears — leaving
+                a saved connection sitting behind a button that said "Cancel". */}
+            {embedded && onClose && (
+              <Button variant="ghost" onClick={onClose}>
+                {savedId ? "Done" : "Cancel"}
+              </Button>
+            )}
             {/* No longer gated on !savedId (Bugs S.No 156): credentials can be verified before
                 they're committed to the tenant. Needs a vendor + its required fields filled. */}
             <Button
@@ -199,32 +213,40 @@ export function ConnectCapability({
               {createIntegration.isPending || patchIntegration.isPending ? "Saving…" : "Save"}
             </Button>
           </>
-        }
-      >
+  );
+
+  const body = (
+        <>
         {loading ? (
           <div className="conn-status conn-status--waiting">
             <Spinner /> Loading connectors…
           </div>
-        ) : view === "testing" ? (
-          <div className="conn-status conn-status--waiting">
-            <Spinner /> Testing connection to {vendor?.label ?? "the vendor"}…
-          </div>
-        ) : view === "success" ? (
-          <Banner variant="success" title="Connection OK">
-            {testResult?.detail ?? "The connector is configured and ready."}
-          </Banner>
-        ) : view === "fail" ? (
-          <Banner variant="danger" title="Connection failed">
-            {testResult?.detail ?? "The connector could not be verified."}
-            {testResult?.fix_hint ? (
-              <>
-                {" "}
-                <strong>Fix:</strong> {testResult.fix_hint}
-              </>
-            ) : null}
-          </Banner>
         ) : (
+          /* The outcome banners sit ABOVE the form rather than replacing it. A failed test used
+             to swap the fields out for the error, so the one screen that told you the token was
+             wrong was also the one screen where you couldn't retype it. */
           <>
+            {view === "testing" && (
+              <div className="conn-status conn-status--waiting">
+                <Spinner /> Testing connection to {vendor?.label ?? "the vendor"}…
+              </div>
+            )}
+            {view === "success" && (
+              <Banner variant="success" title="Connection OK">
+                {testResult?.detail ?? "The connector is configured and ready."}
+              </Banner>
+            )}
+            {view === "fail" && (
+              <Banner variant="danger" title="Connection failed">
+                {testResult?.detail ?? "The connector could not be verified."}
+                {testResult?.fix_hint ? (
+                  <>
+                    {" "}
+                    <strong>Fix:</strong> {testResult.fix_hint}
+                  </>
+                ) : null}
+              </Banner>
+            )}
             {saveResult && (
               <Banner variant={saveResult.ok ? "success" : "danger"} title={saveResult.ok ? "Saved" : "Couldn’t save"}>
                 {saveResult.detail}
@@ -315,10 +337,25 @@ export function ConnectCapability({
             )}
           </>
         )}
-      </Drawer>
+        </>
   );
 
-  if (embedded) return drawer;
+  const title = capEntry?.label ?? CAP_LABEL[capability];
+
+  // In the onboarding hub: a real pop-up over a scrim (B3-6).
+  if (embedded) {
+    return (
+      <Modal title={`Connect ${title}`} footer={footer} onClose={onClose}>
+        {body}
+      </Modal>
+    );
+  }
+
+  const drawer = (
+    <Drawer inline title={title} footer={footer}>
+      {body}
+    </Drawer>
+  );
   return (
     <div className="canvas-pad">
       <Breadcrumb items={[{ label: "Integrations", href: "/integrations" }, CAP_LABEL[capability]]} />
