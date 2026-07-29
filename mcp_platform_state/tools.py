@@ -675,6 +675,19 @@ def get_artifact_body(tenant_id, artifact_id, state=None, object_store=None) -> 
 # well within budget. The vision agent pages through with `next_start`.
 _MAX_VISION_IMAGES_PER_CALL = 4
 
+#: Hard ceiling on ONE call's encoded image payload. The MCP stdio transport rejects any message
+#: over 1 MiB, and four lossless page renders at full vision resolution sail past that once
+#: base64 has added its third — the read failed with "JSON message exceeded maximum buffer size"
+#: and took the whole run with it. Bounding the window by COUNT alone could never prevent that,
+#: because page weight varies wildly (a dense diagram outweighs a title page many times over), so
+#: the window is bounded by bytes as well and simply returns fewer pages when they are heavy.
+#: Left well under the limit: the rest of the JSON envelope and the summary text ride along too.
+_MAX_VISION_PAYLOAD_BYTES = 700_000
+
+#: Long edge for a page that is too heavy even on its own. Re-encoding it smaller keeps the pipe
+#: moving — a slightly softer render the model can still read beats a failed run and no render.
+_VISION_FALLBACK_MAX_PX = 1000
+
 
 def _build_page_image_window(pages: list, store, start: int) -> dict:
     """Pure assembly (no DB): take the ordered `page_images` pointers, read one small window's
@@ -685,24 +698,39 @@ def _build_page_image_window(pages: list, store, start: int) -> dict:
 
     total = len(pages)
     start = max(0, int(start or 0))
-    window = pages[start:start + _MAX_VISION_IMAGES_PER_CALL]
-    out = []
-    for pi in window:
+    out: list = []
+    budget = _MAX_VISION_PAYLOAD_BYTES
+    consumed = 0            # pages taken from `start`, however few fit — drives next_start
+    for pi in pages[start:start + _MAX_VISION_IMAGES_PER_CALL]:
         key = pi.get("s3_key") if isinstance(pi, dict) else None
         if not key:
+            consumed += 1
             continue
         try:
             raw = store.get(key)
         except Exception:  # noqa: BLE001 — one missing object must not fail the whole read
+            consumed += 1
             continue
-        png = downscale_image_for_vision(raw)
+        encoded = base64.b64encode(downscale_image_for_vision(raw)).decode("ascii")
+        if len(encoded) > budget:
+            if out:
+                break       # doesn't fit alongside what we have — it leads the next call
+            # First page of the call and already over budget: send it smaller rather than
+            # stall the read on a page that can never fit at full size.
+            encoded = base64.b64encode(
+                downscale_image_for_vision(raw, max_px=_VISION_FALLBACK_MAX_PX)
+            ).decode("ascii")
+        budget -= len(encoded)
+        consumed += 1
         out.append({
             "name": pi.get("name"),
             "page": pi.get("page"),
             "mime": "image/png",
-            "data_base64": base64.b64encode(png).decode("ascii"),
+            "data_base64": encoded,
         })
-    nxt = start + _MAX_VISION_IMAGES_PER_CALL
+        if budget <= 0:
+            break
+    nxt = start + max(1, consumed)      # never return the same start twice → no infinite paging
     return {"images": out, "total": total, "start": start, "returned": len(out),
             "next_start": nxt if nxt < total else None}
 
