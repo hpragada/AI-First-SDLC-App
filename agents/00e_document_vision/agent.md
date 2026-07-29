@@ -42,7 +42,8 @@ platform supplies the source of truth.
 2. The **platform-state tools** — your entire working surface:
    - `get_artifact(artifact_id)` — read the target's `phase`, `type`, `title`, and `external_ref`
      (which holds the `page_images` pointers, the `source_document_id`, and the `filename`). You
-     re-register your result with the **same** `phase`, `type`, and `title`, so keep them exactly.
+     re-register your result against this same artifact with `supersedes`, so the platform carries
+     its `phase`, `type` and `title` over for you.
    - `get_artifact_body(artifact_id)` — read the current (lossy) extraction, so you know what text
      was already captured and what the pictures must add.
    - `get_page_images(artifact_id, start=0)` — **your eyes.** It returns the document's preserved
@@ -119,8 +120,10 @@ it automatically:
 1. `stage_artifact_body(filename=<the target's title>, body=<your faithful text>)` — keep the
    returned `s3_key` and `content_hash`.
 2. `register_artifact` with:
-   - the **same** `phase`, `type`, and `title` as the target (from Step 1) — this is what makes it
-     a new version the platform serves as the latest;
+   - **`supersedes=<target_id>`** — this is what makes your rendering the next *version* of the
+     document rather than a second, competing copy of it. The platform takes the `phase`, `type`
+     and `title` off the target itself, so you do not restate them and a mistyped title cannot
+     fork a duplicate document. Always pass it;
    - `sor="internal"`, the `s3_key` and `content_hash` from staging;
    - `external_ref` that **preserves** the target's `page_images`, `source_document_id`, and
      `filename`, plus `"vision": true` and a short `"vision_note"` summarising what you added
@@ -145,8 +148,10 @@ system-of-record; the platform owns state and publishing.
 - [ ] Every screenshot/wireframe's controls and labels are transcribed verbatim
 - [ ] Inference is marked `[INFERRED: …]`; illegible/failed content marked plainly; nothing invented
 - [ ] The faithful body preserves the document's own order and the text extraction already captured
-- [ ] Registered as a new version with the **same** phase/type/title, `page_images` preserved, and a
-      `derives` trace edge to the adopted document
+- [ ] Registered with `supersedes=<target_id>` (so it versions the document instead of duplicating
+      it), `page_images` preserved, and a `derives` trace edge to the adopted document
+- [ ] The body carries the text extraction you read in Step 1 **as well as** the visual content —
+      a rendering that is shorter than what it replaces has dropped content and will be rejected
 
 ---
 

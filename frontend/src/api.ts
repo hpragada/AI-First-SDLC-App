@@ -4,6 +4,7 @@
 import type {
   AcceptInviteRequest,
   AdminUser,
+  AdoptResult,
   ApiContract,
   Approval,
   Artifact,
@@ -322,8 +323,18 @@ export const api = {
   // in SCREEN_BUILD_MAP.md "Notes for builders").
   listEvents: (tenantId: string, q: { target_type: string; target_id: string }) =>
     req<RunEvent[]>("GET", "/events/", { tenantId, query: q }),
-  listArtifacts: (tenantId: string, q: { project?: string; phase?: string; status?: string }) =>
-    req<Artifact[]>("GET", "/artifacts/", { tenantId, query: q }),
+  // `latest: true` collapses each artifact to its newest version (Part B fix 5) — prior versions
+  // remain available on the artifact's own screen.
+  listArtifacts: (
+    tenantId: string,
+    q: { project?: string; phase?: string; status?: string; latest?: boolean },
+  ) => {
+    const { latest, ...filters } = q;
+    return req<Artifact[]>("GET", "/artifacts/", {
+      tenantId,
+      query: { ...filters, ...(latest ? { latest: "1" } : {}) },
+    });
+  },
   listTraceEdges: (tenantId: string, projectId: string) =>
     req<TraceEdge[]>("GET", "/trace-edges/", { tenantId, query: { project: projectId } }),
   getTraceability: (tenantId: string, projectId: string) =>
@@ -380,7 +391,7 @@ export const api = {
   uploadSourceDocument: (projectId: string, file: File) =>
     uploadFile<Record<string, unknown>>(`/projects/${projectId}/source-documents/`, file),
   adoptSourceDocument: (sourceDocumentId: string, targetType: string, userId?: string) =>
-    req<Record<string, unknown>>("POST", `/source-documents/${sourceDocumentId}/adopt/`, {
+    req<AdoptResult>("POST", `/source-documents/${sourceDocumentId}/adopt/`, {
       body: { target_type: targetType, ...(userId ? { user_id: userId } : {}) },
     }),
   // A3: view the original upload and captured page images (blob URLs — revoke when done).

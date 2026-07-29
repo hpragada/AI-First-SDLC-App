@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Banner, Breadcrumb, Button, Dropzone, Panel, Spinner } from "../../components/ui";
-import type { SourceDocument } from "../../types";
+import type { AdoptVisionStatus, SourceDocument, SourceDocVision } from "../../types";
 import {
   useAdoptSourceDocument,
   useOnboardingHub,
@@ -139,6 +139,37 @@ export function badgeFor(doc: SourceDocument): { label: string; variant: string 
 
 type PreviewState = { url: string; kind: "pdf" | "image" | "other" } | null;
 
+// Part B fix 3: say out loud what the vision pass did after an adopt. Before this, a document
+// whose diagrams were never read looked exactly like one where the read had already succeeded —
+// the most common cause (no companion running) is a one-click fix, so staying silent about it
+// wasted the user's time and made a working feature look broken. The backend supplies the
+// sentence; this only chooses how loud to be.
+type VisionState = AdoptVisionStatus["state"] | SourceDocVision["state"];
+
+const VISION_TONE: Record<VisionState, "info-hue" | "waiting" | "failed"> = {
+  running: "info-hue",
+  no_visuals: "info-hue",
+  no_companion: "waiting",
+  already_running: "info-hue",
+  failed: "failed",
+  done: "info-hue",
+};
+
+export function VisionNotice({ vision }: { vision: { state: VisionState; message: string } }) {
+  const tone = VISION_TONE[vision.state] ?? "info-hue";
+  const color =
+    tone === "failed" ? "var(--danger)" : tone === "waiting" ? "var(--warning)" : "var(--text-muted)";
+  return (
+    <div
+      className="t-sm"
+      role="status"
+      style={{ color, padding: "0 var(--space-3) var(--space-3)" }}
+    >
+      {vision.state === "running" && <Spinner />} {vision.message}
+    </div>
+  );
+}
+
 // A3: one source-document row + a "Preview" that shows the ORIGINAL upload (PDF/image) so the
 // user can confirm exactly what was captured, next to the extracted artifact.
 function SourceDocRow({
@@ -157,6 +188,15 @@ function SourceDocRow({
   const [err, setErr] = useState("");
   const badge = badgeFor(doc);
   const pageCount = doc.page_images?.length ?? 0;
+  // Part B fix 3: the vision outcome for THIS row's adopt. The mutation object is shared by every
+  // row, so match on the id it last ran for — otherwise adopting one document would print its
+  // notice under all of them.
+  // Prefer the document's standing state (survives a reload, and is the only thing that knows a
+  // dispatched run later failed). Fall back to the adopt response, which is the only thing that
+  // can explain why a pass never started at all (no companion, no visuals).
+  const adoptVision =
+    adopt.variables?.id === doc.id && adopt.isSuccess ? (adopt.data?.vision ?? null) : null;
+  const vision: { state: VisionState; message: string } | null = doc.vision ?? adoptVision;
 
   // Revoke the object URL when it changes or the row unmounts (no leaked blobs).
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
@@ -216,6 +256,7 @@ function SourceDocRow({
             {err}
           </div>
         )}
+        {vision && <VisionNotice vision={vision} />}
         {preview && (
           <div style={{ padding: "var(--space-3)", borderTop: "1px solid var(--border)" }}>
             {preview.kind === "pdf" ? (

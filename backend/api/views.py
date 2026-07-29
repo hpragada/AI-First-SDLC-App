@@ -1406,6 +1406,20 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             value = self.request.query_params.get(field)
             if value:
                 qs = qs.filter(**{("project_id" if field == "project" else field): value})
+        # `?latest=1` — one row per artifact identity (phase+type+title), newest version only
+        # (Part B fix 5). Re-registration is how this platform records a revision: re-running a
+        # phase makes v2, and document vision makes v2 of an adopted upload. Listing every row
+        # meant 20 uploaded documents showed as 40 entries once vision had read them, which reads
+        # as duplication rather than history. Superseded rows are never deleted — they stay
+        # readable as prior versions on the artifact's own screen (that is the provenance the
+        # registry exists to keep); this only changes what the list shows by default.
+        if self.request.query_params.get("latest") in ("1", "true", "yes"):
+            newest = (
+                qs.order_by("phase", "type", "title", "-version", "-created_at")
+                .distinct("phase", "type", "title")
+                .values_list("id", flat=True)
+            )
+            qs = qs.filter(id__in=list(newest))
         return qs
 
     @action(detail=True, methods=["get"])

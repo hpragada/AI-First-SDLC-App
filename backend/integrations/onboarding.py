@@ -219,8 +219,11 @@ def adopt_source_document(*, tenant_id, source_document_id, user_id, target_type
         src = SourceDocument.objects.get(id=source_document_id, tenant_id=tenant_id)
         artifact_ids = [str(x) for x in src.extracted_artifact_ids]
         if src.status == SourceDocument.Status.ADOPTED:
+            # `vision: None` = this call started nothing (the document was already adopted, so any
+            # vision pass it needed ran with the first adopt). Keeps the key present in every
+            # adopt response so the UI never has to special-case its absence.
             return {"source_document_id": str(src.id), "status": "adopted",
-                    "artifact_ids": artifact_ids, "idempotent": True}
+                    "artifact_ids": artifact_ids, "idempotent": True, "vision": None}
         if src.status != SourceDocument.Status.EXTRACTED:
             raise OnboardingError(f"not ready for adoption (status={src.status})")
         # Adoption is a review gate: the product_owner decides — OR an admin who can approve
@@ -253,43 +256,141 @@ def adopt_source_document(*, tenant_id, source_document_id, user_id, target_type
     # Part B (B3): read the adopted document's visual content into faithful text on the companion
     # (document-vision, 00e), auto-applied. Best-effort and non-blocking — adoption has already
     # succeeded and must never fail on this enhancement.
-    _maybe_trigger_vision(
+    vision = _maybe_trigger_vision(
         tenant_id=tenant_id, project_id=project_id, source_document_id=str(source_document_id),
         artifact_ids=artifact_ids, filename=filename, user_id=user_id,
     )
     return {"source_document_id": str(source_document_id), "status": "adopted",
-            "artifact_ids": artifact_ids, "target_type": target_type}
+            "artifact_ids": artifact_ids, "target_type": target_type, "vision": vision}
+
+
+#: What the user is told about the vision pass after adopting (Part B fix 3). Adoption itself
+#: always succeeds — vision only enriches the extracted text — but "succeeded silently" and
+#: "never ran at all" looked identical to the user, and the most common cause (no companion) is
+#: one the user can fix in a click. Each state carries a finished sentence rather than a code the
+#: UI has to translate, so no screen ever shows a raw identifier.
+VISION_STATES = {
+    "running": "Reading the diagrams and screenshots in this document. The text will update on "
+               "its own when it finishes.",
+    "no_visuals": "No diagrams or images were found in this document, so there was nothing "
+                  "further to read.",
+    "already_running": "This document's diagrams are already being read.",
+    "failed": "The diagrams in this document could not be read. The adopted text is unaffected.",
+}
+
+
+def _vision_status(state, message=None, run_id=None) -> dict:
+    return {"state": state, "message": message or VISION_STATES[state],
+            "run_id": str(run_id) if run_id else None}
+
+
+#: What a *dispatched* vision run's state means to the user (Part B fix 4). The adopt response
+#: only reports the moment of dispatch; a run that starts and then dies afterwards would leave the
+#: user watching "Reading the diagrams…" forever, because the carrier work item is deliberately
+#: hidden from the backlog and nothing else points at it. These states are read back from the run
+#: itself so the document row can tell the truth on every later page load, not just at adopt.
+_VISION_RUN_STATES = {
+    "pending": ("running", VISION_STATES["running"]),
+    "running": ("running", VISION_STATES["running"]),
+    "completed": ("done", "The diagrams and screenshots in this document have been read into "
+                          "text."),
+    "approved": ("done", "The diagrams and screenshots in this document have been read into "
+                         "text."),
+    "failed": ("failed", "Reading this document's diagrams did not finish. The adopted text is "
+                         "unaffected — you can adopt it again to retry."),
+    "rejected": ("failed", "Reading this document's diagrams did not finish. The adopted text is "
+                           "unaffected — you can adopt it again to retry."),
+    "stalled": ("failed", "Reading this document's diagrams stopped without finishing (the "
+                          "companion did not report back). The adopted text is unaffected."),
+}
+
+
+def vision_states_for_documents(*, tenant_id, project_id, source_document_ids) -> dict:
+    """Latest vision-run state per source document, for the document list (Part B fix 4).
+
+    Resolved in two bulk queries — the carriers for this project, then their newest runs — so a
+    20-document list costs the same as a 1-document list. Documents with no vision run simply
+    aren't in the returned map; the UI shows nothing for them, which is correct (there was
+    nothing to read, or the pass never started and adopt already said so).
+    """
+    from apps.runs.models import Run
+    from apps.tenancy.context import tenant_context
+    from apps.workitems.models import WorkItem
+
+    wanted = {str(i) for i in source_document_ids}
+    if not wanted:
+        return {}
+    with tenant_context(tenant_id):
+        carriers = {
+            str(wi.external_ref.get("source_document_id")): wi.id
+            for wi in WorkItem.objects.filter(
+                tenant_id=tenant_id, project_id=project_id,
+                external_ref__source="vision_carrier",
+            )
+            if str((wi.external_ref or {}).get("source_document_id")) in wanted
+        }
+        if not carriers:
+            return {}
+        newest = {}
+        for run in (
+            Run.objects.filter(tenant_id=tenant_id, work_item_id__in=list(carriers.values()))
+            .order_by("work_item_id", "-created_at")
+        ):
+            newest.setdefault(str(run.work_item_id), run)
+    out = {}
+    for doc_id, wi_id in carriers.items():
+        run = newest.get(str(wi_id))
+        if run is None:
+            continue
+        mapped = _VISION_RUN_STATES.get(run.status)
+        if mapped is None:
+            continue        # awaiting_gate can't occur here (auto-apply opens no gate)
+        state, message = mapped
+        out[doc_id] = {"state": state, "message": message, "run_id": str(run.id)}
+    return out
 
 
 def _maybe_trigger_vision(*, tenant_id, project_id, source_document_id, artifact_ids, filename,
-                          user_id):
-    """Kick off the document-vision agent (00e) for an adopted document — but only when there is
-    something visual to read (the artifact has preserved `page_images`); a pure-text upload with no
-    images would give vision nothing to do, so it is skipped. Fully best-effort: no enrolled
-    companion, an already-running vision pass for this document, or any other error just skips.
-    Adoption succeeded regardless — vision only enriches the extracted text."""
+                          user_id) -> dict:
+    """Kick off the document-vision agent (00e) for an adopted document, and report what happened.
+
+    Only runs when there is something visual to read (the artifact has preserved `page_images`); a
+    pure-text upload would give vision nothing to do. Still fully best-effort — no enrolled
+    companion, an already-running pass for this document, or any other error never fails adoption,
+    which has already succeeded by the time we get here.
+
+    What changed in Part B fix 3: these outcomes used to be swallowed. `NoCompanionError` even
+    carries a written, user-ready explanation, which was caught and discarded — so a user with no
+    companion running got none of the benefit, no message, and no way to know. Every outcome now
+    comes back as a state + a plain sentence the adopt response hands to the UI.
+    """
     from apps.registry.models import Artifact
     from apps.tenancy.context import tenant_context
 
     if not artifact_ids:
-        return
+        return _vision_status("no_visuals")
     artifact_id = str(artifact_ids[0])
     with tenant_context(tenant_id):
         art = Artifact.objects.filter(id=artifact_id, tenant_id=tenant_id).first()
     if art is None or not (art.external_ref or {}).get("page_images"):
-        return  # nothing visual to read → vision would be a no-op
+        return _vision_status("no_visuals")  # nothing visual to read → vision would be a no-op
     try:
-        from orchestration.trigger import TriggerError, trigger_vision
+        from orchestration.trigger import ActiveRunError, NoCompanionError, trigger_vision
 
-        trigger_vision(
+        result = trigger_vision(
             tenant_id=tenant_id, project_id=project_id, source_document_id=source_document_id,
             artifact_id=artifact_id, filename=filename, triggered_by=user_id,
         )
-    except TriggerError:
-        return  # no companion enrolled / a vision run already in flight for this doc — expected
+    except NoCompanionError as exc:
+        # The message is written for a human and tells them exactly what to do — show it.
+        return _vision_status("no_companion", str(exc))
+    except ActiveRunError:
+        return _vision_status("already_running")
     except Exception as exc:  # noqa: BLE001 — vision is an enhancement; never fail adoption
         tools.log_event(tenant_id, "platform", "document_vision.trigger_failed",
                         "source_document", source_document_id, {"error": str(exc)[:300]})
+        return _vision_status("failed")
+    return _vision_status("running", run_id=getattr(result, "run_id", None))
 
 
 # ── Atlassian register-don't-recreate ───────────────────────────────
@@ -576,8 +677,8 @@ def ensure_vision_work_item(*, tenant_id, project_id, source_document_id, artifa
         description = (
             "Transcribe the adopted document into faithful text. Target document artifact: "
             f"{artifact_id} (file: {filename}). Read its pages with get_page_images, then "
-            "re-register it as a new version with the same phase/type/title carrying your "
-            "faithful transcription."
+            "re-register it as a new version carrying your faithful transcription, passing "
+            f"supersedes={artifact_id} so it versions this document instead of duplicating it."
         )
         if existing is not None:
             # Keep the pointer fresh if the doc was re-adopted (the artifact id can change).

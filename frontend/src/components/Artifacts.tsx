@@ -15,7 +15,9 @@ export function Artifacts() {
     if (!tenantId || !project) return;
     void (async () => {
       try {
-        setArtifacts(await api.listArtifacts(tenantId, { project: project.id }));
+        // One row per artifact, newest version (Part B fix 5) — prior versions stay readable as
+        // version history on the artifact's own screen.
+        setArtifacts(await api.listArtifacts(tenantId, { project: project.id, latest: true }));
         setErr(null);
       } catch (e) {
         setErr(e instanceof ApiError ? e.message : String(e));

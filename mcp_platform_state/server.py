@@ -130,6 +130,7 @@ def register_artifact(
     s3_key: str | None = None,
     external_ref: dict | None = None,
     repo_id: str | None = None,
+    supersedes: str | None = None,
 ) -> dict:
     """Register a generated artifact (pointer/provenance only, never the body). You do NOT
     need to know or ask for the project id or run id — the platform fills them from the run
@@ -139,14 +140,19 @@ def register_artifact(
     a person can tell apart from its siblings — e.g. "Wireframe — Login Page", "ADR-003 — Event
     Sourcing", "TC-014 — Login rejects a bad password". A bare type ("wireframe") is NOT enough
     when a phase produces several of the same type; the title is what every UI surface displays
-    and how the platform distinguishes per-item artifacts (Bugs S.No 120)."""
+    and how the platform distinguishes per-item artifacts (Bugs S.No 120).
+
+    Pass `supersedes=<artifact id>` when this registration is the NEXT VERSION of an artifact
+    that already exists (e.g. a faithful re-transcription of an adopted document). The platform
+    then takes `phase`, `type` and `title` from that artifact, so the new row versions it
+    correctly — you do not have to restate them, and a mistyped title cannot fork a duplicate."""
     resolved_project = project_id or _bound_project()
     resolved_run = run_id or _bound_run()
     if not resolved_project:
         raise RuntimeError("project_id not provided and no PLATFORM_PROJECT_ID bound.")
     return tools.register_artifact(
         _tenant(), resolved_project, resolved_run, phase, type, sor,
-        content_hash, s3_key, external_ref, repo_id, title,
+        content_hash, s3_key, external_ref, repo_id, title, supersedes,
     )
 
 

@@ -56,7 +56,7 @@ describe("S-25 source doc — honest status badge (A4)", () => {
   const base: SourceDocument = {
     id: "d1", project: "p1", filename: "x.pdf", mime: "application/pdf",
     status: "extracted", extracted_artifact_ids: [], provenance: {}, created_at: "",
-    has_original: true, page_images: [], fidelity: "text",
+    has_original: true, page_images: [], fidelity: "text", vision: null,
   };
   it("distinguishes text / images-only / empty instead of a blanket 'Extracted'", () => {
     expect(badgeFor({ ...base, fidelity: "text" }).label).toBe("Extracted");

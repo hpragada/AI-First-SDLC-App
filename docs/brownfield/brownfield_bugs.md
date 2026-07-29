@@ -68,6 +68,12 @@ The crux of trust: whatever is uploaded (text, tables, diagrams, screenshots) mu
 | B.2 | Vision agent on adopt | Adopting a doc with visuals runs **`00e_document_vision`** on the companion; it transcribes screenshots/tables/diagrams into faithful text, **auto-applied** as a new version (no 2nd gate); per-doc carrier hidden from the backlog. | agent | Part B2 | 🔲 OPEN (built; needs seed + companion) |
 | B.3 | Trigger + universal seed | Adopt fires vision only when page images exist; `00e` seeded on every tenant via the `0004` data migration (+ on-create hook for new tenants). | agent | Part B3 + migration | 🔲 OPEN (run migrate + restart companion) |
 
+| B.4 | No silent content loss | An auto-applied vision version that is materially **shorter** than the one it replaces is refused: the run fails with a plain reason and the adopted version stays live. Emptiness alone was never a sufficient bar for a publish with no human gate. | agent | Part B fix 1 | ✅ built + tested |
+| B.5 | Version, not duplicate | `register_artifact(supersedes=<id>)` takes phase/type/title off the target, so the new version can't fork a second document when the agent restates a title imperfectly. | agent | Part B fix 2 | ✅ built + tested |
+| B.6 | Honest vision status | Adopt returns a `vision` state + a finished human sentence (running / no visuals / no companion / already running / failed). The no-companion explanation — previously written and then discarded — now reaches the user. | both | Part B fix 3 | ✅ built + tested |
+| B.7 | Failed run stays visible | A vision run that dies **after** dispatch shows on the document row on every page load, not just in the adopt response (the carrier is hidden from the backlog, so nothing else surfaced it). | both | Part B fix 4 | ✅ built + tested |
+| B.8 | One row per document | Artifacts list collapses to the newest version per artifact (`?latest=1`); prior versions stay readable as history. 20 uploads read as 20 rows, not 40. Preview's version history now groups by title too, so distinct documents of one type stop listing each other as versions. | both | Part B fix 5 | ✅ built |
+
 > **Part A: ✅ team-verified live** ("strongly completed… everything works"). **Part B: built + unit-tested, not yet live** — to exercise it: run migrations (seeds `00e`) and restart the companion, then adopt the Architecture / wireframes PDF and confirm diagrams/screens arrive as text.
 
 ## Step 3 — Connect → Import Jira backlog → Link Confluence docs (typed) → Figma

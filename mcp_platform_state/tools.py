@@ -353,10 +353,22 @@ def _assert_body_not_shared(tenant_id, run, type, s3_key, title) -> None:
 
 def register_artifact(
     tenant_id, project_id, run_id, phase, type, sor,
-    content_hash, s3_key=None, external_ref=None, repo_id=None, title="",
+    content_hash, s3_key=None, external_ref=None, repo_id=None, title="", supersedes=None,
 ) -> dict:
     with tenant_context(tenant_id):
         project = Project.objects.get(id=project_id, tenant_id=tenant_id)
+        # `supersedes` anchors this registration to an EXISTING artifact's identity (Part B fix 2).
+        # Versioning keys on (project, phase, type, title), so a caller that means "this is the
+        # next version of that document" had to reproduce all three strings exactly — and an agent
+        # echoing a title back byte-for-byte is not something the platform can rely on. One
+        # character of drift silently forks a second artifact instead of versioning the first.
+        # Naming the target id instead makes the link explicit: the platform reads the identity
+        # off the target rather than trusting the caller to restate it.
+        if supersedes:
+            target = Artifact.objects.get(id=supersedes, tenant_id=tenant_id)
+            if str(target.project_id) != str(project.id):
+                raise ValueError("supersedes must name an artifact in the same project")
+            phase, type, title = target.phase, target.type, target.title
         run = Run.objects.get(id=run_id, tenant_id=tenant_id) if run_id else None
         repo = (
             Repository.objects.get(id=repo_id, tenant_id=tenant_id) if repo_id else None

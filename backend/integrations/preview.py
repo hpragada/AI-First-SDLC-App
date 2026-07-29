@@ -41,10 +41,18 @@ def _versions(*, tenant_id, artifact) -> list[dict]:
     from apps.tenancy.context import tenant_context
 
     with tenant_context(tenant_id):
+        # Grouped by title as well as phase+type (Part B fix 5). Title is what `register_artifact`
+        # versions on, so leaving it out here made every DISTINCT artifact of a type look like a
+        # revision of its siblings — adopt three architecture documents and each one listed the
+        # other two as its own "prior versions". Untitled rows keep the old phase+type grouping,
+        # which is the correct behaviour for a phase's single unnamed blob.
         siblings = Artifact.objects.filter(
             tenant_id=tenant_id, project_id=artifact.project_id,
             phase=artifact.phase, type=artifact.type,
-        ).order_by("-created_at")
+        )
+        if artifact.title:
+            siblings = siblings.filter(title=artifact.title)
+        siblings = siblings.order_by("-created_at")
         return [
             {"artifact_id": str(a.id), "version": a.version, "status": a.status,
              "run_id": str(a.run_id) if a.run_id else None,

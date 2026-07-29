@@ -552,6 +552,36 @@ export interface SourceDocument {
   has_original: boolean;
   page_images: SourcePageImage[];
   fidelity: "" | "text" | "images_only" | "empty";
+  // Part B fix 4: standing state of this document's vision pass (null when none ran). Survives a
+  // page reload, so a run that failed after dispatch is still visible.
+  vision: SourceDocVision | null;
+}
+
+// Part B fix 4: `done` and `failed` are terminal states only a dispatched run can reach; the
+// adopt-time states live in AdoptVisionStatus below.
+export interface SourceDocVision {
+  state: "running" | "done" | "failed";
+  message: string;
+  run_id: string | null;
+}
+
+// Part B fix 3: what the document-vision pass did when the document was adopted. Adoption always
+// succeeds — vision only enriches the extracted text — but the user must still be told when it
+// did NOT run, because the usual cause (no companion running) is theirs to fix. `message` is a
+// finished, human sentence from the backend; render it as-is rather than mapping `state` to copy,
+// so the two can never drift. `vision: null` = this call started nothing (already-adopted doc).
+export interface AdoptVisionStatus {
+  state: "running" | "no_visuals" | "no_companion" | "already_running" | "failed";
+  message: string;
+  run_id: string | null;
+}
+export interface AdoptResult {
+  source_document_id: string;
+  status: string;
+  artifact_ids: string[];
+  target_type?: string | null;
+  idempotent?: boolean;
+  vision: AdoptVisionStatus | null;
 }
 
 // Onboarding hub (S-24, 4.7-T8). Mirrors `integrations/onboarding.py::onboarding_hub()` exactly.

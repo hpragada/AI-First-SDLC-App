@@ -353,8 +353,75 @@ _PHASE_REQUIRED_ARTIFACTS = {
     "security": ["security_review"],
 }
 
+#: How much of the previous version's text an auto-applied (vision) version must still carry.
+#: 00e is instructed to reproduce the extraction it read AND add what the pictures hold, so a
+#: faithful pass grows the body; a pass that comes back materially SHORTER has dropped prose it
+#: was meant to keep (Part B fix 1). The 10% slack absorbs honest reformatting — collapsed
+#: whitespace, a rebuilt table, dropped page-furniture — without licensing real loss.
+_VISION_MIN_RETAINED_RATIO = 0.9
 
-def verify_write_completeness_core(inp: AgentRunInput, expected_types: list[str]) -> dict:
+
+def _prior_version(artifact):
+    """The version this artifact supersedes: the newest sibling registered before it under the
+    same identity (`register_artifact` versions on project+phase+type+title). Returns None for a
+    first registration — nothing to compare against, so nothing to guard."""
+    return (
+        Artifact.objects
+        .filter(tenant_id=artifact.tenant_id, project_id=artifact.project_id,
+                phase=artifact.phase, type=artifact.type, title=artifact.title)
+        .exclude(id=artifact.id)
+        .filter(version__lt=artifact.version)
+        .order_by("-version")
+        .first()
+    )
+
+
+def _assert_no_content_loss(inp: AgentRunInput, object_store=None) -> None:
+    """Auto-applied versions publish with no human gate, so the platform — not a reviewer — is
+    the last line of defence against a bad transcription (Part B fix 1).
+
+    00e re-registers an adopted document as a new version that must contain the original
+    extracted text PLUS the diagrams/screenshots the extraction missed. That contract lives in
+    the agent's prompt, and a prompt is not a guarantee: a pass that returned only the diagram
+    transcriptions would satisfy the non-empty check above, publish over the adopted document,
+    and silently drop the document's prose from every downstream read (get_context serves the
+    newest version). Compare the new body against the one it supersedes and refuse to publish a
+    version that shrank — the run fails loudly and the adopted v1 stays live and readable.
+
+    Deliberately conservative: only bodies we can actually read on both sides are judged. A
+    missing pointer, an unreadable object, or a first registration makes no claim we can test,
+    so it passes rather than blocking adoption on an unrelated storage hiccup.
+    """
+    store = object_store          # built lazily: a run with nothing to compare touches no S3
+    with tenant_context(inp.tenant_id):
+        new_artifacts = list(
+            Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id)
+        )
+        pairs = [(a, _prior_version(a)) for a in new_artifacts]
+    for artifact, prior in pairs:
+        if prior is None or not artifact.s3_key or not prior.s3_key:
+            continue
+        if store is None:
+            store = s3_from_settings()
+        try:
+            new_len = len(store.get(artifact.s3_key))
+            prior_len = len(store.get(prior.s3_key))
+        except Exception:  # noqa: BLE001 — unreadable body proves nothing; don't block on it
+            continue
+        if prior_len == 0:
+            continue
+        if new_len < prior_len * _VISION_MIN_RETAINED_RATIO:
+            raise WriteCompletenessError(
+                f"run {inp.run_id} (auto-apply) produced a shorter version of "
+                f"'{artifact.title or artifact.type}' than the one it replaces "
+                f"({new_len} bytes vs {prior_len}) — the transcription dropped content it was "
+                "meant to keep, so it is not published and the adopted version stays live."
+            )
+
+
+def verify_write_completeness_core(
+    inp: AgentRunInput, expected_types: list[str], object_store=None,
+) -> dict:
     """Rule 11 (platform-enforced): before the gate opens, confirm the run actually registered
     the artifacts its phase was supposed to produce — **and that they say something**.
 
@@ -384,6 +451,9 @@ def verify_write_completeness_core(inp: AgentRunInput, expected_types: list[str]
                 f"run {inp.run_id} (auto-apply) registered no non-empty artifact — the vision "
                 "pass produced nothing to apply, so nothing is published."
             )
+        # Non-empty is not enough when there is no human gate: it must also not have LOST the
+        # content it supersedes (Part B fix 1).
+        _assert_no_content_loss(inp, object_store)
         return {"present": ["non-empty artifact"], "expected": ["non-empty artifact"]}
 
     # Expand any phase whose real work product is a richer artifact (e.g. security → the actual

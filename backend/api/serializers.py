@@ -541,15 +541,48 @@ class SourceDocumentSerializer(serializers.ModelSerializer):
     has_original = serializers.SerializerMethodField()
     page_images = serializers.SerializerMethodField()
     fidelity = serializers.SerializerMethodField()
+    # Part B fix 4: the standing state of this document's vision pass, so a run that failed after
+    # it was dispatched is visible on every page load — not only in the adopt response that
+    # started it. Absent (null) when no vision run exists for the document.
+    vision = serializers.SerializerMethodField()
 
     class Meta:
         model = SourceDocument
         fields = [
             "id", "project", "filename", "mime", "status",
             "extracted_artifact_ids", "provenance", "created_at",
-            "has_original", "page_images", "fidelity",
+            "has_original", "page_images", "fidelity", "vision",
         ]
         read_only_fields = fields
+
+    def _vision_map(self) -> dict:
+        """Built once for the whole list (two queries total), then shared by every row — a
+        per-row lookup would turn a 20-document page into 40 queries."""
+        holder = self.parent if self.parent is not None else self
+        cached = getattr(holder, "_vision_cache", None)
+        if cached is not None:
+            return cached
+        instance = holder.instance
+        docs = list(instance) if hasattr(instance, "__iter__") else [instance]
+        docs = [d for d in docs if d is not None]
+        out: dict = {}
+        by_project: dict = {}
+        for d in docs:
+            by_project.setdefault((str(d.tenant_id), str(d.project_id)), []).append(str(d.id))
+        from integrations.onboarding import vision_states_for_documents
+
+        for (tenant_id, project_id), ids in by_project.items():
+            try:
+                out.update(vision_states_for_documents(
+                    tenant_id=tenant_id, project_id=project_id, source_document_ids=ids,
+                ))
+            except Exception:  # noqa: BLE001 — a status extra must never break the document list
+                continue
+        holder._vision_cache = out
+        return out
+
+    def get_vision(self, obj) -> dict | None:
+        return self._vision_map().get(str(obj.id))
 
     def get_has_original(self, obj) -> bool:
         return bool(obj.s3_key)
