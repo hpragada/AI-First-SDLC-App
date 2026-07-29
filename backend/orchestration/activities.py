@@ -413,6 +413,12 @@ def _assert_no_content_loss(inp: AgentRunInput, object_store=None) -> None:
     with tenant_context(inp.tenant_id):
         new_artifacts = list(
             Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id)
+            # The platform registers a phase-typed artifact for EVERY run, holding the agent's
+            # closing message rather than the document (register_phase_result_core). Measuring
+            # that against the document's text compares two unrelated things — a short, perfectly
+            # normal sign-off would read as catastrophic content loss and fail a good run. Only
+            # what the agent registered as the document itself is judged.
+            .exclude(type=inp.phase)
         )
         pairs = [(a, _prior_version(a)) for a in new_artifacts]
     for artifact, prior in pairs:
@@ -464,12 +470,17 @@ def verify_write_completeness_core(
         with tenant_context(inp.tenant_id):
             hashes = list(
                 Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id)
+                # Excluding the phase blob the platform registers for every run: it always
+                # exists and always holds SOMETHING (the agent's closing message), so counting
+                # it made this check unfailable. A pass where the agent registered no document
+                # at all — because its tools were missing, say — read as a success.
+                .exclude(type=inp.phase)
                 .values_list("content_hash", flat=True)
             )
         if not any(h and h != _EMPTY_BODY_HASH for h in hashes):
             raise WriteCompletenessError(
-                f"run {inp.run_id} (auto-apply) registered no non-empty artifact — the vision "
-                "pass produced nothing to apply, so nothing is published."
+                f"run {inp.run_id} (auto-apply) registered no document — the vision pass "
+                "produced nothing to apply, so nothing is published."
             )
         # Non-empty is not enough when there is no human gate: it must also not have LOST the
         # content it supersedes (Part B fix 1).

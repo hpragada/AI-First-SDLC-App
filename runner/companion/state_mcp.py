@@ -51,6 +51,14 @@ def build_server(
         return client.call("get_artifact_body", artifact_id=artifact_id, state=state)
 
     @server.tool()
+    def get_source_extraction(source_document_id: str) -> dict:
+        """Read the text already extracted from an uploaded document, straight from the document
+        itself. Use this when your work item names a SOURCE DOCUMENT rather than an artifact — the
+        document has no artifact until your run registers one, so `get_artifact_body` has nothing
+        to read. Your transcription must preserve this text and add what the pages hold."""
+        return client.call("get_source_extraction", source_document_id=source_document_id)
+
+    @server.tool()
     def get_page_images(artifact_id: str, start: int = 0) -> list:
         """SEE the original uploaded pages of a document artifact as images — the diagrams,
         screenshots, wireframes, scanned pages and tables-as-pictures that the extracted

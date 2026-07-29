@@ -154,6 +154,17 @@ class AgentRunWorkflow:
                 break
             except ActivityError as exc:
                 reason = f"write-completeness check failed: {failure_reason(exc)}"
+                # Parking waits for a human to fix the run and resume it. That is right for a
+                # gated phase, and wrong for an auto-apply one: nobody is watching a document
+                # vision run — its work item is hidden from the backlog — so parking left the
+                # document adopted with nothing in the registry, silently, forever. Fail it
+                # instead, which runs the recovery that registers the document's extracted text.
+                if getattr(inp, "auto_approve", False):
+                    await workflow.execute_activity(
+                        "fail_run", args=[inp, reason],
+                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                    )
+                    return {"status": "failed", "run_id": inp.run_id}
                 if not await self._park(inp, reason, "verify_writes"):
                     return {"status": "failed", "run_id": inp.run_id}
                 continue        # resumed → re-check (the phase itself is NOT re-run)

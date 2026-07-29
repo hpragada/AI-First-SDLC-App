@@ -65,6 +65,9 @@ _BUILD_STATE_TOOLS = {
     # Vision pipe (onboarding_fidelity_plan Part B): read a document's stored page images so a
     # multimodal onboarding/vision agent can SEE what text extraction can't carry.
     "get_page_images": tools.get_page_images,
+    # Reads an uploaded document's extracted text before any artifact exists for it — the vision
+    # agent's counterpart to get_artifact_body when its work item names a source document.
+    "get_source_extraction": tools.get_source_extraction,
     "update_artifact": tools.update_artifact,
     "add_trace_edge": tools.add_trace_edge,
     "log_event": tools.log_event,
