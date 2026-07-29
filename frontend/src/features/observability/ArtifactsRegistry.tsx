@@ -25,7 +25,10 @@ function statusBadge(status: string) {
 
 export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) {
   const { selectedProject } = useAuth();
-  const artifacts = useArtifacts({ project: selectedProject?.project_id });
+  // One row per artifact, newest version (Part B fix 5) — prior versions stay readable as version
+  // history on the artifact's own screen, so a document that vision re-transcribed reads as one
+  // entry rather than two.
+  const artifacts = useArtifacts({ project: selectedProject?.project_id, latest: true });
   const list = artifacts.data ?? [];
 
   // Bugs.xlsx row 24: the search box and Phase/Type/Status filters were inert with no options.

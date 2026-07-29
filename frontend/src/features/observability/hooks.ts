@@ -125,7 +125,12 @@ export function useDecideDrift() {
 }
 
 // ── Artifacts registry + preview (S-28/29) ─────────────────────────────────
-export function useArtifacts(q: { project?: string; phase?: string; status?: string }) {
+export function useArtifacts(q: {
+  project?: string;
+  phase?: string;
+  status?: string;
+  latest?: boolean;
+}) {
   const tenantId = useTenantId();
   return useQuery({
     queryKey: ["artifacts", q],
