@@ -575,7 +575,15 @@ def _phase_artifact_title(inp: AgentRunInput) -> str:
             WorkItem.objects.filter(id=inp.work_item_id, tenant_id=inp.tenant_id)
             .values_list("title", flat=True).first() or ""
         )
-    return f"{label} — {work_item_title}" if work_item_title else label
+    if not work_item_title:
+        return label
+    # An auto-apply run (document vision) works on a document the USER uploaded, and its work
+    # item is titled with that file's name. Prefixing the phase there renames the user's own file
+    # into platform vocabulary — "Document vision — 09_Security.pdf" — for a record they never
+    # asked for. Their filename is the only name that means anything to them, so it stands alone.
+    if getattr(inp, "auto_approve", False):
+        return work_item_title
+    return f"{label} — {work_item_title}"
 
 
 def register_phase_result_core(inp: AgentRunInput, report) -> dict:

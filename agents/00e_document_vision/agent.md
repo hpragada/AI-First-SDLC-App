@@ -47,9 +47,11 @@ platform supplies the source of truth.
    - `get_artifact_body(artifact_id)` — read the current (lossy) extraction, so you know what text
      was already captured and what the pictures must add. **Only when your work item names an
      artifact.**
-   - `get_source_extraction(source_document_id)` — the same reading, straight from the document,
-     for when your work item names a **source document**: there is no artifact yet to read it
-     from. Use whichever of the two matches your work item.
+   - `get_source_extraction(source_document_id, start=0)` — the same reading, straight from the
+     document, for when your work item names a **source document**: there is no artifact yet to
+     read it from. Use whichever of the two matches your work item. **Paginated like
+     `get_page_images`**: keep calling with `start=<next_start>` until `next_start` is null and
+     join the pieces, or you will transcribe from only the opening of the document.
    - `get_page_images(artifact_id, start=0)` — **your eyes.** It returns the document's preserved
      page images as viewable image blocks, a few pages per call with a `next_start`. Page through
      with `get_page_images(artifact_id, start=<next_start>)` until it reports the last batch. Read
@@ -140,8 +142,10 @@ it automatically:
      `filename`, plus `"vision": true` and a short `"vision_note"` summarising what you added
      (e.g. "transcribed 6 wireframe screens and 2 architecture diagrams the extraction dropped").
      Preserving `page_images` keeps the original pages viewable on the new version too.
-3. `add_trace_edge(from=<your new artifact id>, to=<target_id>, rel="derives")` — record that your
-   rendering derives from the adopted document.
+3. `add_trace_edge(from=<your new artifact id>, to=<target_id>, rel="derives")` — **only when your
+   work item named an ARTIFACT.** Trace edges join two artifacts, so when your work item named a
+   source document there is nothing to link to and this call will fail — skip it. The provenance
+   is already carried by the `source_document_id` you preserved in `external_ref`.
 4. `log_event` a one-line note of what you transcribed, for the run console.
 
 The platform applies your version automatically and publishes it — there is no second human gate,
@@ -161,7 +165,8 @@ system-of-record; the platform owns state and publishing.
 - [ ] The faithful body preserves the document's own order and the text extraction already captured
 - [ ] Registered the way your work item said — `supersedes=<target_id>` when it named an artifact,
       a plain registration with the stated phase/type/title when it named a source document —
-      `page_images` preserved, and a `derives` trace edge to the adopted document
+      `page_images` preserved, and — only if your work item named an artifact — a `derives` trace
+      edge to it
 - [ ] The body carries the text extraction you read in Step 1 **as well as** the visual content —
       a rendering that is shorter than what it replaces has dropped content and will be rejected
 

@@ -176,7 +176,21 @@ def downscale_image_for_vision(data: bytes, *, max_px: int = _VISION_MAX_PX) -> 
     image is returned unchanged. Best-effort: if the bytes can't be decoded, they pass through
     untouched so the pipe never fails on one odd image."""
     try:
-        from PIL import Image as PILImage
+        try:
+            from PIL import Image as PILImage
+        except ImportError as exc:
+            # Pillow absent means NOTHING is ever downscaled — every page render travels at full
+            # size and eventually overruns the MCP transport's message limit, killing the run with
+            # an error that names the transport and never mentions the real cause. That is exactly
+            # how this went unnoticed: image-light documents squeaked through, image-heavy ones
+            # failed intermittently, and the pass-through below hid the reason. A dependency this
+            # load-bearing must fail loudly, not degrade into a puzzle.
+            raise RuntimeError(
+                "Pillow is not installed, so page images cannot be downscaled for the vision "
+                "agent. Full-size renders overrun the agent transport and fail the run. Install "
+                "Pillow (it is in requirements.txt — the image is likely stale and needs "
+                "rebuilding)."
+            ) from exc
 
         with PILImage.open(io.BytesIO(data)) as im:
             if im.mode not in ("RGB", "RGBA", "L"):
@@ -191,6 +205,8 @@ def downscale_image_for_vision(data: bytes, *, max_px: int = _VISION_MAX_PX) -> 
             out = io.BytesIO()
             im.save(out, format="PNG")
             return out.getvalue()
+    except RuntimeError:
+        raise           # a missing Pillow is a deployment fault, not "one odd image"
     except Exception:  # noqa: BLE001 — a bad image must not break the vision pipe
         return data
 

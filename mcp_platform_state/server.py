@@ -86,12 +86,16 @@ def get_artifact_body(artifact_id: str, state: str | None = None) -> dict:
 
 
 @server.tool()
-def get_source_extraction(source_document_id: str) -> dict:
+def get_source_extraction(source_document_id: str, start: int = 0) -> dict:
     """Read the text already extracted from an uploaded document, straight from the document
     itself. Use this when your work item names a SOURCE DOCUMENT rather than an artifact — the
     document has no artifact until your run registers one, so `get_artifact_body` has nothing to
-    read. Your transcription must preserve this text and add what the pages hold."""
-    return tools.get_source_extraction(_tenant(), source_document_id)
+    read. Your transcription must preserve this text and add what the pages hold.
+
+    Paginated: a long document arrives in pieces. Call again with
+    `get_source_extraction(id, start=<next_start>)` until `next_start` is null, and concatenate —
+    otherwise you are transcribing from only the first part of the document."""
+    return tools.get_source_extraction(_tenant(), source_document_id, start)
 
 
 @server.tool()

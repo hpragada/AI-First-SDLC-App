@@ -689,9 +689,10 @@ _MAX_VISION_IMAGES_PER_CALL = 4
 #: anything more generous is guesswork dressed up as headroom.
 _MAX_VISION_PAYLOAD_BYTES = _MAX_BODY_READ_BYTES
 
-#: Long edge for a page that is too heavy even on its own. Re-encoding it smaller keeps the pipe
-#: moving — a slightly softer render the model can still read beats a failed run and no render.
-_VISION_FALLBACK_MAX_PX = 1000
+#: Long edges tried, in order, for a page too heavy to fit even on its own — each step is
+#: attempted until the encoded result is inside the budget. A slightly softer render the model can
+#: still read beats a failed run and no render at all; a dense screenshot may need several steps.
+_VISION_FALLBACK_STEPS = (1000, 800, 640, 480)
 
 
 def _build_page_image_window(pages: list, store, start: int) -> dict:
@@ -720,11 +721,27 @@ def _build_page_image_window(pages: list, store, start: int) -> dict:
         if len(encoded) > budget:
             if out:
                 break       # doesn't fit alongside what we have — it leads the next call
-            # First page of the call and already over budget: send it smaller rather than
-            # stall the read on a page that can never fit at full size.
-            encoded = base64.b64encode(
-                downscale_image_for_vision(raw, max_px=_VISION_FALLBACK_MAX_PX)
-            ).decode("ascii")
+            # First page of the call and already over budget: shrink until it actually fits.
+            # Re-encoding ONCE at a fixed size was not enough — a dense wireframe screenshot is
+            # still over the limit at 1000px, and including it anyway put the whole message past
+            # what the transport accepts, killing the run. Text pages never reached this branch,
+            # so only image-heavy documents failed. Step down until it fits, and if even the
+            # smallest rendering doesn't, skip the page with a note rather than take the run down
+            # — one unreadable page costs a page; an oversized message costs the document.
+            for px in _VISION_FALLBACK_STEPS:
+                encoded = base64.b64encode(
+                    downscale_image_for_vision(raw, max_px=px)
+                ).decode("ascii")
+                if len(encoded) <= budget:
+                    break
+            else:
+                consumed += 1
+                out.append({
+                    "name": pi.get("name"), "page": pi.get("page"), "mime": "image/png",
+                    "error": "this page could not be sent small enough to read; "
+                             "note it as [unreadable page] rather than guessing its content",
+                })
+                continue
         budget -= len(encoded)
         consumed += 1
         out.append({
@@ -740,7 +757,7 @@ def _build_page_image_window(pages: list, store, start: int) -> dict:
             "next_start": nxt if nxt < total else None}
 
 
-def get_source_extraction(tenant_id, source_document_id, object_store=None) -> dict:
+def get_source_extraction(tenant_id, source_document_id, start=0, object_store=None) -> dict:
     """Read the text a document's upload already extracted, before any artifact exists for it.
 
     The vision agent must preserve this text and add what the pages hold — but for a document
@@ -765,16 +782,19 @@ def get_source_extraction(tenant_id, source_document_id, object_store=None) -> d
     except Exception as exc:  # noqa: BLE001
         return {"body": "", "filename": filename, "title": title, "fidelity": fidelity,
                 "error": f"the extraction could not be read: {exc}"}
-    # Capped like every other body read (`get_artifact_body`). This one shipped uncapped, and a
-    # text-heavy document's extraction then overflowed the MCP transport's 1 MiB message limit —
-    # killing the run with "JSON message exceeded maximum buffer size" on a document with only
-    # three pages, where the page images were far too small to be the cause. `truncated` tells the
-    # agent it is not seeing the whole thing, so it can say so rather than silently transcribe a
-    # document it only half read.
-    truncated = len(raw) > _MAX_BODY_READ_BYTES
-    body = raw[:_MAX_BODY_READ_BYTES].decode("utf-8", "replace")
-    return {"body": body, "filename": filename, "title": title, "fidelity": fidelity,
-            "truncated": truncated}
+    # PAGINATED, not truncated. One message still cannot exceed what the agent transport accepts,
+    # so a long extraction has to be split — but splitting is not the same as discarding. Cutting
+    # at the cap would mean a client's own specification silently arrives 60% read, and an
+    # onboarding built on 60% of a document is wrong in a way nobody can see. The agent reads on
+    # with `start=<next_start>` until `next_start` is null and receives every byte.
+    # Sliced on a byte boundary and decoded with "replace", so a multi-byte character landing on
+    # the seam costs one glyph rather than derailing the decode.
+    start = max(0, int(start or 0))
+    chunk = raw[start:start + _MAX_BODY_READ_BYTES]
+    nxt = start + len(chunk)
+    return {"body": chunk.decode("utf-8", "replace"), "filename": filename, "title": title,
+            "fidelity": fidelity, "total_bytes": len(raw), "start": start,
+            "next_start": nxt if nxt < len(raw) else None}
 
 
 def page_images_for(tenant_id, subject_id):
