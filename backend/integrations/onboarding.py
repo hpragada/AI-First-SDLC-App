@@ -304,13 +304,61 @@ def _readopt(*, tenant_id, project_id, source_document_id, artifact_ids, filenam
         # stays present in every adopt response so the UI never special-cases its absence.
         return {"source_document_id": str(source_document_id), "status": "adopted",
                 "artifact_ids": artifact_ids, "idempotent": True, "vision": None}
+    # Stand the document back down to "no artifact yet" before retrying, so the retry REGISTERS
+    # the document's artifact exactly as the first attempt would have — version 1. Leaving the
+    # fallback in place would make the retry supersede it and land on v2, which is the version
+    # arithmetic this whole flow exists to avoid. Only the extraction fallback is cleared: a real
+    # transcription is never thrown away to make a number look nicer, and if the retry fails too,
+    # recovery registers the extraction again.
+    cleared = _clear_extraction_fallback(tenant_id=tenant_id, source_document_id=source_document_id)
     vision = _maybe_trigger_vision(
         tenant_id=tenant_id, project_id=project_id, source_document_id=str(source_document_id),
-        artifact_ids=artifact_ids, filename=filename, user_id=user_id,
+        artifact_ids=[] if cleared else artifact_ids, filename=filename, user_id=user_id,
         target_type=target_type, title=title,
     )
+    if cleared and vision["state"] != "running":
+        # The retry couldn't start after all — put the extraction back rather than leave the
+        # document holding nothing.
+        artifact_ids = [register_extracted_artifact(
+            tenant_id=tenant_id, source_document_id=str(source_document_id),
+            target_type=target_type,
+        )]
+    elif cleared:
+        artifact_ids = []
     return {"source_document_id": str(source_document_id), "status": "adopted",
             "artifact_ids": artifact_ids, "idempotent": True, "retried": True, "vision": vision}
+
+
+def _clear_extraction_fallback(*, tenant_id, source_document_id) -> bool:
+    """Remove the placeholder artifact a failed reading left behind, so a retry can register the
+    document's artifact as version 1.
+
+    Deliberately narrow: it only removes an artifact that IS the staged extraction — same body
+    pointer, registered by no run. A transcription (a real vision result, or anything a run
+    produced) is never touched, so this can only ever discard a copy of text the platform can
+    reproduce from the object store. Returns whether anything was cleared.
+    """
+    from apps.integrations.models import SourceDocument
+    from apps.registry.models import Artifact
+    from apps.tenancy.context import tenant_context
+
+    with tenant_context(tenant_id):
+        src = SourceDocument.objects.get(id=source_document_id, tenant_id=tenant_id)
+        ids = [str(x) for x in (src.extracted_artifact_ids or [])]
+        extracted_key = (src.provenance or {}).get("extracted_s3_key")
+        if not ids or not extracted_key:
+            return False
+        art = Artifact.objects.filter(id=ids[0], tenant_id=tenant_id).first()
+        if art is None:
+            src.extracted_artifact_ids = []
+            src.save(update_fields=["extracted_artifact_ids", "updated_at"])
+            return True
+        if art.s3_key != extracted_key or art.run_id is not None:
+            return False        # a real transcription, not the fallback — leave it alone
+        art.delete()
+        src.extracted_artifact_ids = []
+        src.save(update_fields=["extracted_artifact_ids", "updated_at"])
+    return True
 
 
 def register_extracted_artifact(*, tenant_id, source_document_id, target_type=None) -> str:
