@@ -166,6 +166,12 @@ export function VisionNotice({ vision }: { vision: { state: VisionState; message
       style={{ color, padding: "0 var(--space-3) var(--space-3)" }}
     >
       {vision.state === "running" && <Spinner />} {vision.message}
+      {vision.state === "no_companion" && (
+        <>
+          {" "}
+          <Link to="/connect">Connect your machine</Link>
+        </>
+      )}
     </div>
   );
 }

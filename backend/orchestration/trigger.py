@@ -289,8 +289,10 @@ def trigger_vision(
     enrollment = _resolve_enrollment(tenant_id, project_id, triggered_by)
     if enrollment is None:
         raise NoCompanionError(
-            "Document vision runs on your local companion. Start your companion for this "
-            "project to have uploaded diagrams and screenshots read into text."
+            # "Your machine", not "companion" — the rest of the product calls it that ("Connect
+            # your machine"), and a first-time brownfield user has never met the other word.
+            "Your machine isn't connected, so the diagrams in this document weren't read. "
+            "Connect your machine and adopt this document again."
         )
     work_item = ensure_vision_work_item(
         tenant_id=tenant_id, project_id=project_id, source_document_id=source_document_id,

@@ -266,7 +266,10 @@ def test_adopt_reports_no_companion_with_the_actionable_message():
     )
     assert out["status"] == "adopted"          # adoption still succeeds — vision is a bonus
     assert out["vision"]["state"] == "no_companion"
-    assert "companion" in out["vision"]["message"].lower()
+    # The product calls it "your machine" everywhere the user can see; "companion" is internal
+    # vocabulary and must not leak into the message.
+    assert "your machine" in out["vision"]["message"].lower()
+    assert "companion" not in out["vision"]["message"].lower()
     assert "_" not in out["vision"]["message"]  # a sentence, never a raw code
 
 

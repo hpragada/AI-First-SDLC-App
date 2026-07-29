@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Select, Spinner } from "../../components/ui";
 import type { Capability, OnboardingRegister } from "../../types";
+import { useRunners } from "../identity/hooks";
 import { ConnectCapability } from "../setup/ConnectCapability";
 import { useRepositories } from "../setup/hooks";
 import { ADOPT_TYPES } from "./SourceDocuments";
@@ -299,6 +300,52 @@ function IndexCodeStep({ projectId, repos, indexDone }: {
   );
 }
 
+// ── Prerequisite: the machine that runs the agents ─────────────────────────
+// Brownfield onboarding leans on the user's own machine for the work that must stay local —
+// reading a document's diagrams, and indexing the code. Greenfield users meet this on the setup
+// checklist before they start; brownfield users met it only as a failure message *after* adopting
+// a document, using a word ("companion") that appears nowhere else in the product. This puts the
+// same step in front of them on arrival, in the app's own vocabulary, with the button right here.
+function ConnectMachineStep() {
+  const runners = useRunners();
+  if (runners.isLoading) return null;
+  const connected = Boolean(runners.data?.some((r) => r.online || r.last_seen));
+  if (connected) {
+    return (
+      <Card>
+        <CardBody className="u-row" style={{ gap: "var(--space-3)", alignItems: "center" }}>
+          <span className="vstep__num vstep__num--done">✓</span>
+          <div style={{ flex: "1 1 auto" }}>
+            <div className="t-body u-strong">Your machine is connected</div>
+            <div className="t-sm u-muted">
+              Diagrams in your documents get read into text, and your code is analysed locally.
+            </div>
+          </div>
+          <Badge variant="done">Connected</Badge>
+        </CardBody>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <CardBody className="u-row" style={{ gap: "var(--space-3)", alignItems: "center" }}>
+        <span className="vstep__num vstep__num--active">1</span>
+        <div style={{ flex: "1 1 auto" }}>
+          <div className="t-body u-strong">Connect your machine first</div>
+          <div className="t-sm u-muted">
+            Some of this work runs on your own machine so nothing leaves it — reading the diagrams
+            and screenshots inside your documents, and analysing your code. You can upload
+            documents without it, but their diagrams won't be read.
+          </div>
+        </div>
+        <Link to="/connect" className="btn btn--primary">
+          Connect your machine
+        </Link>
+      </CardBody>
+    </Card>
+  );
+}
+
 // ── Live: the real onboarding state for the selected project ───────────────
 function OnboardingHubLive() {
   const { selectedProject } = useAuth();
@@ -345,6 +392,8 @@ function OnboardingHubLive() {
           Brownfield
         </Badge>
       </div>
+
+      <ConnectMachineStep />
 
       <Card>
         <CardBody>
