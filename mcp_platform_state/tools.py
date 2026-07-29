@@ -681,8 +681,13 @@ _MAX_VISION_IMAGES_PER_CALL = 4
 #: and took the whole run with it. Bounding the window by COUNT alone could never prevent that,
 #: because page weight varies wildly (a dense diagram outweighs a title page many times over), so
 #: the window is bounded by bytes as well and simply returns fewer pages when they are heavy.
-#: Left well under the limit: the rest of the JSON envelope and the summary text ride along too.
-_MAX_VISION_PAYLOAD_BYTES = 700_000
+#: Set to the SAME ceiling a single artifact body reads at (`_MAX_BODY_READ_BYTES`, 400 KB) —
+#: the limit the greenfield build path arrived at when it hit this identical wall. A payload does
+#: not travel once: the companion decodes what the platform sends and the MCP layer re-encodes it
+#: for the stdio hop, with a summary and JSON envelope riding along, so the figure that leaves
+#: here is not the figure that arrives. 400 KB is the size proven to survive that round trip;
+#: anything more generous is guesswork dressed up as headroom.
+_MAX_VISION_PAYLOAD_BYTES = _MAX_BODY_READ_BYTES
 
 #: Long edge for a page that is too heavy even on its own. Re-encoding it smaller keeps the pipe
 #: moving — a slightly softer render the model can still read beats a failed run and no render.
