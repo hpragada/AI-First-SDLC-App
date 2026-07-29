@@ -812,10 +812,12 @@ def recover_unread_document_core(inp: AgentRunInput) -> dict:
     # Drop whatever the failed run registered but never got to publish — a transcription the
     # guard rejected, or a half-written one. It is not the document's content and must not sit in
     # the registry looking like a second copy of it; the run's error explains what went wrong.
+    # The run's own phase artifact is kept: it holds the agent's closing message, which is what
+    # the run console shows and the only account of WHY the pass failed.
     with tenant_context(inp.tenant_id):
         Artifact.objects.filter(
             run_id=inp.run_id, tenant_id=inp.tenant_id,
-        ).exclude(status=Artifact.Status.PUBLISHED).delete()
+        ).exclude(status=Artifact.Status.PUBLISHED).exclude(type=inp.phase).delete()
     try:
         artifact_id = register_extracted_artifact(
             tenant_id=inp.tenant_id, source_document_id=source_document_id)

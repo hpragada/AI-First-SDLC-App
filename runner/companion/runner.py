@@ -44,8 +44,11 @@ BUILD_STATE_TOOLS = [
     "create_work_item", "transition_work_item", "ask_human",
     # Agent-driven onboarding: 00_onboarding submits its gap report through the shape-safe writer.
     "submit_gap_report",
-    # Document vision (Part B): 00e reads a document's stored page images as image blocks.
+    # Document vision (Part B): 00e reads a document's stored page images as image blocks, and
+    # its already-extracted text — which for a document whose artifact this run is creating has
+    # no artifact to come from, so get_artifact_body cannot serve it.
     "get_page_images",
+    "get_source_extraction",
 ]
 # Filesystem + shell for editing/testing the worktree; platform-state over MCP.
 # Deliberately NO CodeHost and no networked tools — the platform owns Git side-effects (D2).
