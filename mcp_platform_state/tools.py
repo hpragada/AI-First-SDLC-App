@@ -707,6 +707,74 @@ def _build_page_image_window(pages: list, store, start: int) -> dict:
             "next_start": nxt if nxt < total else None}
 
 
+def get_source_extraction(tenant_id, source_document_id, object_store=None) -> dict:
+    """Read the text a document's upload already extracted, before any artifact exists for it.
+
+    The vision agent must preserve this text and add what the pages hold — but for a document
+    uploaded after artifacts moved to adopt time there is no artifact yet to read it from
+    (`get_artifact_body` needs one). The extraction is staged in the object store at upload
+    regardless, so this serves it straight from the source document.
+    """
+    from apps.integrations.models import SourceDocument
+
+    with tenant_context(tenant_id):
+        src = SourceDocument.objects.filter(id=source_document_id, tenant_id=tenant_id).first()
+        if src is None:
+            return {"body": "", "error": f"no source document '{source_document_id}'"}
+        prov = src.provenance or {}
+        key, filename = prov.get("extracted_s3_key"), src.filename
+        title, fidelity = prov.get("title") or "", prov.get("fidelity") or ""
+    if not key:
+        return {"body": "", "filename": filename, "title": title, "fidelity": fidelity,
+                "error": "this document has no staged extraction"}
+    try:
+        body = _obj_store(object_store).get(key).decode("utf-8", "replace")
+    except Exception as exc:  # noqa: BLE001
+        return {"body": "", "filename": filename, "title": title, "fidelity": fidelity,
+                "error": f"the extraction could not be read: {exc}"}
+    return {"body": body, "filename": filename, "title": title, "fidelity": fidelity}
+
+
+def page_images_for(tenant_id, subject_id):
+    """The preserved page renders for a document, wherever they live.
+
+    They are stored on the SOURCE DOCUMENT from the adopt-time-registration change onward: an
+    upload no longer mints an artifact, so the pages have to belong to something that exists from
+    the moment the file lands. Documents uploaded before that change keep them on the artifact
+    they were registered with, so both locations are read — `subject_id` may be either a source
+    document or an artifact, and callers don't have to know which era a document came from.
+
+    Returns (pages, found) so a caller can tell "no images" from "no such subject".
+    """
+    from django.core.exceptions import ValidationError
+
+    from apps.integrations.models import SourceDocument
+
+    with tenant_context(tenant_id):
+        try:
+            src = SourceDocument.objects.filter(id=subject_id, tenant_id=tenant_id).first()
+        except (ValidationError, ValueError):
+            src = None
+        if src is not None:
+            pages = (src.provenance or {}).get("page_images")
+            if pages is None:
+                # Pre-change document: the pages went onto the artifact the upload registered.
+                aids = list(src.extracted_artifact_ids or [])
+                art = (
+                    Artifact.objects.filter(id=aids[0], tenant_id=tenant_id).first()
+                    if aids else None
+                )
+                pages = ((art.external_ref or {}).get("page_images") if art else None) or []
+            return list(pages), True
+        try:
+            artifact = Artifact.objects.filter(id=subject_id, tenant_id=tenant_id).first()
+        except (ValidationError, ValueError):
+            artifact = None
+        if artifact is None:
+            return [], False
+        return list((artifact.external_ref or {}).get("page_images") or []), True
+
+
 def get_page_images(tenant_id, artifact_id, start=0, object_store=None) -> dict:
     """Return the stored page / embedded images of a document artifact as base64 PNG blocks — the
     vision pipe (onboarding_fidelity_plan Part B). Text extraction can't carry diagrams,
@@ -717,18 +785,18 @@ def get_page_images(tenant_id, artifact_id, start=0, object_store=None) -> dict:
 
     Paginated: returns up to a few images from `start`, plus `total` and `next_start` (null on the
     last batch) — call again until `next_start` is null. JSON-safe (base64) so it rides the same
-    HTTP proxy the companion uses; the MCP layer turns each into an image content block."""
-    from django.core.exceptions import ValidationError
+    HTTP proxy the companion uses; the MCP layer turns each into an image content block.
 
-    with tenant_context(tenant_id):
-        try:
-            artifact = Artifact.objects.get(id=artifact_id, tenant_id=tenant_id)
-        except (Artifact.DoesNotExist, ValidationError):
-            return {"images": [], "total": 0, "start": start, "returned": 0, "next_start": None,
-                    "error": f"no artifact '{artifact_id}' — pass the full id (a UUID) from "
-                             "list_artifacts / get_context."}
-        pages = (artifact.external_ref or {}).get("page_images") or []
-        return _build_page_image_window(pages, _obj_store(object_store), start)
+    `artifact_id` accepts either the SOURCE DOCUMENT id or an artifact id. Vision now runs before
+    any artifact exists for the document — the upload no longer registers one — so the run is
+    pointed at the source document; older documents that do have an upload-time artifact still
+    resolve through it."""
+    pages, found = page_images_for(tenant_id, artifact_id)
+    if not found:
+        return {"images": [], "total": 0, "start": start, "returned": 0, "next_start": None,
+                "error": f"no document or artifact '{artifact_id}' — pass the full id (a UUID) "
+                         "named in your work item, or from list_artifacts / get_context."}
+    return _build_page_image_window(pages, _obj_store(object_store), start)
 
 
 def list_artifacts(tenant_id, project_id, phase=None, status=None, type=None) -> list[dict]:

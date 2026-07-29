@@ -45,7 +45,11 @@ platform supplies the source of truth.
      re-register your result against this same artifact with `supersedes`, so the platform carries
      its `phase`, `type` and `title` over for you.
    - `get_artifact_body(artifact_id)` — read the current (lossy) extraction, so you know what text
-     was already captured and what the pictures must add.
+     was already captured and what the pictures must add. **Only when your work item names an
+     artifact.**
+   - `get_source_extraction(source_document_id)` — the same reading, straight from the document,
+     for when your work item names a **source document**: there is no artifact yet to read it
+     from. Use whichever of the two matches your work item.
    - `get_page_images(artifact_id, start=0)` — **your eyes.** It returns the document's preserved
      page images as viewable image blocks, a few pages per call with a `next_start`. Page through
      with `get_page_images(artifact_id, start=<next_start>)` until it reports the last batch. Read
@@ -66,8 +70,11 @@ platform supplies the source of truth.
 
 ### Step 1: Orient on the target
 
-Read `get_artifact(target_id)` and note its `phase`, `type`, `title`, and `external_ref`. Read
-`get_artifact_body(target_id)` to see what text extraction already captured. Your job is to produce
+Read your work item first and note **which of the two cases it puts you in** (see Step 4) — that
+decides which tools you use here. If it names an artifact, read `get_artifact(target_id)` for its
+`phase`, `type`, `title` and `external_ref`, then `get_artifact_body(target_id)` for the text
+already captured. If it names a source document, read `get_source_extraction(target_id)` instead;
+the `phase`, `type` and `title` to use are stated in the work item itself. Your job is to produce
 the *complete* content — the extracted text plus everything the pictures carry that the text
 missed. If the current body is only a placeholder note (an image-only document), you are producing
 essentially all of the real content; if it has real text but embedded diagrams/tables-as-pictures,
@@ -119,12 +126,16 @@ it automatically:
 
 1. `stage_artifact_body(filename=<the target's title>, body=<your faithful text>)` — keep the
    returned `s3_key` and `content_hash`.
-2. `register_artifact` with:
-   - **`supersedes=<target_id>`** — this is what makes your rendering the next *version* of the
-     document rather than a second, competing copy of it. The platform takes the `phase`, `type`
-     and `title` off the target itself, so you do not restate them and a mistyped title cannot
-     fork a duplicate document. Always pass it;
-   - `sor="internal"`, the `s3_key` and `content_hash` from staging;
+2. `register_artifact`. **Your work item tells you which of two cases you are in — follow it
+   exactly; they are not interchangeable:**
+   - **It names a SOURCE DOCUMENT and says this run registers the artifact.** The document has no
+     artifact yet — yours is the first and only one. Pass the `phase`, `type` and `title` the work
+     item gives you, and **do not** pass `supersedes`; there is nothing to supersede.
+   - **It names a target document ARTIFACT and gives you `supersedes`.** Pass
+     **`supersedes=<target_id>`** — that makes your rendering the next *version* of that document
+     rather than a second, competing copy. The platform takes `phase`, `type` and `title` off the
+     target, so you do not restate them and a mistyped title cannot fork a duplicate.
+   - In both cases: `sor="internal"`, and the `s3_key` and `content_hash` from staging;
    - `external_ref` that **preserves** the target's `page_images`, `source_document_id`, and
      `filename`, plus `"vision": true` and a short `"vision_note"` summarising what you added
      (e.g. "transcribed 6 wireframe screens and 2 architecture diagrams the extraction dropped").
@@ -148,8 +159,9 @@ system-of-record; the platform owns state and publishing.
 - [ ] Every screenshot/wireframe's controls and labels are transcribed verbatim
 - [ ] Inference is marked `[INFERRED: …]`; illegible/failed content marked plainly; nothing invented
 - [ ] The faithful body preserves the document's own order and the text extraction already captured
-- [ ] Registered with `supersedes=<target_id>` (so it versions the document instead of duplicating
-      it), `page_images` preserved, and a `derives` trace edge to the adopted document
+- [ ] Registered the way your work item said — `supersedes=<target_id>` when it named an artifact,
+      a plain registration with the stated phase/type/title when it named a source document —
+      `page_images` preserved, and a `derives` trace edge to the adopted document
 - [ ] The body carries the text extraction you read in Step 1 **as well as** the visual content —
       a rendering that is shorter than what it replaces has dropped content and will be rejected
 

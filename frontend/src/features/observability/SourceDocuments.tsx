@@ -251,6 +251,21 @@ function SourceDocRow({
               onAdopt={(targetType) => userId && adopt.mutate({ id: doc.id, targetType, userId })}
             />
           )}
+          {/* A failed reading is recoverable, so the row offers the retry rather than just
+              reporting the failure. Re-adopting a document whose reading failed dispatches it
+              again; the document itself stays adopted throughout. */}
+          {doc.status === "adopted" && doc.vision?.state === "failed" && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={adopt.isPending || !userId}
+              // No type is sent: the document was classified when it was first adopted and a
+              // retry must not silently reclassify it.
+              onClick={() => userId && adopt.mutate({ id: doc.id, targetType: "", userId })}
+            >
+              {adopt.isPending && adopt.variables?.id === doc.id ? <Spinner /> : "Try reading again"}
+            </Button>
+          )}
           {doc.status === "adopted" && (
             <Link to="/artifacts" className="btn btn--ghost btn--sm">
               View artifact

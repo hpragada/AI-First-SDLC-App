@@ -208,6 +208,7 @@ def execute_agent_core(inp: AgentRunInput, manifest: str) -> dict:
                 inp.tenant_id, "orchestrator", "run.failed", "run", inp.run_id,
                 {"error": error_message},
             )
+        recover_unread_document_core(inp)  # a failed vision pass must not leave a document empty
         raise
 
     body = result.outputs.get("result") or result.outputs.get("text") or ""
@@ -314,6 +315,9 @@ def publish_artifacts_core(inp: AgentRunInput) -> dict:
             inp.tenant_id, "orchestrator", "artifacts.published", "run", inp.run_id,
             {"artifact_ids": published},
         )
+    # A vision run's artifact IS the document's artifact — link it back, or the document would
+    # stay pointing at nothing (see link_vision_artifact_core).
+    link_vision_artifact_core(inp)
     return {"published": published}
 
 
@@ -393,29 +397,45 @@ def _assert_no_content_loss(inp: AgentRunInput, object_store=None) -> None:
     so it passes rather than blocking adoption on an unrelated storage hiccup.
     """
     store = object_store          # built lazily: a run with nothing to compare touches no S3
+    # The baseline is whatever the transcription was supposed to preserve. Usually that's the
+    # previous version of the same artifact. For a document whose artifact this run is CREATING
+    # there is no previous version — the thing it must not lose is the extraction staged at
+    # upload, so that is measured instead. Either way the guard has something real to hold.
+    baseline_key = None
+    source_document_id = _vision_source_document(inp)
+    if source_document_id:
+        from apps.integrations.models import SourceDocument
+
+        with tenant_context(inp.tenant_id):
+            src = SourceDocument.objects.filter(
+                id=source_document_id, tenant_id=inp.tenant_id).first()
+        baseline_key = ((src.provenance or {}).get("extracted_s3_key") if src else None)
     with tenant_context(inp.tenant_id):
         new_artifacts = list(
             Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id)
         )
         pairs = [(a, _prior_version(a)) for a in new_artifacts]
     for artifact, prior in pairs:
-        if prior is None or not artifact.s3_key or not prior.s3_key:
+        prior_key = prior.s3_key if prior is not None else baseline_key
+        if not artifact.s3_key or not prior_key:
             continue
         if store is None:
             store = s3_from_settings()
         try:
             new_len = len(store.get(artifact.s3_key))
-            prior_len = len(store.get(prior.s3_key))
+            prior_len = len(store.get(prior_key))
         except Exception:  # noqa: BLE001 — unreadable body proves nothing; don't block on it
             continue
         if prior_len == 0:
             continue
         if new_len < prior_len * _VISION_MIN_RETAINED_RATIO:
+            kept = ("the version it replaces" if prior is not None
+                    else "the text already extracted from the document")
             raise WriteCompletenessError(
-                f"run {inp.run_id} (auto-apply) produced a shorter version of "
-                f"'{artifact.title or artifact.type}' than the one it replaces "
+                f"run {inp.run_id} (auto-apply) produced a shorter rendering of "
+                f"'{artifact.title or artifact.type}' than {kept} "
                 f"({new_len} bytes vs {prior_len}) — the transcription dropped content it was "
-                "meant to keep, so it is not published and the adopted version stays live."
+                "meant to keep, so it is not published."
             )
 
 
@@ -724,6 +744,79 @@ def resume_run_state_core(inp: AgentRunInput) -> dict:
     return {"status": "resumed", "resume_from": resume_from}
 
 
+def _vision_source_document(inp: AgentRunInput):
+    """The source document a vision run is transcribing, or None if this isn't a vision run."""
+    if not getattr(inp, "auto_approve", False):
+        return None
+    with tenant_context(inp.tenant_id):
+        wi = WorkItem.objects.filter(id=inp.work_item_id, tenant_id=inp.tenant_id).first()
+    ref = (wi.external_ref or {}) if wi is not None else {}
+    if ref.get("source") != "vision_carrier":
+        return None
+    return ref.get("source_document_id")
+
+
+def link_vision_artifact_core(inp: AgentRunInput) -> dict:
+    """Point the source document at the artifact its vision run just registered.
+
+    Since an upload no longer registers anything, the vision run is what creates the document's
+    artifact — and the document has to end up pointing at it, or the UI and the gap report would
+    both see an adopted document with nothing behind it. Only ever links, never creates.
+    """
+    source_document_id = _vision_source_document(inp)
+    if not source_document_id:
+        return {"linked": None}
+    from apps.integrations.models import SourceDocument
+
+    with tenant_context(inp.tenant_id):
+        src = SourceDocument.objects.filter(
+            id=source_document_id, tenant_id=inp.tenant_id).first()
+        if src is None or list(src.extracted_artifact_ids or []):
+            return {"linked": None}          # gone, or already linked — leave it alone
+        registered = list(
+            Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id)
+            .order_by("created_at").values_list("id", flat=True)
+        )
+        if not registered:
+            return {"linked": None}
+        src.extracted_artifact_ids = [str(registered[0])]
+        src.save(update_fields=["extracted_artifact_ids", "updated_at"])
+    return {"linked": str(registered[0])}
+
+
+def recover_unread_document_core(inp: AgentRunInput) -> dict:
+    """A vision run failed — make sure its document still ends up with its extracted text.
+
+    The document was adopted the moment the user clicked; the vision pass was only meant to make
+    its pages legible. Since the artifact is now created by that run, a failure would otherwise
+    leave the document adopted with nothing in the registry — invisible to the gap report and to
+    the user. Registering the plain extraction is the honest floor: less than the user hoped for,
+    never nothing. Idempotent, so a run that failed after registering its own artifact is left be.
+    """
+    source_document_id = _vision_source_document(inp)
+    if not source_document_id:
+        return {"recovered": None}
+    from integrations.onboarding import register_extracted_artifact
+
+    # Drop whatever the failed run registered but never got to publish — a transcription the
+    # guard rejected, or a half-written one. It is not the document's content and must not sit in
+    # the registry looking like a second copy of it; the run's error explains what went wrong.
+    with tenant_context(inp.tenant_id):
+        Artifact.objects.filter(
+            run_id=inp.run_id, tenant_id=inp.tenant_id,
+        ).exclude(status=Artifact.Status.PUBLISHED).delete()
+    try:
+        artifact_id = register_extracted_artifact(
+            tenant_id=inp.tenant_id, source_document_id=source_document_id)
+    except Exception as exc:  # noqa: BLE001 — recovery must never mask the original failure
+        tools.log_event(inp.tenant_id, "orchestrator", "document_vision.recovery_failed",
+                        "source_document", source_document_id, {"error": str(exc)[:300]})
+        return {"recovered": None}
+    tools.log_event(inp.tenant_id, "orchestrator", "document_vision.recovered",
+                    "source_document", source_document_id, {"artifact_id": artifact_id})
+    return {"recovered": artifact_id}
+
+
 def fail_run_core(inp: AgentRunInput, reason: str) -> dict:
     """A companion reported a failed phase → flag the run failed (the body, if any, is on the
     report). Mirrors the execute_agent failure path."""
@@ -739,6 +832,7 @@ def fail_run_core(inp: AgentRunInput, reason: str) -> dict:
         run.save(update_fields=["status", "outputs", "ended_at", "updated_at"])
         tools.log_event(inp.tenant_id, "orchestrator", "run.failed", "run", inp.run_id,
                         {"error": reason})
+    recover_unread_document_core(inp)   # a failed vision pass must not leave a document empty
     return {"status": "failed"}
 
 

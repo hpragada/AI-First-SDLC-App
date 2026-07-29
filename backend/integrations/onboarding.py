@@ -156,39 +156,41 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
 
     body_key = f"onboarding/{tenant_id}/{project_id}/{src.id}/extracted.md"
     store.put(body_key, body)
-    # B1-3: register the artifact + flip the doc to EXTRACTED as one unit. If anything fails we
-    # never leave a half-written ingest — the doc is marked FAILED and any orphaned artifact +
-    # extracted body are removed, so a retry starts clean.
-    artifact = None
+    # An upload no longer registers an artifact. The registry entry is created ONCE, at adopt —
+    # carrying the vision transcription when the pages were read, and the plain extraction when
+    # they weren't — so a document the user uploaded once is one artifact at v1, instead of a v1
+    # the upload made and a v2 vision replaced it with. Everything the user sees before adopting
+    # (title, fidelity badge, page count, previews) comes from the source document, which is why
+    # extraction still happens here and the page renders are stored on the document itself.
+    #
+    # B1-3 still holds: the extracted body + the doc's own state land as one unit, and a failure
+    # leaves nothing half-written — the doc is marked FAILED and the staged objects are removed.
     try:
-        artifact = tools.register_artifact(
-            tenant_id, project_id, None, phase="onboarding", type=artifact_type,
-            sor="internal", content_hash=content_hash(body.encode("utf-8")), s3_key=body_key,
-            title=title,  # B1-2: carry the extracted title onto the artifact
-            external_ref={"source": "static_file", "filename": filename,
-                          "source_document_id": str(src.id), "source_s3_key": src_key,
-                          "page_images": page_images},
-        )
         with tenant_context(tenant_id):
             src = SourceDocument.objects.get(id=src.id, tenant_id=tenant_id)
             src.s3_key = src_key
             src.status = SourceDocument.Status.EXTRACTED
-            src.extracted_artifact_ids = [artifact["id"]]
+            src.extracted_artifact_ids = []      # filled in at adopt, when the artifact is made
             src.provenance = {"filename": filename, "mime": mime, "source_s3_key": src_key,
                               "title": title, "fidelity": fidelity,
-                              "page_count": len(page_images)}
+                              "page_count": len(page_images),
+                              # The pages must belong to something that exists from upload, and
+                              # the artifact no longer does.
+                              "page_images": page_images,
+                              # The staged extraction: what adopt registers when vision can't
+                              # run, and what the content-loss guard measures vision against.
+                              "extracted_s3_key": body_key,
+                              "extracted_hash": content_hash(body.encode("utf-8")),
+                              "artifact_type": artifact_type}
             src.save(update_fields=["s3_key", "status", "extracted_artifact_ids",
                                     "provenance", "updated_at"])
             tools.log_event(tenant_id, "onboarding", "source_document.extracted",
                             "source_document", str(src.id),
-                            {"artifact_id": artifact["id"], "filename": filename})
+                            {"filename": filename, "fidelity": fidelity})
     except Exception:
-        from apps.registry.models import Artifact
         with tenant_context(tenant_id):
             SourceDocument.objects.filter(id=src.id, tenant_id=tenant_id).update(
                 status=SourceDocument.Status.FAILED, s3_key=src_key)
-            if artifact is not None:
-                Artifact.objects.filter(id=artifact["id"], tenant_id=tenant_id).delete()
         for key in [body_key, *view_keys]:
             try:
                 store.delete(key)
@@ -196,7 +198,7 @@ def ingest_source_document(*, tenant_id, project_id, filename, mime, content,
                 pass
         raise
     return {"source_document_id": str(src.id), "status": "extracted",
-            "artifact_ids": [artifact["id"]], "title": title}
+            "artifact_ids": [], "title": title}
 
 
 def adopt_source_document(*, tenant_id, source_document_id, user_id, target_type=None) -> dict:
@@ -219,11 +221,15 @@ def adopt_source_document(*, tenant_id, source_document_id, user_id, target_type
         src = SourceDocument.objects.get(id=source_document_id, tenant_id=tenant_id)
         artifact_ids = [str(x) for x in src.extracted_artifact_ids]
         if src.status == SourceDocument.Status.ADOPTED:
-            # `vision: None` = this call started nothing (the document was already adopted, so any
-            # vision pass it needed ran with the first adopt). Keeps the key present in every
-            # adopt response so the UI never has to special-case its absence.
-            return {"source_document_id": str(src.id), "status": "adopted",
-                    "artifact_ids": artifact_ids, "idempotent": True, "vision": None}
+            retry_filename = src.filename
+            retry_project = str(src.project_id)
+            retry_title = (src.provenance or {}).get("title") or src.filename
+            return _readopt(
+                tenant_id=tenant_id, project_id=retry_project,
+                source_document_id=str(src.id), artifact_ids=artifact_ids,
+                filename=retry_filename, title=retry_title, user_id=user_id,
+                target_type=target_type,
+            )
         if src.status != SourceDocument.Status.EXTRACTED:
             raise OnboardingError(f"not ready for adoption (status={src.status})")
         # Adoption is a review gate: the product_owner decides — OR an admin who can approve
@@ -242,6 +248,9 @@ def adopt_source_document(*, tenant_id, source_document_id, user_id, target_type
                 f"user {user_id} lacks role 'product_owner' for this project"
             )
 
+    # Documents uploaded before artifacts moved to adopt-time already have their draft artifact:
+    # publish and reclassify it as before. Nothing re-registers it, so re-adopting an old document
+    # can never mint a duplicate.
     for aid in artifact_ids:
         tools.update_artifact(tenant_id, aid, status="published", type=target_type)
     with tenant_context(tenant_id):
@@ -250,18 +259,97 @@ def adopt_source_document(*, tenant_id, source_document_id, user_id, target_type
         src.save(update_fields=["status", "updated_at"])
         filename = src.filename
         project_id = str(src.project_id)
+        has_pages = bool((src.provenance or {}).get("page_images")) or bool(artifact_ids)
+        doc_title = (src.provenance or {}).get("title") or src.filename
         tools.log_event(tenant_id, f"user:{user_id}", "source_document.adopted",
                         "source_document", str(src.id),
                         {"artifact_ids": artifact_ids, "target_type": target_type})
-    # Part B (B3): read the adopted document's visual content into faithful text on the companion
-    # (document-vision, 00e), auto-applied. Best-effort and non-blocking — adoption has already
-    # succeeded and must never fail on this enhancement.
+    # Part B: read the document's visual content into faithful text on the user's machine
+    # (document-vision, 00e). For a document uploaded after artifacts moved to adopt time, the
+    # vision run is what REGISTERS the artifact — so when vision can't run, adopt must register
+    # the plain extraction itself, or the document would be adopted with nothing to show for it.
+    # Never fails adoption either way: the document is already adopted by this point.
     vision = _maybe_trigger_vision(
         tenant_id=tenant_id, project_id=project_id, source_document_id=str(source_document_id),
         artifact_ids=artifact_ids, filename=filename, user_id=user_id,
-    )
+        target_type=target_type, title=doc_title,
+    ) if has_pages else _vision_status("no_visuals")
+    if not artifact_ids and vision["state"] != "running":
+        # No pages to read, no machine connected, or the dispatch failed — the extraction is the
+        # document's content, so register it now rather than leave the document empty.
+        artifact_ids = [register_extracted_artifact(
+            tenant_id=tenant_id, source_document_id=str(source_document_id),
+            target_type=target_type,
+        )]
     return {"source_document_id": str(source_document_id), "status": "adopted",
             "artifact_ids": artifact_ids, "target_type": target_type, "vision": vision}
+
+
+def _readopt(*, tenant_id, project_id, source_document_id, artifact_ids, filename, title,
+             user_id, target_type) -> dict:
+    """Adopt called on a document that is already adopted.
+
+    Adopting twice used to be a plain no-op, which is right when the first adopt worked — but it
+    left the user no way back when the reading of a document's pages FAILED. They were told to
+    adopt again and nothing happened. So a re-adopt now retries the reading when the last attempt
+    failed, and stays a no-op otherwise. The document is adopted either way; only the pass that
+    makes its diagrams legible is retried.
+    """
+    states = vision_states_for_documents(
+        tenant_id=tenant_id, project_id=project_id,
+        source_document_ids=[str(source_document_id)])
+    last = states.get(str(source_document_id))
+    if last is None or last["state"] != "failed":
+        # Nothing failed → nothing to retry. `vision: None` = this call started nothing; the key
+        # stays present in every adopt response so the UI never special-cases its absence.
+        return {"source_document_id": str(source_document_id), "status": "adopted",
+                "artifact_ids": artifact_ids, "idempotent": True, "vision": None}
+    vision = _maybe_trigger_vision(
+        tenant_id=tenant_id, project_id=project_id, source_document_id=str(source_document_id),
+        artifact_ids=artifact_ids, filename=filename, user_id=user_id,
+        target_type=target_type, title=title,
+    )
+    return {"source_document_id": str(source_document_id), "status": "adopted",
+            "artifact_ids": artifact_ids, "idempotent": True, "retried": True, "vision": vision}
+
+
+def register_extracted_artifact(*, tenant_id, source_document_id, target_type=None) -> str:
+    """Register an adopted document's plain extraction as its artifact — version 1, published.
+
+    This is the document's content when its pages were never read: a text-only upload, no machine
+    connected, or a vision pass that failed. Because the upload no longer registers anything, this
+    is the only thing standing between "adopted" and "the registry has nothing for this document".
+
+    Idempotent by design — if the document already has an artifact (an older upload's draft, or a
+    vision pass that got there first), that one stands and its id comes back unchanged. Both this
+    and the vision run can reach for the same document, and neither may produce a second artifact.
+    """
+    from apps.integrations.models import SourceDocument
+    from apps.tenancy.context import tenant_context
+
+    with tenant_context(tenant_id):
+        src = SourceDocument.objects.get(id=source_document_id, tenant_id=tenant_id)
+        existing = [str(x) for x in (src.extracted_artifact_ids or [])]
+        if existing:
+            return existing[0]
+        prov = src.provenance or {}
+        project_id = str(src.project_id)
+        filename = src.filename
+    artifact = tools.register_artifact(
+        tenant_id, project_id, None, phase="onboarding",
+        type=target_type or prov.get("artifact_type") or "document",
+        sor="internal", content_hash=prov.get("extracted_hash", ""),
+        s3_key=prov.get("extracted_s3_key", ""), title=prov.get("title") or filename,
+        external_ref={"source": "static_file", "filename": filename,
+                      "source_document_id": str(source_document_id),
+                      "source_s3_key": prov.get("source_s3_key"),
+                      "page_images": prov.get("page_images") or []},
+    )
+    tools.update_artifact(tenant_id, artifact["id"], status="published")
+    with tenant_context(tenant_id):
+        SourceDocument.objects.filter(id=source_document_id, tenant_id=tenant_id).update(
+            extracted_artifact_ids=[artifact["id"]])
+    return str(artifact["id"])
 
 
 #: What the user is told about the vision pass after adopting (Part B fix 3). Adoption itself
@@ -296,12 +384,13 @@ _VISION_RUN_STATES = {
                           "text."),
     "approved": ("done", "The diagrams and screenshots in this document have been read into "
                          "text."),
-    "failed": ("failed", "Reading this document's diagrams did not finish. The adopted text is "
-                         "unaffected — you can adopt it again to retry."),
-    "rejected": ("failed", "Reading this document's diagrams did not finish. The adopted text is "
-                           "unaffected — you can adopt it again to retry."),
-    "stalled": ("failed", "Reading this document's diagrams stopped without finishing (the "
-                          "companion did not report back). The adopted text is unaffected."),
+    "failed": ("failed", "Reading this document's diagrams didn't finish, so it holds the plain "
+                         "extracted text for now. Adopt it again to retry."),
+    "rejected": ("failed", "Reading this document's diagrams didn't finish, so it holds the plain "
+                           "extracted text for now. Adopt it again to retry."),
+    "stalled": ("failed", "Reading this document's diagrams stopped without finishing — your "
+                          "machine didn't report back. It holds the plain extracted text for "
+                          "now. Adopt it again to retry."),
 }
 
 
@@ -351,7 +440,7 @@ def vision_states_for_documents(*, tenant_id, project_id, source_document_ids) -
 
 
 def _maybe_trigger_vision(*, tenant_id, project_id, source_document_id, artifact_ids, filename,
-                          user_id) -> dict:
+                          user_id, target_type=None, title=None) -> dict:
     """Kick off the document-vision agent (00e) for an adopted document, and report what happened.
 
     Only runs when there is something visual to read (the artifact has preserved `page_images`); a
@@ -364,22 +453,20 @@ def _maybe_trigger_vision(*, tenant_id, project_id, source_document_id, artifact
     companion running got none of the benefit, no message, and no way to know. Every outcome now
     comes back as a state + a plain sentence the adopt response hands to the UI.
     """
-    from apps.registry.models import Artifact
-    from apps.tenancy.context import tenant_context
-
-    if not artifact_ids:
-        return _vision_status("no_visuals")
-    artifact_id = str(artifact_ids[0])
-    with tenant_context(tenant_id):
-        art = Artifact.objects.filter(id=artifact_id, tenant_id=tenant_id).first()
-    if art is None or not (art.external_ref or {}).get("page_images"):
+    pages, _found = tools.page_images_for(tenant_id, str(source_document_id))
+    if not pages:
         return _vision_status("no_visuals")  # nothing visual to read → vision would be a no-op
+    # The run is pointed at the SOURCE DOCUMENT, not an artifact: for a document uploaded after
+    # artifacts moved to adopt time there is no artifact yet — this run is what creates it.
+    # `get_page_images` takes either id, so an older document still resolves through its artifact.
+    artifact_id = str(artifact_ids[0]) if artifact_ids else str(source_document_id)
     try:
         from orchestration.trigger import ActiveRunError, NoCompanionError, trigger_vision
 
         result = trigger_vision(
             tenant_id=tenant_id, project_id=project_id, source_document_id=source_document_id,
             artifact_id=artifact_id, filename=filename, triggered_by=user_id,
+            target_type=target_type, title=title,
         )
     except NoCompanionError as exc:
         # The message is written for a human and tells them exactly what to do — show it.
@@ -657,7 +744,8 @@ def ensure_onboarding_work_item(*, tenant_id, project_id, repo_id=None):
 CARRIER_SOURCES = ("onboarding_carrier", "vision_carrier")
 
 
-def ensure_vision_work_item(*, tenant_id, project_id, source_document_id, artifact_id, filename):
+def ensure_vision_work_item(*, tenant_id, project_id, source_document_id, artifact_id, filename,
+                            target_type=None, title=None):
     """Get-or-create the per-DOCUMENT carrier work item a document-vision (00e) run executes
     against — one per adopted document, so concurrent adopts never collide on a shared carrier and
     the run's completion `done`-transition is harmless. Hidden from the backlog (CARRIER_SOURCES).
@@ -674,12 +762,26 @@ def ensure_vision_work_item(*, tenant_id, project_id, source_document_id, artifa
             external_ref__source="vision_carrier",
             external_ref__source_document_id=str(source_document_id),
         ).first()
-        description = (
-            "Transcribe the adopted document into faithful text. Target document artifact: "
-            f"{artifact_id} (file: {filename}). Read its pages with get_page_images, then "
-            "re-register it as a new version carrying your faithful transcription, passing "
-            f"supersedes={artifact_id} so it versions this document instead of duplicating it."
-        )
+        # Two shapes, because a document uploaded before artifacts moved to adopt time already
+        # HAS an artifact to version, while a new one does not exist in the registry until this
+        # run creates it. The description is the agent's only instruction about which it is.
+        if str(artifact_id) != str(source_document_id):
+            description = (
+                "Transcribe the adopted document into faithful text. Target document artifact: "
+                f"{artifact_id} (file: {filename}). Read its pages with get_page_images, then "
+                "re-register it as a new version carrying your faithful transcription, passing "
+                f"supersedes={artifact_id} so it versions this document instead of duplicating it."
+            )
+        else:
+            description = (
+                "Transcribe the adopted document into faithful text — this run REGISTERS the "
+                f"document's artifact, so it does not exist yet. Source document: {artifact_id} "
+                f"(file: {filename}). Read its pages with get_page_images using that id, read the "
+                "already-extracted text with get_source_extraction, then register ONE artifact "
+                f"with phase=\"onboarding\", type=\"{target_type or 'document'}\", "
+                f"title=\"{title or filename}\" carrying the extracted text AND everything the "
+                "pages hold. Do not pass supersedes — there is nothing to supersede."
+            )
         if existing is not None:
             # Keep the pointer fresh if the doc was re-adopted (the artifact id can change).
             existing.description = description

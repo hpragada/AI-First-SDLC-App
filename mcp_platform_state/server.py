@@ -86,13 +86,23 @@ def get_artifact_body(artifact_id: str, state: str | None = None) -> dict:
 
 
 @server.tool()
+def get_source_extraction(source_document_id: str) -> dict:
+    """Read the text already extracted from an uploaded document, straight from the document
+    itself. Use this when your work item names a SOURCE DOCUMENT rather than an artifact — the
+    document has no artifact until your run registers one, so `get_artifact_body` has nothing to
+    read. Your transcription must preserve this text and add what the pages hold."""
+    return tools.get_source_extraction(_tenant(), source_document_id)
+
+
+@server.tool()
 def get_page_images(artifact_id: str, start: int = 0) -> list:
-    """SEE the original uploaded pages of a document artifact as images — the diagrams,
-    screenshots, wireframes, scanned pages and tables-as-pictures the extracted markdown
-    (get_artifact_body) can't carry. Returns a one-line text summary then the page images as
-    viewable image blocks. Paginated: a few pages per call; the summary gives a `next_start`,
-    so call get_page_images(artifact_id, start=<next_start>) until it is the last batch. Read
-    the images, then transcribe what you see into faithful text."""
+    """SEE the original uploaded pages of a document as images — the diagrams, screenshots,
+    wireframes, scanned pages and tables-as-pictures the extracted markdown can't carry. Accepts
+    either a SOURCE DOCUMENT id or an artifact id, whichever your work item names. Returns a
+    one-line text summary then the page images as viewable image blocks. Paginated: a few pages
+    per call; the summary gives a `next_start`, so call get_page_images(id, start=<next_start>)
+    until it is the last batch. Read the images, then transcribe what you see into faithful
+    text."""
     import base64
 
     from mcp.server.fastmcp import Image as McpImage

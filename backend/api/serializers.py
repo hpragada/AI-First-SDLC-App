@@ -592,13 +592,12 @@ class SourceDocumentSerializer(serializers.ModelSerializer):
         return (obj.provenance or {}).get("fidelity", "")
 
     def get_page_images(self, obj) -> list:
-        aids = list(obj.extracted_artifact_ids or [])
-        if not aids:
-            return []
-        from apps.registry.models import Artifact
+        # Resolved through the shared helper so it works both for documents that keep their pages
+        # on the document (uploads since artifacts moved to adopt time) and older ones that keep
+        # them on the artifact the upload registered. Never leaks the S3 key.
+        from mcp_platform_state.tools import page_images_for
 
-        art = Artifact.objects.filter(id=aids[0], tenant_id=obj.tenant_id).first()
-        imgs = ((art.external_ref or {}).get("page_images") if art else None) or []
+        imgs, _found = page_images_for(str(obj.tenant_id), str(obj.id))
         return [{"name": im.get("name"), "page": im.get("page")} for im in imgs]
 
 

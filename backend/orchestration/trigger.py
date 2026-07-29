@@ -275,7 +275,7 @@ _VISION_AGENT_KEY = "00e_document_vision"
 
 def trigger_vision(
     *, tenant_id, project_id, source_document_id, artifact_id, filename,
-    triggered_by=None, workflow_starter=None,
+    triggered_by=None, workflow_starter=None, target_type=None, title=None,
 ) -> TriggerResult:
     """Run the document-vision agent (00e) on the user's companion for ONE adopted document
     (Part B). Reads the document's preserved page images and re-registers it as a faithful new
@@ -296,7 +296,7 @@ def trigger_vision(
         )
     work_item = ensure_vision_work_item(
         tenant_id=tenant_id, project_id=project_id, source_document_id=source_document_id,
-        artifact_id=artifact_id, filename=filename,
+        artifact_id=artifact_id, filename=filename, target_type=target_type, title=title,
     )
     return trigger_phase(
         tenant_id=tenant_id, project_id=project_id, work_item_id=str(work_item.id),
