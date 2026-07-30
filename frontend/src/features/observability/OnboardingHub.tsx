@@ -108,6 +108,18 @@ function RegisterToolsStep({
               <Button variant="secondary" onClick={() => setConnectCap("tasktracker")}>Connect Jira</Button>
             )}
           </div>
+          {/* S3-15: say what the import actually covered. The old screen showed only the count it
+              created, so an import that reached its cap and left issues behind in Jira looked
+              identical to one that brought everything — which is exactly how 25-of-68 went
+              unnoticed. Silent on the happy path; loud only when something was left behind. */}
+          {onboardAtlassian.isSuccess && onboardAtlassian.data && (
+            <p className="t-sm" style={{ marginTop: "var(--space-2)",
+                 color: onboardAtlassian.data.truncated ? "var(--warning)" : "var(--success)" }}>
+              {onboardAtlassian.data.truncated
+                ? `Imported ${onboardAtlassian.data.issues_seen} of ${onboardAtlassian.data.issues_available} issues — this project is larger than one import can take. Re-import to bring in the rest.`
+                : `Brought in ${onboardAtlassian.data.registered_issues.length} new issue${onboardAtlassian.data.registered_issues.length === 1 ? "" : "s"}${(onboardAtlassian.data.issues_available ?? -1) >= 0 ? ` · ${onboardAtlassian.data.issues_available} in Jira` : ""}.`}
+            </p>
+          )}
         </div>
 
         {/* Confluence — the user provides the specific typed page links (B3-4), no space crawl. */}
@@ -204,7 +216,9 @@ function ConfluenceLinkForm({ projectId }: { projectId: string }) {
               this paste box once collapsed to an unusable sliver. `minWidth: 0` lets it actually
               shrink-to-fit rather than be forced wide by its placeholder. */}
           <Input
-            placeholder="https://…/wiki/…/pages/12345  ·  or  12345"
+            /* S3-10: the short "Copy link" form (…/wiki/x/AYAkAQ) is accepted too — it is the one
+               the Confluence UI actually hands you, so it belongs in the example. */
+            placeholder="https://…/wiki/…/pages/12345  ·  https://…/wiki/x/AYAkAQ  ·  or  12345"
             value={r.page}
             onChange={(e) => setRow(i, { page: e.target.value })}
             style={{ flex: "1 1 auto", minWidth: 0 }}
@@ -388,6 +402,15 @@ function OnboardingHubLive() {
   }
 
   const uploadDone = data.upload.length > 0 && data.upload.every((d) => d.status === "extracted" || d.status === "adopted");
+  // S3-14: a linked Confluence page is a source document, so it belongs in this list — but it was
+  // never "uploaded", and counting it as one made this step contradict the one below it ("11
+  // documents uploaded" over "2 pages linked"). Split the sentence, don't split the list.
+  const linkedCount = data.upload.filter((d) => d.origin === "confluence").length;
+  const uploadedCount = data.upload.length - linkedCount;
+  const sourcesSummary = [
+    uploadedCount > 0 ? `${uploadedCount} document${uploadedCount === 1 ? "" : "s"} uploaded` : "",
+    linkedCount > 0 ? `${linkedCount} page${linkedCount === 1 ? "" : "s"} linked` : "",
+  ].filter(Boolean).join(" · ") + ".";
   const repoCount = repos.data?.length ?? 0;
   const reposDone = repoCount > 0;
   const indexDone = data.index.status === "indexed";
@@ -417,7 +440,7 @@ function OnboardingHubLive() {
             desc={
               data.upload.length === 0
                 ? "Drag in existing specs, PRDs, designs (.docx · .pdf · .xlsx · .txt · .html)."
-                : `${data.upload.length} document${data.upload.length === 1 ? "" : "s"} uploaded.`
+                : sourcesSummary
             }
             state={uploadDone ? "done" : data.upload.length > 0 ? "running" : "active"}
           >

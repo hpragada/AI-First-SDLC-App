@@ -15,6 +15,12 @@ from .rest import AtlassianRest, Transport
 
 _SOR = "jira"
 
+#: Rows per Jira request. 100 is Jira Cloud's practical page maximum for this endpoint.
+_PAGE_SIZE = 100
+#: Runaway guard for a single `search` — high enough that no real backlog reaches it, low enough
+#: that a pathological JQL can't page forever. Reaching it is reported, never silent (S3-15).
+_SEARCH_LIMIT = 5000
+
 
 def _adf(text: str) -> dict:
     """Minimal Atlassian Document Format doc wrapping plain text."""
@@ -118,12 +124,43 @@ class AtlassianTaskTracker:
         query = {"deleteSubtasks": "true"} if delete_subtasks else None
         self._rest.request("DELETE", f"/rest/api/3/issue/{issue_ref}", query=query)
 
-    def search(self, *, jql: str) -> list[IssueHit]:
-        data = self._rest.request(
-            "POST", "/rest/api/3/search/jql",
-            body={"jql": jql, "maxResults": 25, "fields": ["summary"]},
-        )
-        return [
-            IssueHit(key=i["key"], summary=(i.get("fields") or {}).get("summary", ""))
-            for i in (data or {}).get("issues", [])
-        ]
+    def search(self, *, jql: str, limit: int = _SEARCH_LIMIT) -> list[IssueHit]:
+        """Every issue matching `jql`, following Jira's paging to the end (S3-15).
+
+        This used to send `maxResults: 25` and read one page. Jira answered with 25 rows and a
+        `nextPageToken` nobody looked at, so a backlog import took the first 25 issues and
+        reported success — on a real 68-issue project that silently dropped all 14 Epics and all
+        15 Stories, keeping only subtasks. `limit` is a runaway guard, not a page size: callers
+        that need to know whether it bit should compare against `count()`.
+        """
+        out: list[IssueHit] = []
+        token: str | None = None
+        while len(out) < limit:
+            body: dict = {
+                "jql": jql,
+                "maxResults": min(_PAGE_SIZE, limit - len(out)),
+                "fields": ["summary"],
+            }
+            if token:
+                body["nextPageToken"] = token
+            data = self._rest.request("POST", "/rest/api/3/search/jql", body=body) or {}
+            for i in data.get("issues", []):
+                out.append(
+                    IssueHit(key=i["key"], summary=(i.get("fields") or {}).get("summary", ""))
+                )
+            token = data.get("nextPageToken")
+            if not token:
+                break
+        return out
+
+    def count(self, *, jql: str) -> int:
+        """How many issues Jira says match `jql` — so an import can report "68 of 68" and notice
+        when it didn't get everything. Returns -1 when Jira won't answer, which callers read as
+        "unknown" rather than as zero."""
+        try:
+            data = self._rest.request(
+                "POST", "/rest/api/3/search/approximate-count", body={"jql": jql}
+            ) or {}
+            return int(data.get("count", -1))
+        except Exception:  # noqa: BLE001 — a missing count must never fail the import itself
+            return -1

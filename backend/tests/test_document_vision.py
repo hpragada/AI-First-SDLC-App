@@ -1,6 +1,7 @@
 """Part B2 — document-vision (00e): per-document carrier, auto-apply run path, and the adopt
 trigger. DB-backed (the platform's cloud DB); these run in CI, not against the local no-DB env."""
 import pytest
+from django.db.models import Q
 from mcp_platform_state import tools
 
 from apps.integrations.models import SourceDocument
@@ -91,18 +92,30 @@ def test_ensure_vision_work_item_is_hidden_carrier_and_idempotent():
 
 @pytest.mark.django_db
 def test_carriers_excluded_by_hide_filter():
-    """The user-facing list applies exclude(external_ref__source__in=CARRIER_SOURCES); both the
-    onboarding and vision carriers are hidden, a normal story is not."""
+    """The user-facing list hides both carriers and shows everything else (S3-13).
+
+    The third item is the whole point of this test. `external_ref` is nullable, so the earlier
+    version — one story with a NULL ref — exercised the ONLY shape the old filter got right, and
+    passed while the backlog was empty in the running product. A Jira import carries a REAL dict
+    with no `source` key, and for that row `NULL IN (…)` → NULL → `NOT NULL` → NULL, so Postgres
+    dropped it. Keep a dict-without-`source` row here or this test proves nothing.
+    """
     t, p = _tenant_project()
     ensure_onboarding_work_item(tenant_id=str(t.id), project_id=str(p.id))
     ensure_vision_work_item(tenant_id=str(t.id), project_id=str(p.id), source_document_id="d",
                             artifact_id="a", filename="f.pdf")
     story = WorkItem.objects.create(tenant=t, project=p, type=WorkItem.Type.STORY, title="real")
+    imported = WorkItem.objects.create(
+        tenant=t, project=p, type=WorkItem.Type.TASK, title="ST-447",
+        external_ref={"sor": "jira", "id": "ST-447", "url": "https://x/browse/ST-447"},
+    )
     visible = list(
         WorkItem.objects.filter(tenant_id=t.id, project_id=p.id)
-        .exclude(external_ref__source__in=CARRIER_SOURCES)
+        .exclude(Q(external_ref__has_key="source")
+                 & Q(external_ref__source__in=CARRIER_SOURCES))
+        .order_by("created_at")
     )
-    assert visible == [story]
+    assert visible == [story, imported]
 
 
 # ── trigger_vision ──────────────────────────────────────────────────

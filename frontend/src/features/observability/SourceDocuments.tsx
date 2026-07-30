@@ -55,8 +55,19 @@ export const ADOPT_TYPES: { value: string; label: string }[] = [
 // BF-BUG-1: show a short, human file-type label instead of the raw MIME string — the DOCX
 // content-type is 70 chars and wraps, misaligning the status badge. Derives from MIME first,
 // then the filename extension as a fallback.
+// S3-11: one place that answers "is this row a linked Confluence page rather than an uploaded
+// file?". The backend stamps `text/confluence-storage` as the mime when it snapshots a page, so no
+// API change is needed — but two separate labels depend on the answer, so it lives here once.
+export function isConfluencePage(mime: string): boolean {
+  return (mime || "").toLowerCase() === "text/confluence-storage";
+}
+
 export function fileKindLabel(mime: string, filename: string): string {
   const m = (mime || "").toLowerCase();
+  // S3-11: a linked Confluence page is not a file and has no extension, so every other branch
+  // here missed it and it fell through to the bare "File". Checked FIRST, before the extension
+  // guess, because a page TITLE can look like it has one — "Release 1.2" would read as ext "2".
+  if (isConfluencePage(m)) return "Confluence page";
   const ext = filename.includes(".") ? filename.split(".").pop()!.toLowerCase() : "";
   if (m.includes("wordprocessingml") || ext === "docx") return "Word (DOCX)";
   if (m.includes("spreadsheetml") || ext === "xlsx") return "Excel (XLSX)";
@@ -235,7 +246,15 @@ function SourceDocRow({
             <div className="artifact-row__title">{doc.filename}</div>
             <div className="artifact-row__meta">
               {fileKindLabel(doc.mime, doc.filename)}
-              {pageCount > 0 && ` · ${pageCount} page${pageCount > 1 ? "s" : ""} captured`}
+              {/* S3-11: `page_count` means two different things and the label has to follow. For an
+                  UPLOAD it is how many pages of the file were rendered as images — "1 page
+                  captured". For a linked Confluence page there is exactly one page; the count is
+                  its ATTACHED images, so "1 page captured" was both wrong and baffling next to a
+                  document the user knows is one page long. */}
+              {pageCount > 0 &&
+                (isConfluencePage(doc.mime)
+                  ? ` · ${pageCount} attached image${pageCount > 1 ? "s" : ""}`
+                  : ` · ${pageCount} page${pageCount > 1 ? "s" : ""} captured`)}
             </div>
           </div>
           <Badge variant={badge.variant as never}>{badge.label}</Badge>

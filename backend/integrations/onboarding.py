@@ -18,6 +18,8 @@ product_owner gate, #5). Gap-*fill* generation is then the normal phase agents, 
 """
 from __future__ import annotations
 
+import base64
+import binascii
 from urllib.parse import parse_qs, urlparse
 
 from mcp_platform_state import tools
@@ -744,32 +746,97 @@ def register_atlassian(*, tenant_id, project_id, tasktracker=None, project_key=N
             if w.external_ref
         }
 
+    jql = f'project = "{project_key}"' if project_key else ""
+    hits = tasktracker.search(jql=jql) if jql else []
+    # S3-15: what Jira SAYS it has, so a partial import can admit it. -1 = Jira wouldn't answer;
+    # the caller then reports a plain count rather than inventing a total.
+    available = tasktracker.count(jql=jql) if (jql and hasattr(tasktracker, "count")) else -1
+
+    # Read every matching issue, INCLUDING ones already registered. Re-import is a reconcile, not
+    # an append: reading only the new keys would leave anything imported before this fix
+    # permanently parentless, since a work item's parent is resolved here and nowhere else.
+    # `get_issue` on a known key is a cheap read and creates nothing.
+    fetched = [tasktracker.get_issue(issue_ref=hit.key) for hit in hits]
+
     registered_issues: list[str] = []
-    for hit in (tasktracker.search(jql=f'project = "{project_key}"') if project_key else []):
-        if hit.key in existing_issues:
-            continue
-        issue = tasktracker.get_issue(issue_ref=hit.key)
-        with tenant_context(tenant_id):
-            project = Project.objects.get(id=project_id, tenant_id=tenant_id)
+    by_key: dict[str, object] = {}
+    with tenant_context(tenant_id):
+        project = Project.objects.get(id=project_id, tenant_id=tenant_id)
+        by_key = {
+            (w.external_ref or {}).get("id"): w
+            for w in WorkItem.objects.filter(tenant_id=tenant_id, project_id=project_id)
+            if (w.external_ref or {}).get("sor") == "jira"
+        }
+        for issue in fetched:
+            if issue.key in existing_issues:
+                continue        # already registered — never recreate (spec §6)
             wi = WorkItem.objects.create(
                 tenant_id=tenant_id, project=project,
                 type=_ISSUE_TYPE.get(issue.issue_type, "task"), title=issue.summary,
                 state=WorkItem.State.ACCEPTED,
                 external_ref={"sor": "jira", "id": issue.key, "url": issue.url},
             )
+            by_key[issue.key] = wi
             tools.log_event(tenant_id, "onboarding", "issue.registered", "work_item",
                             str(wi.id), {"issue": issue.key})
-        registered_issues.append(hit.key)
+            registered_issues.append(issue.key)
 
-    return {"registered_issues": registered_issues, "tasktracker_connected": True}
+        # S3-15: carry Jira's hierarchy across. `get_issue` always returned `parent_ref` and the
+        # import threw it away, so an imported backlog was a flat pile of subtasks sitting beside
+        # the Epics and Stories they belong to, unrelated. Runs over every fetched issue, so a
+        # re-import also repairs rows imported before this existed. Only ever SETS a missing
+        # parent — a parent edited in the platform is not overwritten by Jira, and an issue whose
+        # parent lives outside this project simply stays top-level rather than erroring.
+        for issue in fetched:
+            child = by_key.get(issue.key)
+            parent = by_key.get(issue.parent_ref) if issue.parent_ref else None
+            if child is not None and parent is not None and child.parent_id is None:
+                child.parent = parent
+                child.save(update_fields=["parent", "updated_at"])
+
+    return {
+        "registered_issues": registered_issues,
+        "tasktracker_connected": True,
+        # Everything the UI needs to tell the truth about a partial import.
+        "issues_available": available,
+        "issues_seen": len(hits),
+        "truncated": available >= 0 and len(hits) < available,
+    }
+
+
+def _decode_confluence_tiny_code(code: str) -> str | None:
+    """Decode a Confluence "tiny link" code (`/wiki/x/AYAkAQ`) back into its page id (S3-10).
+
+    That short form is what the *Copy link* button hands you in the current editor, so it is the
+    link a user is most likely to paste — and it is not opaque: the code is base64 of the page id
+    as little-endian bytes, with `=` padding dropped. `AYAkAQ` → `01 80 24 01` → 19169281.
+
+    Confluence swaps `/`→`-` and `+`→`_`, which is the OPPOSITE of Python's urlsafe alphabet, so
+    both mappings are attempted — a code containing neither character (the common case) decodes
+    identically either way, and trying both costs nothing.
+    """
+    code = (code or "").strip()
+    if not code or len(code) > 16:
+        return None
+    for plus, slash in (("_", "-"), ("-", "_")):
+        candidate = code.replace(plus, "+").replace(slash, "/")
+        candidate += "=" * (-len(candidate) % 4)
+        try:
+            data = base64.b64decode(candidate, validate=True)
+        except (ValueError, binascii.Error):
+            continue
+        page_id = int.from_bytes(data, "little")
+        if page_id > 0:
+            return str(page_id)
+    return None
 
 
 def _parse_confluence_page_id(raw: str) -> str | None:
     """Extract a Confluence page id from a pasted link or a bare id (B3-4). Handles Cloud
-    (`/wiki/spaces/<SPACE>/pages/<id>/<slug>` or `.../pages/<id>`) and Server/DC
-    (`viewpage.action?pageId=<id>`); a bare numeric id passes through. Returns `None` if no id
-    can be found — the caller then shows a "paste the full URL or the page ID" error. "Tiny"
-    share links (`/x/<code>`) can't be resolved offline, so those fall back to that message."""
+    (`/wiki/spaces/<SPACE>/pages/<id>/<slug>` or `.../pages/<id>`), Server/DC
+    (`viewpage.action?pageId=<id>`) and "tiny" share links (`/wiki/x/<code>`, decoded locally —
+    see `_decode_confluence_tiny_code`); a bare numeric id passes through. Returns `None` if no id
+    can be found — the caller then shows a "paste the full URL or the page ID" error."""
     if not raw:
         return None
     raw = raw.strip()
@@ -788,6 +855,10 @@ def _parse_confluence_page_id(raw: str) -> str | None:
     for i, seg in enumerate(segments):
         if seg == "pages" and i + 1 < len(segments) and segments[i + 1].isdigit():
             return segments[i + 1]
+    # Tiny share link: .../wiki/x/<code> (the `x` segment is what marks it as one).
+    for i, seg in enumerate(segments):
+        if seg == "x" and i + 1 < len(segments):
+            return _decode_confluence_tiny_code(segments[i + 1])
     return None
 
 
@@ -1428,7 +1499,12 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
 
     gap = read_gap_report(tenant_id=tenant_id, project_id=project_id)
     return {
-        "upload": [{"id": str(d.id), "filename": d.filename, "status": d.status} for d in docs],
+        # S3-14: `origin` lets the step say "9 documents uploaded · 2 pages linked" instead of
+        # calling a linked Confluence page an upload. Additive and defaulted, so a project with no
+        # linked pages — every greenfield one — reports "upload" for every row and reads exactly
+        # as it did before.
+        "upload": [{"id": str(d.id), "filename": d.filename, "status": d.status,
+                    "origin": (d.provenance or {}).get("origin") or "upload"} for d in docs],
         "adopt": [{"id": str(d.id), "filename": d.filename}
                  for d in docs if d.status == SourceDocument.Status.EXTRACTED],
         "register": {

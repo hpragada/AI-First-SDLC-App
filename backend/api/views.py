@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -968,8 +968,19 @@ class WorkItemViewSet(
         # user-facing work-item LIST (backlog/board). Direct retrieval by id still resolves (in
         # case a run detail links to one), and the trigger/run machinery resolves them by their
         # external_ref markers regardless; this only affects what the backlog shows.
+        #
+        # S3-13 — the `has_key` guard is LOAD-BEARING, do not "simplify" it away. Without it this
+        # read `exclude(external_ref__source__in=…)`, and for a work item whose external_ref has no
+        # `source` key at all — every Jira import, `{"sor": "jira", "id": "ST-447"}` — Postgres
+        # evaluates `NULL IN (…)` to NULL, `NOT NULL` to NULL, and drops the row. The backlog went
+        # empty for EVERY project (32 → 0 here, 152 → 8 on another), taking Phases & Runs, Gates,
+        # Clarifications and Task Breakdown with it, since they all filter through this list.
+        # Exclude only when the key EXISTS and names a carrier; anything else stays visible.
         if self.action == "list":
-            qs = qs.exclude(external_ref__source__in=CARRIER_SOURCES)
+            qs = qs.exclude(
+                Q(external_ref__has_key="source")
+                & Q(external_ref__source__in=CARRIER_SOURCES)
+            )
         project = self.request.query_params.get("project")
         state = self.request.query_params.get("state")
         type_ = self.request.query_params.get("type")

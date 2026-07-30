@@ -62,6 +62,31 @@ export class ApiError extends Error {
   }
 }
 
+// S3-10: turn an error BODY into a sentence a person can act on.
+// DRF reports validation failures as a nested shape — `{"links":[{"type":["This field is
+// required."]}]}` — and this used to reach the screen as literal JSON, punctuation and all. That
+// is the error a user cannot understand, cannot act on, and cannot even tell apart from a crash.
+// Walks the structure and keeps the leaf messages, which is the only part written for a human.
+// Field names are kept as a prefix when they exist, since "This field is required" alone doesn't
+// say WHICH field; array indices are dropped, because "1" names nothing on screen.
+function humanizeError(data: unknown, fallback: string): string {
+  const msgs: string[] = [];
+  const walk = (node: unknown, label: string) => {
+    if (typeof node === "string") {
+      msgs.push(label ? `${label}: ${node}` : node);
+    } else if (Array.isArray(node)) {
+      node.forEach((child) => walk(child, label));
+    } else if (node && typeof node === "object") {
+      for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
+        walk(child, key === "non_field_errors" || key === "detail" ? label : key);
+      }
+    }
+  };
+  walk(data, "");
+  const unique = [...new Set(msgs.filter((m) => m.trim()))];
+  return unique.length ? unique.join(" ") : fallback;
+}
+
 interface ReqOpts {
   tenantId?: string;
   body?: unknown;
@@ -112,8 +137,7 @@ async function req<T>(method: string, path: string, opts: ReqOpts = {}): Promise
   const text = await res.text();
   const data = text ? JSON.parse(text) : undefined;
   if (!res.ok) {
-    const msg =
-      (data && (data.detail || JSON.stringify(data))) || `${res.status} ${res.statusText}`;
+    const msg = humanizeError(data, `${res.status} ${res.statusText}`);
     if (res.status === 401) {
       window.dispatchEvent(new CustomEvent("auth:unauthorized"));
     }
@@ -132,7 +156,7 @@ async function uploadFile<T>(path: string, file: File): Promise<T> {
   const text = await res.text();
   const data = text ? JSON.parse(text) : undefined;
   if (!res.ok) {
-    const msg = (data && (data.detail || JSON.stringify(data))) || `${res.status} ${res.statusText}`;
+    const msg = humanizeError(data, `${res.status} ${res.statusText}`);
     throw new ApiError(res.status, msg, data);
   }
   return data as T;
@@ -378,8 +402,17 @@ export const api = {
   // Phase 4.8 T5 — brownfield onboarding (4.7 T8). Session-derived tenant.
   getOnboardingHub: (projectId: string) =>
     req<OnboardingHub>("GET", `/projects/${projectId}/onboarding/`),
+  // S3-15: the response reports COMPLETENESS, not just what it created. `issues_available` is
+  // what Jira says exists (-1 when it wouldn't say) and `truncated` means the safety cap bit, so
+  // a partial import can say so instead of reporting a confident subset.
   onboardAtlassian: (projectId: string) =>
-    req<Record<string, unknown>>("POST", `/projects/${projectId}/onboard-atlassian/`),
+    req<{
+      registered_issues: string[];
+      tasktracker_connected: boolean;
+      issues_available?: number;
+      issues_seen?: number;
+      truncated?: boolean;
+    }>("POST", `/projects/${projectId}/onboard-atlassian/`),
   // B3-4: register user-provided Confluence pages as typed pointers (feeds the gap report).
   linkConfluencePages: (projectId: string, links: { page: string; type: string }[]) =>
     req<{

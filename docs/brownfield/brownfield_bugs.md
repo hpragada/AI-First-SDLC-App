@@ -739,3 +739,180 @@ per-developer queue needs no change here, and `.env` is gitignored. Team decisio
 shared queue is only dangerous while people run different code, so it is left as-is and owned by
 the team going forward. Worth re-reading this entry the next time a workflow behaves differently
 between two runs of the same code.
+
+
+## S3-10 · 🔴 "Bring in documents" always failed — three bugs in one paste-a-link path — **✅ FIXED**
+
+Found on the team's first live run of the rebuilt Step 3 (2026-07-30). Pasting two Confluence
+links and pressing **Bring in documents** produced, verbatim on screen:
+
+```
+{"links":[{"type":["This field is required."]},{"type":["This field is required."]}]}
+```
+
+Three separate defects sat behind that one line. They are recorded together because fixing only
+the first would have replaced the error with a different dead end.
+
+### 1. The API still demanded a type the form no longer sends
+
+S3-6 moved classification to the ADOPT step: a linked page is a source document first, and its
+lifecycle type is declared when the human adopts it, exactly as for an uploaded file. The form
+stopped sending `type` and `link_confluence_pages` was updated to default a missing type to
+`document` — but `_ConfluenceLinkSerializer.type` stayed `required=True`, so DRF rejected the
+request before the service that handles its absence ever ran.
+
+**Root cause:** a contract change applied at both ends of the call and not in the validator in the
+middle. **Fix:** `type = CharField(required=False, allow_blank=True)`. `page` stays required.
+
+### 2. The pasted links were "tiny" links, which the parser could not read
+
+Both boxes held `https://<site>/wiki/x/AYAxAQ`. That short form is what the **Copy link** button
+hands you in the current Confluence editor, so it is the link a user is *most* likely to paste —
+and `_parse_confluence_page_id` understood only `/pages/<numeric-id>/…`, `?pageId=`, and a bare
+id. After fix 1 alone, every one of these links would have failed with "couldn't find that page".
+
+**Root cause:** the parser was written against the URL shape you get from the browser address bar,
+not the one the product's own share button produces. The earlier note in that docstring — that
+tiny links "can't be resolved offline" — was simply wrong.
+
+**Fix:** they decode locally, no extra API call. The code is base64 of the page id as
+little-endian bytes with `=` padding dropped: `AYAkAQ` → `01 80 24 01` → **19169281**, which is
+the same Requirements page the S3-6 fix was verified against. Confluence swaps `/`→`-` and
+`+`→`_`, the opposite of Python's urlsafe alphabet, so both mappings are attempted; a code
+containing neither character — the common case — decodes identically either way.
+
+### 3. Raw JSON was shown to the user as an error message
+
+Not specific to this form. `api.ts` built every failure message as `data.detail ||
+JSON.stringify(data)`, so any DRF validation error anywhere in the app reached the screen as a
+literal JSON blob — unreadable, unactionable, and indistinguishable from a crash.
+
+**Fix:** one shared `humanizeError` walks the nested shape and keeps the leaf strings, which are
+the only part written for a human, prefixed by field name where one exists (`This field is
+required` alone doesn't say *which* field). Array indices are dropped — "1" names nothing on
+screen. Duplicates collapse, so two rows failing the same way say it once. Applied at both error
+sites, which fixes every screen, not just this one.
+
+### Verified
+
+- Serializer: a row with no `type` validates; with a `type` still validates; a row with no `page`
+  still fails. Parser: tiny link → `19169281` (matches the known real page), plus `/pages/<id>/`,
+  `?pageId=`, and bare-id forms all unchanged, and unparseable input still returns `None`.
+- `humanizeError` on the exact failing body returns `type: This field is required.`; on
+  `{"detail": …}`, on `non_field_errors`, and on an empty/absent body it returns the sentence or
+  the HTTP fallback.
+- Frontend typechecks clean; vite is serving the new code.
+
+
+## S3-11 · 🟡 A linked Confluence page read as "File · 1 page captured" — **✅ FIXED**
+
+Two labels, two different mistakes, on the same row.
+
+- **"File"** — every branch of `fileKindLabel` tests a file EXTENSION, and a Confluence page has
+  none, so it fell through to the bare fallback. Now returns **"Confluence page"**, checked FIRST:
+  a page TITLE can look like it has an extension ("Release 1.2" → ext `2`).
+- **"1 page captured"** — `page_count` means two different things. For an upload it is how many
+  pages of the file were rendered as images. For a linked page there is exactly one page and the
+  count is its ATTACHED images, so the row told the user a one-page document has one page. Now
+  **"1 attached image"**.
+
+Discriminator is the mime the backend already stamps (`text/confluence-storage`) via a single
+`isConfluencePage()` helper — no API change. Team considered "Confluence page/file"; kept the
+single noun, since the flow only ever accepts page links and the sibling rows say "PDF"/"Word".
+Revisit if linking Confluence ATTACHMENTS is ever added, where the row really could be either.
+
+## S3-12 · 🟠 Gates badge said 1, the Gates page said "Pending (0)" — **✅ CLOSED BY S3-13**
+
+Logged as its own defect, then proved to be a symptom. First diagnosis (the gate's `required_role`
+being one the user doesn't hold) was WRONG — role never enters the filter. The Gates screen keeps
+only approvals whose work item appears in the work-items list, and S3-13 had emptied that list
+entirely. Fixing S3-13 fixed this. **Consequence worth remembering:** the badge pointed at a
+screen that could never show the gate, so a legitimately-opened gate would have been unreachable
+through the UI — nobody could approve it and the document would sit half-published forever.
+Re-check this pairing whenever the work-item list gains another filter.
+
+## S3-13 · 🔴 The backlog was empty for EVERY project — **✅ FIXED** (branch-local, never reached develop)
+
+Introduced by me in `d507b99` (2026-07-28) while hiding vision carriers from the backlog:
+
+```python
+qs = qs.exclude(external_ref__source__in=CARRIER_SOURCES)     # the bug
+```
+
+**Root cause — SQL three-valued logic on a MISSING json key.** A Jira import carries
+`{"sor": "jira", "id": "ST-447"}` with no `source` key, so `external_ref -> 'source'` is NULL,
+`NULL IN (…)` is NULL, `NOT NULL` is NULL, and the row is dropped. The rule actually written was
+"hide any work item that has an `external_ref` without a `source` key". Measured: **32 → 0** on the
+brownfield project, **152 → 8** on another (the 8 survivors being rows whose `external_ref` is
+column-NULL, which Django's added `IS NOT NULL` guard rescued — the one shape that worked).
+
+**Blast radius:** the work-item list feeds Work Items, Phases & Runs (so nothing could be
+triggered), Gates, Clarifications, Task Breakdown and the board. `git branch --contains` confirmed
+the line existed ONLY on `brownfield-agent-onboarding` — develop was never affected, but a merge
+would have broken every project, greenfield included.
+
+**Fix** — exclude only when the key EXISTS *and* names a carrier:
+
+```python
+qs = qs.exclude(Q(external_ref__has_key="source")
+                & Q(external_ref__source__in=CARRIER_SOURCES))
+```
+
+Verified: brownfield **0 → 25**, greenfield **8 → 152**, 7 carriers still hidden, 0 leaked.
+
+**The test was giving false confidence and was fixed too.** `external_ref` is nullable and the old
+test's only real row had a NULL ref — the single shape the broken filter handled correctly — so it
+passed while the product's backlog was empty. It now also creates a Jira-shaped row, with a comment
+marking the `has_key` guard as load-bearing. **A test that only covers the shape you invented is
+not coverage** — this is the lesson worth carrying, not the one-line fix.
+
+## S3-14 · 🟡 "11 documents uploaded" counted pages nobody uploaded — **✅ FIXED**
+
+9 files + 2 linked Confluence pages, all reported as uploads, directly above a step correctly
+saying "2 pages linked". `onboarding_hub` now returns `origin` per document ("upload" by default,
+"confluence" for a linked page) and the step composes **"9 documents uploaded · 2 pages linked"**.
+Additive and defaulted, so a project with no linked pages — every greenfield one — renders exactly
+the sentence it did before.
+
+## S3-15 · 🔴 The Jira import silently stopped at 25 issues — **✅ FIXED** (⚠️ ALSO LIVE ON DEVELOP)
+
+`AtlassianTaskTracker.search` sent `maxResults: 25` and read ONE page. Jira returned 25 rows plus a
+`nextPageToken` nobody looked at, so the import took the first 25 and reported success.
+
+**Measured on a real project: Jira held 68 issues (14 Epic · 15 Story · 38 Subtask · 1 Task); 25
+were imported, all Subtasks.** The cut removed every Epic and every Story — precisely the tier a
+user triggers a phase on. What remained was the bottom of a hierarchy whose top never arrived.
+
+> **⚠️ This is NOT branch-local.** `origin/develop` carries the identical line, so any project with
+> more than 25 Jira issues has been importing a silent subset. Flagged to the team separately.
+
+Also corrected here: an earlier claim that `_ISSUE_TYPE` failed to recognise the issue types was
+**wrong** — all 25 really were `Subtask`, which maps to `task` correctly. The mapping was never the
+problem; the cap was.
+
+**Fixed in three parts:**
+1. **Page to the end** — follow `nextPageToken`, 100 per request, with a stated `_SEARCH_LIMIT`
+   runaway guard. A cap is fine; a cap pretending to be everything is not.
+2. **Never report a silent subset** — new `count()` (Jira's approximate-count; returns -1 when Jira
+   won't answer, read as "unknown", never as zero) lets the response carry
+   `issues_available`/`issues_seen`/`truncated`, and the screen says "Imported N of M" when the cap
+   bites. Silent on the happy path, loud only when something was left behind.
+3. **Carry the hierarchy** — `get_issue` always returned `parent_ref` and the import discarded it.
+   Parents are attached in a SECOND pass after every row exists, so Jira's ordering cannot matter.
+
+**Re-import is now a reconcile, not an append.** It re-reads keys it already holds, so rows
+imported before this fix get their parents filled in — verified: the 25 pre-existing rows went from
+0 parented to 25 parented without any deletion or re-import from scratch. Parent is only ever set
+when currently empty, so a parent edited in the platform is never overwritten by Jira.
+
+**Verified live:** 43 newly registered, 68 total, `available 68 / seen 68 / truncated False`,
+types `epic 14 · story 15 · task 39`, 53 parented. The single unparented non-epic (`ST-414`) is a
+standalone Jira Task with genuinely no parent. Backlog still shows 68 with 0 carriers leaked.
+
+## Standing note — what "surgical" means on this branch (2026-07-30)
+
+Team instruction: nothing built for brownfield may disturb the **greenfield** journey on merge.
+S3-13 is the cautionary tale — a change aimed at a brownfield-only surface (hiding vision carriers)
+silently emptied the backlog for every project, because it went through SHARED code. For any change
+to a shared query or endpoint, check the rows that DON'T carry the brownfield marker — missing json
+key, null column, empty dict. That is the greenfield case, and it is the one that breaks quietly.

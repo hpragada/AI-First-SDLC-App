@@ -231,10 +231,14 @@ class CodeIntelDispatchSerializer(serializers.Serializer):
 
 class _ConfluenceLinkSerializer(serializers.Serializer):
     """One row of the B3-4 "Link your existing docs" form: a Confluence page reference (full URL
-    or bare page id) + the lifecycle type the user declares it as."""
+    or bare page id), optionally with the lifecycle type the caller declares it as.
+
+    `type` is OPTIONAL (S3-10). A linked page now declares its type at ADOPT, the way an uploaded
+    file does, so the form no longer sends one — and requiring it here rejected the request before
+    `link_confluence_pages`, which already defaults a missing type to `document`, ever saw it."""
 
     page = serializers.CharField()
-    type = serializers.CharField()
+    type = serializers.CharField(required=False, allow_blank=True)
 
 
 class LinkConfluenceSerializer(serializers.Serializer):

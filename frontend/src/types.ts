@@ -589,6 +589,9 @@ export interface OnboardingUploadDoc {
   id: string;
   filename: string;
   status: "uploaded" | "extracting" | "extracted" | "adopted" | "failed";
+  // S3-14: where the document came from. "upload" for a file the user dropped in (and for any
+  // row an older API returns, hence the optional), "confluence" for a linked page.
+  origin?: "upload" | "confluence";
 }
 
 export interface OnboardingAdoptDoc {
