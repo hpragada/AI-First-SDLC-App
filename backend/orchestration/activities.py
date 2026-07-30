@@ -26,6 +26,7 @@ from apps.tenancy.context import tenant_context
 from apps.workitems.models import WorkItem
 from drivers import ClaudeDriver
 from manifest import compose_manifest
+from manifest.composer import TRUNCATION_MARKER
 from manifest.rules import get_prompt_rules
 from storage import content_hash, s3_from_settings
 
@@ -65,7 +66,10 @@ _PLATFORM_TOOL_NAMES = [
     "list_work_items", "create_work_item", "transition_work_item", "get_artifact",
     "list_artifacts", "detect_drift",
 ]
-PLATFORM_TOOLS = [f"mcp__platform-state__{name}" for name in _PLATFORM_TOOL_NAMES]
+# `ToolSearch` loads tools the CLI deferred out of the agent's initial context; without it a
+# granted tool can be invisible to the agent (see `daemon.PLAN_ALLOWED_TOOLS` for the run that
+# proved it). Schemas only, for tools already granted here — no widening.
+PLATFORM_TOOLS = [f"mcp__platform-state__{name}" for name in _PLATFORM_TOOL_NAMES] + ["ToolSearch"]
 
 
 # ── injectable factories (tests monkeypatch these) ──────────────────
@@ -129,16 +133,41 @@ def _mcp_servers(tenant_id: str, project_id: str = "", run_id: str = "") -> dict
 
 
 # ── cores (idempotent by run_id) ────────────────────────────────────
+def _log_manifest_truncations(inp: AgentRunInput, manifest: str) -> None:
+    """Record which manifest sections were cut to fit their budget — never silently.
+
+    Truncation used to leave no trace anywhere: not in the run's events, not on any screen. A
+    section could lose real instructions and the only symptom would be an agent that seemed to
+    have forgotten something, with nothing to point at. This makes the loss a fact you can query,
+    which is also the data needed to tune the caps instead of guessing at them again.
+    """
+    cut: list[str] = []
+    for block in manifest.split("\n# "):
+        if not block.strip():
+            continue
+        name = block.splitlines()[0].strip().lstrip("# ").strip()
+        if TRUNCATION_MARKER in block:
+            cut.append(name)
+    if not cut:
+        return
+    tools.log_event(
+        inp.tenant_id, "orchestrator", "manifest.truncated", "run", inp.run_id,
+        {"sections": cut, "phase": inp.phase},
+    )
+
+
 def compose_manifest_core(inp: AgentRunInput) -> str:
     with tenant_context(inp.tenant_id):
         work_item = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
         # Pass the work item so context scopes per-repo when it targets one (D5).
         context = tools.get_context(
             inp.tenant_id, inp.project_id, inp.phase, work_item_id=inp.work_item_id)
-        return compose_manifest(
+        manifest = compose_manifest(
             context=context, work_item=tools._work_item(work_item),
             phase=inp.phase, rules=load_rules(),
         )
+        _log_manifest_truncations(inp, manifest)
+        return manifest
 
 
 _EXECUTED_STATES = {Run.Status.AWAITING_GATE, Run.Status.APPROVED, Run.Status.COMPLETED}
@@ -216,6 +245,7 @@ def execute_agent_core(inp: AgentRunInput, manifest: str) -> dict:
     artifact = tools.register_artifact(
         inp.tenant_id, inp.project_id, inp.run_id, inp.phase, inp.phase,
         "internal", digest, s3_key=s3_key,
+        external_ref={"source": PHASE_REPORT_SOURCE},   # platform-made, not agent-made
     )
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
@@ -342,6 +372,13 @@ def reject_run_core(inp: AgentRunInput, comment: str) -> dict:
 #: the staged body's real digest, so an expected artifact carrying this is provably empty.
 _EMPTY_BODY_HASH = content_hash(b"")
 
+#: `external_ref["source"]` on the artifact the PLATFORM files from the engine's final message,
+#: distinguishing it from every artifact an agent registered through `register_artifact`. Written
+#: at both sinks (companion `register_phase_result_core` and direct `execute_phase`) and read by
+#: `verify_write_completeness_core`. Changing this string breaks that check silently — the marker
+#: is a contract between the two, not a label.
+PHASE_REPORT_SOURCE = "phase_report"
+
 #: Phases whose real deliverable is a RICHER artifact than the platform's generic phase-typed
 #: blob. verify_writes requires these instead of the bare phase type so a run that produced only
 #: an empty/summary "<phase>" blob — but not the actual work product — fails loudly rather than
@@ -375,9 +412,29 @@ def verify_write_completeness_core(inp: AgentRunInput, expected_types: list[str]
     expected_types = list(dict.fromkeys(required_types))  # dedupe, preserve order
 
     with tenant_context(inp.tenant_id):
-        artifacts = list(
+        rows = list(
             Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id)
-            .values_list("type", "content_hash")
+            .values_list("type", "content_hash", "external_ref")
+        )
+    artifacts = [(t, h) for t, h, _ in rows]
+
+    # The agent must have registered something ITSELF. The platform always files the engine's
+    # final message as a phase-named artifact, so a run where the agent did nothing still
+    # arrived here with exactly the artifact type this check looks for — non-empty, because the
+    # text was real. That is how a run whose platform tools were unreachable produced a tidy
+    # "ideation" document containing the agent's clarification QUESTIONS and opened a review
+    # gate on it (2026-07-30). Presence of the platform's own row proves only that the engine
+    # said something. Evidence for the bar: across 47 successful runs spanning 13 phases the
+    # minimum artifact count was 2 — the sink's plus at least one the agent registered — never 1.
+    agent_made = [t for t, _, ref in rows if (ref or {}).get("source") != PHASE_REPORT_SOURCE]
+    if rows and not agent_made:
+        raise WriteCompletenessError(
+            f"run {inp.run_id} registered no artifacts of its own — the only thing recorded is "
+            f"the platform's copy of the engine's final message, so whatever the agent produced "
+            f"was never saved as a reviewable artifact. No gate is opened; re-run the phase. "
+            f"Check the run's tool calls: no `register_artifact` at all points at the agent's "
+            f"write tools being absent from its context; calls that were made and failed point "
+            f"at the platform-state MCP server."
         )
     present = {t for t, _ in artifacts}
     missing = [t for t in expected_types if t not in present]
@@ -501,6 +558,11 @@ def register_phase_result_core(inp: AgentRunInput, report) -> dict:
         artifact = tools.register_artifact(
             inp.tenant_id, inp.project_id, inp.run_id, inp.phase, inp.phase,
             "internal", digest, s3_key=s3_key, title=_phase_artifact_title(inp),
+            # Stamp WHO made this: the platform, from the engine's final message — not the agent
+            # via register_artifact. `verify_write_completeness` needs to tell them apart, because
+            # this row is the very type it checks for, so the platform was manufacturing the
+            # evidence its own check looked for (see PHASE_REPORT_SOURCE).
+            external_ref={"source": PHASE_REPORT_SOURCE},
         )
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)

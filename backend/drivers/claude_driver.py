@@ -121,9 +121,25 @@ _SYSTEM_PROMPT_FILENAME = "SYSTEM_PROMPT.md"
 #       delivered via --system-prompt-file (not settings), so this does not affect it.
 # Implementation/build is the ONE phase that works in a real git worktree and MUST keep these
 # tools — it runs through run_build_task and is deliberately NOT sandboxed here.
+# `ToolSearch` is deliberately ABSENT from this denylist (2026-07-30). It was added on 2026-07-09
+# when it was simply another built-in to sandbox away. Since then the CLI (now 2.1.208) DEFERS
+# tools out of the initial context and makes `ToolSearch` the only way to load them back — the SDK
+# models this as `deferredBuiltinTools`. Blocking it therefore stopped being "one less tool to
+# wander with" and became "some of your granted tools are permanently invisible".
+#
+# That is the failure this cost days: run 457f65e1 opened with, in the agent's own words,
+# "The platform-state tools (ask_human, register_artifact, add_trace_edge, log_event) referenced
+# in my operating instructions are not present in my available tool context" — while the SAME run
+# successfully called `list_artifacts` and `get_artifact`. Read tools surfaced, write tools and
+# `ask_human` deferred and unreachable, so the agent wrote 39,417 chars of deliverables as prose
+# and the platform filed its questions as an artifact. Intermittent, because what the CLI defers
+# depends on context pressure that varies run to run.
+#
+# Allowing it does NOT widen the sandbox: `ToolSearch` only loads SCHEMAS for tools already
+# granted in `allowed_tools`, and execution is still gated by that allowlist plus this denylist.
 _PLANNING_DISALLOWED_TOOLS = [
     "Agent", "Task", "Bash", "BashOutput", "KillShell", "Read", "Write", "Edit",
-    "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch", "ToolSearch", "TodoWrite", "Skill",
+    "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite", "Skill",
 ]
 # A REPO-SCOPED planning phase (catalog `reads_code`, e.g. 10_security) runs the agent in a git
 # worktree so it can scan real source. It needs full local tooling — Read/Grep/Glob AND Bash — to
@@ -134,7 +150,10 @@ _PLANNING_DISALLOWED_TOOLS = [
 # the same posture run_build_task already uses to run the repo's own code. (Built-in tools are
 # governed by this denylist, not `allowed_tools`.)
 _SCAN_DISALLOWED_TOOLS = [
-    "Agent", "Task", "WebFetch", "WebSearch", "ToolSearch", "TodoWrite", "Skill",
+    # `ToolSearch` omitted for the same reason as the planning denylist above — a repo-scoped
+    # phase needs its platform-state write tools just as much, and blocking the only mechanism
+    # that loads deferred tools is what made them vanish.
+    "Agent", "Task", "WebFetch", "WebSearch", "TodoWrite", "Skill",
 ]
 _SANDBOX_SETTING_SOURCES = ["project"]
 

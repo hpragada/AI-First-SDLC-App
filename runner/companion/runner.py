@@ -46,7 +46,10 @@ BUILD_STATE_TOOLS = [
 # Filesystem + shell for editing/testing the worktree; platform-state over MCP.
 # Deliberately NO CodeHost and no networked tools — the platform owns Git side-effects (D2).
 BUILD_ALLOWED_TOOLS = (
-    ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
+    # `ToolSearch` loads tools the CLI deferred out of the initial context — without it, granting
+    # a tool is no guarantee the agent can see it (see `daemon.PLAN_ALLOWED_TOOLS`). It fetches
+    # SCHEMAS only, for tools already granted below, so PG12's bound is unchanged.
+    ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ToolSearch"]
     + [f"mcp__platform-state__{name}" for name in BUILD_STATE_TOOLS]
 )
 
@@ -129,23 +132,30 @@ def build_mcp_servers(task: BuildTask, *, repo_root: str | None = None,
     `--allowed-origins` — the tightest posture consistent with D2 (the browser can reach the app
     under test, nothing else). The 09b body hard-halts Step 4 when these tools are absent."""
     root = repo_root or str(Path(__file__).resolve().parents[2])
+    # Inherit the machine's environment, then overlay ours — same reasoning as the planning path
+    # in `daemon.state_mcp_servers`: a bare seven-variable environment is not enough for Python to
+    # start on Windows (no SYSTEMROOT → WinError 10106 during `import asyncio`), and the process
+    # that dies is the one that would have reported it. The build path launches the identical
+    # server, so it carries the identical risk.
+    env = dict(os.environ)
+    env.update({
+        "RUNNER_API_URL": task.api_url,
+        "RUNNER_TOKEN": task.runner_token,
+        "RUNNER_TENANT_ID": task.tenant_id,
+        # Identify the run/phase/project this launch is bound to (the agent never
+        # passes them — e.g. artifact registration fills project_id/run_id from here
+        # instead of asking the user, Bugs.xlsx row 25).
+        "RUNNER_RUN_ID": task.run_id,
+        "RUNNER_PHASE": task.phase,
+        "RUNNER_PROJECT_ID": task.project_id,
+        "PYTHONPATH": root,
+    })
     servers = {
         "platform-state": {
             "type": "stdio",
             "command": sys.executable,
             "args": ["-m", "runner.companion.state_mcp"],
-            "env": {
-                "RUNNER_API_URL": task.api_url,
-                "RUNNER_TOKEN": task.runner_token,
-                "RUNNER_TENANT_ID": task.tenant_id,
-                # Identify the run/phase/project this launch is bound to (the agent never
-                # passes them — e.g. artifact registration fills project_id/run_id from here
-                # instead of asking the user, Bugs.xlsx row 25).
-                "RUNNER_RUN_ID": task.run_id,
-                "RUNNER_PHASE": task.phase,
-                "RUNNER_PROJECT_ID": task.project_id,
-                "PYTHONPATH": root,
-            },
+            "env": env,
         }
     }
     if playwright_tools_for(task.phase):
@@ -419,6 +429,7 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
         worktree_path=Path(worktrees_root) / task.work_item_key,
     )
     preview: PreviewHandle | None = None
+    mcp_config = ""
     try:
         run_provisioning(worktree, task, policy)
         with inject_environment(task):
@@ -427,13 +438,20 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
             # so it keeps them even after the env context restores). None for 07/11 (no browser).
             preview = provision_preview_app(worktree, task, policy)
             preview_url = preview.url if preview else ""
+            from runner.companion.daemon import write_mcp_config
+            mcp_config = write_mcp_config(
+                build_mcp_servers(task, preview_url=preview_url), run_id=task.run_id)
             result = await driver.run_build_task(
                 # Inject the resolved preview URL into the run's prompt (R-4): the agent explores
                 # THIS live app instead of a placeholder, and Playwright is origin-scoped to it.
                 manifest=manifest_with_preview(task.manifest, preview_url),
                 agent_spec=_SpecShim(task.model, task.phase, task.work_item_key),
                 repo_workspace=worktree,
-                mcp_servers=build_mcp_servers(task, preview_url=preview_url),
+                # Config via FILE, not inline command-line JSON: an inherited environment would
+                # otherwise spend ~6KB of the ~32,767-char command-line ceiling (the one that
+                # produced the misleading "Claude Code not found" in Bugs row 64) and publish the
+                # runner token to any process listing. See `daemon.write_mcp_config`.
+                mcp_servers=mcp_config,
                 allowed_tools=allowed_tools,
                 work_item=_WorkItemShim(task.work_item_id, task.work_item_key),
             )
@@ -482,6 +500,9 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
                 out["head_sha"] = head_sha(worktree)
         return out
     finally:
+        # The MCP config file carries the runner token — remove it on every exit path.
+        from runner.companion.daemon import _cleanup_mcp_config
+        _cleanup_mcp_config(mcp_config)
         teardown_preview_app(preview)      # stop the app before the worktree it runs from is gone
         if not keep_worktree:
             teardown_worktree(repo_path=repo_path, worktree_path=worktree)

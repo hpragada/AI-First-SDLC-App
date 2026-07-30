@@ -27,19 +27,37 @@ from typing import Any
 # Rough heuristic: ~4 chars per token. Good enough to bound section sizes.
 _CHARS_PER_TOKEN = 4
 _TRUNCATED = "\n… [truncated to fit token budget]"
+#: Public alias so callers can detect a cut section and report it (see activities.py).
+TRUNCATION_MARKER = "[truncated to fit token budget]"
 
 
 @dataclass
 class TokenBudget:
-    """Per-section caps (in estimated tokens) + count caps for list sections."""
+    """Per-section caps (in estimated tokens) + count caps for list sections.
 
-    project: int = 800
-    important_context: int = 1500
+    **Cap what grows without bound; don't cap what we author.** Artifact lists, event history and
+    retrieved knowledge grow with a project's age — those are what these caps exist for. `rules`
+    and `project` do not: the rules are written by us and identical on every run, and a project
+    profile is a page. Capping them the same way silently cut real instructions.
+
+    Measured 2026-07-30 on a live ideation run: `rules` needed 1,706 tokens against a 1,500 cap
+    and `project` needed 906 against 800, so BOTH were being truncated mid-sentence — the Project
+    section stopped inside the user's constraints at "Authentication: Email + password only. No
+    OTP, no". The whole manifest was 3,594 tokens, under 2% of the model's window: we were cutting
+    a document that had no size problem at all. Raised with real headroom.
+
+    Worst case if every section fills its cap is ~12,150 tokens (~6% of a 200k window); a typical
+    run is closer to 3,600. FUTURE: when model selection is exposed to users these should scale
+    from the chosen model's context window rather than being fixed — see the brownfield doc.
+    """
+
+    project: int = 2000              # was 800  — user-authored profile, measured 906
+    important_context: int = 2000    # was 1500 — user-authored, measured 651
     current_work_item: int = 650
-    relevant_artifacts: int = 1200
-    recent_events: int = 600
-    retrieved_knowledge: int = 1500
-    rules: int = 1500
+    relevant_artifacts: int = 1200   # unbounded growth — cap stays
+    recent_events: int = 600         # unbounded growth — cap stays
+    retrieved_knowledge: int = 1500  # unbounded growth — cap stays
+    rules: int = 3000                # was 1500 — WE author this, same every run; measured 1,706
     answered_clarifications: int = 1200
     max_artifacts: int = 20
     max_events: int = 15
@@ -51,10 +69,22 @@ def estimate_tokens(text: str) -> int:
 
 
 def _truncate(text: str, max_tokens: int) -> str:
+    """Trim to the cap, cutting at a LINE boundary rather than mid-character.
+
+    The character-exact cut left half-sentences an agent reads as complete: a real run's Project
+    section ended "Authentication: Email + password only. No OTP, no" — the reader cannot tell
+    that something was removed mid-thought, only that the constraint reads oddly. Backing up to
+    the last newline costs at most one line and never presents a fragment as a whole statement.
+    If the first line alone exceeds the cap there is no boundary to find, so the hard cut stands.
+    """
     max_chars = max_tokens * _CHARS_PER_TOKEN
     if len(text) <= max_chars:
         return text
-    return text[:max_chars].rstrip() + _TRUNCATED
+    head = text[:max_chars]
+    cut = head.rfind("\n")
+    if cut > 0:
+        head = head[:cut]
+    return head.rstrip() + _TRUNCATED
 
 
 def _json_block(label: str, value: Any) -> str:
