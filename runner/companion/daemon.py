@@ -20,6 +20,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -31,7 +32,13 @@ from .runner import BUILD_STATE_TOOLS, BuildTask, _SpecShim, _WorkItemShim, run_
 
 # Planning/review expose the platform-state tools (incl. ask_human) over the remote MCP; no
 # filesystem/Bash (those phases reason over registered context, not a working tree).
-PLAN_ALLOWED_TOOLS = [f"mcp__platform-state__{name}" for name in BUILD_STATE_TOOLS]
+#
+# `ToolSearch` rides along because the CLI DEFERS tools out of the initial context and this is the
+# only way to load them back. Granting the platform-state tools is not enough on its own: run
+# 457f65e1 held all 13 in this list, yet the agent reported `ask_human` and `register_artifact`
+# "not present in my available tool context" while `list_artifacts` worked in the same run. It is
+# not a hole in the sandbox — ToolSearch only fetches SCHEMAS for tools already granted here.
+PLAN_ALLOWED_TOOLS = [f"mcp__platform-state__{name}" for name in BUILD_STATE_TOOLS] + ["ToolSearch"]
 
 
 class DaemonError(Exception):
@@ -67,20 +74,32 @@ def state_mcp_servers(*, api_url: str, tenant_id: str, token: str, run_id: str,
     artifact registration fills project_id from here rather than asking the user for a UUID
     they can't know (Bugs.xlsx rows 25 + 53 — the planning/review seam the earlier fix missed)."""
     root = repo_root or str(Path(__file__).resolve().parents[2])
+    # INHERIT the machine's environment, then overlay ours. Seven variables is not enough for a
+    # Python process to start if this env ever REPLACES rather than extends the child's: on
+    # Windows, without SYSTEMROOT, Winsock cannot initialise and the interpreter dies during
+    # `import asyncio` with `OSError: [WinError 10106]` — before any of our code runs, and with
+    # no log anywhere, because the process that would have logged it is the one that died.
+    # Reproduced directly (7 vars → exit 1; + SYSTEMROOT → serves normally). Inheriting removes
+    # the whole class of "the MCP server didn't come up and nobody knows why".
+    # Safe to inherit freely ONLY because this config now travels in a FILE, not on the command
+    # line — see `write_mcp_config`. Putting an inherited environment in `--mcp-config` JSON
+    # would both bloat the command line and expose it in process listings.
+    env = dict(os.environ)
+    env.update({
+        "RUNNER_API_URL": api_url,
+        "RUNNER_TOKEN": token,
+        "RUNNER_TENANT_ID": tenant_id,
+        "RUNNER_RUN_ID": run_id,
+        "RUNNER_PHASE": phase,
+        "RUNNER_PROJECT_ID": project_id,
+        "PYTHONPATH": root,
+    })
     return {
         "platform-state": {
             "type": "stdio",
             "command": sys.executable,
             "args": ["-m", "runner.companion.state_mcp"],
-            "env": {
-                "RUNNER_API_URL": api_url,
-                "RUNNER_TOKEN": token,
-                "RUNNER_TENANT_ID": tenant_id,
-                "RUNNER_RUN_ID": run_id,
-                "RUNNER_PHASE": phase,
-                "RUNNER_PROJECT_ID": project_id,
-                "PYTHONPATH": root,
-            },
+            "env": env,
         }
     }
 
@@ -103,6 +122,38 @@ def codeintel_mcp_servers(*, workspace: str, repo: str, repo_root: str | None = 
             },
         }
     }
+def write_mcp_config(servers: dict, *, run_id: str = "") -> str:
+    """Write an MCP server config to a temp FILE and return its path, for `mcp_servers`.
+
+    The SDK serialises a config DICT into `--mcp-config <json>` on the command line; given a str
+    or Path it passes it through as a file path instead. That difference matters twice over:
+
+    1. **The command line has a hard ceiling.** Windows caps it at ~32,767 chars, and exceeding it
+       surfaces as the misleading "Claude Code not found" (Bugs row 64, where a 36KB agent body
+       overflowed it — fixed then by moving the system prompt to a file). An inherited environment
+       is ~6KB of JSON, and a long PATH pushes it higher: 20% of the ceiling spent on plumbing.
+    2. **Command lines are world-readable.** Any user can read them from a process listing, so an
+       inlined config publishes the runner token and every inherited variable. A temp file is
+       readable only by the account that created it.
+
+    Same shape the team already chose for the agent body: payload in a file, path on the command
+    line. Caller deletes the file when the run ends (`_cleanup_mcp_config`).
+    """
+    fd, path = tempfile.mkstemp(prefix=f"mcp-{run_id[:8] or 'run'}-", suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump({"mcpServers": servers}, fh)
+    return path
+
+
+def _cleanup_mcp_config(path: object) -> None:
+    """Remove a config written by `write_mcp_config`. Best-effort: a leftover temp file must
+    never fail a run that otherwise succeeded."""
+    if not isinstance(path, str) or not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def ensure_backend_importable() -> None:
@@ -222,16 +273,18 @@ class CompanionDaemon:
         spec = _SpecShim(payload.get("model", ""), phase, phase)
         work_item = _WorkItemShim(payload["work_item_id"], "")
         driver = self._driver_factory(payload.get("agent_body", ""))
-        mcp = state_mcp_servers(api_url=self._base, tenant_id=self._tenant, token=self._token,
-                                run_id=run_id, phase=phase,
-                                project_id=payload.get("project_id", ""))
+        # Collected as a DICT first and written to a file at the end, once every server this run
+        # needs is known — a repo-scoped phase adds a second one (codeintel) below.
+        servers = state_mcp_servers(
+            api_url=self._base, tenant_id=self._tenant, token=self._token,
+            run_id=run_id, phase=phase, project_id=payload.get("project_id", ""))
         # Review posts its verdict to the review endpoint (findings); planning posts its draft
         # body to the phase endpoint (becomes the artifact).
         report_path = (f"/api/runner/reviews/{run_id}/report/" if review
                        else f"/api/runner/phases/{run_id}/report/")
         runner = driver.run_review_task if review else driver.run_planning_task
         run_kwargs = dict(
-            manifest=payload.get("manifest", ""), agent_spec=spec, mcp_servers=mcp,
+            manifest=payload.get("manifest", ""), agent_spec=spec,
             allowed_tools=PLAN_ALLOWED_TOOLS, work_item=work_item,
         )
         # Repo-scoped planning (catalog `reads_code`, e.g. 10_security): provision a THROWAWAY
@@ -249,10 +302,14 @@ class CompanionDaemon:
                 # worktree: 00c / 00_onboarding query the codebase via `codeintel.*`, not raw file
                 # tools (planning has no filesystem/Bash). Only wired when a worktree exists.
                 from .codeintel_mcp import CODEINTEL_TOOL_NAMES
-                mcp.update(codeintel_mcp_servers(
+                servers.update(codeintel_mcp_servers(
                     workspace=str(scan_worktree), repo=payload["repo"]))
                 run_kwargs["allowed_tools"] = PLAN_ALLOWED_TOOLS + [
                     f"mcp__codeintel__{n}" for n in CODEINTEL_TOOL_NAMES]
+        # Now that the server set is final, hand it over as a FILE path — never as inline
+        # command-line JSON (see `write_mcp_config` for the size ceiling and the token exposure).
+        mcp = write_mcp_config(servers, run_id=run_id)
+        run_kwargs["mcp_servers"] = mcp
         try:
             result = asyncio.run(runner(**run_kwargs))
             outputs = getattr(result, "outputs", {}) or {}
@@ -278,6 +335,9 @@ class CompanionDaemon:
             self._report(report_path, {"status": "failed", "message": str(exc)})
             return
         finally:
+            # The MCP config file carries the runner token — remove it as soon as the run ends,
+            # on every path (success, failure, or the early return above).
+            _cleanup_mcp_config(mcp)
             # Read-only scan worktree is throwaway — remove it (best-effort) whether the run
             # succeeded or failed. Its local `sdlc-scan/<run_id>` branch was never pushed.
             if scan_worktree is not None:

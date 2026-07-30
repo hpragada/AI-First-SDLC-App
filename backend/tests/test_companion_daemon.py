@@ -5,6 +5,7 @@ no real engine. They prove the loop claims/dispatches/reports correctly and that
 forces the *local* engine login (drops ANTHROPIC_API_KEY).
 """
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -25,11 +26,18 @@ class _FakeDriver:
     def __init__(self):
         self.calls = []
         self.mcp_servers = None
+        self.mcp_config = None      # the config's CONTENTS, captured while the file still exists
 
     async def run_planning_task(self, *, manifest, agent_spec, mcp_servers, allowed_tools,
                                work_item):
         self.calls.append(("plan", manifest, agent_spec.phase_label, allowed_tools))
         self.mcp_servers = mcp_servers
+        # The daemon deletes the config file as soon as the run ends (it carries the runner
+        # token), so read it HERE — at the moment the engine would have — not after serve().
+        if isinstance(mcp_servers, str) and mcp_servers:
+            import json as _json
+            from pathlib import Path as _Path
+            self.mcp_config = _json.loads(_Path(mcp_servers).read_text(encoding="utf-8"))
         return SimpleNamespace(outputs={"result": "# PRD body"}, cost_usd=0.0)
 
     async def run_review_task(self, **kwargs):
@@ -107,8 +115,15 @@ def test_plan_binds_project_id_into_state_mcp_env():
     driver = _FakeDriver()
     d = _daemon(transport, driver, sleep=lambda _s: None)
     d.serve(max_iterations=2)
-    env = driver.mcp_servers["platform-state"]["env"]
+    # The config now travels as a FILE path, not an inline dict (it carries an inherited
+    # environment, which must never reach the command line). The driver captured its contents.
+    assert isinstance(driver.mcp_servers, str), "mcp_servers must be a config FILE path"
+    env = driver.mcp_config["mcpServers"]["platform-state"]["env"]
     assert env["RUNNER_PROJECT_ID"] == "proj-1"
+    # Inherited, so the interpreter can actually start (Windows needs SYSTEMROOT for Winsock).
+    assert len(env) > 7
+    # And the file is gone once the run ended — it carried the runner token.
+    assert not Path(driver.mcp_servers).exists()
 
 
 def test_empty_engine_result_reports_ok_with_honest_message():
@@ -478,6 +493,7 @@ class _ScanDriver:
     def __init__(self):
         self.repo_workspace = "unset"
         self.mcp_servers = {}
+        self.mcp_config = None      # config CONTENTS, captured while the file still exists
         self.allowed_tools = []
 
     async def run_planning_task(self, *, manifest, agent_spec, mcp_servers, allowed_tools,
@@ -485,6 +501,11 @@ class _ScanDriver:
         self.repo_workspace = repo_workspace
         self.mcp_servers = mcp_servers
         self.allowed_tools = allowed_tools
+        # The config is a FILE path now and the daemon deletes it when the run ends, so read it
+        # here — at the moment the engine would have.
+        if isinstance(mcp_servers, str) and mcp_servers:
+            import json as _json
+            self.mcp_config = _json.loads(Path(mcp_servers).read_text(encoding="utf-8"))
         return SimpleNamespace(outputs={"result": "# Security Review"}, cost_usd=0.0)
 
     async def run_review_task(self, **kwargs):
@@ -528,9 +549,12 @@ def test_security_scan_provisions_readonly_worktree_and_tears_it_down(monkeypatc
     assert seen["teardown"].endswith("scan-rsec")
     # a reads_code run with a worktree also wires the CodeIntel MCP bound to that worktree, and
     # adds its tools to the planning allowlist (agent-driven onboarding reuses this seam).
-    assert "platform-state" in driver.mcp_servers and "codeintel" in driver.mcp_servers
-    assert driver.mcp_servers["codeintel"]["env"]["RUNNER_WORKSPACE"].endswith("scan-rsec")
-    assert driver.mcp_servers["codeintel"]["env"]["RUNNER_REPO"] == "acme/api"
+    # Both servers must reach the engine in the SAME config file: the codeintel server is added
+    # after the worktree is provisioned, so the file has to be written once the set is final.
+    servers = driver.mcp_config["mcpServers"]
+    assert "platform-state" in servers and "codeintel" in servers
+    assert servers["codeintel"]["env"]["RUNNER_WORKSPACE"].endswith("scan-rsec")
+    assert servers["codeintel"]["env"]["RUNNER_REPO"] == "acme/api"
     assert "mcp__codeintel__index" in driver.allowed_tools
     assert "mcp__codeintel__get_overview" in driver.allowed_tools
     # the phase result was still reported
