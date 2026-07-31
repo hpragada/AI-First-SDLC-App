@@ -14,15 +14,22 @@ match the screen exactly.
 Each project changes **exactly one thing** from the baseline. If all three differed in several ways
 at once, a failure could not be attributed.
 
-| | Repos | Tech stack & standards | What it isolates |
-|---|---|---|---|
-| **1 · PeopleDesk** | 1 | Fully specified | **Baseline.** Everything given, nothing exotic. If this fails, the platform is broken generally. |
-| **2 · Returns Desk** | 3 | Fully specified | **Multi-repo only.** API contract, cross-repo drift gate, repo-assignment review at the Task Breakdown gate. |
-| **3 · FleetCare** | 1 | **Left to the agent** | **Underspecification only.** Can the Architecture phase choose a stack and defend it at its gate? |
+| | Repos | Backend | Tech stack & standards | What it isolates |
+|---|---|---|---|---|
+| **1 · PeopleDesk** | 1 | **TypeScript / NestJS** | Fully specified | **Stack obedience.** Does the profile actually reach the agents, or do they default to what they know? |
+| **2 · Returns Desk** | 3 | Python + TypeScript | Fully specified | **Multi-repo.** API contract, cross-repo drift gate, repo-assignment review at the Task Breakdown gate. |
+| **3 · FleetCare** | 1 | *agent decides* | **Left to the agent** | **Underspecification.** Can the Architecture phase choose a stack and defend it at its gate? |
 
 > **Leave the answer blank, not the question.** FleetCare has no tech stack, but it *does* have
 > NFRs, constraints and context. An unconstrained choice is an unjudgeable one — the tester needs
 > something to grade the agent's decision against.
+
+> **Why one project is deliberately not Python.** The platform doing the building is itself Django
+> and Python. If all three fixtures were Python too, a good-looking result would prove nothing —
+> you could not separate "the agent read the profile" from "the agent wrote what it always writes".
+> PeopleDesk is TypeScript end to end for exactly that reason, and it is the simplest of the three,
+> so a stack-bias defect surfaces on day one rather than on the most expensive project in week two.
+> **Any Python in PeopleDesk's output is a defect.**
 
 
 ---
@@ -66,27 +73,38 @@ Human Resources
 
 ### Tech stack
 ```
-Backend: Python 3.12, Django 5, Django REST Framework
+
+Runtime: Node.js 22 LTS
+Language: TypeScript 5 (backend and frontend)
+Backend Framework: NestJS 10 — modules, controllers, providers, guards, DTOs
+ORM / Migrations: Prisma 5
 Database: PostgreSQL 16
+Validation: class-validator + class-transformer on every DTO
+Authentication: Passport JWT strategy; access and refresh tokens; argon2 password hashing
+Authorisation: NestJS guards, one per role boundary
 Frontend: React 18, TypeScript 5, Vite
-Authentication: JWT access and refresh tokens; bcrypt password hashing
 State Management: TanStack Query for server state; React Context for session
 Styling: Plain CSS with CSS custom properties — no UI component library
-Testing: pytest + pytest-django (backend); Vitest + React Testing Library (frontend)
-Cloud / Hosting: Single container per service on the company's internal Kubernetes cluster
+Testing: Jest + Supertest (backend); Vitest + React Testing Library (frontend)
+Package manager: pnpm, with a workspace for the backend and frontend packages
+Cloud / Hosting: one container per package on the company's internal Kubernetes cluster
 ```
 
 ### Coding standards
 ```
-Style Guide (Backend): PEP 8 + Black formatter + isort + ruff
+Style Guide (Backend): ESLint with @typescript-eslint recommended-type-checked + Prettier
 Style Guide (Frontend): ESLint with the Airbnb TypeScript config + Prettier
-Type checking: mypy in strict mode (backend); TypeScript strict mode, no implicit any (frontend)
+Type checking: TypeScript strict mode in both packages. noImplicitAny, strictNullChecks and
+noUncheckedIndexedAccess all on. The `any` type is not permitted; use `unknown` and narrow
+Structure (Backend): NestJS convention — one module per domain area, controllers hold no business
+logic, all logic lives in providers/services, all input crosses the boundary as a validated DTO
 Commits: Conventional Commits (feat / fix / chore / docs / test / refactor)
 Branching: short-lived feature branches off main; squash merge; no direct pushes to main
 Test coverage: minimum 80% line coverage on backend business logic; every API endpoint has at
 least one happy-path and one failure-path test
-API design: REST, plural nouns, snake_case JSON keys, ISO-8601 UTC timestamps everywhere
-Error responses: a consistent { "detail": str, "code": str } shape on every 4xx and 5xx
+API design: REST, plural nouns, camelCase JSON keys, ISO-8601 UTC timestamps everywhere
+Error responses: a consistent { "message": string, "code": string } shape on every 4xx and 5xx,
+produced by a global exception filter — never a raw framework error
 ```
 
 ### NFRs
@@ -140,7 +158,7 @@ at 1280px and above. All screens must also work correctly on mobile browsers (37
 this is a responsive adaptation, not a mobile-first design. There is no native mobile app.
 
 Repository topology:
-A single repository. Backend and frontend live in one repo.
+A single repository. Backend and frontend live in one repo, as two pnpm workspace packages.
 
 Sensitivity:
 Employee records are personal data. Leave records reveal health information by implication (sick
@@ -529,9 +547,24 @@ accident and incident reporting, vehicle acquisition and disposal, mobile app.
 
 ## What to watch, per project
 
-**PeopleDesk (control)** — does the whole lifecycle complete? Every artifact produced, every gate
-decided by the right role, nothing published before its gate. If anything here fails, fix it before
-running the other two.
+**PeopleDesk (baseline + stack obedience)** — two things at once.
+
+First, does the whole lifecycle complete? Every artifact produced, every gate decided by the right
+role, nothing published before its gate. If anything here fails, fix it before running the other two.
+
+Second, and the reason this project is TypeScript: **watch for Python leaking in.** Read the
+Architecture artifact, the Task Breakdown tasks and the generated code. Any of the following is a
+defect, and a serious one — it means the Project Profile is not reaching the agents:
+
+- Python, Django, DRF, FastAPI or Flask named anywhere
+- `requirements.txt`, `pyproject.toml`, `manage.py`, `settings.py`, `models.py`
+- pytest, mypy, ruff, Black or isort in the testing or tooling plan
+- snake_case JSON keys in an API design (this profile specifies camelCase)
+- a `{ "detail": ... }` error shape (this profile specifies `{ "message": ..., "code": ... }`)
+
+That last pair is the sharpest tell. `snake_case` and `detail` are Django REST Framework's defaults
+and they are what the platform's own codebase uses — so if they appear here, the agent is echoing
+its own repository rather than reading the profile in front of it.
 
 **Returns Desk (multi-repo)** — three things nothing else tests:
 1. The **repo-assignment review** appears on the Task Breakdown gate, proposes a repo per task with
