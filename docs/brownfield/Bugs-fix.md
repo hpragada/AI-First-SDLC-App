@@ -91,6 +91,245 @@ On adopt, a new **`00e_document_vision`** agent reads the preserved page images 
 
 **Part B needs, before live test:** (1) run migrations (or `seed_agents --tenant <id>`) so `00e` is seeded for the tenant; (2) restart the companion so it picks up `get_page_images` + the agent body. Backend + worker already restarted. Without the seed, adoption degrades gracefully (vision skipped, doc still adopted).
 
+## Step 4 — Index code (live E2E, 2026-07-31)
+
+Second live session on `brownfield-agent-onboarding`. Tenant `test-brown@edvensoft.com` · project **SpendLog-Brownfield-Testing** · repo **TARUN51/medslot-single-repo** (100 files, base `main`).
+
+Context the team should know before reading these: **"Index code" does NOT run the mechanical indexer.** Per commit `bcddebd` (*Agent-driven brownfield onboarding — Slices 3-5*) it triggers the **`00c_intelligent_context_extractor` agent** on the user's companion; the mechanical `CodeIntelJob` survives only as the no-companion fallback. Same for "Run gap report" → `00_onboarding`. Both run against a **carrier work item** hidden from the backlog, and both return **202 + a run id** (async), not a result.
+
+### S4-1 · ✅ Index code / Gap report opened a gate nobody could ever action
+- **Symptom:** every onboarding agent run left a **PENDING approval** behind. It inflated the gate count and could never be approved or dismissed.
+- **Root cause:** `orchestration/trigger.py::trigger_onboarding_agent` called `trigger_phase` without `auto_approve`, so it defaulted to `False` and `AgentRunWorkflow` ran `open_gate`. The approval attaches to the **carrier** work item, which is hidden from every user-facing list — so the gate existed but was unreachable.
+- **Surgical fix:** pass `auto_approve=True` (the mechanism the `00e` vision path already proved). The workflow's auto-apply branch publishes and completes without opening an Approval.
+- **Not a #5 violation:** `publish_artifacts_core` publishes **INTERNAL** only; external export to a SoR stays user-triggered. Nothing reaches Confluence/Jira without a human.
+- **Guard:** `test_a_normal_phase_still_opens_its_gate` asserts `auto_approve` stays `False` for every ordinary phase.
+- **Verify:** run Index code → `pending gates` stays 0. ✅ verified live.
+
+### S4-2 · ✅ Carrier runs leaked into Phases & Runs and the dashboard
+- **Symptom:** the onboarding run surfaced in project-wide run lists and inflated the workspace dashboard's "Needs me" counts, despite its work item being hidden.
+- **Root cause:** hiding the **work item** was not enough. `api/views.py::RunViewSet.get_queryset` filters by `project` and had **no carrier exclusion**; the dashboard rollup queried `Run.objects.filter(work_item__project=…)` the same way.
+- **Surgical fix:** exclude carrier-hosted runs from `RunViewSet`'s **list** action and from the dashboard rollup. Retrieval by id is untouched, so a direct run link still resolves.
+- **Also:** extracted the shared `integrations/onboarding.py::carrier_q(prefix)` so the **load-bearing S3-13 `has_key` guard** exists once instead of being copy-pasted three times.
+- **Verify:** Phases & Runs, Gates and the dashboard show nothing during an index run. ✅ verified live.
+
+### S4-3 · ✅ No "running" state — the button reverted and the run looked like a no-op
+- **Symptom:** click Index code, the button flicked back to normal, no message, nothing anywhere. A 25-minute agent run was indistinguishable from a dead click.
+- **Root cause:** `onboarding_hub`'s `index` block had only two states — `"indexed" if intel_artifact else "not_started"`. **There was no "running".** The UI could not know work was in flight.
+- **Surgical fix:** new `onboarding_step_state()` + per-repo `index.repos[]` (`status` / `running` / `run_id` / `question` / `artifact_id`) and `gap.running` / `gap.question`. The hub polls every 4 s and renders from that.
+- **Verify:** button holds "Indexing dispatched…" for the life of the run. ✅ verified live.
+
+### S4-4 · ✅ The progress message never cleared
+- **Symptom:** once shown, the "running" line stayed forever — through completion and every later re-index.
+- **Root cause:** the message was rendered from the **mutation result** (`startCodeIntel.data`), which is set once and never resets. Same for the local `dispatched` map driving the button label.
+- **Surgical fix:** derive **all** button + message state from the polled server resource. Server state clears itself, so completion and re-index need no manual reset.
+- **Lesson for the team:** *drive UI from the resource, not from the mutation.* Any "it never goes away" bug on this screen is likely this shape.
+
+### S4-5 · ✅ Message rendered nothing while the button worked
+- **Symptom:** after S4-3/S4-4 the button correctly showed "Indexing dispatched…" but **no message appeared below it**.
+- **Root cause:** the payload gave each repo `status: "running"` but **omitted the `running` boolean**. The button switches on `status`; the shared message component switches on `running` → `undefined` → rendered `null`.
+- **Surgical fix:** emit **both** keys. `status` is the tri-state the button needs; `{running, question}` is the shape the shared component needs so one component serves Index code *and* Gap report.
+- **Why the tests missed it:** they covered `onboarding_step_state()` directly but never the **hub payload wiring**. Added `test_hub_index_repos_carry_both_running_and_status`.
+
+### S4-6 · ✅ UI copy leaked an internal agent key and pointed at an invisible screen
+- **Symptom:** *"Running the code-intelligence agent (00c) on your companion — track it in Phases & Runs."*
+- **Root cause:** two faults in one sentence — `00c` is an internal registry key no user can interpret, and the run is **structurally invisible** in Phases & Runs (it hangs off a hidden carrier, and that screen filters runs by the selected work item).
+- **Surgical fix:** plain-language copy, no agent keys, no false pointer. Progress is reported **on the Onboarding hub itself**, which is the only place it can be. Done state links straight to the artifact preview.
+
+### S4-7 · 🔧 Repo-scoped runs hang forever — tools un-denied but never allow-listed
+**The big one. This path had never worked.**
+- **Symptom:** `00c` ran for **27 min**, then **15 min**, with **zero artifacts, zero tool calls, no error**. Killed both times.
+- **Evidence:** engine process at **4.5 s CPU over 15 minutes**; `codeintel_mcp` at **0 s** (never called); scan worktree unmodified since creation — while MCP servers, the 26 KB system prompt and all 9 `codeintel__*` tools were correctly wired.
+- **Root cause:** `drivers/claude_driver.py` — a `reads_code` phase uses `_SCAN_DISALLOWED_TOOLS`, which deliberately **stops blocking** `Read/Glob/Grep/Bash` (10_security needs them for semgrep / pip-audit / syft). But `allowed_tools` was passed through **unchanged**, so those tools were neither denied nor allow-listed. Under **`permission-mode=default`** that combination raises a **permission request** — and an engine run has **no human and no TTY** to answer it. The CLI blocks forever.
+  - A stale comment asserted *"Built-in tools are governed by this denylist, not `allowed_tools`"*. That assumption is what shipped the bug. Removed.
+- **Why vision (`00e`) was never affected:** the sandbox path **hard-denies** those tools, so the agent is told "no" and moves on to its MCP tools. It never gets the chance to ask.
+- **Surgical fix:** `allowed_tools=list(allowed_tools) + _SCAN_LOCAL_TOOLS` on the scan branch (`Read, Glob, Grep, Bash, BashOutput, KillShell`). Confirmed live: the engine's granted tool count went **26 → 32**.
+- **Blast radius:** affects **both** `reads_code` agents — `00c` (Index code) **and** `10_security`. The security phase carries the same latent hang.
+- **Guards added:** `test_scan_path_allow_lists_the_local_tools_it_stops_denying` and `test_sandbox_planning_still_denies_local_tools` (proves greenfield keeps its no-filesystem sandbox).
+- **Status:** fix applied and loaded (companion restarted); **a successful end-to-end index has NOT yet been observed.** Stays 🔧 until one completes.
+- **Open decision:** granting `Bash` to `00c` is wider than that agent needs — `daemon.py` states 00c should query via `codeintel.*`, not raw file tools. Option B (allow local tools only for `10_security`, keep `00c` on `codeintel.*`) is the cleaner end state.
+
+### S4-8 · 🔲 The companion reports nothing while a run is in progress
+- **Symptom:** during a 15-minute run `companion.log` contained **144 bytes** — two reconnect lines, nothing about the run. No claim, no tool call, no phase progress.
+- **Impact:** for a step that is invisible by design and takes minutes, there is **no way to tell working from hung** without inspecting OS process CPU. Both hangs above were diagnosed that way, not from any log.
+- **Suggested fix:** log claim / phase start / each tool call / report at INFO. Cheap, and it turns a 30-minute investigation into a glance.
+
+### S4-9 · 🔲 Seven tests assert behaviour the branch deliberately changed
+- **Symptom:** `tests/test_onboarding.py` — 7 failures (`IndexError: list index out of range` on `out["artifact_ids"][0]`, plus two assertion mismatches).
+- **Root cause:** commit `b97f804` (*Create a document's artifact when it is adopted, not when it is uploaded*) intentionally moved artifact creation from upload → adopt. These tests still assert the old behaviour and were never updated. **Brownfield-only** — the commit is not on develop.
+- **Affected:** `test_ingest_creates_draft_artifact_with_provenance`, `test_ingest_carries_title_onto_artifact`, `test_adopt_publishes_after_role_check_and_is_idempotent`, `test_adopt_wrong_role_is_blocked`, `test_adopt_with_target_type_reclassifies_so_gap_report_sees_it`, `test_link_confluence_pages_registers_typed_pointers_idempotently`, `test_linked_confluence_page_feeds_gap_report`.
+- **Also:** `test_document_vision.py::test_auto_apply_rejects_a_version_that_shrank` greps for *"shorter version"*; the message now says *"shorter rendering"*.
+- **Must be fixed before this branch merges** — a red suite hides real regressions.
+
+### S4-10 · 🔲 Opening "Connect Machine" silently kills the running companion
+- **Symptom:** a working companion started failing every poll with `401 invalid or missing Runner token`.
+- **Root cause:** visiting the Connect Machine page mints a **new** enrollment and **revokes** the current one. The running companion holds the revoked token and dies. Verified in the data: `20cddcee` revoked at 09:13, `90b52e99` created 09:13.
+- **Compounding:** the token is shown **once** and stored only as a hash — unrecoverable. The tenant had **10 enrollments**, 8 `active`, most never used.
+- **Suggested fix:** warn before revoking while a companion is online, and/or offer "show the command for the current enrollment" without minting a new one.
+
+### S4-11 · 🔲 Humans and agents see different projects
+- **Symptom:** the Artifacts page shows **11** artifacts; the database holds **19**.
+- **Root cause (correct, by design):** `RUN_RECORD_ARTIFACT_TYPES = ("document_vision",)` hides per-run bookkeeping blobs from the registry list (commit `dee8106`) — the deliverable is the document the agent rewrote, not the run's own record.
+- **The asymmetry:** that exclusion lives **only** in `api/views.py::ArtifactViewSet`. The agent-facing `mcp_platform_state/tools.py::list_artifacts` has **no such filter**, so agents see all 19.
+- **Risk:** an agent reasoning over *counts* or *coverage* double-counts every vision-read file. **`00_onboarding` (gap report) is exactly that kind of reasoning** — watch its evidence counts for duplicated document names.
+- **Suggested fix:** apply the same exclusion inside `list_artifacts` (or an explicit `include_run_records=False` default) so both doors show the same project.
+
+### S4-12 · 🔲 `00c` agent body does not match the tools it is given (MIGRATION DEFECT)
+Found by reading `agents/00c_intelligent_context_extractor/agent.md` (152 lines) against the real
+`codeintel` MCP surface and the platform-state allowlist. **These are `AGENT_MIGRATION_SPEC` §8
+reference-sweep misses** — the ~15% "rewrite every data reference" bucket. The reasoning (Role,
+Evidence, Process, quality gate) is sound and must be preserved verbatim; it is the *references*
+that are wrong. A migrated agent that still names a tool signature the platform does not expose
+is a FAILED migration by the spec's own definition.
+
+| # | Agent body says | Platform actually exposes | Impact |
+|---|-----------------|---------------------------|--------|
+| a | `codeintel.index(workspace=…, repo=…)` (line 59) | `index(repo: str \| None = None)` — **no `workspace` parameter** | Low in practice: MCP tool schemas are authoritative and the live transcript shows the agent sent `{"repo": "TARUN51/medslot-single-repo"}`, ignoring the doc. Still a wrong instruction. |
+| b | `get_dependency_path(repo, from, to)` (line 82/131) | `get_dependency_path(frm, to, repo=None)` — `from` is a Python keyword, so the code uses `frm` | **An agent following the doc literally fails this call.** |
+| c | "**Also index each artifact's body into the Knowledge Index**" (line 91, and required again in the quality gate line 141) | **No Knowledge-Index tool exists** in the agent's 16 platform-state tools | The agent is ordered to perform a step it has no tool for — and its own completion checklist demands it. A plausible stall/loop source: an agent that cannot tick a required box may keep retrying. |
+| d | "The platform opens the review gate — the required reviewer (Tech Lead) decides" (line 152) | **Wrong as of 2026-07-31** — Index code now runs headless (`auto_approve`, see S4-1). No gate opens. | The agent will tell the user a reviewer must approve something that will never appear. |
+
+**Also worth calibrating:** the body requires **five** artifacts (`codebase_intelligence`, `dependency_graph`, `git_analytics`, `dead_code`, `architecture_decisions`) plus an `assumption` artifact, and the master document alone specifies 13 sections. Even a healthy run is minutes of writing after the analysis — not seconds. Expectations were set wrongly earlier in testing.
+
+**Action:** run the §8 reference sweep over `00c` (and then over every other migrated agent — b/c/d are the kind of miss that repeats). Fix the two signatures, delete or implement the Knowledge-Index step, and align the completion text with the headless path.
+
+---
+
+## Step 4 — second pass (2026-07-31, after the first successful run)
+
+Run `98ab9a8c` **completed** — the first time Index code has ever worked end to end: 7 artifacts
+published, 0 gates, `commits: 22`, 73 files. Everything below was found either while diagnosing
+why the three runs before it failed, or by watching that successful run closely.
+
+> **Correction to an earlier claim in this document.** S4-7 was reported as the cause of the
+> hangs. **It was not.** Reading the run-1 engine transcript afterwards showed `Bash` returning
+> normally at 09:30:55 — *before* the S4-7 fix existed. The real cause is S4-13. The S4-7 change
+> is still correct and is kept (it fixes a genuine latent inconsistency, and `10_security`
+> carries the same one), but it did not fix this. The diagnosis was published before the
+> transcripts were read.
+
+### S4-13 · ✅ THE HANG — git inherited the MCP server's JSON-RPC channel (ROOT CAUSE)
+- **Symptom:** three runs died. `codeintel.index` never returned; the engine eventually reported
+  *"MCP server 'codeintel' tool 'index' sent no response or progress for 1800s"*.
+- **Evidence:** `git log … --name-only` alive **369 seconds at 0 s CPU**, parent already gone.
+  The identical command run by hand returned 6,689 bytes instantly.
+- **Root cause:** `_git` used `capture_output=True`, which redirects **stdout and stderr only** —
+  stdin is still inherited. Harmless from a web process. Fatal inside a **stdio MCP server**,
+  whose stdin *is* the JSON-RPC channel to the engine: git got a duplicate handle to the protocol
+  pipe, blocked on it, and the server had no line left to answer on.
+- **Surgical fix:** `stdin=subprocess.DEVNULL` in **four** places — `codeintel/builtin.py::_git`,
+  `worktree.py::_git`, `runner.py` provisioning commands, and the `runner.py` build `Popen`.
+- **Guard:** `test_git_helper_never_inherits_stdin`.
+- **Rule this establishes:** *any* subprocess spawned under a stdio MCP server must own its stdin.
+
+### S4-14 · ✅ The CodeIntel server ran without an environment (git invisible)
+- **Symptom:** `commits: 0` on a repo with real history — reported as "no history", not as an error.
+- **Root cause:** `daemon.py` launched `codeintel_mcp` with **3 hand-built env vars**. No `PATH`,
+  so git could not be found. (On Windows, no `SYSTEMROOT` is worse still: the interpreter dies in
+  `import asyncio` with WinError 10106 before any of our code can log it.)
+- **Fix:** inherit `os.environ`, then overlay the run-specific vars. Measured: `commits 0 → 22`.
+- **Guard:** `test_both_mcp_servers_inherit_the_environment`.
+
+### S4-15 · ✅ The agent delegated its own work to a queue nothing was running
+- **Symptom:** the agent called `TaskCreate` and waited on a background task that would never run.
+- **Fix:** `_BACKGROUND_TOOLS` (Task*/Cron*/Monitor/SendMessage/…) denied on both driver paths.
+
+### S4-16 · ✅ `add_trace_edge` was undiscoverable, and failed with HTTP 500
+- **Symptom:** the agent guessed **nine** relationship values before one stuck, then used that one
+  (`implements`) for **every** edge. Verified in the data: all 5 edges of run `98ab9a8c` read
+  `implements` — semantically wrong (a dependency graph does not "implement" a document).
+- **Root cause, three layers:** the valid set (`derives, implements, tests, deploys`) existed only
+  in the model enum — not in the tool signature, not in a docstring, not in the error message; and
+  `RunnerStateView` mapped only `TypeError` to 400, so every rejected **value** surfaced as a
+  **500**. An agent reading 500 concludes the platform is broken and retries the same call.
+- **Surgical fix:** docstring naming all four values with their meaning (on **both** MCP surfaces —
+  `mcp_platform_state/server.py` *and* `runner/companion/state_mcp.py`, which is the one the
+  companion agent actually sees); error message lists the valid values and echoes what was
+  rejected; `ValueError → 400`.
+- **Guards:** 3 tests incl. `test_rejected_value_is_400_and_explains_itself`.
+
+### S4-17 · ✅ `search_codebase` matched letters, not words — and only file names
+- **Symptom, both observed live:** `'authentication JWT token'` → **nothing**, in a repo that
+  authenticates. `'CI CD pipeline docker compose'` → **`dependencies.py`**, because "ci" sits
+  inside "dependen**ci**es". It never errored; it answered confidently and wrongly.
+- **Root cause:** `sum(low.count(t) for t in terms)` over **paths only** — raw substring counting.
+- **Surgical fix:** whole-word regex matching; searches file **contents** as well as paths (a
+  bounded, lower-cased copy — 20 KB/file, 40 MB/repo, so a monorepo cannot exhaust the developer's
+  machine); single-character terms dropped; results carry `terms_matched` / `of_terms` / `where`.
+- **Guards:** `test_search_matches_whole_words_not_substrings`,
+  `test_search_finds_content_not_just_filenames`.
+
+### S4-18 · ✅ The Knowledge Index was never populated — the phase's whole purpose leaked out
+- **Symptom:** measured in the DB after the successful run — `KnowledgeChunk` rows for its seven
+  artifacts: **0**. Every later phase would re-read the codebase rather than retrieve what Step 4
+  computed at a cost of ~40 minutes.
+- **Root cause:** the agent bodies instruct *"index each artifact's body into the Knowledge
+  Index"*, and **no such tool is exposed**. No agent could ever have complied. (This is S4-12c,
+  now closed.)
+- **Surgical fix:** the **platform** does it — `register_artifact` chunks the staged body via the
+  existing `apps/knowledge/index.py::index_artifact` at registration. Idempotent, so a
+  re-registration re-indexes cleanly. Best-effort: retrieval is an accelerator, never a
+  correctness gate, so a store hiccup logs a warning and never fails a registration.
+- **Blast radius (good):** this fixes retrieval for **every phase**, not just Step 4.
+- **Guards:** 3 tests incl. failure-tolerance and pointer-only artifacts.
+
+### S4-19 · ✅ Only 10 languages recognised; config/CI files invisible; unknown reported as zero
+- **Root cause:** one line — `if path.suffix not in _LANG_EXT` — gates `file_meta`, which is the
+  **only node set** the dependency graph, PageRank, hotspots, dead code and search all read.
+- **Three distinct failures it caused:**
+  1. A C#/PHP/Swift/C++/Vue repo indexes as **zero files**. Git analytics is *not* filtered, so it
+     still reports thousands of commits with **0 hotspots** — the shape of a *healthy* codebase.
+     The worst possible failure for a tool whose job is finding risk.
+  2. `package.json`, `.github/workflows/*.yml`, `docker-compose.yml`, `Dockerfile` all carry
+     non-code (or no) extensions, so **"CI/CD presence" and "tech stack" were unanswerable** — the
+     only evidence available was which code extensions appeared. This is why the agent offered
+     `dependencies.py` as CI/CD evidence.
+  3. `get_context` on an unindexed path returned a full row of **zeros** — 0 lines, 0 complexity,
+     no owner, `bus_factor_risk: false` — indistinguishable from a small, clean, well-shared file.
+- **Surgical fix:** widened `_LANG_EXT` (+20 languages); added a **separate** `_CONTEXT_EXT` /
+  `_CONTEXT_NAMES` inventory collected for **presence only**, never graph nodes, so the evidence
+  base widens without distorting the analysis; `get_overview().signals` gives evidence-backed
+  yes/no for CI/CD, containerisation, IaC, dependency manifests and docs, each naming the proving
+  files; `get_context`/`get_risk` return `{"indexed": false, "reason": …}`; `index()` reports
+  `skipped_files` by extension.
+- **Note:** `skipped_files` closes a checkbox the agent could never honestly tick — its own quality
+  gate demands *"any skipped files recorded as assumptions"*, and it had no way to know.
+- **Guards:** 4 tests.
+
+### S4-20 · ✅ Any git failure was indistinguishable from "this repo has no history"
+- **Root cause:** `_git` collapsed **every** outcome to `""` — timeout, missing binary, corrupt
+  index, and a genuinely empty repo all identical. Empty string → every counter stays 0 →
+  `_hotspots` skips every file (`churn <= 0`) → **the churn×complexity ranking, the highest-value
+  output of this phase, comes back empty and reports as "no hotspots found"**. The agent's own
+  Step 1 check passes regardless, because `file_count` comes from the filesystem walk.
+- **Not hypothetical: S4-14 was exactly this shape** and cost real debugging time.
+- **Surgical fix:** `_git_checked` returns `(stdout, error)`; analytics carries
+  `ok` / `partial` / `error`; a timeout **retries smaller** (`-n 200`) so partial history that we
+  *know* is partial beats none; new `index_report` tool + `index_health` on `index()`;
+  `worktree.py::_git` gained a 300 s timeout (it previously had **none at all** — the companion
+  could wait forever on a remote git operation).
+- **Guards:** 3 tests.
+
+### S4-21 · ✅ The companion died on a transient backend error
+- **Symptom (caught live by a background monitor, mid-session):** the shared Postgres dropped one
+  connection (`SSL SYSCALL error: EOF detected`), `/api/runner/work/` returned 500, and the
+  companion **exited**. Heartbeat went stale; the developer's only symptom is a button that
+  silently stops working, with no visible link to a blip minutes earlier.
+- **Root cause:** connection failures (OSError) were already retried forever, but an HTTP **5xx**
+  raised a plain `DaemonError` that the serve loop — catching only OSError — let escape.
+- **Surgical fix:** new `TransientBackendError` for 5xx on both claim paths, retried with the
+  existing backoff; `_report` also retries a 5xx (a finished phase is too expensive to lose to a
+  database blip). **4xx stays fatal** — a revoked token is a real rejection retrying cannot fix.
+- **Guards:** 3 tests incl. `test_claim_4xx_is_still_fatal`.
+
+### S4-22 · ✅ A leaking test made a passing test look broken
+- `--headed` wrote to the real `os.environ`; `monkeypatch.delenv` on an already-absent variable
+  records nothing to restore, so the flag leaked into every later test in the session. A Playwright
+  test then **failed in a full run and passed alone** — the exact signature of a phantom
+  regression, and a guaranteed time-sink during demo prep. Popped explicitly.
+
+### Cross-reference — platform-wide, owned by the team (not brownfield)
+**Re-running a phase duplicates artifacts (v1 + v2) instead of replacing.** Full blast-radius recon delivered 2026-07-31: the defect is in the shared `register_artifact`, so it spans **every phase, both branches, greenfield and brownfield**. Orphaned state includes phantom gates, stranded clarifications, unreclaimed S3 bodies, orphan trace edges and (if a published run is re-run) duplicate Confluence pages. The team took ownership of this one.
+
 ## Status summary
 | ID | Title | Status |
 |----|-------|--------|
@@ -102,3 +341,29 @@ On adopt, a new **`00e_document_vision`** agent reads the preserved page images 
 | BF-BUG-3c (diagrams/screens) | Diagrams/screenshots not agent-readable | 🔧 Part B vision built — awaiting live test |
 | T-1 | Test PDFs: dashes → � | ✅ FIXED (regenerated) |
 | T-2 | Wireframes image-only → add HTML | ✅ FIXED (HTML added) |
+| S4-1 | Onboarding agent opened an unreachable gate | ✅ FIXED (verified live) |
+| S4-2 | Carrier runs leaked into Phases & Runs + dashboard | ✅ FIXED (verified live) |
+| S4-3 | No "running" state — run looked like a no-op | ✅ FIXED (verified live) |
+| S4-4 | Progress message never cleared | ✅ FIXED |
+| S4-5 | Message rendered nothing (missing `running` key) | ✅ FIXED (verified live) |
+| S4-6 | Copy leaked agent key `00c`, pointed at an invisible screen | ✅ FIXED |
+| S4-7 | Repo-scoped runs hang — un-denied but not allow-listed | ✅ FIX KEPT — **but it was NOT the cause of the hangs** (see S4-13). Genuine latent inconsistency; `10_security` had it too |
+| S4-8 | Companion logs nothing during a run | 🔲 OPEN |
+| S4-9 | 7 stale tests from `b97f804` | 🔲 OPEN (**blocks merge**) |
+| S4-10 | Connect Machine revokes the live companion's token | 🔲 OPEN (decision) |
+| S4-11 | Agents see run-record artifacts the UI hides | 🔲 OPEN (decision) |
+| S4-12 | **`00c` agent body ≠ the tools it is given** (migration §8 miss) | ✅ FIXED — all four (a `workspace` param, b `frm` not `from`, c Knowledge Index → S4-18, d headless not a Tech Lead gate). **Re-sweep of the OTHER migrated agents still owed** |
+| S4-13 | **THE HANG — git inherited the MCP server's JSON-RPC channel** | ✅ FIXED (verified live: run completed) |
+| S4-14 | CodeIntel server launched without an environment (git invisible) | ✅ FIXED (verified live: `commits 0 → 22`) |
+| S4-15 | Agent delegated its work to a background queue nothing runs | ✅ FIXED |
+| S4-16 | `add_trace_edge` undiscoverable; caller error returned 500 | ✅ FIXED (tests green) |
+| S4-17 | `search_codebase` matched substrings, and only file names | ✅ FIXED (tests green) |
+| S4-18 | **Knowledge Index never populated — 0 chunks for 7 artifacts** | ✅ FIXED (tests green; fixes retrieval platform-wide) |
+| S4-19 | 10 languages only; CI/config invisible; unknown reported as zero | ✅ FIXED (tests green) |
+| S4-20 | Any git failure indistinguishable from "no history" | ✅ FIXED (tests green) |
+| S4-21 | Companion died on a transient 5xx from the platform | ✅ FIXED (tests green) |
+| S4-22 | Leaking test made a passing test look broken | ✅ FIXED |
+
+**Legend for the second pass:** ✅ *(tests green)* = fixed with guards, **not yet exercised by a
+live run**. Only S4-13 and S4-14 are confirmed by a completed live run. The next Index code run is
+what promotes the rest to "verified live".
