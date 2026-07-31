@@ -232,6 +232,14 @@ class RunnerStateView(APIView):
         except TypeError as exc:
             return Response({"detail": f"bad arguments: {exc}"},
                             status=status.HTTP_400_BAD_REQUEST)
+        except ValueError as exc:
+            # A rejected VALUE is a caller error, not a platform fault (B2). The state tools
+            # raise ValueError for exactly that — an unknown `rel`, `status` or `sor`. Only
+            # TypeError was mapped, so every one of those surfaced to the agent as a 500.
+            # An agent reading "500" concludes the platform is broken and retries the same call;
+            # reading "400: invalid rel … valid values: …" it corrects itself on the first try.
+            # Live in run 98ab9a8c that distinction cost nine wasted round trips.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"result": result})
 
     @staticmethod

@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Spinner } from "../../components/ui";
-import type { Capability, OnboardingRegister } from "../../types";
+import type { Capability, OnboardingRegister, OnboardingRepoIndex } from "../../types";
 import { useRunners } from "../identity/hooks";
 import { ConnectCapability } from "../setup/ConnectCapability";
 import { useRepositories } from "../setup/hooks";
@@ -253,22 +253,60 @@ function ConfluenceLinkForm({ projectId }: { projectId: string }) {
   );
 }
 
+// ── Shared: what a headless onboarding step is doing right now ──────────────
+// Index code and Gap report run as agents on a carrier work item that is hidden from the backlog,
+// from Phases & Runs and from the dashboard — deliberately, so a setup step never looks like
+// lifecycle work needing review. That makes THIS the only place their progress can be reported,
+// which is why the message is driven by the hub's polled state and not by the POST's result: a
+// mutation result is set once and never clears, so the old "running…" line survived completion
+// and every later re-index. Server state clears itself.
+function AgentStepStatus({ state, workingText, questionText }: {
+  state: { running: boolean; question?: { id: string; count: number } | null };
+  workingText: string;
+  questionText: string;
+}) {
+  if (!state.running) return null;
+  // A blocked agent is still "running", but the user has to act and nothing else would say so.
+  if (state.question) {
+    return (
+      <Card attention>
+        <CardBody style={{ maxWidth: "520px" }}>
+          <span className="gate-panel__role">Waiting on you</span>
+          <p className="t-sm" style={{ marginTop: "var(--space-1)" }}>{questionText}</p>
+          <div className="gate-panel__actions">
+            <Link to="/clarifications" className="btn btn--primary">
+              {state.question.count === 1 ? "Answer the question" : "Answer the questions"}
+            </Link>
+          </div>
+        </CardBody>
+      </Card>
+    );
+  }
+  // Amber, not muted grey: this is the only signal that a multi-minute agent run is under way —
+  // the run is deliberately absent from Phases & Runs, Gates and the dashboard — so it has to be
+  // findable at a glance. `--warning` is the token the product already uses for in-progress
+  // states (e.g. the connecting companion pill), so this reads as "working", not "broken".
+  return (
+    <p
+      className="t-sm u-row"
+      style={{ gap: "var(--space-2)", alignItems: "center", color: "var(--warning)" }}
+    >
+      <Spinner />
+      <span>{workingText}</span>
+    </p>
+  );
+}
+
 // ── Step 4: Index code (B4-1) — dispatch real code intelligence per repo ──
-// The button dispatches an indexing job to the connected companion, which analyses the repo in
-// a read-only worktree and reports the index back (nothing is copied off the machine). The web
+// The button dispatches the code-intelligence agent to the connected companion, which analyses the
+// repo in a read-only worktree and reports back (nothing is copied off the machine). The web
 // endpoint only dispatches — it can't fabricate an index (B4-2).
-function IndexCodeStep({ projectId, repos, indexDone }: {
+function IndexCodeStep({ projectId, repoStates, indexDone }: {
   projectId: string;
-  repos: { id: string; name: string }[];
+  repoStates: OnboardingRepoIndex[];
   indexDone: boolean;
 }) {
   const startCodeIntel = useStartCodeIntel(projectId);
-  const [dispatched, setDispatched] = useState<Record<string, boolean>>({});
-
-  const onIndex = (repoId: string) => {
-    setDispatched((d) => ({ ...d, [repoId]: true }));
-    startCodeIntel.mutate(repoId);
-  };
 
   return (
     <Vstep
@@ -276,36 +314,55 @@ function IndexCodeStep({ projectId, repos, indexDone }: {
       title="Index code"
       desc={
         indexDone
-          ? "Code intelligence indexed."
-          : "Analyse each repository on your connected companion — the built-in code-intel runs in a read-only worktree and reports back. Nothing is copied off your machine."
+          ? "Code intelligence is ready."
+          : "Analyse each repository on your connected companion — it reads the code in a read-only copy and reports back. Nothing is copied off your machine."
       }
       state={indexDone ? "done" : undefined}
     >
-      {repos.length === 0 ? (
+      {repoStates.length === 0 ? (
         <p className="t-sm u-muted" style={{ marginTop: "var(--space-2)" }}>
           Register a repository first (step 3) to index code.
         </p>
       ) : (
         <div className="u-stack" style={{ marginTop: "var(--space-2)" }}>
-          {repos.map((r) => (
-            <div key={r.id} className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
-              <span className="u-strong">{r.name}</span>
-              <Button variant="secondary" onClick={() => onIndex(r.id)} disabled={startCodeIntel.isPending}>
-                {dispatched[r.id] ? "Indexing dispatched…" : "Index code"}
-              </Button>
+          {repoStates.map((r) => (
+            <div key={r.repo_id} className="u-stack" style={{ gap: "var(--space-1)" }}>
+              <div className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                <span className="u-strong">{r.name}</span>
+                <Button
+                  variant="secondary"
+                  onClick={() => startCodeIntel.mutate(r.repo_id)}
+                  disabled={r.status === "running" || startCodeIntel.isPending}
+                >
+                  {r.status === "running"
+                    ? "Indexing dispatched…"
+                    : r.status === "indexed"
+                      ? "Re-index code"
+                      : "Index code"}
+                </Button>
+                {/* Straight to the result, not a filtered list — one click to what it produced. */}
+                {r.status === "indexed" && r.artifact_id && (
+                  <Link to={`/artifacts/${r.artifact_id}`} className="t-sm">
+                    View what it found
+                  </Link>
+                )}
+              </div>
+              <AgentStepStatus
+                state={r}
+                workingText={`Reading ${r.name} on your machine — this usually takes a few minutes. You can leave this page; it keeps going.`}
+                questionText={`The code-intelligence agent has a question about ${r.name} before it can finish.`}
+              />
+              {r.status === "indexed" && (
+                <p className="t-sm" style={{ color: "var(--success)" }}>
+                  Done — {r.name} has been analysed and the findings are saved. They feed the gap
+                  report next.
+                </p>
+              )}
             </div>
           ))}
           <p className="t-sm u-muted">
-            Requires your companion online. It runs the analysis and reports back — the result
-            appears here and feeds the gap report.
+            Requires your companion online. It runs the analysis on your machine and reports back.
           </p>
-          {startCodeIntel.data && (
-            <p className="t-sm" style={{ color: "var(--success)" }}>
-              {startCodeIntel.data.mode === "agent"
-                ? "Running the code-intelligence agent (00c) on your companion — track it in Phases & Runs; its result feeds the gap report."
-                : "Indexing dispatched to a companion — the result appears here and feeds the gap report."}
-            </p>
-          )}
           {startCodeIntel.isError && (
             <p className="t-sm" style={{ color: "var(--danger)" }}>
               {startCodeIntel.error instanceof Error ? startCodeIntel.error.message : "Could not start indexing."}
@@ -413,7 +470,15 @@ function OnboardingHubLive() {
   ].filter(Boolean).join(" · ") + ".";
   const repoCount = repos.data?.length ?? 0;
   const reposDone = repoCount > 0;
-  const indexDone = data.index.status === "indexed";
+  // Prefer the hub's per-repo state (carries running / question / artifact link). Fall back to the
+  // repositories list so a backend that predates `index.repos` still renders the step.
+  const repoStates: OnboardingRepoIndex[] =
+    data.index.repos ??
+    (repos.data ?? []).map((r) => ({
+      repo_id: r.id, name: r.name, status: "not_started" as const,
+      running: false, run_id: null, question: null, artifact_id: null,
+    }));
+  const indexDone = repoStates.length > 0 && repoStates.every((r) => r.status === "indexed");
 
   return (
     <div className="canvas-pad" style={{ maxWidth: "920px" }}>
@@ -492,7 +557,7 @@ function OnboardingHubLive() {
             )}
           </Vstep>
 
-          <IndexCodeStep projectId={projectId} repos={repos.data ?? []} indexDone={indexDone} />
+          <IndexCodeStep projectId={projectId} repoStates={repoStates} indexDone={indexDone} />
 
           <Vstep
             num="5"
@@ -515,17 +580,19 @@ function OnboardingHubLive() {
             ) : (
               <div className="u-stack" style={{ marginTop: "var(--space-2)" }}>
                 <div className="gate-panel__actions">
-                  <Button variant="secondary" onClick={() => runGapReport.mutate()} disabled={runGapReport.isPending}>
-                    {runGapReport.isPending ? <Spinner /> : "Run gap report"}
+                  <Button
+                    variant="secondary"
+                    onClick={() => runGapReport.mutate()}
+                    disabled={data.gap.running || runGapReport.isPending}
+                  >
+                    {data.gap.running ? "Assessment dispatched…" : "Run gap report"}
                   </Button>
                 </div>
-                {runGapReport.data?.mode === "agent" && (
-                  <p className="t-sm">
-                    The onboarding agent (00_onboarding) is assessing your project on your companion.
-                    The report appears here once its review gate is approved —{" "}
-                    <Link to="/runs">track it in Phases &amp; Runs</Link>.
-                  </p>
-                )}
+                <AgentStepStatus
+                  state={data.gap}
+                  workingText="Assessing your project on your machine — reading everything you've brought in and the code analysis. This usually takes a few minutes."
+                  questionText="The onboarding agent has a question about your project before it can finish the assessment."
+                />
                 {runGapReport.isError && (
                   <p className="t-sm" style={{ color: "var(--danger)" }}>
                     {runGapReport.error instanceof Error ? runGapReport.error.message : "Could not run the gap report."}

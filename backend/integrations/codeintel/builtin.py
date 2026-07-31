@@ -25,11 +25,37 @@ from integrations.types import IntelIndex
 
 _SKIP_DIRS = {".git", "node_modules", "dist", "build", "__pycache__", ".venv", "venv",
               "vendor", ".next", ".turbo", "target", "out", ".mypy_cache", ".pytest_cache"}
-_LANG_EXT = {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".rb", ".rs", ".kt"}
+#: Files that participate in the ANALYSIS — dependency graph nodes, complexity, hotspots, dead
+#: code, search. This one set gates `_collect_files`, and `file_meta` is the only node set every
+#: later layer knows about, so an extension missing here is invisible to all of them at once
+#: (B4). A C#/PHP/Swift/C++ repo indexed as ZERO files while git analytics — which reads `git
+#: log` and is not filtered — still reported thousands of commits: the shape of a *healthy*
+#: codebase, because hotspots require a churn entry for a file that was never collected.
+_LANG_EXT = {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".rb", ".rs", ".kt",
+             ".cs", ".php", ".swift", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm",
+             ".scala", ".vue", ".svelte", ".dart", ".ex", ".exs", ".sh", ".sql", ".lua", ".pl"}
+
+#: Files collected for PRESENCE only — never graph nodes, never complexity or hotspot inputs.
+#: The agent's artifact spec requires a "Technology Stack (confirmed from code analysis)" and a
+#: "CI/CD presence" field, and neither was answerable: `package.json`, `requirements.txt`,
+#: `.github/workflows/*.yml` and `docker-compose.yml` all carry non-code extensions, so the only
+#: stack evidence in existence was *which code extensions appeared*. Kept deliberately separate
+#: from `_LANG_EXT` so widening the evidence base cannot distort the dependency graph.
+_CONTEXT_EXT = {".json", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".xml", ".gradle",
+                ".tf", ".tfvars", ".md", ".rst", ".env", ".lock", ".properties"}
+
+#: Extensionless files that are pure signal. `path.suffix` is empty for these, so no
+#: extension-based rule could ever have reached them.
+_CONTEXT_NAMES = {"Dockerfile", "Makefile", "Jenkinsfile", "Procfile", "Vagrantfile",
+                  "CODEOWNERS", "Gemfile", "Rakefile", "requirements.txt"}
 _ENTRY_NAMES = {"main", "index", "__init__", "__main__", "app", "manage", "cmd", "setup",
                 "conftest", "wsgi", "asgi", "server"}
 _COMPLEXITY = re.compile(r"\b(if|for|while|case|elif|when|catch|switch|except)\b|&&|\|\||\?")
 _MAX_BYTES = 1_000_000
+
+#: Per-file and whole-repo caps on the searchable text copy kept in memory (see `_analyze`).
+_SEARCH_TEXT_PER_FILE = 20_000
+_SEARCH_TEXT_BUDGET = 40_000_000
 
 # import-extraction patterns per language family
 _JS_IMPORT = re.compile(
@@ -62,12 +88,47 @@ def _py_imports(text: str) -> list[str]:
 
 
 def _git(workspace: Path, *args: str) -> str:
+    """Run a read-only git command in `workspace` and return stdout ("" on any failure).
+
+    `stdin=DEVNULL` is LOAD-BEARING — do not drop it. `capture_output` covers stdout/stderr only,
+    so without this the child INHERITS the parent's stdin. That is harmless from a web process and
+    fatal inside the companion's CodeIntel **MCP server**, whose stdin *is* the JSON-RPC channel to
+    the engine: git receives a duplicate handle to the protocol pipe, blocks on it, and the server
+    is left with no line to answer on. Observed live (run edefff0d): `git log … --name-only` alive
+    369s at **0s CPU** with its parent gone, `codeintel.index` never returning, and the engine
+    finally reporting *'MCP server "codeintel" tool "index" sent no response or progress for
+    1800s'*. The same command run by hand finished instantly with 6,689 bytes. Any subprocess
+    spawned under a stdio MCP server must own its stdin.
+    """
+    return _git_checked(workspace, *args)[0]
+
+
+def _git_checked(workspace: Path, *args: str, timeout: int = 60) -> tuple[str, str]:
+    """`(stdout, error)` — the same call as `_git`, but it says WHY it produced nothing.
+
+    `_git` collapses every outcome into `""`: a timeout, a missing git binary, a corrupt index
+    and a repository with genuinely no commits are indistinguishable. That is not hypothetical
+    — **S4-8 was exactly this**. git was missing from the server's PATH, `_git` returned `""`,
+    and the platform reported `commits: 0`, which reads as "this repo has no history" rather
+    than "I could not read the history". Because the empty string flows into `_git_analytics`,
+    every counter stays at zero, and `_hotspots` skips any file with `churn <= 0` — so the
+    churn x complexity ranking, the single highest-value output of this whole phase, comes back
+    EMPTY and reports as "no hotspots found". The agent's Step 1 check ("verify the IntelIndex
+    is non-empty") passes regardless, because `file_count` comes from the filesystem walk.
+
+    Callers that need to tell those cases apart use this; `_decisions` stays on the tolerant
+    `_git` because decision archaeology is best-effort by design (B5)."""
     try:
         out = subprocess.run(["git", "-C", str(workspace), *args],
-                             capture_output=True, text=True, timeout=60)
-        return out.stdout if out.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError):
-        return ""
+                             stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=timeout)
+        if out.returncode != 0:
+            return "", (out.stderr or "").strip()[:200] or f"git exited {out.returncode}"
+        return out.stdout, ""
+    except subprocess.TimeoutExpired:
+        return "", f"timed out after {timeout}s"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "", f"{type(exc).__name__}: {exc}"[:200]
 
 
 class BuiltinCodeIntel:
@@ -87,6 +148,24 @@ class BuiltinCodeIntel:
             hotspots=len(analysis["hotspots"]),
         )
 
+    def index_report(self, *, repo: str) -> dict:
+        """Health of the INDEX ITSELF, separate from the codebase it describes.
+
+        `IntelIndex` reports what was found; this reports what could not be. An agent that only
+        checks "is the index non-empty" cannot distinguish a clean read from a degraded one —
+        `file_count` comes from the filesystem walk and stays healthy even when git failed
+        completely. Read this before interpreting any result (B4/B5)."""
+        a = self._a(repo)
+        g = a["git"]
+        return {
+            "git": {"ok": g.get("ok", True), "partial": g.get("partial", False),
+                    "error": g.get("error", ""), "commits": g["commits"]},
+            "skipped_files": a.get("skipped", {}),
+            "analysed_files": a["file_count"],
+            "config_files_seen": len(a.get("config_files", [])),
+            "content_search_complete": a.get("search_text_complete", True),
+        }
+
     def _a(self, repo: str) -> dict:
         if repo not in self._analyses:
             raise KeyError(f"repo not indexed: {repo!r} (call index() first)")
@@ -101,6 +180,12 @@ class BuiltinCodeIntel:
             "commits": a["git"]["commits"], "authors": len(a["git"]["authors"]),
             "top_modules": [f for f, _ in top], "entry_points": a["entry_points"],
             "communities": len(a["graph"]["communities"]), "hotspots": a["hotspots"][:5],
+            # Evidence-backed presence checks + index health, so the agent never has to infer
+            # "is there CI/CD?" from code file names, and can see a degraded read (B4/B5).
+            "signals": a.get("signals", {}),
+            "git_ok": a["git"].get("ok", True),
+            "git_error": a["git"].get("error", ""),
+            "skipped_files": a.get("skipped", {}),
         }
 
     def get_context(self, *, repo: str, targets: list[str]) -> dict:
@@ -108,11 +193,21 @@ class BuiltinCodeIntel:
         out = {}
         for t in targets:
             f = a["files"].get(t)
+            if f is None:
+                # A path that was never indexed used to answer with a full row of ZEROS —
+                # 0 lines, 0 complexity, no owner, bus_factor_risk false. Indistinguishable
+                # from a small, clean, well-shared file, so the agent wrote "not indexed" into
+                # artifacts as "healthy". Say so instead (B4).
+                out[t] = {"indexed": False,
+                          "reason": "not analysed — unsupported file type, excluded directory, "
+                                    "too large, or the path does not exist in this repo"}
+                continue
             owners = a["git"]["file_owners"].get(t, {})
             top_owner = max(owners, key=owners.get) if owners else None
             out[t] = {
-                "lines": (f or {}).get("lines", 0), "complexity": (f or {}).get("complexity", 0),
-                "lang": (f or {}).get("lang", ""), "churn": a["git"]["file_churn"].get(t, 0),
+                "indexed": True,
+                "lines": f.get("lines", 0), "complexity": f.get("complexity", 0),
+                "lang": f.get("lang", ""), "churn": a["git"]["file_churn"].get(t, 0),
                 "owner": top_owner, "bus_factor_risk": bool(owners) and len(owners) == 1,
             }
         return out
@@ -122,6 +217,11 @@ class BuiltinCodeIntel:
         score = {h["file"]: h["score"] for h in a["hotspots"]}
         out = {}
         for t in targets:
+            if t not in a["files"]:
+                out[t] = {"indexed": False,                     # same trap as get_context (B4)
+                          "reason": "not analysed — this file is not in the index, so its risk "
+                                    "is UNKNOWN, not zero"}
+                continue
             dependents = sorted(a["graph"]["in_edges"].get(t, []))
             co = a["git"]["co_change"].get(t, {})
             out[t] = {
@@ -140,17 +240,46 @@ class BuiltinCodeIntel:
         return [d for d in decisions if q in (d.get("title", "") + d.get("ref", "")).lower()]
 
     def search_codebase(self, *, repo: str, query: str) -> list[dict]:
-        # Keyword baseline over file paths/symbols; the Knowledge Index backs the semantic
-        # path once embeddings are wired (it delegates here when no provider is set).
+        """Whole-word keyword search over file paths AND file contents.
+
+        It previously counted raw SUBSTRINGS in the path alone, and looked at nothing else.
+        Two ways that lied, both observed live in run 98ab9a8c:
+
+        - `'authentication JWT token'` returned NOTHING in a repo that authenticates, because
+          no file was *named* that.
+        - `'CI CD pipeline docker compose'` returned `dependencies.py` — "ci" appears inside
+          "dependen**ci**es". A meaningless match, ranked first, presented as evidence.
+
+        It never errored either time; it answered confidently and wrongly, which is the worst
+        failure mode for a tool an agent uses to decide what exists. Now: word boundaries only,
+        content matched as well as path, path weighted higher (a file named `auth.py` beats one
+        that merely mentions auth), and single-character terms dropped (B3).
+        """
         a = self._a(repo)
-        terms = [t for t in re.split(r"\W+", query.lower()) if t]
+        terms = [t for t in re.split(r"\W+", query.lower()) if len(t) > 1]
+        if not terms:
+            return []
+        patterns = [re.compile(rf"\b{re.escape(t)}\b") for t in terms]
         hits = []
-        for path in a["files"]:
+        for path, meta in a["files"].items():
             low = path.lower()
-            s = sum(low.count(t) for t in terms)
-            if s:
-                hits.append({"file": path, "score": s})
-        return sorted(hits, key=lambda h: -h["score"])[:20]
+            body = (meta.get("text") or "").lower()
+            path_hits = sum(1 for p in patterns if p.search(low))
+            body_hits = sum(len(p.findall(body)) for p in patterns) if body else 0
+            matched = sum(1 for p in patterns
+                          if p.search(low) or (body and p.search(body)))
+            if not matched:
+                continue
+            hits.append({
+                "file": path,
+                # Path match is the strong signal; body occurrences break ties. `matched`
+                # (how many DISTINCT query terms appear) dominates both, so a file covering
+                # the whole query outranks one repeating a single word.
+                "score": matched * 100 + path_hits * 10 + min(body_hits, 9),
+                "terms_matched": matched, "of_terms": len(terms),
+                "where": ("path" if path_hits else "content"),
+            })
+        return sorted(hits, key=lambda h: (-h["score"], h["file"]))[:20]
 
     def get_dependency_path(self, *, repo: str, frm: str, to: str) -> list[str]:
         return _bfs_path(self._a(repo)["graph"]["out_edges"], frm, to)
@@ -170,13 +299,24 @@ class BuiltinCodeIntel:
 
 # ── analysis engine ─────────────────────────────────────────────────
 def _analyze(ws: Path, repo: str) -> dict:
-    files = _collect_files(ws)
+    files, config_files, skipped = _scan(ws)
     languages: dict[str, int] = defaultdict(int)
     file_meta: dict[str, dict] = {}
+    budget = _SEARCH_TEXT_BUDGET
     for rel, ext, text in files:
         languages[ext] += 1
         file_meta[rel] = {"lang": ext, "lines": text.count("\n") + 1,
                           "complexity": len(_COMPLEXITY.findall(text))}
+        # Keep a bounded, lower-cased copy so `search_codebase` can match CONTENT and not just
+        # file names (B3). Bounded twice — per file and across the repo — because the whole
+        # analysis is held in memory inside the companion's MCP server, and an unbounded copy of
+        # a monorepo would put the developer's machine under pressure to answer a search query.
+        # Past the budget, search degrades to path-only for the remaining files rather than
+        # growing without limit; `search_text_complete` records whether that happened.
+        if budget > 0:
+            snippet = text[:_SEARCH_TEXT_PER_FILE].lower()
+            file_meta[rel]["text"] = snippet
+            budget -= len(snippet)
 
     git = _git_analytics(ws)
     edges, out_edges, in_edges = _dependency_graph(files)
@@ -196,28 +336,92 @@ def _analyze(ws: Path, repo: str) -> dict:
                   "pagerank": pagerank, "communities": communities},
         "hotspots": hotspots, "dead_code": dead_code, "decisions": decisions,
         "entry_points": entry_points,
+        "config_files": config_files, "skipped": skipped,
+        "signals": _signals(config_files),
+        "search_text_complete": budget > 0,
     }
 
 
-def _collect_files(ws: Path) -> list[tuple[str, str, str]]:
-    out = []
-    for path in ws.rglob("*"):
-        if not path.is_file() or path.suffix not in _LANG_EXT:
-            continue
-        if any(part in _SKIP_DIRS for part in path.parts):
-            continue
-        try:
-            if path.stat().st_size > _MAX_BYTES:
-                continue
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        out.append((path.relative_to(ws).as_posix(), path.suffix, text))
+#: Presence checks the agent's artifact spec explicitly asks for, each answerable from the
+#: config inventory alone. Substrings are matched against the repo-relative path, lowercased.
+_SIGNAL_MARKERS = {
+    "ci_cd": (".github/workflows/", ".gitlab-ci", "jenkinsfile", "azure-pipelines",
+              ".circleci/", "bitbucket-pipelines", ".travis.yml"),
+    "containerized": ("dockerfile", "docker-compose", ".dockerignore"),
+    "iac": (".tf", "terraform/", "cloudformation", "helm/", "k8s/", "kubernetes/"),
+    "dependency_manifest": ("package.json", "requirements.txt", "pyproject.toml", "go.mod",
+                            "pom.xml", "build.gradle", "gemfile", "cargo.toml", "composer.json",
+                            "*.csproj", "pubspec.yaml"),
+    "documentation": ("readme", "docs/", "contributing"),
+}
+
+
+def _signals(config_files: list[str]) -> dict:
+    """Evidence-backed yes/no answers with the file that proves each one.
+
+    The health dashboard asks "CI/CD presence"; before this the only way to answer was to guess
+    from code file names, which is how `dependencies.py` came back as CI/CD evidence. Every
+    answer here names the file it rests on, so the agent reports a measured fact rather than an
+    inference — the distinction its own Role section is built around (B4)."""
+    low = [(p, p.lower()) for p in config_files]
+    out = {}
+    for name, markers in _SIGNAL_MARKERS.items():
+        hits = [p for p, lp in low if any(m.strip("*") in lp for m in markers)]
+        out[name] = {"present": bool(hits), "evidence": hits[:5]}
     return out
 
 
+def _collect_files(ws: Path) -> list[tuple[str, str, str]]:
+    """Analysable source files only — kept as its own function because these, and only these,
+    become dependency-graph nodes."""
+    return _scan(ws)[0]
+
+
+def _scan(ws: Path) -> tuple[list[tuple[str, str, str]], list[str], dict[str, int]]:
+    """One walk, three results: `(code_files, context_files, skipped)`.
+
+    `skipped` counts files that EXIST but were not analysed, by extension. The agent's own
+    quality gate says "any skipped files recorded as assumptions" — and until now the agent had
+    no way to know anything had been skipped, making that checkbox impossible to satisfy
+    honestly. Now silence means silence and a number means a gap (B4)."""
+    code: list[tuple[str, str, str]] = []
+    context: list[str] = []
+    skipped: dict[str, int] = defaultdict(int)
+    for path in ws.rglob("*"):
+        if not path.is_file() or any(part in _SKIP_DIRS for part in path.parts):
+            continue
+        rel = path.relative_to(ws).as_posix()
+        if path.suffix in _CONTEXT_EXT or path.name in _CONTEXT_NAMES:
+            context.append(rel)
+            continue
+        if path.suffix not in _LANG_EXT:
+            # Only count things that plausibly ARE source. Images, fonts and binaries are not a
+            # coverage gap and reporting them as one would bury the signal.
+            if path.suffix and len(path.suffix) <= 6:
+                skipped[path.suffix] += 1
+            continue
+        try:
+            if path.stat().st_size > _MAX_BYTES:
+                skipped[path.suffix] += 1        # too large to read is still a real gap
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            skipped[path.suffix] += 1
+            continue
+        code.append((rel, path.suffix, text))
+    return code, sorted(context), dict(skipped)
+
+
 def _git_analytics(ws: Path) -> dict:
-    log = _git(ws, "log", "--no-merges", "-n", "500", "--format=__C__%H|%ae|%aI", "--name-only")
+    fmt = ("log", "--no-merges", "--format=__C__%H|%ae|%aI", "--name-only")
+    log, err = _git_checked(ws, fmt[0], fmt[1], "-n", "500", *fmt[2:])
+    partial = False
+    if err and "timed out" in err:
+        # Retry smaller before giving up. `--name-only` over 500 commits of a monorepo can be
+        # tens of MB; partial history that we KNOW is partial beats none at all (B5).
+        log, err2 = _git_checked(ws, fmt[0], fmt[1], "-n", "200", *fmt[2:], timeout=90)
+        if not err2:
+            err, partial = "", True
     commits = 0
     authors: dict[str, int] = defaultdict(int)
     file_churn: dict[str, int] = defaultdict(int)
@@ -254,6 +458,9 @@ def _git_analytics(ws: Path) -> dict:
             touched.append(f)
     _flush()
     return {
+        # `ok` is the difference between "no history" and "could not read the history". Every
+        # consumer — and the agent — must be able to tell those apart (B5).
+        "ok": not err, "error": err, "partial": partial,
         "commits": commits, "authors": dict(authors), "first": first, "last": last,
         "file_churn": dict(file_churn),
         "file_owners": {f: dict(o) for f, o in file_owners.items()},

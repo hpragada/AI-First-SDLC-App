@@ -15,10 +15,27 @@ class WorktreeError(Exception):
     """A git worktree operation failed."""
 
 
+#: Upper bound on any single git operation here. Provisioning talks to the REMOTE (`ls-remote`,
+#: `fetch`, `push`), so a slow or half-open network connection can leave it waiting with no end
+#: — and until now there was NO timeout at all on this path, so "the companion is stuck" had no
+#: floor. Generous enough for a large fetch over a poor link, finite enough that a wedged
+#: operation surfaces as an error the developer can see instead of silence (B5).
+_GIT_TIMEOUT = 300
+
+
 def _git(cwd, *args, check=True) -> str:
-    res = subprocess.run(
-        ["git", "-C", str(cwd), *args], capture_output=True, text=True
-    )
+    # `stdin=DEVNULL` for the same reason as `codeintel/builtin.py::_git` — `capture_output`
+    # covers stdout/stderr only, so the child would otherwise inherit ours. A git that decides to
+    # prompt (credentials, a stale lock) then blocks on a pipe nobody feeds, with no timeout here
+    # to end it. Empty input makes it fail fast instead of hanging the companion.
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=_GIT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise WorktreeError(
+            f"git {' '.join(args)} timed out after {_GIT_TIMEOUT}s in {cwd}") from exc
     if check and res.returncode != 0:
         raise WorktreeError(f"git {' '.join(args)} failed: {res.stderr.strip()}")
     return res.stdout

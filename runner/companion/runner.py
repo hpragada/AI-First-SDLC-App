@@ -243,7 +243,11 @@ def run_provisioning(worktree: Path, task: BuildTask, policy: EgressPolicy) -> N
 
     for cmd in task.provisioning_commands:
         check_command_egress(cmd, policy)
-        subprocess.run(cmd, cwd=str(worktree), shell=isinstance(cmd, str), check=True)
+        # stdin=DEVNULL: a provisioning command that pauses for input (a package manager
+        # confirmation, a credential prompt) would otherwise inherit the companion's stdin and
+        # block forever with no timeout. Empty input makes it fail fast and report.
+        subprocess.run(cmd, cwd=str(worktree), shell=isinstance(cmd, str), check=True,
+                       stdin=subprocess.DEVNULL)
 
 
 class PreviewError(Exception):
@@ -342,7 +346,11 @@ def provision_preview_app(
 
     # A new session/process-group so teardown kills the whole server tree (dev servers spawn
     # children). POSIX: start_new_session; Windows: a new process group.
+    # stdin=DEVNULL — the build command must never inherit the companion's stdin (see
+    # `codeintel/builtin.py::_git`): a prompt would block it indefinitely, and under an MCP
+    # server an inherited stdin is the JSON-RPC channel itself.
     popen_kwargs = {"cwd": str(worktree), "shell": isinstance(command, str),
+                    "stdin": subprocess.DEVNULL,
                     "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "text": True}
     if os.name == "posix":
         popen_kwargs["start_new_session"] = True

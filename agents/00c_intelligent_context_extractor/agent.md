@@ -56,13 +56,20 @@ If the repository scope is ambiguous, confirm it as a Tier-1 question (per `# Ru
 Index the worktree through the CodeIntel capability (workspace mode for split/multi-repo):
 
 ```
-codeintel.index(workspace=<the companion worktree>, repo="<owner/name>")
-# Multi-repo: call index() once per repository in the workspace.
+codeintel.index()          # the workspace is already bound to your worktree — pass nothing
+# Multi-repo: call index(repo="<owner/name>") once per repository in the workspace.
 ```
 
-This builds the five layers in one pass: **dependency graph** (PageRank, communities, coupling), **git analytics** (churn, hotspots, ownership, co-change), **code-health** (dead code, complexity), and the inputs for **documentation** and **decision archaeology**. Verify the returned `IntelIndex` (file count, languages, commit count, hotspot count) is non-empty before interpreting results. If indexing skips specific files, note them — gaps in the dependency graph must be recorded as Tier-3 inferences in the assumption artifact.
+This builds the five layers in one pass: **dependency graph** (PageRank, communities, coupling), **git analytics** (churn, hotspots, ownership, co-change), **code-health** (dead code, complexity), and the inputs for **documentation** and **decision archaeology**.
 
-> **Failure mode to avoid:** Proceeding to interpret results before confirming the index actually built. An empty or partial index produces confident-but-wrong intelligence.
+**Then check `index_health` in the response (or call `index_report`) before interpreting anything.** A non-empty file count does NOT mean the read succeeded — the file walk and the git read fail independently:
+
+- `git.ok: false` — the history could not be read at all. Commit counts, hotspots, ownership and bus-factor are **unavailable, not zero**. Say so explicitly in every artifact that would otherwise carry them, and record it as a blocker. Never write "no hotspots found" when what happened is "hotspots could not be computed".
+- `git.partial: true` — history was read but truncated. Every git-derived figure is a floor, not a total; label it that way.
+- `skipped_files` non-empty — those file types were not analysed at all. Record each as a Tier-3 assumption; a language missing here means the dependency graph, hotspots and dead-code inventory all silently exclude it.
+- `content_search_complete: false` — `search_codebase` covers only part of the repo, so an empty result proves nothing.
+
+> **Failure mode to avoid:** Proceeding to interpret results before confirming the index actually built. An empty or partial index produces confident-but-wrong intelligence — and it will look healthy, because the file count survives failures that destroy everything else.
 
 ---
 
@@ -79,21 +86,30 @@ Query the engine across all five layers (gather both raw data and prose-ready sy
 - `get_risk(repo, targets=[most-changed files])` — hotspot score, dependents, co-change partners, blast radius.
 - `get_why(repo)` — architectural decisions with their source.
 - `get_context(repo, targets)` — ownership, churn, complexity, and bus-factor risk for specific files.
-- `get_dependency_path(repo, from, to)` / `get_architecture_diagram(repo, module)` — connection paths and module diagrams.
-- `search_codebase(repo, query)` — semantic/keyword search over the indexed codebase when you don't know where something lives.
+- `get_dependency_path(frm, to)` / `get_architecture_diagram(module)` — connection paths and module diagrams. The parameter is **`frm`**, not `from` (`from` is a reserved word in Python, so the tool cannot use it).
+- `search_codebase(repo, query)` — **whole-word keyword** search over file paths and file contents. This is not semantic search: it finds the words you type, not concepts near them. Search for identifiers that would really appear in code (`jwt`, `authenticate`, `login`) rather than descriptions (`user login flow`). An empty result means those words are absent — it is **not** evidence the capability is absent.
 
-Supplement with the file tools in the worktree for any signal the engine does not surface (test-file ratio, language breakdown). Distinguish measured signals from inferred ones throughout.
+Two results carry a meaning that is easy to misread:
+
+- `get_context` / `get_risk` return `{"indexed": false}` for a file that was never analysed. That is **unknown**, never "clean" or "low risk". Do not let an unindexed file into a report as a healthy one.
+- `get_overview(repo)` returns `signals` — evidence-backed presence checks for CI/CD, containerisation, infrastructure-as-code, dependency manifests and documentation, each naming the files that prove it. **Use `signals` for those questions.** Do not try to answer "is there CI/CD?" by searching source files — workflow, compose and manifest files are not source, and a search for them will return a coincidental match rather than nothing.
+
+Supplement with the file tools in the worktree for any signal the engine does not surface (test-file ratio). Distinguish measured signals from inferred ones throughout.
 
 ---
 
 ### Step 3: Register the SDLC Intelligence Artifacts
 
-Synthesise the gathered data + prose into the structured intelligence, then register each with the platform-state `register_artifact` tool (`sor="internal"`), link it to its sources with `add_trace_edge`, and record the work with `log_event`. **Also index each artifact's body into the Knowledge Index** (so downstream agents retrieve it via `get_context`). Do not write local files.
+Synthesise the gathered data + prose into the structured intelligence, then stage each body with `stage_artifact_body` and register it with `register_artifact` (`sor="internal"`), link it to its sources with `add_trace_edge`, and record the work with `log_event`. Do not write local files.
+
+The platform indexes each registered body into the Knowledge Index for you — there is nothing to call, and downstream agents retrieve your artifacts through `get_context` automatically.
+
+For `add_trace_edge`, `rel` is one of exactly four values: **`derives`** (this artifact was derived from that one — the right choice for every artifact here, since each is derived from the code-intelligence index), `implements`, `tests`, `deploys`. Nothing else is accepted.
 
 **Artifact 1 — type `codebase_intelligence`** (the master document):
 - Executive Summary (what the codebase does, health assessment, critical facts)
-- Codebase Health Dashboard (file count, test-file count, dead-code count, hotspot count, CI/CD presence)
-- Technology Stack (confirmed from code analysis)
+- Codebase Health Dashboard (file count, test-file count, dead-code count, hotspot count, CI/CD presence — take CI/CD, containerisation and IaC from `get_overview(repo).signals`, citing the evidence files it names; state any value that could not be measured as *unavailable*, never as zero)
+- Technology Stack (confirmed from the dependency manifests in `signals.dependency_manifest` plus the language breakdown — name the manifest each claim rests on; a stack asserted from file extensions alone is an inference, not a confirmation)
 - Architecture Communities (community, core files, PageRank, purpose, coupling risk)
 - Hotspot Analysis (file, commits/period, last changed, owner, test coverage, risk level)
 - Dead Code Inventory (file/symbol, type, last used, confidence, recommendation)
@@ -123,22 +139,24 @@ Every downstream phase agent uses the same `codeintel.*` tools before reading or
 
 | Tool | What it answers | Best used when |
 |------|----------------|----------------|
-| `get_overview(repo)` | Architecture summary, module map, entry points | First call on any unfamiliar codebase or phase |
-| `get_context(repo, targets)` | Docs, ownership, decisions, freshness for files/modules | Before reading or modifying code — pass all relevant targets in one call |
+| `get_overview(repo)` | Architecture summary, module map, entry points, CI/CD + stack `signals` | First call on any unfamiliar codebase or phase |
+| `index_report(repo)` | What the index could NOT see — git failures, skipped file types | Before trusting any figure above |
+| `get_context(repo, targets)` | Lines, complexity, language, churn, top owner, bus-factor risk for each file | Before reading or modifying code — pass all relevant targets in one call |
 | `get_risk(repo, targets)` | Hotspot score, dependents, co-change partners, blast radius | Before modifying any file — especially hotspots |
-| `get_why(repo, query)` | Architectural decisions governing a file or concept | Before any architectural change |
-| `search_codebase(repo, query)` | Search over the indexed codebase / Knowledge Index | When you don't know where something lives |
-| `get_dependency_path(repo, from, to)` | Connection path between two files/modules | When tracing how two components relate |
+| `get_why(repo, query)` | Architectural decisions from ADR files + commit-message archaeology | Before any architectural change |
+| `search_codebase(repo, query)` | Whole-word keyword search over file paths and contents (not semantic) | When you don't know where something lives |
+| `get_dependency_path(frm, to)` | Connection path between two files/modules (**`frm`**, not `from`) | When tracing how two components relate |
 | `get_dead_code(repo)` | Unreferenced code ranked by confidence | Cleanup, pre-transformation scoping |
-| `get_architecture_diagram(repo, module)` | Mermaid diagram for the repo or a module | Documentation, onboarding, ADR writing |
+| `get_architecture_diagram(module)` | Mermaid diagram for the repo or a module | Documentation, onboarding, ADR writing |
 
 ---
 
 ## Quality Gate — Before Completing
 
-- [ ] The codebase indexed successfully via `codeintel.index` (non-empty `IntelIndex`); any skipped files recorded as assumptions
+- [ ] The codebase indexed via `codeintel.index`, **and `index_health` checked** — `git.ok` true, or its failure stated plainly wherever a git-derived figure would have gone
+- [ ] Every entry in `skipped_files` recorded as an assumption, naming the file types excluded from the graph, hotspots and dead-code inventory
 - [ ] Intelligence extracted across all five layers (overview, dead code, hotspots/risk, decisions, dependency graph) — queries returned real data
-- [ ] All five intelligence artifacts registered (`codebase_intelligence`, `dependency_graph`, `git_analytics`, `dead_code`, `architecture_decisions`) and indexed into the Knowledge Index
+- [ ] All five intelligence artifacts registered (`codebase_intelligence`, `dependency_graph`, `git_analytics`, `dead_code`, `architecture_decisions`), each with its body staged and a `derives` trace edge to its source
 - [ ] Hotspots identified (churn × complexity) with risk levels — the highest-risk files are flagged for downstream agents
 - [ ] Dead-code inventory is conservative — no dynamically-loaded files or test fixtures marked safe-to-delete
 - [ ] Architectural decisions linked to the files they govern, with staleness flags
@@ -149,4 +167,4 @@ Every downstream phase agent uses the same `codeintel.*` tools before reading or
 
 ## Completion
 
-When all intelligence artifacts are registered and indexed, stop. The platform opens the review gate — the required reviewer (Tech Lead) decides, and onboarding (which benefits most from confirmed intelligence) proceeds on approval. Do not ask for sign-off and do not surface a next command.
+When all intelligence artifacts are registered, stop. This phase runs **headless** as part of onboarding: the platform publishes your artifacts and completes the run without opening a review gate, and the developer sees them appear on the Onboarding page. There is no reviewer to address and no approval to wait for. Do not ask for sign-off, do not surface a next command, and do not write a closing message aimed at a human reviewer.

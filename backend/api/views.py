@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from django.db.models import Count, Q
+from django.db.models import Count
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -549,11 +549,18 @@ class ProjectViewSet(
         )
         my_runs = []
         if user:
+            from integrations.onboarding import carrier_q
+
             my_runs = list(
                 Run.objects.filter(
                     tenant_id=tid, work_item__project=project,
                     triggered_by=user, status__in=["running", "awaiting_gate"],
-                ).select_related("agent_spec")[:10]
+                )
+                # Headless onboarding runs (Index code / Gap report) report their progress on the
+                # Onboarding hub, not here — counting them made the dashboard claim work needed
+                # the user when the whole point is that it doesn't.
+                .exclude(carrier_q("work_item__"))
+                .select_related("agent_spec")[:10]
             )
 
         recent_published = list(
@@ -960,7 +967,7 @@ class WorkItemViewSet(
         return WorkItemSerializer
 
     def get_queryset(self):
-        from integrations.onboarding import CARRIER_SOURCES
+        from integrations.onboarding import carrier_q
 
         qs = super().get_queryset()
         # Carrier work items (onboarding + document-vision) are internal plumbing that only host
@@ -968,19 +975,9 @@ class WorkItemViewSet(
         # user-facing work-item LIST (backlog/board). Direct retrieval by id still resolves (in
         # case a run detail links to one), and the trigger/run machinery resolves them by their
         # external_ref markers regardless; this only affects what the backlog shows.
-        #
-        # S3-13 — the `has_key` guard is LOAD-BEARING, do not "simplify" it away. Without it this
-        # read `exclude(external_ref__source__in=…)`, and for a work item whose external_ref has no
-        # `source` key at all — every Jira import, `{"sor": "jira", "id": "ST-447"}` — Postgres
-        # evaluates `NULL IN (…)` to NULL, `NOT NULL` to NULL, and drops the row. The backlog went
-        # empty for EVERY project (32 → 0 here, 152 → 8 on another), taking Phases & Runs, Gates,
-        # Clarifications and Task Breakdown with it, since they all filter through this list.
-        # Exclude only when the key EXISTS and names a carrier; anything else stays visible.
+        # The S3-13 `has_key` guard lives in `carrier_q` — read its docstring before touching it.
         if self.action == "list":
-            qs = qs.exclude(
-                Q(external_ref__has_key="source")
-                & Q(external_ref__source__in=CARRIER_SOURCES)
-            )
+            qs = qs.exclude(carrier_q())
         project = self.request.query_params.get("project")
         state = self.request.query_params.get("state")
         type_ = self.request.query_params.get("type")
@@ -1306,9 +1303,18 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     queryset = Run.objects.all().order_by("-created_at")
 
     def get_queryset(self):
+        from integrations.onboarding import carrier_q
+
         qs = super().get_queryset()
         work_item = self.request.query_params.get("work_item")
         project = self.request.query_params.get("project")
+        # A carrier's run is internal plumbing — the onboarding steps (Index code / Gap report)
+        # run headless and report their own progress on the Onboarding hub, so their runs must
+        # not surface in Phases & Runs or any project-wide run list. Hiding the carrier work item
+        # alone was not enough: this list also filters by `project`, which reached them anyway.
+        # Retrieval by id is untouched, so a direct link to a run detail still resolves.
+        if self.action == "list":
+            qs = qs.exclude(carrier_q("work_item__"))
         if work_item:
             qs = qs.filter(work_item_id=work_item)
         if project:

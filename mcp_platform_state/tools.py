@@ -11,6 +11,7 @@ tools and injects the tenant from the launch context.
 from __future__ import annotations
 
 import base64
+import logging
 
 from apps.clarifications.models import Clarification
 from apps.ledger.models import Event
@@ -19,6 +20,8 @@ from apps.registry.models import Artifact, TraceEdge
 from apps.runs.models import Run
 from apps.tenancy.context import tenant_context
 from apps.workitems.models import WorkItem
+
+logger = logging.getLogger(__name__)
 
 
 # ── serialization (JSON-safe dicts) ─────────────────────────────────
@@ -407,7 +410,46 @@ def register_artifact(
             version=(last or 0) + 1,
         )
         _log_artifact_registered(tenant_id, run, artifact)
+        _index_into_knowledge(tenant_id, project, artifact, repo)
         return _artifact(artifact)
+
+
+def _index_into_knowledge(tenant_id, project, artifact, repo) -> None:
+    """Chunk the newly-registered body into the Knowledge Index so downstream phases can
+    retrieve it (B1).
+
+    Registration and retrieval were two separate steps and only ONE of them had a tool. Agent
+    bodies (00c, and the artifact instructions of every later phase) tell the agent to "index
+    each artifact into the Knowledge Index" — but no such tool is exposed, so no agent has ever
+    been able to. Measured live after run 98ab9a8c published seven code-intelligence artifacts:
+    `KnowledgeChunk` rows for them = **0**. The entire point of the phase — intelligence that
+    later agents retrieve instead of re-reading the codebase — leaked out here silently.
+
+    So the platform does it, rather than asking the agent to remember: an artifact that carries
+    a body is indexed at the moment it is registered. `index_artifact` is idempotent (it
+    replaces that artifact's chunks), so a re-registration re-indexes cleanly rather than
+    duplicating.
+
+    Best-effort by design: retrieval is an accelerator, never a correctness gate. A missing
+    body, an object-store hiccup or an un-decodable payload must not fail a registration the
+    agent has already done the work for — it degrades to "not retrievable", which is exactly
+    where we were before."""
+    if not artifact.s3_key:
+        return  # pointer-only artifact (external SoR) — nothing local to chunk
+    try:
+        from apps.knowledge.index import index_artifact
+
+        raw = _obj_store().get(artifact.s3_key)
+        text = (raw.decode("utf-8", errors="ignore") if isinstance(raw, bytes) else str(raw))
+        text = text[:_MAX_BODY_READ_BYTES].strip()
+        if not text:
+            return
+        index_artifact(
+            tenant_id=tenant_id, project_id=project.id, artifact_id=artifact.id,
+            text=text, repo_id=(repo.id if repo else None),
+        )
+    except Exception:  # noqa: BLE001 — see docstring: never fail a registration over retrieval
+        logger.warning("knowledge indexing failed for artifact %s", artifact.id, exc_info=True)
 
 
 def _log_artifact_registered(tenant_id, run, artifact) -> None:
@@ -472,7 +514,19 @@ def update_artifact(
 def add_trace_edge(tenant_id, from_artifact_id, to_artifact_id, rel) -> dict:
     with tenant_context(tenant_id):
         if rel not in TraceEdge.Rel.values:
-            raise ValueError(f"invalid rel: {rel}")
+            # Name the vocabulary in the error (B2). The valid set lived only in the model
+            # enum — never in the tool signature, never in a docstring, never in this message.
+            # Live in run 98ab9a8c the agent guessed NINE values before landing on one that
+            # stuck, then used that single value for every edge because it had no way to learn
+            # the others. An error that says only "invalid" teaches nothing; one that lists the
+            # alternatives ends the guessing on the first failure.
+            raise ValueError(
+                f"invalid rel: {rel!r}. Valid values: {', '.join(TraceEdge.Rel.values)}. "
+                f"Meaning: 'derives' = this artifact was DERIVED from the other (the usual "
+                f"choice for analysis/report → its source); 'implements' = code/design "
+                f"fulfilling a specification; 'tests' = a test covering the target; "
+                f"'deploys' = a deployment artifact shipping the target."
+            )
         # Validate both endpoints belong to the tenant.
         Artifact.objects.get(id=from_artifact_id, tenant_id=tenant_id)
         Artifact.objects.get(id=to_artifact_id, tenant_id=tenant_id)

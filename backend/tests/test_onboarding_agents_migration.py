@@ -82,6 +82,35 @@ def test_00c_reroutes_to_codeintel_knowledge_and_artifacts():
     assert "Reply APPROVED" not in body
 
 
+def test_00c_body_matches_what_the_platform_actually_does():
+    """B6 — the migrated body described three things that were not true, and an agent working
+    from wrong instructions makes wrong decisions confidently:
+
+    1. it told the agent to index artifacts into the Knowledge Index — no such tool exists, and
+       measured after run 98ab9a8c the chunk count for its seven artifacts was 0;
+    2. it called `search_codebase` "semantic" when it is keyword matching, so an empty result
+       was read as "this codebase has no authentication";
+    3. it promised a Tech Lead review gate, but onboarding runs headless and opens none.
+    """
+    body = _body("00c_intelligent_context_extractor")
+    # 1 — the platform indexes on registration; the agent is told so, not asked to do it.
+    assert "platform indexes each registered body" in body.lower()
+    # 2 — the tool is described as what it is, with the trap named.
+    assert "not semantic" in body.lower() or "This is not semantic search" in body
+    assert "index_health" in body and "index_report" in body     # degraded reads are checkable
+    assert "unavailable, not zero" in body                       # the S4-8 lesson, stated
+    # 3 — no gate is promised in a headless phase.
+    assert "headless" in body.lower()
+    assert "Tech Lead" not in body
+    # the four trace-edge values are named, so the agent never has to guess (B2)
+    assert "`derives`" in body
+    # signatures match the real tools: `frm` (not the reserved word `from`), and index() takes
+    # no `workspace` — an agent following the old text literally fails the call outright.
+    assert "get_dependency_path(frm, to)" in body
+    assert "get_dependency_path(repo, from, to)" not in body
+    assert "index(workspace=" not in body
+
+
 def test_00c_gate_role_is_tech_lead():
     assert get_by_key("00c_intelligent_context_extractor").gate_role == "tech_lead"
 

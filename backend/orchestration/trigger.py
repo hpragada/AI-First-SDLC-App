@@ -251,7 +251,15 @@ def trigger_onboarding_agent(
     Fail-closed on execution mode: these agents need the companion (00c reads a repo worktree;
     both use ask_human), so with no companion enrolled we raise `NoCompanionError` rather than
     let `trigger_phase` silently fall back to a server-mode run that has neither tool. The REST
-    caller catches this and keeps the deterministic/mechanical path as the fallback."""
+    caller catches this and keeps the deterministic/mechanical path as the fallback.
+
+    HEADLESS (`auto_approve=True`): Index code and Gap report are setup steps, not lifecycle
+    phases a reviewer signs off. Their run is hosted on a carrier work item that is hidden from
+    the backlog, so a gate opened here could never be found or actioned — it just sat PENDING
+    forever and inflated the gate count. The Onboarding hub reports these steps' own progress
+    and links to what they produced, which IS the review surface. Same reasoning as the 00e
+    vision path. This publishes INTERNAL only — external export to a SoR stays user-triggered
+    (#5), so nothing reaches Confluence/Jira without a human acting."""
     from integrations.onboarding import ensure_onboarding_work_item
 
     # Inside the tenant's context, like every other enrollment lookup (see trigger_code_intel):
@@ -271,7 +279,7 @@ def trigger_onboarding_agent(
     return trigger_phase(
         tenant_id=tenant_id, project_id=project_id, work_item_id=str(work_item.id),
         agent_key=agent_key, triggered_by=triggered_by, execution_mode="companion",
-        workflow_starter=workflow_starter,
+        auto_approve=True, workflow_starter=workflow_starter,
     )
 
 

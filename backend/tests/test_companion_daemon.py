@@ -391,6 +391,62 @@ class _ReportFailsTransport:
         return 200, {"ok": True}
 
 
+# ── B8: a 5xx from the platform is transient, not fatal ─────────────
+class _FlakyWorkTransport:
+    """`/work/` answers 500 twice (the backend's own database blinked), then behaves."""
+
+    def __init__(self):
+        self.work_calls = 0
+        self.calls = []
+
+    def __call__(self, method, url, headers, body):
+        self.calls.append((method, url, body))
+        if method == "GET" and url.endswith("/api/runner/work/"):
+            self.work_calls += 1
+            if self.work_calls <= 2:
+                return 500, "OperationalError: SSL SYSCALL error: EOF detected"
+            return 204, None
+        return 200, {"ok": True}
+
+
+def test_backend_5xx_on_claim_does_not_kill_the_companion():
+    """The shared Postgres dropped ONE connection, `/api/runner/work/` returned 500, and the
+    companion exited — leaving a developer with a button that silently stops working, minutes
+    after a blip they never saw. A connection that never lands was already retried forever; a
+    connection that lands on a briefly-broken backend was fatal (B8)."""
+    transport = _FlakyWorkTransport()
+    d = _daemon(transport, _FakeDriver())
+    assert d.serve(max_iterations=4) == 0     # survived; no exception escaped
+    assert transport.work_calls >= 3          # kept polling past both 500s
+
+
+def test_claim_4xx_is_still_fatal():
+    """A 4xx is a real rejection — a revoked or invalid token. Retrying cannot fix it, and
+    quietly looping forever on one would hide a genuine misconfiguration."""
+    def _unauthorized(method, url, headers, body):
+        return 403, "enrollment revoked"
+
+    d = _daemon(_unauthorized, _FakeDriver())
+    with pytest.raises(DaemonError):
+        d.serve(max_iterations=1)
+
+
+def test_report_retries_a_5xx_before_giving_up():
+    """A finished phase is too expensive to lose to a database blip: the platform answered, but
+    never recorded the report."""
+    attempts = {"n": 0}
+
+    def _flaky(method, url, headers, body):
+        if url.endswith("/report/"):
+            attempts["n"] += 1
+            return (500, "db blinked") if attempts["n"] == 1 else (200, {"ok": True})
+        return 200, {"ok": True}
+
+    d = _daemon(_flaky, _FakeDriver())
+    d._report("/api/runner/phases/r1/report/", {"status": "completed"})
+    assert attempts["n"] == 2                 # retried once, then succeeded
+
+
 def test_failed_report_does_not_crash_daemon():
     transport = _ReportFailsTransport([(200, _PLAN_TASK), (204, None)])
     d = _daemon(transport, _FakeDriver())
@@ -688,3 +744,41 @@ def test_serve_headed_flag_exports_env(monkeypatch):
     # With --headed: exported for this process.
     cli.main(["serve", "--api-url", "http://x", "--tenant", "t", "--token", "tok", "--headed"])
     assert os.environ.get("SDLC_COMPANION_HEADED") == "1"
+    # …and undone by hand. `cli.main` sets it on the REAL os.environ, and monkeypatch cannot
+    # roll that back: the `delenv` above found the var ABSENT, so it recorded nothing to
+    # restore. The flag therefore leaked into every later test in the session, making
+    # `test_build_mcp_servers_adds_playwright_only_for_test_automation` fail in a full run and
+    # pass alone — the exact signature of a phantom regression. Popped directly, because
+    # `monkeypatch.delenv` here would record "1" and put it BACK at teardown.
+    os.environ.pop("SDLC_COMPANION_HEADED", None)
+
+
+def test_both_mcp_servers_inherit_the_environment():
+    """Neither MCP server may be launched with a hand-built environment.
+
+    `codeintel` shipped with exactly three variables and it corrupted the analysis silently: the
+    engine shells out to `git` for history, and with no PATH there is no git to find. Measured on
+    the live test repo — the same index returned **commits=0** under the 3-var env and
+    **commits=22** under an inherited one. No error, no warning; just a repo that looks like it
+    has no history, feeding a gap report that reasons from it. (On Windows a minimal env is worse
+    still: without SYSTEMROOT the interpreter dies in `import asyncio`, WinError 10106, before any
+    of our code can log it.) Both servers must inherit.
+    """
+    from runner.companion.daemon import codeintel_mcp_servers, state_mcp_servers
+
+    ci = codeintel_mcp_servers(workspace="/wt", repo="acme/api", repo_root="/repo")["codeintel"]
+    st = state_mcp_servers(api_url="http://x", tenant_id="t", token="tok",
+                           run_id="r", phase="p", project_id="pr")["platform-state"]
+    for name, cfg in (("codeintel", ci), ("platform-state", st)):
+        # A real inherited environment is dozens of vars; a hand-built one is a handful.
+        assert len(cfg["env"]) > 10, f"{name} env looks hand-built: {sorted(cfg['env'])}"
+        # Case-insensitively: Windows' os.environ answers to both "PATH" and "Path", but the
+        # copied dict keeps only whichever spelling the OS actually stores.
+        have = {k.lower() for k in cfg["env"]}
+        for key in ("path", "systemroot"):
+            if key in {k.lower() for k in os.environ}:
+                assert key in have, f"{name} dropped {key}"
+    # The run-specific values still override the inherited ones.
+    assert ci["env"]["RUNNER_WORKSPACE"] == "/wt"
+    assert ci["env"]["RUNNER_REPO"] == "acme/api"
+    assert ci["env"]["PYTHONPATH"] == "/repo"

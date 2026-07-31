@@ -1047,6 +1047,77 @@ def ensure_onboarding_work_item(*, tenant_id, project_id, repo_id=None):
 # the backlog; the trigger/run machinery still resolves them by their external_ref markers.
 CARRIER_SOURCES = ("onboarding_carrier", "vision_carrier")
 
+
+def carrier_q(prefix: str = ""):
+    """The `Q` that matches a CARRIER work item, for `.exclude(...)` on any queryset that reaches
+    a WorkItem. `prefix` is the relation path to the work item ("" when the queryset IS work
+    items, "work_item__" from Run/Approval/Clarification).
+
+    The `has_key` half is LOAD-BEARING — do not "simplify" it away (S3-13). Without it this
+    reduces to `external_ref__source__in=(…)`, and for a work item whose external_ref carries no
+    `source` key at all — every Jira import, `{"sor": "jira", "id": "ST-447"}` — Postgres
+    evaluates `NULL IN (…)` to NULL, `NOT NULL` to NULL, and drops the row. The backlog went
+    empty for EVERY project (32 → 0 on one, 152 → 8 on another), taking Phases & Runs, Gates,
+    Clarifications and Task Breakdown with it. Exclude only when the key EXISTS and names a
+    carrier; anything else stays visible.
+    """
+    from django.db.models import Q
+
+    return (Q(**{f"{prefix}external_ref__has_key": "source"})
+            & Q(**{f"{prefix}external_ref__source__in": CARRIER_SOURCES}))
+
+#: Run statuses that mean a headless onboarding step is still in flight. APPROVED is absent on
+#: purpose: an auto-approved run never sits in it, and a run that somehow did is finishing, not
+#: waiting on the user.
+_LIVE_RUN_STATUSES = ("pending", "running", "awaiting_gate")
+
+
+def onboarding_step_state(*, tenant_id, project_id, agent_key, repo_id=None) -> dict:
+    """Live state of ONE headless onboarding step (Index code / Gap report), for the hub.
+
+    These steps run with `auto_approve` on a carrier work item hidden from every list, so the
+    Onboarding hub is the ONLY place their progress can be seen — the run does not appear in
+    Phases & Runs by design. Without this the hub had no "running" state at all and the button
+    reverted the instant the POST returned 202, so a 25-minute agent run looked like a no-op.
+
+    `question` is non-null when the agent called `ask_human` and is blocked waiting: the run is
+    still live but the user must act, and nothing else on the hub would tell them so.
+    Read-only — never creates a carrier (that is `ensure_onboarding_work_item`'s job).
+    """
+    from apps.clarifications.models import Clarification
+    from apps.runs.models import Run
+    from apps.tenancy.context import tenant_context
+    from apps.workitems.models import WorkItem
+
+    with tenant_context(tenant_id):
+        carrier = WorkItem.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.EPIC,
+            external_ref__source="onboarding_carrier",
+            external_ref__repo_id=str(repo_id) if repo_id else None,
+        ).first()
+        if carrier is None:
+            return {"running": False, "run_id": None, "question": None}
+        run = (
+            Run.objects.filter(
+                tenant_id=tenant_id, work_item=carrier, agent_spec__key=agent_key,
+                status__in=_LIVE_RUN_STATUSES,
+            ).order_by("-created_at").first()
+        )
+        if run is None:
+            return {"running": False, "run_id": None, "question": None}
+        pending = (
+            Clarification.objects.filter(
+                tenant_id=tenant_id, run_id=run.id, status=Clarification.Status.PENDING,
+            ).order_by("created_at").first()
+        )
+        return {
+            "running": True,
+            "run_id": str(run.id),
+            "question": ({"id": str(pending.id),
+                          "count": len(pending.questions or [])} if pending else None),
+        }
+
+
 #: Artifact types that are a RUN's own record rather than a project deliverable, and so are hidden
 #: from the registry list — the same reasoning that hides the carrier work items above.
 #: `document_vision` is the phase blob the platform registers for every run, holding the agent's
@@ -1468,7 +1539,7 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
     """Hub state across upload/adopt/register/index/gap (S-24) — the one read the onboarding
     screen needs; every step's action already exists as its own endpoint."""
     from apps.integrations.models import IntegrationConnection, SourceDocument
-    from apps.projects.models import Project
+    from apps.projects.models import Project, Repository
     from apps.registry.models import Artifact
     from apps.tenancy.context import tenant_context
     from apps.workitems.models import WorkItem
@@ -1491,6 +1562,15 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
         intel_artifact = Artifact.objects.filter(
             tenant_id=tenant_id, project_id=project_id, type="codebase_intelligence"
         ).order_by("-created_at").first()
+        # Per-repo, because code intelligence is dispatched per repository (one carrier pinned to
+        # each). The project-level `index.status` below stays as it was for back-compat.
+        repo_rows = list(Repository.objects.filter(
+            tenant_id=tenant_id, project_id=project_id).order_by("name"))
+        intel_by_repo = {
+            str(a.repo_id): a for a in Artifact.objects.filter(
+                tenant_id=tenant_id, project_id=project_id, type="codebase_intelligence",
+            ).order_by("created_at") if a.repo_id
+        }
         connected = {
             cap: IntegrationConnection.objects.filter(
                 tenant_id=tenant_id, capability=cap).first()
@@ -1498,6 +1578,18 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
         }
 
     gap = read_gap_report(tenant_id=tenant_id, project_id=project_id)
+    # Live state of the two headless steps. Outside the block above because each opens its own
+    # tenant_context; cheap (one indexed lookup per repo) and only this screen asks for it.
+    index_states = {
+        str(r.id): onboarding_step_state(
+            tenant_id=tenant_id, project_id=project_id,
+            agent_key="00c_intelligent_context_extractor", repo_id=str(r.id),
+        )
+        for r in repo_rows
+    }
+    gap_state = onboarding_step_state(
+        tenant_id=tenant_id, project_id=project_id, agent_key="00_onboarding",
+    )
     return {
         # S3-14: `origin` lets the step say "9 documents uploaded · 2 pages linked" instead of
         # calling a linked Confluence page an upload. Additive and defaulted, so a project with no
@@ -1520,6 +1612,33 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
         "index": {
             "status": "indexed" if intel_artifact else "not_started",
             "artifact_id": str(intel_artifact.id) if intel_artifact else None,
+            # Per-repo lifecycle the hub renders its button + message from. Deriving the UI from
+            # THIS (server truth) rather than the POST's mutation result is what makes the
+            # "working" message clear itself on completion and on a re-index — a mutation result
+            # is set once and never clears, which is why the old message stuck forever.
+            "repos": [
+                {
+                    "repo_id": str(r.id),
+                    "name": r.name,
+                    "status": ("running" if index_states[str(r.id)]["running"]
+                               else "indexed" if str(r.id) in intel_by_repo
+                               else "not_started"),
+                    # Both `running` and `status` on purpose: the button switches on the tri-state
+                    # `status`, while the progress/question line takes the same `{running,
+                    # question}` shape as the gap step so ONE component renders both.
+                    "running": index_states[str(r.id)]["running"],
+                    "run_id": index_states[str(r.id)]["run_id"],
+                    "question": index_states[str(r.id)]["question"],
+                    "artifact_id": (str(intel_by_repo[str(r.id)].id)
+                                    if str(r.id) in intel_by_repo else None),
+                }
+                for r in repo_rows
+            ],
         },
-        "gap": {"ready": True, "resume_phase": gap["resume_phase"]} if gap else {"ready": False},
+        "gap": {
+            **({"ready": True, "resume_phase": gap["resume_phase"]} if gap else {"ready": False}),
+            "running": gap_state["running"],
+            "run_id": gap_state["run_id"],
+            "question": gap_state["question"],
+        },
     }

@@ -388,6 +388,87 @@ def test_add_trace_edge(world):
     assert edge["from_artifact_id"] == a1["id"] and edge["to_artifact_id"] == a2["id"]
 
 
+def test_invalid_trace_rel_error_names_the_valid_values(world):
+    """The valid set lived only in the model enum — not in the signature, not in a docstring,
+    not in the error. Live in run 98ab9a8c the agent guessed NINE values before one stuck, then
+    used that single value for every edge because it had no way to learn the others (B2)."""
+    t, project, run = world["t"], world["project"], world["run"]
+    a1 = tools.register_artifact(t.id, project.id, run.id, "p", "requirements", "internal", "h1")
+    a2 = tools.register_artifact(t.id, project.id, run.id, "p", "prd", "internal", "h2")
+    with pytest.raises(ValueError) as exc:
+        tools.add_trace_edge(t.id, a1["id"], a2["id"], "documents")
+    msg = str(exc.value)
+    for valid in ("derives", "implements", "tests", "deploys"):
+        assert valid in msg
+    assert "documents" in msg          # says what was rejected, not just that something was
+
+
+def test_add_trace_edge_tool_documents_its_vocabulary():
+    """A docstring is the only place the agent can learn the four values before guessing."""
+    from mcp_platform_state import server as state_server
+
+    doc = state_server.add_trace_edge.__doc__ or ""
+    for valid in ("derives", "implements", "tests", "deploys"):
+        assert valid in doc
+
+
+# ── B1: registration populates the Knowledge Index ──────────────────
+def test_register_artifact_indexes_the_body_for_retrieval(world, monkeypatch):
+    """Registration and retrieval were two steps and only ONE had a tool.
+
+    Agent bodies say "index each artifact into the Knowledge Index"; no such tool is exposed,
+    so no agent ever could. Measured after run 98ab9a8c published seven code-intelligence
+    artifacts: KnowledgeChunk rows = 0 — every later phase would re-read the codebase instead
+    of retrieving what this phase computed."""
+    from apps.knowledge.models import KnowledgeChunk
+    from storage.object_store import InMemoryObjectStore
+
+    t, project, run = world["t"], world["project"], world["run"]
+    store = InMemoryObjectStore()
+    monkeypatch.setattr(tools, "_obj_store", lambda injected=None: store)
+    ptr = tools.stage_artifact_body(
+        t.id, project.id, run.id, "context_extraction", "intel",
+        "Hotspot analysis found pkg/b.py churning fastest.", object_store=store)
+    art = tools.register_artifact(
+        t.id, project.id, run.id, "context_extraction", "codebase_intelligence",
+        "internal", ptr["content_hash"], s3_key=ptr["s3_key"], title="Codebase Intelligence")
+
+    chunks = KnowledgeChunk.objects.filter(tenant_id=t.id, artifact_id=art["id"])
+    assert chunks.count() >= 1
+    assert "hotspot" in chunks.first().text.lower()
+
+
+def test_register_artifact_survives_a_knowledge_indexing_failure(world, monkeypatch):
+    """Retrieval is an accelerator, never a correctness gate: an object-store hiccup must not
+    fail a registration the agent already did the work for."""
+    class Broken:
+        def get(self, key):
+            raise OSError("object store unavailable")
+
+    t, project, run = world["t"], world["project"], world["run"]
+    monkeypatch.setattr(tools, "_obj_store", lambda injected=None: Broken())
+    art = tools.register_artifact(
+        t.id, project.id, run.id, "p", "dependency_graph", "internal", "h",
+        s3_key="drafts/whatever", title="Dependency Graph")
+    assert art["id"]                     # registered anyway
+    assert art["status"] == "draft"
+
+
+def test_pointer_only_artifact_is_not_indexed(world, monkeypatch):
+    """An artifact whose body lives in an external system-of-record has nothing local to chunk
+    — and must not trigger an object-store read for a key it does not have."""
+    from apps.knowledge.models import KnowledgeChunk
+
+    def explode(injected=None):
+        raise AssertionError("must not touch the object store for a pointer-only artifact")
+
+    t, project, run = world["t"], world["project"], world["run"]
+    monkeypatch.setattr(tools, "_obj_store", explode)
+    art = tools.register_artifact(
+        t.id, project.id, run.id, "p", "requirements", "confluence", "h", title="Reqs")
+    assert KnowledgeChunk.objects.filter(tenant_id=t.id, artifact_id=art["id"]).count() == 0
+
+
 def test_log_event(world):
     t, run = world["t"], world["run"]
     e = tools.log_event(

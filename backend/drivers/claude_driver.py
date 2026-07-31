@@ -137,9 +137,28 @@ _SYSTEM_PROMPT_FILENAME = "SYSTEM_PROMPT.md"
 #
 # Allowing it does NOT widen the sandbox: `ToolSearch` only loads SCHEMAS for tools already
 # granted in `allowed_tools`, and execution is still gated by that allowlist plus this denylist.
+# Tools that hand work to something OUTSIDE this run — a task queue, a cron schedule, another
+# session, a notification channel. A phase run has none of those: it is one engine invocation the
+# platform waits on, and anything it defers is never executed by anyone.
+#
+# These are DEFERRED tools: the CLI keeps them out of the agent's initial context and `ToolSearch`
+# loads them on request. We must allow `ToolSearch` (it is the only way the platform-state write
+# tools come back — see the note above it), so the agent can and does reach for these. Live proof,
+# run fed0f385: the agent's FIRST action was
+#   ToolSearch select:CronCreate,…,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate
+# then "I'll set up the task list and kick off the index in parallel" → `TaskCreate` → "Task #1
+# created successfully" → and it went silent, waiting on a task nothing would ever run. Denying
+# them costs the agent nothing: it has no legitimate use for a cron job or a second session.
+_BACKGROUND_TOOLS = [
+    "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate",
+    "CronCreate", "CronDelete", "CronList", "Monitor", "SendMessage", "PushNotification",
+    "RemoteTrigger", "DesignSync", "EnterWorktree", "ExitWorktree",
+    "EnterPlanMode", "ExitPlanMode",
+]
 _PLANNING_DISALLOWED_TOOLS = [
     "Agent", "Task", "Bash", "BashOutput", "KillShell", "Read", "Write", "Edit",
     "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite", "Skill",
+    *_BACKGROUND_TOOLS,
 ]
 # A REPO-SCOPED planning phase (catalog `reads_code`, e.g. 10_security) runs the agent in a git
 # worktree so it can scan real source. It needs full local tooling — Read/Grep/Glob AND Bash — to
@@ -147,14 +166,24 @@ _PLANNING_DISALLOWED_TOOLS = [
 # blocks only the sandbox-hygiene tools (subagents + web + skills). The worktree is THROWAWAY and
 # is never committed or pushed (the companion calls no git-write helper and tears it down after),
 # so the "read-only-to-the-real-repo" guarantee comes from never-pushing, not from blocking Bash —
-# the same posture run_build_task already uses to run the repo's own code. (Built-in tools are
-# governed by this denylist, not `allowed_tools`.)
+# the same posture run_build_task already uses to run the repo's own code.
 _SCAN_DISALLOWED_TOOLS = [
     # `ToolSearch` omitted for the same reason as the planning denylist above — a repo-scoped
     # phase needs its platform-state write tools just as much, and blocking the only mechanism
     # that loads deferred tools is what made them vanish.
-    "Agent", "Task", "WebFetch", "WebSearch", "TodoWrite", "Skill",
+    "Agent", "Task", "WebFetch", "WebSearch", "TodoWrite", "Skill", "NotebookEdit",
+    # A repo-scoped run is the one that PROVED this necessary — see `_BACKGROUND_TOOLS`.
+    *_BACKGROUND_TOOLS,
 ]
+# Taking a built-in tool OFF the denylist is only half of granting it. Under
+# `permission-mode=default` a tool that is neither denied nor allow-listed raises a PERMISSION
+# REQUEST — and an engine run has no human and no TTY to answer one, so the CLI blocks forever.
+# That is exactly what happened: every repo-scoped run (00c code intelligence, 10_security) sat
+# at ~0% CPU with no tool calls, no artifacts and no error until it was killed, because the
+# denylist above "allowed" these tools while `allowed_tools` never named them. The sandbox path
+# never hit it — there the same tools are hard-DENIED, so the agent is told "no" and moves on.
+# Keep this list in step with what `_SCAN_DISALLOWED_TOOLS` stops blocking.
+_SCAN_LOCAL_TOOLS = ["Read", "Glob", "Grep", "Bash", "BashOutput", "KillShell"]
 _SANDBOX_SETTING_SOURCES = ["project"]
 
 # Generic safety net: the engine subprocess can occasionally lose a launch race and surface as
@@ -298,7 +327,8 @@ class ClaudeDriver:
             options = self._agent_options(
                 extra_args={_SYSTEM_PROMPT_FLAG: sp_file},
                 mcp_servers=mcp_servers,
-                allowed_tools=allowed_tools,
+                # Allow-list the local tools too, not just un-deny them — see _SCAN_LOCAL_TOOLS.
+                allowed_tools=list(allowed_tools) + _SCAN_LOCAL_TOOLS,
                 disallowed_tools=_SCAN_DISALLOWED_TOOLS,  # full local toolset; never pushed
                 cwd=str(repo_workspace),
                 model=(agent_spec.recommended_model or None),

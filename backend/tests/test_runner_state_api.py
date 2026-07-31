@@ -56,6 +56,28 @@ def test_tool_outside_build_allowlist_is_403(db, client):
     assert r.status_code == 403
 
 
+def test_rejected_value_is_400_and_explains_itself(db, client):
+    """A rejected VALUE is a caller error, not a platform fault (B2).
+
+    Only TypeError was mapped to 400, so every ValueError the state tools raise — an unknown
+    `rel`, `status` or `sor` — reached the agent as a **500**. An agent reading 500 concludes
+    the platform is broken and retries the same call; reading "400: invalid rel … valid values"
+    it corrects itself immediately. Live in run 98ab9a8c that cost nine wasted round trips and
+    left every trace edge labelled with the one value that happened to stick."""
+    t = Tenant.objects.create(name="A")
+    p = Project.objects.create(tenant=t, name="App")
+    token = _enroll(client, t, p)
+    a1 = Artifact.objects.create(tenant=t, project=p, phase="p", type="requirements",
+                                 sor="internal", content_hash="h1")
+    a2 = Artifact.objects.create(tenant=t, project=p, phase="p", type="prd",
+                                 sor="internal", content_hash="h2")
+    r = _state(client, t, token, "add_trace_edge",
+               from_artifact_id=str(a1.id), to_artifact_id=str(a2.id), rel="documents")
+    assert r.status_code == 400, r.content
+    detail = r.json()["detail"]
+    assert "derives" in detail and "implements" in detail    # the vocabulary, not just "invalid"
+
+
 def test_agent_cannot_transition_work_item_to_done(db, client):
     """The build agent must not mark a WorkItem done — that is the control plane's job after an
     approved merge gate (#2/#5). Blocking it here prevents the state=done-while-awaiting_gate

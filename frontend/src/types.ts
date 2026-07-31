@@ -617,12 +617,33 @@ export interface AdoptType {
   label: string; // "<Type> (<Phase>)"
 }
 
+// A headless onboarding step's live state. Index code and Gap report run as agents on a carrier
+// work item hidden from every list, so this hub is the ONLY surface that can report their
+// progress — `running` and `question` exist for exactly that. `question` non-null means the agent
+// called ask_human and is blocked until the user answers on the Clarifications screen.
+export interface OnboardingStepState {
+  running: boolean;
+  run_id?: string | null;
+  question?: { id: string; count: number } | null;
+}
+
+export interface OnboardingRepoIndex extends OnboardingStepState {
+  repo_id: string;
+  name: string;
+  status: "not_started" | "running" | "indexed";
+  artifact_id?: string | null;
+}
+
 export interface OnboardingHub {
   upload: OnboardingUploadDoc[];
   adopt: OnboardingAdoptDoc[];
   register: OnboardingRegister;
-  index: { status: "not_started" | "indexed"; artifact_id?: string | null };
-  gap: { ready: boolean; resume_phase?: string };
+  index: {
+    status: "not_started" | "indexed";
+    artifact_id?: string | null;
+    repos?: OnboardingRepoIndex[];
+  };
+  gap: { ready: boolean; resume_phase?: string } & OnboardingStepState;
   adopt_types: AdoptType[];
 }
 

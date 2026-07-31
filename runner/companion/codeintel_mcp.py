@@ -20,7 +20,7 @@ from mcp.server.fastmcp import FastMCP
 
 # The 8-tool surface + index — the names the daemon adds to the planning allowlist.
 CODEINTEL_TOOL_NAMES = (
-    "index", "get_overview", "get_context", "get_risk", "get_why",
+    "index", "index_report", "get_overview", "get_context", "get_risk", "get_why",
     "search_codebase", "get_dependency_path", "get_dead_code", "get_architecture_diagram",
 )
 
@@ -46,27 +46,54 @@ def build_server(*, workspace: str, repo: str) -> FastMCP:
     def index(repo: str | None = None) -> dict:
         """Analyse the checked-out repository ONCE — git history, import graph, hotspots, dead
         code, decisions. CALL THIS FIRST; every other tool reads its cached result. Returns a
-        summary (file_count, languages, commits, hotspots)."""
+        summary (file_count, languages, commits, hotspots) PLUS `index_health`.
+
+        **Check `index_health` before interpreting anything.** A non-empty `file_count` does not
+        mean the read succeeded: the file walk and the git read fail independently, so history
+        can be entirely missing while the file count looks perfectly healthy. If
+        `index_health.git.ok` is false, commit counts, hotspots, ownership and bus-factor are
+        ALL unavailable — not zero — and must be reported as unavailable. If `skipped_files` is
+        non-empty, those file types were not analysed at all; record them as assumptions."""
         idx = engine.index(workspace=ws_bound, repo=repo or repo_bound)
         return {
             "repo": idx.repo, "indexed_at": idx.indexed_at, "file_count": idx.file_count,
             "languages": idx.languages, "commits": idx.commits, "hotspots": idx.hotspots,
+            "index_health": engine.index_report(repo=repo or repo_bound),
         }
+
+    @server.tool()
+    def index_report(repo: str | None = None) -> dict:
+        """Health of the INDEX itself, not of the codebase: whether git could be read
+        (`git.ok`, `git.partial`, `git.error`), which file types were skipped
+        (`skipped_files`), how many files were analysed, and whether content search covers the
+        whole repo. Use it to state plainly what you could NOT see."""
+        return engine.index_report(repo=repo or repo_bound)
 
     @server.tool()
     def get_overview(repo: str | None = None) -> dict:
         """Repo shape: file_count, languages, commits, author count, top PageRank modules,
-        entry points, community count, and the top hotspots."""
+        entry points, community count, and the top hotspots.
+
+        Also returns `signals` — evidence-backed presence checks for CI/CD, containerisation,
+        infrastructure-as-code, dependency manifests and documentation, each with the exact
+        files that prove it. Use `signals` for those questions rather than searching for them;
+        a search over source files cannot answer "is there CI/CD" because workflow and compose
+        files are not source. `git_ok` false means the history could not be read."""
         return engine.get_overview(repo=repo or repo_bound)
 
     @server.tool()
     def get_context(targets: list, repo: str | None = None) -> dict:
-        """Per-file lines/complexity/language/churn/owner/bus-factor for each path in `targets`."""
+        """Per-file lines/complexity/language/churn/owner/bus-factor for each path in `targets`.
+
+        A file that was not analysed returns `{"indexed": false, "reason": …}` — that means its
+        metrics are UNKNOWN, never that they are zero. Do not report an unindexed file as
+        clean, small or low-risk."""
         return engine.get_context(repo=repo or repo_bound, targets=targets)
 
     @server.tool()
     def get_risk(targets: list, repo: str | None = None) -> dict:
-        """Per-file hotspot score, dependents, co-change partners, and blast radius."""
+        """Per-file hotspot score, dependents, co-change partners, and blast radius. An
+        unindexed path returns `{"indexed": false}` — unknown risk, not zero risk."""
         return engine.get_risk(repo=repo or repo_bound, targets=targets)
 
     @server.tool()
@@ -76,7 +103,13 @@ def build_server(*, workspace: str, repo: str) -> FastMCP:
 
     @server.tool()
     def search_codebase(query: str, repo: str | None = None) -> list:
-        """Keyword search over file paths; returns scored matches."""
+        """Whole-word keyword search over file paths AND file contents. Returns scored matches
+        with `terms_matched`/`of_terms` and `where` ("path" or "content").
+
+        This is keyword matching, NOT semantic search — it finds the words you type, not
+        concepts related to them. Search for identifiers likely to appear in the code
+        (`login`, `jwt`, `authenticate`), not for descriptions (`user login flow`). An empty
+        result means those words are absent, which is NOT proof the capability is absent."""
         return engine.search_codebase(repo=repo or repo_bound, query=query)
 
     @server.tool()

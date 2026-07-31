@@ -384,3 +384,87 @@ def test_body_loader_reads_body_ref(tmp_path):
     body.write_text("ROLE: PRD agent\n", encoding="utf-8")
     driver = ClaudeDriver(query_fn=_fake_query_factory([], {}), repo_root=tmp_path)
     assert driver._read_body_file(_spec(body_ref="agent.md")) == "ROLE: PRD agent\n"
+
+
+@pytest.mark.asyncio
+async def test_scan_path_allow_lists_the_local_tools_it_stops_denying(tmp_path):
+    """A repo-scoped (`reads_code`) planning run must ALLOW-LIST the local tools, not merely
+    un-deny them.
+
+    Under `permission-mode=default` a built-in tool that is neither denied nor allow-listed
+    raises a permission request, and an engine run has no human and no TTY to answer it — the
+    CLI blocks forever. That is what happened live: 00c code-intelligence runs sat at ~0% CPU
+    with no tool calls, no artifacts and no error until they were killed, twice, because
+    `_SCAN_DISALLOWED_TOOLS` stopped blocking Read/Grep/Glob/Bash while `allowed_tools` never
+    named them. Asserting only the denylist is what let this ship.
+    """
+    captured: dict = {}
+    driver = ClaudeDriver(query_fn=_fake_query_factory(_messages(), captured),
+                          body_loader=lambda s: "00c BODY", workdir_base=tmp_path)
+    workspace = tmp_path / "scan-wt"
+    workspace.mkdir()
+    await driver.run_planning_task(
+        manifest="m", agent_spec=_spec(), mcp_servers={},
+        allowed_tools=["mcp__platform-state__register_artifact", "mcp__codeintel__index"],
+        work_item=SimpleNamespace(id="wi-scan"), repo_workspace=workspace,
+    )
+    allowed = set(captured["options"].allowed_tools)
+    denied = set(captured["options"].disallowed_tools or [])
+    for tool in ("Read", "Glob", "Grep", "Bash"):
+        assert tool in allowed, f"{tool} is un-denied but not allow-listed → the run would hang"
+        assert tool not in denied
+    # The caller's own tools survive, and sandbox hygiene still holds.
+    assert {"mcp__platform-state__register_artifact", "mcp__codeintel__index"} <= allowed
+    assert {"Agent", "Task", "WebFetch"} <= denied
+
+
+@pytest.mark.asyncio
+async def test_sandbox_planning_still_denies_local_tools(tmp_path):
+    """The guard on the change above: a NORMAL planning phase (no repo_workspace) must keep its
+    empty-temp-dir sandbox — no filesystem, no Bash — so greenfield phases are unaffected."""
+    captured: dict = {}
+    driver = ClaudeDriver(query_fn=_fake_query_factory(_messages(), captured),
+                          body_loader=lambda s: "BODY", workdir_base=tmp_path)
+    await driver.run_planning_task(
+        manifest="m", agent_spec=_spec(), mcp_servers={},
+        allowed_tools=["mcp__platform-state__register_artifact"],
+        work_item=SimpleNamespace(id="wi-plain"),
+    )
+    allowed = set(captured["options"].allowed_tools)
+    denied = set(captured["options"].disallowed_tools or [])
+    for tool in ("Read", "Glob", "Grep", "Bash"):
+        assert tool in denied and tool not in allowed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repo_scoped", [False, True])
+async def test_background_tools_are_denied_on_every_phase_path(tmp_path, repo_scoped):
+    """A phase run must not be able to defer its own work.
+
+    `ToolSearch` is allow-listed (it is the only way the deferred platform-state write tools come
+    back), which also lets the agent pull in Task*/Cron*/Monitor/SendMessage. Live run fed0f385
+    did exactly that: it loaded `TaskCreate`, announced it would "kick off the index in parallel",
+    created Task #1 — and went silent forever, because nothing in a phase run executes a queued
+    task. Deny the whole family on BOTH paths; the agent has no legitimate use for one.
+    """
+    captured: dict = {}
+    driver = ClaudeDriver(query_fn=_fake_query_factory(_messages(), captured),
+                          body_loader=lambda s: "BODY", workdir_base=tmp_path)
+    kwargs = {}
+    if repo_scoped:
+        ws = tmp_path / "scan-wt"
+        ws.mkdir()
+        kwargs["repo_workspace"] = ws
+    await driver.run_planning_task(
+        manifest="m", agent_spec=_spec(), mcp_servers={},
+        allowed_tools=["mcp__platform-state__register_artifact"],
+        work_item=SimpleNamespace(id="wi-bg"), **kwargs,
+    )
+    denied = set(captured["options"].disallowed_tools or [])
+    allowed = set(captured["options"].allowed_tools)
+    for tool in ("TaskCreate", "TaskUpdate", "TaskList", "CronCreate", "Monitor",
+                 "SendMessage", "RemoteTrigger", "EnterWorktree"):
+        assert tool in denied, f"{tool} reachable via ToolSearch → the run can hang on it"
+        assert tool not in allowed
+    # ToolSearch itself must SURVIVE — blocking it is what made the write tools vanish.
+    assert "ToolSearch" not in denied

@@ -157,6 +157,19 @@ def build_server(
 
     @server.tool()
     def add_trace_edge(from_artifact_id: str, to_artifact_id: str, rel: str) -> dict:
+        """Record a traceability link FROM one artifact TO another. Direction matters: `from` is
+        the artifact you just produced, `to` is what it came from or acts upon.
+
+        `rel` must be exactly one of four values — there are no others:
+
+        - **derives** — `from` was derived/synthesised from `to`. The right choice for any
+          analysis, report or summary pointing at its source (e.g. a dependency graph derived
+          from a code-intelligence index). If unsure, this is almost always the one.
+        - **implements** — `from` is code or design fulfilling the specification in `to`.
+        - **tests** — `from` is a test covering `to`.
+        - **deploys** — `from` is a deployment artifact shipping `to`.
+
+        Anything else is rejected as a caller error and changes nothing."""
         return client.call("add_trace_edge", from_artifact_id=from_artifact_id,
                            to_artifact_id=to_artifact_id, rel=rel)
 

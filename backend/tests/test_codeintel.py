@@ -88,8 +88,10 @@ def test_context_and_search_and_diagram(repo):
     ctx = ci.get_context(repo="acme/api", targets=["pkg/b.py"])
     assert ctx["pkg/b.py"]["churn"] == 4 and ctx["pkg/b.py"]["owner"] == "dev@acme.test"
     assert ctx["pkg/b.py"]["bus_factor_risk"] is True      # single owner
-    hits = {h["file"] for h in ci.search_codebase(repo="acme/api", query="b")}
-    assert "pkg/b.py" in hits
+    # "b" is one character — dropped as a term (it would match anything). Search by a real
+    # identifier instead, which is what the tool is now documented to want.
+    hits = {h["file"] for h in ci.search_codebase(repo="acme/api", query="value")}
+    assert "pkg/b.py" in hits                              # matched in CONTENT, not the path
     assert "graph TD" in ci.get_architecture_diagram(repo="acme/api")
 
 
@@ -126,3 +128,166 @@ def test_repo_path_is_posix_relative(repo):
     over = a.get_overview(repo="acme/api")
     assert all("/" in m or m.endswith(".py") for m in over["top_modules"])
     assert not any(str(repo) in m for m in over["top_modules"])
+
+
+# ── B3: search must match WORDS, in content as well as paths ────────
+def test_search_matches_whole_words_not_substrings(repo):
+    """The substring bug: 'ci' matched inside 'dependencies.py' and ranked it first.
+
+    Live in run 98ab9a8c, `search_codebase('CI CD pipeline docker compose')` answered
+    `dependencies.py` — because "ci" is inside "dependen**ci**es". It never errored; it just
+    answered wrongly, which is the failure mode an agent cannot detect.
+    """
+    ws = repo
+    (ws / "pkg" / "dependencies.py").write_text("def resolve():\n    return []\n")
+    ci = BuiltinCodeIntel()
+    ci.index(workspace=ws, repo="acme/api")
+    hits = {h["file"] for h in ci.search_codebase(repo="acme/api", query="ci cd pipeline")}
+    assert "pkg/dependencies.py" not in hits    # 'ci' is not a WORD in that path
+
+
+def test_search_finds_content_not_just_filenames(repo):
+    """The other half: a concept present in the code but absent from every file NAME.
+
+    `search_codebase('authentication JWT token')` returned nothing on a repo that authenticates,
+    because the search only ever looked at file paths."""
+    (repo / "pkg" / "sec.py").write_text(
+        'def authenticate(token):\n    """Check the JWT is valid."""\n    return True\n')
+    ci = BuiltinCodeIntel()
+    ci.index(workspace=repo, repo="acme/api")
+    hits = ci.search_codebase(repo="acme/api", query="authenticate jwt")
+    assert "pkg/sec.py" in {h["file"] for h in hits}
+    top = hits[0]
+    assert top["where"] == "content" and top["terms_matched"] == 2
+
+
+# ── B4: the language/context filter ─────────────────────────────────
+def test_previously_unsupported_languages_are_analysed(tmp_path):
+    """A C#/PHP/Vue repo indexed as ZERO files while git still reported real commits — the
+    shape of a healthy codebase, because hotspots need a file that was never collected."""
+    ws = tmp_path / "poly"
+    ws.mkdir()
+    for name in ("Program.cs", "index.php", "App.vue", "main.swift", "util.cpp"):
+        (ws / name).write_text("int x = 1;\n")
+    idx = BuiltinCodeIntel().index(workspace=ws, repo="poly/x")
+    assert idx.file_count == 5
+
+
+def test_config_files_answer_ci_cd_and_stack_without_polluting_the_graph(tmp_path):
+    """`signals` exists because "is there CI/CD?" was unanswerable: workflow and manifest files
+    carry non-code extensions, so the only evidence available was which code extensions
+    appeared — which is how `dependencies.py` came back as CI/CD evidence."""
+    ws = tmp_path / "app"
+    (ws / ".github" / "workflows").mkdir(parents=True)
+    (ws / ".github" / "workflows" / "ci.yml").write_text("on: push\n")
+    (ws / "Dockerfile").write_text("FROM python:3.12\n")
+    (ws / "package.json").write_text('{"name":"app"}\n')
+    (ws / "app.py").write_text("x = 1\n")
+    ci = BuiltinCodeIntel()
+    idx = ci.index(workspace=ws, repo="a/b")
+    over = ci.get_overview(repo="a/b")
+    assert over["signals"]["ci_cd"]["present"] is True
+    assert ".github/workflows/ci.yml" in over["signals"]["ci_cd"]["evidence"]
+    assert over["signals"]["containerized"]["present"] is True
+    assert over["signals"]["dependency_manifest"]["present"] is True
+    # Presence-only: config files must never become analysis nodes or inflate the file count.
+    assert idx.file_count == 1
+    dead = {d["file"] for d in ci.get_dead_code(repo="a/b")}
+    assert not any(f.endswith((".json", ".yml")) or f == "Dockerfile" for f in dead)
+
+
+def test_skipped_file_types_are_reported(tmp_path):
+    """The agent's quality gate demands "any skipped files recorded as assumptions" — it had no
+    way to know anything was skipped."""
+    ws = tmp_path / "mixed"
+    ws.mkdir()
+    (ws / "a.py").write_text("x = 1\n")
+    (ws / "legacy.cobol").write_text("IDENTIFICATION DIVISION.\n")
+    ci = BuiltinCodeIntel()
+    ci.index(workspace=ws, repo="m/x")
+    assert ci.index_report(repo="m/x")["skipped_files"] == {".cobol": 1}
+
+
+def test_unindexed_target_reports_unknown_not_zero(repo):
+    """A row of zeros — 0 lines, 0 complexity, no owner, bus_factor false — is indistinguishable
+    from a small, clean, well-shared file. The agent wrote "not indexed" into artifacts as
+    "healthy"."""
+    ci = BuiltinCodeIntel()
+    ci.index(workspace=repo, repo="acme/api")
+    ctx = ci.get_context(repo="acme/api", targets=["Program.cs"])["Program.cs"]
+    assert ctx["indexed"] is False and "lines" not in ctx
+    risk = ci.get_risk(repo="acme/api", targets=["Program.cs"])["Program.cs"]
+    assert risk["indexed"] is False and "hotspot_score" not in risk
+
+
+# ── B5: git failure must be distinguishable from "no history" ───────
+def test_git_failure_is_reported_not_silently_zero(repo, monkeypatch):
+    """S4-8 was exactly this: git missing from PATH -> `""` -> `commits: 0`, which reads as
+    "this repo has no history" instead of "I could not read the history". Hotspots then come
+    back EMPTY (every file has churn 0) and report as "no hotspots found"."""
+    import integrations.codeintel.builtin as b
+
+    monkeypatch.setattr(b, "_git_checked",
+                        lambda ws, *a, **k: ("", "timed out after 60s"))
+    ci = BuiltinCodeIntel()
+    ci.index(workspace=repo, repo="acme/api")
+    report = ci.index_report(repo="acme/api")
+    assert report["git"]["ok"] is False
+    assert "timed out" in report["git"]["error"]
+    assert report["analysed_files"] > 0          # the file walk succeeded — the trap
+    assert ci.get_overview(repo="acme/api")["git_ok"] is False
+
+
+def test_healthy_git_reports_ok(repo):
+    ci = BuiltinCodeIntel()
+    ci.index(workspace=repo, repo="acme/api")
+    report = ci.index_report(repo="acme/api")
+    assert report["git"] == {"ok": True, "partial": False, "error": "", "commits": 4}
+
+
+def test_git_checked_separates_timeout_from_empty_output(monkeypatch):
+    import subprocess as sp
+
+    from integrations.codeintel.builtin import _git_checked
+
+    def boom(cmd, **kw):
+        raise sp.TimeoutExpired(cmd, 60)
+
+    monkeypatch.setattr(sp, "run", boom)
+    out, err = _git_checked(__import__("pathlib").Path("/ws"), "log")
+    assert out == "" and "timed out after 60s" in err
+
+
+def test_git_helper_never_inherits_stdin(monkeypatch):
+    """Every git subprocess must be handed its OWN stdin.
+
+    `capture_output=True` redirects stdout/stderr only — stdin is still inherited. Harmless from
+    a web process; fatal inside the companion's CodeIntel **MCP server**, whose stdin *is* the
+    JSON-RPC channel to the engine. The child gets a duplicate handle to the protocol pipe and
+    blocks on it, leaving the server no line to answer on.
+
+    Observed live (run edefff0d): `git log … --name-only` alive 369s at 0s CPU with its parent
+    gone, `codeintel.index` never returning, and the engine reporting 'MCP server "codeintel"
+    tool "index" sent no response or progress for 1800s'. The identical command run by hand
+    finished instantly. Three earlier runs were killed chasing this.
+    """
+    import subprocess as sp
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from integrations.codeintel.builtin import _git
+
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(cmd=cmd, kwargs=kwargs)
+        return SimpleNamespace(returncode=0, stdout="out", stderr="")
+
+    monkeypatch.setattr(sp, "run", fake_run)
+    assert _git(Path("/ws"), "log", "--oneline") == "out"
+    assert seen["kwargs"].get("stdin") is sp.DEVNULL, (
+        "git would inherit the MCP server's stdin — the JSON-RPC channel"
+    )
+    # The other guards that keep a hung git from taking the run down with it.
+    assert seen["kwargs"].get("timeout") == 60
+    assert seen["kwargs"].get("capture_output") is True

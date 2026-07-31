@@ -45,6 +45,21 @@ class DaemonError(Exception):
     """The companion daemon could not start or run a task."""
 
 
+class TransientBackendError(DaemonError):
+    """The backend answered, but with a server-side failure that is expected to pass (B8).
+
+    A connection that never lands is an OSError and was already retried forever. A connection
+    that lands on a backend whose own database blinked is an HTTP 5xx — and that was fatal.
+    Observed live: the shared Postgres dropped one connection (`SSL SYSCALL error: EOF
+    detected`), `/api/runner/work/` returned 500, `claim()` raised plain `DaemonError`, and the
+    serve loop — which catches only OSError — let it escape and **the companion exited**. The
+    developer's only symptom is a button that stops doing anything, with no obvious link to a
+    momentary network blip minutes earlier. On a shared remote database that blip is normal.
+
+    Subclasses DaemonError so existing handlers still catch it; the serve loop treats it like a
+    connection failure and keeps polling with backoff."""
+
+
 class EngineAuthError(DaemonError):
     """Subscription-only auth could not be guaranteed (fail-closed). Subclasses DaemonError so
     existing callers/tests still catch it, but the serve loop re-raises it rather than treating
@@ -110,16 +125,25 @@ def codeintel_mcp_servers(*, workspace: str, repo: str, repo_root: str | None = 
     `backend/` to its own path and wraps one `BuiltinCodeIntel` over the worktree, so the agent
     calls `codeintel.*` (index + the 8 read tools) without handling a path or repo it can't know."""
     root = repo_root or str(Path(__file__).resolve().parents[2])
+    # INHERIT the environment, exactly like `state_mcp_servers` above — this server was shipped
+    # with a hand-built 3-variable env and it silently corrupted the analysis. The engine shells
+    # out to `git` for history, and with no PATH there is no `git` to find: measured on the live
+    # test repo, the same index returned **commits=0** under the 3-var env and **commits=22**
+    # under an inherited one. No error, no warning — just a repository that looks like it has no
+    # history, feeding a gap report that then reasons from it. Whatever else a minimal env breaks
+    # (SYSTEMROOT/Winsock, TEMP), it is never worth re-deriving by hand.
+    env = dict(os.environ)
+    env.update({
+        "RUNNER_WORKSPACE": workspace,
+        "RUNNER_REPO": repo,
+        "PYTHONPATH": root,
+    })
     return {
         "codeintel": {
             "type": "stdio",
             "command": sys.executable,
             "args": ["-m", "runner.companion.codeintel_mcp"],
-            "env": {
-                "RUNNER_WORKSPACE": workspace,
-                "RUNNER_REPO": repo,
-                "PYTHONPATH": root,
-            },
+            "env": env,
         }
     }
 def write_mcp_config(servers: dict, *, run_id: str = "") -> str:
@@ -215,8 +239,10 @@ class CompanionDaemon:
             "GET", f"{self._base}/api/runner/work/", self._headers(), None)
         if status == 204 or not data:
             return None
+        if status >= 500:
+            raise TransientBackendError(f"claim work -> {status}: {data}")
         if status >= 400:
-            raise DaemonError(f"claim work -> {status}: {data}")
+            raise DaemonError(f"claim work -> {status}: {data}")   # 4xx = a real rejection
         return data
 
     def claim_code_intel(self) -> dict | None:
@@ -226,6 +252,8 @@ class CompanionDaemon:
             "GET", f"{self._base}/api/runner/code-intel/", self._headers(), None)
         if status == 204 or not data:
             return None
+        if status >= 500:
+            raise TransientBackendError(f"claim code-intel -> {status}: {data}")
         if status >= 400:
             raise DaemonError(f"claim code-intel -> {status}: {data}")
         # Only a real job payload (carries job_id) is work; treat anything else as idle so a
@@ -244,8 +272,10 @@ class CompanionDaemon:
 
     def _report(self, path: str, report: dict) -> None:
         """POST a task result. A finished phase/build is too expensive to lose to a backend
-        restart, so transient connection errors are retried (~2 min of backoff) before the
-        failure is surfaced; HTTP 4xx/5xx answers still fail immediately (the platform saw us)."""
+        restart, so transient failures are retried (~2 min of backoff) before the failure is
+        surfaced. Retried: a connection that never lands (OSError) and a 5xx — the platform
+        answered, but out of its own database blinking, so it did NOT record the report (B8).
+        Not retried: 4xx, which is a real rejection that retrying cannot fix."""
         delay = min(self._poll_interval, self._RETRY_MAX_DELAY) or 1.0
         for attempt in range(self._REPORT_RETRIES + 1):
             try:
@@ -257,6 +287,15 @@ class CompanionDaemon:
                         f"report {path} failed after {attempt + 1} attempts "
                         f"(backend unreachable): {exc}") from exc
                 print(f"[companion] backend unreachable reporting {path} ({exc}); "
+                      f"retrying in {delay:.0f}s", file=sys.stderr, flush=True)
+                self._sleep(delay)
+                delay = min(delay * 2, self._RETRY_MAX_DELAY)
+                continue
+            if status >= 500:
+                if attempt >= self._REPORT_RETRIES:
+                    raise DaemonError(
+                        f"report {path} failed after {attempt + 1} attempts -> {status}: {data}")
+                print(f"[companion] backend error reporting {path} ({status}); "
                       f"retrying in {delay:.0f}s", file=sys.stderr, flush=True)
                 self._sleep(delay)
                 delay = min(delay * 2, self._RETRY_MAX_DELAY)
@@ -542,9 +581,10 @@ class CompanionDaemon:
                 iterations += 1
                 try:
                     task = self.claim()
-                except OSError as exc:
-                    # Backend restarting/unreachable (S.No 105): keep polling with capped
-                    # backoff until it returns — NEVER exit the loop on a connection error.
+                except (OSError, TransientBackendError) as exc:
+                    # Backend restarting/unreachable (S.No 105) or answering 5xx because its own
+                    # database blinked (B8): keep polling with capped backoff until it returns —
+                    # NEVER exit the loop on a failure that is expected to pass.
                     # (The heartbeat thread already swallows its own failures and resumes.)
                     reconnect_delay = (min(reconnect_delay * 2, self._RETRY_MAX_DELAY)
                                        if reconnect_delay else
@@ -562,7 +602,7 @@ class CompanionDaemon:
                     # No agent-run work — check for a code-intel job (B4) before idling.
                     try:
                         job = self.claim_code_intel()
-                    except OSError:
+                    except (OSError, TransientBackendError):
                         job = None   # transient; the main-claim backoff handles reconnect
                     if job is not None:
                         try:

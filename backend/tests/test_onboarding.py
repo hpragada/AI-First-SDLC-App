@@ -498,3 +498,125 @@ def test_trigger_onboarding_agent_dispatches_companion_run_when_enrolled(world):
         tenant=world["t"], project=world["project"], type=WorkItem.Type.EPIC)
     assert seen["inp"].work_item_id == str(carrier.id)      # ran against the carrier WI
     assert Run.objects.filter(id=res.run_id).exists()
+
+
+# ── Headless onboarding steps (Index code / Gap report) ───────────────────────
+def test_onboarding_agent_runs_headless_without_opening_a_gate(world):
+    """Index code / Gap report are setup steps, not lifecycle phases anyone signs off. Their run
+    is hosted on a carrier hidden from every list, so a gate opened here could never be found or
+    actioned — it just sat PENDING forever and inflated the gate count."""
+    from apps.registry.catalog import seed_agent_specs
+    from apps.runs.enrollment import enroll_runner
+
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    seed_agent_specs(world["t"])
+    enroll_runner(tenant_id=tid, project_id=pid, developer_id=str(world["po"].id), label="l")
+    seen = {}
+    trigger_onboarding_agent(
+        tenant_id=tid, project_id=pid, agent_key="00_onboarding",
+        triggered_by=str(world["po"].id),
+        workflow_starter=lambda wf_id, inp: seen.update(inp=inp))
+    assert seen["inp"].auto_approve is True
+
+
+def test_a_normal_phase_still_opens_its_gate(world):
+    """The guard on the change above: `auto_approve` must stay False for every ordinary phase, or
+    this fix would silently publish lifecycle work with no human review (#5)."""
+    from orchestration.trigger import trigger_phase
+
+    from apps.registry.catalog import seed_agent_specs
+    from apps.workitems.models import WorkItem as WI
+
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    seed_agent_specs(world["t"])
+    wi = WI.objects.create(tenant=world["t"], project=world["project"],
+                           type=WI.Type.STORY, title="a real story")
+    seen = {}
+    trigger_phase(
+        tenant_id=tid, project_id=pid, work_item_id=str(wi.id), agent_key="01_ideation",
+        triggered_by=str(world["po"].id),
+        workflow_starter=lambda wf_id, inp: seen.update(inp=inp))
+    assert seen["inp"].auto_approve is False
+
+
+def test_step_state_reports_running_and_a_pending_question(world):
+    """The hub is the ONLY surface these runs appear on, so it must distinguish 'working' from
+    'blocked on you' — a run waiting on ask_human is still running, but the user must act."""
+    from apps.clarifications.models import Clarification
+    from apps.registry.catalog import seed_agent_specs
+    from apps.runs.enrollment import enroll_runner
+    from apps.runs.models import Run
+    from integrations.onboarding import onboarding_step_state
+
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    seed_agent_specs(world["t"])
+    enroll_runner(tenant_id=tid, project_id=pid, developer_id=str(world["po"].id), label="l")
+
+    idle = onboarding_step_state(tenant_id=tid, project_id=pid, agent_key="00_onboarding")
+    assert idle == {"running": False, "run_id": None, "question": None}   # nothing dispatched yet
+
+    res = trigger_onboarding_agent(
+        tenant_id=tid, project_id=pid, agent_key="00_onboarding",
+        triggered_by=str(world["po"].id), workflow_starter=lambda *a, **k: None)
+    run = Run.objects.get(id=res.run_id)
+    live = onboarding_step_state(tenant_id=tid, project_id=pid, agent_key="00_onboarding")
+    assert live["running"] is True and live["run_id"] == str(run.id) and live["question"] is None
+
+    Clarification.objects.create(
+        tenant=world["t"], run=run, work_item=run.work_item, phase="onboarding",
+        status=Clarification.Status.PENDING, questions=[{"id": "q1", "text": "which repo?"}])
+    blocked = onboarding_step_state(tenant_id=tid, project_id=pid, agent_key="00_onboarding")
+    assert blocked["running"] is True and blocked["question"]["count"] == 1
+
+    run.status = Run.Status.COMPLETED
+    run.save(update_fields=["status"])
+    assert onboarding_step_state(
+        tenant_id=tid, project_id=pid, agent_key="00_onboarding")["running"] is False
+
+
+def test_carrier_q_never_hides_a_work_item_without_a_source_key(world):
+    """S3-13 regression guard. `carrier_q` must match ONLY when `source` EXISTS and names a
+    carrier: an imported Jira item's external_ref has no `source` key, and dropping the has_key
+    half makes Postgres evaluate NULL IN (…) → NULL → NOT NULL → NULL and delete the row from
+    the list. That emptied the backlog for every project."""
+    from integrations.onboarding import carrier_q
+
+    from apps.workitems.models import WorkItem as WI
+
+    jira = WI.objects.create(tenant=world["t"], project=world["project"], type=WI.Type.STORY,
+                             title="imported", external_ref={"sor": "jira", "id": "ST-447"})
+    plain = WI.objects.create(tenant=world["t"], project=world["project"], type=WI.Type.STORY,
+                              title="hand written", external_ref=None)
+    carrier = ensure_onboarding_work_item(
+        tenant_id=str(world["t"].id), project_id=str(world["project"].id))
+    visible = set(WI.objects.exclude(carrier_q()).values_list("id", flat=True))
+    assert jira.id in visible and plain.id in visible and carrier.id not in visible
+
+
+def test_hub_index_repos_carry_both_running_and_status(world):
+    """The hub payload — not just `onboarding_step_state` — must carry BOTH keys. Shipped once
+    with `status` only: the button (switching on `status`) worked while the progress line
+    (reading `running`) silently rendered nothing, so a dispatched run showed a locked button
+    and no explanation. Testing the state helper alone did not catch it; test the wiring."""
+    from apps.projects.models import Repository
+    from apps.registry.catalog import seed_agent_specs
+    from apps.runs.enrollment import enroll_runner
+    from integrations.onboarding import onboarding_hub
+
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    seed_agent_specs(world["t"])
+    enroll_runner(tenant_id=tid, project_id=pid, developer_id=str(world["po"].id), label="l")
+    repo = Repository.objects.create(tenant=world["t"], project=world["project"], name="acme/api")
+
+    idle = onboarding_hub(tenant_id=tid, project_id=pid)["index"]["repos"][0]
+    assert idle["running"] is False and idle["status"] == "not_started"
+
+    trigger_onboarding_agent(
+        tenant_id=tid, project_id=pid, agent_key="00c_intelligent_context_extractor",
+        repo_id=str(repo.id), triggered_by=str(world["po"].id),
+        workflow_starter=lambda *a, **k: None)
+    live = onboarding_hub(tenant_id=tid, project_id=pid)["index"]["repos"][0]
+    assert live["running"] is True and live["status"] == "running" and live["run_id"]
+    # The gap step shares the component, so it must expose the same keys.
+    assert set(onboarding_hub(tenant_id=tid, project_id=pid)["gap"]) >= {
+        "running", "run_id", "question"}
