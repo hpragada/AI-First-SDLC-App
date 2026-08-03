@@ -178,7 +178,7 @@ def test_auto_apply_rejects_a_version_that_shrank():
     store = InMemoryObjectStore()
     store.put("v1", b"x" * 5000)        # the adopted extraction
     store.put("v2", b"x" * 400)         # diagrams only — the prose is gone
-    with pytest.raises(WriteCompletenessError, match="shorter version"):
+    with pytest.raises(WriteCompletenessError, match="shorter rendering"):
         verify_write_completeness_core(
             _vision_input(t, p, run), ["document_vision"], object_store=store)
 

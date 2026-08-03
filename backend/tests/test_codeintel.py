@@ -291,3 +291,72 @@ def test_git_helper_never_inherits_stdin(monkeypatch):
     # The other guards that keep a hung git from taking the run down with it.
     assert seen["kwargs"].get("timeout") == 60
     assert seen["kwargs"].get("capture_output") is True
+
+
+# ── S4-23: the dependency graph must not invent edges ────────────────
+@pytest.fixture
+def polyglot_repo(tmp_path):
+    """A repo shaped like the real defect: a Python package that (a) imports the STDLIB
+    `logging` while also containing its own `middleware/logging.py`, (b) imports a
+    third-party dotted module `starlette.types`, and (c) sits beside a frontend whose only
+    `types.ts` is the sole file in the tree with that basename.
+
+    Before the fix every one of those produced an edge: 6 files "importing" the local
+    logging module they never named, and two Python files "importing" a TypeScript file.
+    """
+    ws = tmp_path / "poly"
+    (ws / "backend" / "app" / "middleware").mkdir(parents=True)
+    (ws / "frontend" / "src" / "api").mkdir(parents=True)
+    (ws / "backend" / "app" / "middleware" / "logging.py").write_text(
+        "import json\nimport logging\nfrom starlette.types import ASGIApp\n")
+    # Names the stdlib module only — must NOT be wired to middleware/logging.py.
+    (ws / "backend" / "app" / "service.py").write_text(
+        "import logging\n\ndef go():\n    return 1\n")
+    # Names the LOCAL module explicitly — this edge is real and must survive.
+    (ws / "backend" / "app" / "main.py").write_text(
+        "import logging\nfrom app.middleware.logging import Mw\n")
+    (ws / "backend" / "app" / "__init__.py").write_text("")
+    (ws / "frontend" / "src" / "api" / "types.ts").write_text(
+        "export type Expense = { id: string }\n")
+    (ws / "frontend" / "src" / "api" / "client.ts").write_text(
+        "import { Expense } from './types'\nexport const c = 1\n")
+    return ws
+
+
+def _edges(ws):
+    from integrations.codeintel.builtin import _analyze
+
+    return {(f, t) for f, t in _analyze(ws, "acme/poly")["graph"]["edges"]}
+
+
+def test_python_import_never_resolves_to_a_frontend_file(polyglot_repo):
+    """A Python `import` cannot name a TypeScript file. Two such edges shipped live."""
+    cross = {(f, t) for f, t in _edges(polyglot_repo)
+             if f.endswith(".py") != t.endswith(".py")}
+    assert cross == set(), f"fabricated cross-language edges: {cross}"
+
+
+def test_stdlib_import_does_not_wire_to_a_same_named_repo_file(polyglot_repo):
+    """`import logging` names the standard library, not this repo's middleware/logging.py.
+
+    On the live repo 6 of that file's 7 inbound edges were exactly this confusion, inflating
+    its PageRank and blast radius sevenfold."""
+    edges = _edges(polyglot_repo)
+    target = "backend/app/middleware/logging.py"
+    assert ("backend/app/service.py", target) not in edges
+    # And the same, through the surface the agent actually reads.
+    ci = BuiltinCodeIntel()
+    ci.index(workspace=polyglot_repo, repo="acme/poly")
+    assert "backend/app/service.py" not in ci.get_risk(
+        repo="acme/poly", targets=[target])[target]["dependents"]
+
+
+def test_an_explicit_local_import_of_that_same_module_still_resolves(polyglot_repo):
+    """The other half of the guard: narrowing must not delete REAL edges. `main.py` does
+    name the local module, so that edge has to survive the stdlib filter."""
+    assert ("backend/app/main.py", "backend/app/middleware/logging.py") in _edges(polyglot_repo)
+
+
+def test_relative_js_import_still_resolves(polyglot_repo):
+    """The family restriction must leave ordinary in-language resolution untouched."""
+    assert ("frontend/src/api/client.ts", "frontend/src/api/types.ts") in _edges(polyglot_repo)

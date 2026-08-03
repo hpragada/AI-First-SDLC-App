@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from collections import defaultdict, deque
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,6 +51,27 @@ _CONTEXT_NAMES = {"Dockerfile", "Makefile", "Jenkinsfile", "Procfile", "Vagrantf
                   "CODEOWNERS", "Gemfile", "Rakefile", "requirements.txt"}
 _ENTRY_NAMES = {"main", "index", "__init__", "__main__", "app", "manage", "cmd", "setup",
                 "conftest", "wsgi", "asgi", "server"}
+
+#: Language family per extension — an import may only resolve WITHIN its own family (S4-23).
+#: A Python `import` cannot name a TypeScript file, so a match across families is always wrong.
+#: Extensions absent here can never be an import TARGET, which is correct: nothing `import`s a
+#: .css, .sql or .md file. Kept separate from `_LANG_EXT` (which decides what is a graph NODE)
+#: because the two questions differ: `.vue` is a node and a legal JS target; `.sql` is a node
+#: and never a target.
+_IMPORT_FAMILY = {
+    ".py": "py", ".pyi": "py",
+    ".ts": "js", ".tsx": "js", ".js": "js", ".jsx": "js", ".mjs": "js", ".cjs": "js",
+    ".vue": "js", ".svelte": "js",
+    ".java": "jvm", ".kt": "jvm", ".scala": "jvm",
+    ".go": "go",
+}
+
+#: Python's own standard library. `import logging` names the stdlib module, never this repo's
+#: `middleware/logging.py` — but a bare-name match cannot tell the difference, so before this
+#: guard 6 of the 7 inbound edges on that file were fabricated by exactly that confusion.
+#: `sys.stdlib_module_names` is authoritative and version-accurate (3.10+), so the set can
+#: never drift from the interpreter actually running the analysis.
+_PY_STDLIB_ROOTS = frozenset(getattr(sys, "stdlib_module_names", ())) | {"__future__"}
 _COMPLEXITY = re.compile(r"\b(if|for|while|case|elif|when|catch|switch|except)\b|&&|\|\||\?")
 _MAX_BYTES = 1_000_000
 
@@ -471,38 +493,64 @@ def _git_analytics(ws: Path) -> dict:
 def _dependency_graph(files):
     by_noext: dict[str, str] = {}
     by_base: dict[str, list] = defaultdict(list)
-    for rel, _ext, _text in files:
+    family_of: dict[str, str] = {}
+    for rel, ext, _text in files:
         noext = rel.rsplit(".", 1)[0]
         by_noext[noext] = rel
         by_base[Path(rel).stem].append(rel)
+        family_of[rel] = _IMPORT_FAMILY.get(ext, "")
 
-    def resolve(token: str, importer: str) -> str | None:
+    def resolve(token: str, importer: str, family: str) -> str | None:
+        """Resolve one import token to a file IN THIS REPO, or None (S4-23).
+
+        Every rule below is a heuristic, so each is fenced by what the language makes
+        possible. Returning None is always safe — a missing edge understates coupling;
+        a fabricated edge invents architecture, and PageRank, blast-radius, communities
+        and the hotspot ranking are all computed from these edges.
+        """
         token = token.strip().strip("'\"")
         if not token:
             return None
         norm = token.lstrip(".").replace(".", "/")
+        # An absolute Python import rooted at the standard library is never a repo file.
+        # Relative imports (`from .logging import x`) are always local, so they are exempt.
+        if (family == "py" and not token.startswith(".")
+                and norm.split("/", 1)[0] in _PY_STDLIB_ROOTS):
+            return None
+        # Same-family only: nothing can import across languages.
+        def matches(rel: str) -> bool:
+            return family_of.get(rel) == family
+
         cand = norm.rsplit("/", 1)[0] if token.endswith((".ts", ".js")) else norm
         # 1) a file whose path-without-ext ends with the token path
         for noext, rel in by_noext.items():
-            if noext == norm or noext.endswith("/" + norm) or noext == cand:
+            if matches(rel) and (noext == norm or noext.endswith("/" + norm) or noext == cand):
                 return rel
         # 2) relative JS import resolved against the importer's directory
         if token.startswith("."):
             base = (Path(importer).parent / token.lstrip("./")).as_posix().rsplit(".", 1)[0]
             for noext, rel in by_noext.items():
-                if noext == base or noext == base + "/index":
+                if matches(rel) and (noext == base or noext == base + "/index"):
                     return rel
-        # 3) fall back to a unique basename match
+        # 3) fall back to a unique basename match. For a DOTTED Python module path the last
+        # segment alone is a guess, not evidence — `starlette.types` is a third-party package,
+        # not this repo's `types.py`. Such a token must have matched its FULL path at (1).
+        if family == "py" and "/" in norm:
+            return None
         last = norm.rsplit("/", 1)[-1]
-        if len(by_base.get(last, [])) == 1:
-            return by_base[last][0]
+        named = [rel for rel in by_base.get(last, []) if matches(rel)]
+        if len(named) == 1:
+            return named[0]
         return None
 
     out_edges: dict[str, set] = defaultdict(set)
     in_edges: dict[str, set] = defaultdict(set)
     for rel, ext, text in files:
+        family = _IMPORT_FAMILY.get(ext, "")
+        if not family:
+            continue
         for tok in _extract_imports(ext, text):
-            target = resolve(tok, rel)
+            target = resolve(tok, rel, family)
             if target and target != rel:
                 out_edges[rel].add(target)
                 in_edges[target].add(rel)

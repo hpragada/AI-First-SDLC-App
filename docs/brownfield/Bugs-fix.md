@@ -330,6 +330,99 @@ why the three runs before it failed, or by watching that successful run closely.
 ### Cross-reference — platform-wide, owned by the team (not brownfield)
 **Re-running a phase duplicates artifacts (v1 + v2) instead of replacing.** Full blast-radius recon delivered 2026-07-31: the defect is in the shared `register_artifact`, so it spans **every phase, both branches, greenfield and brownfield**. Orphaned state includes phantom gates, stranded clarifications, unreclaimed S3 bodies, orphan trace edges and (if a published run is re-run) duplicate Confluence pages. The team took ownership of this one.
 
+---
+
+## Step 4 — third pass (2026-08-03): the fixes taken live, and two found by doing it
+
+Three Index-code runs this session. The first two were aborted for setup reasons and cleaned up;
+the third, **`9d1b4d32`**, completed in **10 minutes**: 7 artifacts, **51 knowledge chunks**,
+5 `derives` edges, **0 gates**. This is the run that promotes S4-16 … S4-21 from "tests green"
+to **verified live**, and it is where S4-23 and S4-24 were found.
+
+**Setup finding worth recording (cost one aborted run).** The companion was restarted without
+`--repo-path` / `--worktrees`. The agent then ran with **no worktree and no `codeintel` MCP
+server at all** — and did not fail: `daemon.py` logged *"has no worktree … scanning manifest
+only"* and carried on, analysing paperwork instead of code. E2E prerequisite #4 in
+`brownfield_bugs.md` already requires those flags; nothing enforces them. **Pre-flight that
+actually proves it:** after clicking, check a `codeintel_mcp` process exists and a
+`.sdlc-worktrees/scan-<run-id>` directory was created. Both are absent when the flags are missing.
+
+### S4-23 · ✅ The dependency graph invented edges that do not exist in the code
+- **Symptom:** run `bf0f27c0` reported a "Cross-Tier Anomaly" — `backend/app/middleware/logging.py`
+  and `backend/tests/test_migrations.py` importing `frontend/src/api/types.ts`. A backend module
+  importing a frontend file is architecturally impossible.
+- **Verified against source:** neither file imports anything from the frontend. `logging.py` imports
+  `json`, `logging`, `time`, `starlette.requests`, `starlette.types`. **The edges are fabricated.**
+- **Root cause** (`integrations/codeintel/builtin.py::_dependency_graph::resolve`): an import token
+  was matched to a file **by bare name, across the whole repository, in any language**, with no
+  check for stdlib, third-party, or language. Two rules misfired:
+  - `import types` (stdlib) → rule 1's suffix match, `"frontend/src/api/types".endswith("/types")`;
+  - `from starlette.types import …` (third-party) → rule 3's "unique basename" fallback, because
+    exactly one file in the repo has the stem `types`.
+- **Measured blast radius on the real repo — bigger than the two edges reported:** `_analyze` run
+  directly over `medslot-single-repo` gave **127 edges, of which 8 were false**. Seven files
+  "imported" `middleware/logging.py`; **only one really does** (`main.py`) — the other six merely
+  write `import logging`, meaning that file's inbound count and PageRank were overstated **7×**.
+- **Why it matters beyond two wrong lines:** the graph feeds PageRank, blast-radius, architecture
+  communities and coupling risk. The false cross-tier edges were **welding the backend and frontend
+  into one component**: the same repo reports **2 communities before the fix and 3 after**. The
+  architecture map was wrong, not merely annotated.
+- **Surgical fix** — three guards, each fenced by what the language makes possible:
+  1. **Same-language-family only** (`_IMPORT_FAMILY`). A Python `import` can never name a `.ts`
+     file. Extensions absent from the map can never be a target — correct: nothing imports `.css`.
+  2. **Python stdlib roots skipped**, from `sys.stdlib_module_names` (authoritative, version-exact,
+     cannot drift from the interpreter running the analysis). Relative imports are exempt — those
+     are always local.
+  3. **A dotted Python path must match in full.** `starlette.types` may no longer fall back to
+     "the only file named `types`"; `a.b.c` has to match a path containing `a/b/c`.
+- **Result:** 127 → **119 edges**; cross-language 2 → **0**; inbound to `middleware/logging.py`
+  7 → **1**, and the surviving one is the genuine `from app.middleware.logging import …`.
+- **Guards:** 4 tests, incl. `test_an_explicit_local_import_of_that_same_module_still_resolves` and
+  `test_relative_js_import_still_resolves` — both exist to catch **over**-correction. Returning
+  None is safe (a missing edge understates coupling); a fabricated edge invents architecture.
+- **Verified live in run `9d1b4d32`:** no anomaly section raised, `middleware/logging` not mentioned
+  at all, `types.ts` correctly placed inside the frontend community only, communities = 3.
+
+### S4-24 · ✅ The agent forwarded an unverified anomaly instead of resolving it
+- **Symptom:** having found the S4-23 edges, `00c` wrote them into the report as a finding and asked
+  the reader to *"inspect `logging.py` before any refactor"*. One `grep` settles it.
+- **The team's question:** should it not have used **clarifications** (`ask_human`)? Checked:
+  `ask_human` **is** wired on this path (`state_mcp.py:218`, `BUILD_STATE_TOOLS`), the hub carries
+  `index.repos[].question`, and the agent also had `Read`/`Grep`/`Glob` (the S4-7 allow-list).
+  **The `00c` body mentioned `ask_human` zero times in 152 lines.**
+- **Root cause:** the body offered only one route for an odd result — record an assumption. It never
+  said *verify it yourself*, and never said the clarification channel existed.
+- **Why asking the user is wrong *for this case*:** the answer is in the repo and the agent has the
+  tools. Asking would stall a headless run on a question the user must read the code to answer.
+  Clarifications are for what only a human knows — intent, ownership, whether something dormant is
+  deliberate.
+- **Surgical fix** (`agents/00c_.../agent.md`, Step 2 + quality gate): a ranked three-way rule —
+  **(1)** answerable from code → answer it yourself; **(2)** answerable only by a person → a single
+  `ask_human` call, surfaced on the Onboarding page; **(3)** neither → Tier-3 `assumption`. Plus the
+  named failure mode: *forwarding an unverified anomaly hands your work to the user and the artifact
+  still carries the wrong data — downstream agents read the artifact, not the caveat.*
+- **Guards:** a migration test asserts `ask_human` is named **and** that self-verification is ranked
+  before it, so this can never be "fixed" into an agent that stalls on code-answerable questions.
+- **Verified live in run `9d1b4d32`** — and it generalised beyond the case that prompted it:
+  - a new **"## Anomaly Verification"** section: *"No structurally impossible edges detected …
+    all Python imports resolved within the repo"*, with `client.test.ts` and the Alembic files
+    each checked and explained rather than flagged;
+  - dead code went from *"5 candidates (all low confidence)"* to **"all five are false positives —
+    verified by reading the architecture diagram and source"**, with a per-file reason.
+- **⚠️ Honest limit:** this run contained no anomaly needing a human, so the **`ask_human` branch was
+  never exercised**. S4-24 is verified for the self-verify path, **untested for the ask path**.
+
+### S4-25 · 🔲 A completed run never records when it ended
+- **Symptom:** run `9d1b4d32` is `completed` with `ended_at = None`. Same for `98ab9a8c`,
+  `bf0f27c0` and every completed `00e` vision run.
+- **Contrast:** *failed* runs do set `ended_at` (e.g. `2745c2e0`, `7c46b43c`), so the column works —
+  it is the success path that skips it.
+- **Impact:** run duration is uncomputable from the data, so no screen can show "took 10 minutes"
+  and no regression in run time can be measured. Low severity, trivial to miss, easy to fix.
+- Found while assembling the run report; **not fixed** — logged for the team.
+
+---
+
 ## Status summary
 | ID | Title | Status |
 |----|-------|--------|
@@ -348,22 +441,30 @@ why the three runs before it failed, or by watching that successful run closely.
 | S4-5 | Message rendered nothing (missing `running` key) | ✅ FIXED (verified live) |
 | S4-6 | Copy leaked agent key `00c`, pointed at an invisible screen | ✅ FIXED |
 | S4-7 | Repo-scoped runs hang — un-denied but not allow-listed | ✅ FIX KEPT — **but it was NOT the cause of the hangs** (see S4-13). Genuine latent inconsistency; `10_security` had it too |
-| S4-8 | Companion logs nothing during a run | 🔲 OPEN |
-| S4-9 | 7 stale tests from `b97f804` | 🔲 OPEN (**blocks merge**) |
+| S4-8 | Companion logs nothing during a run | 🔲 OPEN — partially mitigated in practice: redirecting the companion's output to a file (`>> companion.log 2>&1`) does capture the failure-path lines, and caught the missing-worktree misconfiguration this session. It still reports **nothing** while a healthy run is in progress |
+| S4-9 | 7 stale tests from `b97f804` | ✅ FIXED — `test_onboarding.py` **28/28 green**. Artifact ids now come from the **adopt** result (upload registers nothing since `b97f804`); the two Confluence tests gained the adopt step the 2026-07-29 two-step decision requires, and now assert the phase reads *missing* until adoption. Also fixed `test_document_vision.py` ("shorter version" → "shorter rendering") |
 | S4-10 | Connect Machine revokes the live companion's token | 🔲 OPEN (decision) |
 | S4-11 | Agents see run-record artifacts the UI hides | 🔲 OPEN (decision) |
 | S4-12 | **`00c` agent body ≠ the tools it is given** (migration §8 miss) | ✅ FIXED — all four (a `workspace` param, b `frm` not `from`, c Knowledge Index → S4-18, d headless not a Tech Lead gate). **Re-sweep of the OTHER migrated agents still owed** |
 | S4-13 | **THE HANG — git inherited the MCP server's JSON-RPC channel** | ✅ FIXED (verified live: run completed) |
 | S4-14 | CodeIntel server launched without an environment (git invisible) | ✅ FIXED (verified live: `commits 0 → 22`) |
 | S4-15 | Agent delegated its work to a background queue nothing runs | ✅ FIXED |
-| S4-16 | `add_trace_edge` undiscoverable; caller error returned 500 | ✅ FIXED (tests green) |
-| S4-17 | `search_codebase` matched substrings, and only file names | ✅ FIXED (tests green) |
-| S4-18 | **Knowledge Index never populated — 0 chunks for 7 artifacts** | ✅ FIXED (tests green; fixes retrieval platform-wide) |
-| S4-19 | 10 languages only; CI/config invisible; unknown reported as zero | ✅ FIXED (tests green) |
-| S4-20 | Any git failure indistinguishable from "no history" | ✅ FIXED (tests green) |
-| S4-21 | Companion died on a transient 5xx from the platform | ✅ FIXED (tests green) |
+| S4-16 | `add_trace_edge` undiscoverable; caller error returned 500 | ✅ FIXED — **verified live**: all 5 edges of `9d1b4d32` read `derives` (were 5 × `implements`) |
+| S4-17 | `search_codebase` matched substrings, and only file names | ✅ FIXED — **verified live**: JWT/auth found by identifier; CI/CD answered from `signals`, not a coincidental match |
+| S4-18 | **Knowledge Index never populated — 0 chunks for 7 artifacts** | ✅ FIXED — **verified live: 51 chunks** across 7 artifacts (was 0). Fixes retrieval platform-wide |
+| S4-19 | 10 languages only; CI/config invisible; unknown reported as zero | ✅ FIXED — **verified live**: CI/CD cites `.github/workflows/ci.yml`, containerisation `backend/Dockerfile`; all 8 cited evidence files confirmed to exist; `skipped_files` recorded as assumptions |
+| S4-20 | Any git failure indistinguishable from "no history" | ✅ FIXED — **verified live**: report carries `git.ok=true, git.partial=false, 22 commits read, content_search_complete=true` |
+| S4-21 | Companion died on a transient 5xx from the platform | ✅ FIXED — **verified live**: companion rode out **two** backend restarts (backoff 5s → 10s → reconnected) instead of exiting. Note the observed path is the connection retry; the 5xx branch itself is still only covered by tests |
 | S4-22 | Leaking test made a passing test look broken | ✅ FIXED |
+| S4-23 | **Dependency graph invented edges (stdlib + cross-language)** | ✅ FIXED — **verified live**: 127 → 119 edges, 8 false removed, 1 real kept; communities 2 → 3 |
+| S4-24 | Agent forwarded an unverified anomaly instead of resolving it | ✅ FIXED — **verified live** for the self-verify path (new "Anomaly Verification" section; dead code verified against source). **`ask_human` branch untested** |
+| S4-25 | A completed run never records `ended_at` | 🔲 OPEN (low severity; failed runs do set it) |
 
-**Legend for the second pass:** ✅ *(tests green)* = fixed with guards, **not yet exercised by a
-live run**. Only S4-13 and S4-14 are confirmed by a completed live run. The next Index code run is
-what promotes the rest to "verified live".
+**Legend.** ✅ *verified live* = proven by a completed run against the real repo. ✅ *(tests green)*
+= fixed with guards, not yet exercised live. As of run **`9d1b4d32`** (2026-08-03) every Step-4
+finding except S4-8, S4-10, S4-11 and S4-25 is fixed, and all of those four are either a decision
+or observability — none blocks the journey.
+
+**Still owed:** the AGENT_MIGRATION_SPEC §8 reference sweep over the **other** migrated agents.
+S4-24 raised its priority: `00c`'s body never mentioned `ask_human` at all, and the other agents
+were written the same way, so the same gap is likely to repeat.

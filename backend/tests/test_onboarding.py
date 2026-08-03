@@ -50,25 +50,36 @@ def world(db):
     return {"t": t, "project": project, "po": po, "eng": eng, "store": InMemoryObjectStore()}
 
 
-# ── static-file extraction → draft artifact → review gate ───────────
-def test_ingest_creates_draft_artifact_with_provenance(world):
+# ── static-file extraction → adopt registers the artifact → review gate ─────
+# PB-7 (`b97f804`): the UPLOAD no longer registers an artifact — it extracts into the
+# SourceDocument. ADOPT is what registers the artifact, at v1, published. So the artifact id
+# comes from the adopt result; the upload result's `artifact_ids` is empty by contract.
+def test_ingest_extracts_into_the_source_document_and_adopt_registers_the_artifact(world):
     out = ingest_source_document(
         tenant_id=str(world["t"].id), project_id=str(world["project"].id),
         filename="PRD.docx", mime="", content=_docx_bytes(),
         artifact_type="prd", object_store=world["store"],
     )
     assert out["status"] == "extracted"
+    assert out["artifact_ids"] == []                      # PB-7: nothing registered at upload
 
     src = SourceDocument.objects.get(id=out["source_document_id"])
     assert src.status == SourceDocument.Status.EXTRACTED
     assert src.provenance["filename"] == "PRD.docx"
+    # The extraction itself lives on the source document from the moment the file lands.
+    body = world["store"].get(src.provenance["extracted_s3_key"]).decode("utf-8")
+    assert "# PRD" in body and "log in" in body           # extracted, not the original bytes
+    assert Artifact.objects.filter(project=world["project"]).count() == 0
 
-    artifact = Artifact.objects.get(id=out["artifact_ids"][0])
-    assert artifact.status == Artifact.Status.DRAFT       # awaiting review (#5)
+    res = adopt_source_document(
+        tenant_id=str(world["t"].id), source_document_id=out["source_document_id"],
+        user_id=str(world["po"].id),
+    )
+    artifact = Artifact.objects.get(id=res["artifact_ids"][0])
+    assert artifact.version == 1 and artifact.status == Artifact.Status.PUBLISHED
     assert artifact.sor == Artifact.SoR.INTERNAL and artifact.type == "prd"
     assert artifact.external_ref["source"] == "static_file"
-    body = world["store"].get(artifact.s3_key).decode("utf-8")
-    assert "# PRD" in body and "log in" in body           # extracted, not the original bytes
+    assert artifact.s3_key == src.provenance["extracted_s3_key"]
 
 
 def test_adopt_publishes_after_role_check_and_is_idempotent(world):
@@ -81,7 +92,7 @@ def test_adopt_publishes_after_role_check_and_is_idempotent(world):
         user_id=str(world["po"].id),
     )
     assert res["status"] == "adopted"
-    assert Artifact.objects.get(id=out["artifact_ids"][0]).status == Artifact.Status.PUBLISHED
+    assert Artifact.objects.get(id=res["artifact_ids"][0]).status == Artifact.Status.PUBLISHED
     assert SourceDocument.objects.get(id=out["source_document_id"]).status == \
         SourceDocument.Status.ADOPTED
 
@@ -90,6 +101,8 @@ def test_adopt_publishes_after_role_check_and_is_idempotent(world):
         user_id=str(world["po"].id),
     )
     assert again.get("idempotent") is True
+    # Re-adopting must never mint a second artifact for the document.
+    assert Artifact.objects.filter(project=world["project"]).count() == 1
 
 
 def test_adopt_wrong_role_is_blocked(world):
@@ -102,7 +115,11 @@ def test_adopt_wrong_role_is_blocked(world):
             tenant_id=str(world["t"].id), source_document_id=out["source_document_id"],
             user_id=str(world["eng"].id),
         )
-    assert Artifact.objects.get(id=out["artifact_ids"][0]).status == Artifact.Status.DRAFT
+    # The gate held: adopt is what registers the artifact, so a blocked adopt registers nothing
+    # and leaves the document awaiting review.
+    assert Artifact.objects.filter(project=world["project"]).count() == 0
+    assert SourceDocument.objects.get(id=out["source_document_id"]).status == \
+        SourceDocument.Status.EXTRACTED
 
 
 def test_ingest_unsupported_marks_failed(world):
@@ -116,13 +133,23 @@ def test_ingest_unsupported_marks_failed(world):
 
 
 def test_ingest_carries_title_onto_artifact(world):
-    """Brownfield B1-2: the extracted document title is threaded onto the artifact (was blank)."""
+    """Brownfield B1-2: the extracted document title is threaded onto the artifact (was blank).
+
+    Post-PB-7 the title is read at upload and parked on the source document; adopt carries it
+    onto the artifact it registers. The title must survive that hand-off."""
     out = ingest_source_document(
         tenant_id=str(world["t"].id), project_id=str(world["project"].id),
         filename="PRD.docx", mime="", content=_docx_bytes(), object_store=world["store"],
     )
     assert out["title"]
-    assert Artifact.objects.get(id=out["artifact_ids"][0]).title == out["title"]
+    src = SourceDocument.objects.get(id=out["source_document_id"])
+    assert src.provenance["title"] == out["title"]
+
+    res = adopt_source_document(
+        tenant_id=str(world["t"].id), source_document_id=out["source_document_id"],
+        user_id=str(world["po"].id),
+    )
+    assert Artifact.objects.get(id=res["artifact_ids"][0]).title == out["title"]
 
 
 def test_adopt_with_target_type_reclassifies_so_gap_report_sees_it(world):
@@ -134,7 +161,8 @@ def test_adopt_with_target_type_reclassifies_so_gap_report_sees_it(world):
         tenant_id=tid, project_id=pid, filename="Reqs.docx", mime="",
         content=_docx_bytes(), object_store=world["store"],  # default artifact_type -> "document"
     )
-    assert Artifact.objects.get(id=out["artifact_ids"][0]).type == "document"
+    assert SourceDocument.objects.get(
+        id=out["source_document_id"]).provenance["artifact_type"] == "document"
 
     # Blind before classification: requirements has no matching-typed evidence.
     before = build_gap_report(tenant_id=tid, project_id=pid, object_store=world["store"])
@@ -145,14 +173,14 @@ def test_adopt_with_target_type_reclassifies_so_gap_report_sees_it(world):
         user_id=str(world["po"].id), target_type="requirements",
     )
     assert res["target_type"] == "requirements"
-    art = Artifact.objects.get(id=out["artifact_ids"][0])
+    art = Artifact.objects.get(id=res["artifact_ids"][0])
     assert art.type == "requirements" and art.status == Artifact.Status.PUBLISHED
 
     # Now the gap report recognises it as complete evidence for requirements.
     after = build_gap_report(tenant_id=tid, project_id=pid, object_store=world["store"])
     req = next(p for p in after["phases"] if p["phase"] == "requirements")
     assert req["status"] == "complete"
-    assert out["artifact_ids"][0] in [e["artifact_id"] for e in req["evidence"]]
+    assert res["artifact_ids"][0] in [e["artifact_id"] for e in req["evidence"]]
 
 
 def test_adopt_rejects_invalid_target_type(world):
@@ -232,8 +260,15 @@ def _docpage(pid, title):
                    url=f"https://x/wiki/spaces/BILL/pages/{pid}")
 
 
+def _confluence_doc(world, page_id):
+    return next(d for d in SourceDocument.objects.filter(project=world["project"])
+                if str((d.provenance or {}).get("confluence_page_id") or "") == str(page_id))
+
+
 def test_link_confluence_pages_registers_typed_pointers_idempotently(world):
-    # B3-4: user-provided links, each typed → typed Confluence-pointer artifacts (no body copied).
+    # B3-4 + S3-6 (two-step, team decision 2026-07-29): a linked page is snapshotted into a
+    # SourceDocument awaiting adoption — the same journey as an upload — so the agents can
+    # actually READ it. No artifact exists until someone adopts it.
     docstore = _FakeDocStore({"100": _docpage("100", "Billing PRD"),
                               "200": _docpage("200", "Arch Overview")})
     out = link_confluence_pages(
@@ -243,23 +278,27 @@ def test_link_confluence_pages_registers_typed_pointers_idempotently(world):
     )
     assert len(out["linked"]) == 2 and out["errors"] == []
 
-    arts = list(Artifact.objects.filter(project=world["project"], sor="confluence"))
-    by_type = {a.type: a for a in arts}
+    docs = list(SourceDocument.objects.filter(project=world["project"]))
+    assert len(docs) == 2
+    assert all(d.status == SourceDocument.Status.EXTRACTED for d in docs)
+    assert all(d.provenance["origin"] == "confluence" for d in docs)
+    by_type = {d.provenance["artifact_type"]: d for d in docs}
     assert set(by_type) == {"prd", "architecture"}
-    assert all(a.status == "published" for a in arts)
-    assert by_type["prd"].external_ref["id"] == "100"
-    assert by_type["prd"].external_ref["title"] == "Billing PRD"
+    assert by_type["prd"].provenance["confluence_page_id"] == "100"
+    assert by_type["prd"].provenance["title"] == "Billing PRD"
+    assert Artifact.objects.filter(project=world["project"]).count() == 0   # not yet adopted
 
-    # Idempotent by page id: re-linking updates the declared type, never duplicates.
+    # Idempotent by page id: re-linking updates the declared type in place, never duplicates.
     again = link_confluence_pages(
         tenant_id=str(world["t"].id), project_id=str(world["project"].id), docstore=docstore,
         links=[{"page": "100", "type": "requirements"}],
     )
-    assert len(again["linked"]) == 1 and again["linked"][0]["created"] is False
-    arts2 = list(Artifact.objects.filter(project=world["project"], sor="confluence"))
-    assert len(arts2) == 2
-    a100 = next(a for a in arts2 if (a.external_ref or {}).get("id") == "100")
-    assert a100.type == "requirements"
+    assert len(again["linked"]) == 1
+    assert again["linked"][0]["status"] == "awaiting_adoption"
+    assert again["linked"][0]["artifact_id"] is None
+    # Idempotency is proven here: the re-link updated page 100 in place, it did not add a third.
+    assert SourceDocument.objects.filter(project=world["project"]).count() == 2
+    assert _confluence_doc(world, "100").provenance["artifact_type"] == "requirements"
 
 
 def test_link_confluence_bad_input_returns_per_row_errors(world):
@@ -307,10 +346,23 @@ def test_code_intel_summary_degrades_for_a_thin_payload():
 def test_linked_confluence_page_feeds_gap_report(world):
     # B3-4 headline (Q-1 sibling for Confluence): a typed linked page is real gap-report evidence,
     # so the resume point moves off the phase it covers — the whole point of typed linking.
+    # Post-S3-6 that evidence exists once the page is ADOPTED, exactly like an uploaded file:
+    # linking alone must not mark a phase complete on a document nobody has reviewed.
     docstore = _FakeDocStore({"300": _docpage("300", "Requirements")})
     link_confluence_pages(
         tenant_id=str(world["t"].id), project_id=str(world["project"].id), docstore=docstore,
         links=[{"page": "300", "type": "requirements"}],
+    )
+    linked_only = build_gap_report(
+        tenant_id=str(world["t"].id), project_id=str(world["project"].id),
+        object_store=world["store"])
+    assert next(p for p in linked_only["phases"]
+                if p["phase"] == "requirements")["status"] == "missing"
+
+    adopt_source_document(
+        tenant_id=str(world["t"].id),
+        source_document_id=str(_confluence_doc(world, "300").id),
+        user_id=str(world["po"].id),
     )
     report = build_gap_report(tenant_id=str(world["t"].id), project_id=str(world["project"].id),
                               object_store=world["store"])

@@ -111,6 +111,29 @@ def test_00c_body_matches_what_the_platform_actually_does():
     assert "index(workspace=" not in body
 
 
+def test_00c_resolves_anomalies_instead_of_forwarding_them():
+    """S4-24 — run bf0f27c0 reported a backend module importing a frontend file and asked the
+    READER to go and check it. The agent had `Read`/`Grep` over the worktree and could have
+    settled it in one call; it also had `ask_human`, which the body never mentioned at all.
+
+    An unresolved anomaly forwarded as a finding is the worst of both: the user does the work,
+    and the artifact still carries the wrong data — downstream agents read the artifact, not
+    the caveat. The body must name all three routes and rank them.
+    """
+    body = _body("00c_intelligent_context_extractor")
+    # the clarification channel exists and is now reachable from the instructions
+    assert "ask_human" in body, "00c never tells the agent the clarification channel exists"
+    # self-verification comes FIRST — asking a human what the code can answer stalls a
+    # headless run on a question the user would have to read the code to answer
+    verify_at = body.find("answer it yourself")
+    ask_at = body.find("ask_human")
+    assert verify_at != -1 and verify_at < ask_at, "self-verification must precede ask_human"
+    # and the fallback when neither settles it
+    assert "assumption" in body.lower()
+    # the gate keeps it honest at completion time
+    assert "none passed to the reader unresolved" in body
+
+
 def test_00c_gate_role_is_tech_lead():
     assert get_by_key("00c_intelligent_context_extractor").gate_role == "tech_lead"
 

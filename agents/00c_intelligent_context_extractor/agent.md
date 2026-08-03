@@ -96,6 +96,14 @@ Two results carry a meaning that is easy to misread:
 
 Supplement with the file tools in the worktree for any signal the engine does not surface (test-file ratio). Distinguish measured signals from inferred ones throughout.
 
+**When a result looks wrong, resolve it before it reaches the report.** Static analysis is heuristic: it can report a relationship the code does not contain. Anything structurally impossible — a module importing across languages, a file that is both dead and heavily imported, a dependency that contradicts the architecture — is a finding about the **analysis** until you have checked the source. Three ways out, in this order:
+
+1. **Answerable from the code → answer it yourself.** You have `Read`, `Grep` and `Glob` over the worktree. Opening the file named in a suspect edge and reading its imports takes one call and settles it. Do this first, every time.
+2. **Answerable only by a person → `ask_human`.** Intent, ownership, and whether something dormant is deliberate cannot be recovered from source. Route every such gap through a **single** `ask_human` call; the platform surfaces it on the Onboarding page and waits for the answer. Never use it for something the worktree could have told you.
+3. **Neither → record a Tier-3 `assumption`**, naming exactly what could not be resolved and why.
+
+> **Failure mode to avoid:** Passing an unverified anomaly into the report as a finding and asking the reader to go and check it. That hands your work to the user, and the artifact still carries the wrong data — every downstream agent reads the artifact, not the caveat around it.
+
 ---
 
 ### Step 3: Register the SDLC Intelligence Artifacts
@@ -161,6 +169,7 @@ Every downstream phase agent uses the same `codeintel.*` tools before reading or
 - [ ] Dead-code inventory is conservative — no dynamically-loaded files or test fixtures marked safe-to-delete
 - [ ] Architectural decisions linked to the files they govern, with staleness flags
 - [ ] Measured signals are distinguished from inferred ones; every Tier-3 inference recorded as an `assumption` artifact
+- [ ] Every anomaly or self-contradicting result either **verified against the source**, **asked** via `ask_human`, or **recorded as an assumption** — none passed to the reader unresolved
 - [ ] A recommended SDLC entry point is stated with rationale
 
 ---
