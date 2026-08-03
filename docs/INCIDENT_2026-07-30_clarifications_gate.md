@@ -227,3 +227,121 @@ start and refuse to claim work (or restart itself) rather than run on a half-swa
 | `backend/tests/test_companion_daemon.py` | asserts the config is a FILE, env is inherited, file is removed |
 | `backend/drivers/claude_driver.py` | **`ToolSearch` removed from both denylists** (§4b — the root cause) |
 | `runner/companion/daemon.py` · `runner.py` · `activities.py` | `ToolSearch` added to the three allowlists |
+
+---
+
+# Chapter 2 — the same shape, a different cause (reported 2026-08-03)
+
+## 8. Run `fad927a2` — requirements produced a status message instead of a spec
+
+A fresh account (`tarun105@gmail.com`) ran ideation successfully, then requirements. The run
+console:
+
+```
+9:40:15 PM  Run parked — write-completeness check failed: WriteCompletenessError …
+9:40:13 PM  Run executed
+9:40:13 PM  Artifact registered — requirements — Requirements — SPENDLog
+9:34:50 PM  Phase reported
+9:00:03 PM  Phase dispatched — requirements
+9:00:01 PM  Run triggered — companion
+```
+
+The artifact's body was not a requirements spec. It was the agent's status report, opening
+*"The platform's database is currently unavailable (PostgreSQL connection error on
+`13.203.56.29`)"*, listing the 8 Tier-2 questions it wanted answered, and closing with
+*"No requirements artifacts will be written until the gate answers return — per Rule 1."*
+
+**§4's safety net worked.** The `agent_made` bar caught the run, parked it, and opened no
+gate. Under the pre-2026-07-30 code this would have been a review gate on a list of
+questions — the exact incident above. The net did its job on a cause nobody had seen yet.
+
+### Root cause — the clarification wait died on one transient error
+
+The agent behaved correctly at every step. It gap-scanned, called `ask_human`, and the
+clarification WAS created — it is still visible in the Clarifications screen. Then a single
+poll returned `500 OperationalError`, and the wait loop raised.
+
+`ClarificationClient.poll` treated **any** `status >= 400` as fatal, drawing no distinction
+between a 500 that would clear on the next tick and a 404 that never will. Worse, there were
+**two** ways to die: `_urllib_transport` converts an `HTTPError` into a `(status, payload)`
+pair, but a refused or reset connection arrives as `OSError` and escaped through `poll`
+entirely — a path the status check never saw.
+
+With `ask_human` raising, the agent was unblocked **with no answers**. Obeying Rule 1
+(*"call `ask_human` and WAIT for the answers BEFORE you produce, stage, or `register_artifact`
+any…"*), it registered nothing and wrote a status message. The companion reported `ok` —
+it cannot see that a blocking tool died — and the platform filed that message as the phase
+artifact.
+
+**The trigger.** Measured against the live database: `CONN_MAX_AGE=0` and
+`CONN_HEALTH_CHECKS=False`, so every request opens a new connection to a remote Postgres at
+**~320ms per connect** (50 sequential connects: p50 320ms, max 341ms). The companion polls
+two endpoints every 5s, so **~24 new connections/minute per companion**. The server itself
+was healthy — 15 of 97 usable connections in use, postmaster uptime 1d 7h, no restart — so
+this is neither exhaustion nor a crash. It is tens of thousands of long-haul TLS handshakes a
+day against a public IP, with zero tolerance for one failure.
+
+### Fix — the wait is patient now  ✅ FIXED
+
+`runner/companion/clarify.py`. A new `TransientClarificationError` (subclassing
+`ClarificationError`, so existing callers are untouched) separates what is worth retrying
+from what is not:
+
+| outcome | behaviour |
+|---|---|
+| 500, 502, 503, 504, 408, 425, 429, connection reset/timeout | retry — keep waiting |
+| 400, 401, 403, 404, 409, `cancelled` | terminal, fails fast as before |
+
+Connection-level failures are now mapped to the transient class inside `_call`, closing the
+second death path. `create()` retries too — a failed create means the clarification never
+exists at all. Any successful poll resets the outage window; the loop gives up only after
+`transient_grace` (default 900s) of *consecutive* failure, and logs each retry to stderr so a
+long outage cannot look like a hang.
+
+The justification is the module's own design note: the model is idle on the open tool call,
+so **waiting is free**. Patience was always the intent; the loop simply was not patient about
+errors. The retry cadence matches `poll_interval` rather than backing off — the loop already
+polls at that rate while pending, so riding out an outage adds no load the platform was not
+already receiving.
+
+**Verified:** 24 tests in `test_companion_clarify.py` (5 original unchanged, including the one
+asserting the happy path's exact sleep sequence — the fix is invisible when nothing fails) +
+31 in `test_companion_daemon.py`. `test_companion_runner.py` (11) and `test_phase_dispatch.py`
+(32) fail environmentally in this container — no `git` binary, and the `sdlc_app` role cannot
+`CREATE DATABASE` — and neither file imports `clarify`.
+
+**Companion-side only:** no backend, no DB, no migration, no API change. Requires a companion
+restart to take effect (see §5 — a companion whose files change underneath it is its own
+failure mode).
+
+## 9. STILL OPEN from chapter 2
+
+**The platform's copy still renders as a deliverable.** §4 marked it
+(`external_ref.source = "phase_report"`) and stopped the gate — it did not stop the artifact.
+`grep -r phase_report frontend/src/` returns **nothing**: the marker never reached the UI, so
+the Artifacts screen cannot tell the platform's copy of a closing message from a real
+deliverable. That is why the questions were still visible on screen after the July 30 fix.
+The artifact list and preview should read the marker and label it as the engine's closing
+message, not a draft artifact.
+
+**The parked message accuses the wrong subsystem.** It reads *"no `register_artifact` at all
+points at the agent's write tools being absent from its context."* In this run the write tools
+were fine; `ask_human` broke. The message should be driven by evidence the platform already
+holds: a pending clarification on the run means the agent asked and never got an answer; zero
+`POST /api/runner/state/*` calls means tools were unreachable (§4b's decisive measurement);
+calls made and failed means the MCP server.
+
+**Orphaned clarifications advertise a resume that cannot happen.** The clarification is still
+`pending` and the UI says *"Answer it to resume in the same session"*, but the poller and the
+engine session are gone. Nothing reconciles a pending clarification whose waiter died. It
+should be marked, and the copy should tell the truth: answer it anyway, then re-run the phase
+— `composer._render_clarifications` replays answered clarifications, so the answers are not
+wasted. (Adjacent to the stale-clarification-history item in §5.)
+
+**The connection churn itself.** `CONN_MAX_AGE` + `CONN_HEALTH_CHECKS` would cut handshakes
+by >95%, but they interact with RLS: `set_config(…, false)` is *session*-scoped, so a reused
+connection carries `app.tenant_id` across requests. The `finally: clear_current_tenant()` in
+`TenantContextMiddleware` should cover it — *should* is not good enough for a tenant-isolation
+boundary, so that change must ship with an explicit cross-tenant isolation test or not at all.
+Note also that no application change can make a public-internet link reliable; retry is the
+mitigation, and a private network or a pooler beside the database is the cure.
