@@ -338,8 +338,13 @@ class CompanionDaemon:
             if scan_worktree is not None:
                 run_kwargs["repo_workspace"] = scan_worktree
                 # Give the agent the CodeIntel tool surface over a second MCP server bound to the
-                # worktree: 00c / 00_onboarding query the codebase via `codeintel.*`, not raw file
-                # tools (planning has no filesystem/Bash). Only wired when a worktree exists.
+                # worktree: a `reads_code` agent queries the codebase via `codeintel.*`, not raw
+                # file tools (planning has no filesystem/Bash). Only wired when a worktree exists.
+                # Today that is 00c and 10_security ONLY. It is NOT 00_onboarding — that agent
+                # reads code facts from 00c's registered artifacts, so it never gets a worktree
+                # and never gets these tools. This comment used to name it, which is exactly the
+                # kind of stale note that sends the next reader hunting for a branch that cannot
+                # fire (S5-2). The catalog's `reads_code` flag is the single source of truth.
                 from .codeintel_mcp import CODEINTEL_TOOL_NAMES
                 servers.update(codeintel_mcp_servers(
                     workspace=str(scan_worktree), repo=payload["repo"]))

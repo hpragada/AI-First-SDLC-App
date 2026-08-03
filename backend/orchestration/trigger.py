@@ -242,6 +242,12 @@ def trigger_phase(
     return TriggerResult(run_id=str(run.id), workflow_id=workflow_id)
 
 
+#: Onboarding agents whose output a human must approve before the platform acts on it, so they run
+#: GATED rather than headless. Only the gap report qualifies: it is a judgement about the client's
+#: project (phase statuses + the resume point), not a mechanical index like 00c's.
+_GATED_ONBOARDING_AGENTS = ("00_onboarding",)
+
+
 def trigger_onboarding_agent(
     *, tenant_id, project_id, agent_key, repo_id=None, triggered_by=None, workflow_starter=None,
 ) -> TriggerResult:
@@ -253,13 +259,20 @@ def trigger_onboarding_agent(
     let `trigger_phase` silently fall back to a server-mode run that has neither tool. The REST
     caller catches this and keeps the deterministic/mechanical path as the fallback.
 
-    HEADLESS (`auto_approve=True`): Index code and Gap report are setup steps, not lifecycle
-    phases a reviewer signs off. Their run is hosted on a carrier work item that is hidden from
-    the backlog, so a gate opened here could never be found or actioned — it just sat PENDING
-    forever and inflated the gate count. The Onboarding hub reports these steps' own progress
-    and links to what they produced, which IS the review surface. Same reasoning as the 00e
-    vision path. This publishes INTERNAL only — external export to a SoR stays user-triggered
-    (#5), so nothing reaches Confluence/Jira without a human acting."""
+    HEADLESS (`auto_approve=True`) for **Index code** (00c): it is a setup step, not a lifecycle
+    phase a reviewer signs off, and its run is hosted on a carrier work item hidden from the
+    backlog. The Onboarding hub reports its progress and links to what it produced, which IS the
+    review surface. Same reasoning as the 00e vision path. Publishes INTERNAL only — external
+    export to a SoR stays user-triggered (#5).
+
+    GATED (`auto_approve=False`) for **Gap report** (00_onboarding), team decision 2026-08-03.
+    Unlike 00c, this agent's output is a JUDGEMENT about the client's project — which phases are
+    done, where to resume — that a Product Owner must own before the pipeline acts on it. The
+    original "a gate here could never be found" reasoning does not hold for it: only the *backlog*
+    and *Phases & Runs* hide carriers; `ApprovalViewSet` and the dashboard's pending-gates query do
+    not, so the gate surfaces in Gates and on the dashboard the moment it opens. Approval is also
+    what publishes the report — `publish_artifacts` runs on the approved path, and the report is
+    bound to its run (S5-3), so the gate is the report's one and only publish route."""
     from integrations.onboarding import ensure_onboarding_work_item
 
     # Inside the tenant's context, like every other enrollment lookup (see trigger_code_intel):
@@ -279,7 +292,8 @@ def trigger_onboarding_agent(
     return trigger_phase(
         tenant_id=tenant_id, project_id=project_id, work_item_id=str(work_item.id),
         agent_key=agent_key, triggered_by=triggered_by, execution_mode="companion",
-        auto_approve=True, workflow_starter=workflow_starter,
+        auto_approve=agent_key not in _GATED_ONBOARDING_AGENTS,
+        workflow_starter=workflow_starter,
     )
 
 

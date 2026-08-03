@@ -18,6 +18,7 @@ import type {
   DriftRecord,
   ExportPolicy,
   GapReport,
+  GapReportRunResult,
   GateCriteria,
   Integration,
   Invitation,
@@ -365,7 +366,10 @@ export const api = {
     req<TraceGraph>("GET", `/projects/${projectId}/traceability/`, { tenantId }),
 
   // Gates.
-  listApprovals: (tenantId: string, q: { decision?: string; work_item?: string; run?: string } = {}) =>
+  listApprovals: (
+    tenantId: string,
+    q: { decision?: string; work_item?: string; run?: string; project?: string } = {},
+  ) =>
     req<Approval[]>("GET", "/approvals/", { tenantId, query: q }),
   decideApproval: (
     tenantId: string,
@@ -440,8 +444,7 @@ export const api = {
   runGapReport: (projectId: string) =>
     // mode "agent" → the 00_onboarding agent assesses on the companion (async, 202); "deterministic"
     // → the report is built inline and ready to read (200).
-    req<{ mode: "agent" | "deterministic"; run_id?: string; resume_phase?: string }>(
-      "POST", `/projects/${projectId}/gap-report/`),
+    req<GapReportRunResult>("POST", `/projects/${projectId}/gap-report/`),
   getGapReport: (projectId: string) =>
     req<GapReport>("GET", `/projects/${projectId}/gap-report/`),
 

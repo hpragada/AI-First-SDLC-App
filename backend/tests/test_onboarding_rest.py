@@ -161,6 +161,139 @@ def test_gap_report_get_404_before_any_build(client, project, member):
     assert client.get(_gap_url(project)).status_code == 404
 
 
+def test_gap_report_post_dispatches_the_agent_when_a_companion_is_enrolled(
+        client, project, tech_lead, monkeypatch):
+    """S5-16 — the AGENT path had zero REST coverage. Every test here enrolled no companion, so
+    every POST fell through `NoCompanionError` to the deterministic builder and the primary path
+    was never exercised: nothing asserted 202, nothing asserted `mode == "agent"`.
+
+    That matters beyond coverage — the deterministic fallback returns the whole report inline
+    while the agent path returns a run id and finishes minutes later. A client that assumes the
+    200 shape breaks the moment a companion is connected, which is the normal case."""
+    from apps.registry.catalog import seed_agent_specs
+    from apps.runs.enrollment import enroll_runner
+
+    seed_agent_specs(project.tenant)
+    enroll_runner(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                  developer_id=str(tech_lead.id), label="lead-laptop")
+    # No Temporal in a REST test — capture the dispatch instead of starting a workflow.
+    started = {}
+    import orchestration.trigger as trigger_mod
+
+    real = trigger_mod.trigger_phase
+    monkeypatch.setattr(
+        trigger_mod, "trigger_phase",
+        lambda **kw: real(**{**kw, "workflow_starter": lambda wf, inp: started.update(inp=inp)}))
+
+    _login(client, "lead@acme.com", "lead-pass!")
+    resp = client.post(_gap_url(project))
+    assert resp.status_code == 202
+    assert resp.data["mode"] == "agent" and resp.data["run_id"]
+    # gated, not headless — a Product Owner owns the assessment (team decision 2026-08-03)
+    assert started["inp"].auto_approve is False
+
+    # A second click while that run is live is a 409, not a duplicate dispatch (S5-16). Two
+    # concurrent assessments would race to write the same report and the loser would silently
+    # overwrite the winner.
+    second = client.post(_gap_url(project))
+    assert second.status_code == 409
+    assert "detail" in second.data
+
+
+def test_a_carrier_gate_is_reachable_on_the_gates_screen(client, project, tech_lead):
+    """Found LIVE on run 448b8d21, after I had reasoned it was safe. The gap report's gate opened
+    correctly — and the Gates page said "No gates need you" while the sidebar badge said 1.
+
+    Cause: the screen fetched every approval and kept only those whose work item appeared in the
+    work-item LIST, which hides carriers by design. So the one gate hosted on a carrier was
+    filtered out client-side. I checked `ApprovalViewSet` had no carrier exclusion and concluded
+    the gate was reachable; I never checked what the CLIENT did with the response. A gate nobody
+    can reach is worse than no gate — the run waits forever.
+
+    The fix moves project scoping server-side (`?project=`) and ships the work item's title on the
+    approval, so the screen never needs the backlog list to decide what a gate IS."""
+    from apps.gates.models import Approval
+    from apps.registry.catalog import seed_agent_specs
+    from apps.registry.models import AgentSpec
+    from apps.runs.models import Run
+    from integrations.onboarding import ensure_onboarding_work_item
+
+    seed_agent_specs(project.tenant)
+    wi = ensure_onboarding_work_item(tenant_id=str(project.tenant_id), project_id=str(project.id))
+    run = Run.objects.create(
+        tenant=project.tenant, work_item=wi, status=Run.Status.AWAITING_GATE,
+        agent_spec=AgentSpec.objects.get(tenant=project.tenant, key="00_onboarding"))
+    approval = Approval.objects.create(
+        tenant=project.tenant, run=run, work_item=wi, gate_type="phase_gate",
+        required_role="product_owner", decision="pending")
+
+    _login(client, "lead@acme.com", "lead-pass!")
+    resp = client.get(f"/api/approvals/?project={project.id}&decision=pending")
+    assert resp.status_code == 200
+    ids = [a["id"] for a in resp.data]
+    assert str(approval.id) in ids, "the onboarding gate is invisible on the Gates screen"
+
+    # …and it can name itself without the work-item list, which never contains a carrier
+    row = next(a for a in resp.data if a["id"] == str(approval.id))
+    assert row["work_item_title"] == "Onboarding — project assessment"
+
+    # the project filter is a real filter, not a no-op
+    other = client.get("/api/approvals/?project=00000000-0000-0000-0000-000000000000")
+    assert other.status_code == 200 and other.data == []
+
+
+def test_submit_gap_report_reaches_the_writer_through_the_runner_endpoint(
+        client, project, tech_lead):
+    """S5-16 — the whole agent write path end to end: the companion's MCP tool posts to
+    `/api/runner/state/submit_gap_report/` with its Runner token, the view dispatches through
+    `_BUILD_STATE_TOOLS` to `tools.submit_gap_report`, and the shared writer stores a report the
+    UI can read. Every link in that chain was untested; only the innermost function had coverage,
+    so a break at the allowlist, the view or the argument names would have surfaced live.
+
+    This also pins the S5-3 run binding at the layer the agent actually calls from."""
+    from apps.registry.catalog import seed_agent_specs
+    from apps.registry.models import AgentSpec, Artifact
+    from apps.runs.enrollment import enroll_runner
+    from apps.runs.models import Run
+    from integrations.onboarding import ensure_onboarding_work_item, read_gap_report
+
+    seed_agent_specs(project.tenant)
+    _enrollment, token = enroll_runner(
+        tenant_id=str(project.tenant_id), project_id=str(project.id),
+        developer_id=str(tech_lead.id), label="lead-laptop")
+    wi = ensure_onboarding_work_item(tenant_id=str(project.tenant_id), project_id=str(project.id))
+    run = Run.objects.create(
+        tenant=project.tenant, work_item=wi, status=Run.Status.RUNNING,
+        agent_spec=AgentSpec.objects.get(tenant=project.tenant, key="00_onboarding"))
+
+    resp = client.post(
+        "/api/runner/state/submit_gap_report/",
+        data={
+            "project_id": str(project.id),
+            "run_id": str(run.id),
+            "phases": [
+                {"phase": "ideation", "status": "complete",
+                 "evidence": [{"artifact_id": "not-a-real-id", "type": "ideation"}]},
+                {"phase": "requirements", "status": "partial"},
+            ],
+            "resume_phase": "requirements",
+            "blockers": [],
+        },
+        format="json",
+        HTTP_AUTHORIZATION=f"Runner {token}",
+        HTTP_X_TENANT_ID=str(project.tenant_id),
+    )
+    assert resp.status_code in (200, 201), resp.data
+
+    read = read_gap_report(tenant_id=str(project.tenant_id), project_id=str(project.id))
+    by = {p["phase"]: p["assessment"] for p in read["phases"]}
+    assert by["ideation"] == "complete" and by["requirements"] == "partial"
+    assert by["prd"] == "missing"                       # omitted → missing, all 12 present
+    assert read["resume_phase"] == "requirements"
+    # bound to the run, which is what lets verify_writes see it and the gate publish it (S5-3)
+    assert str(Artifact.objects.get(id=read["gap_report_id"]).run_id) == str(run.id)
+
+
 def test_gap_report_resume_point_moves_as_evidence_is_added(client, project, repo, tech_lead):
     _login(client, "lead@acme.com", "lead-pass!")
 
@@ -215,8 +348,16 @@ def test_onboarding_hub_shape_before_anything(client, project, member):
     assert resp.status_code == 200
     assert set(resp.data.keys()) == {"upload", "adopt", "register", "index", "gap", "adopt_types"}
     assert resp.data["upload"] == [] and resp.data["adopt"] == []
-    assert resp.data["index"] == {"status": "not_started", "artifact_id": None}
-    assert resp.data["gap"] == {"ready": False}
+    # Assert the MEANING, not the exact dict (S5-18): both steps grew keys after this test was
+    # written — `index.repos` for the per-repo cards, and `running`/`run_id`/`question` so the hub
+    # can show a live agent run. A strict `==` here failed on additions that were correct, which is
+    # the same trap the S4-9 rewrite hit.
+    assert resp.data["index"]["status"] == "not_started"
+    assert resp.data["index"]["artifact_id"] is None
+    assert resp.data["index"]["repos"] == []
+    assert resp.data["gap"]["ready"] is False
+    assert resp.data["gap"]["running"] is False
+    assert resp.data["gap"]["run_id"] is None and resp.data["gap"]["question"] is None
     assert resp.data["register"]["pages_registered"] == 0
     # Served adopt vocabulary: humanized "Type (Phase)", full lifecycle minus implementation.
     types = resp.data["adopt_types"]

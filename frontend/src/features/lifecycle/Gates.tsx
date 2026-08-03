@@ -38,8 +38,11 @@ function GatesLive() {
   const { selectedProject, currentUser } = useAuth();
   const projectId = selectedProject?.project_id;
   const workItems = useWorkItems(projectId);
-  const workItemIds = new Set((workItems.data ?? []).map((w) => w.id));
-  const approvals = useApprovals();
+  // Scoped SERVER-side. This used to fetch every approval and keep only those whose work item
+  // appeared in `workItems` — but that list hides carrier work items on purpose, so the
+  // onboarding gate vanished from this page while the sidebar badge (which doesn't cross-filter)
+  // still counted it. The work-item list is for labelling; it must not decide what a gate IS.
+  const approvals = useApprovals(projectId ? { project: projectId } : {});
   const decideApproval = useDecideApproval();
   const repos = useRepositories(projectId);
   const patchAny = usePatchAnyWorkItem();
@@ -50,7 +53,7 @@ function GatesLive() {
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
 
   const loading = approvals.isLoading || workItems.isLoading;
-  const projectApprovals = (approvals.data ?? []).filter((a) => workItemIds.has(a.work_item));
+  const projectApprovals = approvals.data ?? [];
   const pending = projectApprovals.filter((a) => a.decision === "pending");
   const decided = projectApprovals.filter((a) => a.decision !== "pending");
   const selected = pending.find((a) => a.id === selectedId) ?? pending[0];
@@ -97,9 +100,12 @@ function GatesLive() {
   const canDecide = (a: Approval) =>
     Boolean(currentUser?.user.is_tenant_admin) || selectedProject?.role === a.required_role;
 
-  const workItemLabel = (id: string) => {
+  const workItemLabel = (id: string, fallbackTitle?: string | null) => {
     const wi = workItems.data?.find((w) => w.id === id);
-    if (!wi) return id.slice(0, 8);
+    // A carrier work item is not in that list by design, so fall back to the title the approval
+    // carries. Showing "Onboarding — project assessment" beats an 8-character id fragment for the
+    // one gate whose work item the user is never meant to see in their backlog.
+    if (!wi) return fallbackTitle || id.slice(0, 8);
     return `${wi.key || id.slice(0, 8)} · ${wi.title || wi.type}`;
   };
 
@@ -159,7 +165,7 @@ function GatesLive() {
                 rows={decided.map((a) => [
                   gateLabel(a.gate_type),
                   <span className="table__id" key="w">
-                    {workItemLabel(a.work_item)}
+                    {workItemLabel(a.work_item, a.work_item_title)}
                   </span>,
                   <Badge variant={a.decision === "approved" ? "done" : "failed"} key="d">
                     {a.decision === "approved" ? "Approved" : "Rejected"}
@@ -201,7 +207,7 @@ function GatesLive() {
                     {roleLabel(a.required_role)}
                   </span>,
                   <span className="table__id" key="w">
-                    {workItemLabel(a.work_item)}
+                    {workItemLabel(a.work_item, a.work_item_title)}
                   </span>,
                   <Link to="/artifacts" key="a">
                     Preview ↗
@@ -219,7 +225,7 @@ function GatesLive() {
                   <span className="gate-panel__role">
                     ▲ {gateLabel(selected.gate_type)} · required role: {roleLabel(selected.required_role)}
                   </span>
-                  <h3 className="t-h3">{workItemLabel(selected.work_item)}</h3>
+                  <h3 className="t-h3">{workItemLabel(selected.work_item, selected.work_item_title)}</h3>
                   <Link to="/artifacts" className="t-sm">
                     Preview artifact under review ↗
                   </Link>
@@ -329,7 +335,7 @@ function GatesLive() {
               <Card>
                 <CardBody>
                   <span className="gate-panel__role" style={{ color: "var(--text-muted)" }}>
-                    {gateLabel(selected.gate_type)} · {workItemLabel(selected.work_item)}
+                    {gateLabel(selected.gate_type)} · {workItemLabel(selected.work_item, selected.work_item_title)}
                   </span>
                   <Banner variant="info" title={`Awaiting ${selected.required_role}`}>
                     You don't hold the <strong>{selected.required_role}</strong> role on this

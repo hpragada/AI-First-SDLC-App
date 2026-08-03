@@ -177,7 +177,9 @@ export function useAnswerClarification() {
 }
 
 // ── Gates (S-21/22) ─────────────────────────────────────────────────────────
-export function useApprovals(q: { decision?: string; work_item?: string; run?: string } = {}) {
+export function useApprovals(
+  q: { decision?: string; work_item?: string; run?: string; project?: string } = {},
+) {
   const tenantId = useTenantId();
   return useQuery({
     queryKey: ["approvals", q],

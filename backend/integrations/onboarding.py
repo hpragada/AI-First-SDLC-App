@@ -936,7 +936,14 @@ _LIFECYCLE: list[tuple[str, str, tuple[str, ...]]] = [
     ("ux_design", "5. UX Design",
      ("ux_design", "user_journey", "wireframe", "design_system", "accessibility")),
     ("task_breakdown", "6. Task Breakdown", ("task_breakdown",)),
-    ("implementation", "7. Implementation", ("code",)),
+    # Implementation is evidenced by the CODE, which is not a document — so the artifact that
+    # stands for it is the code-intelligence report measured from the repository. This used to be
+    # `("code",)`, a type nothing anywhere registers (S5-23): the entry was inert, the phase's
+    # evidence list was always empty, and its status came solely from the `intel_present` flag.
+    # Naming the real artifact makes the assessment cite what it actually relied on. Adoption is
+    # still blocked for this phase (_NON_ADOPTABLE_PHASES) — a running codebase is proven from
+    # git, never from an uploaded file.
+    ("implementation", "7. Implementation", ("codebase_intelligence",)),
     ("code_review", "8. Code Review", ("code_review",)),
     ("testing", "9. Testing & QA", ("test_case", "test_report")),
     ("security", "10. Security",
@@ -978,6 +985,20 @@ _TYPE_LABELS = {
 
 def _humanize_type(value: str) -> str:
     return _TYPE_LABELS.get(value) or value.replace("_", " ").title()
+
+
+def _phase_label(phase: str | None) -> str:
+    """The human label for a lifecycle phase key, from the ONE place the lifecycle is defined.
+    Served to the UI (S5-7) so no client has to keep its own key→label map: the frontend's map was
+    keyed `01_ideation` while this module emits the bare `ideation`, every lookup missed, and the
+    Gap report screen rendered raw slugs. Numbering is stripped ("5. UX Design" -> "UX Design")
+    because the report already shows the phases in order."""
+    if not phase:
+        return ""
+    for key, label, _types in _LIFECYCLE:
+        if key == phase:
+            return label.split(". ", 1)[-1]
+    return phase.replace("_", " ").title()
 
 
 def adoptable_type_choices() -> list[dict]:
@@ -1072,19 +1093,29 @@ def carrier_q(prefix: str = ""):
 _LIVE_RUN_STATUSES = ("pending", "running", "awaiting_gate")
 
 
+_IDLE_STEP_STATE = {"running": False, "run_id": None, "question": None, "approval_id": None}
+
+
 def onboarding_step_state(*, tenant_id, project_id, agent_key, repo_id=None) -> dict:
-    """Live state of ONE headless onboarding step (Index code / Gap report), for the hub.
+    """Live state of ONE onboarding step (Index code / Gap report), for the hub.
 
-    These steps run with `auto_approve` on a carrier work item hidden from every list, so the
-    Onboarding hub is the ONLY place their progress can be seen — the run does not appear in
-    Phases & Runs by design. Without this the hub had no "running" state at all and the button
-    reverted the instant the POST returned 202, so a 25-minute agent run looked like a no-op.
+    These steps run on a carrier work item hidden from the backlog and from Phases & Runs, so the
+    Onboarding hub is the ONLY place their progress can be seen. Without this the hub had no
+    "running" state at all and the button reverted the instant the POST returned 202, so a
+    25-minute agent run looked like a no-op.
 
-    `question` is non-null when the agent called `ask_human` and is blocked waiting: the run is
-    still live but the user must act, and nothing else on the hub would tell them so.
+    Three states the user must be able to tell apart:
+      * `running` alone — the agent is working; nothing to do.
+      * `question` — the agent called `ask_human` and is blocked; the user must answer.
+      * `approval_id` — the run finished and is waiting at its GATE (S5-8). Index code is headless
+        and never reaches this, but the Gap report is gated by design, and without this the hub
+        showed "working…" forever while it was really waiting on the user. `running` stays true
+        because the run is not finished — but a hub that only reads `running` would strand it.
+
     Read-only — never creates a carrier (that is `ensure_onboarding_work_item`'s job).
     """
     from apps.clarifications.models import Clarification
+    from apps.gates.models import Approval
     from apps.runs.models import Run
     from apps.tenancy.context import tenant_context
     from apps.workitems.models import WorkItem
@@ -1096,7 +1127,7 @@ def onboarding_step_state(*, tenant_id, project_id, agent_key, repo_id=None) -> 
             external_ref__repo_id=str(repo_id) if repo_id else None,
         ).first()
         if carrier is None:
-            return {"running": False, "run_id": None, "question": None}
+            return dict(_IDLE_STEP_STATE)
         run = (
             Run.objects.filter(
                 tenant_id=tenant_id, work_item=carrier, agent_spec__key=agent_key,
@@ -1104,17 +1135,24 @@ def onboarding_step_state(*, tenant_id, project_id, agent_key, repo_id=None) -> 
             ).order_by("-created_at").first()
         )
         if run is None:
-            return {"running": False, "run_id": None, "question": None}
+            return dict(_IDLE_STEP_STATE)
         pending = (
             Clarification.objects.filter(
                 tenant_id=tenant_id, run_id=run.id, status=Clarification.Status.PENDING,
             ).order_by("created_at").first()
+        )
+        approval = (
+            Approval.objects.filter(
+                tenant_id=tenant_id, run_id=run.id, decision="pending",
+            ).order_by("created_at").first()
+            if run.status == Run.Status.AWAITING_GATE else None
         )
         return {
             "running": True,
             "run_id": str(run.id),
             "question": ({"id": str(pending.id),
                           "count": len(pending.questions or [])} if pending else None),
+            "approval_id": str(approval.id) if approval else None,
         }
 
 
@@ -1196,21 +1234,57 @@ def _assess_phase(phase, types, by_type, *, has_backlog, intel_present):
     Implementation from the code itself (code intelligence proves the codebase exists)."""
     evidence = [a for t in types for a in by_type.get(t, [])]
     published = [a for a in evidence if a.status == "published"]
+    # Non-document evidence: a backlog proves Task Breakdown, code intelligence proves the code
+    # exists. There used to be a second `weak` flag here meant to express "code exists but is
+    # unverified against the docs" — but it was a strict subset of this one, so the branch it
+    # guarded was unreachable and Implementation was never once assessed `partial` (S5-22). It is
+    # gone rather than switched on: making Implementation permanently partial would park every
+    # brownfield project's resume point on it forever, which is worse than the honest reading —
+    # the code is there, and whether it matches the docs is Code Review's question, not this one.
     strong = (phase == "task_breakdown" and has_backlog) or \
              (phase == "implementation" and intel_present)
-    weak = (phase == "implementation" and intel_present)  # code exists but unverified vs docs
     if published or strong:
         status = "complete"
-    elif evidence or weak:
+    elif evidence:
         status = "partial"
     else:
         status = "missing"
     return status, evidence
 
 
+def _resolvable_artifact_ids(tenant_id, project_id, ids) -> list[str]:
+    """The subset of `ids` that are real artifacts of this project, de-duplicated and capped.
+
+    Two filters, both load-bearing when the caller is an agent: a value that is not a UUID never
+    reaches the database (Django raises `ValidationError` from the field, not a lookup miss), and
+    a well-formed id belonging to another project is not this report's provenance.
+    """
+    import uuid
+
+    from apps.registry.models import Artifact
+    from apps.tenancy.context import tenant_context
+
+    candidates: list[str] = []
+    for raw in dict.fromkeys(str(i) for i in ids if i):
+        try:
+            uuid.UUID(raw)
+        except (ValueError, AttributeError, TypeError):
+            continue
+        candidates.append(raw)
+    if not candidates:
+        return []
+    with tenant_context(tenant_id):
+        real = set(
+            Artifact.objects.filter(
+                tenant_id=tenant_id, project_id=project_id, id__in=candidates[:200]
+            ).values_list("id", flat=True)
+        )
+    return [c for c in candidates[:200] if uuid.UUID(c) in real]
+
+
 def write_gap_report_artifact(
     *, tenant_id, project_id, phases, resume, blockers, intel_present,
-    evidence_ids=(), object_store=None,
+    evidence_ids=(), object_store=None, run_id=None,
 ) -> dict:
     """Render + persist the canonical draft `gap_report` artifact and return the REST-shaped
     result. This is the ONE writer of the `external_ref` shape that `read_gap_report` + the whole
@@ -1218,7 +1292,12 @@ def write_gap_report_artifact(
     `submit_gap_report` tool, so neither can emit a shape the reader can't parse.
 
     `phases` is the canonical list [{phase, label, status, evidence:[...]}]; `evidence_ids` are
-    the artifact ids the report derives from (trace edges)."""
+    the artifact ids the report derives from (trace edges).
+
+    `run_id` binds the report to the agent run that reasoned it (S5-3), and is None on the
+    deterministic REST path, which has no run. It is what makes the report count as the run's work
+    product: `verify_writes` and `publish_artifacts` both filter on `run_id`, so an unbound report
+    failed write-completeness and could never be published by its gate."""
     from storage import content_hash
 
     store = _object_store(object_store)
@@ -1230,18 +1309,38 @@ def write_gap_report_artifact(
     ]
     resume_label = next(
         (p["label"] for p in phases if p["phase"] == resume), "Pipeline complete")
-    body = _render_gap_report(render_phases, resume_label, blockers, intel_present)
+    # "Code intelligence: not run" means something different when there is no repository to run
+    # it against — then it is *not applicable*, and telling the reader to go and run it is noise.
+    from apps.projects.models import Repository
+    from apps.tenancy.context import tenant_context
+
+    with tenant_context(tenant_id):
+        has_repo = Repository.objects.filter(
+            tenant_id=tenant_id, project_id=project_id).exists()
+    body = _render_gap_report(render_phases, resume_label, blockers, intel_present, has_repo)
     body_key = f"onboarding/{tenant_id}/{project_id}/gap_report.md"
     store.put(body_key, body)
+    # ALWAYS a title. `register_artifact`'s own contract tells agents to pass one, and the
+    # platform was registering this one blank — so the report a Product Owner opens at the gate,
+    # and the row it occupies in the registry, had no name at all (observed on run 448b8d21).
+    # Name it for what it decides, so it reads as itself in a list of twenty artifacts.
+    title = f"Gap Report — resume at {_phase_label(resume) or resume}"
     report = tools.register_artifact(
-        tenant_id, project_id, None, phase="onboarding", type="gap_report",
+        tenant_id, project_id, run_id, phase="onboarding", type="gap_report", title=title,
         sor="internal", content_hash=content_hash(body.encode("utf-8")), s3_key=body_key,
         external_ref={"source": "onboarding", "resume_phase": resume,
                       "phases": [{"phase": p["phase"], "label": p["label"], "status": p["status"],
                                  "evidence": p.get("evidence", [])} for p in phases],
                       "blockers": blockers, "intel_present": intel_present},
     )
-    for aid in list(dict.fromkeys(evidence_ids))[:200]:
+    # Only link evidence that RESOLVES. An agent citing an artifact id it invented is not
+    # hypothetical — ids are exactly the kind of token a model reconstructs from memory — and an
+    # unresolvable one used to raise straight out of `add_trace_edge` (a non-UUID string fails
+    # Django's field validation), taking the whole submitted report down with it. Losing a
+    # provenance link is a small, visible loss; losing the entire assessment because one id was
+    # wrong is not. Resolve first, link what's real, keep the report.
+    linked = _resolvable_artifact_ids(tenant_id, project_id, evidence_ids)
+    for aid in linked:
         tools.add_trace_edge(tenant_id, report["id"], aid, "derives")
     tools.log_event(tenant_id, "onboarding", "gap_report.built", "artifact", report["id"],
                     {"resume_phase": resume, "blockers": blockers})
@@ -1267,7 +1366,17 @@ def build_gap_report(*, tenant_id, project_id, object_store=None) -> dict:
             Artifact.objects.filter(tenant_id=tenant_id, project_id=project_id)
             .exclude(type="gap_report")  # don't assess prior reports as evidence
         )
-        work_items = list(WorkItem.objects.filter(tenant_id=tenant_id, project_id=project_id))
+        # Carriers are EXCLUDED, and that exclusion is load-bearing (S5-27). Task Breakdown is
+        # assessed from the backlog, not from a document — and every onboarding/vision carrier is
+        # created as an `epic`. Counted, they made `has_backlog` true on any project that had ever
+        # run an onboarding step: clicking Index code was enough, and the gap report even corrupted
+        # its OWN input, because `trigger_onboarding_agent` creates the carrier before the run
+        # starts. Task Breakdown then reported Complete for a project with no backlog at all, and
+        # the resume point skipped past the phase the team actually needed next.
+        work_items = list(
+            WorkItem.objects.filter(tenant_id=tenant_id, project_id=project_id)
+            .exclude(carrier_q())
+        )
 
     by_type: dict[str, list] = {}
     for a in artifacts:
@@ -1300,15 +1409,46 @@ def build_gap_report(*, tenant_id, project_id, object_store=None) -> dict:
     )
 
 
-def _render_gap_report(phases, resume_label, blockers, intel_present) -> str:
+#: Phases whose evidence is never a document, so "generate it via its phase agent" is the wrong
+#: advice: you cannot author your way out of a missing codebase or an absent review history
+#: (S5-28). The advice also depends on whether code intelligence has ALREADY run — telling someone
+#: to go and index a repo that is already indexed is the kind of wrong-but-confident line this
+#: whole audit was about. Keyed (phase, intel_present).
+_NON_GENERATED_BLOCKER_ADVICE = {
+    ("implementation", False): ("the codebase itself is the evidence — run **Index code** so the "
+                                "platform can measure it, or link a repository if none is set."),
+    ("implementation", True): ("code intelligence ran but found no codebase to attribute to this "
+                               "project — check the linked repository is the right one."),
+    ("code_review", False): ("evidenced by merge history and required checks — run **Index code** "
+                             "first so there is history to read."),
+    ("code_review", True): ("no review evidence found in the indexed history — if reviews happen "
+                            "outside this repository, register that record; otherwise this phase "
+                            "genuinely has not run yet."),
+}
+
+
+def _render_gap_report(phases, resume_label, blockers, intel_present, has_repo=True) -> str:
     icon = {"complete": "Complete", "partial": "Partial", "missing": "Missing"}
+    resume_idx = next(
+        (i for i, p in enumerate(phases) if p["status"] != "complete"), len(phases))
+    # "Not run" is a status with nothing to do about it. Say what it means for THIS project and
+    # what to do — or that there is nothing to do, when the project has no repository at all.
+    if intel_present:
+        intel_line = "available — Implementation and Code Review are assessed from measured code."
+    elif not has_repo:
+        intel_line = ("not applicable — no repository is linked to this project yet, so there "
+                      "is no code to measure.")
+    else:
+        intel_line = ("**not run** — run **Index code** first. Until then Implementation and "
+                      "Code Review cannot be assessed, and are reported as missing rather than "
+                      "judged.")
     lines = [
         "# Onboarding Gap Report",
         "",
         "> Generated by the Onboarding Agent — what existed, what was registered, "
         "and what is still missing before the pipeline resumes.",
         "",
-        f"**Code intelligence:** {'available' if intel_present else 'not run'}",
+        f"**Code intelligence:** {intel_line}",
         f"**Recommended resume phase:** {resume_label}",
         "",
         "## Phase Completion Assessment",
@@ -1316,11 +1456,21 @@ def _render_gap_report(phases, resume_label, blockers, intel_present) -> str:
         "| Phase | Status | Evidence |",
         "|-------|--------|----------|",
     ]
-    lines += [f"| {p['label']} | {icon[p['status']]} | {p['evidence_count']} artifact(s) |"
-              for p in phases]
+    # A phase AFTER the resume point with no evidence has not been reached yet — it is not a gap
+    # the team failed to fill. Reporting six identical "Missing" rows to a team that legitimately
+    # stopped at UX Design reads as six failures (S5-28).
+    for i, p in enumerate(phases):
+        label = ("Not started" if p["status"] == "missing" and i > resume_idx
+                 else icon[p["status"]])
+        lines.append(f"| {p['label']} | {label} | {p['evidence_count']} artifact(s) |")
     lines += ["", "## Blockers (resolve before resuming)", ""]
-    lines += ([f"- **{b}** — no evidence found; generate via its phase agent (gated) "
-               "or provide the source." for b in blockers] or ["- None."])
+    by_phase = {p["phase"]: p.get("label", p["phase"]) for p in phases}
+    lines += ([f"- **{by_phase.get(b, b)}** — "
+               + _NON_GENERATED_BLOCKER_ADVICE.get(
+                   (b, bool(intel_present)),
+                   "no evidence found; generate it via its phase agent (gated), "
+                   "or upload and adopt the existing source.")
+               for b in blockers] or ["- None."])
     return "\n".join(lines) + "\n"
 
 
@@ -1349,16 +1499,49 @@ def read_gap_report(*, tenant_id, project_id) -> dict | None:
         "phases": [
             # assessment values are lowercase to match the frontend GapPhaseAssessment type:
             # "complete" | "partial" | "missing"  (never capitalised in the REST response)
-            {"phase": p["phase"], "assessment": p["status"],
-             "evidence": p.get("evidence", [])}
+            #
+            # `label` is forwarded (S5-7). It was dropped here, so the frontend had to map phase
+            # keys itself — against a list keyed `01_ideation`/`04_architecture` while this emits
+            # the bare `ideation`/`ux_design`. Every lookup missed and the screen showed raw slugs
+            # ("Resume at: task_breakdown"). The human label already exists in `external_ref`;
+            # sending it is one key and kills the whole class of drift.
+            {"phase": p["phase"], "label": p.get("label") or _phase_label(p["phase"]),
+             "assessment": p["status"], "evidence": p.get("evidence", [])}
             for p in ext.get("phases", [])
         ],
+        "resume_label": _phase_label(ext.get("resume_phase")),
         "blocking": ext.get("blockers", []),
     }
 
 
+#: The evidence keys `read_gap_report` promises the UI. Anything else an agent invents is dropped.
+_EVIDENCE_KEYS = ("artifact_id", "type", "sor", "status")
+
+
+def _clean_evidence(raw) -> list[dict]:
+    """Coerce an agent's `evidence` into the exact ref shape the deterministic path emits (S5-20).
+
+    Only the list-ness used to be checked, so elements could be anything the model felt like —
+    bare id strings, nested dicts, prose. The stored `external_ref` is a UI contract: whatever
+    lands here is what every client renders, and the frontend has already been broken once by an
+    evidence value it did not expect. Anything without a usable `artifact_id` is dropped rather
+    than guessed at; an entry that is just the id string is accepted and normalized, because that
+    is an obvious shorthand and the id is the only part that carries meaning.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw[:10]:                       # same cap the deterministic path uses
+        if isinstance(item, str) and item.strip():
+            out.append({"artifact_id": item.strip()})
+        elif isinstance(item, dict) and item.get("artifact_id"):
+            out.append({k: str(item[k]) for k in _EVIDENCE_KEYS if item.get(k) is not None})
+    return out
+
+
 def submit_agent_gap_report(
     *, tenant_id, project_id, phases, resume_phase=None, blockers=None, object_store=None,
+    run_id=None,
 ) -> dict:
     """Normalize an AGENT's phase assessment (00_onboarding) into the canonical draft
     `gap_report`. The agent supplies reasoned per-phase statuses (+ optional evidence refs); this
@@ -1373,9 +1556,8 @@ def submit_agent_gap_report(
     supplied: dict[str, dict] = {}
     for p in (phases or []):
         if isinstance(p, dict) and p.get("phase") and p.get("status") in valid:
-            ev = p.get("evidence")
             supplied[p["phase"]] = {
-                "status": p["status"], "evidence": ev if isinstance(ev, list) else [],
+                "status": p["status"], "evidence": _clean_evidence(p.get("evidence")),
             }
     canonical = []
     for phase, label, _types in _LIFECYCLE:
@@ -1404,7 +1586,7 @@ def submit_agent_gap_report(
     return write_gap_report_artifact(
         tenant_id=tenant_id, project_id=project_id, phases=canonical, resume=resume,
         blockers=blockers, intel_present=intel_present, evidence_ids=evidence_ids,
-        object_store=object_store,
+        object_store=object_store, run_id=run_id,
     )
 
 
@@ -1636,9 +1818,20 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
             ],
         },
         "gap": {
-            **({"ready": True, "resume_phase": gap["resume_phase"]} if gap else {"ready": False}),
+            # `resume_label` rides along with the key (S5-7) so no client keeps its own key→label
+            # map — the one the frontend had was keyed differently and rendered raw slugs.
+            **({"ready": True, "resume_phase": gap["resume_phase"],
+                "resume_label": gap.get("resume_label") or "",
+                # The report's own artifact, so the hub can link to the rendered document the way
+                # the Index code step already links to its intelligence artifact (S5-19).
+                "report_artifact_id": gap["gap_report_id"]}
+               if gap else {"ready": False}),
             "running": gap_state["running"],
             "run_id": gap_state["run_id"],
             "question": gap_state["question"],
+            # Non-null when the run is parked at its Product Owner gate (S5-8). The gap report is
+            # gated by design, so without this the hub says "working…" for as long as the user
+            # takes to approve — and gives them no way to reach the gate from here.
+            "approval_id": gap_state["approval_id"],
         },
     }

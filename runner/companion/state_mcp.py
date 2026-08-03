@@ -183,7 +183,12 @@ def build_server(
         `resume_phase` = the first phase that is not complete; `blockers` = phase keys still
         missing that gate progress. The platform fills the project from this run and guarantees
         the report's shape — you provide the reasoning, not the format."""
-        return client.call("submit_gap_report", project_id=project_id_bound,
+        # `or project_id` / `or run_id` mirrors get_context and list_artifacts (S5-21). Without
+        # the fallback an unset binding posted an empty string, which reaches the server as a
+        # blank project id instead of failing here where the cause is obvious.
+        return client.call("submit_gap_report",
+                           project_id=project_id_bound or None,
+                           run_id=run_id_bound or None,
                            phases=phases, resume_phase=resume_phase, blockers=blockers)
 
     @server.tool()

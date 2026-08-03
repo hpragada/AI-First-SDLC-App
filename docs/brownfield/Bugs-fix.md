@@ -458,12 +458,166 @@ actually proves it:** after clicking, check a `codeintel_mcp` process exists and
 | S4-22 | Leaking test made a passing test look broken | ✅ FIXED |
 | S4-23 | **Dependency graph invented edges (stdlib + cross-language)** | ✅ FIXED — **verified live**: 127 → 119 edges, 8 false removed, 1 real kept; communities 2 → 3 |
 | S4-24 | Agent forwarded an unverified anomaly instead of resolving it | ✅ FIXED — **verified live** for the self-verify path (new "Anomaly Verification" section; dead code verified against source). **`ask_human` branch untested** |
-| S4-25 | A completed run never records `ended_at` | 🔲 OPEN (low severity; failed runs do set it) |
+| S4-25 | A completed run never records `ended_at` | ✅ FIXED (tests green) — closed in the Step-5 second pass as S5-26; `publish_artifacts` now stamps it on success, so durations are finally recordable |
 
 **Legend.** ✅ *verified live* = proven by a completed run against the real repo. ✅ *(tests green)*
 = fixed with guards, not yet exercised live. As of run **`9d1b4d32`** (2026-08-03) every Step-4
 finding except S4-8, S4-10, S4-11 and S4-25 is fixed, and all of those four are either a decision
-or observability — none blocks the journey.
+or observability — none blocks the journey. **S4-25 was subsequently closed** in the Step-5 second
+pass (as S5-26), leaving S4-8, S4-10 and S4-11.
+
+---
+
+## Step 5 — Gap report: read BEFORE running it (2026-08-03)
+
+Step 4 cost days because its gaps were found by running it. The team asked for a full end-to-end
+audit of the gap-report path and the `00_onboarding` agent **before** clicking the button. Twenty
+findings; the five below made the run impossible or wrong, and all are fixed.
+
+### What we found
+
+**The run could not have succeeded, and the answer would have been wrong.**
+
+| # | Finding | Where | Fix |
+|---|---------|-------|-----|
+| **S5-1** | **The agent was never told to write the report.** `submit_gap_report` is built, granted and wired end to end — and the body never mentioned it once. It said the *opposite*: "the platform computes this assessment; your job is to verify and correct it." Nothing pre-generates a report on the agent path, so the agent would have found nothing to verify and `gap.ready` would have stayed false forever. The old test passed on the word "gap_report" appearing anywhere in prose, which is why it survived. | `agents/00_onboarding/agent.md` :93/:158/:162/:193/:200 | Steps 2/5/Completion rewritten around a single `submit_gap_report` call, with the phase keys and status values inline so the shape is never guessed. Plus a runtime backstop: `_PHASE_REQUIRED_ARTIFACTS["onboarding"] = ["gap_report"]`, so a run that skips the call now **fails loudly** instead of completing with nothing |
+| **S5-2** | **The body described a runtime that does not exist.** `reads_code=False` for this agent: no worktree, an empty temp working directory, no `codeintel` server, and Read/Grep/Glob/Bash **hard-denied**. The body instructed worktree + `codeintel.*` work in four places — including Step 1f, the *fallback* used when 00c never ran, i.e. the one case with no other source of code facts | `catalog.py:110`, `daemon.py:336`, `claude_driver.py:158-162` vs `agent.md` :29/:68/:71/:74/:132 | **Fixed the body, not the flag** (team review changed my first recommendation). 00c already names `.github/workflows/ci.yml` and `backend/Dockerfile` directly — the body's "intelligence may only give a yes/no flag" premise was stale, and a second independent look at the repo is how two artifacts end up with two different numbers (the S4-23 failure). Code evidence now comes only from 00c's artifacts, and 00c is a **stated prerequisite** |
+| **S5-3** | **A perfect run would have been marked FAILED.** The completion check counts artifacts belonging to the run; the report was registered with `run_id=None`, so it counted as no write at all. Under the new assess-only remit this became certain, not merely likely | `onboarding.py:1236`, `state_mcp.py:186`, `activities.py:506-525` | `run_id` threaded through `submit_gap_report` → `tools.submit_gap_report` → `write_gap_report_artifact`. The deterministic REST path still registers unbound (it has no run) |
+| **S5-4 / S5-5** | **The gate was inverted.** The gap report — the one artifact built for review — was never published; while everything the agent registered during the run (including requirements/PRD/architecture it was told to transform) **auto-published with no review**, contradicting non-negotiable #5. *Scope corrections from team review: "published" is INTERNAL only, nothing reaches Confluence/Jira; and Step 3 barely fired anyway, since adopted documents are already published → phase Complete → transformation skipped* | `activities.py:316`, `trigger.py:279`, `agent.md:105` | **Team decision (option c) + a real gate.** 00_onboarding now **assesses and reports only** — no lifecycle content, `assumption` artifacts excepted. And it runs **gated**: `auto_approve=False`, Product Owner approves, approval publishes the report. No new gate UI was needed — only the backlog and Phases & Runs hide carriers; `ApprovalViewSet` and the dashboard do not |
+| **S5-27** | **Onboarding's own plumbing faked a backlog** — found by the team asking "what if a user has only finished UX Design?". Task Breakdown is judged from work items, and every onboarding/vision carrier is an **epic**. Clicking Index code was enough to make `has_backlog` true; the gap report even corrupted its own input, because its carrier is created before the run starts. Task Breakdown read **Complete** for a project with no backlog, and the resume point skipped a phase: correct advice "break the work down" became "go write code". **A failed run is obvious; a confidently wrong resume point is not** | `onboarding.py:1270/:1275` vs `carrier_q()` at `:1051`; `tools.py:568` | `.exclude(carrier_q())` in both `build_gap_report` and `list_work_items`, so the agent path gets the same clean input. Genuine backlog still counts — guarded by its own test |
+
+**Also fixed — the report could not have been read even if it had been produced:**
+
+| # | Finding | Where | Fix |
+|---|---------|-------|-----|
+| **S5-6** | **The Gap report screen crashed on any real report.** `evidence` is a list of artifact refs; the type said `string` and the cell rendered it raw → *"Objects are not valid as a React child"*. Every report with evidence. Never caught because the only live-mode test stubbed a **404** | `types.ts:654`, `GapReportScreen.tsx:85` | Typed as `GapEvidence[]`, rendered as a count. Plus the missing test: one live-mode render with a real payload |
+| **S5-7** | **Every phase rendered as a raw slug** — the frontend mapped keys against a list keyed `01_ideation` while the API emits `ideation`. Users read "Resume at: task_breakdown". The right label was already in the database and was being dropped on the way out | `onboarding.py:1352`, `GapReportScreen.tsx:16` | Backend serves `label` per phase and `resume_label`; no client keeps a key→label map |
+| **S5-8** | **A re-run was completely silent.** Once a report existed, the progress line and the "waiting on you" card became unreachable and the hub had no re-run button. Re-running after adopting more documents is the *normal* case | `OnboardingHub.tsx:568`, `hooks.ts:80` | Ready card and run controls render together; hub gains a "Re-run" button; the screen polls. **And the new gate made this bigger:** `awaiting_gate` counts as "running", so the hub would have said "working…" for as long as approval took — `approval_id` now surfaces a "Waiting for your approval" card that links to the gate |
+| **S5-28** | **"Missing" conflated a real gap with "not started yet."** A team that has legitimately reached only UX Design saw six red ✗ rows reading as six failures | `GapReportScreen.tsx:75-120` | Phases past the resume point render as "Not started yet". Blockers are unchanged — that logic was already right |
+| **S5-15** | **The tests were locking three of these bugs in.** The migration test asserted `"codeintel" in body`, `"worktree" in body`, `"docstore" in body` — enforcing instructions the runtime cannot honour, so fixing the body would break the test | `test_onboarding_agents_migration.py:141` | Rewritten alongside the body, with the assertions that would have caught S5-1 and S5-14 in the first place |
+| **S5-18** | Two hub tests were **stale** — strict `==` on dicts that had gained keys (predicted in the audit, confirmed by running them) | `test_onboarding_rest.py:218` | Assert meaning, not dict equality — the same trap as S4-9 |
+| **S5-10 · S5-12 · S5-13 · S5-14** | Body↔runtime drift the §8 sweep never reached this agent: four capability surfaces (`docstore.*` etc.) **no agent can call**; "index into the Knowledge Index", which is not an agent action; **no mention of `ask_human`** (the S4-24 defect, unfixed here); and a promised gate that did not open | `agent.md` :28/:63/:105/:189/:200 | All corrected. The `ask_human` rule is **weighted differently from 00c**: that agent was told to verify from the code first because it had Read/Grep — this one has no file tools, so the registry is the first route and asking carries far more of the load |
+| **S5-11** | The five intelligence artifacts were **not guaranteed** to reach the agent — no declared inputs, so the manifest was just the newest 12 artifacts of any type, and on a real project they can be crowded out | `catalog.py:110` | `needs_artifacts` pins all five into the manifest's required tier |
+
+### Second pass — the remainder, incl. everything originally deferred (team: "fix everything")
+
+| # | Finding | Where | Fix |
+|---|---------|-------|-----|
+| **S5-9** | Agent vs deterministic mode was **invisible** — the two are different products (minutes of reasoning on your machine vs an instant mechanical count) and the screen said neither | `OnboardingHub.tsx`, `GapReportScreen.tsx` | The hub names which path ran; the report says whether Implementation/Code Review were assessed from measured code or reported unjudged |
+| **S5-19** | **The report dead-ended** — blockers were display-only while the report's own text said "generate it via its phase agent", with nothing to click; and nothing linked to the report document | `GapReportScreen.tsx`, `OnboardingHub.tsx`, `onboarding.py` (hub) | Each blocker now says what resolves it and links there — **and two of them don't route to a phase agent at all**: Implementation and Code Review are resolved by **Index code**, because you cannot author your way out of a missing codebase. "Open the report document" added on both screens |
+| **S5-20** | Agent evidence was **unvalidated**; elements could be anything | `onboarding.py` `_clean_evidence` | Coerced to the exact ref shape the UI expects; a bare id string is accepted as shorthand, anything without a usable id is dropped |
+| **S5-20b** | 🔴 **Found while writing the end-to-end test, not by review: one invented artifact id destroyed the whole report.** Ids are exactly what a model reconstructs from memory, and a non-UUID raised straight out of `add_trace_edge` — Django validates the field before any lookup — so a single bad citation threw away the entire assessment and the user saw nothing | `onboarding.py` `_resolvable_artifact_ids` | Evidence ids are resolved first; only real artifacts **of this project** are linked, and the report survives. Losing one provenance link is a small visible loss; losing the assessment is not |
+| **S5-21** | `submit_gap_report` had **no project-id fallback**, unlike its neighbours — an unset binding posted an empty string | `state_mcp.py:186` | `or None`, matching `get_context`/`list_artifacts` |
+| **S5-22** | **Dead branch** in the assessor: `weak` was a strict subset of `strong`, so Implementation was never once assessed `partial` | `onboarding.py` `_assess_phase` | Removed rather than switched on — making Implementation permanently partial would park every brownfield resume point on it forever. Whether code matches the docs is Code Review's question |
+| **S5-23** | `_LIFECYCLE` mapped Implementation to the type **`code`, which nothing anywhere registers** — the entry was inert and the phase's evidence list was always empty | `onboarding.py:939` | Mapped to `codebase_intelligence`, the artifact actually measured from the repo, so the assessment cites what it relied on. Adoption stays blocked for the phase — a running codebase is proven from git, never an uploaded file |
+| **S5-24** | Re-runs **replay the first run's answers**, so a scope question is asked once, ever — and an answer about scope goes stale the moment new documents are adopted | `composer.py` `_render_clarifications` | Answers are still replayed (that continuity is the point), but the agent is told they may be from an earlier run and to ask again when the evidence in front of it contradicts them |
+| **S5-25** | A **truncated run reported as a clean success.** The companion sends "engine ended abnormally (error_max_turns)" precisely so the platform can say so — and it was recorded **only when the body was also empty**, so a run cut off part-way through, with half its work done, looked complete | `activities.py` | The message is recorded whenever the companion sends one. A partial assessment that looks complete is the dangerous shape — nothing downstream can tell it apart |
+| **S5-26** | **Every successful run had `ended_at = NULL`** (S4-25) — only failure paths stamped it, so no duration could be shown anywhere. Also the content-loss guard failed onboarding runs with a message written for document vision | `activities.py` | `ended_at` stamped on completion; the guard's message made phase-neutral. *The vision-worded guard no longer reaches the gap report at all — it only runs on auto-apply runs, and the gap report is now gated* |
+
+**Also closed:** the stale comment at `daemon.py:341` that named `00_onboarding` as a `codeintel`
+consumer — doubly wrong now, and exactly the kind of note that sent this audit down the wrong path
+in the first place. And the last two test gaps: the **409** branch (a second click while a run is
+live) and the **full MCP chain** end to end — companion tool → runner endpoint → allowlist →
+writer → what the UI reads. That end-to-end test is what caught S5-20b.
+
+---
+
+## Step 5 — LIVE RESULT: run `448b8d21` (2026-08-03) ✅
+
+Ran end to end on the real project, on the team's companion, and was approved. **Step 5 is closed.**
+
+| | |
+|---|---|
+| Run | `448b8d21` · agent `00_onboarding` · **completed** · 23.5 min · cost 1.38 (display-only) |
+| Gate | `fd18a0a1` · **approved** by product_owner · 12:06:15 |
+| Artifacts | `gap_report` (**published on approval**), `assumption`, the platform's phase blob — **and nothing else** |
+| Trace edges | 15, all resolved |
+| Verdict | **Resume at Implementation**; Implementation + Code Review *Partial*, ten phases *Complete*, no blockers |
+
+**Verified live by this run:** S5-1 (the agent called `submit_gap_report` — the blocker that made the
+run impossible) · S5-3 (report bound to its run; unbound it would have failed) · S5-4/S5-5 (real
+Product Owner gate; approval is what published the report) · **option (c)** (three artifacts, *zero*
+lifecycle content — nothing rewritten and auto-published) · S5-7 (labels, not slugs) · S5-11 (the
+manifest **was** truncated and the five pinned intelligence artifacts survived — the exact case the
+fix exists for) · S5-20b (15 edges resolved, no crash) · S5-26 (**`ended_at` stamped** — the first
+successful run in this system ever to record when it finished) · S5-28 (the new intel line).
+
+**Note on the agent's answer.** The deterministic assessor would have said *"resume at Code Review,
+Code Review missing"* — it has no `code_review` artifact type to find. The agent read the
+intelligence artifacts and judged both Implementation and Code Review **Partial**: code exists, not
+fully verified against the docs. That is reasoning rather than row-counting, and it is the more
+defensible answer — but it *is* a judgement, and it is now the resume point.
+
+### Four defects that only live testing found — three of them caused by the gate change
+
+Review did not catch these. Flipping `auto_approve` off broke assumptions that had held only
+because every carrier run until now happened to be headless.
+
+| # | Defect | Cause | Status |
+|---|--------|-------|--------|
+| **S5-29** | 🔴 **The gate was invisible.** Sidebar badge said "Gates 1"; the page said "No gates need you" | The Gates screen fetched every approval and kept only those whose work item appeared in the **work-item list — which hides carriers by design**. I checked `ApprovalViewSet` had no carrier filter and concluded the gate was reachable; **I never checked what the client did with the response.** A gate nobody can reach is worse than no gate: the run waits forever | ✅ FIXED (tests green) — project scoping moved server-side (`?project=`), `work_item_title` added so a carrier gate names itself |
+| **S5-30** | 🟠 Phase artifact titled **"Onboarding — Onboarding — project assessment"** | The phase prefix was suppressed by `auto_approve`, which only ever worked by coincidence. The stutter landed on the document a reviewer opens at the gate | ✅ FIXED (tests green) — keyed off **carrier**-ness, which was always the real condition (also protects the vision case) |
+| **S5-31** | 🟠 The gap report registered with **`title=''`** — no name in any list | The platform wasn't holding itself to the "always pass a title" rule it gives agents | ✅ FIXED (tests green) — "Gap Report — resume at &lt;phase&gt;" |
+| **S5-32** | 🟡 Right-hand card **clipped mid-word** ("Open the report…") | `gate-panel__actions` is `display:flex` with **no `flex-wrap`**; my second action link overflowed the narrow card | ✅ FIXED (tests green) — wraps now; shared CSS, so it fixes the same clipping wherever else a card is narrow |
+
+**S5-30/31/32 are fixed in code but were NOT in the running containers for run `448b8d21`** — its
+artifacts still carry the old titles. The next gap-report run confirms them.
+
+---
+
+## Status board — brownfield onboarding, as of 2026-08-03
+
+The team declared the brownfield onboarding journey **logically and accurately closed** after run
+`448b8d21`. This is the honest ledger behind that.
+
+### ✅ Fixed AND verified live
+Steps 1–4 (upload · adopt · register · Index code) and **Step 5 (Gap report)** end to end, including
+the gate and publish. Part A lossless capture. S4-1…S4-7, S4-12…S4-24, S4-26. S5-1, S5-3, S5-4/5,
+option (c), S5-7, S5-11, S5-20b, S5-26, S5-28.
+
+### ✅ Fixed, tests green, NOT yet exercised live
+Not a doubt about the fix — simply no run has hit the path yet. Each is confirmed by the next
+gap-report run.
+
+| # | What | How it gets confirmed |
+|---|------|----------------------|
+| S5-29 | Gate visible on the Gates **list** | The gate *was* reached and approved after the restart; whether via the list or the hub's direct link is not distinguishable from the DB, so this stays "tests green" |
+| S5-30 · S5-31 | Artifact titles (stutter · untitled report) | Next run's artifact titles |
+| S5-32 | Card no longer clips | Next look at the Gap report page |
+| S5-27 | Carrier epics don't fake a backlog | Needs a project **without** a real backlog — this one has 68 genuine items, so it reads Complete either way |
+| S5-13 | `ask_human` from `00_onboarding` | The agent asked nothing this run. **The clarification route has still never fired from any onboarding agent** (same gap as S4-24) |
+| S5-9 · S5-19 · S5-22 · S5-23 · S5-24 · S5-25 | Mode banner · actionable blockers · assessor branch · evidence type · stale-answer note · truncation recorded | This run had no blockers, no truncation and no replayed answers, so none rendered |
+
+### 🔲 OPEN — decisions for the team (not defects)
+- **S4-10** — "Connect Machine" revokes the live companion's token.
+- **S4-11** — agents can see run-record artifacts the UI hides.
+
+### 🔲 OPEN — observability / hardening
+- **S4-8** — the companion logs **nothing** during a healthy run. Redirecting output to a file
+  captures failures only. This is why every diagnosis this session went through the database.
+- **S5-25b** — a run that exceeds the 2 h timeout goes **STALLED and waits indefinitely** for an
+  `abandon_run` that has **no UI surface** on a hidden carrier. The truncation half is fixed; this
+  half is not.
+- **NEW · runner token in the process command line.** The companion is launched with
+  `--token <secret>`, so any process listing on that machine reveals it. An env var or a token file
+  would avoid it. Not urgent; worth doing before anything runs on a shared machine.
+
+### 🔲 TO BE DONE — next work, not blockers
+- **Step 6 — Resume.** Untested. The report says resume at Implementation; nobody has yet resumed
+  the pipeline from a gap report.
+- **`test_api.py:317`** — an 8th instance of the `b97f804` upload/adopt change (reads
+  `artifact_ids[0]` from the upload response, which no longer registers an artifact). **Pre-existing
+  and proven so by stashing**; it will block a clean merge.
+- **AGENT_MIGRATION_SPEC §8 sweep** over the *other* migrated agents. Two agents have now been found
+  with bodies describing tools they don't have (00c, 00_onboarding). The rest were written the same
+  way; assume the same until checked.
+- **Figma import** — still untested (no account).
+
+### The lesson worth keeping
+Twenty findings came from reading the code before running it, and that is what made Step 5 work on
+the first attempt instead of costing days like Step 4. But **four more came only from running it,
+and three of those were caused by my own fix** — flipping one flag broke assumptions that held only
+by coincidence. The audit was necessary and was not sufficient. Both passes were needed.
 
 **Still owed:** the AGENT_MIGRATION_SPEC §8 reference sweep over the **other** migrated agents.
 S4-24 raised its priority: `00c`'s body never mentioned `ask_human` at all, and the other agents

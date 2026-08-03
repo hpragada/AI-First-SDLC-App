@@ -1,6 +1,8 @@
+import { Link } from "react-router-dom";
+
 import { useAuth } from "../../auth/AuthContext";
 import { Assess, Banner, Breadcrumb, Button, Card, CardBody, Panel, Spinner, Table } from "../../components/ui";
-import { PLANNING_PHASES } from "../../types";
+import type { GapReport } from "../../types";
 import { useGapReport, useRunGapReport } from "./hooks";
 
 // S-26 view states: partial (resume=Architecture, main sample) · empty
@@ -13,8 +15,41 @@ const ASSESS_LABEL: Record<"complete" | "partial" | "missing", string> = {
   missing: "✗ Missing",
 };
 
-function phaseLabel(key: string) {
-  return PLANNING_PHASES.find((p) => p.key === key)?.label ?? key;
+// A phase key with no human label — the backend now serves `label` on every phase and
+// `resume_label` alongside the resume key (S5-7), so this only catches an older cached payload.
+// The previous fallback looked keys up in PLANNING_PHASES, which is keyed `01_ideation` while the
+// API emits the bare `ideation`: every lookup missed and the screen rendered raw slugs.
+function humanize(key: string) {
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function labelOf(data: GapReport, key: string) {
+  return data.phases.find((p) => p.phase === key)?.label ?? humanize(key);
+}
+
+// What actually resolves a blocker, per phase (S5-19). Two phases are NOT resolved by running a
+// phase agent — you cannot author your way out of a missing codebase or an absent review history
+// — so pointing them at "Phases & Runs" was wrong advice, not just a missing button.
+// Keyed by phase, then by whether code intelligence has already run — telling someone to index a
+// repo that is already indexed is the wrong-but-confident advice this audit was about.
+const BLOCKER_ACTION: Record<string, (indexed: boolean) => { text: string; to: string; cta: string }> = {
+  implementation: (indexed) => indexed
+    ? { text: "Code intelligence ran but found no codebase for this project — check the linked repository is the right one.", to: "/repositories", cta: "Check repositories" }
+    : { text: "The codebase is the evidence — index it so the platform can measure it.", to: "/onboarding", cta: "Go to Index code" },
+  code_review: (indexed) => indexed
+    ? { text: "No review evidence in the indexed history. If reviews happen outside this repository, register that record.", to: "/runs", cta: "Run Code Review" }
+    : { text: "Evidenced by merge history and required checks — index the repository first.", to: "/onboarding", cta: "Go to Index code" },
+  task_breakdown: () =>
+    ({ text: "No backlog yet — run Task Breakdown, or import an existing backlog.", to: "/runs", cta: "Run Task Breakdown" }),
+};
+
+// A phase AFTER the resume point that has no evidence hasn't been reached yet — it is not a gap
+// the team failed to fill (S5-28). Showing six identical "✗ Missing" rows to a team that has
+// legitimately only finished UX Design reads as six failures. Blockers sit at or before the
+// resume point; everything past it is simply ahead of them.
+function isAhead(data: GapReport, index: number) {
+  const resumeIdx = data.phases.findIndex((p) => p.phase === data.resume_phase);
+  return resumeIdx !== -1 && index > resumeIdx;
 }
 
 export function GapReportScreen({ forceView }: { forceView?: GapReportView }) {
@@ -74,18 +109,32 @@ function GapReportLive() {
           <Panel flush title="Lifecycle assessment">
             <Table
               headers={["Phase", "Assessment", "Evidence"]}
-              rows={data.phases.map((row) => ({
-                cells: [
-                  <span className="table__primary" key="p">
-                    {phaseLabel(row.phase)}
-                  </span>,
-                  <Assess state={row.assessment} key="a">
-                    {ASSESS_LABEL[row.assessment]}
-                  </Assess>,
-                  row.phase === data.resume_phase ? <strong key="e">{row.evidence}</strong> : row.evidence,
-                ],
-                className: row.phase === data.resume_phase ? "row--resume" : undefined,
-              }))}
+              rows={data.phases.map((row, i) => {
+                const ahead = row.assessment === "missing" && isAhead(data, i);
+                const n = row.evidence?.length ?? 0;
+                return {
+                  cells: [
+                    <span className="table__primary" key="p">
+                      {row.label ?? humanize(row.phase)}
+                    </span>,
+                    ahead ? (
+                      <span className="t-sm u-muted" key="a">
+                        Not started yet
+                      </span>
+                    ) : (
+                      <Assess state={row.assessment} key="a">
+                        {ASSESS_LABEL[row.assessment]}
+                      </Assess>
+                    ),
+                    // `evidence` is a list of artifact refs, never a string — rendering it raw
+                    // threw "Objects are not valid as a React child" on every real report (S5-6).
+                    <span className="t-sm u-muted" key="e">
+                      {n === 0 ? "—" : `${n} artifact${n === 1 ? "" : "s"}`}
+                    </span>,
+                  ],
+                  className: row.phase === data.resume_phase ? "row--resume" : undefined,
+                };
+              })}
             />
           </Panel>
 
@@ -93,12 +142,27 @@ function GapReportLive() {
             <Card attention>
               <CardBody>
                 <span className="gate-panel__role">Recommended resume point</span>
-                <h3 className="t-h3">Resume at: {phaseLabel(data.resume_phase)}</h3>
+                <h3 className="t-h3">
+                  Resume at: {data.resume_label || (data.resume_phase ? labelOf(data, data.resume_phase) : "Pipeline complete")}
+                </h3>
                 <div className="gate-panel__actions">
-                  <a href="/runs" className="btn btn--primary">
+                  {/* A router Link, not a raw <a>: the anchor triggered a full page reload and
+                      dropped the SPA's state on the way to Phases & Runs. */}
+                  <Link to="/runs" className="btn btn--primary">
                     Go to Phases &amp; Runs
-                  </a>
+                  </Link>
+                  {data.gap_report_id && (
+                    <Link to={`/artifacts/${data.gap_report_id}`} className="btn btn--ghost">
+                      Open the report document
+                    </Link>
+                  )}
                 </div>
+                {/* How this reading was produced (S5-9) — measured code evidence, or not. */}
+                <p className="t-sm u-muted" style={{ marginTop: "var(--space-2)" }}>
+                  {data.intel_present
+                    ? "Implementation and Code Review were assessed from measured code."
+                    : "Code intelligence hasn't run, so Implementation and Code Review are reported as missing rather than judged."}
+                </p>
               </CardBody>
             </Card>
             {data.blocking.length > 0 && (
@@ -107,11 +171,28 @@ function GapReportLive() {
                   <h3 className="t-h3" style={{ marginBottom: "var(--space-3)" }}>
                     Blocking gaps
                   </h3>
+                  {/* Each blocker now says what resolves it and links there (S5-19). The list
+                      used to be display-only while the report's own text told the reader to
+                      "generate it via its phase agent" — with nothing to click. */}
                   <ul className="u-stack" style={{ ["--space-4" as string]: "8px" }}>
                     {data.blocking.map((b) => (
-                      <li className="u-row-tight" key={b}>
-                        <Assess state="missing">✗</Assess>
-                        <span className="t-sm">{phaseLabel(b)}</span>
+                      <li className="u-stack" key={b} style={{ ["--space-4" as string]: "2px" }}>
+                        <span className="u-row-tight">
+                          <Assess state="missing">✗</Assess>
+                          <span className="t-sm">{labelOf(data, b)}</span>
+                        </span>
+                        {(() => {
+                          const act = BLOCKER_ACTION[b]?.(Boolean(data.intel_present)) ?? {
+                            text: "No evidence found — run this phase to generate it, or upload and adopt the existing source.",
+                            to: "/runs",
+                            cta: "Run this phase",
+                          };
+                          return (
+                            <span className="t-sm u-muted">
+                              {act.text} <Link to={act.to}>{act.cta}</Link>
+                            </span>
+                          );
+                        })()}
                       </li>
                     ))}
                   </ul>

@@ -7,7 +7,7 @@
  * All assertions use body.textContent (never-throws) or getAllByText (multi-safe).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { cleanup, screen } from "@testing-library/react";
 import { renderWithProviders, stubFetchJson } from "./test/utils";
 
 import { OnboardingHub } from "./features/observability/OnboardingHub";
@@ -368,6 +368,75 @@ describe("Integration failure — screen resilience (INTEGRATION_FAILURE scenari
     vi.stubGlobal("fetch", vi.fn(stubFetchJson(404, { detail: "not found" })));
     const { container } = renderWithProviders(<GapReportScreen />);
     expect(container).toBeDefined();
+  });
+
+  it("GapReportScreen renders a REAL report — labels, evidence counts, not-started phases", async () => {
+    // S5-6/S5-7/S5-28 regression. Every other test of this screen used either the hardcoded
+    // gallery or a 404 stub, so nothing ever fed it a live payload — and the live payload was the
+    // one that crashed. `evidence` is a list of artifact refs; the type said `string` and the
+    // cell rendered it raw, so React threw "Objects are not valid as a React child" on every
+    // report that had any evidence. Phase labels were looked up against the wrong keyspace and
+    // came out as raw slugs. And phases the team simply hasn't reached read as failures.
+    const me = {
+      user: { id: "u1", name: "Ada", email: "ada@acme.test", is_tenant_admin: false },
+      tenant: { id: "t1", name: "Acme" },
+      memberships: [{ project_id: "p1", project_name: "Legacy Billing", role: "developer" }],
+    };
+    const report = {
+      gap_report_id: "a1",
+      resume_phase: "task_breakdown",
+      resume_label: "Task Breakdown",
+      intel_present: true,
+      blocking: ["task_breakdown"],
+      phases: [
+        { phase: "ideation", label: "Ideation", assessment: "complete",
+          evidence: [{ artifact_id: "x1", type: "ideation", sor: "internal", status: "published" }] },
+        { phase: "ux_design", label: "UX Design", assessment: "complete",
+          evidence: [
+            { artifact_id: "x2", type: "wireframe", sor: "internal", status: "published" },
+            { artifact_id: "x3", type: "ux_design", sor: "internal", status: "published" },
+          ] },
+        { phase: "task_breakdown", label: "Task Breakdown", assessment: "missing", evidence: [] },
+        { phase: "implementation", label: "Implementation", assessment: "missing", evidence: [] },
+      ],
+    };
+    const json = (status: number, body: unknown) =>
+      Promise.resolve({
+        ok: status < 400, status, statusText: "stub",
+        text: async () => JSON.stringify(body),
+      } as Response);
+    vi.stubGlobal("fetch", vi.fn((url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.includes("/auth/me/")) return json(200, me);
+      if (u.includes("/gap-report/")) return json(200, report);
+      return json(200, []);
+    }));
+    // Tear down every tree this file has left mounted before rendering ours. They are still live
+    // (this file never calls cleanup), each with its own AuthProvider, and this is the only test
+    // here that stubs a LOGGED-IN /auth/me/ — so they would refetch against a payload shaped for
+    // a different screen while our assertions run.
+    cleanup();
+    const { container, unmount } = renderWithProviders(<GapReportScreen />);
+    // Scoped to THIS render, not document.body: this file never calls cleanup(), so the gallery
+    // tests above leave their DOM behind — and one of them renders "Resume at: Task Breakdown"
+    // too, which would satisfy the wait before this component had fetched anything.
+    const has = (re: RegExp) => re.test(container.textContent ?? "");
+    await vi.waitFor(() => expect(has(/Lifecycle assessment/)).toBe(true));
+
+    // labels, never slugs
+    expect(has(/task_breakdown/)).toBe(false);
+    expect(has(/ux_design/)).toBe(false);
+    expect(has(/Resume at: Task Breakdown/i)).toBe(true);
+    // evidence rendered as a count, not as [object Object]
+    expect(has(/2 artifacts/)).toBe(true);
+    expect(has(/1 artifact(?!s)/)).toBe(true);   // singular, and adjacent text runs together
+    expect(has(/object Object/i)).toBe(false);
+    // a phase PAST the resume point is "not started yet", not a failure
+    expect(has(/Not started yet/i)).toBe(true);
+    // This is the only test here that renders a LOGGED-IN tree, and the screen now polls. Left
+    // mounted it keeps refetching into the next test's fetch stub, which answers `[]` for
+    // /auth/me/ and blows up AuthContext. Unmount rather than leak into a neighbour.
+    unmount();
   });
 
   it("ArtifactPreviewScreen shows unavailable on missing body", () => {

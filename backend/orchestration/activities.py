@@ -338,7 +338,12 @@ def publish_artifacts_core(inp: AgentRunInput) -> dict:
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         run.status = Run.Status.COMPLETED
-        run.save(update_fields=["status", "updated_at"])
+        # Stamp the end (S4-25/S5-26). Only the FAILURE paths set this, so every successful run in
+        # the system carried `ended_at = NULL` — no duration could be shown anywhere, and nobody
+        # could see a phase getting slower over time. The oddity that failures were timed and
+        # successes were not is what makes it read as an omission rather than a decision.
+        run.ended_at = _now()
+        run.save(update_fields=["status", "ended_at", "updated_at"])
         # The Approval decision is recorded by the gate service (decide_gate, T9),
         # not here — that path owns the approver + decided_at.
         tools.log_event(
@@ -392,6 +397,11 @@ PHASE_REPORT_SOURCE = "phase_report"
 #: which the agent registers (stage_artifact_body → register_artifact) as `security_review`.
 _PHASE_REQUIRED_ARTIFACTS = {
     "security": ["security_review"],
+    # Onboarding's deliverable is the gap report the agent submits, not the generic "onboarding"
+    # blob holding its closing message. Without this line a run whose agent never called
+    # `submit_gap_report` — the exact failure S5-1 describes, where the prompt pointed at no tool —
+    # completed quietly with nothing for the user to read. Now it fails loudly and says so.
+    "onboarding": ["gap_report"],
 }
 
 #: How much of the previous version's text an auto-applied (vision) version must still carry.
@@ -477,7 +487,7 @@ def _assert_no_content_loss(inp: AgentRunInput, object_store=None) -> None:
             raise WriteCompletenessError(
                 f"run {inp.run_id} (auto-apply) produced a shorter rendering of "
                 f"'{artifact.title or artifact.type}' than {kept} "
-                f"({new_len} bytes vs {prior_len}) — the transcription dropped content it was "
+                f"({new_len} bytes vs {prior_len}) — the new version dropped content it was "
                 "meant to keep, so it is not published."
             )
 
@@ -626,19 +636,27 @@ def _phase_artifact_title(inp: AgentRunInput) -> str:
     the artifact a reviewer opens at the gate. `register_artifact`'s own contract says ALWAYS
     pass a title; the platform must hold itself to what it tells agents.
     """
+    from integrations.onboarding import CARRIER_SOURCES
+
     label = (inp.phase or "phase").replace("_", " ").strip().capitalize()
     with tenant_context(inp.tenant_id):
-        work_item_title = (
+        wi = (
             WorkItem.objects.filter(id=inp.work_item_id, tenant_id=inp.tenant_id)
-            .values_list("title", flat=True).first() or ""
+            .values("title", "external_ref").first() or {}
         )
+    work_item_title = wi.get("title") or ""
     if not work_item_title:
         return label
-    # An auto-apply run (document vision) works on a document the USER uploaded, and its work
-    # item is titled with that file's name. Prefixing the phase there renames the user's own file
-    # into platform vocabulary — "Document vision — 09_Security.pdf" — for a record they never
-    # asked for. Their filename is the only name that means anything to them, so it stands alone.
-    if getattr(inp, "auto_approve", False):
+    # A CARRIER work item is already named for what it is — the uploaded file for a vision run
+    # ("09_Security.pdf"), or the step itself for an onboarding run ("Onboarding — project
+    # assessment"). Prefixing the phase there either renames the user's own file into platform
+    # vocabulary, or stutters: "Onboarding — Onboarding — project assessment".
+    #
+    # This used to key off `auto_approve`, which worked only by coincidence — every carrier run
+    # happened to be headless. The moment the gap report became gated (team decision 2026-08-03)
+    # the coincidence broke and the stutter appeared on the very artifact a reviewer opens at the
+    # gate. Key off what actually matters: whether the work item is a carrier.
+    if (wi.get("external_ref") or {}).get("source") in CARRIER_SOURCES:
         return work_item_title
     return f"{label} — {work_item_title}"
 
@@ -714,13 +732,16 @@ def register_phase_result_core(inp: AgentRunInput, report) -> dict:
         ).update(takeover_flag=False)
         tools.log_event(inp.tenant_id, "orchestrator", "run.executed", "run", inp.run_id,
                         {"artifact_id": artifact["id"]})
-        if not body:
-            # An "ok" report with no text means the engine ended without producing the phase
-            # document (e.g. max-turns). Don't hide it behind a blank preview at gate time —
-            # make it visible in the run's event stream.
+        if report.message or not body:
+            # An "ok" report that carries a message means the engine did NOT end cleanly — it ran
+            # out of turns, or returned no final text. The companion sends that message precisely
+            # so the platform can say so; it used to be recorded only when the body was ALSO
+            # empty, so a run truncated part-way through — with text on the floor and half its
+            # work done — reported as an unqualified success (S5-25). A partial assessment that
+            # looks complete is the dangerous shape: nothing downstream can tell it apart.
             tools.log_event(
                 inp.tenant_id, "orchestrator", "phase.empty_result", "run", inp.run_id,
-                {"phase": inp.phase,
+                {"phase": inp.phase, "body_empty": not body,
                  "message": report.message or
                  "companion reported ok but the engine returned no final text; "
                  "the staged phase draft is empty"})

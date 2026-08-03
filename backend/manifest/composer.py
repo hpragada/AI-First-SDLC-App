@@ -202,6 +202,13 @@ def _render_clarifications(clarifications: list[dict], budget: TokenBudget) -> s
         "Questions you already asked were answered by a human — **use these answers; do "
         "NOT ask them again**:",
         "",
+        "> These answers may come from an EARLIER run of this phase (they persist on the work "
+        "item, which is how a re-dispatched run avoids re-asking). If the project has changed "
+        "since — new documents adopted, a repository added, a source disconnected — an answer "
+        "about *scope* may no longer hold. Trust it unless the evidence in front of you "
+        "contradicts it; when it does, say so and ask once rather than reasoning from a stale "
+        "answer.",
+        "",
     ]
     for c in shown:
         if c.get("context"):

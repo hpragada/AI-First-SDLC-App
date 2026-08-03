@@ -117,6 +117,9 @@ export interface Approval {
    *  gate panels key on this so they render only for their own phase). */
   phase?: string | null;
   work_item: string;
+  /** The work item's own title. A CARRIER work item (onboarding / document vision) is hidden from
+   *  the work-item list on purpose, so the Gates screen cannot look its name up — it uses this. */
+  work_item_title?: string | null;
   required_role: string;
   approver: string | null;
   approver_name?: string | null;
@@ -625,6 +628,9 @@ export interface OnboardingStepState {
   running: boolean;
   run_id?: string | null;
   question?: { id: string; count: number } | null;
+  // Non-null when the run finished and is parked at its review gate (S5-8). The gap report is
+  // gated by design, so "running" alone would show "working…" for as long as approval takes.
+  approval_id?: string | null;
 }
 
 export interface OnboardingRepoIndex extends OnboardingStepState {
@@ -643,22 +649,51 @@ export interface OnboardingHub {
     artifact_id?: string | null;
     repos?: OnboardingRepoIndex[];
   };
-  gap: { ready: boolean; resume_phase?: string } & OnboardingStepState;
+  gap: {
+    ready: boolean;
+    resume_phase?: string;
+    resume_label?: string;
+    report_artifact_id?: string;
+  } & OnboardingStepState;
   adopt_types: AdoptType[];
 }
 
 // Gap report (S-26, 4.7-T8).
+// One artifact the report weighed as evidence for a phase. This is a LIST OF OBJECTS, not a
+// string (S5-6): it was typed `evidence: string` and rendered straight into a table cell, so
+// React threw "Objects are not valid as a React child" on every report that had any evidence —
+// i.e. every real one. The only live-mode test stubbed a 404, so nothing caught it.
+export interface GapEvidence {
+  artifact_id: string;
+  type: string;
+  sor: string;
+  status: string;
+}
+
 export interface GapPhaseAssessment {
   phase: string;
+  // Human label served by the backend (S5-7) — the frontend used to map `phase` itself against a
+  // list keyed `01_ideation` while the API emits the bare `ideation`, so every lookup missed and
+  // the screen showed raw slugs. Optional so an older cached payload still renders.
+  label?: string;
   assessment: "complete" | "partial" | "missing";
-  evidence: string;
+  evidence: GapEvidence[];
 }
 
 export interface GapReport {
+  gap_report_id?: string;
   phases: GapPhaseAssessment[];
-  resume_phase: string;
+  resume_phase: string | null;
+  resume_label?: string;
+  intel_present?: boolean;
   blocking: string[];
 }
+
+// POST /gap-report/ answers in two shapes: 202 when the agent path dispatched a run on the user's
+// companion, 200 with the whole report when the deterministic fallback ran inline (S5-9).
+export type GapReportRunResult =
+  | ({ mode: "deterministic" } & GapReport)
+  | { mode: "agent"; run_id: string; workflow_id: string };
 
 // API contracts & drift (S-27, 4.7-T9). Mirrors `integrations/api_contract.py::list_api_contracts`.
 export interface ApiContract {

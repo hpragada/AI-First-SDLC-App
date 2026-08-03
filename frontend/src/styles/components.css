@@ -428,7 +428,18 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
    ========================================================================== */
 .gate-panel .card__body { display: flex; flex-direction: column; gap: var(--space-3); }
 .gate-panel__role { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--brand-orange-600); }
-.gate-panel__actions { display: flex; gap: var(--space-3); margin-top: var(--space-2); }
+/* `flex-wrap` is load-bearing, not cosmetic: this row sits inside narrow side cards, and without
+   it a second action (e.g. "Open the report document" beside "Go to Phases & Runs") is pushed past
+   the card's edge and clipped mid-word — the user sees a truncated label they cannot click. Wrap
+   only changes anything when the row would otherwise overflow, so it is safe wherever this is
+   already used. `align-items` keeps a text link aligned with a button when they end up on one row. */
+.gate-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
 .gate-reassure { font-size: var(--fs-xs); color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; }
 
 .criteria-list { display: flex; flex-direction: column; gap: var(--space-1); }

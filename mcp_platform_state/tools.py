@@ -539,16 +539,23 @@ def add_trace_edge(tenant_id, from_artifact_id, to_artifact_id, rel) -> dict:
         return _edge(edge)
 
 
-def submit_gap_report(tenant_id, project_id, phases, resume_phase=None, blockers=None) -> dict:
+def submit_gap_report(tenant_id, project_id, phases, resume_phase=None, blockers=None,
+                      run_id=None) -> dict:
     """Agent-authored gap report (00_onboarding). Hands the agent's reasoned per-phase assessment
     to the shared normalizer+writer, which coerces it to the exact `external_ref` shape
     `read_gap_report` + the whole UI depend on — so a model typo can never degrade the screen.
-    The bound `project_id` travels from the run; `tenant_id` is bound server-side."""
+    The bound `project_id`/`run_id` travel from the run; `tenant_id` is bound server-side.
+
+    `run_id` is LOAD-BEARING (S5-3): the report used to be registered run-unbound, and both
+    `verify_writes` and `publish_artifacts` filter on `run_id`. Unbound, the report counted as no
+    write at all — an agent that assessed correctly and submitted once failed write-completeness —
+    and it could never be published by its gate. Bound, it is the run's work product: the gate
+    opens on it and approval publishes it."""
     from integrations.onboarding import submit_agent_gap_report
 
     return submit_agent_gap_report(
         tenant_id=tenant_id, project_id=project_id, phases=phases,
-        resume_phase=resume_phase, blockers=blockers,
+        resume_phase=resume_phase, blockers=blockers, run_id=run_id,
     )
 
 
@@ -566,8 +573,16 @@ def log_event(tenant_id, actor, action, target_type, target_id, payload=None) ->
 
 
 def list_work_items(tenant_id, project_id, state=None) -> list[dict]:
+    """The project's backlog as an agent sees it. Carrier work items are excluded (S5-27): they
+    are internal plumbing that only exists to host an onboarding/vision run, never backlog a human
+    authored — and they are `epic`s, so an agent assessing "does this project have a backlog?"
+    counted the platform's own scaffolding as the answer. Same exclusion the user-facing backlog
+    list already applies (api WorkItemViewSet)."""
+    from integrations.onboarding import carrier_q
+
     with tenant_context(tenant_id):
-        qs = WorkItem.objects.filter(tenant_id=tenant_id, project_id=project_id)
+        qs = WorkItem.objects.filter(
+            tenant_id=tenant_id, project_id=project_id).exclude(carrier_q())
         if state is not None:
             if state not in WorkItem.State.values:
                 raise ValueError(f"invalid state: {state}")

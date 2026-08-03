@@ -1677,12 +1677,20 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        # `project` filters server-side (Gates screen). The client used to fetch every approval and
+        # keep only those whose work item appeared in the work-item LIST — but that list hides
+        # carrier work items by design, so the onboarding gate was silently dropped: the sidebar
+        # badge counted 1 (the dashboard doesn't cross-filter) while the page said "No gates need
+        # you". A gate nobody can reach is worse than no gate, because the run sits waiting.
+        project = self.request.query_params.get("project")
+        if project:
+            qs = qs.filter(work_item__project_id=project)
         for field in ("decision", "run", "work_item"):
             value = self.request.query_params.get(field)
             if value:
                 qs = qs.filter(**{("run_id" if field == "run" else
                                    "work_item_id" if field == "work_item" else field): value})
-        return qs
+        return qs.select_related("work_item")
 
     @action(detail=True, methods=["get"])
     def criteria(self, request, pk=None):

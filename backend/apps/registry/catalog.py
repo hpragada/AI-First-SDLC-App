@@ -107,7 +107,15 @@ AGENT_CATALOG: list[AgentDefinition] = [
     AgentDefinition("12_deployment", "deploy", "deployment", "12_deployment_agent.md", "P2", "devops",
                     needs_artifacts=("cicd_architecture", "pipeline_config", "architecture", "secrets_manifest", "security_review")),
     # ── Entry / onboarding agents (P4) ──────────────────────────────
-    AgentDefinition("00_onboarding", "onboard", "onboarding", "00_onboarding_agent.md", "P4", "product_owner"),
+    # `needs_artifacts` pins 00c's five intelligence artifacts into the manifest's required tier
+    # (S5-11). Without it this agent declared no inputs, so `# Relevant Artifacts` was just the
+    # newest-12 slice of the whole project — and on a real brownfield project (19 adopted documents
+    # and one phase blob per run) the intelligence it is told to read first can be evicted before
+    # it ever sees it. It cannot re-derive them either: `reads_code` is False by design, because
+    # 00c is the single source of truth for code facts.
+    AgentDefinition("00_onboarding", "onboard", "onboarding", "00_onboarding_agent.md", "P4", "product_owner",
+                    needs_artifacts=("codebase_intelligence", "dependency_graph", "git_analytics",
+                                     "dead_code", "architecture_decisions")),
     AgentDefinition("00b_context_bridge", "context-bridge", "context_bridge", "00b_context_bridge_agent.md", "P4", "architect"),
     AgentDefinition("00c_intelligent_context_extractor", "analyze", "context_extraction", "00c_intelligent_context_extractor_agent.md", "P4", "tech_lead", reads_code=True),
     # 00e Document Vision (Part B, brownfield lossless capture) — platform-native, no legacy

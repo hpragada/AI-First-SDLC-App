@@ -260,12 +260,37 @@ function ConfluenceLinkForm({ projectId }: { projectId: string }) {
 // which is why the message is driven by the hub's polled state and not by the POST's result: a
 // mutation result is set once and never clears, so the old "running…" line survived completion
 // and every later re-index. Server state clears itself.
-function AgentStepStatus({ state, workingText, questionText }: {
-  state: { running: boolean; question?: { id: string; count: number } | null };
+function AgentStepStatus({ state, workingText, questionText, gateText }: {
+  state: {
+    running: boolean;
+    question?: { id: string; count: number } | null;
+    approval_id?: string | null;
+  };
   workingText: string;
   questionText: string;
+  gateText?: string;
 }) {
   if (!state.running) return null;
+  // Parked at its review gate (S5-8). The run is not finished, so `running` is still true — but
+  // it is waiting on the USER, not working. The gap report is gated by design, and without this
+  // the step said "working…" for as long as approval took and offered no way to reach the gate.
+  if (state.approval_id) {
+    return (
+      <Card attention>
+        <CardBody style={{ maxWidth: "520px" }}>
+          <span className="gate-panel__role">Waiting for your approval</span>
+          <p className="t-sm" style={{ marginTop: "var(--space-1)" }}>
+            {gateText ?? "The assessment is ready and needs your sign-off before the project resumes."}
+          </p>
+          <div className="gate-panel__actions">
+            <Link to={`/gates/${state.approval_id}`} className="btn btn--primary">
+              Review the assessment
+            </Link>
+          </div>
+        </CardBody>
+      </Card>
+    );
+  }
   // A blocked agent is still "running", but the user has to act and nothing else would say so.
   if (state.question) {
     return (
@@ -479,6 +504,12 @@ function OnboardingHubLive() {
       running: false, run_id: null, question: null, artifact_id: null,
     }));
   const indexDone = repoStates.length > 0 && repoStates.every((r) => r.status === "indexed");
+  // The backend serves the human label beside the key (S5-7). The hub used to interpolate the raw
+  // key, so a user read "Resume at: task_breakdown". Fall back to prettifying the slug rather than
+  // to a lookup table, which is what drifted in the first place.
+  const gapResumeLabel =
+    data.gap.resume_label ||
+    (data.gap.resume_phase ?? "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
   return (
     <div className="canvas-pad" style={{ maxWidth: "920px" }}>
@@ -562,50 +593,82 @@ function OnboardingHubLive() {
           <Vstep
             num="5"
             title="Gap report"
-            desc={data.gap.ready ? `Ready — resume at ${data.gap.resume_phase}.` : "What exists, what's missing, and where to resume."}
+            desc={data.gap.ready
+              ? `Ready — resume at ${gapResumeLabel}.`
+              : "What exists, what's missing, and where to resume."}
             state={data.gap.ready ? "done" : undefined}
           >
-            {data.gap.ready ? (
-              <Card attention>
-                <CardBody style={{ maxWidth: "520px" }}>
-                  <span className="gate-panel__role">Recommended resume point</span>
-                  <h3 className="t-h3">Resume at: {data.gap.resume_phase}</h3>
-                  <div className="gate-panel__actions">
-                    <Link to="/onboarding/gap-report" className="btn btn--secondary">
-                      View full gap report
-                    </Link>
-                  </div>
-                </CardBody>
-              </Card>
-            ) : (
-              <div className="u-stack" style={{ marginTop: "var(--space-2)" }}>
-                <div className="gate-panel__actions">
-                  <Button
-                    variant="secondary"
-                    onClick={() => runGapReport.mutate()}
-                    disabled={data.gap.running || runGapReport.isPending}
-                  >
-                    {data.gap.running ? "Assessment dispatched…" : "Run gap report"}
-                  </Button>
-                </div>
-                <AgentStepStatus
-                  state={data.gap}
-                  workingText="Assessing your project on your machine — reading everything you've brought in and the code analysis. This usually takes a few minutes."
-                  questionText="The onboarding agent has a question about your project before it can finish the assessment."
-                />
-                {runGapReport.isError && (
-                  <p className="t-sm" style={{ color: "var(--danger)" }}>
-                    {runGapReport.error instanceof Error ? runGapReport.error.message : "Could not run the gap report."}
-                  </p>
-                )}
+            {/* The ready card and the run controls render TOGETHER, not either/or (S5-8). When
+                they were exclusive, a re-run after adopting more documents showed nothing at all:
+                no progress line, no "waiting on you" card, and no button to press — because the
+                whole branch was unreachable the moment a report existed. Re-running is the normal
+                case, so it has to be visible. */}
+            <div className="u-stack" style={{ marginTop: "var(--space-2)" }}>
+              {data.gap.ready && (
+                <Card attention>
+                  <CardBody style={{ maxWidth: "520px" }}>
+                    <span className="gate-panel__role">Recommended resume point</span>
+                    <h3 className="t-h3">Resume at: {gapResumeLabel}</h3>
+                    <div className="gate-panel__actions">
+                      <Link to="/onboarding/gap-report" className="btn btn--secondary">
+                        View full gap report
+                      </Link>
+                      {/* The rendered report document itself, mirroring what the Index code
+                          step already offers for its intelligence artifact (S5-19). */}
+                      {data.gap.report_artifact_id && (
+                        <Link
+                          to={`/artifacts/${data.gap.report_artifact_id}`}
+                          className="btn btn--ghost"
+                        >
+                          Open the report document
+                        </Link>
+                      )}
+                    </div>
+                  </CardBody>
+                </Card>
+              )}
+              <div className="gate-panel__actions">
+                <Button
+                  variant="secondary"
+                  onClick={() => runGapReport.mutate()}
+                  disabled={data.gap.running || runGapReport.isPending}
+                >
+                  {data.gap.running
+                    ? "Assessment dispatched…"
+                    : data.gap.ready ? "Re-run gap report" : "Run gap report"}
+                </Button>
               </div>
-            )}
+              <AgentStepStatus
+                state={data.gap}
+                workingText="Assessing your project on your machine — reading everything you've brought in and the code analysis. This usually takes a few minutes."
+                questionText="The onboarding agent has a question about your project before it can finish the assessment."
+                gateText="The assessment is ready. Approve it to publish the gap report and set the resume point."
+              />
+              {/* Which path ran (S5-9). The two are genuinely different products: the agent
+                  reasons over the evidence on your machine and takes minutes; the fallback is a
+                  mechanical count that returns instantly. Saying nothing left the user unable to
+                  tell a considered assessment from a tally. */}
+              {runGapReport.data?.mode === "deterministic" && !data.gap.running && (
+                <p className="t-sm u-muted">
+                  Assessed mechanically from what's registered — your machine wasn't connected, so
+                  no agent reasoned over it. Connect your machine and re-run for a fuller reading.
+                </p>
+              )}
+              {runGapReport.data?.mode === "agent" && (
+                <p className="t-sm u-muted">Your machine is assessing the project.</p>
+              )}
+              {runGapReport.isError && (
+                <p className="t-sm" style={{ color: "var(--danger)" }}>
+                  {runGapReport.error instanceof Error ? runGapReport.error.message : "Could not run the gap report."}
+                </p>
+              )}
+            </div>
           </Vstep>
 
           <Vstep
             num="6"
             title="Resume"
-            desc={data.gap.ready ? `Trigger ${data.gap.resume_phase} on a work item to enter the pipeline.` : "Available after the gap report."}
+            desc={data.gap.ready ? `Trigger ${gapResumeLabel} on a work item to enter the pipeline.` : "Available after the gap report."}
             state={data.gap.ready ? "active" : undefined}
           >
             {data.gap.ready && (

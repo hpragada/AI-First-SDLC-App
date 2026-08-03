@@ -164,13 +164,15 @@ One row per finding, ready to lift into the tracking spreadsheet. **Severity**: 
 
 | # | Step | What to verify | Path | Delivered by | Status |
 |---|------|----------------|------|--------------|--------|
-| S5.1 | Trigger "Run gap report" | Dispatches; correct mode banner (**agent** vs **deterministic**). | both | Slice 5/6 | 🔲 OPEN |
-| S5.1b | **Headless + progress UX** (team decision, 2026-07-31) | Gap report gets the **same treatment as Index code**: no gate, invisible in Phases & Runs and the dashboard, button locks to "Assessment dispatched…", amber working line, "Waiting on you" card when the agent asks a question. It shares the `AgentStepStatus` component and the `auto_approve` path. | agent | S4-1 · S4-3 (`gap.running` / `gap.question`) | 🔲 OPEN — **built, not yet live-tested** (blocked behind Index code) |
-| S5.2 | Agent reasons, calls `submit_gap_report` | `00_onboarding` assesses each phase Complete/Partial/Missing and **calls `submit_gap_report`** — it does **not** dump the assessment into a document (the ideation-class prompt-adherence risk). | agent | Slice 5 (agent body + tool) | 🔲 OPEN |
-| S5.3 | Contract guaranteed | Whatever the agent emits, the stored `external_ref` has the exact shape `{source, resume_phase, phases:[{phase,label,status,evidence}], blockers, intel_present}` — the shared `write_gap_report_artifact` normalizes it. UI/`types.ts` unchanged. | agent | Slice 5 (shared writer) | 🔲 OPEN |
-| S5.4 | Gap report is accurate | With real adopted docs + code intel, the report reflects reality — **not** "all Missing, resume at ideation." Resume point matches the evidence. | both | B5-1 (redesign) | 🔲 OPEN |
-| S5.5 | Deterministic fallback | No companion → `build_gap_report` writes the **byte-identical** `external_ref` via the same shared writer. | fallback | Slice 5 | 🔲 OPEN |
-| S5.6 | Hub refreshes in place | Running the report flips the hub's Resume step without a manual reload (both query keys invalidated). | both | B5-2 + Slice 6 | 🔲 OPEN |
+| S5.1 | Trigger "Run gap report" | Dispatches; correct mode banner (**agent** vs **deterministic**). | both | Slice 5/6 | ✅ **DONE (live)** — 202 agent dispatch confirmed; mode is now named on the hub |
+| S5.1b | ~~**Headless** + progress UX~~ → **GATED + progress UX** (team decision, **2026-08-03**, supersedes 2026-07-31) | The gap report is **not** treated like Index code. Index code stays headless — it is a mechanical index. The gap report is a **judgement about the client's project** that the pipeline acts on, so a **Product Owner gate** owns it and approval is what publishes the report. It still hides from Phases & Runs and the dashboard and still shares `AgentStepStatus`, which gains a third state: **"Waiting for your approval"** linking to the gate (`gap.approval_id`) — without it `awaiting_gate` reads as "still working" forever. No new gate surface was needed: only the backlog and Phases & Runs hide carriers; `ApprovalViewSet` and the dashboard do not. | agent | S5-4/S5-5 · S5-8 | ✅ **DONE (live)** — gate opened, was reachable, approved by product_owner, and approval published the report |
+| S5.2 | Agent reasons, calls `submit_gap_report` | `00_onboarding` assesses each phase Complete/Partial/Missing and **calls `submit_gap_report`** — it does **not** dump the assessment into a document (the ideation-class prompt-adherence risk). | agent | Slice 5 (agent body + tool) | ✅ **DONE (live)** — run `448b8d21` called it, and registered no document instead. The pre-flight audit found the body **never named the tool** and told the agent the opposite (**S5-1**). Body rewritten around a single call; a runtime backstop (`_PHASE_REQUIRED_ARTIFACTS["onboarding"]`) now fails the run loudly if the call is skipped |
+| S5.2b | **Assess-only remit** (team decision, 2026-08-03 — option c) | `00_onboarding` registers **no lifecycle content**: it judges the evidence and submits the report. `assumption` artifacts are the one exception. Transformation belongs to the phase agents, each already gated. | agent | S5-4/S5-5 | ✅ **DONE (live)** — the run registered exactly `gap_report` + `assumption` + the phase blob. Zero lifecycle content |
+| S5.3 | Contract guaranteed | Whatever the agent emits, the stored `external_ref` has the exact shape `{source, resume_phase, phases:[{phase,label,status,evidence}], blockers, intel_present}` — the shared `write_gap_report_artifact` normalizes it. UI/`types.ts` unchanged. | agent | Slice 5 (shared writer) | ✅ **DONE (live)** — run `448b8d21`'s `external_ref` parsed by `read_gap_report` + both screens |
+| S5.4 | Gap report is accurate | With real adopted docs + code intel, the report reflects reality — **not** "all Missing, resume at ideation." Resume point matches the evidence. | both | B5-1 (redesign) | ✅ **DONE (live)** — run `448b8d21` read the real evidence: ten phases Complete, resume at Implementation. **Not** "all Missing, resume at ideation". **A second accuracy defect was fixed before it could bite (S5-27) was found and fixed before it could bite (S5-27): onboarding's own carrier work items are `epic`s, so Task Breakdown read Complete on any project that had ever run an onboarding step.** Still to verify on a project with NO real backlog: the report must say **resume at task_breakdown**, not implementation. This project has 68 genuine backlog items, so it reads Complete either way |
+| S5.4b | Phases ahead of the resume point read as "not started" | A team that finished only Ideation..UX Design must not see six ✗ Missing rows reading as six failures (**S5-28**). | both | S5-28 | ✅ FIXED (tests green) — this run had no phases past the resume point, so it did not render |
+| S5.5 | Deterministic fallback | No companion → `build_gap_report` writes the **byte-identical** `external_ref` via the same shared writer. | fallback | Slice 5 | ✅ DONE (tests green) — same shared writer; no companion-less run has been exercised live |
+| S5.6 | Hub refreshes in place | Running the report flips the hub's Resume step without a manual reload (both query keys invalidated). | both | B5-2 + Slice 6 | ✅ **DONE (live)** — the hub flipped to "Ready — resume at Implementation" without a reload |
 
 ## Step 6 — Resume the lifecycle at the agent-decided phase
 
@@ -275,6 +277,54 @@ One row per finding, ready to lift into the tracking spreadsheet. **Severity**: 
 ### Step 5 — Gap report
 - **B5-1 · 🔴 HEADLINE: gap report blind to adopted docs ("all Missing, resume at ideation").** — **✅ resolved**: typed adoption feeds the assessor; the agent path reasons over real evidence · verify at **S5.4**.
 - **B5-2 · ⚪ Running the report doesn't refresh the hub's Resume step.** Fix: invalidate the onboarding query. — **✅ resolved (done)** · re-confirm at **S5.6**.
+
+#### Pre-flight audit, 2026-08-03 — 20 findings, read BEFORE the first run
+Full detail in `Bugs-fix.md` ("Step 5 — Gap report"). The five that made the run impossible or wrong:
+- **S5-1 · 🔴 The agent was never told to call `submit_gap_report`** — the body instructed the opposite. — **✅ fixed** (body + a runtime backstop).
+- **S5-2 · 🔴 The body described a runtime that does not exist** (worktree / `codeintel.*` / file tools, all denied). — **✅ fixed by correcting the BODY, not the flag**: 00c is the single source of code facts and is now a stated prerequisite.
+- **S5-3 · 🔴 A perfect run would have been marked FAILED** — the report was registered unbound to its run. — **✅ fixed** (`run_id` threaded through; this is also what lets the gate publish it).
+- **S5-4/S5-5 · 🔴 The gate was inverted** — the report never published, while agent-registered lifecycle content auto-published unreviewed (#5). — **✅ resolved by the option-(c) + gate decision**.
+- **S5-27 · 🔴 Onboarding's own carriers faked a backlog**, flipping "resume at Task Breakdown" into "resume at Implementation". Found by the team's UX-Design scenario question. — **✅ fixed** (`carrier_q()` exclusion in the assessor *and* in `list_work_items`).
+
+Plus **S5-6** (the screen crashed on any real report), **S5-7** (raw slugs), **S5-8** (a re-run was
+silent), **S5-28**, **S5-15** (the tests were locking three bugs in), **S5-18** (stale hub tests),
+**S5-10/12/13/14** (the §8 sweep this agent never got), **S5-11** (intelligence artifacts not
+guaranteed in context).
+
+**Second pass (team: "fix everything, including the deferred") — all closed:** **S5-9** (mode now
+named), **S5-19** (blockers are actionable; Implementation/Code Review correctly route to *Index
+code*, not to a phase agent), **S5-20** (evidence validated) and **S5-20b** — 🔴 *found by the new
+end-to-end test, not by review*: **one invented artifact id destroyed the entire report**, because
+a non-UUID raised out of `add_trace_edge` before any lookup. **S5-21** (project-id fallback),
+**S5-22** (dead branch removed, not switched on — see the note), **S5-23** (`code` → the artifact
+actually measured), **S5-24** (replayed answers flagged as possibly stale), **S5-25** (a truncated
+run no longer reports as a clean success), **S5-26** (`ended_at` stamped on success — this also
+closes **S4-25**). Also the stale `daemon.py:341` comment, the **409** test and the **full MCP
+chain** test.
+
+**Nothing from the Step-5 audit remains open.**
+
+#### LIVE RESULT — run `448b8d21` (2026-08-03): **STEP 5 IS GREEN** ✅
+Ran end to end on the team's companion and was approved. **completed** · 23.5 min · gate
+`fd18a0a1` approved by product_owner · `gap_report` **published on approval** · `assumption` +
+the phase blob and **nothing else** (option (c) holding) · 15 resolved trace edges ·
+**`ended_at` stamped** — the first successful run in this system ever to record when it finished.
+Verdict: **resume at Implementation**, ten phases Complete, Implementation + Code Review *Partial*,
+no blockers. The agent reasoned rather than counted rows: the deterministic path would have said
+"Code Review missing".
+
+**Four defects that only the live run found — three caused by the gate change**, because flipping
+`auto_approve` off broke assumptions that held only while every carrier run was headless:
+- **S5-29 · 🔴 the gate was INVISIBLE** — badge said 1, the Gates page said "No gates need you". The
+  screen kept only approvals whose work item was in the work-item list, **which hides carriers**. I
+  had checked the API had no carrier filter and never checked what the client did with the response.
+- **S5-30 · 🟠** phase artifact titled "Onboarding — Onboarding — project assessment".
+- **S5-31 · 🟠** the gap report registered with an empty title.
+- **S5-32 · 🟡** the resume card clipped "Open the report document" mid-word (no `flex-wrap`).
+
+All four fixed with regression tests; **S5-30/31/32 not yet seen live** (they were not in the
+containers during this run). Full status board — fixed-live vs tests-green vs open vs to-be-done —
+in `Bugs-fix.md`.
 
 ### Step 6 — Resume the lifecycle
 - **B6-1 · 🟠 Resume routes to the wrong phase.** — **✅ resolved by B5-1 + the agent path** · verify at **S6.1**.

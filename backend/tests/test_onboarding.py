@@ -509,6 +509,153 @@ def test_submit_agent_gap_report_normalizes_and_reads_back(world):
     assert "bogus_phase" not in by
 
 
+def test_carrier_work_items_do_not_count_as_a_backlog(world):
+    """S5-27 — the team's scenario: a project that finished Ideation..UX Design outside the
+    platform, with NO backlog yet. Task Breakdown is assessed from work items, not documents, and
+    every onboarding/vision carrier is an `epic`. Counted, they made `has_backlog` true on any
+    project that had ever run an onboarding step — clicking Index code was enough, and the gap
+    report corrupted its own input because the carrier is created before the run starts.
+
+    Task Breakdown then read `complete` for a project with no backlog at all, and the resume point
+    jumped past the phase the team actually needed next: "go write code" instead of "break the
+    work down". A failed run is obvious; a confidently wrong resume point is not."""
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    for t in ("ideation", "requirements", "prd", "architecture", "ux_design"):
+        _published(world, t)
+    # exactly what Index code / Gap report leave behind — and nothing else
+    ensure_onboarding_work_item(tenant_id=tid, project_id=pid)
+
+    out = build_gap_report(tenant_id=tid, project_id=pid, object_store=world["store"])
+    by = {p["phase"]: p["status"] for p in out["phases"]}
+    assert by["ux_design"] == "complete"
+    assert by["task_breakdown"] == "missing", "a carrier epic was counted as the project's backlog"
+    assert out["resume_phase"] == "task_breakdown"
+    assert out["blockers"] == ["task_breakdown"]
+
+
+def test_a_real_backlog_item_still_completes_task_breakdown(world):
+    """The guard on the exclusion above: hiding carriers must not hide genuine backlog. A real
+    story — the thing a Jira import or the Task-Breakdown agent creates — still counts."""
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    for t in ("ideation", "requirements", "prd", "architecture", "ux_design"):
+        _published(world, t)
+    ensure_onboarding_work_item(tenant_id=tid, project_id=pid)          # carrier: ignored
+    WorkItem.objects.create(tenant=world["t"], project=world["project"],
+                            type=WorkItem.Type.STORY, title="US-001 login",
+                            external_ref={"sor": "jira", "id": "ST-447"})
+
+    out = build_gap_report(tenant_id=tid, project_id=pid, object_store=world["store"])
+    by = {p["phase"]: p["status"] for p in out["phases"]}
+    assert by["task_breakdown"] == "complete"
+    assert out["resume_phase"] == "implementation"
+
+
+def test_gap_report_is_bound_to_the_run_that_submitted_it(world):
+    """S5-3 — the report used to be registered run-unbound, and both `verify_writes` and
+    `publish_artifacts` filter on `run_id`. Unbound it counted as NO write, so an agent that
+    assessed correctly and submitted once failed write-completeness and its run was marked failed;
+    and the gate could never publish it, so it stayed draft forever.
+
+    The deterministic REST path has no run and must still work — hence the None case."""
+    from apps.registry.catalog import seed_agent_specs
+    from apps.registry.models import AgentSpec
+    from apps.runs.models import Run
+
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    seed_agent_specs(world["t"])
+    spec = AgentSpec.objects.get(tenant=world["t"], key="00_onboarding")
+    wi = ensure_onboarding_work_item(tenant_id=tid, project_id=pid)
+    run = Run.objects.create(tenant=world["t"], work_item=wi,
+                             agent_spec=spec, status=Run.Status.RUNNING)
+
+    out = submit_agent_gap_report(
+        tenant_id=tid, project_id=pid, run_id=str(run.id),
+        phases=[{"phase": "ideation", "status": "complete"}],
+        object_store=world["store"])
+    report = Artifact.objects.get(id=out["gap_report_id"])
+    assert str(report.run_id) == str(run.id)
+
+    # …and the deterministic path, which has no run, still registers it unbound
+    det = build_gap_report(tenant_id=tid, project_id=pid, object_store=world["store"])
+    assert Artifact.objects.get(id=det["gap_report_id"]).run_id is None
+
+
+def test_a_carrier_runs_artifact_is_not_named_twice(world):
+    """Caught on the FIRST live gated run (448b8d21), not by any test: the phase artifact came
+    back titled "Onboarding — Onboarding — project assessment".
+
+    The phase prefix was suppressed by `auto_approve`, which only ever worked by coincidence —
+    every carrier run happened to be headless. Making the gap report gated broke the coincidence,
+    and the stutter landed on the very document a reviewer opens at the gate. The real condition
+    is whether the work item is a CARRIER: its title already names the step (or, for a vision run,
+    the user's own filename, which must not be renamed into platform vocabulary either)."""
+    from uuid import uuid4
+
+    from orchestration.activities import _phase_artifact_title
+    from orchestration.types import AgentRunInput
+
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    carrier = ensure_onboarding_work_item(tenant_id=tid, project_id=pid)
+    normal = WorkItem.objects.create(tenant=world["t"], project=world["project"],
+                                     type=WorkItem.Type.STORY, title="Add login")
+
+    def _title(work_item, auto_approve):
+        return _phase_artifact_title(AgentRunInput(
+            run_id=str(uuid4()), tenant_id=tid, project_id=pid,
+            work_item_id=str(work_item.id), agent_spec_id=str(uuid4()), phase="onboarding",
+            required_role="product_owner", execution_mode="companion",
+            auto_approve=auto_approve))
+
+    # the carrier already says "Onboarding — …"; it is not prefixed again, gated or headless
+    assert _title(carrier, False) == "Onboarding — project assessment"
+    assert _title(carrier, True) == "Onboarding — project assessment"
+    # a real work item still gets the phase prefix — that is what makes it readable in a list
+    assert _title(normal, False) == "Onboarding — Add login"
+
+
+def test_the_gap_report_artifact_is_named(world):
+    """Also from run 448b8d21: the report registered with `title=''`, so the artifact a Product
+    Owner opens at the gate had no name in any list. `register_artifact`'s contract tells agents
+    to ALWAYS pass a title; the platform has to hold itself to what it tells agents."""
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    _published(world, "ideation")
+    out = build_gap_report(tenant_id=tid, project_id=pid, object_store=world["store"])
+    title = Artifact.objects.get(id=out["gap_report_id"]).title
+    assert title, "the gap report registered with no title"
+    assert "Gap Report" in title and "Requirements" in title   # names what it decides
+
+
+def test_a_hallucinated_evidence_id_does_not_destroy_the_report(world):
+    """S5-20 — found while writing the end-to-end test for the runner endpoint, not by review.
+
+    Artifact ids are exactly the kind of token a model reconstructs from memory. A cited id that
+    isn't a UUID used to raise out of `add_trace_edge` (Django validates the field before any
+    lookup), so ONE bad id threw away the entire submitted assessment — minutes of agent work,
+    and the user sees nothing. Losing one provenance link is a small visible loss; losing the
+    report is not. Also guards the cross-project case: a well-formed id belonging to somewhere
+    else is not this report's provenance."""
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    real = _published(world, "ideation")
+    other_project = Project.objects.create(tenant=world["t"], name="Other")
+    stranger = tools.register_artifact(
+        tid, str(other_project.id), None, phase="onboarding", type="ideation",
+        sor="internal", content_hash="h")["id"]
+
+    out = submit_agent_gap_report(
+        tenant_id=tid, project_id=pid, object_store=world["store"],
+        phases=[{"phase": "ideation", "status": "complete", "evidence": [
+            {"artifact_id": real},
+            {"artifact_id": "PRD-2024-final"},        # invented, not even a UUID
+            {"artifact_id": stranger},                # real, but another project's
+            "bare-string-not-a-dict",                 # shorthand the normalizer accepts
+        ]}])
+
+    assert out["gap_report_id"]                                    # the report SURVIVED
+    edges = {str(e.to_artifact_id) for e in TraceEdge.objects.filter(
+        from_artifact_id=out["gap_report_id"])}
+    assert edges == {real}                                         # only what resolves is linked
+
+
 def test_ensure_onboarding_work_item_idempotent_per_repo(world):
     from apps.projects.models import Repository
 
@@ -553,10 +700,38 @@ def test_trigger_onboarding_agent_dispatches_companion_run_when_enrolled(world):
 
 
 # ── Headless onboarding steps (Index code / Gap report) ───────────────────────
-def test_onboarding_agent_runs_headless_without_opening_a_gate(world):
-    """Index code / Gap report are setup steps, not lifecycle phases anyone signs off. Their run
-    is hosted on a carrier hidden from every list, so a gate opened here could never be found or
-    actioned — it just sat PENDING forever and inflated the gate count."""
+def test_index_code_runs_headless_without_opening_a_gate(world):
+    """Index code is a setup step, not a lifecycle phase anyone signs off. Its run is hosted on a
+    carrier hidden from the backlog and from Phases & Runs, and its output is a mechanical index —
+    so it publishes without a gate. (The Gap report is the deliberate exception; see below.)"""
+    from apps.projects.models import Repository
+    from apps.registry.catalog import seed_agent_specs
+    from apps.runs.enrollment import enroll_runner
+
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    seed_agent_specs(world["t"])
+    enroll_runner(tenant_id=tid, project_id=pid, developer_id=str(world["po"].id), label="l")
+    repo = Repository.objects.create(tenant=world["t"], project=world["project"],
+                                     name="acme/legacy")
+    seen = {}
+    trigger_onboarding_agent(
+        tenant_id=tid, project_id=pid, agent_key="00c_intelligent_context_extractor",
+        repo_id=str(repo.id), triggered_by=str(world["po"].id),
+        workflow_starter=lambda wf_id, inp: seen.update(inp=inp))
+    assert seen["inp"].auto_approve is True
+
+
+def test_gap_report_opens_a_product_owner_gate(world):
+    """Team decision 2026-08-03. The gap report is NOT a mechanical setup step like Index code: it
+    is a judgement about the client's project — which phases are done, where to resume — and the
+    pipeline acts on it. So it runs GATED and a Product Owner owns the call.
+
+    The old "a gate here could never be found" reasoning does not apply: only the backlog
+    (WorkItemViewSet) and Phases & Runs (RunViewSet) hide carriers. ApprovalViewSet and the
+    dashboard's pending-gates query do not, so the gate is reachable the moment it opens.
+
+    Approval is also the report's ONLY publish route — `publish_artifacts` runs on the approved
+    path and the report is bound to its run, so headless would have left it draft forever."""
     from apps.registry.catalog import seed_agent_specs
     from apps.runs.enrollment import enroll_runner
 
@@ -568,7 +743,11 @@ def test_onboarding_agent_runs_headless_without_opening_a_gate(world):
         tenant_id=tid, project_id=pid, agent_key="00_onboarding",
         triggered_by=str(world["po"].id),
         workflow_starter=lambda wf_id, inp: seen.update(inp=inp))
-    assert seen["inp"].auto_approve is True
+    assert seen["inp"].auto_approve is False
+
+    from apps.registry.catalog import get_by_key
+
+    assert get_by_key("00_onboarding").gate_role == "product_owner"
 
 
 def test_a_normal_phase_still_opens_its_gate(world):
@@ -605,7 +784,11 @@ def test_step_state_reports_running_and_a_pending_question(world):
     enroll_runner(tenant_id=tid, project_id=pid, developer_id=str(world["po"].id), label="l")
 
     idle = onboarding_step_state(tenant_id=tid, project_id=pid, agent_key="00_onboarding")
-    assert idle == {"running": False, "run_id": None, "question": None}   # nothing dispatched yet
+    # nothing dispatched yet. Asserted by MEANING, not by dict equality — this state gains keys as
+    # the hub learns to show more (S5-18: `approval_id` for the gate), and a strict `==` fails on
+    # additions that are correct.
+    assert idle["running"] is False and idle["run_id"] is None
+    assert idle["question"] is None and idle["approval_id"] is None
 
     res = trigger_onboarding_agent(
         tenant_id=tid, project_id=pid, agent_key="00_onboarding",
@@ -624,6 +807,40 @@ def test_step_state_reports_running_and_a_pending_question(world):
     run.save(update_fields=["status"])
     assert onboarding_step_state(
         tenant_id=tid, project_id=pid, agent_key="00_onboarding")["running"] is False
+
+
+def test_step_state_surfaces_the_gap_reports_pending_gate(world):
+    """S5-8 — the gap report is gated, so its run ends at `awaiting_gate`. That status counts as
+    "still in flight", which alone made the hub show "working…" for as long as the user took to
+    approve — with no way to reach the gate from the one page they were looking at. `approval_id`
+    is what lets the hub say "waiting for your approval" and link to it."""
+    from apps.gates.models import Approval
+    from apps.registry.catalog import seed_agent_specs
+    from apps.runs.enrollment import enroll_runner
+    from apps.runs.models import Run
+    from integrations.onboarding import onboarding_step_state
+
+    tid, pid = str(world["t"].id), str(world["project"].id)
+    seed_agent_specs(world["t"])
+    enroll_runner(tenant_id=tid, project_id=pid, developer_id=str(world["po"].id), label="l")
+    res = trigger_onboarding_agent(
+        tenant_id=tid, project_id=pid, agent_key="00_onboarding",
+        triggered_by=str(world["po"].id), workflow_starter=lambda *a, **k: None)
+    run = Run.objects.get(id=res.run_id)
+
+    # running, but no gate yet
+    assert onboarding_step_state(
+        tenant_id=tid, project_id=pid, agent_key="00_onboarding")["approval_id"] is None
+
+    run.status = Run.Status.AWAITING_GATE
+    run.save(update_fields=["status"])
+    approval = Approval.objects.create(
+        tenant=world["t"], run=run, work_item=run.work_item,
+        gate_type="phase_gate", required_role="product_owner", decision="pending")
+
+    parked = onboarding_step_state(tenant_id=tid, project_id=pid, agent_key="00_onboarding")
+    assert parked["running"] is True                       # the run is not finished…
+    assert parked["approval_id"] == str(approval.id)       # …it is waiting on the user
 
 
 def test_carrier_q_never_hides_a_work_item_without_a_source_key(world):

@@ -293,11 +293,21 @@ class TestGapReport:
         r = client.get(f"/api/projects/{brownfield_project.id}/gap-report/")
         assert r.status_code == 404
 
-    def test_gap_report_trigger_returns_200(self, client, sarah, brownfield_project):
+    def test_gap_report_trigger_dispatches_or_falls_back(self, client, sarah, brownfield_project):
+        """POST answers in two shapes and BOTH are correct (S5-17): **202** when a companion is
+        enrolled and the 00_onboarding agent was dispatched, **200** with the whole report when
+        the deterministic fallback ran inline. This test used to assert `in (200, 404)`, which
+        quietly encoded "the agent path never runs" as the expected behaviour — it would have
+        failed the moment the agent path started working, on the very journey it is guarding.
+        No companion is enrolled in these fixtures, so 200 is what we get here."""
         _login(client, "sarah@acme.com", "Str0ng-Pass!")
         r = client.post(f"/api/projects/{brownfield_project.id}/gap-report/")
-        # May return 200 with a gap report or 404 if no evidence yet
-        assert r.status_code in (200, 404)
+        assert r.status_code in (200, 202)
+        assert r.data["mode"] in ("agent", "deterministic")
+        if r.data["mode"] == "agent":
+            assert r.data["run_id"]                      # dispatched, async
+        else:
+            assert "phases" in r.data and "resume_phase" in r.data
 
     def test_gap_report_shape_when_available(self, client, sarah, acme, brownfield_project):
         """When gap report is built, it must match frontend GapReport type."""

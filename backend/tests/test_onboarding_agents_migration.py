@@ -138,20 +138,111 @@ def test_00c_gate_role_is_tech_lead():
     assert get_by_key("00c_intelligent_context_extractor").gate_role == "tech_lead"
 
 
-def test_00_reroutes_to_sors_intel_and_gap_report():
+def test_00_reroutes_to_registered_evidence_and_gap_report():
     body = _body("00_onboarding")
-    # discovery rerouted to the connected SoRs + code-intel + the worktree (no local files)
-    assert "docstore" in body and "tasktracker" in body
-    assert "codeintel" in body and "worktree" in body
-    assert "get_artifact" in body and "# Relevant Artifacts" in body and "# Rules" in body
-    # register-don't-recreate + reconcile reasoning preserved, rerouted to platform writes
-    assert "register-don't-recreate" in body and "register_artifact" in body
-    assert "add_trace_edge" in body and "Knowledge Index" in body
-    # the gap analysis is now a gap_report artifact, with a resume phase
+    # discovery reads what the PLATFORM registered — the manifest + the registry read tools.
+    assert "get_artifact_body" in body and "list_artifacts" in body
+    assert "list_work_items" in body
+    assert "# Relevant Artifacts" in body and "# Rules" in body
+    # register-don't-recreate reasoning preserved; the Knowledge Index is stated as the platform's
+    # job, not asked of the agent (B6 wording, S5-12)
+    assert "register-don't-recreate" in body and "Knowledge Index" in body
+    assert "platform indexes each registered body" in body.lower()
+    # the gap analysis is a gap_report artifact, with a resume phase
     assert "gap_report" in body and "resume phase" in body.lower()
     # no interactive-checklist / human-gate / next-command glue survives
     assert "STOP HERE" not in body and "Reply APPROVED" not in body
     assert "Next command" not in body and "Human Gate" not in body
+
+
+def test_00_names_the_tool_that_actually_writes_the_report():
+    """S5-1 — `submit_gap_report` is built, granted (runner.BUILD_STATE_TOOLS) and wired end to
+    end, and the body never mentioned it once. Worse, it told the agent the OPPOSITE: that the
+    platform computes the assessment and the agent's job is to 'verify and correct' it. Nothing
+    pre-generates a report on the agent path, so the agent found nothing to verify, and `gap.ready`
+    stayed false forever. The old test passed on the word "gap_report" appearing anywhere in prose,
+    which is why this survived."""
+    body = _body("00_onboarding")
+    assert "submit_gap_report" in body, "00_onboarding never names the tool that writes its report"
+    # called ONCE, at the end — not written into a document (the ideation-class adherence risk)
+    assert "exactly once" in body.lower()
+    # and the contract is inline, so the shape is never guessed
+    for key in ["ideation", "task_breakdown", "code_review", "cicd", "deployment"]:
+        assert key in body, f"phase key {key!r} missing from the submit contract"
+    assert '"complete"' in body and '"partial"' in body and '"missing"' in body
+    # the platform-computes-it-for-you instruction is gone
+    assert "verify and correct" not in body.lower()
+
+
+def test_00_does_not_promise_code_access_it_does_not_have():
+    """S5-2 — `00_onboarding` runs with `reads_code=False`: no worktree, an empty temp cwd, no
+    `codeintel.*` server, and Read/Grep/Glob/Bash hard-denied by `_PLANNING_DISALLOWED_TOOLS`. The
+    body instructed worktree + `codeintel.*` work in four places, including the fallback used when
+    00c never ran — the one case with no other source of code facts. Code evidence comes from 00c's
+    registered artifacts, which are pinned into the manifest (S5-11)."""
+    body = _body("00_onboarding")
+    assert "codeintel" not in body, "00_onboarding cannot call codeintel.* — it has no such server"
+    assert "search_codebase" not in body
+    # `worktree` may only appear as a denial, never as an instruction
+    for line in body.splitlines():
+        if "worktree" in line:
+            assert "no worktree" in line.lower(), f"body still directs worktree work: {line!r}"
+    # the intelligence artifacts it reads INSTEAD are named
+    for art in ["codebase_intelligence", "dependency_graph", "git_analytics",
+                "dead_code", "architecture_decisions"]:
+        assert art in body, f"00 missing code-evidence source {art!r}"
+    # and 00c is a stated prerequisite, not an optional nicety
+    assert "prerequisite" in body.lower()
+
+
+def test_00_does_not_call_capabilities_no_agent_can_reach():
+    """S5-10 — `docstore.*` / `tasktracker.*` / `designsource.*` / `testmgmt.*` are backend-only
+    Python Protocols (integrations/capabilities.py). No MCP tool wraps any of them, and none appear
+    in BUILD_STATE_TOOLS. The body told the agent to 'refresh detail through the capability' and
+    named `designsource.get_design_context()` by name. The reachable route is the registry."""
+    body = _body("00_onboarding")
+    for cap in ["docstore.", "tasktracker.", "designsource.", "testmgmt."]:
+        assert cap not in body, f"00 still instructs an uncallable capability {cap!r}"
+    assert "registered artifacts, not as live connectors" in body
+
+
+def test_00_assesses_only_and_registers_no_lifecycle_content():
+    """Team decision 2026-08-03 (option c): 00_onboarding assesses and reports. It does NOT
+    transform source material into requirements/PRD/architecture drafts.
+
+    Why it matters: onboarding runs on a carrier work item, and `publish_artifacts` publishes every
+    run-scoped artifact. Under the old body the drafts it was told would 'publish only on the gate'
+    were published with no review, while the gap report — the one thing built for review — was
+    never published at all. Transformation belongs to the phase agents, each already gated."""
+    body = _body("00_onboarding")
+    assert "register no lifecycle content" in body
+    assert "assumption" in body.lower()
+    # the transformation instructions are gone
+    assert "Transformation Rules" not in body
+    assert "Translate Jira tickets into User Story format" not in body
+    assert "Translate architecture diagrams into ADR format" not in body
+    # `register_artifact` survives for the assumption log ONLY, and says so
+    assert "only** artifact type this agent registers" in body
+
+
+def test_00_describes_a_gate_that_actually_opens():
+    """S5-14 — the body promised a Product Owner gate while the run was headless. It is now
+    genuinely gated (`_GATED_ONBOARDING_AGENTS`), and approval is what publishes the report."""
+    body = _body("00_onboarding")
+    assert "Product Owner" in body and "review gate" in body
+    assert "headless" not in body.lower()
+
+
+def test_00_resolves_anomalies_instead_of_forwarding_them():
+    """S5-13 — the S4-24 rule, weighted for THIS agent. 00c was told to verify from the code first
+    because it had Read/Grep. 00_onboarding has no file tools at all, so the first route is the
+    registry and `ask_human` carries far more of the load."""
+    body = _body("00_onboarding")
+    assert "ask_human" in body, "00 never tells the agent the clarification channel exists"
+    verify_at = body.find("answer it yourself")
+    ask_at = body.find("ask_human")
+    assert verify_at != -1 and verify_at < ask_at, "self-service from the registry must precede ask"
+    assert "none passed to the reader unresolved" in body
 
 
 def test_00_gate_role_is_product_owner():

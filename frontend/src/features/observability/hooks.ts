@@ -82,6 +82,10 @@ export function useGapReport(projectId: string | undefined) {
     queryKey: ["gap-report", projectId],
     queryFn: () => api.getGapReport(projectId as string),
     enabled: Boolean(projectId),
+    // Polls like the hub does (S5-8). Without this the Gap report screen only refetched on mount:
+    // sitting on it while an agent run finished showed a stale report, or none at all, until the
+    // user reloaded by hand. An agent assessment takes minutes — the screen has to notice.
+    refetchInterval: 4000,
   });
 }
 

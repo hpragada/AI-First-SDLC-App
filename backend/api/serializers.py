@@ -476,12 +476,16 @@ class ApprovalSerializer(serializers.ModelSerializer):
     # surface the conflict so the gate panel can explain WHY the user is being asked to approve
     # again (resolve in GitHub, then re-approve to retry the merge — no rebuild). None otherwise.
     merge_conflict = serializers.SerializerMethodField()
+    # The work item's own title, so a gate can name itself without the client cross-referencing
+    # the work-item LIST — which deliberately hides carriers, and so rendered an onboarding gate
+    # as a bare id fragment (or, before the project filter moved server-side, dropped it entirely).
+    work_item_title = serializers.SerializerMethodField()
 
     class Meta:
         model = Approval
         fields = [
-            "id", "run", "gate_type", "phase", "work_item", "required_role", "approver",
-            "approver_name", "decision", "comment", "decided_at", "created_at",
+            "id", "run", "gate_type", "phase", "work_item", "work_item_title", "required_role",
+            "approver", "approver_name", "decision", "comment", "decided_at", "created_at",
             "merge_conflict",
         ]
         read_only_fields = fields
@@ -492,6 +496,9 @@ class ApprovalSerializer(serializers.ModelSerializer):
     def get_phase(self, obj) -> str | None:
         spec = getattr(obj.run, "agent_spec", None)
         return getattr(spec, "key", None) if spec is not None else None
+
+    def get_work_item_title(self, obj) -> str | None:
+        return getattr(obj.work_item, "title", None) or None
 
     def get_merge_conflict(self, obj) -> str | None:
         # Only relevant while the gate is still pending (a re-opened, awaiting-retry merge gate).
