@@ -361,15 +361,41 @@ exposes `run_status`, and the screen distinguishes a live wait (`pending`/`runni
 ended one: the card shows *"This run has ended"* and explains that answering still helps
 because the answers replay on the next run. Nothing is cancelled; only the promise changed.
 
-## 12. STILL OPEN
+## 12. Defect H — the connection churn itself  ✅ FIXED
 
-**The connection churn itself.** `CONN_MAX_AGE` + `CONN_HEALTH_CHECKS` would cut handshakes
-by >95%, but they interact with RLS: `set_config(…, false)` is *session*-scoped, so a reused
-connection carries `app.tenant_id` across requests. The `finally: clear_current_tenant()` in
-`TenantContextMiddleware` should cover it — *should* is not good enough for a tenant-isolation
-boundary, so that change must ship with an explicit cross-tenant isolation test or not at all.
-Note also that no application change can make a public-internet link reliable; retry is the
-mitigation, and a private network or a pooler beside the database is the cure.
+`CONN_MAX_AGE = 0` and `CONN_HEALTH_CHECKS = False` meant Django opened and closed a brand-new
+connection for **every request** — ~320ms of TCP+TLS+auth each, against a Postgres reached over
+the public internet, at ~24 requests/minute from an idle companion alone. Every one of those
+handshakes was a chance to fail, and `TenantContextMiddleware` issues the first query of each
+request with no retry anywhere, so a single dropped handshake was a user-facing 500. That is
+the trigger for §8.
+
+**Fix.** `CONN_MAX_AGE = 60` and `CONN_HEALTH_CHECKS = True` (both env-overridable via
+`DB_CONN_MAX_AGE` / `DB_CONN_HEALTH_CHECKS`, so this can be switched off without a deploy).
+Health checks probe a reused connection at request start and transparently replace a dead one.
+`_enter_tenant_scope` additionally retries the first touch **once** on a fresh connection — a
+genuine outage still surfaces rather than hanging.
+
+**The RLS hazard this creates, and why it is safe.** `app.tenant_id` is a **session** GUC, so a
+pooled connection carries tenant scope between requests — and the middleware's no-tenant path
+deliberately never touches the DB, so it would inherit whatever the previous request left
+behind. With `CONN_MAX_AGE = 0` that was impossible by accident, not by design. The invariant is
+now explicit: **after a tenant-scoped request the connection is either scoped to `''` or gone.**
+`_release_tenant_scope` clears the GUC and, if clearing fails, **discards the connection** rather
+than returning it to the pool still scoped. It never re-raises — the response is already made.
+
+**Verified.** `tests/test_persistent_connection_rls.py`, ten tests in two halves: the database
+half drives the real RLS policies over one reused connection as the non-superuser app role
+(A → released → B → A, plus fail-closed and never-scoped cases); the middleware half drives the
+set/release/discard/retry paths directly. Both halves were **mutation-tested** — breaking the
+discard-on-failed-release makes 1 fail, removing the retry makes 2 fail, and granting the app
+role SUPERUSER makes all 3 database tests fail. Runtime check against the live remote database:
+four consecutive requests shared `backend_pid`, scope was correct during each and `''` after,
+and a following no-tenant request saw `''`.
+
+**Not fixed, and not fixable in code:** no application change makes a public-internet link
+reliable. Retry and reuse are the mitigation; a private network or a pooler beside the database
+is the cure.
 
 **The idle poll interval (5s) was deliberately left alone.** Raising it to 15–30s would cut
 request volume 3–6×, but it also adds up to that much latency to every phase pickup, which is
@@ -393,6 +419,19 @@ docker compose --profile app run --rm \
   backend pytest
 ```
 
-Baseline on that setup is **33 failed · 1093 passed · 28 skipped · 13 errors** — the 12
+Baseline on that setup was **33 failed · 1093 passed · 28 skipped · 13 errors** — the 12
 `test_companion_runner` failures and 7 `test_codeintel` errors are the container having no
 `git` binary. Compare against that baseline, not against zero.
+
+**The RLS tests were passing vacuously — worth knowing before trusting any of them.** In the
+compose database `sdlc_app` had been created as a **SUPERUSER**, and superusers bypass row-level
+security entirely, so all seven `test_rls_isolates_*` tests failed there (the app role saw every
+tenant's rows). One statement fixes it, and it is what production should look like anyway:
+
+```
+docker compose exec postgres psql -U postgres -d sdlc_platform -c "ALTER ROLE sdlc_app NOSUPERUSER;"
+```
+
+All seven then pass, and the baseline becomes **26 failed · 1113 passed**. The lesson generalises:
+a green RLS test proves nothing unless the role under test is actually subject to RLS — which is
+why §12's new tests are mutation-checked against a re-granted SUPERUSER.

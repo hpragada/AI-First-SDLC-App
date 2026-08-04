@@ -108,6 +108,24 @@ DATABASES = {
         default="postgres://postgres:postgres@localhost:5433/sdlc_platform",
     )
 }
+# Reuse connections across requests. Django's default (0) opens and closes a NEW connection
+# for every single request; against a remote Postgres that measured ~320ms of TCP+TLS+auth
+# each time, and the companion alone drives ~24 requests/minute while merely idling. Every one
+# of those handshakes was a chance to fail, and `TenantContextMiddleware` issues the first
+# query of each request, so one dropped handshake surfaced as a 500 OperationalError with no
+# retry anywhere (Bugs S.No 235).
+#
+# CONN_HEALTH_CHECKS makes Django probe a reused connection at the start of a request and
+# transparently replace a dead one — which is what absorbs the drop rather than 500-ing on it.
+#
+# Both are env-overridable so this can be turned off in seconds without a code change.
+# SAFETY: `app.tenant_id` is a SESSION GUC, so a reused connection carries tenant scope
+# between requests. `TenantContextMiddleware` sets it at the start of every tenant-scoped
+# request and releases it in a `finally` that DISCARDS the connection if the release fails,
+# so a connection can never return to the pool still scoped to a tenant. Proven by
+# `tests/test_persistent_connection_rls.py` — do not raise CONN_MAX_AGE without reading it.
+DATABASES["default"]["CONN_MAX_AGE"] = env.int("DB_CONN_MAX_AGE", default=60)
+DATABASES["default"]["CONN_HEALTH_CHECKS"] = env.bool("DB_CONN_HEALTH_CHECKS", default=True)
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
