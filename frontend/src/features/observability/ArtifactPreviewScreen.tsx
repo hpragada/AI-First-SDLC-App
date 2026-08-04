@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { Badge, Banner, Card, CardBody, Breadcrumb, DocPreview, Markdown, Panel, Spinner } from "../../components/ui";
-import type { ArtifactState } from "../../types";
+import { isPhaseReport, type ArtifactState } from "../../types";
 import { artifactLabel } from "../lifecycle/phases";
 import { useArtifactPreview } from "./hooks";
 
@@ -109,7 +109,20 @@ function ArtifactPreviewLive() {
                 </>
               )}
             </div>
-            <Banner variant="info">Read-through from the system-of-record. This preview is never an editor.</Banner>
+            {isPhaseReport(data) ? (
+              // The platform files the engine's closing message as a phase-typed artifact
+              // whatever that message says. When a run fails mid-phase that text is a status
+              // report or a list of unanswered questions — never the deliverable — so it must
+              // not be introduced as one. The 2026-07-30 fix stopped the GATE opening on such
+              // a row; this stops it *reading* as a finished document.
+              <Banner variant="warning" title="Run output — not a deliverable">
+                This is the platform's copy of the engine's closing message for this run, not an
+                artifact the agent saved. If the run failed or stopped to ask a question, that is
+                what you are reading here. Re-run the phase to produce the real document.
+              </Banner>
+            ) : (
+              <Banner variant="info">Read-through from the system-of-record. This preview is never an editor.</Banner>
+            )}
             {states.length > 0 ? (
               <WireframeStates states={states} />
             ) : data.content_type === "text/html" ? (

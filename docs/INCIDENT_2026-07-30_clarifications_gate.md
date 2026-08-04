@@ -314,29 +314,54 @@ asserting the happy path's exact sleep sequence — the fix is invisible when no
 restart to take effect (see §5 — a companion whose files change underneath it is its own
 failure mode).
 
-## 9. STILL OPEN from chapter 2
+## 9. Defect E — the platform's copy read as a deliverable  ✅ FIXED
 
-**The platform's copy still renders as a deliverable.** §4 marked it
-(`external_ref.source = "phase_report"`) and stopped the gate — it did not stop the artifact.
-`grep -r phase_report frontend/src/` returns **nothing**: the marker never reached the UI, so
-the Artifacts screen cannot tell the platform's copy of a closing message from a real
-deliverable. That is why the questions were still visible on screen after the July 30 fix.
-The artifact list and preview should read the marker and label it as the engine's closing
-message, not a draft artifact.
+§4 *marked* the platform's own artifact (`external_ref.source = "phase_report"`) and stopped
+the gate opening on it. It did not stop the artifact existing, and
+`grep -r phase_report frontend/src/` returned **nothing** — the marker was backend-only. So
+after the July 30 fix the Artifacts screen still rendered a failed run's status message as
+`Requirements — SPENDLog · v1 · draft` with a "Read-through from the system-of-record" banner
+and eight unanswered clarification questions in the body. Half the reported symptom was fixed;
+the visible half was not.
 
-**The parked message accuses the wrong subsystem.** It reads *"no `register_artifact` at all
-points at the agent's write tools being absent from its context."* In this run the write tools
-were fine; `ask_human` broke. The message should be driven by evidence the platform already
-holds: a pending clarification on the run means the agent asked and never got an answer; zero
-`POST /api/runner/state/*` calls means tools were unreachable (§4b's decisive measurement);
-calls made and failed means the MCP server.
+**Fix.** `read_artifact_preview` now returns `source`, and the UI reads it: the registry row
+carries a *Run output — not a deliverable* label instead of a Draft badge, and the preview
+replaces the read-through banner with a warning that says what the row actually is and tells
+the reader to re-run the phase. The marker string is asserted identical on both sides so the
+contract cannot drift.
 
-**Orphaned clarifications advertise a resume that cannot happen.** The clarification is still
-`pending` and the UI says *"Answer it to resume in the same session"*, but the poller and the
-engine session are gone. Nothing reconciles a pending clarification whose waiter died. It
-should be marked, and the copy should tell the truth: answer it anyway, then re-run the phase
-— `composer._render_clarifications` replays answered clarifications, so the answers are not
-wasted. (Adjacent to the stale-clarification-history item in §5.)
+## 10. Defect F — the failure message accused the wrong subsystem  ✅ FIXED
+
+`verify_write_completeness_core` ended its message with *"no `register_artifact` at all points
+at the agent's write tools being absent from its context."* That was true of the run it was
+written for (§4b — `ToolSearch` denylisted, tools deferred out of reach). It was false here:
+`fad927a2`'s write tools were fine and `ask_human` broke, so the message sent the reader
+hunting the wrong subsystem.
+
+**Fix.** The reason is now derived from evidence. A **pending clarification on the run** is
+decisive and free to check — it means the agent *did* reach its tools, asked, and never got an
+answer, at which point Rule 1 forbids it writing anything. The message says so, states plainly
+that this is not a tooling failure, and points at the recovery that works. With no pending
+clarification the original tooling text is unchanged.
+
+## 11. Defect G — orphaned clarifications promised a resume  ✅ FIXED
+
+The Clarifications screen said *"Answering resumes the run in the same session"* and the card
+read *"Paused — waiting for your answer"*. For `fad927a2` both were false: the poller had
+raised and the engine session had exited, so no answer could resume anything.
+
+**The obvious fix was wrong.** Cancelling an orphaned clarification would have made it
+*unanswerable* — `answer_clarification` rejects any status other than `PENDING` — destroying
+the one recovery that works, and the one §10's new message now points at. The answer is still
+valuable precisely because `composer._render_clarifications` replays answered clarifications
+into a re-dispatched run's manifest.
+
+**Fix.** The clarification stays `PENDING` and answerable. `ClarificationSerializer` now
+exposes `run_status`, and the screen distinguishes a live wait (`pending`/`running`) from an
+ended one: the card shows *"This run has ended"* and explains that answering still helps
+because the answers replay on the next run. Nothing is cancelled; only the promise changed.
+
+## 12. STILL OPEN
 
 **The connection churn itself.** `CONN_MAX_AGE` + `CONN_HEALTH_CHECKS` would cut handshakes
 by >95%, but they interact with RLS: `set_config(…, false)` is *session*-scoped, so a reused
@@ -345,3 +370,29 @@ connection carries `app.tenant_id` across requests. The `finally: clear_current_
 boundary, so that change must ship with an explicit cross-tenant isolation test or not at all.
 Note also that no application change can make a public-internet link reliable; retry is the
 mitigation, and a private network or a pooler beside the database is the cure.
+
+**The idle poll interval (5s) was deliberately left alone.** Raising it to 15–30s would cut
+request volume 3–6×, but it also adds up to that much latency to every phase pickup, which is
+plainly visible in use. It belongs with the `CONN_MAX_AGE` work, which achieves far more
+without the latency cost — not as a standalone change.
+
+**The companion still reports `ok` when a blocking tool dies.** It cannot see that `ask_human`
+failed, so the platform cannot distinguish "the agent finished and wrote nothing" from "the
+agent's tools broke". §10 infers the difference from a pending clarification, which covers the
+observed case; tracking tool outcomes in the companion would settle it directly.
+
+## 13. Testing note — the suite needs the LOCAL database
+
+Much of the suite cannot run against the remote database in `.env`: the `sdlc_app` role has no
+`CREATEDB`, so every Django test that needs a test database ERRORs at setup. Pointing at the
+compose Postgres turns **746 errors into 13**:
+
+```
+docker compose --profile app run --rm \
+  -e DATABASE_URL="postgres://postgres:postgres@postgres:5432/sdlc_platform" \
+  backend pytest
+```
+
+Baseline on that setup is **33 failed · 1093 passed · 28 skipped · 13 errors** — the 12
+`test_companion_runner` failures and 7 `test_codeintel` errors are the container having no
+`git` binary. Compare against that baseline, not against zero.

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, EmptyState, Panel, Table } from "../../components/ui";
+import { isPhaseReport } from "../../types";
 import { phaseLabel, artifactLabel } from "../lifecycle/phases";
 import { useArtifacts } from "./hooks";
 
@@ -168,12 +169,24 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
                   : filtered.map((artifact) => [
                       <span className="table__primary" key="t">
                         {artifactLabel(artifact.title, artifact.type)}
+                        {isPhaseReport(artifact) && (
+                          // Not a deliverable: the platform's copy of the engine's closing
+                          // message. Saying so in the list stops a failed run's status text
+                          // from reading as a finished document.
+                          <span className="t-xs u-muted" style={{ display: "block" }}>
+                            Run output — not a deliverable
+                          </span>
+                        )}
                       </span>,
                       phaseLabel(artifact.phase),
                       <span className="table__id" key="v">
                         v{artifact.version}
                       </span>,
-                      statusBadge(artifact.status),
+                      isPhaseReport(artifact) ? (
+                        <Badge variant="info-hue" key="s">Run output</Badge>
+                      ) : (
+                        statusBadge(artifact.status)
+                      ),
                       artifact.sor ? (
                         <span className="sor-chip sor-chip--confluence" key="sor">
                           <span className="sor-chip__glyph">C</span>

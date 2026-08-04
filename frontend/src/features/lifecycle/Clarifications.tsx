@@ -14,7 +14,7 @@ import {
   Select,
   Spinner,
 } from "../../components/ui";
-import type { Clarification, ClarificationQuestion } from "../../types";
+import { isRunListening, type Clarification, type ClarificationQuestion } from "../../types";
 import { useAnswerClarification, useClarifications, useWorkItems } from "./hooks";
 import { phaseLabel } from "./phases";
 
@@ -265,8 +265,23 @@ function ClarificationsLive() {
               <span className="wi-card__id">{workItemLabel(current.work_item)}</span>
               <Badge variant="needs-answer">{phaseLabel(current.phase)} · needs answer</Badge>
               <span className="u-spacer" />
-              <span className="zero-cost">⏸ Paused — waiting for your answer</span>
+              {isRunListening(current.run_status) ? (
+                <span className="zero-cost">⏸ Paused — waiting for your answer</span>
+              ) : (
+                <span className="t-xs u-muted">⚠ This run has ended</span>
+              )}
             </div>
+            {!isRunListening(current.run_status) && (
+              // The agent that asked this is gone (run fad927a2: its poll died, the phase
+              // reported, the run parked). Answering cannot resume anything — but the answer
+              // is replayed into the next run's manifest, so it is still worth giving. Say
+              // exactly that instead of promising a resume that cannot happen.
+              <p className="clar-card__why">
+                The run that asked this has already ended, so answering won't resume it. Your
+                answers are still saved and replayed the next time you run this phase — so
+                answer here, then re-run the phase and it won't ask again.
+              </p>
+            )}
             {current.context && <p className="clar-card__why">{current.context}</p>}
             {groupByTier(current.questions).map(({ tier, questions }) => (
               <section key={tier} className="clar-tier" data-tier={tier}>
