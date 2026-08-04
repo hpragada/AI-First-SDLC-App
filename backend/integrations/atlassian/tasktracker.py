@@ -30,6 +30,87 @@ def _adf(text: str) -> dict:
     return {"type": "doc", "version": 1, "content": [paragraph]}
 
 
+#: ADF block types rendered as a markdown list item, and the bullet to use.
+_ADF_LIST_MARK = {"bulletList": "- ", "orderedList": "1. "}
+
+
+def _adf_to_text(node, _depth: int = 0) -> str:
+    """Flatten an Atlassian Document Format body to readable markdown.
+
+    Jira v3 returns descriptions as ADF, not a string — a nested tree of blocks. Reading it
+    without this returns a dict, and `str()`-ing that would hand an agent a wall of JSON.
+
+    Deliberately lossy but *faithful to the words*: headings, lists, code blocks, links, tables
+    and line breaks survive as text, because a task's acceptance criteria are usually a bulleted
+    list and losing the bullets loses the structure of the requirement. Panels/media/emoji
+    degrade to their text content rather than disappearing silently. Anything unrecognised still
+    has its children walked, so a node type Atlassian adds later costs formatting, never content.
+    """
+    if node is None:
+        return ""
+    if isinstance(node, str):
+        return node
+    if isinstance(node, list):
+        return "".join(_adf_to_text(n, _depth) for n in node)
+    if not isinstance(node, dict):
+        return ""
+
+    kind = node.get("type")
+    kids = node.get("content") or []
+
+    if kind == "text":
+        text = node.get("text", "")
+        for mark in node.get("marks") or []:
+            if mark.get("type") == "code":
+                text = f"`{text}`"
+            elif mark.get("type") == "link":
+                href = (mark.get("attrs") or {}).get("href")
+                if href:
+                    text = f"[{text}]({href})"
+        return text
+    if kind in ("hardBreak", "rule"):
+        return "\n"
+    if kind == "mention":
+        return (node.get("attrs") or {}).get("text") or ""
+    if kind == "emoji":
+        attrs = node.get("attrs") or {}
+        return attrs.get("text") or attrs.get("shortName") or ""
+    if kind == "inlineCard":
+        return (node.get("attrs") or {}).get("url") or ""
+    if kind == "codeBlock":
+        lang = (node.get("attrs") or {}).get("language") or ""
+        return f"\n```{lang}\n{_adf_to_text(kids, _depth)}\n```\n"
+    if kind == "heading":
+        level = (node.get("attrs") or {}).get("level") or 1
+        return f"\n{'#' * int(level)} {_adf_to_text(kids, _depth).strip()}\n"
+    if kind in _ADF_LIST_MARK:
+        mark, indent = _ADF_LIST_MARK[kind], "  " * _depth
+        items = [_adf_to_text(k, _depth + 1).strip() for k in kids]
+        return "\n" + "\n".join(f"{indent}{mark}{i}" for i in items if i) + "\n"
+    if kind == "listItem":
+        return _adf_to_text(kids, _depth).strip()
+    if kind in ("paragraph", "blockquote", "panel", "tableCell", "tableHeader"):
+        body = _adf_to_text(kids, _depth).strip()
+        return f"{body}\n" if body else ""
+    if kind == "tableRow":
+        cells = [_adf_to_text(k, _depth).strip().replace("\n", " ") for k in kids]
+        return "| " + " | ".join(cells) + " |\n"
+
+    return _adf_to_text(kids, _depth)
+
+
+def _description_text(value) -> str:
+    """A Jira description as text, whichever shape the field arrives in (ADF doc, or a plain
+    string on older sites / some import paths)."""
+    if not value:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return "\n".join(
+        line.rstrip() for line in _adf_to_text(value).splitlines()
+    ).strip()
+
+
 class AtlassianTaskTracker:
     def __init__(self, config: AtlassianConfig, project: str, transport: Transport | None = None):
         self._cfg = config
@@ -82,7 +163,10 @@ class AtlassianTaskTracker:
     def get_issue(self, *, issue_ref: str) -> Issue:
         data = self._rest.request(
             "GET", f"/rest/api/3/issue/{issue_ref}",
-            query={"fields": "summary,status,issuetype,parent"},
+            # `description` is the issue's actual specification — for a brownfield import it is
+            # the ONLY statement of what the work is. Omitting it from `fields` meant every
+            # imported work item reached the build agent as a bare one-line title.
+            query={"fields": "summary,status,issuetype,parent,description"},
         )
         f = data.get("fields") or {}
         parent = (f.get("parent") or {}).get("key")
@@ -91,6 +175,7 @@ class AtlassianTaskTracker:
             status=(f.get("status") or {}).get("name", ""),
             issue_type=(f.get("issuetype") or {}).get("name", ""),
             url=self._browse(data["key"]), parent_ref=parent,
+            description=_description_text(f.get("description")),
         )
 
     def available_transitions(self, *, issue_ref: str) -> list[str]:

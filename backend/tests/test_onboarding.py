@@ -247,6 +247,70 @@ def test_register_atlassian_imports_jira_backlog_idempotently(world):
     assert WorkItem.objects.filter(project=world["project"]).count() == 2
 
 
+def test_jira_import_carries_the_issue_description(world):
+    """The summary is a label; the DESCRIPTION is the specification. A brownfield backlog
+    imported without it reaches the build agent as a bare one-line title, so the agent has to
+    invent the requirement it was asked to implement."""
+    tasktracker = _FakeTaskTracker(
+        [IssueHit(key="ST-9", summary="ExpenseService")],
+        {"ST-9": Issue(key="ST-9", summary="ExpenseService", status="To Do", issue_type="Task",
+                       url="https://x/browse/ST-9",
+                       description=(
+                           "Every query MUST filter by user_id.\n- reject cross-user reads"))},
+    )
+    register_atlassian(tenant_id=str(world["t"].id), project_id=str(world["project"].id),
+                       tasktracker=tasktracker, project_key="ST")
+    wi = WorkItem.objects.get(project=world["project"], external_ref__id="ST-9")
+    assert "filter by user_id" in wi.description
+    assert "reject cross-user reads" in wi.description
+
+
+def test_reimport_backfills_a_description_that_was_never_imported(world):
+    """The create loop SKIPS an already-registered issue, so without a repair pass a backlog
+    imported before descriptions were read could never be fixed — the user re-runs the import,
+    sees '0 new issues', and still has a backlog with no specifications in it."""
+    tasktracker = _FakeTaskTracker(
+        [IssueHit(key="ST-9", summary="ExpenseService")],
+        {"ST-9": Issue(key="ST-9", summary="ExpenseService", status="To Do", issue_type="Task",
+                       url="https://x/browse/ST-9")},          # first import: no description
+    )
+    kw = dict(tenant_id=str(world["t"].id), project_id=str(world["project"].id),
+              tasktracker=tasktracker, project_key="ST")
+    register_atlassian(**kw)
+    wi = WorkItem.objects.get(project=world["project"], external_ref__id="ST-9")
+    assert wi.description == ""
+
+    tasktracker._issues["ST-9"] = Issue(
+        key="ST-9", summary="ExpenseService", status="To Do", issue_type="Task",
+        url="https://x/browse/ST-9", description="Every query MUST filter by user_id.")
+    out = register_atlassian(**kw)
+    assert out["registered_issues"] == []            # nothing new — this is a repair, not an add
+    assert out["descriptions_backfilled"] == 1
+    wi.refresh_from_db()
+    assert "filter by user_id" in wi.description
+
+
+def test_reimport_never_overwrites_a_description_a_human_edited(world):
+    """Only an EMPTY description is filled. A description edited in the platform is the human's
+    and Jira does not get to overwrite it — the same rule the parent-repair pass follows."""
+    tasktracker = _FakeTaskTracker(
+        [IssueHit(key="ST-9", summary="ExpenseService")],
+        {"ST-9": Issue(key="ST-9", summary="ExpenseService", status="To Do", issue_type="Task",
+                       url="https://x/browse/ST-9", description="from jira")},
+    )
+    kw = dict(tenant_id=str(world["t"].id), project_id=str(world["project"].id),
+              tasktracker=tasktracker, project_key="ST")
+    register_atlassian(**kw)
+    wi = WorkItem.objects.get(project=world["project"], external_ref__id="ST-9")
+    wi.description = "the human's own words"
+    wi.save(update_fields=["description"])
+
+    out = register_atlassian(**kw)
+    assert out["descriptions_backfilled"] == 0
+    wi.refresh_from_db()
+    assert wi.description == "the human's own words"
+
+
 def test_register_atlassian_skips_gracefully_when_jira_not_connected(world):
     # B3-1: no tasktracker connected → graceful skip (no error), so onboarding never dead-ends.
     out = register_atlassian(

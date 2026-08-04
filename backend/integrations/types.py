@@ -46,6 +46,10 @@ class Issue:
     issue_type: str
     url: str
     parent_ref: str | None = None
+    # The issue's body. For an imported brownfield backlog this is the specification — the
+    # summary is a label, the description is what the work actually is. Defaulted so an older
+    # connector that doesn't populate it still constructs.
+    description: str = ""
 
 
 @dataclass(frozen=True)

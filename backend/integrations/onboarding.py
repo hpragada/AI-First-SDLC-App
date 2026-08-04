@@ -759,6 +759,7 @@ def register_atlassian(*, tenant_id, project_id, tasktracker=None, project_key=N
     fetched = [tasktracker.get_issue(issue_ref=hit.key) for hit in hits]
 
     registered_issues: list[str] = []
+    repaired_descriptions = 0
     by_key: dict[str, object] = {}
     with tenant_context(tenant_id):
         project = Project.objects.get(id=project_id, tenant_id=tenant_id)
@@ -773,6 +774,10 @@ def register_atlassian(*, tenant_id, project_id, tasktracker=None, project_key=N
             wi = WorkItem.objects.create(
                 tenant_id=tenant_id, project=project,
                 type=_ISSUE_TYPE.get(issue.issue_type, "task"), title=issue.summary,
+                # The issue's body IS the specification. Dropping it left every imported item a
+                # bare title, so the build agent had to invent the requirement it was meant to
+                # implement — and nothing anywhere said the spec had gone missing.
+                description=issue.description or "",
                 state=WorkItem.State.ACCEPTED,
                 external_ref={"sor": "jira", "id": issue.key, "url": issue.url},
             )
@@ -794,8 +799,25 @@ def register_atlassian(*, tenant_id, project_id, tasktracker=None, project_key=N
                 child.parent = parent
                 child.save(update_fields=["parent", "updated_at"])
 
+        # Backfill descriptions the same way, and for the same reason: the create loop above
+        # SKIPS an issue that is already registered, so a re-import would never repair a backlog
+        # imported before the description was read — the user would re-run the import, see
+        # "0 new issues", and still have 68 specification-less work items.
+        # Only ever FILLS AN EMPTY one: a description edited in the platform is the human's, and
+        # Jira must not overwrite it.
+        for issue in fetched:
+            wi = by_key.get(issue.key)
+            if wi is not None and issue.description and not (wi.description or "").strip():
+                wi.description = issue.description
+                wi.save(update_fields=["description", "updated_at"])
+                repaired_descriptions += 1
+        if repaired_descriptions:
+            tools.log_event(tenant_id, "onboarding", "issues.descriptions_backfilled", "project",
+                            str(project_id), {"count": repaired_descriptions})
+
     return {
         "registered_issues": registered_issues,
+        "descriptions_backfilled": repaired_descriptions,
         "tasktracker_connected": True,
         # Everything the UI needs to tell the truth about a partial import.
         "issues_available": available,
