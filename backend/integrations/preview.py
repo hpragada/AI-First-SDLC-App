@@ -341,4 +341,11 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
             "artifact_type": artifact.type,
             "export_target": export_target,
             "states": states,
+            # WHO produced this row. `phase_report` = the platform's own copy of the engine's
+            # closing message, not something the agent chose to register (see
+            # activities.PHASE_REPORT_SOURCE). The marker existed backend-only, so the UI
+            # rendered a failed run's status message as an ordinary draft deliverable —
+            # which is how a screen full of clarification QUESTIONS still read as
+            # "Requirements — SPENDLog · draft" after the 2026-07-30 gate fix.
+            "source": (artifact.external_ref or {}).get("source") or "",
         }

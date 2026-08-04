@@ -99,6 +99,14 @@ export interface Artifact {
   content_hash: string;
   version: number;
   created_at: string;
+  // Pointer + provenance. `source: "phase_report"` marks the platform's own copy of the
+  // engine's closing message — see `isPhaseReport`.
+  external_ref?: {
+    sor?: string;
+    id?: string;
+    url?: string;
+    source?: string;
+  } | null;
 }
 
 export interface TraceEdge {
@@ -151,9 +159,19 @@ export interface ClarificationQuestion {
   suggestion?: unknown;
 }
 
+// Answering a clarification resumes the agent's OPEN `ask_human` tool call — but only while
+// that session still exists. Once the run has left these states the poller is gone and no
+// answer can resume anything; the answer is still worth giving (it replays into a re-run's
+// manifest), so the question stays answerable and only the promise changes.
+export function isRunListening(runStatus: string | undefined) {
+  return runStatus === "pending" || runStatus === "running";
+}
+
 export interface Clarification {
   id: string;
   run: string;
+  // The parent run's status, so the screen can tell a live wait from an orphaned question.
+  run_status?: string;
   work_item: string;
   phase: string;
   status: string; // "pending" | "answered" | "cancelled"
@@ -747,6 +765,21 @@ export interface ArtifactPreview {
   // Multi-state artifacts (per-screen wireframes) carry one self-contained HTML document per
   // UI state; the preview renders them behind a state switcher. Empty for single-body ones.
   states?: ArtifactState[];
+  // Provenance: "phase_report" means the PLATFORM filed this from the engine's closing
+  // message — it is not a deliverable the agent chose to register. See PHASE_REPORT_ARTIFACT.
+  source?: string;
+}
+
+// `external_ref.source` on an artifact the platform filed from the engine's final message.
+// Mirrors `orchestration.activities.PHASE_REPORT_SOURCE` — a contract, not a label.
+export const PHASE_REPORT_ARTIFACT = "phase_report";
+
+// True when the platform, not the agent, produced this row. Such a row is a record of what
+// the engine last said (often an error or a list of questions) and must never be presented
+// as a reviewable deliverable.
+export function isPhaseReport(a: { external_ref?: { source?: string } | null } | { source?: string }) {
+  const ref = a as { external_ref?: { source?: string } | null; source?: string };
+  return (ref.external_ref?.source ?? ref.source) === PHASE_REPORT_ARTIFACT;
 }
 
 export interface ArtifactState {

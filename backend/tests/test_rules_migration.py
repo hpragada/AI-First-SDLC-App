@@ -168,3 +168,70 @@ def test_an_empty_non_expected_artifact_does_not_block(run_input):
         run_input.tenant_id, run_input.project_id, run_input.run_id,
         "prd", "assumption", "internal", content_hash(b""), s3_key="k2")
     assert verify_write_completeness_core(run_input, ["prd"])["present"] == ["assumption", "prd"]
+
+
+# ── the failure message must follow EVIDENCE, not a remembered cause ──
+# The original text asserted "the agent's write tools being absent from its context" because
+# that was the cause of the run it was written for (2026-07-30 §4b). Run fad927a2 had its write
+# tools working fine and `ask_human` broken, so the message pointed at the wrong subsystem.
+def _register_platform_copy(run_input, body=b"# status\nDB unavailable"):
+    """Reproduce the only-artifact-is-the-platform's-copy shape."""
+    from mcp_platform_state import tools
+
+    from orchestration.activities import PHASE_REPORT_SOURCE
+    from storage import content_hash
+
+    tools.register_artifact(
+        run_input.tenant_id, run_input.project_id, run_input.run_id,
+        "prd", "prd", "internal", content_hash(body), s3_key="drafts/t/p/r/prd.md",
+        external_ref={"source": PHASE_REPORT_SOURCE},
+    )
+
+
+def test_no_agent_artifact_blames_tooling_when_nothing_was_asked(run_input):
+    _register_platform_copy(run_input)
+    with pytest.raises(WriteCompletenessError, match="write tools being absent"):
+        verify_write_completeness_core(run_input, ["prd"])
+
+
+def test_no_agent_artifact_names_the_unanswered_clarification_instead(run_input):
+    """Run fad927a2: the agent reached its tools, asked, and the answer never came back — so
+    Rule 1 correctly stopped it writing. Blaming the write tools here is simply wrong, and it
+    buries the recovery (answer it, then re-run — the answers replay)."""
+    from apps.clarifications.models import Clarification
+    from apps.tenancy.context import tenant_context
+
+    _register_platform_copy(run_input)
+    with tenant_context(run_input.tenant_id):
+        Clarification.objects.create(
+            tenant_id=run_input.tenant_id, run_id=run_input.run_id,
+            work_item_id=run_input.work_item_id, phase="prd",
+            status=Clarification.Status.PENDING,
+            questions=[{"id": "q1", "text": "Which currency?", "kind": "text"}],
+        )
+    with pytest.raises(WriteCompletenessError) as exc:
+        verify_write_completeness_core(run_input, ["prd"])
+    message = str(exc.value)
+    assert "still unanswered" in message
+    assert "NOT a tooling failure" in message
+    assert "re-run the phase" in message
+    assert "write tools being absent" not in message
+
+
+def test_an_answered_clarification_does_not_change_the_diagnosis(run_input):
+    """Only a PENDING one is evidence the agent is still waiting; an answered clarification
+    means it got what it asked for and stopped for some other reason."""
+    from apps.clarifications.models import Clarification
+    from apps.tenancy.context import tenant_context
+
+    _register_platform_copy(run_input)
+    with tenant_context(run_input.tenant_id):
+        Clarification.objects.create(
+            tenant_id=run_input.tenant_id, run_id=run_input.run_id,
+            work_item_id=run_input.work_item_id, phase="prd",
+            status=Clarification.Status.ANSWERED,
+            questions=[{"id": "q1", "text": "Which currency?", "kind": "text"}],
+            answers={"q1": "USD"},
+        )
+    with pytest.raises(WriteCompletenessError, match="write tools being absent"):
+        verify_write_completeness_core(run_input, ["prd"])

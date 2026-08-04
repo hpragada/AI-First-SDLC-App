@@ -527,11 +527,21 @@ class GateDecisionSerializer(serializers.Serializer):
 
 # ── Clarification / interactive Q&A (req #2) ────────────────────────
 class ClarificationSerializer(serializers.ModelSerializer):
+    # Whether anyone is still listening. A clarification blocks the agent on its `ask_human`
+    # tool, and answering resumes THAT session — but only while the session exists. If the run
+    # already ended (failed/stalled/completed), the poller is gone and no answer can resume
+    # anything, yet the screen still said "answering resumes the run in the same session".
+    # Run fad927a2 sat exactly there. The clarification is deliberately left PENDING and
+    # answerable — `answer_clarification` rejects any other status, and an answered one is
+    # replayed into a re-run's manifest — so the answer is still worth giving; the UI just has
+    # to stop promising the wrong thing.
+    run_status = serializers.CharField(source="run.status", read_only=True)
+
     class Meta:
         model = Clarification
         fields = [
-            "id", "run", "work_item", "phase", "status", "questions", "answers",
-            "context", "answered_by", "answered_at", "created_at",
+            "id", "run", "run_status", "work_item", "phase", "status", "questions",
+            "answers", "context", "answered_by", "answered_at", "created_at",
         ]
         read_only_fields = fields
 

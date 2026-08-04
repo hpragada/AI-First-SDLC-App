@@ -492,6 +492,48 @@ def _assert_no_content_loss(inp: AgentRunInput, object_store=None) -> None:
             )
 
 
+def _no_agent_artifact_reason(inp: AgentRunInput) -> str:
+    """Explain a run that registered nothing of its own, from EVIDENCE rather than a guess.
+
+    The first version of this message asserted one cause — "the agent's write tools being
+    absent from its context" — because that was the cause of the run it was written for
+    (2026-07-30, §4b: `ToolSearch` denylisted, so granted tools were deferred out of reach).
+    Run fad927a2 had a different one: its write tools were fine and `ask_human` broke, so the
+    message sent the reader hunting the wrong subsystem entirely.
+
+    A pending clarification on the run is decisive and free to check: it means the agent DID
+    reach its tools, asked, and never got an answer — and Rule 1 then forbids it writing
+    anything. Say that, and point at the recovery that actually works.
+    """
+    from apps.clarifications.models import Clarification
+
+    base = (
+        f"run {inp.run_id} registered no artifacts of its own — the only thing recorded is "
+        f"the platform's copy of the engine's final message, so whatever the agent produced "
+        f"was never saved as a reviewable artifact. No gate is opened. "
+    )
+    with tenant_context(inp.tenant_id):
+        pending = list(
+            Clarification.objects.filter(
+                run_id=inp.run_id, tenant_id=inp.tenant_id,
+                status=Clarification.Status.PENDING,
+            ).values_list("id", flat=True)[:1]
+        )
+    if pending:
+        return base + (
+            f"The agent asked a clarification ({pending[0]}) that is still unanswered, so it "
+            f"stopped before producing anything — Rule 1 forbids writing artifacts until the "
+            f"answers come back. This is NOT a tooling failure. Answer the clarification, then "
+            f"re-run the phase: answered clarifications are replayed into the new run's "
+            f"manifest, so it will not ask again."
+        )
+    return base + (
+        "Re-run the phase. Check the run's tool calls: no `register_artifact` at all points at "
+        "the agent's write tools being absent from its context; calls that were made and "
+        "failed point at the platform-state MCP server."
+    )
+
+
 def verify_write_completeness_core(
     inp: AgentRunInput, expected_types: list[str], object_store=None,
 ) -> dict:
@@ -559,14 +601,7 @@ def verify_write_completeness_core(
     # minimum artifact count was 2 — the sink's plus at least one the agent registered — never 1.
     agent_made = [t for t, _, ref in rows if (ref or {}).get("source") != PHASE_REPORT_SOURCE]
     if rows and not agent_made:
-        raise WriteCompletenessError(
-            f"run {inp.run_id} registered no artifacts of its own — the only thing recorded is "
-            f"the platform's copy of the engine's final message, so whatever the agent produced "
-            f"was never saved as a reviewable artifact. No gate is opened; re-run the phase. "
-            f"Check the run's tool calls: no `register_artifact` at all points at the agent's "
-            f"write tools being absent from its context; calls that were made and failed point "
-            f"at the platform-state MCP server."
-        )
+        raise WriteCompletenessError(_no_agent_artifact_reason(inp))
     present = {t for t, _ in artifacts}
     missing = [t for t in expected_types if t not in present]
     if missing:
