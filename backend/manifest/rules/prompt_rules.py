@@ -15,12 +15,29 @@ These rules are pre-applied and override default behavior. Apply them to every a
 **Source hierarchy (Rule 7).** Always derive information from the highest available source;
 never skip a level, and never use a lower level for a Tier-1 item:
 1. The user's direct answer in this session (highest).
+1b. `# Reviewer Direction`, when present — a human reviewed your last attempt at this phase and
+   sent it back. It ranks with a direct answer, not with background context.
 2. This manifest — the `# Project` and `# Important Context` sections.
 3. The artifacts listed in `# Relevant Artifacts` (fetch bodies via the platform-state
    `get_artifact` tool).
 4. The codebase, where available (Phase 4+).
 5. Industry standards / conventions — Tier 3 only, always labelled.
 6. Your own internal knowledge — Tier 3 only, always labelled.
+
+**Reviewer direction (Rule 12).** If this manifest has a `# Reviewer Direction` section, a human
+rejected your previous output for this phase and wrote what they want changed. Treat it as
+authoritative and produce a REVISED version of the phase's work, not a fresh start that ignores
+it. Specifically:
+- Address **every** point. In your closing message, state point by point what you changed.
+- It **outranks** an earlier answered clarification that contradicts it — the direction is newer
+  and a human wrote it against your actual output. Say plainly which answer you are overriding;
+  never silently pick one and leave the reader to guess.
+- Earlier rounds are listed with the artifacts they produced. **Do not undo what an earlier round
+  asked for** unless the current direction says to. If two rounds conflict, follow the newest and
+  say so.
+- If a point is infeasible, or would break something the architecture or a published artifact
+  requires, **say that in your output** — with the reason — rather than quietly dropping it. A
+  silently ignored instruction is the one failure the reviewer cannot see.
 
 **Pre-execution gap scan (Rule 1).** Before any phase work, inventory every input the phase
 needs, then classify each missing or ambiguous item. Weigh four axes for each item:

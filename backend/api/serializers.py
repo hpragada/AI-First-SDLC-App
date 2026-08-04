@@ -517,12 +517,29 @@ class GateDecisionSerializer(serializers.Serializer):
 
     user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     decision = serializers.ChoiceField(choices=["approved", "rejected"])
-    comment = serializers.CharField(required=False, allow_blank=True, default="")
+    # Bounded because this text now travels into a composed manifest. Left unbounded it could
+    # push past the section's token budget, and a HALF-READ instruction is the worst outcome this
+    # feature has — the agent would follow part of it and nobody could see which part.
+    comment = serializers.CharField(
+        required=False, allow_blank=True, default="", max_length=8000,
+    )
     # Reviewer's gate-checklist updates (e.g. WCAG criteria marked satisfied on the design
     # gate); a required-but-unsatisfied condition blocks an APPROVED decision (D6).
     conditions = serializers.ListField(
         child=serializers.DictField(), required=False, default=list
     )
+    # "Request changes": reject AND re-run the phase with `comment` as authoritative direction.
+    revise = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        if attrs.get("revise"):
+            if attrs.get("decision") != "rejected":
+                raise serializers.ValidationError(
+                    {"revise": "only a rejection can request changes"})
+            if not (attrs.get("comment") or "").strip():
+                raise serializers.ValidationError(
+                    {"comment": "say what you want changed — the agent re-runs on this text"})
+        return attrs
 
 
 # ── Clarification / interactive Q&A (req #2) ────────────────────────

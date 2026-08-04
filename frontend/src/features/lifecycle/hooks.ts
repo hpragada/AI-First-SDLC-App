@@ -206,16 +206,23 @@ export function useDecideApproval() {
       decision,
       comment,
       conditions,
+      revise,
     }: {
       id: string;
       decision: "approved" | "rejected";
       comment?: string;
       conditions?: { key: string; satisfied: boolean }[];
-    }) => api.decideApproval(tenantId, id, { decision, comment, conditions }),
+      revise?: boolean;
+    }) => api.decideApproval(tenantId, id, { decision, comment, conditions, revise }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["approvals"] });
       qc.invalidateQueries({ queryKey: ["gate-criteria"] });
       qc.invalidateQueries({ queryKey: ["lifecycle"] });
+      // A "Request changes" starts a NEW run — but not before this response returns: the gate
+      // service replies as soon as it has signalled Temporal, and the revision run is created
+      // later, by the workflow. So there is no run id to show here; refresh the list and let it
+      // appear. (Promising an id in this response would be promising one that does not exist.)
+      qc.invalidateQueries({ queryKey: ["runs"] });
     },
   });
 }

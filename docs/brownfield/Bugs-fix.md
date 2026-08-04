@@ -622,3 +622,91 @@ by coincidence. The audit was necessary and was not sufficient. Both passes were
 **Still owed:** the AGENT_MIGRATION_SPEC §8 reference sweep over the **other** migrated agents.
 S4-24 raised its priority: `00c`'s body never mentioned `ask_human` at all, and the other agents
 were written the same way, so the same gap is likely to repeat.
+
+---
+
+## Gate rejection → "Request changes" (2026-08-04) — greenfield AND brownfield
+
+Two issues the team raised about every SDLC phase, not just onboarding. Recon first, then built.
+
+### Issue 1 — what a rejection did today
+
+Traced end to end. The rejection was recorded honestly and then went nowhere.
+
+| Layer | What happened |
+|---|---|
+| DB | `Approval` got `decision/approver/comment/decided_at`; `Run.status=rejected`; WorkItem → `in_progress`; two events (`gate.decided`, `run.rejected`) |
+| SoR | Nothing published — `publish_artifacts` is inside the approved branch only. Correct |
+| UI | **Nothing at all.** The mutation only invalidated queries; the gate silently vanished into a history tab with **no comment column** |
+| Next run | **Blind.** Grepping `composer.py` for `approval`/`comment`/`feedback`/`rejected` returned **zero matches** |
+
+Three defects fell out of that trace:
+
+| # | Defect | Fix |
+|---|---|---|
+| **G-1** | **`Run.ended_at` was never stamped on rejection.** The approve path and the fail path both stamp it; rejection was the last terminal path that did not, so a rejected run's duration was permanently unknowable (same family as S4-25) | `reject_run_core` stamps it |
+| **G-2** | **Rejected drafts were served downstream as authoritative.** `get_context`'s artifact query had **no status filter**, so the draft the reviewer rejected stayed the newest artifact of its type and was handed to every later phase. The reviewer said no and the platform kept passing it on | New `Artifact.Status.SUPERSEDED`, set on the rejected run's drafts and excluded from `get_context`. Not deleted — the revision cites them by id |
+| **G-3** | **The reviewer's comment was write-only** — stored, event-logged, signalled into the workflow, and rendered nowhere. Two other Reject buttons (`WorkItemEpic`, `WorkItemTask`) sent **no comment field at all** | Comment column added to the decided-gate history; those two buttons now route to the gate instead of deciding blind |
+
+### Issue 2 — no way to say what to change
+
+`trigger_phase` took no free-text parameter, `AgentRunInput` had no such field, and
+`TriggerSerializer` silently dropped unknown keys. Nothing carried human direction into a re-run.
+
+**But the mechanism already existed on the build path.** `dispatch_remediation_core` folds a written
+brief into agent 07's manifest and re-dispatches on the same run/branch/PR. Machine-generated, no UI.
+So this gave an existing mechanism a human author and extended it to the planning path.
+
+**Team decisions (locked):** three actions (Approve · Request changes · Reject) · the agent sees the
+**whole review conversation**, not just the last note · rejected drafts marked superseded · **all**
+phase families.
+
+| Phase family | What "Request changes" does |
+|---|---|
+| Planning (requirements, PRD, architecture, UX design, task breakdown, testing, deployment, gap report) | Rejects the run, then starts a **fresh run** carrying the accumulated history |
+| Scan (`10_security`, `reads_code=True`) | Same code path — no extra work |
+| Build (`07_implementation`, `09b_test_automation`, `11_cicd`) | **Re-dispatches in place** — same run, same branch, same PR, preview kept |
+
+`00c` Index code and `00e` document vision are out of scope by construction: they run headless
+(`auto_approve=True`) and open no gate, so there is nothing to reject.
+
+### Three things the design got right only after they were challenged
+
+1. **The build path must NOT start a new build.** My first design called `trigger_build`. At the
+   merge gate the branch is pushed and the draft PR is open, so that would have cut a **second
+   branch and a second PR** and orphaned the first (`reject_build_core` never closes it) — and torn
+   down the preview the reviewer was looking at. It now re-dispatches in place and re-enters the
+   full PR → 07↔08 review → gate block, because *a change nobody reviewed is exactly what the merge
+   gate exists to prevent*.
+2. **The re-trigger must run from the WORKFLOW, not the API.** `decide_gate` returns 200 as soon as
+   it has signalled, while the run is still `AWAITING_GATE` — which **is** in
+   `_ACTIVE_RUN_STATUSES` — so a REST-layer re-trigger would hit `_guard_no_active_run` and 409.
+   Not a narrow race: the normal case. Running after `reject_run` makes Temporal guarantee the order.
+3. **The history lives on `Run.inputs`, not the Temporal payload.** `compose_manifest_core` is
+   duck-typed and also receives `BuildInput`; reading a new attribute off `inp` would have raised
+   `AttributeError` on **every build dispatch**. Reading from the Run row also keeps a
+   grows-every-round list out of Temporal, leaving **one boolean** as the only payload change.
+
+### Also true now that was false before
+
+`CriteriaGate` claimed *"Rejected — sent back for rework"* and *"A remediation note was sent to the
+run"* on **every** rejection. Neither was true — nothing was sent and nothing re-ran. That copy is
+now shown only on the revise branch, where it is accurate.
+
+### Verification
+
+Backend, run per-file (the full suite SIGKILLs): 47 (develop's guards) · 45 (build) · 64 (gate/rules/
+workflow) · 117 (onboarding/composer/activities) · 134 (journeys + dispatch). Frontend **241 passed**,
+incl. all 97 greenfield. `tsc` clean. Lint unchanged (9 before, 9 after — all pre-existing).
+`test_users_roles.py::test_role_coverage_hard_block_when_no_holder_and_no_admin` fails — **pre-existing,
+proven by stashing**.
+
+New tests worth naming, because each guards a failure that would otherwise be silent: re-trigger
+idempotency under Temporal replay (a second pass must not create a second run) · the 409-race
+regression · `compose_manifest_core` with a build-shaped input · a **three-deep** revision chain
+(fails if the history is ever trimmed back to the last round) · budget truncation dropping whole
+oldest rounds while the current direction survives intact.
+
+**NOT yet verified live** — needs a real run and a companion: the whole feature. See the plan's live
+steps; the decisive one is rejecting **twice** with different notes and confirming round 3's manifest
+carries both.

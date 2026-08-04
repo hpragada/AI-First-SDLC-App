@@ -207,4 +207,23 @@ class AgentRunWorkflow:
             "reject_run", args=[inp, decision.comment],
             start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
         )
-        return {"status": "rejected", "run_id": inp.run_id}
+        if not getattr(decision, "revise", False):
+            return {"status": "rejected", "run_id": inp.run_id}
+
+        # "Request changes": re-run the phase with the reviewer's direction. This MUST come after
+        # `reject_run` — that activity is what moves the run out of AWAITING_GATE, and a new run
+        # for the same work item is refused while the old one still looks active.
+        #
+        # One attempt, and failure is swallowed on purpose. The Approval is decided and the run is
+        # already terminal; a lost re-trigger must degrade to "rejected, revision not started" and
+        # say so, never leave the workflow Failed over work that is finished.
+        try:
+            out = await workflow.execute_activity(
+                "retrigger_revision", args=[inp, decision.comment],
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except ActivityError:
+            return {"status": "rejected", "run_id": inp.run_id, "revision_run_id": None}
+        return {"status": "rejected", "run_id": inp.run_id,
+                "revision_run_id": (out or {}).get("revision_run_id")}

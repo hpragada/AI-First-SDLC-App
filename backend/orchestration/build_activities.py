@@ -840,6 +840,79 @@ def dispatch_remediation_core(inp: BuildInput) -> dict:
     return {"dispatched": True, "items": len(brief)}
 
 
+def dispatch_reviewer_revision_core(inp: BuildInput, direction: str) -> dict:
+    """"Request changes" on the MERGE gate: re-dispatch the build with the reviewer's written
+    direction folded into 07's manifest.
+
+    Unlike the planning path this does NOT start a new run. At the merge gate the branch is pushed
+    and the draft PR is open; a fresh build would cut a second branch, open a second PR and orphan
+    the first (nothing closes it). So the revision rides the SAME run, branch and PR — the shape
+    `dispatch_remediation_core` already established for review findings.
+
+    The review conversation accumulates on this one run's `Run.inputs["review_history"]`, and it is
+    written HERE, before the Approval is reset — reopening the gate lets the next decision
+    overwrite `Approval.comment`, so the reviewer's earlier words would otherwise be lost.
+    """
+    from django.conf import settings
+
+    from manifest.composer import TokenBudget, _render_review_direction
+
+    from .activities import build_review_round
+
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        history = list((run.inputs or {}).get("review_history") or [])
+    entry = build_review_round(inp.tenant_id, inp.run_id, direction)
+    entry["revision"] = len(history) + 1
+    history = history + [entry]
+
+    # Same renderer the planning path uses, so a reviewer's direction reads identically to an
+    # agent whichever workflow it arrives through.
+    manifest = (f"{compose_manifest_core(inp)}\n\n"
+                f"{_render_review_direction(history, TokenBudget())}")
+    agent_body, model = _load_agent_body(inp.agent_spec_id, inp.tenant_id)
+    payload = {
+        "run_id": inp.run_id, "tenant_id": inp.tenant_id, "project_id": inp.project_id,
+        "work_item_id": inp.work_item_id, "work_item_key": inp.work_item_key,
+        "repo": inp.repo, "base": inp.base, "phase": inp.phase,
+        "manifest": manifest, "agent_body": agent_body, "model": model,
+        "api_url": getattr(settings, "PLATFORM_API_URL", ""),
+        "remediation": True,        # same shape as a remediation build: same branch, no re-clone
+    }
+    if inp.phase == "test_automation":
+        from apps.projects.preview_config import resolve_preview_start, resolve_preview_url
+
+        payload["preview_url"] = resolve_preview_url(
+            tenant_id=inp.tenant_id, project_id=inp.project_id, repo_name=inp.repo)
+        payload["preview_start"] = resolve_preview_start(
+            tenant_id=inp.tenant_id, project_id=inp.project_id, repo_name=inp.repo)
+    with tenant_context(inp.tenant_id):
+        wi = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
+        payload["work_item_title"] = wi.title
+        payload["work_item_type"] = wi.type
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.inputs = {
+            **(run.inputs or {}),
+            "review_history": history,
+            "build_task": payload,
+            # Re-arm the claim block or the companion has nothing to pull and the loop hangs
+            # until takeover (the S.No 115 failure).
+            "dispatch": {"kind": "build", "enrollment_id": inp.enrollment_id,
+                         "status": "pending"},
+        }
+        run.status = Run.Status.RUNNING
+        run.save(update_fields=["inputs", "status", "updated_at"])
+        # Reset the gate to PENDING now. `open_merge_gate` is get_or_create and will NOT reset a
+        # decided Approval, so without this the reviewer's next decision is refused with
+        # "approval already decided" and they are locked out of their own gate for good.
+        Approval.objects.filter(
+            run_id=inp.run_id, gate_type=inp.gate_type, tenant_id=inp.tenant_id,
+        ).update(decision=Approval.Decision.PENDING, approver=None, decided_at=None)
+        tools.log_event(inp.tenant_id, "orchestrator", "build.revision_dispatched", "run",
+                        inp.run_id, {"revision": entry["revision"]})
+    return {"dispatched": True, "revision": entry["revision"]}
+
+
 # ── activity wrappers (close the DB connection at the boundary) ─────
 @activity.defn(name="dispatch_build")
 def dispatch_build_activity(inp: BuildInput) -> dict:
@@ -879,6 +952,11 @@ def run_code_review_activity(inp: BuildInput) -> dict:
 @activity.defn(name="dispatch_remediation")
 def dispatch_remediation_activity(inp: BuildInput) -> dict:
     return _boundary(dispatch_remediation_core, inp)
+
+
+@activity.defn(name="dispatch_reviewer_revision")
+def dispatch_reviewer_revision_activity(inp: BuildInput, direction: str) -> dict:
+    return _boundary(dispatch_reviewer_revision_core, inp, direction)
 
 
 @activity.defn(name="merge_build_pr")
@@ -939,6 +1017,7 @@ BUILD_ACTIVITIES = [
     teardown_preview_activity,
     run_code_review_activity,
     dispatch_remediation_activity,
+    dispatch_reviewer_revision_activity,
     open_merge_gate_activity,
     merge_build_pr_activity,
     transition_build_work_item_activity,

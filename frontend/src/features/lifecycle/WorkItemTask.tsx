@@ -190,13 +190,12 @@ function WorkItemTaskLive() {
                   >
                     Approve
                   </Button>
-                  <Button
-                    variant="secondary"
-                    disabled={decideApproval.isPending}
-                    onClick={() => decideApproval.mutate({ id: pendingGate.id, decision: "rejected" })}
-                  >
-                    Reject
-                  </Button>
+                  {/* Rejecting from here sent NO comment at all — there is no box on this card,
+                      so the reason was lost. The gate is where you can reject with a reason or
+                      request changes and have the build actually revise. */}
+                  <Link className="btn btn--secondary" to="/gates">
+                    Reject or request changes…
+                  </Link>
                 </div>
               </CardBody>
             </Card>

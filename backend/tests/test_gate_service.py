@@ -44,8 +44,8 @@ class _Recorder:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, workflow_id, decision, approver_id, comment):
-        self.calls.append((workflow_id, decision, approver_id, comment))
+    def __call__(self, workflow_id, decision, approver_id, comment, revise=False):
+        self.calls.append((workflow_id, decision, approver_id, comment, revise))
 
 
 def test_decide_gate_approved_records_and_signals(gate_world):
@@ -59,7 +59,7 @@ def test_decide_gate_approved_records_and_signals(gate_world):
     assert approval.decision == Approval.Decision.APPROVED
     assert str(approval.approver_id) == gate_world["po_id"]
     assert approval.decided_at is not None
-    assert sender.calls == [("wf-x", "approved", gate_world["po_id"], "lgtm")]
+    assert sender.calls == [("wf-x", "approved", gate_world["po_id"], "lgtm", False)]
 
 
 def test_decide_gate_rejected(gate_world):
@@ -71,6 +71,53 @@ def test_decide_gate_rejected(gate_world):
     )
     assert Approval.objects.get(id=gate_world["approval_id"]).decision == Approval.Decision.REJECTED
     assert sender.calls[0][1] == "rejected"
+
+
+def test_request_changes_carries_the_flag_and_the_note_to_the_workflow(gate_world):
+    """"Request changes" is still recorded as a REJECTION — that is the audit truth — but the
+    signal carries `revise` so the workflow re-runs the phase instead of just stopping."""
+    sender = _Recorder()
+    result = decide_gate(
+        tenant_id=gate_world["tenant_id"], approval_id=gate_world["approval_id"],
+        user_id=gate_world["po_id"], decision="rejected",
+        comment="Use a single column and drop the hero image.", revise=True,
+        signal_sender=sender,
+    )
+    assert result["decision"] == "rejected" and result["revise"] is True
+    approval = Approval.objects.get(id=gate_world["approval_id"])
+    assert approval.decision == Approval.Decision.REJECTED
+    assert approval.comment == "Use a single column and drop the hero image."
+    assert sender.calls[0][3] == "Use a single column and drop the hero image."
+    assert sender.calls[0][4] is True
+
+
+def test_request_changes_without_a_note_is_refused(gate_world):
+    """There would be nothing for the agent to act on, so it must fail loudly rather than
+    re-run the phase with the same inputs and produce the same thing again."""
+    sender = _Recorder()
+    for blank in ("", "   "):
+        with pytest.raises(GateError):
+            decide_gate(
+                tenant_id=gate_world["tenant_id"], approval_id=gate_world["approval_id"],
+                user_id=gate_world["po_id"], decision="rejected", comment=blank, revise=True,
+                signal_sender=sender,
+            )
+    assert Approval.objects.get(id=gate_world["approval_id"]).decision == Approval.Decision.PENDING
+    assert sender.calls == []
+
+
+def test_request_changes_on_an_approval_is_refused(gate_world):
+    """An approved run publishes and completes; there is nothing to revise. Silently ignoring
+    the flag would leave the reviewer believing a revision was requested."""
+    sender = _Recorder()
+    with pytest.raises(GateError):
+        decide_gate(
+            tenant_id=gate_world["tenant_id"], approval_id=gate_world["approval_id"],
+            user_id=gate_world["po_id"], decision="approved", comment="also do X", revise=True,
+            signal_sender=sender,
+        )
+    assert Approval.objects.get(id=gate_world["approval_id"]).decision == Approval.Decision.PENDING
+    assert sender.calls == []
 
 
 def test_decide_gate_wrong_role_is_blocked(gate_world):

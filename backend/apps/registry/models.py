@@ -38,6 +38,12 @@ class Artifact(TenantScopedModel):
         STAGED = "staged", "Staged"
         APPROVED = "approved", "Approved"
         PUBLISHED = "published", "Published"
+        # A draft whose gate was REJECTED. It is kept (it is the record of what the agent
+        # produced, and the revision's manifest cites it by id) but it is no longer the
+        # project's answer for its type, so `get_context` stops serving it. Without this a
+        # rejected draft was still handed to every downstream phase as authoritative — the
+        # reviewer said no and the platform kept passing it on.
+        SUPERSEDED = "superseded", "Superseded"
 
     class SoR(models.TextChoices):
         INTERNAL = "internal", "Internal"

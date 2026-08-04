@@ -245,7 +245,15 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
         from apps.registry.catalog import needs_artifacts_for
 
         needs = needs_artifacts_for(phase)
-        base_qs = Artifact.objects.filter(tenant_id=tenant_id, project_id=project_id)
+        # SUPERSEDED = a draft whose gate was rejected. It stays in the registry (it is the
+        # record of what the agent wrote, and a revision's manifest cites it by id) but it is no
+        # longer the project's answer for its type. Without this exclusion a rejected draft was
+        # still served to every downstream phase as the authoritative artifact — the reviewer
+        # said no and the platform kept handing it on, which is a far quieter failure than a
+        # rejected run.
+        base_qs = Artifact.objects.filter(
+            tenant_id=tenant_id, project_id=project_id,
+        ).exclude(status=Artifact.Status.SUPERSEDED)
         if repo is not None:
             # this repo + repo-agnostic project artifacts + the shared cross-repo contract
             base_qs = base_qs.filter(

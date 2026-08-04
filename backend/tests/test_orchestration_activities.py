@@ -3,6 +3,7 @@
 Each core is exercised against the real DB with a fake driver + in-memory object store,
 covering the happy path, idempotency by run_id, and the approve/reject branches.
 """
+import dataclasses
 from types import SimpleNamespace
 
 import pytest
@@ -208,3 +209,122 @@ def test_reject_run_core(wired, run_input):
     assert Run.objects.get(id=run_input.run_id).status == Run.Status.REJECTED
     assert WorkItem.objects.get(id=run_input.work_item_id).state == WorkItem.State.IN_PROGRESS
     # Approval decision recorded by the gate service (T9), verified there.
+
+
+# ── "Request changes": reject → revise ──────────────────────────────
+
+
+def _reject_with_drafts(run_input, direction="Use a single column."):
+    """Put a run in the state the revise path actually starts from: an artifact registered, a
+    decided (rejected) approval, and reject_run_core already applied."""
+    tenant_id, run_id = run_input.tenant_id, run_input.run_id
+    Artifact.objects.create(
+        tenant_id=tenant_id, project_id=run_input.project_id, run_id=run_id,
+        phase="prd", type="prd", title="PRD", status=Artifact.Status.DRAFT, version=1,
+    )
+    Approval.objects.create(
+        tenant_id=tenant_id, run_id=run_id, work_item_id=run_input.work_item_id,
+        required_role="product_owner", decision=Approval.Decision.REJECTED, comment=direction,
+    )
+    activities.reject_run_core(run_input, direction)
+
+
+def test_rejecting_stamps_when_the_run_ended(run_input):
+    """Every other terminal path records this; rejection was the last one that did not, so a
+    rejected run's duration was permanently unknowable."""
+    _reject_with_drafts(run_input)
+    run = Run.objects.get(id=run_input.run_id)
+    assert run.status == Run.Status.REJECTED
+    assert run.ended_at is not None
+
+
+def test_rejecting_supersedes_the_drafts_so_they_stop_being_served_downstream(run_input):
+    """The reviewer said no. Without this the draft stayed the newest artifact of its type and
+    get_context kept handing it to every later phase as the authoritative one."""
+    from mcp_platform_state import tools
+
+    _reject_with_drafts(run_input)
+    art = Artifact.objects.get(run_id=run_input.run_id)
+    assert art.status == Artifact.Status.SUPERSEDED
+    ctx = tools.get_context(run_input.tenant_id, run_input.project_id, phase="architecture")
+    served = [a["id"] for a in ctx["relevant_artifacts"]]
+    assert str(art.id) not in served
+    # It is NOT deleted — the revision's manifest cites it by id and the run console lists it.
+    assert Artifact.objects.filter(id=art.id).exists()
+
+
+def test_retrigger_starts_one_revision_carrying_the_note_and_what_was_produced(run_input):
+    _reject_with_drafts(run_input)
+    out = activities.retrigger_revision_core(run_input, "Use a single column.")
+    assert out["revision_run_id"] and out["revision"] == 1
+
+    new_run = Run.objects.get(id=out["revision_run_id"])
+    history = new_run.inputs["review_history"]
+    assert new_run.inputs["revision_of"] == run_input.run_id
+    assert len(history) == 1
+    assert history[0]["direction"] == "Use a single column."
+    # The superseded draft is NAMED (not inlined) so the agent can re-read it on demand.
+    assert history[0]["artifacts"][0]["type"] == "prd"
+
+
+def test_retrigger_is_idempotent_when_temporal_replays_it(run_input):
+    """Temporal retries an activity whose completion was lost. A second pass must NOT create a
+    second run — and must not blow up on _guard_no_active_run against the run it just made."""
+    _reject_with_drafts(run_input)
+    first = activities.retrigger_revision_core(run_input, "Use a single column.")
+    second = activities.retrigger_revision_core(run_input, "Use a single column.")
+    assert second["revision_run_id"] == first["revision_run_id"]
+    assert second.get("reused") is True
+    assert Run.objects.filter(work_item_id=run_input.work_item_id).count() == 2
+
+
+def test_the_revision_is_not_blocked_by_the_run_it_revises(run_input):
+    """The 409 race this design exists to avoid: from the REST layer the old run is still
+    AWAITING_GATE (an ACTIVE status) when the response returns, so the new run is refused. Doing
+    it after reject_run means the old run is REJECTED, which is not an active status."""
+    from orchestration.trigger import _ACTIVE_RUN_STATUSES
+
+    _reject_with_drafts(run_input)
+    assert Run.objects.get(id=run_input.run_id).status not in _ACTIVE_RUN_STATUSES
+    assert activities.retrigger_revision_core(run_input, "go again")["revision_run_id"]
+
+
+def test_the_conversation_accumulates_over_three_rounds(run_input):
+    """The team's decision: the agent sees every earlier round, not just the last note. If this
+    is ever trimmed back to one round, round 3 starts undoing what round 1 asked for."""
+    _reject_with_drafts(run_input, "Round one: drop the hero image.")
+    r2_id = activities.retrigger_revision_core(run_input, "Round one: drop the hero image.")[
+        "revision_run_id"]
+
+    r2_input = dataclasses.replace(run_input, run_id=r2_id)
+    _reject_with_drafts(r2_input, "Round two: merge the forms.")
+    r3_id = activities.retrigger_revision_core(r2_input, "Round two: merge the forms.")[
+        "revision_run_id"]
+
+    history = Run.objects.get(id=r3_id).inputs["review_history"]
+    assert [h["direction"] for h in history] == [
+        "Round one: drop the hero image.", "Round two: merge the forms."]
+    assert [h["revision"] for h in history] == [1, 2]
+
+
+def test_compose_manifest_survives_a_build_shaped_input(run_input, wired):
+    """compose_manifest_core is duck-typed — BuildInput flows through it from dispatch_build,
+    dispatch_remediation and the code-review provider. Reading a new field straight off `inp`
+    would AttributeError on every build dispatch, so the review history comes off the Run row."""
+    build_shaped = SimpleNamespace(
+        run_id=run_input.run_id, tenant_id=run_input.tenant_id,
+        project_id=run_input.project_id, work_item_id=run_input.work_item_id,
+        phase="implementation",
+    )
+    assert "# Project" in activities.compose_manifest_core(build_shaped)
+
+
+def test_a_revision_run_gets_the_direction_in_its_manifest(run_input, wired):
+    _reject_with_drafts(run_input)
+    revision_id = activities.retrigger_revision_core(run_input, "Use a single column.")[
+        "revision_run_id"]
+    revision_input = dataclasses.replace(run_input, run_id=revision_id)
+    md = activities.compose_manifest_core(revision_input)
+    assert "# Reviewer Direction" in md
+    assert "Use a single column." in md
+    assert md.find("# Reviewer Direction") < md.find("# Current Work Item")

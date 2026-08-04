@@ -225,7 +225,31 @@ describe("S-22 Criteria gate", () => {
     expect(screen.getByText("8 of 8 criteria met")).toBeDefined();
 
     rerender(<CriteriaGate forceView="rejected" />);
-    expect(screen.getByText("Rejected — sent back for rework")).toBeDefined();
+    expect(screen.getByText("Sent back for changes")).toBeDefined();
+  });
+});
+
+describe("Gate decision — Request changes", () => {
+  it("offers three actions, and gates the new one on a written note", async () => {
+    const { container, unmount } = renderWithProviders(<Gates forceView="can-decide" />);
+    const label = (t: string) =>
+      [...container.querySelectorAll("button")].find((b) => b.textContent?.includes(t));
+
+    expect(label("Approve")).toBeDefined();
+    expect(label("Reject")).toBeDefined();
+    const request = label("Request changes");
+    expect(request).toBeDefined();
+    // Without a note there is nothing for the agent to act on — the server refuses it, so the
+    // button must not look clickable.
+    expect(request?.hasAttribute("disabled")).toBe(true);
+    unmount();
+  });
+
+  it("shows the reviewer's comment in the decided history — it was stored but never rendered", () => {
+    const { container, unmount } = renderWithProviders(<Gates forceView="history" />);
+    const headers = [...container.querySelectorAll("th")].map((h) => h.textContent);
+    expect(headers).toContain("Comment");
+    unmount();
   });
 });
 

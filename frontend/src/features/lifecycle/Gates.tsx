@@ -109,8 +109,14 @@ function GatesLive() {
     return `${wi.key || id.slice(0, 8)} · ${wi.title || wi.type}`;
   };
 
-  const handleDecide = (decision: "approved" | "rejected") => {
+  // A merge gate revises IN PLACE (same branch, same PR, preview kept); a phase gate starts a
+  // fresh run. Same button, different promise — so say the right one.
+  const isMergeGate = selected?.gate_type === "merge_gate";
+  const [revisionRequested, setRevisionRequested] = useState(false);
+
+  const handleDecide = (decision: "approved" | "rejected", revise = false) => {
     if (!selected) return;
+    setRevisionRequested(revise);
     decideApproval.mutate({
       id: selected.id,
       decision,
@@ -118,9 +124,14 @@ function GatesLive() {
       conditions: criteriaList.length
         ? criteriaList.map((c) => ({ key: c.id, satisfied: Boolean(satisfied[c.id]) }))
         : undefined,
+      revise,
     });
     setComment("");
   };
+  // "Request changes" IS the comment — without one there is nothing for the agent to act on,
+  // and the server refuses it. Keep the button visibly disabled rather than letting the click
+  // fail with a validation error.
+  const canRequestChanges = comment.trim().length > 0;
 
   return (
     <div className="canvas-pad">
@@ -161,7 +172,7 @@ function GatesLive() {
               <EmptyState title="No decided gates yet" text="Decisions you make will show up here." />
             ) : (
               <Table
-                headers={["Gate", "Work item", "Decision", "By", "When"]}
+                headers={["Gate", "Work item", "Decision", "Comment", "By", "When"]}
                 rows={decided.map((a) => [
                   gateLabel(a.gate_type),
                   <span className="table__id" key="w">
@@ -170,6 +181,14 @@ function GatesLive() {
                   <Badge variant={a.decision === "approved" ? "done" : "failed"} key="d">
                     {a.decision === "approved" ? "Approved" : "Rejected"}
                   </Badge>,
+                  // What the reviewer actually wrote. It has always been stored and served and
+                  // never shown — so a rejection read as a bare "Rejected" with the reason
+                  // invisible, even to the person who wrote it.
+                  <span key="c" className="t-sm u-body" title={a.comment || undefined}
+                        style={{ display: "block", maxWidth: "28rem",
+                                 whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                    {a.comment || "—"}
+                  </span>,
                   a.approver === currentUser?.user.id
                     ? "You"
                     : a.approver_name ?? (a.approver ? a.approver.slice(0, 8) : "—"),
@@ -293,11 +312,13 @@ function GatesLive() {
                     </>
                   )}
                   <label className="field" style={{ margin: "var(--space-2) 0 0" }}>
-                    <span className="field__label">Comment (optional)</span>
+                    <span className="field__label">
+                      Comment{canRequestChanges ? "" : " (optional to approve or reject)"}
+                    </span>
                     <Textarea
                       value={comment}
                       onChange={(e) => setComment(e.target.value)}
-                      placeholder="Add context for your decision…"
+                      placeholder="Add context for your decision — or say what you want changed…"
                     />
                   </label>
                   <div className="gate-panel__actions">
@@ -316,6 +337,19 @@ function GatesLive() {
                       )}
                     </Button>
                     <Button
+                      variant="secondary"
+                      disabled={decideApproval.isPending || !canRequestChanges}
+                      aria-disabled={!canRequestChanges}
+                      title={
+                        canRequestChanges
+                          ? undefined
+                          : "Write what you want changed first — the agent re-runs on this text"
+                      }
+                      onClick={() => handleDecide("rejected", true)}
+                    >
+                      Request changes
+                    </Button>
+                    <Button
                       variant="danger"
                       disabled={decideApproval.isPending}
                       onClick={() => handleDecide("rejected")}
@@ -328,7 +362,20 @@ function GatesLive() {
                       {decideApproval.error instanceof Error ? decideApproval.error.message : "Unknown error"}
                     </Banner>
                   )}
-                  <span className="gate-reassure">Decision logged with your role &amp; comment.</span>
+                  {decideApproval.isSuccess && (
+                    <Banner variant="info" title="Decision recorded">
+                      {revisionRequested
+                        ? isMergeGate
+                          ? "Sent back for changes. The same branch and pull request are updated — your preview stays up — then the gate re-opens for you."
+                          : "Sent back for changes. A new run starts shortly with your note as its instructions; watch Phases & Runs."
+                        : "Logged with your role and comment."}
+                    </Banner>
+                  )}
+                  <span className="gate-reassure">
+                    {canRequestChanges
+                      ? "Request changes re-runs this phase with your note as the agent's instructions. Reject just stops it."
+                      : "Decision logged with your role & comment."}
+                  </span>
                 </CardBody>
               </Card>
             ) : (
@@ -403,7 +450,7 @@ function GatesGallery({ view }: { view: GatesView }) {
         <div style={{ marginTop: "var(--space-4)" }}>
           <Panel flush>
             <Table
-              headers={["Gate", "Work item", "Decision", "By", "When"]}
+              headers={["Gate", "Work item", "Decision", "Comment", "By", "When"]}
               rows={[
                 [
                   "PRD",
@@ -413,6 +460,7 @@ function GatesGallery({ view }: { view: GatesView }) {
                   <Badge variant="done" key="d">
                     Approved
                   </Badge>,
+                  "—",
                   "Sarah Chen",
                   "1h ago",
                 ],
@@ -424,6 +472,7 @@ function GatesGallery({ view }: { view: GatesView }) {
                   <Badge variant="done" key="d">
                     Approved
                   </Badge>,
+                  "Scope matches the signed-off brief.",
                   "Sarah Chen",
                   "2d ago",
                 ],
@@ -435,6 +484,7 @@ function GatesGallery({ view }: { view: GatesView }) {
                   <Badge variant="failed" key="d">
                     Rejected
                   </Badge>,
+                  "Event bus is overkill at this scale — use a queue.",
                   "Marcus Lee",
                   "3d ago",
                 ],
@@ -504,14 +554,21 @@ function GatesGallery({ view }: { view: GatesView }) {
                   Preview artifact under review ↗
                 </a>
                 <label className="field" style={{ margin: "var(--space-2) 0 0" }}>
-                  <span className="field__label">Comment (optional)</span>
-                  <Textarea placeholder="Add context for your decision…" />
+                  <span className="field__label">Comment (optional to approve or reject)</span>
+                  <Textarea placeholder="Add context for your decision — or say what you want changed…" />
                 </label>
                 <div className="gate-panel__actions">
                   <Button variant="primary">Approve</Button>
+                  {/* Disabled until something is written: "Request changes" IS the comment. */}
+                  <Button variant="secondary" disabled aria-disabled>
+                    Request changes
+                  </Button>
                   <Button variant="danger">Reject</Button>
                 </div>
-                <span className="gate-reassure">Decision logged with your role &amp; comment.</span>
+                <span className="gate-reassure">
+                  Request changes re-runs this phase with your note as the agent's instructions.
+                  Reject just stops it.
+                </span>
               </CardBody>
             </Card>
           ) : (

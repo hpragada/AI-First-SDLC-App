@@ -60,7 +60,8 @@ def _merge_conditions(existing: list, updates: list | None) -> list:
 
 
 def _default_signal_sender(
-    workflow_id: str, decision: str, approver_id: str | None, comment: str
+    workflow_id: str, decision: str, approver_id: str | None, comment: str,
+    revise: bool = False,
 ) -> None:
     import asyncio
 
@@ -75,7 +76,8 @@ def _default_signal_sender(
         handle = client.get_workflow_handle(workflow_id)
         await handle.signal(
             "gate_decision",
-            GateDecision(decision=decision, approver_id=approver_id, comment=comment),
+            GateDecision(decision=decision, approver_id=approver_id, comment=comment,
+                         revise=revise),
         )
 
     asyncio.run(_send())
@@ -89,6 +91,7 @@ def decide_gate(
     decision: str,
     comment: str = "",
     conditions: list | None = None,
+    revise: bool = False,
     signal_sender=None,
 ) -> dict:
     """Record a gate decision (after role check + condition check) and signal the workflow
@@ -96,9 +99,19 @@ def decide_gate(
     checklist (e.g. the WCAG 2.1 AA criteria on the design gate); an APPROVED decision is
     rejected while any *required* condition is unsatisfied (D6). Derived conditions (e.g. the
     test gate's blocking-test rule, D9) are recomputed from live state here and ignore the
-    reviewer's `satisfied` — they are the platform's finding, not the reviewer's."""
+    reviewer's `satisfied` — they are the platform's finding, not the reviewer's.
+
+    `revise` is "Request changes": a rejection the reviewer wants ACTED ON. The decision recorded
+    is still `rejected` — that is the audit truth, and adding a third decision value would change
+    the meaning of every historical row — but the workflow re-runs the phase with `comment` as
+    authoritative direction. It is meaningless without a comment (there would be nothing to act on)
+    and meaningless on an approval, so both are refused rather than silently ignored."""
     if decision not in _VALID_DECISIONS:
         raise GateError(f"invalid decision: {decision!r}")
+    if revise and decision != "rejected":
+        raise GateError("revise applies only to a rejection")
+    if revise and not (comment or "").strip():
+        raise GateError("revise needs a comment saying what to change")
     signal_sender = signal_sender or _default_signal_sender
 
     with tenant_context(tenant_id):
@@ -164,7 +177,7 @@ def decide_gate(
 
         tools.log_event(
             tenant_id, f"user:{user_id}", "gate.decided", "approval", str(approval.id),
-            {"decision": decision, "comment": comment},
+            {"decision": decision, "comment": comment, "revise": revise},
         )
         result = {
             "id": str(approval.id),
@@ -172,8 +185,9 @@ def decide_gate(
             "approver_id": user_id,
             "comment": comment,
             "conditions": approval.conditions,
+            "revise": revise,
         }
 
     # Signal outside the tenant_context cursor.
-    signal_sender(workflow_id, decision, user_id, comment)
+    signal_sender(workflow_id, decision, user_id, comment, revise=revise)
     return result

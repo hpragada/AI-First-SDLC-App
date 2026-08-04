@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
 import {
   Breadcrumb,
@@ -143,15 +143,17 @@ function WorkItemEpicLive() {
                   >
                     Approve
                   </Button>
-                  <Button
-                    variant="secondary"
-                    disabled={decideApproval.isPending}
-                    onClick={() => decideApproval.mutate({ id: pendingGate.id, decision: "rejected" })}
-                  >
-                    Reject
-                  </Button>
+                  {/* Rejecting from here sent NO comment at all — the reviewer had no box to
+                      write in, so the reason was lost and nothing could act on it. Send them to
+                      the gate, where they can reject with a reason or request changes. */}
+                  <Link className="btn btn--secondary" to="/gates">
+                    Reject or request changes…
+                  </Link>
                 </div>
-                <span className="gate-reassure">Decision is logged with your role &amp; comment.</span>
+                <span className="gate-reassure">
+                  Approving is logged with your role. To send it back, open the gate and say what
+                  you want changed.
+                </span>
               </CardBody>
             </Card>
           )}

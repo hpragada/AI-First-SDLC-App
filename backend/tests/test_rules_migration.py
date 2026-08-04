@@ -23,8 +23,24 @@ def test_distilled_rules_preserve_reasoning():
         "what not to ask",                  # Rule 9
         "mid-phase",                        # Rule 6
         "assumption",                       # Rule 5 (agent side)
+        "reviewer direction",               # Rule 12 — "Request changes"
     ]:
         assert needle in rules, f"missing distilled rule content: {needle!r}"
+
+
+def test_reviewer_direction_is_authoritative_and_may_not_be_dropped_silently():
+    """A reviewer's written direction is the one input a human typed against the agent's actual
+    output. Two failure modes have to be closed in the prompt, because neither is detectable
+    afterwards: quietly ignoring a point, and quietly overriding an earlier answer."""
+    rules = get_prompt_rules().lower()
+    assert "reviewer direction" in rules
+    assert "authoritative" in rules
+    # It must beat a stale clarification answer — and say when it does.
+    assert "outranks" in rules or "supersede" in rules
+    # An infeasible point must be reported, not dropped.
+    assert "infeasible" in rules
+    # It must not undo an earlier round's request.
+    assert "do not undo" in rules
 
 
 def test_gap_scan_is_a_question_never_an_artifact():

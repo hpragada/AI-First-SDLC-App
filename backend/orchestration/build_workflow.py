@@ -245,7 +245,6 @@ class BuildWorkflow:
                     "open_merge_gate", inp,
                     start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
                 )
-                break
             except ActivityError as exc:
                 # Unwrap the ActivityError to the real cause (S.No 139) so the classifier sees the
                 # actual error, not the generic "Activity task failed".
@@ -266,67 +265,108 @@ class BuildWorkflow:
                     return {"status": "build_failed", "run_id": inp.run_id}
                 continue        # resumed → retry the PR/review/gate block (build NOT redone)
 
-        # Merge gate: block until a reviewer decides (human-paced; no timeout). On a MERGE
-        # CONFLICT the build is NOT ended (Bugs S.No 141 / ENH-2): the gate re-opens so the
-        # reviewer can resolve the conflict in GitHub and approve again to retry the merge — no
-        # full rebuild. Only a non-conflict merge error, or a rejection, ends the build.
-        while True:
-            await workflow.wait_condition(lambda: self._decision is not None)
-            decision = self._decision
-            self._decision = None       # consume: each loop waits for a fresh decision
-
-            if decision.decision != "approved":
-                await workflow.execute_activity(
-                    "reject_build", args=[inp, decision.comment],
-                    start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
-                )
-                await self._teardown_preview(inp)
-                return {"status": "rejected", "run_id": inp.run_id}
-
-            # Retry the merge until it succeeds, needs a fresh decision (conflict), or the human
-            # abandons a parked failure.
-            needs_new_decision = False
+            # Merge gate: block until a reviewer decides (human-paced; no timeout). On a MERGE
+            # CONFLICT the build is NOT ended (Bugs S.No 141 / ENH-2): the gate re-opens so the
+            # reviewer can resolve the conflict in GitHub and approve again to retry the merge —
+            # no full rebuild. Only a non-conflict merge error, or a rejection, ends the build.
+            #
+            # This sits INSIDE the PR/review block on purpose: "Request changes" re-enters that
+            # block from the top, so a reviewer revision gets the same treatment as the first
+            # build — PR reconciled to the new head, full 07<->08 remediation loop, gate re-opened.
+            # Re-running review matters: the reviewer asked for a change, and a change nobody
+            # reviewed is exactly what the merge gate exists to prevent.
+            revise_requested = False
             while True:
-                try:
+                await workflow.wait_condition(lambda: self._decision is not None)
+                decision = self._decision
+                self._decision = None   # consume: each loop waits for a fresh decision
+
+                if decision.decision != "approved":
+                    if getattr(decision, "revise", False):
+                        # Do NOT reject and do NOT tear down the preview — the reviewer is
+                        # looking at it, and the branch/PR they reviewed are what gets updated.
+                        await workflow.execute_activity(
+                            "dispatch_reviewer_revision", args=[inp, decision.comment],
+                            start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
+                        )
+                        self._report = None     # no consume on _report — reset or the wait
+                        try:                    # below returns instantly on the stale one
+                            await workflow.wait_condition(
+                                lambda: self._report is not None,
+                                timeout=timedelta(seconds=inp.report_timeout_seconds),
+                            )
+                        except TimeoutError:
+                            await workflow.execute_activity(
+                                "mark_takeover", inp,
+                                start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                            )
+                            await self._teardown_preview(inp)
+                            return {"status": "takeover", "run_id": inp.run_id}
+                        if self._report.status != "ok":
+                            await workflow.execute_activity(
+                                "mark_build_failed",
+                                args=[inp, self._report.message or "revision build failed"],
+                                start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                            )
+                            await self._teardown_preview(inp)
+                            return {"status": "build_failed", "run_id": inp.run_id}
+                        report = self._report
+                        revise_requested = True
+                        break
                     await workflow.execute_activity(
-                        "merge_build_pr", inp,
+                        "reject_build", args=[inp, decision.comment],
+                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                    )
+                    await self._teardown_preview(inp)
+                    return {"status": "rejected", "run_id": inp.run_id}
+
+                # Retry the merge until it succeeds, needs a fresh decision (conflict), or the
+                # human abandons a parked failure.
+                needs_new_decision = False
+                while True:
+                    try:
+                        await workflow.execute_activity(
+                            "merge_build_pr", inp,
+                            start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
+                        )
+                    except ActivityError as exc:
+                        # Unwrap to the real cause (S.No 139) — surfaces the S.No 136 "merge
+                        # conflict" message instead of the generic "Activity task failed".
+                        reason = failure_reason(exc)
+                        if is_merge_conflict(exc):
+                            # Non-terminal (ENH-2): re-open the gate for a resolve-then-retry (no
+                            # rebuild), then wait for the reviewer's next decision.
+                            await workflow.execute_activity(
+                                "reopen_merge_gate", args=[inp, reason],
+                                start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                            )
+                            needs_new_decision = True
+                            break
+                        # Any OTHER merge error parks instead of ending the build (S.No 157). On
+                        # resume the merge is retried under the SAME approval — the reviewer
+                        # already approved, and clicking Resume IS the human action.
+                        if not await self._park(inp, f"merge failed: {reason}", "merge_build_pr"):
+                            await self._teardown_preview(inp)
+                            return {"status": "build_failed", "run_id": inp.run_id}
+                        continue
+
+                    # Publish EVERY artifact of the run now the gate is approved and the PR is
+                    # merged (Bugs S.No 152) — the mirror of the planning path's
+                    # publish_artifacts. Without this the Assumptions/Code Review artifacts
+                    # stayed Draft forever; only the `code` artifact was ever published.
+                    await workflow.execute_activity(
+                        "publish_build_artifacts", inp,
                         start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
                     )
-                except ActivityError as exc:
-                    # Unwrap to the real cause (S.No 139) — surfaces the S.No 136 "merge conflict"
-                    # message instead of the generic "Activity task failed".
-                    reason = failure_reason(exc)
-                    if is_merge_conflict(exc):
-                        # Non-terminal (ENH-2): re-open the gate for a resolve-then-retry (no
-                        # rebuild), then wait for the reviewer's next decision.
-                        await workflow.execute_activity(
-                            "reopen_merge_gate", args=[inp, reason],
-                            start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
-                        )
-                        needs_new_decision = True
-                        break
-                    # Any OTHER merge error parks instead of ending the build (S.No 157). On
-                    # resume the merge is retried under the SAME approval — the reviewer already
-                    # approved, and clicking Resume IS the human action.
-                    if not await self._park(inp, f"merge failed: {reason}", "merge_build_pr"):
-                        await self._teardown_preview(inp)
-                        return {"status": "build_failed", "run_id": inp.run_id}
+                    await workflow.execute_activity(
+                        "transition_build_work_item", args=[inp, "done"],
+                        start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                    )
+                    await self._teardown_preview(inp)  # PR merged → close the preview env (D7)
+                    return {"status": "completed", "run_id": inp.run_id}
+
+                if needs_new_decision:
                     continue
 
-                # Publish EVERY artifact of the run now the gate is approved and the PR is merged
-                # (Bugs S.No 152) — the mirror of the planning path's publish_artifacts. Without
-                # this the Assumptions/Code Review artifacts stayed Draft forever; only the `code`
-                # artifact was ever published.
-                await workflow.execute_activity(
-                    "publish_build_artifacts", inp,
-                    start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
-                )
-                await workflow.execute_activity(
-                    "transition_build_work_item", args=[inp, "done"],
-                    start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
-                )
-                await self._teardown_preview(inp)      # PR merged → close the preview env (D7)
-                return {"status": "completed", "run_id": inp.run_id}
-
-            if needs_new_decision:
-                continue
+            if revise_requested:
+                continue        # back through PR → review → gate with the revised head

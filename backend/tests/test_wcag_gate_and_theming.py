@@ -28,7 +28,7 @@ class _Recorder:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, workflow_id, decision, approver_id, comment):
+    def __call__(self, workflow_id, decision, approver_id, comment, revise=False):
         self.calls.append((workflow_id, decision, approver_id, comment))
 
 

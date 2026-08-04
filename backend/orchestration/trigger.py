@@ -177,6 +177,8 @@ def trigger_phase(
     triggered_by: str | None = None,
     execution_mode: str | None = None,
     auto_approve: bool = False,
+    review_history: list[dict] | None = None,
+    revision_of: str | None = None,
     workflow_starter=None,
 ) -> TriggerResult:
     """Start an agent run for a work item and kick off its Temporal workflow. The phase runs
@@ -184,7 +186,12 @@ def trigger_phase(
     auto-resolves to "companion"), else server-side (the CI/test fallback).
 
     `auto_approve` (Part B, 00e) publishes the run's result without a human gate — default False,
-    so every normal phase still opens its review gate unchanged."""
+    so every normal phase still opens its review gate unchanged.
+
+    `review_history` / `revision_of` are set only when a reviewer pressed "Request changes" on this
+    phase's gate: the accumulated review conversation, and the run this one revises. They are
+    persisted on `Run.inputs` (NOT on the Temporal payload) and read back by the manifest composer,
+    so the revising agent sees every round's direction and what it produced in response."""
     workflow_starter = workflow_starter or _default_workflow_starter
 
     with tenant_context(tenant_id):
@@ -217,6 +224,8 @@ def trigger_phase(
             engine=spec.recommended_engine, model=spec.recommended_model,
             prompt_version=spec.prompt_version, status=Run.Status.PENDING,
             triggered_by_id=triggered_by,
+            inputs=({"review_history": review_history, "revision_of": revision_of,
+                     "revision": len(review_history) + 1} if review_history else {}),
         )
         workflow_id = f"agent-run-{run.id}"
         run.temporal_workflow_id = workflow_id

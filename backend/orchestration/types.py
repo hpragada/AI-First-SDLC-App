@@ -47,6 +47,13 @@ class GateDecision:
     decision: str  # "approved" | "rejected"
     approver_id: str | None = None
     comment: str = ""
+    # "Request changes": a rejection the reviewer wants ACTED ON rather than just recorded. The
+    # workflow rejects the run as usual and then re-runs the phase with `comment` as authoritative
+    # direction. Defaults False, so an old-shape signal payload (no key) replays as a plain
+    # rejection — but a NEW api signalling an OLD worker fails to deserialize, so deploy the
+    # worker first. This flag is the only workflow-payload change the revision feature needs:
+    # the direction itself travels in `Run.inputs["review_history"]`, not in a Temporal payload.
+    revise: bool = False
 
 
 @dataclass

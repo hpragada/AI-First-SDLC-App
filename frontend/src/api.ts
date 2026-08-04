@@ -381,6 +381,9 @@ export const api = {
       // Reviewer's checklist updates — matched server-side by `key` (== GateCriterion.id).
       // Field name/shape must match `GateDecisionSerializer.conditions` exactly.
       conditions?: { key: string; satisfied: boolean }[];
+      // "Request changes": reject AND re-run the phase with `comment` as the agent's
+      // authoritative direction. The server refuses it without a comment, or on an approval.
+      revise?: boolean;
     },
   ) => req<Record<string, unknown>>("POST", `/approvals/${approvalId}/decide/`, { tenantId, body }),
 

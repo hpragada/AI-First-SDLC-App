@@ -31,6 +31,7 @@ function CriteriaGateLive() {
   const [satisfied, setSatisfied] = useState<Record<string, boolean>>({});
   const [comment, setComment] = useState("");
   const [decided, setDecided] = useState<"approved" | "rejected" | null>(null);
+  const [revisionRequested, setRevisionRequested] = useState(false);
 
   useEffect(() => {
     if (criteria.data) {
@@ -65,13 +66,17 @@ function CriteriaGateLive() {
   const requiredUnmet = list.some((c) => c.required && !satisfied[c.id]);
   const approveEnabled = !requiredUnmet;
 
-  const handleDecide = (decision: "approved" | "rejected") => {
+  const canRequestChanges = comment.trim().length > 0;
+
+  const handleDecide = (decision: "approved" | "rejected", revise = false) => {
+    setRevisionRequested(revise);
     decideApproval.mutate(
       {
         id,
         decision,
         comment: comment || undefined,
         conditions: list.map((c) => ({ key: c.id, satisfied: Boolean(satisfied[c.id]) })),
+        revise,
       },
       { onSuccess: () => setDecided(decision) },
     );
@@ -84,9 +89,22 @@ function CriteriaGateLive() {
         <Card>
           <CardBody>
             <span className="gate-panel__role">Criteria gate</span>
-            <Banner variant="danger" title="Rejected — sent back for rework">
-              {comment || "A remediation note was sent to the run."}
-            </Banner>
+            {/* Only the revise branch may claim rework — this screen used to say "sent back for
+                rework" and "a remediation note was sent to the run" on EVERY rejection, and
+                neither was true: nothing was sent and nothing re-ran. */}
+            {revisionRequested ? (
+              <Banner variant="danger" title="Sent back for changes">
+                {comment
+                  ? `The phase re-runs with your note as its instructions: “${comment}”`
+                  : "The phase re-runs with your note as its instructions."}
+              </Banner>
+            ) : (
+              <Banner variant="danger" title="Rejected">
+                {comment
+                  ? `Recorded: “${comment}”. Nothing re-runs — use Request changes if you want a revision.`
+                  : "Recorded. Nothing re-runs — use Request changes if you want a revision."}
+              </Banner>
+            )}
           </CardBody>
         </Card>
       </div>
@@ -142,8 +160,12 @@ function CriteriaGateLive() {
               </CriteriaList>
             )}
             <label className="field" style={{ margin: "var(--space-2) 0 0" }}>
-              <span className="field__label">Comment (optional)</span>
-              <Textarea value={comment} onChange={(e) => setComment(e.target.value)} />
+              <span className="field__label">Comment</span>
+              <Textarea
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                placeholder="Add context for your decision — or say what you want changed…"
+              />
             </label>
             <div className="gate-panel__actions">
               <Button
@@ -157,6 +179,19 @@ function CriteriaGateLive() {
                     ? <Spinner />
                     : "Approve"
                   : `Approve (${list.length - met} remaining)`}
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={decideApproval.isPending || !canRequestChanges}
+                aria-disabled={!canRequestChanges}
+                title={
+                  canRequestChanges
+                    ? undefined
+                    : "Write what you want changed first — the agent re-runs on this text"
+                }
+                onClick={() => handleDecide("rejected", true)}
+              >
+                Request changes
               </Button>
               <Button
                 variant="danger"
@@ -201,12 +236,12 @@ function CriteriaGateGallery({ view }: { view: CriteriaGateView }) {
         <Card>
           <CardBody>
             <span className="gate-panel__role">UX Design criteria · WI-487</span>
-            <Banner variant="danger" title="Rejected — sent back for rework">
-              Contrast failed on the secondary buttons. A remediation note was sent to the run; the
-              design returns to UX Design.
+            <Banner variant="danger" title="Sent back for changes">
+              Contrast failed on the secondary buttons. UX Design re-runs with this note as its
+              instructions.
             </Banner>
             <label className="field">
-              <span className="field__label">Rejection comment</span>
+              <span className="field__label">What you asked to be changed</span>
               <Textarea defaultValue="Secondary button text is 3.1:1 on white — bump to navy text or darken the fill." />
             </label>
           </CardBody>

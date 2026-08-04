@@ -2,6 +2,7 @@
 import pytest
 
 from manifest import TokenBudget, compose_manifest, estimate_tokens
+from manifest.composer import TRUNCATION_MARKER
 
 _SECTION_ORDER = [
     "# Project",
@@ -230,3 +231,77 @@ def test_composes_from_real_get_context():
         assert header in md
     assert "verbatim ctx" in md
     assert "[requirements v1]" in md
+
+
+# ── Reviewer Direction (the "Request changes" loop) ─────────────────
+
+
+def _round(n, direction, artifacts=()):
+    return {
+        "revision": n, "direction": direction, "approver": "po@acme.com",
+        "decided_at": "2026-08-04", "run_id": f"r{n}",
+        "artifacts": [
+            {"id": f"a{n}", "type": "wireframe", "title": t, "version": n} for t in artifacts
+        ],
+    }
+
+
+def test_reviewer_direction_is_omitted_when_nobody_sent_the_phase_back():
+    """The overwhelmingly common case. A manifest for a phase with no review history must be
+    byte-identical to what it was before this feature existed."""
+    plain = compose_manifest(context=_context(), work_item=_work_item(), phase="prd")
+    with_empty = compose_manifest(
+        context=_context(), work_item=_work_item(), phase="prd", review_history=[],
+    )
+    assert plain == with_empty
+    assert "# Reviewer Direction" not in plain
+
+
+def test_reviewer_direction_sits_above_the_sections_that_get_truncated():
+    """It must land after # Important Context and before # Current Work Item. Everything below
+    is capped and grows with the project; an instruction a human typed must never be what gets
+    cut to make room."""
+    md = compose_manifest(
+        context=_context(), work_item=_work_item(), phase="prd",
+        review_history=[_round(1, "Use a single column.")],
+    )
+    assert md.find("# Important Context") < md.find("# Reviewer Direction")
+    assert md.find("# Reviewer Direction") < md.find("# Current Work Item")
+    assert md.find("# Current Work Item") < md.find("# Relevant Artifacts")
+
+
+def test_the_whole_review_conversation_reaches_the_agent():
+    """The team's decision: not just the last note. Round 3 must carry rounds 1 and 2 AND name
+    the artifacts they produced, or the agent will happily undo what round 1 asked for."""
+    md = compose_manifest(
+        context=_context(), work_item=_work_item(), phase="prd",
+        review_history=[
+            _round(1, "Drop the hero image.", artifacts=("Login",)),
+            _round(2, "Merge the two forms.", artifacts=("Signup",)),
+            _round(3, "Use a single column."),
+        ],
+    )
+    assert "Drop the hero image." in md
+    assert "Merge the two forms." in md
+    assert "Use a single column." in md
+    # The current direction is the authoritative one and must be presented as such, first.
+    assert md.find("Use a single column.") < md.find("Drop the hero image.")
+    # Superseded artifacts are named with ids so the agent can re-read what it wrote.
+    assert "Login" in md and "a1" in md
+    assert "3 review rounds" in md
+
+
+def test_a_long_history_drops_whole_old_rounds_and_never_cuts_the_current_direction():
+    """`_truncate` cuts from the END, which here would swallow the newest — i.e. the
+    authoritative — instruction. A half-read instruction is the worst failure this has."""
+    current = ("THE CURRENT INSTRUCTION. " + ("keep every word of this. " * 40)).strip()
+    history = [_round(i, f"round {i} says " + ("filler " * 400)) for i in range(1, 9)]
+    history.append(_round(9, current))
+    md = compose_manifest(
+        context=_context(), work_item=_work_item(), phase="prd", review_history=history,
+    )
+    section = md[md.find("# Reviewer Direction"):md.find("# Current Work Item")]
+    assert current in section, "the current direction was truncated"
+    assert TRUNCATION_MARKER not in section
+    assert "omitted to fit" in section, "old rounds should be dropped, not the section cut"
+    assert estimate_tokens(section) <= TokenBudget().review_direction + 100

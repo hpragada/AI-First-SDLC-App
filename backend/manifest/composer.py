@@ -5,9 +5,14 @@ with a FIXED section order and a per-section token budget (prefer retrieval over
 the whole profile). Pure: dicts in, markdown string out — written per run, discarded after.
 
 Section order (locked):
-  # Project → [# Repository] → # Important Context → # Current Work Item
-  → [# Answered Clarifications] → # Relevant Artifacts → # Recent Events
-  → # Retrieved Knowledge → # Rules
+  # Project → [# Repository] → # Important Context → [# Reviewer Direction]
+  → # Current Work Item → [# Answered Clarifications] → # Relevant Artifacts
+  → # Recent Events → # Retrieved Knowledge → # Rules
+
+`# Reviewer Direction` is rendered only when a human sent this phase back through the gate with
+written direction ("Request changes"). It sits ABOVE every capped-and-growing section on purpose:
+the artifact/event tail is what truncation eats, and an instruction the reviewer typed must never
+be the thing that gets cut.
 
 `# Answered Clarifications` is rendered only when the work item has answered clarifications —
 prior human answers to the agent's questions, replayed so a re-dispatched run reuses them
@@ -59,6 +64,11 @@ class TokenBudget:
     retrieved_knowledge: int = 1500  # unbounded growth — cap stays
     rules: int = 3000                # was 1500 — WE author this, same every run; measured 1,706
     answered_clarifications: int = 1200
+    # The review conversation. Human-authored like `project`/`important_context`, but unlike them
+    # it DOES grow without bound — one more round every time a reviewer sends the phase back — so
+    # it needs a cap. It is enforced differently: whole OLDEST rounds are dropped, and the current
+    # direction is never cut. See `_render_review_direction`.
+    review_direction: int = 3000
     max_artifacts: int = 20
     max_events: int = 15
     max_clarifications: int = 20
@@ -223,6 +233,71 @@ def _render_clarifications(clarifications: list[dict], budget: TokenBudget) -> s
     return _section("Answered Clarifications", "\n".join(lines), budget.answered_clarifications)
 
 
+def _render_round(entry: dict, *, current: bool) -> list[str]:
+    """One round of the review conversation: what the reviewer asked for, and — for a past
+    round — what the agent produced in response, named so it can be re-read on demand."""
+    if current:
+        lines = ["## What the reviewer wants changed (authoritative)", "",
+                 str(entry.get("direction") or "").strip(), ""]
+        return lines
+    who = entry.get("approver") or "a reviewer"
+    when = entry.get("decided_at") or ""
+    lines = [f"### Revision {entry.get('revision')} — sent back by {who} {when}".rstrip(), "",
+             str(entry.get("direction") or "").strip(), ""]
+    produced = entry.get("artifacts") or []
+    if produced:
+        lines.append("What you produced that round (superseded — call `get_artifact_body` on an "
+                     "id to re-read one):")
+        for a in produced:
+            title = a.get("title") or a.get("type")
+            lines.append(f"- {title} [{a.get('type')} v{a.get('version')}] — {a.get('id')}")
+        lines.append("")
+    return lines
+
+
+def _render_review_direction(history: list[dict], budget: TokenBudget) -> str:
+    """The review conversation for this phase: the CURRENT direction first, then every earlier
+    round with the artifacts it produced.
+
+    Deliberately NOT `_truncate`d. That helper cuts from the end, which here would silently
+    swallow the newest — i.e. the authoritative — instruction, and a half-read instruction is the
+    worst failure this section has. Instead the CURRENT direction is always rendered whole and
+    whole OLDEST rounds are dropped until the section fits, with a line saying how many went.
+    """
+    if not history:
+        return ""
+    current, earlier = history[-1], history[:-1]
+    head = [
+        f"You have been through {len(history)} review "
+        f"{'round' if len(history) == 1 else 'rounds'} on this phase. Address the direction "
+        "below in full. It outranks your default approach and any earlier answered "
+        "clarification it contradicts; where it does contradict one, say so in your output "
+        "rather than silently choosing. Do not undo what an earlier round asked for unless the "
+        "current direction says to.",
+        "",
+    ]
+    body = _render_round(current, current=True)
+    if earlier:
+        tail_head = ["## Earlier rounds (oldest first)", ""]
+        rounds = [_render_round(e, current=False) for e in earlier]
+        dropped = 0
+        while rounds:
+            candidate = "\n".join(head + body + tail_head
+                                  + ([f"_{dropped} earlier round(s) omitted to fit._", ""]
+                                     if dropped else [])
+                                  + [ln for r in rounds for ln in r])
+            if estimate_tokens(candidate) <= budget.review_direction:
+                break
+            rounds.pop(0)          # drop the OLDEST round, never the current direction
+            dropped += 1
+        if rounds or dropped:
+            body = body + tail_head
+            if dropped:
+                body += [f"_{dropped} earlier round(s) omitted to fit._", ""]
+            body += [ln for r in rounds for ln in r]
+    return "# Reviewer Direction\n\n" + "\n".join(head + body).rstrip()
+
+
 def _artifact_ptr_line(a: dict) -> str:
     ptr = a.get("s3_key") or (
         json.dumps(a.get("external_ref")) if a.get("external_ref") else "—"
@@ -314,8 +389,13 @@ def compose_manifest(
     phase: str,
     rules: str = "",
     budget: TokenBudget | None = None,
+    review_history: list[dict] | None = None,
 ) -> str:
-    """Render the composed AGENTS.md. `context` is a `get_context()` result."""
+    """Render the composed AGENTS.md. `context` is a `get_context()` result.
+
+    `review_history` is the phase's review conversation (see `_render_review_direction`); empty or
+    None renders nothing at all, so a manifest for a phase nobody has sent back is byte-identical
+    to what it was before this parameter existed."""
     budget = budget or TokenBudget()
     profile = context.get("profile") or {}
     repo = context.get("repo")
@@ -327,10 +407,11 @@ def compose_manifest(
         # project-level run (no single repo) on a multi-repo project — list the assignment
         # options so Task Breakdown can route each work item to the right repo (Option C).
         sections.append(_render_repositories(repositories, budget))
-    sections += [
-        _render_important_context(profile, budget),
-        _render_work_item(work_item, phase, budget),
-    ]
+    sections.append(_render_important_context(profile, budget))
+    direction = _render_review_direction(review_history or [], budget)
+    if direction:  # only when a reviewer sent this phase back with written direction
+        sections.append(direction)
+    sections.append(_render_work_item(work_item, phase, budget))
     clarifications = context.get("answered_clarifications") or []
     if clarifications:  # only when prior answers exist (req #2 durability) — else omitted
         sections.append(_render_clarifications(clarifications, budget))

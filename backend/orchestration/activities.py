@@ -158,7 +158,21 @@ def _log_manifest_truncations(inp: AgentRunInput, manifest: str) -> None:
     )
 
 
+def _review_history(tenant_id: str, run_id: str) -> list[dict]:
+    """The review conversation carried into this run by "Request changes".
+
+    Read off the Run ROW rather than the input object on purpose. `compose_manifest_core` is
+    duck-typed — `BuildInput` flows through it too (dispatch_build_core, dispatch_remediation_core,
+    review_provider) — so any new attribute read off `inp` would raise AttributeError on every
+    build dispatch. It also keeps a list that grows with each revision out of the Temporal payload.
+    """
+    with tenant_context(tenant_id):
+        run = Run.objects.filter(id=run_id, tenant_id=tenant_id).only("inputs").first()
+    return list((run.inputs or {}).get("review_history") or []) if run else []
+
+
 def compose_manifest_core(inp: AgentRunInput) -> str:
+    review_history = _review_history(inp.tenant_id, inp.run_id)
     with tenant_context(inp.tenant_id):
         work_item = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
         # Pass the work item so context scopes per-repo when it targets one (D5).
@@ -166,7 +180,7 @@ def compose_manifest_core(inp: AgentRunInput) -> str:
             inp.tenant_id, inp.project_id, inp.phase, work_item_id=inp.work_item_id)
         manifest = compose_manifest(
             context=context, work_item=tools._work_item(work_item),
-            phase=inp.phase, rules=load_rules(),
+            phase=inp.phase, rules=load_rules(), review_history=review_history,
         )
         _log_manifest_truncations(inp, manifest)
         return manifest
@@ -370,13 +384,114 @@ def reject_run_core(inp: AgentRunInput, comment: str) -> dict:
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         run.status = Run.Status.REJECTED
-        run.save(update_fields=["status", "updated_at"])
+        # Stamp when it ended. Rejection is terminal exactly like publish (:publish_artifacts_core)
+        # and failure (:fail_run_core), both of which stamp it — this path was the last one that
+        # did not, so no screen could show a rejected run's duration.
+        run.ended_at = _now()
+        run.save(update_fields=["status", "ended_at", "updated_at"])
+        # The drafts this run produced are no longer the project's answer for their type. They are
+        # NOT deleted — they are what the agent actually wrote, a revision's manifest cites them by
+        # id, and the run console still lists them — but `get_context` must stop serving them
+        # downstream as authoritative. A rejected artifact that keeps being handed to later phases
+        # is a quieter failure than a rejected run.
+        superseded = Artifact.objects.filter(
+            run_id=inp.run_id, tenant_id=inp.tenant_id,
+        ).exclude(status=Artifact.Status.PUBLISHED).update(
+            status=Artifact.Status.SUPERSEDED, updated_at=_now(),
+        )
         tools.transition_work_item(inp.tenant_id, inp.work_item_id, WorkItem.State.IN_PROGRESS)
         # Approval decision/comment recorded by the gate service (decide_gate, T9).
         tools.log_event(
-            inp.tenant_id, "orchestrator", "run.rejected", "run", inp.run_id, {"comment": comment}
+            inp.tenant_id, "orchestrator", "run.rejected", "run", inp.run_id,
+            {"comment": comment, "superseded_artifacts": superseded},
         )
-    return {"status": "rejected"}
+    return {"status": "rejected", "superseded_artifacts": superseded}
+
+
+def build_review_round(tenant_id: str, run_id: str, direction: str) -> dict:
+    """One entry in the review conversation: what the reviewer asked for on this run, and what
+    the run had produced when they asked. Shared by the planning and build revise paths."""
+    with tenant_context(tenant_id):
+        approval = (
+            Approval.objects.filter(run_id=run_id, tenant_id=tenant_id)
+            .select_related("approver").order_by("-decided_at").first()
+        )
+        approver = getattr(getattr(approval, "approver", None), "email", "") or (
+            getattr(approval, "required_role", "") or "a reviewer")
+        produced = [
+            {"id": str(a.id), "type": a.type, "title": a.title, "version": a.version}
+            for a in Artifact.objects.filter(run_id=run_id, tenant_id=tenant_id)
+            .order_by("type", "title")
+        ]
+    decided = getattr(approval, "decided_at", None)
+    return {
+        "run_id": str(run_id),
+        "direction": direction or getattr(approval, "comment", "") or "",
+        "decided_at": decided.strftime("%Y-%m-%d") if decided else "",
+        "approver": approver,
+        "artifacts": produced,
+    }
+
+
+def retrigger_revision_core(inp: AgentRunInput, direction: str) -> dict:
+    """"Request changes": start a fresh run of this phase carrying the reviewer's direction.
+
+    Runs from the WORKFLOW, after `reject_run`, and that ordering is load-bearing. Doing it from
+    the REST layer instead would race: `decide_gate` returns 200 as soon as it has signalled, while
+    the run is still AWAITING_GATE — which IS in `_ACTIVE_RUN_STATUSES` — so `_guard_no_active_run`
+    would reject the new run with a 409. Here the run is already REJECTED, which is not in that
+    set, and Temporal guarantees the activity order.
+
+    Idempotent, because Temporal will retry an activity whose completion was lost. The guard is a
+    lookup for a run that already revises this one, not a flag we set afterwards: a flag written
+    after the trigger leaves a window where a retry creates a SECOND run and then dies on
+    `_guard_no_active_run` against the run it just made.
+    """
+    from .trigger import ActiveRunError, trigger_phase
+
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        existing = (run.outputs or {}).get("revision_run_id")
+        if not existing:
+            already = (
+                Run.objects.filter(tenant_id=inp.tenant_id, inputs__revision_of=str(inp.run_id))
+                .order_by("created_at").values_list("id", flat=True).first()
+            )
+            existing = str(already) if already else None
+        if existing:
+            return {"revision_run_id": existing, "reused": True}
+        history = list((run.inputs or {}).get("review_history") or [])
+        spec = AgentSpec.objects.get(id=inp.agent_spec_id, tenant_id=inp.tenant_id)
+        agent_key = spec.key
+        # Carry the triggering user forward so the revision resolves the SAME companion (req #1).
+        triggered_by = str(run.triggered_by_id) if run.triggered_by_id else None
+
+    round_entry = build_review_round(inp.tenant_id, inp.run_id, direction)
+    round_entry["revision"] = len(history) + 1
+    history = history + [round_entry]
+
+    try:
+        result = trigger_phase(
+            tenant_id=inp.tenant_id, project_id=inp.project_id, work_item_id=inp.work_item_id,
+            agent_key=agent_key, gate_type=inp.gate_type, required_role=inp.required_role,
+            triggered_by=triggered_by, review_history=history, revision_of=str(inp.run_id),
+        )
+    except ActiveRunError:
+        # Another run for this work item started in the gap. Do not queue behind it and do not
+        # fail the (already terminal) rejected run — say so and let the reviewer re-ask.
+        with tenant_context(inp.tenant_id):
+            tools.log_event(inp.tenant_id, "orchestrator", "run.revision_failed", "run",
+                            inp.run_id, {"reason": "another run is already active"})
+        return {"revision_run_id": None, "reason": "another run is already active"}
+
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        run.outputs = {**(run.outputs or {}), "revision_run_id": result.run_id}
+        run.save(update_fields=["outputs", "updated_at"])
+        tools.log_event(inp.tenant_id, "orchestrator", "run.revision_requested", "run",
+                        inp.run_id, {"revision_run_id": result.run_id,
+                                     "revision": round_entry["revision"]})
+    return {"revision_run_id": result.run_id, "revision": round_entry["revision"]}
 
 
 #: The hash of a body staged from no text at all. `register_phase_result_core` always stamps
@@ -1018,6 +1133,11 @@ def reject_run_activity(inp: AgentRunInput, comment: str) -> dict:
     return _boundary(reject_run_core, inp, comment)
 
 
+@activity.defn(name="retrigger_revision")
+def retrigger_revision_activity(inp: AgentRunInput, direction: str) -> dict:
+    return _boundary(retrigger_revision_core, inp, direction)
+
+
 @activity.defn(name="verify_writes")
 def verify_writes_activity(inp: AgentRunInput, expected_types: list[str]) -> dict:
     return _boundary(verify_write_completeness_core, inp, expected_types)
@@ -1063,6 +1183,7 @@ ALL_ACTIVITIES = [
     publish_artifacts_activity,
     transition_work_item_activity,
     reject_run_activity,
+    retrigger_revision_activity,
     verify_writes_activity,
     dispatch_phase_activity,
     register_phase_result_activity,
