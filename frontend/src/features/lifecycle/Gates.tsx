@@ -19,10 +19,18 @@ import {
 } from "../../components/ui";
 import type { Approval } from "../../types";
 import { roleLabel } from "../identity/roles";
-import { useApprovals, useDecideApproval, useGateCriteria, usePatchAnyWorkItem, useWorkItems } from "./hooks";
+import { Pager, PhaseFilter, WorkItemFilter } from "./HistoryControls";
+import {
+  useApprovalHistory,
+  useApprovals,
+  useDecideApproval,
+  useGateCriteria,
+  usePatchAnyWorkItem,
+  useWorkItems,
+} from "./hooks";
 import { useRepositories } from "../setup/hooks";
 import { RepoAssignmentReview } from "./RepoAssignmentReview";
-import { gateLabel } from "./phases";
+import { gateLabel, phaseLabel } from "./phases";
 
 // S-21 view states: can-decide (your role) · cannot-decide (permission) ·
 // decided-history · empty.
@@ -52,7 +60,8 @@ function GatesLive() {
   const loading = approvals.isLoading || workItems.isLoading;
   const projectApprovals = (approvals.data ?? []).filter((a) => workItemIds.has(a.work_item));
   const pending = projectApprovals.filter((a) => a.decision === "pending");
-  const decided = projectApprovals.filter((a) => a.decision !== "pending");
+  // Decided gates are no longer derived here — GateHistory fetches them paged and filtered
+  // server-side, so this screen never holds a project's entire decision history in memory.
   const selected = pending.find((a) => a.id === selectedId) ?? pending[0];
 
   // Some gates (e.g. the UX Design a11y gate) carry a required WCAG checklist that must be
@@ -149,30 +158,7 @@ function GatesLive() {
           <Spinner /> Loading gates…
         </Panel>
       ) : tab === "history" ? (
-        <div style={{ marginTop: "var(--space-4)" }}>
-          <Panel flush>
-            {decided.length === 0 ? (
-              <EmptyState title="No decided gates yet" text="Decisions you make will show up here." />
-            ) : (
-              <Table
-                headers={["Gate", "Work item", "Decision", "By", "When"]}
-                rows={decided.map((a) => [
-                  gateLabel(a.gate_type),
-                  <span className="table__id" key="w">
-                    {workItemLabel(a.work_item)}
-                  </span>,
-                  <Badge variant={a.decision === "approved" ? "done" : "failed"} key="d">
-                    {a.decision === "approved" ? "Approved" : "Rejected"}
-                  </Badge>,
-                  a.approver === currentUser?.user.id
-                    ? "You"
-                    : a.approver_name ?? (a.approver ? a.approver.slice(0, 8) : "—"),
-                  a.decided_at ? new Date(a.decided_at).toLocaleString() : "—",
-                ])}
-              />
-            )}
-          </Panel>
-        </div>
+        <GateHistory projectId={projectId} currentUserId={currentUser?.user.id} />
       ) : pending.length === 0 ? (
         <Panel>
           <EmptyState
@@ -356,6 +342,113 @@ function GatesLive() {
 }
 
 // ── Gallery: fixed demo states for /dev/components + tests ─────────────────
+// ── Decided-gate history ───────────────────────────────────────────────────
+// Paged and filterable, because this is a record that only grows: a project six months in has
+// hundreds of decided gates, and the table rendered every one of them. Phase is shown as its own
+// column — it was already being sent to the browser and nothing displayed it, so a reviewer
+// could see THAT a gate was decided but not WHICH phase it belonged to.
+const GATE_HISTORY_PAGE_SIZE = 25;
+
+function GateHistory({
+  projectId,
+  currentUserId,
+}: {
+  projectId: string | undefined;
+  currentUserId: string | undefined;
+}) {
+  const [workItem, setWorkItem] = useState("");
+  const [phase, setPhase] = useState("");
+  const [page, setPage] = useState(1);
+  const workItems = useWorkItems(projectId);
+  const history = useApprovalHistory({
+    project: projectId,
+    work_item: workItem || undefined,
+    phase: phase || undefined,
+    page,
+  });
+
+  // A filter change resets to page 1 — page 3 of the previous result set says nothing about the
+  // new one, and landing on an empty page reads as "there is nothing here".
+  const applyFilter = (set: (v: string) => void) => (v: string) => {
+    set(v);
+    setPage(1);
+  };
+
+  const rows = (history.data?.results ?? []).filter((a) => a.decision !== "pending");
+  const label = (id: string) => {
+    const wi = workItems.data?.find((w) => w.id === id);
+    return wi ? `${id.slice(0, 8)} · ${wi.title || wi.type}` : id.slice(0, 8);
+  };
+
+  return (
+    <div style={{ marginTop: "var(--space-4)" }}>
+      <div className="u-row" style={{ gap: "var(--space-3)", marginBottom: "var(--space-3)" }}>
+        <WorkItemFilter
+          value={workItem}
+          onChange={applyFilter(setWorkItem)}
+          items={workItems.data ?? []}
+        />
+        <PhaseFilter value={phase} onChange={applyFilter(setPhase)} as="key" />
+      </div>
+
+      {history.isLoading ? (
+        <Panel>
+          <Spinner /> Loading history…
+        </Panel>
+      ) : rows.length === 0 ? (
+        <Panel>
+          <EmptyState title="No decided gates yet" text="Decisions you make will show up here." />
+        </Panel>
+      ) : (
+        <>
+          <Panel flush>
+            <Table
+              headers={["Gate", "Phase", "Work item", "Decision", "Comment", "By", "When"]}
+              rows={rows.map((a) => [
+                gateLabel(a.gate_type),
+                a.phase ? phaseLabel(a.phase) : "—",
+                <span className="table__id" key="w">
+                  {label(a.work_item)}
+                </span>,
+                <Badge variant={a.decision === "approved" ? "done" : "failed"} key="d">
+                  {a.decision === "approved" ? "Approved" : "Rejected"}
+                </Badge>,
+                // What the reviewer actually wrote. Stored and served all along, never shown —
+                // so a rejection read as a bare "Rejected" with the reason invisible, even to
+                // the person who wrote it.
+                <span
+                  key="c"
+                  className="t-sm u-body"
+                  title={a.comment || undefined}
+                  style={{
+                    display: "block",
+                    maxWidth: "28rem",
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {a.comment || "—"}
+                </span>,
+                a.approver === currentUserId
+                  ? "You"
+                  : a.approver_name ?? (a.approver ? a.approver.slice(0, 8) : "—"),
+                a.decided_at ? new Date(a.decided_at).toLocaleString() : "—",
+              ])}
+            />
+          </Panel>
+          <Pager
+            page={page}
+            count={history.data?.count ?? 0}
+            pageSize={GATE_HISTORY_PAGE_SIZE}
+            onPage={setPage}
+            noun="decided gates"
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
 function GatesGallery({ view }: { view: GatesView }) {
   return (
     <div className="canvas-pad">

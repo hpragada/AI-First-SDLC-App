@@ -24,25 +24,60 @@ from apps.tenancy.models import Membership
 
 
 def question_signature(questions: list) -> str:
-    """Stable hash of the question set, so a re-asked (re-dispatched) clarification reuses an
-    existing one instead of creating a duplicate. Order-independent on the question id."""
-    norm = sorted(
-        (
-            {
-                "id": q.get("id"),
-                "text": q.get("text", ""),
-                "kind": q.get("kind", "text"),
-                "required": bool(q.get("required", True)),
-                "options": q.get("options"),
-                # `tier` is part of the question's meaning (a re-classified question must not
-                # dedupe onto its old tier), so it participates in the idempotency signature.
-                "tier": q.get("tier"),
-            }
-            for q in (questions or [])
-        ),
-        key=lambda q: str(q["id"]),
-    )
-    return hashlib.sha256(json.dumps(norm, sort_keys=True).encode()).hexdigest()
+    """Stable hash of the question set — the identity used to dedupe a re-ask.
+
+    **Hashes the question IDS ONLY, deliberately.** It used to hash the prose too (`text`,
+    `options`) plus `kind`/`required`/`tier`, which made the signature survive only a
+    BYTE-IDENTICAL re-ask — and prose is the one part of a question a language model
+    regenerates differently every time.
+
+    Run 75adb0ec proved the cost. The ideation agent emitted two `ask_human` calls in one turn
+    (against the single-call rule); the second sat queued behind the first for 37 minutes and
+    fired one second after the human answered. All ten ids matched and nine of ten texts were
+    byte-identical — but ONE question had dropped a seven-word parenthetical, so the hash
+    differed, dedupe missed, and the human was asked the same ten questions a second time. The
+    net that exists precisely to make that invisible was anchored to the volatile part.
+
+    Ids are the stable identity everywhere else in this module: `answers` is keyed by id, and
+    `_missing_required` looks questions up by id. The signature now agrees with them.
+
+    `tier` STAYS in the hash, and that is not an oversight. A Tier-3 question carries the
+    agent's `suggestion` and is auto-accepted when the human leaves it alone; a Tier-1 question
+    demands a decision. If the agent re-classifies the same gap from Tier 3 up to Tier 1,
+    deduping it would hand back the auto-accepted default as though a human had chosen it —
+    silently converting "nobody looked at this" into "the human decided". Tier is a structured
+    value, so unlike prose it cannot drift by rewording. A missing tier normalises to 1, the
+    same rule the UI applies (`tierOf`), so an omitted field can't fork the signature either.
+
+    The trade: an agent that reuses an id set at the same tiers for genuinely DIFFERENT
+    questions within one run gets the earlier answers instead of asking again. Judged far less
+    likely than prose drift (which is observed, not hypothetical) — and `create_clarification`
+    logs an event when it dedupes across changed text, so it is visible rather than silent.
+
+    A question with no id falls back to its text, so id-less questions don't all collapse onto
+    one another.
+    """
+    identity = sorted({
+        (str(q.get("id") or q.get("text", "")), 2 if q.get("tier") == 2 else
+         3 if q.get("tier") == 3 else 1)
+        for q in (questions or [])
+    })
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
+
+def _reworded_question_ids(stored: list, asked: list) -> list[str]:
+    """Ids present in BOTH sets whose wording (text or options) differs — i.e. the drift the
+    id-only signature now forgives. Returns [] when the re-ask is byte-identical."""
+    by_id = {str(q.get("id")): q for q in (stored or [])}
+    out = []
+    for q in asked or []:
+        prior = by_id.get(str(q.get("id")))
+        if prior is None:
+            continue
+        if (prior.get("text", "") != q.get("text", "")
+                or prior.get("options") != q.get("options")):
+            out.append(str(q.get("id")))
+    return out
 
 
 def _serialize(clar: Clarification) -> dict:
@@ -69,6 +104,18 @@ def create_clarification(
             .order_by("created_at").first()
         )
         if existing is not None:
+            # Deduped. If the WORDING changed (same ids, different text/options), say so in the
+            # ledger: the human is being spared a repeat, but a silent absorb would hide both
+            # the agent's double-ask and any drift in what it means to be asking. Never fatal —
+            # the dedupe is the point; this is only the record of it.
+            drifted = _reworded_question_ids(existing.questions, questions)
+            if drifted:
+                tools.log_event(
+                    tenant_id, "orchestrator", "clarification.reask_deduped", "clarification",
+                    str(existing.id),
+                    {"run": str(run_id), "status": existing.status,
+                     "reworded": drifted, "phase": phase},
+                )
             return _serialize(existing)
         clar = Clarification.objects.create(
             tenant_id=tenant_id, run=run, work_item=run.work_item, phase=phase,

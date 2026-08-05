@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import {
@@ -13,9 +14,16 @@ import {
   Panel,
   Select,
   Spinner,
+  Tabs,
 } from "../../components/ui";
 import { isRunListening, type Clarification, type ClarificationQuestion } from "../../types";
-import { useAnswerClarification, useClarifications, useWorkItems } from "./hooks";
+import { Pager, PhaseFilter, WorkItemFilter } from "./HistoryControls";
+import {
+  useAnswerClarification,
+  useClarificationHistory,
+  useClarifications,
+  useWorkItems,
+} from "./hooks";
 import { phaseLabel } from "./phases";
 
 // S-20 view states: one-pending(confirm) · multi-question · tiered (all three tiers) ·
@@ -84,6 +92,146 @@ export function Clarifications({ forceView }: { forceView?: ClarificationsView }
   return <ClarificationsLive />;
 }
 
+// ── History: what the agent asked and what you told it ─────────────────────
+// Every answer here is a decision that shaped a deliverable, and until now it was written once
+// and never shown again — the only way to recall what you told an agent three weeks ago was to
+// read the artifact it produced and infer backwards. Pending questions deliberately do NOT
+// appear: they live in "Needs answer" until they are answered, so the two tabs never disagree
+// about what still needs you.
+const HISTORY_PAGE_SIZE = 25;
+
+function answerText(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "— not answered";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+export function ClarificationHistory({
+  projectId,
+  // When set, the view is pinned to one work item and the work-item filter disappears — this is
+  // the same component embedded on a work item's own page, where "which work item" is already
+  // answered by being there.
+  workItemId,
+}: {
+  projectId: string | undefined;
+  workItemId?: string;
+}) {
+  const [workItem, setWorkItem] = useState("");
+  const [phase, setPhase] = useState("");
+  const [page, setPage] = useState(1);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const workItems = useWorkItems(projectId);
+  const history = useClarificationHistory({
+    project: projectId,
+    work_item: workItemId ?? (workItem || undefined),
+    phase: phase || undefined,
+    page,
+  });
+
+  // Any filter change invalidates the page number — page 3 of the old result set is meaningless
+  // against the new one, and silently showing an empty page reads as "there is nothing here".
+  const applyFilter = (set: (v: string) => void) => (v: string) => {
+    set(v);
+    setPage(1);
+  };
+
+  const rows = (history.data?.results ?? []).filter((c) => c.status !== "pending");
+
+  return (
+    <div style={{ marginTop: "var(--space-4)" }}>
+      <div className="u-row" style={{ gap: "var(--space-3)", marginBottom: "var(--space-3)" }}>
+        {!workItemId && (
+          <WorkItemFilter
+            value={workItem}
+            onChange={applyFilter(setWorkItem)}
+            items={workItems.data ?? []}
+          />
+        )}
+        <PhaseFilter value={phase} onChange={applyFilter(setPhase)} as="slug" />
+      </div>
+
+      {history.isLoading ? (
+        <Panel>
+          <Spinner /> Loading history…
+        </Panel>
+      ) : rows.length === 0 ? (
+        <Panel>
+          <EmptyState
+            title="No answered questions yet"
+            text="Questions you answer will be kept here, with what you told the agent."
+          />
+        </Panel>
+      ) : (
+        <>
+          <Panel flush>
+            {rows.map((c) => {
+              const expanded = Boolean(open[c.id]);
+              return (
+                <div key={c.id} className="clar-history__row">
+                  <button
+                    type="button"
+                    className="clar-history__head"
+                    aria-expanded={expanded}
+                    onClick={() => setOpen((o) => ({ ...o, [c.id]: !o[c.id] }))}
+                  >
+                    <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+                    <span className="u-stack-tight">
+                      <span className="t-sm">
+                        {c.work_item_title || c.work_item.slice(0, 8)}
+                      </span>
+                      <span className="t-xs u-muted">
+                        {phaseLabel(c.phase)} · {c.questions.length} question
+                        {c.questions.length === 1 ? "" : "s"}
+                        {c.answered_by_name ? ` · answered by ${c.answered_by_name}` : ""}
+                        {c.answered_at ? ` · ${new Date(c.answered_at).toLocaleString()}` : ""}
+                      </span>
+                    </span>
+                    <span className="u-spacer" />
+                    <Badge variant={c.status === "answered" ? "done" : "failed"}>
+                      {c.status === "answered" ? "Answered" : "Cancelled"}
+                    </Badge>
+                  </button>
+
+                  {expanded && (
+                    <div className="clar-history__body">
+                      {c.context && <p className="clar-card__why">{c.context}</p>}
+                      {groupByTier(c.questions).map(({ tier, questions }) => (
+                        <section key={tier} className="clar-tier" data-tier={tier}>
+                          <div className="clar-tier__head">
+                            <span className={`clar-tier__badge clar-tier__badge--t${tier}`}>
+                              {TIER_META[tier].title}
+                            </span>
+                          </div>
+                          {questions.map((q) => (
+                            <div key={q.id} className="clar-history__qa">
+                              <p className="t-sm u-muted">{q.text}</p>
+                              <p className="t-sm u-body">{answerText(c.answers?.[q.id])}</p>
+                            </div>
+                          ))}
+                        </section>
+                      ))}
+                      <Link className="t-sm" to={`/runs/${c.run}`}>
+                        Open run {c.run.slice(0, 8)} ↗
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </Panel>
+          <Pager
+            page={page}
+            count={history.data?.count ?? 0}
+            pageSize={HISTORY_PAGE_SIZE}
+            onPage={setPage}
+            noun="answered questions"
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Live: real pending clarifications for the selected project ─────────────
 function ClarificationsLive() {
   const { selectedProject } = useAuth();
@@ -97,6 +245,7 @@ function ClarificationsLive() {
   const [otherText, setOtherText] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState(false);
   const [justAnswered, setJustAnswered] = useState<Clarification | null>(null);
+  const [tab, setTab] = useState<"pending" | "history">("pending");
 
   const loading = clarifications.isLoading || workItems.isLoading;
   const pending = (clarifications.data ?? []).filter((c) => workItemIds.has(c.work_item));
@@ -237,7 +386,18 @@ function ClarificationsLive() {
         </div>
       </div>
 
-      {loading ? (
+      <Tabs
+        tabs={[
+          { id: "pending", label: `Needs answer (${pending.length})` },
+          { id: "history", label: "History" },
+        ]}
+        active={tab}
+        onSelect={(id) => setTab(id as "pending" | "history")}
+      />
+
+      {tab === "history" ? (
+        <ClarificationHistory projectId={projectId} />
+      ) : loading ? (
         <Panel>
           <Spinner /> Loading clarifications…
         </Panel>

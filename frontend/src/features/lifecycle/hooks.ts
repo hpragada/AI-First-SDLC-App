@@ -166,6 +166,23 @@ export function useClarifications(q: { status?: string; work_item?: string; run?
   });
 }
 
+// Answered/cancelled clarifications for the history tab — paged, and filterable by work item
+// and phase. Deliberately a separate hook from `useClarifications`: that one polls every 4s for
+// pending questions, which is wrong for a record that only changes when someone answers.
+export function useClarificationHistory(q: {
+  project?: string;
+  work_item?: string;
+  phase?: string;
+  page?: number;
+}) {
+  const tenantId = useTenantId();
+  return useQuery({
+    queryKey: ["clarification-history", q],
+    queryFn: () => api.listClarificationHistory(tenantId, q),
+    enabled: Boolean(tenantId && q.project),
+  });
+}
+
 export function useAnswerClarification() {
   const tenantId = useTenantId();
   const qc = useQueryClient();
@@ -183,6 +200,22 @@ export function useApprovals(q: { decision?: string; work_item?: string; run?: s
     queryKey: ["approvals", q],
     queryFn: () => api.listApprovals(tenantId, q),
     enabled: Boolean(tenantId),
+  });
+}
+
+// Decided gates for the history tab — paged, filterable by work item and phase. Same reasoning
+// as useClarificationHistory: a decided gate is a record, not a live queue.
+export function useApprovalHistory(q: {
+  project?: string;
+  work_item?: string;
+  phase?: string;
+  page?: number;
+}) {
+  const tenantId = useTenantId();
+  return useQuery({
+    queryKey: ["approval-history", q],
+    queryFn: () => api.listApprovalHistory(tenantId, q),
+    enabled: Boolean(tenantId && q.project),
   });
 }
 

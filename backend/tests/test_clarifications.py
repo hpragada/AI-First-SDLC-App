@@ -286,6 +286,68 @@ def test_create_clarification_returns_answer_when_already_answered(world):
     assert again["answers"] == {"framework": "react"}
 
 
+def test_a_reworded_question_still_dedupes_onto_the_answered_one(world):
+    """Run 75adb0ec, reproduced. The ideation agent emitted two `ask_human` calls in one turn;
+    the second fired a second after the human answered the first. All ten ids matched and nine
+    of ten texts were byte-identical — one question had merely dropped a parenthetical. The old
+    prose-hashing signature saw a different question set and put all ten questions back on the
+    human's screen. Ids (+ tier) are the identity, so the re-ask must come back answered."""
+    first = [{"id": "announcements", "text":
+              "What should announcements support (e.g. acknowledge or comment)?",
+              "kind": "text", "required": True, "tier": 1}]
+    reworded = [{"id": "announcements", "text":
+                 "What should announcements support?",   # same gap, seven words lighter
+                 "kind": "text", "required": True, "tier": 1}]
+    created = create_clarification(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                                   questions=first)
+    answer_clarification(tenant_id=world["tenant_id"], clarification_id=created["id"],
+                         user_id=world["member_id"], answers={"announcements": "HR only"})
+    again = create_clarification(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                                 questions=reworded)
+    assert again["id"] == created["id"]
+    assert again["answers"] == {"announcements": "HR only"}
+    # …and the absorbed drift is on the record, not swallowed.
+    assert Event.objects.filter(action="clarification.reask_deduped",
+                                target_id=str(created["id"])).exists()
+
+
+def test_a_genuinely_different_question_set_still_opens_a_new_clarification(world):
+    """The dedupe must not become a gag. Different ids = a different gap = ask the human."""
+    created = create_clarification(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                                   questions=_NEW_QS)
+    other = create_clarification(
+        tenant_id=world["tenant_id"], run_id=world["run_id"],
+        questions=[{"id": "hosting", "text": "Cloud or on-prem?", "kind": "text",
+                    "required": True, "tier": 1}])
+    assert other["id"] != created["id"]
+
+
+def test_an_identical_reask_logs_no_drift_event(world):
+    """A byte-identical re-ask (crash recovery / re-dispatch) is the normal, quiet path."""
+    created = create_clarification(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                                   questions=_NEW_QS)
+    create_clarification(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                         questions=_NEW_QS)
+    assert not Event.objects.filter(action="clarification.reask_deduped",
+                                    target_id=str(created["id"])).exists()
+
+
+def test_a_tier3_promoted_to_tier1_is_asked_again_not_deduped(world):
+    """A Tier-3 question is auto-accepted from the agent's `suggestion` when the human leaves
+    it alone. If the agent later promotes that same gap to Tier 1 — a decision it can no longer
+    make itself — deduping would hand back the auto-accepted default as though a human had
+    chosen it. Tier stays in the signature to stop exactly that."""
+    gap_t3 = [{"id": "retention", "text": "How long to retain logs?", "kind": "text",
+               "required": False, "tier": 3, "suggestion": "30 days"}]
+    gap_t1 = [{"id": "retention", "text": "How long to retain logs?", "kind": "text",
+               "required": True, "tier": 1}]
+    a = create_clarification(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                             questions=gap_t3)
+    b = create_clarification(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                             questions=gap_t1)
+    assert b["id"] != a["id"]
+
+
 def test_get_clarification_reports_status_and_answers(world):
     state = get_clarification(tenant_id=world["tenant_id"], clarification_id=world["clar_id"])
     assert state["status"] == Clarification.Status.PENDING and state["answers"] == {}
@@ -365,3 +427,54 @@ def test_rls_isolates_clarifications_by_tenant():
             assert cur.fetchone()[0] == 0
     finally:
         raw.close()
+
+
+# ── history surface: opt-in pagination + phase/project filters (WP2/WP3) ──
+def test_list_without_page_param_returns_a_bare_array(world):
+    """The contract every existing caller depends on. Seven call sites read this response as a
+    JSON array; if adding pagination ever turns it into {count, next, previous, results} by
+    default, they all break at once. No `page` param => no envelope."""
+    client = APIClient()
+    r = client.get("/api/clarifications/", **_hdr(world["tenant_id"]))
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+
+def test_list_with_page_param_returns_an_envelope(world):
+    client = APIClient()
+    r = client.get("/api/clarifications/?page=1", **_hdr(world["tenant_id"]))
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) >= {"count", "next", "previous", "results"}
+    assert isinstance(body["results"], list)
+
+
+def test_list_filters_by_phase(world):
+    create_clarification(tenant_id=world["tenant_id"], run_id=world["run_id"],
+                         questions=_NEW_QS, phase="ideation")
+    client = APIClient()
+    hit = client.get("/api/clarifications/?phase=ideation", **_hdr(world["tenant_id"]))
+    miss = client.get("/api/clarifications/?phase=architecture", **_hdr(world["tenant_id"]))
+    assert len(hit.json()) == 1
+    assert miss.json() == []
+
+
+def test_list_filters_by_project(world):
+    client = APIClient()
+    hit = client.get(f"/api/clarifications/?project={world['project_id']}",
+                     **_hdr(world["tenant_id"]))
+    miss = client.get(f"/api/clarifications/?project={uuid.uuid4()}",
+                      **_hdr(world["tenant_id"]))
+    assert len(hit.json()) >= 1
+    assert miss.json() == []
+
+
+def test_history_carries_the_answerer_name_and_work_item_title(world):
+    WorkItem.objects.filter(id=world["wi_id"]).update(title="Leave balance ledger")
+    answer_clarification(tenant_id=world["tenant_id"], clarification_id=world["clar_id"],
+                         user_id=world["member_id"], answers={"scope": "MVP"})
+    client = APIClient()
+    r = client.get("/api/clarifications/?status=answered", **_hdr(world["tenant_id"]))
+    row = r.json()[0]
+    assert row["answered_by_name"] == "PO"                    # not a raw user id
+    assert row["work_item_title"] == "Leave balance ledger"   # no backlog cross-reference

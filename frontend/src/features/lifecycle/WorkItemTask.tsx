@@ -14,6 +14,7 @@ import {
   Panel,
   Spinner,
 } from "../../components/ui";
+import { ClarificationHistory } from "./Clarifications";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
@@ -272,6 +273,15 @@ function WorkItemTaskLive() {
           )}
         </Modal>
       )}
+
+      {/* The questions this task's agents asked and the answers they were given — the decisions
+          behind its code and artifacts. Pinned to this task, so no work-item filter. */}
+      <Card style={{ marginTop: "var(--space-5)" }}>
+        <CardBody>
+          <h3 className="t-h3">Answered questions</h3>
+          <ClarificationHistory projectId={workItem.data.project} workItemId={workItem.data.id} />
+        </CardBody>
+      </Card>
     </div>
   );
 }

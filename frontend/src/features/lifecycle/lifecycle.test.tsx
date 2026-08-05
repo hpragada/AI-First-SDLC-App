@@ -4,6 +4,7 @@ import { screen } from "@testing-library/react";
 
 import { renderWithProviders, stubFetchJson } from "../../test/utils";
 import {
+  ClarificationHistory,
   Clarifications,
   groupByTier,
   isOtherOption,
@@ -12,6 +13,7 @@ import {
 } from "./Clarifications";
 import { CriteriaGate } from "./CriteriaGate";
 import { Gates } from "./Gates";
+import { Pager, phaseSlug } from "./HistoryControls";
 import { PhasesAndRuns } from "./PhasesAndRuns";
 import { RunConsole } from "./RunConsole";
 import { TaskBreakdown } from "./TaskBreakdown";
@@ -257,5 +259,45 @@ describe("P3-09b Test cases (coverage screen)", () => {
     rerender(<TestCases forceView="add-form" />);
     expect(screen.getByText("Steps / spec")).toBeDefined();
     expect(screen.getByText("Add test case")).toBeDefined();
+  });
+});
+
+// ── Clarification history + gate history (WP2/WP3) ────────────────────────
+describe("Clarification history", () => {
+  it("renders an empty state rather than crashing when there is nothing to show", () => {
+    renderWithProviders(<ClarificationHistory projectId={undefined} />);
+    expect(screen.getByText("No answered questions yet")).toBeDefined();
+  });
+});
+
+describe("History controls", () => {
+  it("phaseSlug strips the ordinal so a clarification's phase matches an agent key", () => {
+    // Approvals filter on the agent key ("01_ideation"); clarifications store the bare phase
+    // ("ideation"). One vocabulary each — the filter has to speak whichever it is asking.
+    expect(phaseSlug("01_ideation")).toBe("ideation");
+    expect(phaseSlug("06_task_breakdown")).toBe("task_breakdown");
+    expect(phaseSlug("09b_test_automation")).toBe("test_automation");
+    expect(phaseSlug("ideation")).toBe("ideation"); // already bare — unchanged
+  });
+
+  it("pager reports the window it is showing and stops at both ends", () => {
+    const { rerender } = renderWithProviders(
+      <Pager page={1} count={60} pageSize={25} onPage={() => {}} noun="decided gates" />,
+    );
+    expect(screen.getByText("1–25 of 60 decided gates")).toBeDefined();
+    expect(screen.getByText("Page 1 of 3")).toBeDefined();
+    expect((screen.getByText("Previous") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText("Next") as HTMLButtonElement).disabled).toBe(false);
+
+    rerender(<Pager page={3} count={60} pageSize={25} onPage={() => {}} noun="decided gates" />);
+    expect(screen.getByText("51–60 of 60 decided gates")).toBeDefined();
+    expect((screen.getByText("Next") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("renders nothing at all when there is no history to page through", () => {
+    const { container } = renderWithProviders(
+      <Pager page={1} count={0} pageSize={25} onPage={() => {}} noun="decided gates" />,
+    );
+    expect(container.textContent).toBe("");
   });
 });

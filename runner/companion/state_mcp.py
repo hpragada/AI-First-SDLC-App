@@ -149,6 +149,13 @@ def build_server(
         |"confirm", options?: [...], required?: bool, tier?: 1|2|3, suggestion?: <answer>}.
         Returns answers keyed by question id.
 
+        Call this AT MOST ONCE per message. Never emit two `ask_human` calls in the same turn:
+        the second queues behind the first and fires the moment the human answers the first,
+        re-asking them minutes later. More questions go in the SAME call, not a second one.
+        `id` must be a stable slug naming the gap (e.g. "leave_entitlements"); if you ever ask
+        again, reuse the same id verbatim — that is how the platform recognises a re-ask and
+        hands you the answer already given instead of troubling the human twice.
+
         Front-load ALL three tiers in ONE call (see `# Rules`): `tier: 1` = must-ask, keep it
         `required: true` with NO `suggestion`; `tier: 2`/`3` = set `required: false` and put
         your proposed answer in `suggestion` (for kind="choice", `suggestion` must be one of

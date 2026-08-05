@@ -41,6 +41,20 @@ def test_gap_scan_is_a_question_never_an_artifact():
         assert needle in rules, f"missing gap-scan enforcement: {needle!r}"
 
 
+def test_rules_forbid_two_ask_human_calls_in_one_turn():
+    """Regression: run 75adb0ec (01_ideation) emitted TWO ask_human calls in a single turn. The
+    second queued behind the first and fired one second after the human answered, re-asking the
+    same ten questions 37 minutes later. The existing "a SINGLE call" wording was read as "don't
+    dribble questions out over time"; it never forbade two calls in one message. It does now."""
+    rules = get_prompt_rules().lower()
+    for needle in [
+        "one `ask_human` tool call per message",   # the rule itself
+        "never two in the same turn",              # the specific failure, named
+        "queues behind the first",                 # why it is harmful, not just disallowed
+    ]:
+        assert needle in rules, f"missing single-call enforcement: {needle!r}"
+
+
 def test_distilled_rules_have_no_local_file_references():
     """The §8 sweep applies to rules too: references must be rerouted to the platform."""
     rules = get_prompt_rules().lower()

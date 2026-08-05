@@ -148,6 +148,12 @@ def ask_human(
     that rate while pending, so riding out an outage adds no load the platform wasn't
     already seeing.
     """
+    # Record every invocation. Diagnosing run 75adb0ec — where the agent emitted two ask_human
+    # calls in one turn — rested entirely on two database timestamps a second apart, because
+    # nothing anywhere logged the calls themselves. A double-ask is agent behaviour, so it will
+    # recur; this is the line that will name it next time instead of leaving it to inference.
+    _note(f"ask_human run={run_id} phase={phase or '-'} "
+          f"questions={len(questions or [])} ids={[q.get('id') for q in (questions or [])]}")
     outage = 0.0
     while True:
         try:
@@ -166,6 +172,12 @@ def ask_human(
 
     clarification_id = created["id"]
     if created.get("status") == "answered":
+        # The platform deduped onto an already-answered clarification, so the human is spared a
+        # repeat and we return their earlier answers straight away. Worth a line: from the
+        # agent's side this is indistinguishable from an instant reply, and it is exactly what
+        # a double-ask or a re-dispatch looks like when the safety net works.
+        _note(f"ask_human answered from an existing clarification {clarification_id} "
+              f"(re-ask deduped) — returning the answers already given")
         return created.get("answers") or {}
 
     waited = 0.0
