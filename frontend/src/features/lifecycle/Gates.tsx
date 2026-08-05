@@ -431,7 +431,7 @@ function GateHistory({
 
   return (
     <div style={{ marginTop: "var(--space-4)" }}>
-      <div className="u-row" style={{ gap: "var(--space-3)", marginBottom: "var(--space-3)" }}>
+      <div className="history-filters" style={{ marginBottom: "var(--space-3)" }}>
         <WorkItemFilter
           value={workItem}
           onChange={applyFilter(setWorkItem)}

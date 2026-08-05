@@ -153,23 +153,27 @@ export function ClarificationHistory({
 
   return (
     <div style={{ marginTop: "var(--space-4)" }}>
-      <div className="u-row" style={{ gap: "var(--space-3)", marginBottom: "var(--space-3)" }}>
+      {/* Search on its own full-width row, filters beneath. Sharing one row with two dropdowns
+          squeezed the search box to a few characters — the control people reach for first was
+          the smallest thing on the screen, and its own placeholder didn't fit inside it. */}
+      <div style={{ marginBottom: "var(--space-3)" }}>
         <Input
           type="search"
           aria-label="Search questions and answers"
-          placeholder="Search questions and answers"
+          placeholder="Search questions and answers…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{ flex: "1 1 16rem" }}
         />
-        {!workItemId && (
-          <WorkItemFilter
-            value={workItem}
-            onChange={applyFilter(setWorkItem)}
-            items={workItems.data ?? []}
-          />
-        )}
-        <PhaseFilter value={phase} onChange={applyFilter(setPhase)} as="slug" />
+        <div className="history-filters">
+          {!workItemId && (
+            <WorkItemFilter
+              value={workItem}
+              onChange={applyFilter(setWorkItem)}
+              items={workItems.data ?? []}
+            />
+          )}
+          <PhaseFilter value={phase} onChange={applyFilter(setPhase)} as="slug" />
+        </div>
       </div>
 
       {history.isLoading ? (
