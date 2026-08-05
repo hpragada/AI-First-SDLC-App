@@ -173,6 +173,9 @@ export function useClarificationHistory(q: {
   project?: string;
   work_item?: string;
   phase?: string;
+  // Free-text search across questions, answers and the agent's reason for asking. Server-side,
+  // because the list is paged — searching in the browser would only search the visible page.
+  q?: string;
   page?: number;
 }) {
   const tenantId = useTenantId();

@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from django.db.models import Count
+from django.db.models import Count, Q, TextField
+from django.db.models.functions import Cast
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -1812,6 +1813,22 @@ class ClarificationViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             value = self.request.query_params.get(field)
             if value:
                 qs = qs.filter(**{lookup: value})
+        # Free-text search across the questions, the answers and the agent's reason for asking.
+        # Server-side on purpose: the history is paged, so searching in the browser would search
+        # only the 25 rows on screen while appearing to search everything — which is worse than
+        # having no search, because it answers "not found" without having looked.
+        # `questions`/`answers` are JSONB, so cast to text and match a substring: crude, but it
+        # searches question text, option lists and answers in one pass without a search index.
+        search = (self.request.query_params.get("q") or "").strip()
+        if search:
+            qs = qs.annotate(
+                _questions_text=Cast("questions", TextField()),
+                _answers_text=Cast("answers", TextField()),
+            ).filter(
+                Q(_questions_text__icontains=search)
+                | Q(_answers_text__icontains=search)
+                | Q(context__icontains=search)
+            )
         return qs.select_related("answered_by", "work_item", "run")
 
     @action(detail=True, methods=["post"])
