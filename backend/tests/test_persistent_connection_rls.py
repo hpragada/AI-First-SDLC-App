@@ -1,21 +1,31 @@
-"""Tenant isolation under CONNECTION REUSE (`CONN_MAX_AGE` > 0) — Bugs S.No 235.
+"""Tenant isolation when a connection is REUSED, and the ceiling that must come with it.
 
-Persistent connections removed ~95% of the handshakes to a remote Postgres, but they also
-removed the accident that was protecting tenant scope: with `CONN_MAX_AGE = 0` every request
-got a brand-new connection, so `app.tenant_id` — a **session** GUC — could never survive into
-another request. Once connections are pooled it can, and `TenantContextMiddleware`'s no-tenant
-path deliberately never touches the DB, so it would inherit whatever the previous request left.
+Reuse is safe here — these tests prove it — but "safe" was never the whole question, and
+assuming it was is what caused the outage on 2026-08-05. `CONN_MAX_AGE = 60` shipped with the
+isolation half proven and the *bound* half never checked: Django reaps connections only at
+request boundaries, per thread, so idle ASGI worker threads held connections open indefinitely
+until 92 of 97 slots were gone and every developer's login failed. `CONN_MAX_AGE` is now 0 and
+must stay there until a genuinely bounded pool replaces it (see `config/settings.py`).
 
-The invariant: **after a tenant-scoped request the connection is either scoped to '' or gone.**
+The isolation half still matters, because the moment a bounded pool lands, connections get
+reused again and this is what makes that safe:
 
-Two complementary halves, because neither alone is sufficient:
+  after a tenant-scoped request the connection is either scoped to '' or gone.
 
-* `TestScopeOnAReusedConnection` proves the DATABASE half against the real RLS policies, on
-  one connection reused across several tenant scopes — as the non-superuser app role, since
-  the Django test connection is the privileged migration role and bypasses RLS entirely.
-* `TestMiddlewareMaintainsTheInvariant` proves the MIDDLEWARE half — that it always sets, always
-  releases, and discards the connection when releasing fails. That path cannot be reached
-  through the database, so it is driven directly.
+`app.tenant_id` is a SESSION GUC, so it outlives a request on any reused connection, and
+`TenantContextMiddleware`'s no-tenant path deliberately never touches the DB — it would inherit
+whatever the last request left behind.
+
+Three parts, because none alone is sufficient:
+
+* `TestScopeOnAReusedConnection` — the DATABASE half, against the real RLS policies, on one
+  connection reused across several tenant scopes, as the non-superuser app role (the Django
+  test connection is the privileged migration role and bypasses RLS entirely).
+* `TestMiddlewareMaintainsTheInvariant` — the MIDDLEWARE half: always sets, always releases,
+  discards on a failed release, retries a dropped handshake. Driven directly, since those paths
+  cannot be reached through the database.
+* `TestConnectionCountIsBounded` — the half that was MISSING. Isolation without a ceiling is
+  what shipped the outage.
 """
 import psycopg
 import pytest
@@ -193,9 +203,37 @@ class TestMiddlewareMaintainsTheInvariant:
         assert calls["cleared"] == 0               # scope was never entered
 
 
-def test_settings_keep_connections_alive_with_health_checks():
-    """A regression fence: reverting either of these silently restores the 320ms-per-request
-    handshake storm, and raising CONN_MAX_AGE without the release invariant above is unsafe."""
-    db = settings.DATABASES["default"]
-    assert db["CONN_MAX_AGE"] > 0
-    assert db["CONN_HEALTH_CHECKS"] is True
+class TestConnectionCountIsBounded:
+    """The check that was missing on 2026-08-05, and the reason this file exists in this shape.
+
+    The previous version of this test asserted `CONN_MAX_AGE > 0` — it fenced in the very
+    setting that caused the outage, and would have gone green throughout it. An age limit says
+    when a connection may be REUSED; it says nothing about how many may EXIST. Only a pool with
+    an explicit `max_size` bounds that.
+    """
+
+    def test_connection_reuse_is_either_off_or_explicitly_bounded(self):
+        """Either close-after-every-request, or a pool with a real ceiling. Never in between —
+        'in between' is unbounded, which is what filled 92 of 97 slots."""
+        db = settings.DATABASES["default"]
+        pool = (db.get("OPTIONS") or {}).get("pool")
+        if not db["CONN_MAX_AGE"]:
+            return                     # reuse off — bounded by construction
+        assert pool, (
+            "CONN_MAX_AGE > 0 without OPTIONS['pool'] is UNBOUNDED: Django reaps connections "
+            "only at request boundaries and only per-thread, so an idle ASGI worker thread "
+            "holds its connection forever. This exhausted the shared 100-slot Postgres on "
+            "2026-08-05. Configure a bounded pool (psycopg[pool], max_size) instead."
+        )
+        max_size = pool.get("max_size") if isinstance(pool, dict) else None
+        assert isinstance(max_size, int) and max_size > 0, (
+            "a pool without an explicit positive max_size is not a ceiling"
+        )
+        assert max_size <= 20, (
+            f"max_size={max_size} is too large a share of the ~97 usable slots on a database "
+            f"shared by every developer AND Temporal"
+        )
+
+    def test_health_checks_stay_on_for_whenever_reuse_returns(self):
+        """Only meaningful when connections are reused, but wrong to have to remember later."""
+        assert settings.DATABASES["default"]["CONN_HEALTH_CHECKS"] is True
