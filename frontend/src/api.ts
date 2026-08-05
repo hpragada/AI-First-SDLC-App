@@ -360,7 +360,7 @@ export const api = {
   // envelope — callers that omit it (every existing one) still get a bare array.
   listClarificationHistory: (
     tenantId: string,
-    q: { project?: string; work_item?: string; phase?: string; page?: number },
+    q: { project?: string; work_item?: string; phase?: string; q?: string; page?: number },
   ) =>
     req<Page<Clarification>>("GET", "/clarifications/", {
       tenantId,

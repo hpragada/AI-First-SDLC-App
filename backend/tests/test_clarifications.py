@@ -478,3 +478,33 @@ def test_history_carries_the_answerer_name_and_work_item_title(world):
     row = r.json()[0]
     assert row["answered_by_name"] == "PO"                    # not a raw user id
     assert row["work_item_title"] == "Leave balance ledger"   # no backlog cross-reference
+
+
+def test_search_matches_question_text_answer_text_and_context(world):
+    """Search is server-side because the list is paged: searching in the browser would search
+    only the visible page while appearing to search everything. It has to reach the question
+    wording, the answer the human gave, and the agent's reason for asking."""
+    answer_clarification(tenant_id=world["tenant_id"], clarification_id=world["clar_id"],
+                         user_id=world["member_id"], answers={"scope": "billing and invoices"})
+    client = APIClient()
+
+    def ids(query):
+        r = client.get(f"/api/clarifications/?q={query}", **_hdr(world["tenant_id"]))
+        return {row["id"] for row in r.json()}
+
+    assert world["clar_id"] in ids("MVP scope")        # question text
+    assert world["clar_id"] in ids("invoices")         # the human's answer
+    assert world["clar_id"] in ids("drafting the PRD")  # the agent's context
+    assert ids("nothing here matches") == set()
+
+
+def test_search_is_case_insensitive_and_combines_with_the_other_filters(world):
+    answer_clarification(tenant_id=world["tenant_id"], clarification_id=world["clar_id"],
+                         user_id=world["member_id"], answers={"scope": "Billing"})
+    client = APIClient()
+    hit = client.get("/api/clarifications/?q=billing&phase=prd", **_hdr(world["tenant_id"]))
+    # Right search, wrong phase — the filters must AND, not OR.
+    miss = client.get("/api/clarifications/?q=billing&phase=architecture",
+                      **_hdr(world["tenant_id"]))
+    assert len(hit.json()) == 1
+    assert miss.json() == []

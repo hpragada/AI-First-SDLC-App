@@ -118,13 +118,27 @@ export function ClarificationHistory({
 }) {
   const [workItem, setWorkItem] = useState("");
   const [phase, setPhase] = useState("");
+  const [search, setSearch] = useState("");
+  const [debounced, setDebounced] = useState("");
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const workItems = useWorkItems(projectId);
+
+  // Search on a pause, not on every keystroke — typing "probation" would otherwise fire nine
+  // queries and show eight sets of results nobody asked for.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebounced(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
   const history = useClarificationHistory({
     project: projectId,
     work_item: workItemId ?? (workItem || undefined),
     phase: phase || undefined,
+    q: debounced || undefined,
     page,
   });
 
@@ -140,6 +154,14 @@ export function ClarificationHistory({
   return (
     <div style={{ marginTop: "var(--space-4)" }}>
       <div className="u-row" style={{ gap: "var(--space-3)", marginBottom: "var(--space-3)" }}>
+        <Input
+          type="search"
+          aria-label="Search questions and answers"
+          placeholder="Search questions and answers"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ flex: "1 1 16rem" }}
+        />
         {!workItemId && (
           <WorkItemFilter
             value={workItem}
@@ -156,10 +178,19 @@ export function ClarificationHistory({
         </Panel>
       ) : rows.length === 0 ? (
         <Panel>
-          <EmptyState
-            title="No answered questions yet"
-            text="Questions you answer will be kept here, with what you told the agent."
-          />
+          {debounced || workItem || phase ? (
+            // Nothing MATCHED is a different fact from nothing EXISTS — saying "none yet" to
+            // someone whose search just missed reads as "you never answered anything".
+            <EmptyState
+              title="Nothing matches those filters"
+              text="Try a different search, or clear the filters to see everything."
+            />
+          ) : (
+            <EmptyState
+              title="No answered questions yet"
+              text="Questions you answer will be kept here, with what you told the agent."
+            />
+          )}
         </Panel>
       ) : (
         <>
