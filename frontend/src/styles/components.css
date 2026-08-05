@@ -467,6 +467,20 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .clar-tier__badge--t2 { color: var(--warning); background: var(--warning-bg); }
 .clar-tier__badge--t3 { color: var(--accent-purple); background: var(--info-bg); }
 
+/* Clarification history: one collapsed row per answered gate, expanding to the questions and
+   what the human answered. The head is a real <button> so it is keyboard- and screen-reader-
+   operable — a div with an onClick would have been invisible to both. */
+.clar-history__row { border-bottom: 1px solid var(--border); }
+.clar-history__row:last-child { border-bottom: 0; }
+.clar-history__head { display: flex; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-3) var(--space-4); background: none; border: 0; text-align: left; cursor: pointer; color: inherit; font: inherit; }
+.clar-history__head:hover { background: var(--surface-hover, var(--bg-subtle)); }
+.clar-history__head .u-stack-tight { display: flex; flex-direction: column; gap: 2px; }
+.clar-history__head .u-spacer { flex: 1 1 auto; }
+.clar-history__body { display: flex; flex-direction: column; gap: var(--space-3); padding: 0 var(--space-4) var(--space-4) calc(var(--space-4) + var(--space-4)); }
+.clar-history__qa { border-left: 2px solid var(--border); padding-left: var(--space-3); }
+.clar-history__qa p { margin: 0; }
+.clar-history__qa p + p { margin-top: 2px; }
+
 /* ============================================================================
    14. Artifact row + SoR chip
    ========================================================================== */

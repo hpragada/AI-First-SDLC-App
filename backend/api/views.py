@@ -99,6 +99,7 @@ from orchestration.trigger import (
     trigger_phase,
 )
 
+from .pagination import OptInPageNumberPagination
 from .serializers import (
     AdoptSerializer,
     ApprovalSerializer,
@@ -1674,6 +1675,20 @@ class EventViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = ApprovalSerializer
     queryset = Approval.objects.all().order_by("-created_at")
+    # Opt-in: only a caller that passes ?page= gets an envelope. Every existing caller keeps
+    # the bare array it has always received. See api/pagination.py.
+    pagination_class = OptInPageNumberPagination
+
+    #: query param -> ORM lookup. `phase` is the run's agent key (the same value the serializer
+    #: exposes as `phase`), and `project` scopes through the work item — both needed by the
+    #: decided-gate history, which spans months of gates across every phase of a project.
+    _FILTERS = {
+        "decision": "decision",
+        "run": "run_id",
+        "work_item": "work_item_id",
+        "phase": "run__agent_spec__key",
+        "project": "work_item__project_id",
+    }
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -1682,15 +1697,11 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         # carrier work items by design, so the onboarding gate was silently dropped: the sidebar
         # badge counted 1 (the dashboard doesn't cross-filter) while the page said "No gates need
         # you". A gate nobody can reach is worse than no gate, because the run sits waiting.
-        project = self.request.query_params.get("project")
-        if project:
-            qs = qs.filter(work_item__project_id=project)
-        for field in ("decision", "run", "work_item"):
+        for field, lookup in self._FILTERS.items():
             value = self.request.query_params.get(field)
             if value:
-                qs = qs.filter(**{("run_id" if field == "run" else
-                                   "work_item_id" if field == "work_item" else field): value})
-        return qs.select_related("work_item")
+                qs = qs.filter(**{lookup: value})
+        return qs.select_related("approver", "work_item", "run", "run__agent_spec")
 
     @action(detail=True, methods=["get"])
     def criteria(self, request, pk=None):
@@ -1781,15 +1792,27 @@ class ClarificationViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 
     serializer_class = ClarificationSerializer
     queryset = Clarification.objects.all().order_by("-created_at")
+    # Opt-in: only a caller that passes ?page= gets an envelope. See api/pagination.py.
+    pagination_class = OptInPageNumberPagination
+
+    #: query param -> ORM lookup. `phase` and `project` serve the clarifications history, which
+    #: spans every phase of every work item in a project; without `project` the client has to
+    #: fetch the tenant's whole history and filter it in the browser.
+    _FILTERS = {
+        "status": "status",
+        "run": "run_id",
+        "work_item": "work_item_id",
+        "phase": "phase",
+        "project": "work_item__project_id",
+    }
 
     def get_queryset(self):
         qs = super().get_queryset()
-        for field in ("status", "run", "work_item"):
+        for field, lookup in self._FILTERS.items():
             value = self.request.query_params.get(field)
             if value:
-                qs = qs.filter(**{("run_id" if field == "run" else
-                                   "work_item_id" if field == "work_item" else field): value})
-        return qs
+                qs = qs.filter(**{lookup: value})
+        return qs.select_related("answered_by", "work_item", "run")
 
     @action(detail=True, methods=["post"])
     def answer(self, request, pk=None):

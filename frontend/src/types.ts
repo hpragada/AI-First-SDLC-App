@@ -173,14 +173,27 @@ export interface Clarification {
   // The parent run's status, so the screen can tell a live wait from an orphaned question.
   run_status?: string;
   work_item: string;
+  // Resolved names for the history view, which is read back long after the fact — an id and a
+  // raw uuid don't tell you what you decided or who decided it.
+  work_item_title?: string | null;
   phase: string;
   status: string; // "pending" | "answered" | "cancelled"
   questions: ClarificationQuestion[];
   answers: Record<string, unknown>;
   context: string;
   answered_by: string | null;
+  answered_by_name?: string | null;
   answered_at: string | null;
   created_at: string;
+}
+
+// Opt-in pagination envelope. The API returns a bare array unless the caller passes `page`, so
+// this shape appears only where we ask for it (the history views). See backend api/pagination.py.
+export interface Page<T> {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: T[];
 }
 
 // Traceability viewer (GET /projects/{id}/traceability/) — lineage graph.

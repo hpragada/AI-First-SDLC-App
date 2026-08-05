@@ -73,6 +73,14 @@ put YOUR proposed answer in `suggestion` (for `choice` questions, `suggestion` m
 `options`); the human confirms, edits, or overrides it, and any item they leave untouched
 falls back to your `suggestion`. If the scan finds no gaps at all, do not call `ask_human`.
 
+**ONE `ask_human` tool call per message — never two in the same turn.** "A single call" means
+one tool call, not one round of questions split across two calls you emit together. Emitting a
+second `ask_human` block alongside the first does NOT ask twice as thoroughly: the second one
+queues behind the first and fires the instant the human answers, putting the same questions
+back on their screen minutes or hours later, after they thought they were done. If you find
+yourself about to write a second `ask_human` call, add those questions to the first one
+instead. This applies to every phase, not just the opening gap scan.
+
 **The gap scan is a QUESTION, never a deliverable (hard rule).** The gap scan's only output
 is that single `ask_human` call. If the scan finds one or more gaps you MUST: (1) call
 `ask_human` and WAIT for the answers BEFORE you produce, stage, or `register_artifact` any

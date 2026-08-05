@@ -11,6 +11,7 @@ import {
   Panel,
   Spinner,
 } from "../../components/ui";
+import { ClarificationHistory } from "./Clarifications";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useClarifications, useDecideApproval, useLifecycle, useRuns, useWorkItem } from "./hooks";
@@ -190,6 +191,18 @@ function WorkItemEpicLive() {
           </Card>
         </div>
       </div>
+
+      {/* What this item's agents asked, and what a human told them — the decisions behind the
+          artifacts above. Pinned to this work item, so no work-item filter is shown. */}
+      <Card style={{ marginTop: "var(--space-5)" }}>
+        <CardBody>
+          <h3 className="t-h3">Answered questions</h3>
+          <ClarificationHistory
+            projectId={workItem.data.project}
+            workItemId={workItem.data.id}
+          />
+        </CardBody>
+      </Card>
     </div>
   );
 }

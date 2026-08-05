@@ -553,14 +553,27 @@ class ClarificationSerializer(serializers.ModelSerializer):
     # replayed into a re-run's manifest — so the answer is still worth giving; the UI just has
     # to stop promising the wrong thing.
     run_status = serializers.CharField(source="run.status", read_only=True)
+    # Who answered, and what they answered ABOUT — both for the history view, which reads back
+    # months later. `answered_by` alone is a raw user id, and the work item was only ever
+    # resolvable by cross-referencing the backlog. Mirrors `approver_name` / `work_item_title`
+    # on ApprovalSerializer so the two history screens can say the same things the same way.
+    answered_by_name = serializers.SerializerMethodField()
+    work_item_title = serializers.SerializerMethodField()
 
     class Meta:
         model = Clarification
         fields = [
-            "id", "run", "run_status", "work_item", "phase", "status", "questions",
-            "answers", "context", "answered_by", "answered_at", "created_at",
+            "id", "run", "run_status", "work_item", "work_item_title", "phase", "status",
+            "questions", "answers", "context", "answered_by", "answered_by_name",
+            "answered_at", "created_at",
         ]
         read_only_fields = fields
+
+    def get_answered_by_name(self, obj) -> str | None:
+        return obj.answered_by.name if obj.answered_by_id else None
+
+    def get_work_item_title(self, obj) -> str | None:
+        return getattr(obj.work_item, "title", None) if obj.work_item_id else None
 
 
 class ClarificationAnswerSerializer(serializers.Serializer):

@@ -27,6 +27,7 @@ import type {
   LoginRequest,
   OnboardingHub,
   PhaseCatalog,
+  Page,
   Project,
   ProjectProfile,
   PublishResult,
@@ -371,6 +372,16 @@ export const api = {
     q: { decision?: string; work_item?: string; run?: string; project?: string } = {},
   ) =>
     req<Approval[]>("GET", "/approvals/", { tenantId, query: q }),
+  // Decided-gate history: paged, and filterable by phase/work item/project. Same opt-in rule —
+  // `page` is what asks for the envelope.
+  listApprovalHistory: (
+    tenantId: string,
+    q: { project?: string; work_item?: string; phase?: string; decision?: string; page?: number },
+  ) =>
+    req<Page<Approval>>("GET", "/approvals/", {
+      tenantId,
+      query: { ...q, page: String(q.page ?? 1) },
+    }),
   decideApproval: (
     tenantId: string,
     approvalId: string,
@@ -396,6 +407,16 @@ export const api = {
     tenantId: string,
     q: { status?: string; work_item?: string; run?: string } = {},
   ) => req<Clarification[]>("GET", "/clarifications/", { tenantId, query: q }),
+  // History: the same endpoint, but paged. Passing `page` is what switches the response to an
+  // envelope — callers that omit it (every existing one) still get a bare array.
+  listClarificationHistory: (
+    tenantId: string,
+    q: { project?: string; work_item?: string; phase?: string; page?: number },
+  ) =>
+    req<Page<Clarification>>("GET", "/clarifications/", {
+      tenantId,
+      query: { ...q, page: String(q.page ?? 1) },
+    }),
   answerClarification: (
     tenantId: string,
     clarificationId: string,
