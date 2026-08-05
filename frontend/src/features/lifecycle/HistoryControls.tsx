@@ -2,7 +2,7 @@
 // Both are records rather than queues: they grow forever, they are read back weeks later, and
 // they are searched by "which work item" and "which phase". Keeping the controls in one place is
 // what stops the two screens drifting into looking like different products.
-import { Button, Select } from "../../components/ui";
+import { Button, Combobox } from "../../components/ui";
 import { usePhaseCatalog } from "./hooks";
 import { phaseLabel } from "./phases";
 
@@ -14,6 +14,11 @@ export function phaseSlug(agentKey: string): string {
   return agentKey.replace(/^\d+[a-z]?_/, "");
 }
 
+// Both filters are Comboboxes, not plain selects — the same choice Phases & Runs already made
+// for its work-item picker (Bugs S.No 150). A project accumulates dozens of work items and the
+// phase list is seventeen long, so scrolling a native dropdown to find one is the slow path.
+// Typing filters it. The "All …" row is a real option with an empty value, so clearing a filter
+// is a pick like any other rather than a separate control.
 export function PhaseFilter({
   value,
   onChange,
@@ -31,18 +36,20 @@ export function PhaseFilter({
     ...(catalog.data?.remediation ?? []),
   ];
   return (
-    <Select
-      aria-label="Filter by phase"
+    <Combobox
+      id="history-phase-filter"
       value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      <option value="">All phases</option>
-      {entries.map((p) => (
-        <option key={p.agent_key} value={as === "key" ? p.agent_key : phaseSlug(p.agent_key)}>
-          {phaseLabel(p.agent_key)}
-        </option>
-      ))}
-    </Select>
+      onChange={onChange}
+      placeholder="All phases"
+      emptyText="No phases match"
+      options={[
+        { value: "", label: "All phases" },
+        ...entries.map((p) => ({
+          value: as === "key" ? p.agent_key : phaseSlug(p.agent_key),
+          label: phaseLabel(p.agent_key),
+        })),
+      ]}
+    />
   );
 }
 
@@ -53,21 +60,25 @@ export function WorkItemFilter({
 }: {
   value: string;
   onChange: (v: string) => void;
-  items: { id: string; title?: string; type?: string }[];
+  items: { id: string; key?: string; title?: string; type?: string }[];
 }) {
   return (
-    <Select
-      aria-label="Filter by work item"
+    <Combobox
+      id="history-work-item-filter"
       value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      <option value="">All work items</option>
-      {items.map((w) => (
-        <option key={w.id} value={w.id}>
-          {w.title || w.type || w.id.slice(0, 8)}
-        </option>
-      ))}
-    </Select>
+      onChange={onChange}
+      placeholder="All work items"
+      emptyText="No work items match"
+      options={[
+        { value: "", label: "All work items" },
+        ...items.map((w) => ({
+          value: w.id,
+          // Same label shape as the Phases & Runs picker, so the two screens name a work item
+          // identically: "WI-19 · Implement ExpenseService".
+          label: `${w.key || w.id.slice(0, 8)} · ${w.title || w.type || ""}`.replace(/ · $/, ""),
+        })),
+      ]}
+    />
   );
 }
 

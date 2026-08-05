@@ -456,6 +456,12 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .clar-tier__badge--t2 { color: var(--warning); background: var(--warning-bg); }
 .clar-tier__badge--t3 { color: var(--accent-purple); background: var(--info-bg); }
 
+/* History filter row (clarifications + gates). Equal-width columns that wrap on a narrow
+   viewport — `.u-row` sizes flex children from their content, which let two dropdowns starve the
+   search box beside them. `minmax(0, 1fr)` is what stops a long work-item label pushing its
+   column past its share. */
+.history-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr)); gap: var(--space-3); margin-top: var(--space-3); }
+
 /* Clarification history: one collapsed row per answered gate, expanding to the questions and
    what the human answered. The head is a real <button> so it is keyboard- and screen-reader-
    operable — a div with an onClick would have been invisible to both. */
