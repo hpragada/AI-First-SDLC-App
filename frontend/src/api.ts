@@ -442,7 +442,9 @@ export const api = {
       truncated?: boolean;
     }>("POST", `/projects/${projectId}/onboard-atlassian/`),
   // B3-4: register user-provided Confluence pages as typed pointers (feeds the gap report).
-  linkConfluencePages: (projectId: string, links: { page: string; type: string }[]) =>
+  // `type` is optional (S3-10): a linked page declares its type at ADOPT now, so the form no
+  // longer sends one and the backend defaults a missing type to `document`.
+  linkConfluencePages: (projectId: string, links: { page: string; type?: string }[]) =>
     req<{
       linked: { page_id: string; artifact_id: string; type: string; title: string; created: boolean }[];
       errors: { page: string; error: string }[];

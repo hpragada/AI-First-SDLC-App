@@ -63,7 +63,7 @@ export function useOnboardAtlassian(projectId: string | undefined) {
 export function useLinkConfluencePages(projectId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (links: { page: string; type: string }[]) =>
+    mutationFn: (links: { page: string; type?: string }[]) =>
       api.linkConfluencePages(projectId as string, links),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["onboarding", projectId] }),
   });
