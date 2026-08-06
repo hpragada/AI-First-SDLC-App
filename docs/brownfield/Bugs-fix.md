@@ -707,6 +707,55 @@ regression · `compose_manifest_core` with a build-shaped input · a **three-dee
 (fails if the history is ever trimmed back to the last round) · budget truncation dropping whole
 oldest rounds while the current direction survives intact.
 
-**NOT yet verified live** — needs a real run and a companion: the whole feature. See the plan's live
-steps; the decisive one is rejecting **twice** with different notes and confirming round 3's manifest
-carries both.
+### Live verification — round 1 (2026-08-05)
+
+Tenant `d6a89745` · project **People Desk** · work item **WI-1** · greenfield planning path, no repo.
+Reviewer direction: *"I want to build a SaaS based application where anyone can use my platform for
+their HR management instead of just limiting it to my internal company tool."*
+
+Worker and API restarted first (worker before API, as the payload change requires).
+
+| # | Expected | Observed | Status |
+|---|---|---|---|
+| 1 | Old run rejected, `ended_at` stamped (G-1) | `75adb0ec` → `rejected`, `ended_at` 11:16:36 | ✅ |
+| 2 | Rejected drafts superseded (G-2) | All **7** ideation artifacts `draft` → `superseded` | ✅ |
+| 3 | Revision starts on the same companion | `5b4a1bab` created 11:16:37 — 1s later — `revision_of=75adb0ec`, enrollment `1327cdae` | ✅ |
+| 4 | No 409 from the re-trigger race | `run.revision_requested` logged, no guard failure | ✅ |
+| 5 | Direction stored verbatim + prior artifacts named by id | `review_history[0]` holds the text unaltered and all 7 artifact ids/types/titles/versions | ✅ |
+| 6 | `# Reviewer Direction` above `# Current Work Item` | Section order: Project · Important Context · **Reviewer Direction** · Current Work Item · … | ✅ |
+| 7 | Direction survives the budget intact | `manifest.truncated` fired for `Answered Clarifications` + `Retrieved Knowledge` — **not** Reviewer Direction | ✅ |
+| 8 | The agent acts on the direction | Before writing anything it opened a clarification round with **four new ids** — `saas_target_segment`, `saas_pricing_model`, `saas_geographic_scope`, `saas_hosting_model`. None existed in round 1: it derived the questions the pivot creates | ✅ |
+
+(8) is the substantive result. The agent did not merely echo the note — it recognised that "anyone
+can use my platform" leaves customer segment, pricing, geography and hosting undefined, none of which
+an internal tool needed. It also incidentally confirms the WP1 dedup fix in the direction that
+worried us most: a genuinely **different** question set was let through rather than suppressed as a
+repeat of round 1. One `clarification.asked`, one `clarification.answered`, no duplicate gate.
+
+**Still NOT verified live:**
+
+* **Round 2 — the decisive test for decision (2).** Reject again with *different* direction and
+  confirm round 3's manifest carries **both** notes and names both rounds' superseded artifacts.
+  Round 1 alone cannot show the history accumulating.
+* The **decided-gate history** rendering both comments (G-3) — not yet opened after the rejection.
+* The **build merge-gate** path in full: same PR, same branch, preview kept, gate reopened.
+
+### G-4 · Artifact status badge showed "Draft" for every status it did not recognise
+
+Found by the team on the Artifacts screen immediately after the rejection: all 7 artifacts read
+**Draft** while the database had them `superseded`.
+
+`ArtifactsRegistry.statusBadge` knew only `published` and `pending_gate` and returned a hardcoded
+`<Badge>Draft</Badge>` for anything else. `Artifact.Status` has five members, so `staged`,
+**`approved`** and `superseded` all rendered as drafts — an approved artifact has been displaying as
+a draft for as long as the screen has existed. Not caused by this feature; `superseded` is simply the
+first new status to see real use, which is what exposed it.
+
+Fixed in a new `features/observability/artifactStatus.tsx`, shared by the registry list and the
+preview screen so a status cannot mean one thing on one screen and another elsewhere. The fallback
+now humanizes the raw token instead of naming a status, so a future addition renders honestly rather
+than silently claiming to be a draft. Verified live: all 7 rows read **Superseded**.
+
+Worth noting the data was never wrong and the API never dropped it — the Status filter dropdown,
+which builds its options from the values actually present in the response, listed "Superseded"
+correctly the whole time. Only the badge lied.

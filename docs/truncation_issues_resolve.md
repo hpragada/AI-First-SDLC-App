@@ -286,13 +286,58 @@ unbounded paste is a real risk, so the ceiling should stay.
 
 ---
 
-#### T9 · `answered_clarifications`, 1,200 tokens / 20 items
-**Where:** `backend/manifest/composer.py:66`, `composer.py:74`
+#### T9 · `answered_clarifications`, 1,200 tokens / 20 items — **observed live 2026-08-05**
+**Where:** `backend/manifest/composer.py:66`, `composer.py:74`, ordering at
+`mcp_platform_state/tools.py:293`
 **Silent?** Yes. Recoverable via `get_context()`.
 
-Matters after several clarification rounds on one work item.
+No longer hypothetical. Run `5b4a1bab` (tenant `d6a89745`, WI-1) logged `manifest.truncated` for
+this section on dispatch. Reconstructed as of that moment: **1,496 tokens against the 1,200 cap.**
 
-**Recommended fix:** pointer line (D1/D2).
+**The cause was not size — it was a duplicate.** Three answered clarification records exist on that
+work item:
+
+| Answered | Questions | Ids |
+|---|---|---|
+| 07:33:42 | 10 | current_process, leave_entitlements, carryover_cap, half_day, manager_on_leave, probation_leave, announcements, office_locations, leave_cancellation, notifications |
+| 07:44:13 | 10 | **the identical ten** |
+| 11:27:32 | 4 | saas_target_segment, saas_pricing_model, saas_geographic_scope, saas_hosting_model |
+
+The first two are the duplicate gate WP1 fixed. Both were answered, so both persist, and the
+composer replays the same ten questions twice. Pulling the tail of what the agent actually received
+confirms the cut lands **midway through the second copy**, after `manager_on_leave` — so nothing
+unique was lost on this run and the output was unharmed. Deduplicated, the same content measures
+**823 tokens and does not truncate at all**.
+
+**WP1 stops new duplicates being created; it does nothing about records already in the table.** The
+two rows above will inflate every future manifest for this work item.
+
+**Recommended fix:** dedupe on replay in `_render_clarifications` — key on the sorted question ids,
+keep the most recent answer. Cheap, defensive, and it covers any duplicate that ever reaches the
+table regardless of how it got there. Pointer line (D1/D2) still applies on top.
+
+---
+
+#### T13 · The section is ordered oldest-first and truncates from the tail — **the newest human answer is always the first thing lost**
+**Where:** `mcp_platform_state/tools.py:293` (`.order_by("answered_at")`),
+`backend/manifest/composer.py:81` (`_truncate` keeps the head)
+**Silent?** Yes.
+
+Found while measuring T9, and more serious than T9 itself. Answers are rendered oldest first and the
+cap cuts from the end, so overflow discards **the most recent decisions and keeps the stalest ones**.
+
+Measured on the same work item as it stands after the SaaS pivot: the section is 1,813 tokens against
+the 1,200 cap, and the four ids that fall off the end are exactly
+`saas_target_segment`, `saas_pricing_model`, `saas_geographic_scope`, `saas_hosting_model` — the
+answers that define the new direction. A re-dispatch of that run (round 3, or a companion restart)
+would hand the agent the superseded internal-tool Q&A **twice** and none of the pivot answers.
+
+Not hit yet only because the current run received those answers live through `ask_human`, in
+conversation, rather than through the manifest.
+
+**Recommended fix:** order newest-first for this section, so if it ever does overflow the loss is old
+context rather than the latest human decision. Combine with the T9 dedupe — together they bring this
+work item to ~1,140 tokens, under the cap, with no cap change at all.
 
 ---
 
@@ -411,7 +456,16 @@ Grouped by blast radius, per D8 (own PR off `develop`).
 
 ## 8. What has NOT been done
 
-Nothing in this document has been implemented. No file was modified to produce it. The evidence
+Nothing in this document has been implemented — **including T9 and T13, which were observed live on
+2026-08-05 and are the two cheapest wins on the list.** Between them they remove both live
+truncations on run `5b4a1bab` without moving a single cap:
+
+1. Dedupe answered clarifications on replay (T9)
+2. Order them newest-first (T13)
+3. Raise `retrieved_knowledge` 1,500 → 2,500 to match retrieval's own `k=8` ceiling (T3), or do the
+   budget-aware retrieval that removes the ceiling question entirely
+
+No file was modified to produce this document. The original evidence
 run `6a7ae08e` completed normally — it registered a `code` artifact, opened
 `https://github.com/TARUN51/medslot-single-repo/pull/36`, and proceeded to code review — with the
 `Retrieved Knowledge` truncation described in T3 in effect.
