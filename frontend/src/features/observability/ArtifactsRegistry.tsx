@@ -5,24 +5,11 @@ import { useAuth } from "../../auth/AuthContext";
 import { Badge, EmptyState, Panel, Table } from "../../components/ui";
 import { isPhaseReport } from "../../types";
 import { phaseLabel, artifactLabel } from "../lifecycle/phases";
+import { artifactStatusBadge, statusLabel } from "./artifactStatus";
 import { useArtifacts } from "./hooks";
-
-// Humanize a status token (draft / pending_gate / published) for display + filter options.
-function statusLabel(status: string) {
-  return status
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
 
 // S-28 view states: populated · internal-only (no external link) · empty.
 export type ArtifactsView = "populated" | "internal-only" | "empty";
-
-function statusBadge(status: string) {
-  if (status === "published" || status === "done") return <Badge variant="done">Published</Badge>;
-  if (status === "pending_gate" || status === "gate") return <Badge variant="gate">Pending gate</Badge>;
-  return <Badge variant="info-hue">Draft</Badge>;
-}
 
 export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) {
   const { selectedProject } = useAuth();
@@ -188,7 +175,7 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
                       isPhaseReport(artifact) ? (
                         <Badge variant="info-hue" key="s">Run output</Badge>
                       ) : (
-                        statusBadge(artifact.status)
+                        artifactStatusBadge(artifact.status)
                       ),
                       artifact.sor ? (
                         <span className="sor-chip sor-chip--confluence" key="sor">

@@ -29,7 +29,9 @@ type Variant =
   | "ghost"
   | "danger"
   | "danger-solid";
-type BadgeVariant =
+// Exported so a caller can hold a variant in a lookup table rather than a chain of ternaries —
+// the artifact registry maps five artifact statuses to badges this way.
+export type BadgeVariant =
   | "queued"
   | "neutral"
   | "waiting"

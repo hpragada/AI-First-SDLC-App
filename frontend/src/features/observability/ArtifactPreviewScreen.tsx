@@ -4,6 +4,7 @@ import { useParams } from "react-router-dom";
 import { Badge, Banner, Card, CardBody, Breadcrumb, DocPreview, Markdown, Panel, Spinner } from "../../components/ui";
 import { isPhaseReport, type ArtifactState } from "../../types";
 import { artifactLabel } from "../lifecycle/phases";
+import { artifactStatusBadge } from "./artifactStatus";
 import { useArtifactPreview } from "./hooks";
 
 // Per-screen wireframes carry one self-contained HTML document per UI state (default,
@@ -97,9 +98,10 @@ function ArtifactPreviewLive() {
           <div className="u-stack">
             <div className="u-row">
               <h1 className="t-h1">{artifactLabel(data.title, data.artifact_type)} · v{data.version}</h1>
-              <Badge variant={data.status === "published" ? "done" : data.status === "pending_gate" ? "gate" : "info-hue"}>
-                {data.status}
-              </Badge>
+              {/* Same mapping as the registry list, so a status does not change colour between
+                  the two screens. This one already showed the real token as its text — it was the
+                  list that hardcoded "Draft" for anything it did not recognise. */}
+              {artifactStatusBadge(data.status)}
               {data.sor_link && (
                 <>
                   <span className="u-spacer" />
