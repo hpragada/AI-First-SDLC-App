@@ -7,7 +7,9 @@ kept out of the diff via the worktree's local git exclude.
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -22,6 +24,25 @@ def _git(cwd, *args, check=True) -> str:
     if check and res.returncode != 0:
         raise WorktreeError(f"git {' '.join(args)} failed: {res.stderr.strip()}")
     return res.stdout
+
+
+def _is_live_worktree(worktree_path) -> bool:
+    """Whether the path is still a real git worktree, not just a directory of files.
+
+    Two stale states both look perfectly fine to the agent — it is writing ordinary files — and
+    surface only when git is finally asked to act, by which point the whole run is wasted:
+
+      1. the `.git` link is gone, but the files were left behind (a teardown that could not
+         finish);
+      2. the `.git` file survives but points at an admin directory that has since been pruned.
+
+    The existence check catches (1), and also stops a worktrees root that happens to sit INSIDE
+    another clone from reporting that parent's git dir as its own. Case (2) needs git itself:
+    `rev-parse --git-dir` prints nothing on stdout when it cannot resolve one.
+    """
+    if not (Path(worktree_path) / ".git").exists():
+        return False
+    return bool(_git(worktree_path, "rev-parse", "--git-dir", check=False).strip())
 
 
 def provision_worktree(*, repo_path, branch: str, base: str, worktree_path,
@@ -43,7 +64,26 @@ def provision_worktree(*, repo_path, branch: str, base: str, worktree_path,
     repo_path = Path(repo_path)
     worktree_path = Path(worktree_path)
     if worktree_path.exists():
-        return worktree_path
+        if _is_live_worktree(worktree_path):
+            return worktree_path
+        # The directory is there but it is no longer a worktree — what a teardown that could not
+        # finish leaves behind. Build worktrees are named `<worktrees_root>/<work_item_key>`, so
+        # EVERY run and every remediation cycle for a work item targets this same path; on
+        # Windows a single locked file under `node_modules` is enough to strand it (observed on
+        # WI-54 "set up the pnpm monorepo workspace"). Reusing it silently is the whole bug: the
+        # agent works happily for minutes, registers its artifact, and only the closing
+        # `git status` fails — throwing the entire run away. Clear it and provision fresh.
+        print(f"[companion] {worktree_path} exists but is not a git worktree (stale directory "
+              f"from an earlier cycle) — discarding it and provisioning a fresh one",
+              file=sys.stderr, flush=True)
+        _git(repo_path, "worktree", "prune", check=False)   # drop any dangling admin entry
+        shutil.rmtree(worktree_path, ignore_errors=True)
+        if worktree_path.exists():
+            raise WorktreeError(
+                f"{worktree_path} is not a git worktree and could not be removed — something "
+                f"is still holding files in it (a dev server or an editor?). Stop it, delete "
+                f"the directory, and retry the run"
+            )
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
     # Ask the remote AUTHORITATIVELY whether the branch exists right now. `ls-remote` queries the
     # server directly, so a stale local remote-tracking ref (left when the branch was deleted on
@@ -62,12 +102,35 @@ def provision_worktree(*, repo_path, branch: str, base: str, worktree_path,
         start = base
     _git(repo_path, "worktree", "add", "-B", branch, str(worktree_path), start)
     _exclude_platform_scratch(worktree_path)
+    # Fail HERE, not eight minutes from now. Everything downstream — `changed_files`,
+    # `commit_all`, `head_sha` — assumes this is a worktree, and each only finds out at the very
+    # end of the build. Checking once, before the agent is handed the path, turns a wasted run
+    # into an immediate, legible error.
+    if not _is_live_worktree(worktree_path):
+        raise WorktreeError(
+            f"provisioned {worktree_path} but it is not a usable git worktree — refusing to run "
+            f"the build against it"
+        )
     return worktree_path
 
 
 def teardown_worktree(*, repo_path, worktree_path) -> None:
-    """Remove the worktree (best-effort; the branch is left for the platform to dispose)."""
+    """Remove the worktree (best-effort; the branch is left for the platform to dispose).
+
+    Best-effort but NOT silent. A removal that fails leaves the files on disk without their git
+    link, and the next cycle for this work item targets that exact path — so a swallowed failure
+    here is what poisons the *next* run rather than this one. `provision_worktree` now detects
+    and clears such a directory; this makes the original cause visible in the companion's own
+    output instead of only ever surfacing later as a build that died on `git status`.
+
+    Never raises: this runs in a `finally`, where raising would mask the real error.
+    """
     _git(repo_path, "worktree", "remove", "--force", str(worktree_path), check=False)
+    if Path(worktree_path).exists():
+        print(f"[companion] could not remove worktree {worktree_path} — it is left on disk "
+              f"without its git link. The next build for this work item will discard and "
+              f"re-create it. Something may still be holding files in it (a dev server?)",
+              file=sys.stderr, flush=True)
 
 
 def changed_files(worktree_path) -> list[str]:

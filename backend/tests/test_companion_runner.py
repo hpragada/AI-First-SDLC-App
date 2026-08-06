@@ -150,6 +150,73 @@ def test_provision_creates_isolated_branch_and_excludes_scratch(tmp_path):
     assert not wt.exists()
 
 
+def test_provision_discards_a_stale_directory_left_by_a_failed_teardown(tmp_path):
+    """A directory that is no longer a worktree must never be reused.
+
+    Build worktrees are named `<worktrees_root>/<work_item_key>`, so every run and every
+    remediation cycle for a work item targets the same path. When a teardown cannot finish (a
+    locked file under node_modules on Windows), the files stay but the `.git` link goes. The
+    agent then works happily against ordinary files, registers its artifact, and only the closing
+    `git status` fails — the whole run wasted. Observed live on WI-54/PeopleDesk:
+    `git status --porcelain failed: fatal: not a git repository`.
+    """
+    repo = _init_repo(tmp_path / "repo")
+    wt_path = tmp_path / "wt" / "ST-STALE"
+    wt = provision_worktree(repo_path=repo, branch="feature/ST-STALE", base="main",
+                            worktree_path=wt_path)
+    (wt / "left-behind.txt").write_text("from the previous cycle\n")
+
+    # Exactly what a half-finished teardown leaves: the files, without the git link.
+    (wt / ".git").unlink()
+    assert wt_path.exists() and not (wt_path / ".git").exists()
+
+    again = provision_worktree(repo_path=repo, branch="feature/ST-STALE", base="main",
+                               worktree_path=wt_path)
+
+    assert again == wt_path
+    # Re-provisioned for real: git works again, and the orphaned file is gone.
+    assert (wt_path / ".git").exists()
+    assert changed_files(wt_path) == []
+    assert not (wt_path / "left-behind.txt").exists()
+    teardown_worktree(repo_path=repo, worktree_path=wt_path)
+
+
+def test_provision_rejects_a_stale_directory_it_cannot_clear(tmp_path, monkeypatch):
+    """If the stale directory cannot be removed, fail loudly BEFORE the agent runs.
+
+    The point of the guard is that the run costs nothing when it trips. Silently continuing is
+    what produced the eight-minute build that died at the final git step.
+    """
+    import runner.companion.worktree as wt_mod
+
+    repo = _init_repo(tmp_path / "repo")
+    wt_path = tmp_path / "wt" / "ST-LOCKED"
+    wt = provision_worktree(repo_path=repo, branch="feature/ST-LOCKED", base="main",
+                            worktree_path=wt_path)
+    (wt / ".git").unlink()
+
+    # Stand in for a Windows lock: removal does nothing, so the directory survives.
+    monkeypatch.setattr(wt_mod.shutil, "rmtree", lambda *a, **k: None)
+
+    with pytest.raises(WorktreeError, match="could not be removed"):
+        provision_worktree(repo_path=repo, branch="feature/ST-LOCKED", base="main",
+                           worktree_path=wt_path)
+
+
+def test_teardown_reports_a_removal_it_could_not_complete(tmp_path, capsys):
+    """A swallowed teardown failure poisons the NEXT run, so it must at least be visible."""
+    repo = _init_repo(tmp_path / "repo")
+    wt_path = tmp_path / "wt" / "ST-NOISY"
+    provision_worktree(repo_path=repo, branch="feature/ST-NOISY", base="main",
+                       worktree_path=wt_path)
+    (wt_path / ".git").unlink()          # git can no longer remove it as a worktree
+
+    teardown_worktree(repo_path=repo, worktree_path=wt_path)   # must not raise
+
+    assert wt_path.exists()
+    assert "could not remove worktree" in capsys.readouterr().err
+
+
 def _sha(repo: Path, ref: str) -> str:
     return subprocess.run(["git", "-C", str(repo), "rev-parse", ref],
                           check=True, capture_output=True, text=True).stdout.strip()
