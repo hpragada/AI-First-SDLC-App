@@ -142,6 +142,21 @@ CONNECTOR_CATALOG: dict[str, dict] = {
             },
         ],
     },
+    "a11yai": {
+        "label": "AI accessibility judgment",
+        "vendors": [
+            {
+                # The platform's own judge — judgment runs through the ExecutionDriver, so
+                # there is no model API key to store. A third-party accessibility-AI service
+                # would be a second slug here, and no caller would change (#9).
+                "slug": "builtin",
+                "label": "Built-in judge",
+                "no_secret": True,
+                "binding": [],
+                "secrets": [],
+            },
+        ],
+    },
 }
 
 

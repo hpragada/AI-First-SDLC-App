@@ -9,6 +9,8 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from .types import (
+    A11yCandidate,
+    A11yJudgment,
     BranchRef,
     ComponentRef,
     DesignContext,
@@ -166,3 +168,42 @@ class CodeIntel(Protocol):
     def get_dependency_path(self, *, repo: str, frm: str, to: str) -> list[str]: ...
     def get_dead_code(self, *, repo: str) -> list[dict]: ...
     def get_architecture_diagram(self, *, repo: str, module: str | None = None) -> str: ...
+
+
+@runtime_checkable
+class A11yAI(Protocol):
+    """AI accessibility judgment (model-agnostic, vendor-free) — the four WCAG questions a
+    rule scanner like axe genuinely cannot answer: is the alt text *meaningful*, is this
+    really a button, is meaning carried by colour *alone*, does the visible label match the
+    accessible name.
+
+    A capability for its **shape** (#9): callers ask `get_capability(tenant, "a11yai")` and
+    never name a model or vendor, so the judge underneath can be swapped without touching
+    them. It is NOT a model client — the implementation dispatches a constrained agent run
+    through the `ExecutionDriver` (#7); no connector anywhere makes a direct model call, and
+    no API credential is involved (QA-02/QA-02a build the dispatch and the judge agent).
+
+    Two rules bind every implementation:
+      - An AI judgment NEVER overrides a deterministic axe failure — it adds what axe cannot
+        see, it does not overrule what axe proved.
+      - A check that cannot answer returns `uncertain` (see `types.uncertain`) so the item
+        goes to human review. It never guesses, raises, or returns a partial result.
+    """
+
+    def check_alt(self, *, candidate: A11yCandidate) -> A11yJudgment:
+        """WCAG 1.1.1 — is the alt text meaningful *for what this image does here*?"""
+        ...
+
+    def check_semantics(self, *, candidate: A11yCandidate) -> A11yJudgment:
+        """WCAG 1.3.1 / 4.1.2 — is a thing that looks and behaves like a control actually
+        exposed as one (real role/name/state), or a styled `div` faking it?"""
+        ...
+
+    def check_color(self, *, candidate: A11yCandidate) -> A11yJudgment:
+        """WCAG 1.4.1 — is meaning conveyed by colour alone, with no text/shape/icon backup?"""
+        ...
+
+    def check_label(self, *, candidate: A11yCandidate) -> A11yJudgment:
+        """WCAG 2.5.3 — does the visible label match the accessible name a screen reader and a
+        voice-control user would say?"""
+        ...

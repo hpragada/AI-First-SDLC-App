@@ -16,7 +16,15 @@ from collections.abc import Callable
 from .atlassian.config import AtlassianConfig
 from .atlassian.docstore import AtlassianDocStore
 from .atlassian.tasktracker import AtlassianTaskTracker
-from .capabilities import CodeHost, CodeIntel, DesignSource, DocStore, TaskTracker, TestMgmt
+from .capabilities import (
+    A11yAI,
+    CodeHost,
+    CodeIntel,
+    DesignSource,
+    DocStore,
+    TaskTracker,
+    TestMgmt,
+)
 from .types import CapabilityError, CapabilityUnavailable
 
 
@@ -99,6 +107,15 @@ def _build_builtin_codeintel(conn) -> CodeIntel:
     return BuiltinCodeIntel()
 
 
+def _build_builtin_a11yai(conn) -> A11yAI:
+    # The platform's own accessibility judge — no creds (judgment runs through the
+    # ExecutionDriver, not a model API), so no transport/governor. Tenant-bound because
+    # every judgment is started on that tenant's behalf and its results are that tenant's.
+    from .a11yai.builtin import BuiltinA11yAI
+
+    return BuiltinA11yAI(tenant_id=conn.tenant_id, scopes=conn.scopes or {})
+
+
 # (capability, connector) -> builder. The single place vendors are wired (#9);
 # extend via register_connector for new vendors without touching callers.
 _BUILDERS: dict[tuple[str, str], Callable[[object], object]] = {
@@ -108,6 +125,7 @@ _BUILDERS: dict[tuple[str, str], Callable[[object], object]] = {
     ("designsource", "figma"): _build_figma,
     ("testmgmt", "xray"): _build_xray,
     ("codeintel", "builtin"): _build_builtin_codeintel,
+    ("a11yai", "builtin"): _build_builtin_a11yai,
 }
 
 
@@ -140,7 +158,7 @@ def get_connection(tenant_id, capability: str):
 
 def get_capability(
     tenant_id, capability: str
-) -> DocStore | TaskTracker | CodeHost | DesignSource | TestMgmt | CodeIntel:
+) -> DocStore | TaskTracker | CodeHost | DesignSource | TestMgmt | CodeIntel | A11yAI:
     """Return the tenant's connector for a capability, or raise CapabilityUnavailable."""
     conn = get_connection(tenant_id, capability)
     if conn is None:

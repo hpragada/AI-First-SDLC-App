@@ -364,7 +364,7 @@ def test_catalog_lists_registered_vendors_per_capability(client, admin):
     by_cap = {c["capability"]: c for c in resp.data}
     # every capability the services layer accepts is present in the catalog…
     assert {"docstore", "tasktracker", "codehost", "designsource", "testmgmt",
-            "codeintel"} <= set(by_cap)
+            "codeintel", "a11yai"} <= set(by_cap)
     # …and every vendor slug it advertises is actually builder-wired (so a saved
     # connection can never hit "No connector registered" — the #39 root cause).
     from integrations.registry import get_builder
@@ -438,7 +438,8 @@ def test_every_catalog_vendor_saves_and_is_wired(client, admin):
             checked.append((cap["capability"], vendor["slug"]))
     # every capability the services layer accepts was exercised
     assert {c for c, _ in checked} == {
-        "docstore", "tasktracker", "codehost", "designsource", "testmgmt", "codeintel"
+        "docstore", "tasktracker", "codehost", "designsource", "testmgmt", "codeintel",
+        "a11yai",
     }
 
 

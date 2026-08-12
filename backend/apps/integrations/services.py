@@ -17,7 +17,38 @@ from apps.integrations.models import IntegrationConnection
 
 # The fixed capability set (DECISION-4 / spec §3 T6) — independent of which vendors are
 # builder-wired yet, so an admin can record a connection ahead of `register_connector` support.
-CAPABILITIES = {"docstore", "tasktracker", "codehost", "designsource", "testmgmt", "codeintel"}
+CAPABILITIES = {"docstore", "tasktracker", "codehost", "designsource", "testmgmt", "codeintel",
+                "a11yai"}
+
+
+# Capabilities the platform provides itself and auto-provisions for every tenant, as
+# (capability, connector). They take no credentials and offer no vendor choice, so there is
+# nothing a human could usefully fill in — presenting them on the "connect your tools" screen
+# would be a control that only looks like a control (team decision, 2026-08-12).
+#
+# `codeintel` is deliberately NOT here. It is credential-free too, but today it is connected
+# by the user from the Integrations page, and silently changing that would alter a journey
+# that is currently under test. If the team later wants the same treatment for it, adding the
+# pair here plus a backfill migration is the whole change.
+AUTO_PROVISIONED = (("a11yai", "builtin"),)
+
+
+def provision_builtin_capabilities(tenant) -> list[IntegrationConnection]:
+    """Give a tenant the platform's own credential-free capabilities.
+
+    Called from `create_tenant` (alongside `seed_agent_specs`, for the same reason: a new
+    workspace must be able to run the lifecycle immediately, not after a setup step nobody
+    could complete). Idempotent — safe to call again on an existing tenant, which is what
+    lets the backfill migration and this share one behaviour.
+    """
+    provisioned = []
+    for capability, connector in AUTO_PROVISIONED:
+        conn, _ = IntegrationConnection.objects.get_or_create(
+            tenant=tenant, capability=capability,
+            defaults={"connector": connector, "scopes": {}, "token_ref": "builtin"},
+        )
+        provisioned.append(conn)
+    return provisioned
 
 
 class IntegrationError(Exception):

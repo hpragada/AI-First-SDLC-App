@@ -78,6 +78,14 @@ def create_tenant(*, name: str, config: dict | None = None,
     # New tenants need the agent registry seeded so phase triggers like 01_ideation
     # are available immediately after tenant creation.
     seed_agent_specs(tenant)
+
+    # Same reason, for the platform's own credential-free capabilities (a11yai): there is
+    # nothing for a human to connect, so the workspace gets them from the start rather than
+    # via a setup step that would present an empty form.
+    from apps.integrations.services import provision_builtin_capabilities
+
+    with tenant_context(tenant.id):
+        provision_builtin_capabilities(tenant)
     return tenant
 
 
