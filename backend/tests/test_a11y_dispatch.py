@@ -1,0 +1,471 @@
+"""QA-02 — judgment dispatch, cache and audit behind `a11yai`.
+
+What these prove, against the task's acceptance criteria:
+
+  AC1  judgment happens through an ExecutionDriver run — no direct model/API call anywhere
+       on the dispatch path (asserted by reading the source, not by trusting the design)
+  AC2  the same candidate judged twice is served from the store; no second run is started
+  AC3  every stored verdict records the engine, model and prompt version that produced it
+  AC4  a refused or errored dispatch returns `uncertain`, never a hard failure
+  AC5  a batch over the cap stops at the cap and hands back the remainder
+  AC6  (D-A11Y-3) an unavailable judge is reported in plain words and its items go to human
+       review, rather than coming back empty and reading as "no problems found"
+  AC7  coverage ≥ 90% on the new code
+
+The judge agent (`09c_a11y_judge`) does not exist until QA-02a, so the unavailable-judge path
+here is exercised for real rather than with a mock — the fixtures register a stand-in spec
+only where a *successful* dispatch is the thing under test.
+"""
+import psycopg
+import pytest
+from django.conf import settings
+from django.db import connection
+
+from apps.a11y.dispatch import (
+    DEFAULT_MAX_JUDGMENTS_PER_RUN,
+    JUDGE_AGENT_KEY,
+    NO_COMPANION,
+    NO_JUDGE_AGENT,
+    A11yRequest,
+    caps_for,
+    content_hash,
+    dispatch_judgments,
+    judge_available,
+    record_verdict,
+)
+from apps.a11y.models import A11yJudgmentCache
+from apps.integrations.models import IntegrationConnection
+from apps.projects.models import Project
+from apps.registry.models import AgentSpec
+from apps.runs.enrollment import enroll_runner
+from apps.runs.models import Run
+from apps.tenancy.models import Tenant, User
+from apps.workitems.models import WorkItem
+from integrations.types import A11Y_UNCERTAIN, A11yCandidate, A11yJudgment
+
+
+@pytest.fixture
+def world(db):
+    """A tenant that can actually dispatch: judge agent registered, machine connected."""
+    tenant = Tenant.objects.create(name="Acme")
+    project = Project.objects.create(tenant=tenant, name="Shop")
+    user = User.objects.create_user(email="qa@acme.com", name="QA", tenant=tenant, password="pw")
+    work_item = WorkItem.objects.create(tenant=tenant, project=project, title="Checkout")
+    AgentSpec.objects.create(
+        tenant=tenant, key=JUDGE_AGENT_KEY, semver="1.0.0", prompt_version="a11y-judge-1",
+        body_ref="agents/09c_a11y_judge.md", recommended_engine="claude",
+        recommended_model="claude-opus-5", phase_label="testing",
+    )
+    enroll_runner(tenant_id=str(tenant.id), project_id=str(project.id),
+                  developer_id=str(user.id), label="qa-laptop")
+    IntegrationConnection.objects.create(
+        tenant=tenant, capability="a11yai", connector="builtin", token_ref="builtin",
+    )
+    return {"tenant": tenant, "project": project, "user": user, "work_item": work_item}
+
+
+class FakeTrigger:
+    """Stands in for `trigger_phase` — records the call and creates the Run it would create.
+
+    A fake here is right: what QA-02 owns is the *decision* to dispatch and what it records.
+    Actually starting a Temporal workflow is `trigger_phase`'s job, and it has its own tests.
+    """
+
+    def __init__(self, world, fail: Exception | None = None):
+        self._world = world
+        self._fail = fail
+        self.calls: list[dict] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        if self._fail is not None:
+            raise self._fail
+        spec = AgentSpec.objects.get(tenant=self._world["tenant"], key=kwargs["agent_key"])
+        run = Run.objects.create(
+            tenant=self._world["tenant"], work_item=self._world["work_item"], agent_spec=spec,
+            engine=spec.recommended_engine, model=spec.recommended_model,
+            prompt_version=spec.prompt_version,
+        )
+
+        class _Outcome:
+            run_id = str(run.id)
+            workflow_id = f"agent-run-{run.id}"
+
+        return _Outcome()
+
+
+def _request(checker="alt", *, route="/checkout", html='<img src="a.png" alt="a">', **kw):
+    return A11yRequest(
+        checker=checker,
+        candidate=A11yCandidate(selector="img", html=html, route=route, **kw),
+    )
+
+
+def _dispatch(world, requests, trigger=None, **kw):
+    return dispatch_judgments(
+        tenant_id=world["tenant"].id, project_id=world["project"].id,
+        work_item_id=world["work_item"].id, requests=requests,
+        triggered_by=str(world["user"].id), trigger=trigger, **kw,
+    )
+
+
+# ── AC1: it goes through the driver seam, never a model call ─────────
+def test_no_direct_model_or_api_call_exists_on_the_dispatch_path():
+    """Non-negotiable #7, asserted rather than assumed. If someone later reaches for an HTTP
+    client or an SDK here, this fails and names the line — the design intent stops being a
+    comment and becomes a check."""
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "apps/a11y/dispatch.py").read_text()
+    # Imports and calls, not bare words — this module legitimately has a variable named
+    # `requests` (the things to be judged), and a guard that cried wolf would get deleted.
+    banned = (
+        r"^\s*(from|import)\s+(anthropic|openai|httpx|requests|urllib|http\.client|aiohttp)\b",
+        r"\brequests\.(get|post|put|patch|delete|request)\s*\(",
+        r"\bhttpx\.(get|post|Client|AsyncClient)\b",
+        r"\banthropic\b", r"\bopenai\b",
+        r"api_key", r"\.messages\.create\s*\(", r"\.chat\.completions\b",
+    )
+    offenders = [
+        f"{n}: {line.strip()}"
+        for n, line in enumerate(source.splitlines(), start=1)
+        for pattern in banned
+        if re.search(pattern, line, re.IGNORECASE)
+    ]
+    assert not offenders, "direct model/API access on the dispatch path:\n  " + "\n  ".join(
+        offenders
+    )
+
+
+def test_dispatch_starts_one_run_through_the_trigger(world):
+    trigger = FakeTrigger(world)
+    result = _dispatch(world, [_request(), _request(html="<img src='b.png'>")], trigger)
+
+    assert len(trigger.calls) == 1, "one run per dispatch, not one per element"
+    assert trigger.calls[0]["agent_key"] == JUDGE_AGENT_KEY
+    assert result.run_id and len(result.dispatched) == 2
+    assert result.complete is True
+
+
+def test_the_run_carries_the_candidates_grouped_by_screen(world):
+    """The judge should read a page at a time, not a shuffled pile of elements."""
+    trigger = FakeTrigger(world)
+    result = _dispatch(world, [
+        _request(route="/cart"),
+        _request(route="/checkout", html="<img src='b.png'>"),
+        _request(route="/cart", html="<img src='c.png'>"),
+    ], trigger)
+
+    batches = Run.objects.get(id=result.run_id).inputs["a11y_batches"]
+    assert [b["route"] for b in batches] == ["/cart", "/checkout"]   # first-seen order
+    assert len(batches[0]["elements"]) == 2 and len(batches[1]["elements"]) == 1
+    assert batches[0]["elements"][0]["criteria"] == ["1.1.1"]
+    assert result.screens == ["/cart", "/checkout"]
+
+
+# ── AC2: judged once, reused thereafter ──────────────────────────────
+def test_a_second_dispatch_of_the_same_candidate_starts_no_run(world):
+    request = _request()
+    first = FakeTrigger(world)
+    _dispatch(world, [request], first)
+    record_verdict(
+        tenant_id=world["tenant"].id, project_id=world["project"].id,
+        run_id=first.calls and Run.objects.first().id, content_hash=request.content_hash,
+        judgment=A11yJudgment(criteria=("1.1.1",), verdict="pass", confidence=0.95,
+                              evidence="alt describes the chart", suggested_fix="",
+                              checker="alt"),
+    )
+
+    second = FakeTrigger(world)
+    result = _dispatch(world, [request], second)
+
+    assert second.calls == [], "a cached candidate must not start a run"
+    assert len(result.from_cache) == 1
+    assert result.from_cache[0].verdict == "pass"
+    assert result.from_cache[0].criteria == ("1.1.1",)
+
+
+def test_changing_the_element_busts_the_cache(world):
+    """The safety argument for caching a model's opinion: the key is the input, so anything
+    that could change the answer changes the key."""
+    original = _request(html='<img src="a.png" alt="a">')
+    edited = _request(html='<img src="a.png" alt="quarterly revenue by region">')
+    assert original.content_hash != edited.content_hash
+
+
+def test_the_selector_and_route_are_deliberately_not_part_of_the_key():
+    """Same markup, same context, same answer — re-judging because a selector churned would
+    cost money for nothing. (Finding-level dedup is a different key, built in QA-12a.)"""
+    a = A11yCandidate(selector="#a", html="<b>x</b>", context="c", route="/one")
+    b = A11yCandidate(selector="main .b", html="<b>x</b>", context="c", route="/two")
+    assert content_hash("alt", a) == content_hash("alt", b)
+
+
+def test_the_hash_cannot_collide_by_moving_text_between_fields():
+    a = A11yCandidate(html="ab", context="")
+    b = A11yCandidate(html="a", context="b")
+    assert content_hash("alt", a) != content_hash("alt", b)
+
+
+def test_the_same_input_under_a_different_checker_is_judged_separately():
+    candidate = A11yCandidate(html="<div>Save</div>", route="/x")
+    assert content_hash("alt", candidate) != content_hash("semantics", candidate)
+
+
+# ── AC3: the audit trail ─────────────────────────────────────────────
+def test_a_stored_verdict_records_the_engine_model_and_prompt_version(world):
+    trigger = FakeTrigger(world)
+    request = _request()
+    result = _dispatch(world, [request], trigger)
+
+    row = record_verdict(
+        tenant_id=world["tenant"].id, project_id=world["project"].id, run_id=result.run_id,
+        content_hash=request.content_hash,
+        judgment=A11yJudgment(criteria=("1.1.1",), verdict="fail", confidence=0.88,
+                              evidence='alt is "a"', suggested_fix="Describe the image",
+                              checker="alt"),
+    )
+
+    assert row.engine == "claude"
+    assert row.model == "claude-opus-5"
+    assert row.prompt_version == "a11y-judge-1"
+    assert str(row.run_id) == result.run_id
+
+
+def test_the_audit_stamp_comes_from_the_run_not_the_agents_own_claim(world):
+    """Which model produced a verdict is exactly the fact an agent must not self-declare."""
+    trigger = FakeTrigger(world)
+    request = _request()
+    result = _dispatch(world, [request], trigger)
+    run = Run.objects.get(id=result.run_id)
+    run.model = "the-real-model"
+    run.save(update_fields=["model"])
+
+    row = record_verdict(
+        tenant_id=world["tenant"].id, project_id=world["project"].id, run_id=result.run_id,
+        content_hash=request.content_hash,
+        judgment=A11yJudgment(criteria=("1.1.1",), verdict="pass", confidence=0.9,
+                              evidence="e", suggested_fix="", checker="alt"),
+    )
+    assert row.model == "the-real-model"
+
+
+def test_re_reporting_the_same_element_updates_rather_than_duplicates(world):
+    request = _request()
+    args = {"tenant_id": world["tenant"].id, "project_id": world["project"].id,
+            "run_id": None, "content_hash": request.content_hash}
+    record_verdict(**args, judgment=A11yJudgment(
+        criteria=("1.1.1",), verdict="uncertain", confidence=0.3, evidence="e",
+        suggested_fix="", checker="alt"))
+    record_verdict(**args, judgment=A11yJudgment(
+        criteria=("1.1.1",), verdict="fail", confidence=0.9, evidence="e2",
+        suggested_fix="f", checker="alt"))
+
+    rows = A11yJudgmentCache.objects.filter(content_hash=request.content_hash)
+    assert rows.count() == 1 and rows.first().verdict == "fail"
+
+
+# ── AC4 + AC6: nothing comes back empty and quiet ────────────────────
+def test_a_refused_dispatch_returns_uncertain_not_an_exception(world):
+    trigger = FakeTrigger(world, fail=RuntimeError("a run is already in progress"))
+    result = _dispatch(world, [_request(), _request(html="<img src='b'>")], trigger)
+
+    assert result.run_id is None
+    assert len(result.unjudged) == 2
+    assert all(j.verdict == A11Y_UNCERTAIN for j in result.unjudged)
+    assert "a run is already in progress" in result.unavailable_reason
+    assert result.complete is False
+
+
+def test_no_judge_agent_is_reported_in_plain_words_and_nothing_is_dispatched(world):
+    """The state the platform is genuinely in until QA-02a lands."""
+    AgentSpec.objects.filter(tenant=world["tenant"], key=JUDGE_AGENT_KEY).delete()
+    trigger = FakeTrigger(world)
+
+    result = _dispatch(world, [_request()], trigger)
+
+    assert trigger.calls == []
+    assert result.unavailable_reason == NO_JUDGE_AGENT.format(key=JUDGE_AGENT_KEY)
+    assert "human review" in result.unavailable_reason
+    assert [j.verdict for j in result.unjudged] == [A11Y_UNCERTAIN]
+
+
+def test_no_connected_machine_is_reported_and_nothing_is_dispatched(world):
+    """Judgment rides the Claude subscription on the developer's own machine, like the
+    onboarding and vision agents — so no machine means no judge, said plainly."""
+    from apps.runs.models import RunnerEnrollment
+
+    RunnerEnrollment.objects.filter(tenant=world["tenant"]).delete()
+    trigger = FakeTrigger(world)
+
+    result = _dispatch(world, [_request()], trigger)
+
+    assert trigger.calls == []
+    assert result.unavailable_reason == NO_COMPANION
+    assert len(result.unjudged) == 1
+
+
+def test_an_unjudged_item_carries_every_criterion_its_checker_covers(world):
+    AgentSpec.objects.filter(tenant=world["tenant"], key=JUDGE_AGENT_KEY).delete()
+    result = _dispatch(world, [_request("semantics", html="<div>Save</div>")], FakeTrigger(world))
+    assert result.unjudged[0].criteria == ("1.3.1", "4.1.2")
+
+
+def test_judge_available_returns_empty_when_everything_is_in_place(world):
+    assert judge_available(
+        world["tenant"].id, world["project"].id, str(world["user"].id)
+    ) == ""
+
+
+def test_dispatching_nothing_is_a_no_op(world):
+    trigger = FakeTrigger(world)
+    result = _dispatch(world, [], trigger)
+    assert trigger.calls == [] and result.complete is True
+
+
+# ── AC5: the cap stops, it does not truncate ─────────────────────────
+def test_a_batch_over_the_cap_stops_and_hands_back_the_remainder(world):
+    _set_caps(world, judgments=2)
+    trigger = FakeTrigger(world)
+    requests = [_request(html=f"<img src='{i}.png'>") for i in range(5)]
+
+    result = _dispatch(world, requests, trigger)
+
+    assert len(result.dispatched) == 2
+    assert len(result.deferred) == 3
+    assert result.deferred == requests[2:], "the remainder must resume where this stopped"
+    assert "3 item(s) still need judging" in result.unavailable_reason
+    assert result.complete is False
+
+
+def test_the_cap_can_be_expressed_in_screens_instead_of_elements(world):
+    """The team asked to be able to switch to a 10-screens cap without a code change. Both
+    limits are read from config; whichever is reached first stops the run."""
+    _set_caps(world, judgments=1000, screens=2)
+    trigger = FakeTrigger(world)
+    requests = [
+        _request(route="/one"), _request(route="/one", html="<img src='b'>"),
+        _request(route="/two"), _request(route="/three"),
+    ]
+
+    result = _dispatch(world, requests, trigger)
+
+    assert result.screens == ["/one", "/two"]
+    assert len(result.dispatched) == 3 and len(result.deferred) == 1
+    assert result.deferred[0].candidate.route == "/three"
+
+
+def test_resuming_after_the_cap_judges_only_what_was_left(world):
+    _set_caps(world, judgments=2)
+    requests = [_request(html=f"<img src='{i}.png'>") for i in range(4)]
+    first = _dispatch(world, requests, FakeTrigger(world))
+    for request in first.dispatched:
+        record_verdict(
+            tenant_id=world["tenant"].id, project_id=world["project"].id,
+            run_id=first.run_id, content_hash=request.content_hash,
+            judgment=A11yJudgment(criteria=("1.1.1",), verdict="pass", confidence=0.9,
+                                  evidence="e", suggested_fix="", checker="alt"),
+        )
+
+    second = _dispatch(world, requests, FakeTrigger(world))
+
+    assert len(second.from_cache) == 2          # the first two are answered
+    assert len(second.dispatched) == 2          # the remainder now fits under the cap
+    assert second.complete is True
+
+
+def test_the_default_cap_applies_when_the_tenant_has_configured_nothing(world):
+    assert caps_for(world["tenant"].id) == (DEFAULT_MAX_JUDGMENTS_PER_RUN, None)
+
+
+def test_a_cap_of_zero_is_a_kill_switch_not_a_fallback_to_the_default(world):
+    """Someone setting the cap to 0 means "judge nothing for now". Treating that as "unset"
+    would start exactly the runs they were trying to stop."""
+    _set_caps(world, judgments=0)
+    trigger = FakeTrigger(world)
+
+    result = _dispatch(world, [_request(), _request(html="<img src='b'>")], trigger)
+
+    assert caps_for(world["tenant"].id)[0] == 0
+    assert trigger.calls == [] and len(result.deferred) == 2 and result.complete is False
+
+
+def test_dispatch_defaults_to_the_platforms_own_phase_trigger(world, monkeypatch):
+    """The production path. Every other test injects a fake, so without this the real wiring —
+    dispatch reaching `trigger_phase`, the same seam every agent run goes through — would
+    never be exercised at all."""
+    import orchestration.trigger as trigger_module
+
+    spy = FakeTrigger(world)
+    monkeypatch.setattr(trigger_module, "trigger_phase", spy)
+
+    result = _dispatch(world, [_request()], trigger=None)
+
+    assert len(spy.calls) == 1
+    assert spy.calls[0]["agent_key"] == JUDGE_AGENT_KEY
+    assert spy.calls[0]["auto_approve"] is True      # headless: findings are reviewed, not runs
+    assert spy.calls[0]["execution_mode"] == "companion"
+    assert result.run_id
+
+
+def test_an_unconfigured_capability_is_still_capped(db):
+    """A missing connection is not a reason to run uncapped."""
+    tenant = Tenant.objects.create(name="NoConn")
+    assert caps_for(tenant.id) == (DEFAULT_MAX_JUDGMENTS_PER_RUN, None)
+
+
+def test_a_cached_row_describes_itself_usefully(world):
+    row = record_verdict(
+        tenant_id=world["tenant"].id, project_id=world["project"].id, run_id=None,
+        content_hash="abcdef0123456789",
+        judgment=A11yJudgment(criteria=("1.4.1",), verdict="fail", confidence=0.9,
+                              evidence="e", suggested_fix="f", checker="color"),
+    )
+    assert str(row) == "a11y:color:fail (abcdef012345)"
+
+
+def _set_caps(world, *, judgments=None, screens=None):
+    conn = IntegrationConnection.objects.get(tenant=world["tenant"], capability="a11yai")
+    scopes = {}
+    if judgments is not None:
+        scopes["max_judgments_per_run"] = judgments
+    if screens is not None:
+        scopes["max_screens_per_run"] = screens
+    conn.scopes = scopes
+    conn.save(update_fields=["scopes"])
+
+
+# ── isolation: one tenant's cached verdicts are its own ──────────────
+@pytest.mark.django_db(transaction=True)
+def test_rls_hides_one_tenants_cached_verdicts_from_another():
+    """Proven on a connection opened as the non-superuser app role — the Django test
+    connection is the privileged migration role and bypasses RLS entirely."""
+    a = Tenant.objects.create(name="A")
+    b = Tenant.objects.create(name="B")
+    for tenant, mark in ((a, "A-secret"), (b, "B-secret")):
+        project = Project.objects.create(tenant=tenant, name="p")
+        A11yJudgmentCache.objects.create(
+            tenant=tenant, project=project, checker="alt", content_hash=f"hash-{mark}",
+            criteria=["1.1.1"], verdict="fail", confidence=0.9, evidence=mark,
+        )
+
+    sd = connection.settings_dict
+    with connection.cursor() as cur:
+        cur.execute("SELECT current_database()")
+        dbname = cur.fetchone()[0]
+    raw = psycopg.connect(
+        host=sd["HOST"], port=sd["PORT"], dbname=dbname,
+        user=settings.APP_DB_USER, password=settings.APP_DB_PASSWORD, autocommit=True,
+    )
+    try:
+        with raw.cursor() as cur:
+            cur.execute("SELECT set_config('app.tenant_id', %s, false)", [str(a.id)])
+            cur.execute("SELECT evidence FROM a11y_a11yjudgmentcache")
+            assert cur.fetchall() == [("A-secret",)]
+
+            cur.execute("SELECT set_config('app.tenant_id', %s, false)", [""])
+            cur.execute("SELECT count(*) FROM a11y_a11yjudgmentcache")
+            assert cur.fetchone()[0] == 0        # no tenant context -> fail closed
+    finally:
+        raw.close()
