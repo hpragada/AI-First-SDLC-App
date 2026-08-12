@@ -2,7 +2,9 @@
 
 **What this plan is for.** This is the *order* to push accessibility earlier in the lifecycle — into design, code review, and brownfield onboarding — after the QA capability exists. The full detail of each of the 9 tasks is in `TASK_BACKLOG_OTHER_PHASES.md`; this plan gives the order, the dependencies, and what runs in parallel. No estimates/sprints (team decision).
 
-**Prerequisite: build the QA plan first.** Every task here reuses the `a11yai` capability (QA‑01/02/03), the WCAG 2.2 knowledge base (QA‑04), the confidence gate (QA‑06), and the gate policy (QA‑08) from `BUILD_PLAN_QA.md`. Dependencies on QA tasks are named below.
+**Prerequisite: build the QA plan first.** Every task here reuses the `a11yai` capability (QA‑01/02/02a/03), the WCAG 2.2 knowledge base (QA‑04), the confidence gate (QA‑06), the gate policy (QA‑08), the **candidate-capture route (QA‑11b)** and the **findings ledger (QA‑12a)** from `BUILD_PLAN_QA.md`. Dependencies on QA tasks are named below.
+
+> **Read `RESEARCH_CORRECTIONS.md` first.** Correction **R5** affects four of these nine tasks: OP‑01, OP‑02, OP‑06 and OP‑07 were written against the legacy agent suite and named local file paths that do not exist in this platform. They have been corrected in `TASK_BACKLOG_OTHER_PHASES.md`. Correction **R2** matters here too: any "rendered preview" is a **localhost URL on a developer's machine**, so design- and review-time checks reuse the QA‑11b capture route rather than rendering server-side.
 
 **How to work it.** Pick the next unblocked task, open its block in `TASK_BACKLOG_OTHER_PHASES.md`, build it, tick it `🟢`. A task is ready only when everything in its **Depends On** (including any QA‑xx) is `🟢`.
 
@@ -33,11 +35,11 @@ Tasks: OP‑08 (remediation campaign) and OP‑09 (hold new work to WCAG 2.2).
 ## Dependency map (what must be `🟢` before what)
 
 ```
-(QA plan complete — QA-03, QA-04, QA-06, QA-08, QA-15, QA-18 available)
+(QA plan complete — QA-03, QA-04, QA-06, QA-08, QA-11b, QA-12a, QA-15, QA-18 available)
 
-N1 DESIGN                         N2 REVIEW                      N3 ONBOARDING
-  QA-04 ──► OP-01 ──► OP-07*        QA-03 ──► OP-04 ──► OP-05       QA-04 ──► OP-06 ──► OP-07
-  QA-03 ──► OP-02                                                   OP-06 feeds ► QA-17 (QA plan)
+N1 DESIGN                              N2 REVIEW                           N3 ONBOARDING
+  QA-04 ──────► OP-01 ──► OP-07*         QA-03, QA-11b ──► OP-04 ──► OP-05    QA-04 ──► OP-06 ──► OP-07
+  QA-03, QA-11b ──► OP-02                                                     OP-06 feeds ► QA-17 (QA plan)
   QA-08, OP-02 ──► OP-03
 
 N4 COMPOSITIONS
@@ -63,6 +65,7 @@ Same binary checklist as the QA plan: behaviour matches the Description; every A
 ---
 
 ## Cross‑references
+- **What the research got wrong about the platform (read first):** `RESEARCH_CORRECTIONS.md`.
 - **Task detail (read before building any task):** `TASK_BACKLOG_OTHER_PHASES.md`.
 - **The QA engine this depends on (build first):** `BUILD_PLAN_QA.md` / `TASK_BACKLOG_QA.md`.
 - **The user journeys these serve:** `USER_JOURNEYS.md` (J2, J3, J5‑onboarding, J6, J7).

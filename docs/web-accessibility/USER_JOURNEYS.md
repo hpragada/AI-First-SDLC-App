@@ -8,6 +8,12 @@
 
 **The one new thing we build.** A capability called `a11yai` — the AI checks that judge the accessibility things the rule scanner can't (is the alt text meaningful, is this really a button, is meaning carried by colour alone, does the label match what a screen reader says). Everything else in these journeys is the platform's existing design → build → review → test → fix‑loop → gate machinery, with accessibility woven through it.
 
+> **Two corrections from the source review (2026‑08‑12) — see `RESEARCH_CORRECTIONS.md`.**
+> 1. **The rule scanner has never actually run.** The journeys were written assuming the testing phase already scans with axe. It doesn't — it writes a test *plan*. The scan now runs as part of the **test-automation step**, which is the only place with a browser. The journeys below read the same to a user; only the machinery underneath moved.
+> 2. **The browser lives on the developer's machine, not the server.** The live app under test comes up locally through the companion, at a URL the platform's servers cannot reach. So anything involving "looking at the rendered page" happens there, and the findings travel back to the platform.
+>
+> Neither correction changes what a user experiences in any journey — but both change what we build, so don't plan from the journeys alone.
+
 ---
 
 ## J1 — Set up a project to be held to WCAG accessibility  *(foundation · greenfield & brownfield)*
@@ -20,6 +26,8 @@
 4. The platform loads the WCAG 2.2 rulebook into its knowledge base so that, later, every AI finding can quote the exact rule it's judging against.
 
 **Done when:** the project has a WCAG 2.2 target, the AI checks resolve for that tenant (and can't see any other tenant's data), the gate strictness and the accessibility reviewer are set, and the WCAG rulebook is loaded. *There is no golden‑set step here — the accuracy of the checks is proven internally by Edvensoft, not by the tenant.*
+
+> **Where these settings live (QA‑08).** The target and gate strictness are stored as an `a11y` policy block on the **Project Profile**, alongside the theme and export-policy blocks that already work the same way. The accessibility reviewer maps to the existing **QA Lead** role for the POC — no new role is added.
 
 ---
 
@@ -55,8 +63,8 @@
 
 **What this delivers:** the implemented screen verified against WCAG 2.2 by the rules **and** the AI, in one place, with problems turning into tracked bugs automatically.
 
-1. The **testing phase** runs the rule scanner (axe) against every screen — now at **WCAG 2.2**.
-2. Straight after, the **AI checks** run on each screen's relevant parts — images for alt text, controls for "is this a real button / correct label," coloured indicators for colour‑only meaning — and their findings are merged into the **same report** as the rule findings. Each finding is marked as coming from the rules or the AI, with a confidence and the rule it relates to.
+1. The **testing phase** runs the rule scanner (axe) against every screen — now at **WCAG 2.2**. *(Under the hood this executes in the test-automation step, against the live app running locally through the companion — the only place with a browser. The user just sees "the tests ran.")*
+2. While it scans, it also **collects what the AI needs to judge** — for each element worth asking about, a screenshot of it, what a screen reader would see, and the surrounding text. Those go to the platform, the **AI checks** judge them — images for alt text, controls for "is this a real button / correct label," coloured indicators for colour‑only meaning — and the findings are merged into the **same report** as the rule findings. Each finding is marked as coming from the rules or the AI, with a confidence and the rule it relates to.
 3. Real problems (a rule violation, or an AI finding the system is confident about) automatically open a **bug** with a severity based on the WCAG level; the AI's unsure calls go to the SME's review queue instead of becoming bugs; and a bug closes itself when a later run shows the problem fixed.
 4. The **test‑automation** step generates scripts that run both the rule scan and the AI checks, so accessibility is part of the automated suite from then on.
 5. The **QA Lead** approves the **accessibility test gate** once there are no real (rule or AI‑confirmed) serious problems left.

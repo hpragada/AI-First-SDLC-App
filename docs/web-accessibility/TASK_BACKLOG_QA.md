@@ -1,7 +1,11 @@
 # Task Backlog — Web Accessibility QA (POC + Phase 2)
 
-**Total Tasks:** 24 (QA‑01 … QA‑24)
+**Total Tasks:** 31 (QA‑01 … QA‑24, plus QA‑02a, QA‑10a, QA‑11a, QA‑11b, QA‑12a, QA‑15a, QA‑23a)
 **Estimates:** deferred by team decision — this backlog carries detail + dependencies, not story points or sprints.
+
+> **Read `RESEARCH_CORRECTIONS.md` first.** A source-level check of the platform (2026‑08‑12) found that several things the research reports said "already exist" do not — most importantly, **the testing agent has never run an accessibility scan**. Seven tasks were added and five re-scoped as a result. Every affected block below says so in its Description. Building to an uncorrected block will produce a task that passes its tests and demonstrates nothing.
+
+**Sizing assumption (team decision, 2026‑08‑12):** design for roughly **10 screens per run and 50 screens per app**, with a configurable cap on judgments per run and a run that **pauses and resumes** at the cap rather than failing. A wrong estimate then costs a slower first audit, never a lost run.
 
 > **How to read a task.** Each task block is written so you can implement it by reading that block alone. The **Description** starts with one plain sentence saying what the task delivers and why, then "In build terms:" gives the concrete behaviour, inputs/outputs, states, and edge cases, then the **Acceptance Criteria** are hand‑checkable given/when/then statements. If a block ever leaves you guessing how to start, that's a bug in the block — raise it.
 
@@ -28,30 +32,48 @@ This epic gives the platform a single, model‑agnostic way to ask an AI to judg
 | ID | Title | Type | Depends On | Status |
 |----|-------|------|-----------|--------|
 | QA‑01 | Create the `a11yai` capability front door | Backend | — | ⬜ |
-| QA‑02 | Build the model switchboard behind `a11yai` | Backend | QA‑01 | ⬜ |
-| QA‑03 | Build the four accessibility AI checkers | Backend (AI) | QA‑01, QA‑02, QA‑04 | ⬜ |
+| QA‑02 | Judgment dispatch, cache & audit behind `a11yai` | Backend | QA‑01 | ⬜ |
+| QA‑02a | The `09c_a11y_judge` agent + `record_a11y_finding` tool | Agent + Backend | QA‑02, QA‑04 | ⬜ |
+| QA‑03 | Build the four accessibility AI checkers | Backend (AI) | QA‑01, QA‑02, QA‑02a, QA‑04 | ⬜ |
 
 **QA‑01 — Create the `a11yai` capability front door** *(critical path)*
 - **Epic:** E1 · **Story:** US‑A1 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** — · **Blocks:** QA‑02, QA‑03
 - **Description:** Right now nothing in the platform can ask an AI "is this screen accessible?", and we want that request to work the same way as every other integration — through a named capability so the AI model underneath can be swapped without touching the callers. This task creates that front door, called `a11yai`. In build terms: add a new capability contract `a11yai` alongside the existing ones in `backend/integrations/capabilities.py`, with four methods — `check_alt`, `check_semantics`, `check_color`, `check_label` — each accepting the element / screenshot / surrounding context it needs and returning **one standard result object**: the WCAG criterion it judged, a verdict (`pass` / `fail` / `uncertain`), a confidence from 0 to 1, the evidence it used, and a suggested fix. Wire it so `get_capability(tenant, "a11yai")` returns the right implementation for that tenant, exactly like `get_capability(tenant, "codehost")` does today, and keep it tenant‑scoped so one tenant's checks can never read another's data. Edge cases: an unconfigured tenant returns a clear "capability not configured" error, not a crash; a method called with missing inputs returns an `uncertain` result with a reason, never a partial object.
+  > **Correction (R4).** `a11yai` is a capability for its **shape** — so callers never name a vendor (non‑negotiable #9) — but it must **never call a model directly**. Its implementation dispatches a constrained agent run through `ExecutionDriver` (non‑negotiable #7); that agent is built in QA‑02a. No API key is involved anywhere in this build.
+  > **What this task honestly delivers:** the seam only. All four methods return a well-formed `uncertain` result until QA‑02a and QA‑03 fill them in. That is the backlog's intended dependency order, not a shortcut — but say so at review so nobody mistakes a working front door for a working check.
 - **Acceptance Criteria:**
   - [ ] Given a tenant with `a11yai` configured, when code calls `get_capability(tenant, "a11yai")`, then it returns a working object exposing all four methods.
   - [ ] Given any of the four methods runs on a sample element, when it returns, then the result always contains criterion, verdict, confidence, evidence, and suggested_fix — no field missing.
   - [ ] Given a second tenant, when it uses the capability, then it cannot read the first tenant's inputs or results (proven by an RLS test).
   - [ ] Unit + integration tests cover capability resolution and the result shape, with ≥ 90% coverage on the new code.
 
-**QA‑02 — Build the model switchboard behind `a11yai`** *(critical path)*
-- **Epic:** E1 · **Story:** US‑A2 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑01 · **Blocks:** QA‑03
-- **Description:** The checks will use different AI models for different jobs — a cheaper text model to read code and a vision model to "look" at screenshots — and we must be able to change those models (hosted or self‑hosted) without rewriting the checkers, and never pay to re‑analyse a screen that hasn't changed. This task builds the one switchboard every check goes through. In build terms: create `backend/a11y/gateway.py` with a single function the checkers call to run a model request. It routes text‑only checks (label, semantics) to the configured text model and vision checks (alt, colour) to the configured vision model; it reads *which* concrete model/endpoint to use from tenant config, so "hosted vs self‑hosted" is a setting, not code; it forces temperature 0 and pins the exact model version so results are repeatable; and it caches every result under a hash of its inputs, so an identical request returns the stored answer instead of calling the model again. Every call records the model name, model version, and prompt version for the audit log. Edge cases: a model timeout or error returns an `uncertain` result (never a hard fail from an outage); a cache hit must never be stale for changed input because the key includes the input hash.
+**QA‑02 — Judgment dispatch, cache & audit behind `a11yai`** *(critical path)* — **RE‑SCOPED (R4)**
+- **Epic:** E1 · **Story:** US‑A2 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑01 · **Blocks:** QA‑02a, QA‑03
+- **Was:** "Build the model switchboard" — routing text checks to a cheap text model and vision checks to a VLM through a LiteLLM-style gateway. **That is not buildable here and would break non‑negotiable #7:** the platform has no one-shot model-call primitive, no API credential (the companion deliberately drops `ANTHROPIC_API_KEY`), and no connector anywhere makes model calls. Model routing becomes a **later cost optimisation**, not POC scope.
+- **Description:** Judgment costs time and subscription usage, so the platform must decide *what actually needs judging*, ask for it once, reuse the answer, and be able to prove afterwards which model produced which verdict. This task builds that decision layer — the one path every check goes through. In build terms: create `backend/a11y/dispatch.py`. Given a set of candidates it (1) drops any whose content hash already has a stored verdict, (2) groups the remainder into per-screen batches, (3) starts **one `09c_a11y_judge` run per batch through `ExecutionDriver`** (built in QA‑02a) — never a direct model call, (4) stores each returned verdict against its content hash, and (5) stamps engine, model and prompt version (read from the `Run`) onto every finding. Apply a configurable **cap on judgments per run**; when a batch would exceed it, stop at the cap and report what remains rather than failing or silently truncating — runs are Temporal workflows, so the remainder resumes. Default sizing per the header: ~10 screens/run. Edge cases: a run that errors or times out returns `uncertain` for its candidates, never a hard failure from an outage; a cache hit can never be stale because the key is the input hash.
 - **Acceptance Criteria:**
-  - [ ] Given a text check (label), when it runs, then the gateway sends it to the configured text model; given a vision check (colour), then it sends it to the vision model.
-  - [ ] Given the same input checked twice, when the second call runs, then it is served from cache and no model call is made.
-  - [ ] Given a tenant configured for a self‑hosted model, when a check runs, then it uses that model with zero change to checker code.
-  - [ ] Given any completed check, when inspected, then the model name, version, and prompt version were recorded.
-  - [ ] Tests cover routing, caching, timeout‑to‑uncertain, and the audit record, with ≥ 90% coverage on new code.
+  - [ ] Given a batch of candidates, when dispatch runs, then judgment happens via an `ExecutionDriver` run — a search of the dispatch path finds **no direct model/API call**.
+  - [ ] Given the same candidate judged twice, when the second dispatch runs, then it is served from the stored verdict and no run is started for it.
+  - [ ] Given any stored finding, when inspected, then the engine, model and prompt version that produced it are recorded.
+  - [ ] Given a judgment run errors or times out, when handled, then its candidates come back `uncertain` — never a hard failure.
+  - [ ] Given a batch that exceeds the per‑run cap, when dispatch runs, then it stops at the cap and reports the remainder rather than truncating silently.
+  - [ ] Tests cover dispatch, caching, the cap, timeout‑to‑uncertain and the audit record, with ≥ 90% coverage on new code.
+
+**QA‑02a — The `09c_a11y_judge` agent + `record_a11y_finding` tool** *(critical path)* — **NEW (R4)**
+- **Epic:** E1 · **Story:** US‑A2 · **Type:** Agent + Backend · **Status:** ⬜ Pending · **Depends On:** QA‑02, QA‑04 · **Blocks:** QA‑03
+- **Description:** Something has to actually look at a screenshot and form a judgement, and in this platform the thing that can do that is an agent — Claude is already multimodal and already runs on the subscription, so no new model plumbing and no API bill. This task builds the judge. In build terms: author a **platform-native agent** `agents/09c_a11y_judge/agent.md` and register it in the catalog with `native=True`, following the precedent of `00e_document_vision` (which already reads page images and writes structured output). Its body takes a batch of candidate bundles and, for each one, judges it against the exact WCAG 2.2 criterion text from QA‑04 and calls a new MCP tool **`record_a11y_finding(criterion, verdict, confidence, evidence, suggested_fix, element, source)`**. That tool validates against a strict schema and rejects anything malformed — the same "coerce it so a model typo can never degrade the screen" discipline `submit_gap_report` already uses. Add a **write-completeness check** after the run: if 40 candidates were dispatched and 31 findings came back, the run **fails loudly**. Edge cases: a malformed tool call is retried once then recorded as `uncertain`; a candidate whose screenshot could not be captured is recorded `uncertain` with a reason, never a verdict.
+  > **Why the completeness check is not optional.** We have a verified instance of an agent being told to call a tool and not doing it (the ideation agent skipping `ask_human`). For a compliance feature, silently reporting 31 of 40 results is the worst possible failure — worse than reporting none, because it looks like a pass.
+- **Acceptance Criteria:**
+  - [ ] Given a batch of candidates, when the judge runs, then one finding is recorded per candidate via `record_a11y_finding`.
+  - [ ] Given a malformed tool call, when it is received, then it is retried once and then recorded as `uncertain` — never stored malformed.
+  - [ ] Given fewer findings return than candidates dispatched, when the run completes, then it fails with a clear "incomplete judgment" reason naming the count.
+  - [ ] Given the agent body, when checked, then it passes the platform reference sweep (no local file paths; all I/O through platform capabilities).
+  - [ ] Tests cover a full batch, a malformed call, and the under-reporting case, with ≥ 90% coverage on new code.
 
 **QA‑03 — Build the four accessibility AI checkers** *(critical path)*
-- **Epic:** E1 · **Story:** US‑A3 · **Type:** Backend (AI) · **Status:** ⬜ Pending · **Depends On:** QA‑01, QA‑02, QA‑04 · **Blocks:** QA‑12, QA‑16, QA‑20
+- **Epic:** E1 · **Story:** US‑A3 · **Type:** Backend (AI) · **Status:** ⬜ Pending · **Depends On:** QA‑01, QA‑02, QA‑02a, QA‑04 · **Blocks:** QA‑12, QA‑16, QA‑20
+  > **Correction (R4).** Each checker is still a prompt + strict schema pair, but the **prompts live in the `09c_a11y_judge` agent body** (QA‑02a) and the **schema is enforced by `record_a11y_finding`**, not by a Pydantic model wrapped around a direct API call. `backend/a11y/checkers/` holds the schema definitions and the candidate-selection rules (which elements each checker applies to); the judging text belongs with the agent.
+  > **Scope note (R7).** The POC ships **five** AI-judged criteria — 1.1.1, 1.3.1, 4.1.2, 1.4.1, 2.5.3. **2.4.6 is Phase 2** (team decision D5), so it is not in this task.
 - **Description:** This is the heart of the POC — the four checks that judge what the rule scanner can't. It delivers a checker for each of: *is the alt text meaningful*, *is this thing that looks like a button really one*, *is information carried by colour alone*, and *does the visible label match the name a screen reader announces*. In build terms: create `backend/a11y/checkers/` with four checkers, each a prompt plus a strict result schema (Pydantic) the model must fill. (1) **meaningful‑alt** looks at the image + its current alt + nearby text and judges whether the alt conveys the image's purpose, and whether a decorative image was wrongly given alt or an informative one left empty. (2) **fake‑semantics** reads the accessibility tree + DOM + screenshot and flags an element that looks or behaves like a control (button, heading, link) but isn't exposed as one. (3) **colour‑only** looks at the rendered region + its text and flags meaning carried by colour with no text / icon / pattern backup. (4) **label** compares a form control's visible label text against its programmatic accessible name and flags a mismatch or a placeholder used as the label. Each returns the standard result object from QA‑01, grounded in the exact WCAG 2.2 criterion text from QA‑04. Edge cases: if the model returns malformed JSON, retry once, then return `uncertain`; if an image/region can't be captured, return `uncertain` with a reason rather than a false verdict.
 - **Acceptance Criteria:**
   - [ ] Given an image with a meaningless alt ("IMG_1234"), when meaningful‑alt runs, then it returns `fail` on 1.1.1 with a reason and a suggested alt.
@@ -82,6 +104,9 @@ So the AI judges against the actual standard instead of guessing, this epic load
 **QA‑05 — Build the "who checks which criterion" registry**
 - **Epic:** E2 · **Story:** US‑B2 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑04 · **Blocks:** QA‑12
 - **Description:** The platform needs to know, for each of the 55 WCAG A/AA criteria, whether the rule scanner, our AI, or a human is responsible for it — and whether it's a POC or a Phase‑2 item — so it can route each check correctly and never silently skip one. This task builds that lookup. In build terms: create a registry (a config table) of the 55 Level A/AA criteria, each row tagged with its **owner** (rule / AI / human) and its **tier** (POC / Phase 2), taken from Report 1 Addendum A; expose a lookup that returns owner + tier for any criterion. The testing flow uses it to decide which engine runs each criterion. Edge case: loading must fail loudly if the set isn't exactly 55 or a criterion has no owner — a silent gap here means an un‑checked criterion later.
+  > **Two source conflicts you must not re-litigate (R7, R8) — both already decided:**
+  > 1. **2.4.6 Headings and Labels is Phase 2** (Addendum A's per-criterion table wins over Addendum B's Tier‑1 list). Team decision D5. Without this the loader hits one criterion with two tiers and refuses to start.
+  > 2. Where Addendum A's **prose** ("~16 agentic / ~14 human") disagrees with its **enumerated lists** (15 and 15), **the lists are authoritative** — they are internally consistent: 15 + 15 = 30 human-primary, and 20 + 20 + 15 = 55 total. Build the registry from the lists.
 - **Acceptance Criteria:**
   - [ ] Given a criterion number, when the registry is queried, then it returns the owner (rule/AI/human) and tier (POC/Phase 2).
   - [ ] Given the loaded set, when validated, then there are exactly 55 criteria and every one has exactly one owner and one tier (no gaps, no duplicates).
@@ -101,15 +126,18 @@ An AI can be confidently wrong and expensive at scale. This epic makes sure an u
 **QA‑06 — Add the confidence gate & "AI never overrides a rule" safety valve** *(critical path)*
 - **Epic:** E‑COST · **Story:** US‑L0 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑03 · **Blocks:** QA‑12, QA‑14, OP‑05
 - **Description:** In a compliance setting a confidently wrong "fail" is as damaging as a miss, so the platform must never let an unsure AI verdict block a team or overturn a definite rule result — this task builds the safety valve between raw AI output and anything shown or acted on. In build terms: create `backend/a11y/triage.py`. For every AI finding, compare its confidence to a per‑checker threshold — high confidence becomes a real finding, medium or low becomes "**needs human review**" rather than "fail". Enforce a hard rule that an AI result can never overturn a deterministic axe failure (axe always wins where they disagree). Require an "evidence" value on every finding and refuse to treat an evidence‑less finding as a hard failure. Thresholds are configurable per checker. Edge case: exactly‑at‑threshold rounds toward "review" (be conservative).
+  > **Honest note on "axe always wins" (R1).** Matching an AI verdict to a *specific* axe failure needs axe output with element + criterion attached. The JUnit path (QA‑11a) does not preserve that — it carries only pass/fail and free text. The structured axe result arrives with the candidate bundles in **QA‑11b**. So this task builds and unit-tests the rule; it is only **proven end-to-end at QA‑12**. Say that at review rather than presenting a fixture-only test as a working guarantee.
 - **Acceptance Criteria:**
   - [ ] Given an AI finding below its checker's threshold, when triaged, then it is marked "needs human review", not "fail".
   - [ ] Given axe reports a failure and the AI disagrees, when triaged, then the axe failure stands.
   - [ ] Given a finding with no evidence, when triaged, then it is never reported as a hard failure.
   - [ ] Tests cover the threshold split, the axe‑wins rule, and the evidence rule, with ≥ 90% coverage on new code.
 
-**QA‑07 — Only check what changed; meter cost; log the model per finding**
-- **Epic:** E‑COST · **Story:** US‑L1 / US‑L2 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑02 · **Blocks:** —
-- **Description:** With many tenants checking many screens, unbounded AI calls would be slow and costly, and every compliance result must be traceable to the exact model that produced it — this task keeps cost down and makes every finding auditable. In build terms: run AI checks only on the screens/elements that changed since the last run (diff‑scope), reusing the gateway's content‑hash cache; record the AI cost per tenant per run in the platform's existing metering; and make sure the model name + version + prompt version is written onto every finding in Run History. Edge case: the very first run of a project has no prior state, so it checks everything once and caches for next time.
+**QA‑07 — Only check what changed; meter cost; log the model per finding** — **PROMOTED to a prerequisite of the first real run**
+- **Epic:** E‑COST · **Story:** US‑L1 / US‑L2 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑02 · **Blocks:** **QA‑12**
+- **Why it moved.** Judgment runs on the Claude Code **subscription**, which is free per token but **capped in usage**. Without diff-scoping and caching, one brownfield baseline audit of a 50-screen app would do the work of fifty normal runs in a single pass, on an empty cache. This is no longer a "keep costs tidy" task — it is what stops the first real audit exhausting the subscription. It must be `🟢` before QA‑12 runs against anything real.
+- **Description:** With many tenants checking many screens, unbounded judgment would be slow and would burn subscription usage, and every compliance result must be traceable to the exact model that produced it — this task keeps the volume down and makes every finding auditable. In build terms: judge only the screens/elements that changed since the last run (diff‑scope), reusing the content‑hash cache from QA‑02; and make sure model name + version + prompt version is written onto every finding in Run History. Edge case: the very first run of a project has no prior state, so it judges everything once and caches for next time — which is exactly the brownfield baseline case, so pair it with QA‑02's per-run cap and resume.
+  > **Correction (R6).** "Record the AI cost in the platform's existing metering" — there is no separate metering plane, but this turned out to be a **non-issue**: judgment is a `Run`, so `Run.cost_usd` already carries it and every existing cost display works unchanged. Do not build a metering table.
 - **Acceptance Criteria:**
   - [ ] Given a run where only one screen changed, when checks run, then only that screen is sent to the AI and the rest are cache‑served.
   - [ ] Given any run, when it finishes, then its AI cost is recorded against the tenant.
@@ -123,11 +151,14 @@ Teams need a clear, configurable checkpoint that decides whether a screen's acce
 
 | ID | Title | Type | Depends On | Status |
 |----|-------|------|-----------|--------|
-| QA‑08 | Create the accessibility gate policy + reviewer role | Backend | — | ⬜ |
-| QA‑15 | Enforce the accessibility test gate at the end of testing | Backend | QA‑08, QA‑14 | ⬜ |
+| QA‑08 | Create the accessibility gate policy + reviewer role + WCAG target | Backend | — | ⬜ |
+| QA‑15a | Fix `refresh_derived` to dispatch derived conditions by key | Backend | — | ⬜ |
+| QA‑15 | Enforce the accessibility test gate at the end of testing | Backend | QA‑08, QA‑14, QA‑15a | ⬜ |
 
-**QA‑08 — Create the accessibility gate policy + reviewer role**
+**QA‑08 — Create the accessibility gate policy + reviewer role + WCAG target** — **SCOPE ADDED**
 - **Epic:** E‑GATE · **Story:** US‑F1 / US‑F2 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** — · **Blocks:** QA‑15, QA‑19, OP‑03
+  > **Added scope — the WCAG target had no home.** Journey J1 says the owner sets the project's target to WCAG 2.2 AA, but `ProjectProfile` has no such field. Add an **`a11y` JSON block** to `ProjectProfile` (`{"target": "wcag_2.2_aa", "gate": {…}}`), matching how `theme`, `export_policy` and `preview_start` already work there — a policy block, not a scalar column, so later settings need no migration.
+  > **Role decision (D7): map the Accessibility SME onto the existing `qa_lead` role for the POC.** Do **not** add a value to the shared `Role` enum — it is used by both `Membership.role` and `Approval.required_role`, and touching it drags in a migration, the RBAC matrix and the UI for no POC benefit. Add a real role only when a client needs the separation.
 - **Description:** Teams need one clear, adjustable checkpoint for "is this accessible enough to move on?", and someone accountable for accessibility sign‑off — this task creates that gate policy and role without enforcing anything yet. In build terms: add an accessibility gate policy object to the Gate/Approval service with configurable thresholds — which severities block, and the confidence bar below which findings never block — editable per project; and add an "Accessibility SME / reviewer" role to the RBAC role→phase→gate matrix (for the POC it may map onto the existing QA Lead). This task only makes the policy and role exist and be editable; enforcement is QA‑15. Edge case: a project with no explicit policy inherits a sensible default (block on Critical/Serious, confidence bar at the checker default).
 - **Acceptance Criteria:**
   - [ ] Given a project, when an admin opens the a11y gate policy, then they can set which severities block and the confidence threshold, and save it.
@@ -135,9 +166,19 @@ Teams need a clear, configurable checkpoint that decides whether a screen's acce
   - [ ] Given a project with no explicit policy, when read, then it returns the documented default.
   - [ ] Tests cover policy read/write, the default, and role assignment, with ≥ 90% coverage on new code.
 
+**QA‑15a — Fix `refresh_derived` to dispatch derived conditions by key** — **NEW (R3)**
+- **Epic:** E‑GATE · **Story:** US‑F1 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** — · **Blocks:** QA‑15
+- **Description:** There is a latent bug in the gate machinery that will silently break our accessibility gate the moment we add it, so it has to be fixed first. `backend/apps/gates/conditions.py::refresh_derived` hands **every** derived condition to the *test* evaluator (`_evaluate_test_condition`). Today that is harmless — `testgate.evaluate()` returns any condition it doesn't recognise untouched — but it means the platform can only ever have **one** derived condition. Add a second and it is passed to the wrong evaluator and silently never refreshes, so the gate reads a stale value seeded when it opened. For an accessibility gate that would mean a gate that never notices findings were fixed, or worse, never notices they exist. In build terms: replace the hardcoded call with a small registry mapping condition key → evaluator, so each derived condition is refreshed by its own evaluator and an unknown key is returned untouched (today's safe behaviour, kept). Edge case: a condition marked `derived` with no registered evaluator must pass through unchanged rather than raising — a gate must never crash on an unknown condition.
+- **Acceptance Criteria:**
+  - [ ] Given a gate carrying both the blocking-test and an a11y derived condition, when refreshed, then each is evaluated by its own evaluator and both update.
+  - [ ] Given a derived condition with no registered evaluator, when refreshed, then it passes through unchanged and nothing raises.
+  - [ ] Given the existing test gate, when refreshed, then its behaviour is unchanged (regression proven by the existing test-gate tests still passing).
+  - [ ] Tests cover two derived conditions together, the unknown-key case, and the no-regression case, with ≥ 90% coverage on new code.
+
 **QA‑15 — Enforce the accessibility test gate at the end of testing** *(critical path)*
-- **Epic:** E‑GATE · **Story:** US‑F1 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑08, QA‑14 · **Blocks:** QA‑19, OP‑09
-- **Description:** The pipeline must actually stop when a screen has a real accessibility failure and let it through when it doesn't — this task makes the gate enforce the QA‑08 policy on the merged findings. In build terms: at the end of the testing phase, evaluate the merged axe + AI findings against the project's policy — set the gate Approval to *blocked* when there is any axe or AI‑confirmed Critical/Serious at WCAG 2.2, and *passable* when there are none; low‑confidence‑only findings never block. Keep it a control‑plane Approval, consistent with every other gate. Edge case: a run that errored (couldn't complete) blocks with an "incomplete run" reason rather than passing by default.
+- **Epic:** E‑GATE · **Story:** US‑F1 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑08, QA‑14, QA‑15a · **Blocks:** QA‑19, OP‑09
+- **Description:** The pipeline must actually stop when a screen has a real accessibility failure and let it through when it doesn't — this task makes the gate enforce the QA‑08 policy on the merged findings. In build terms: add `backend/apps/gates/a11ygate.py` as a **derived** condition on the `testing` phase, cloned from the existing `testgate.py` pattern, and compose it in `conditions.py`. At decide time it evaluates the merged axe + AI findings against the project's policy — *blocked* when there is any axe or AI‑confirmed Critical/Serious at WCAG 2.2, *passable* when there are none; low‑confidence‑only findings never block. Its `detail` line names the findings holding the gate shut, so the reviewer sees why. Edge case: a run that errored (couldn't complete) blocks with an "incomplete run" reason rather than passing by default.
+  > **Build it derived, not reviewer-attested (R3).** `testgate.py`'s own comment says why: *"a reviewer can never tick past a red suite."* The existing WCAG checklist is reviewer-attested and on the **design** gate — that is correct for design judgement calls, and it is **not** this. A reviewer must not be able to tick past a real accessibility failure.
 - **Acceptance Criteria:**
   - [ ] Given a run with an AI‑confirmed Critical, when the gate evaluates, then it blocks.
   - [ ] Given a run with only low‑confidence findings, when the gate evaluates, then it passes.
@@ -153,23 +194,35 @@ Before we trust these checks in front of tenants, *we* need to measure how often
 | ID | Title | Type | Depends On | Status |
 |----|-------|------|-----------|--------|
 | QA‑09 | Build the internal golden set (team‑only) | Internal | QA‑03 | ⬜ |
-| QA‑10 | Build the internal accuracy harness (team‑only) | Internal | QA‑09 | ⬜ |
+| QA‑10a | Create the local accuracy-harness entry point | Internal | — | ⬜ |
+| QA‑10 | Build the internal accuracy harness (team‑only) | Internal | QA‑09, QA‑10a | ⬜ |
 
 **QA‑09 — Build the internal golden set (team‑only)**
 - **Epic:** E‑EVAL · **Story:** US‑G1 · **Type:** Internal (not a tenant feature) · **Status:** ⬜ Pending · **Depends On:** QA‑03 · **Blocks:** QA‑10
 - **Description:** Before we put these AI checks in front of tenants, we (Edvensoft) need an answer‑key to measure how often they're right — a set of real screens we've labelled by hand against WCAG 2.2. This is our internal quality control and must never ship to tenants. In build terms: assemble a labelled dataset of screens/components with the correct WCAG 2.2 verdict per relevant criterion, adjudicated by an accessibility expert; store it inside Edvensoft's own repo/CI, versioned; keep it entirely out of tenant databases and the platform UI. Edge case: any disagreement between two labellers is resolved by a third adjudication and the final call recorded — the golden set must be trustworthy or the numbers it produces are meaningless.
+  > **Status (2026‑08‑12).** The SME is a **QA Lead team member**; the screens to label are **not ready yet (in progress)**. This does **not** block the critical path — QA‑09 and QA‑10 gate only **QA‑22** (Phase 2). M0 and M1 proceed without them. Start this task when the screens exist.
 - **Acceptance Criteria:**
   - [ ] Given the dataset, when inspected, then each item has an expert‑adjudicated verdict per relevant criterion and a version tag.
   - [ ] Given the platform code, when searched, then the golden set is never referenced by tenant‑facing code or stored in tenant data.
   - [ ] Given a new dataset version, when added, then the previous version is retained.
 
-**QA‑10 — Build the internal accuracy harness (team‑only)**
-- **Epic:** E‑EVAL · **Story:** US‑G2 · **Type:** Internal (not a tenant feature) · **Status:** ⬜ Pending · **Depends On:** QA‑09 · **Blocks:** QA‑22
-- **Description:** We need to know, in numbers, how accurate each checker is, and to stop a model or prompt change from quietly degrading it — this task builds the scorer that runs in our CI. In build terms: build a scorer that runs each checker over the golden set and reports precision, recall, and F1 per checker; wire it into Edvensoft CI so that promoting a new model or prompt version is blocked if any checker's accuracy drops below the last accepted numbers. Edge case: a new checker with no prior baseline records its first numbers as the baseline rather than blocking.
+**QA‑10a — Create the local accuracy-harness entry point** — **NEW (R6)**
+- **Epic:** E‑EVAL · **Story:** US‑G2 · **Type:** Internal (not a tenant feature) · **Status:** ⬜ Pending · **Depends On:** — · **Blocks:** QA‑10
+- **Description:** QA‑10 says to wire the accuracy scorer "into Edvensoft CI" — but **this repository has no CI**: no `.github/`, no `Jenkinsfile`, no `.gitlab-ci.yml`, only `docker-compose.yml`. So the thing QA‑10 plugs into has to exist first. Team decision **D4**: for the POC the harness runs **locally via `make`**, not in a pipeline; a real pipeline comes when a client depends on it. In build terms: add a `make a11y-eval` target that runs the scorer against the golden set and writes a versioned results file, plus a stored **baseline** of the last accepted numbers it compares against. Keep it entirely inside Edvensoft's own repo/CI space — never tenant data, never the platform UI. Edge case: with no stored baseline the first run **records** its numbers as the baseline rather than failing.
+  > **Related prerequisite (also R6):** `pytest-cov` is not installed and no coverage config exists, so the "≥ 90% coverage on new code" in this backlog's Definition of Done is currently **unmeasurable**. Add `pytest-cov` and a **module-scoped** `make cov` before QA‑01 — module-scoped deliberately, because running the full backend suite is known to be killed.
+- **Acceptance Criteria:**
+  - [ ] Given the golden set, when `make a11y-eval` runs, then it prints per-checker numbers and writes a versioned results file.
+  - [ ] Given no prior baseline, when it runs, then it records the first numbers as the baseline instead of failing.
+  - [ ] Given the repository, when searched, then the harness and its data are never referenced by tenant-facing code.
+
+**QA‑10 — Build the internal accuracy harness (team‑only)** — **RE‑SCOPED (R6)**
+- **Epic:** E‑EVAL · **Story:** US‑G2 · **Type:** Internal (not a tenant feature) · **Status:** ⬜ Pending · **Depends On:** QA‑09, QA‑10a · **Blocks:** QA‑22
+- **Description:** We need to know, in numbers, how accurate each checker is, and to stop a model or prompt change from quietly degrading it — this task builds the scorer. In build terms: build a scorer that runs each checker over the golden set and reports precision, recall, and F1 per checker, and make **promotion of a new model or prompt version fail** when any checker drops below the stored baseline from QA‑10a. Edge case: a new checker with no prior baseline records its first numbers as the baseline rather than blocking.
+  > **Correction (R6).** "Wire it into CI" — there is no CI. It runs through the local `make` entry point from QA‑10a (decision D4). The *rule* is unchanged: an accuracy regression blocks promotion. Only where it runs changed.
 - **Acceptance Criteria:**
   - [ ] Given the golden set, when the harness runs, then it reports precision/recall/F1 per checker.
-  - [ ] Given a model/prompt change that lowers a checker's accuracy, when CI runs, then promotion is blocked.
-  - [ ] Given no regression, when CI runs, then promotion is allowed.
+  - [ ] Given a model/prompt change that lowers a checker's accuracy below baseline, when the harness runs, then promotion is blocked with the failing checker named.
+  - [ ] Given no regression, when it runs, then promotion is allowed and the baseline updates.
 
 ---
 
@@ -178,31 +231,65 @@ This epic upgrades the testing phase so one run scans with the rules **and** the
 
 | ID | Title | Type | Depends On | Status |
 |----|-------|------|-----------|--------|
-| QA‑11 | Move the testing agent's scan to WCAG 2.2 | Agent edit | QA‑04 | ⬜ |
-| QA‑12 | Add the AI‑checks pass to the testing agent | Agent edit + Backend | QA‑03, QA‑06, QA‑11 | ⬜ |
-| QA‑13 | Add source/confidence/fix columns to the report | Backend | QA‑12 | ⬜ |
+| QA‑11 | Move the accessibility standard to WCAG 2.2 (agents **+ gate**) | Agent edit + Backend | QA‑04 | ⬜ |
+| QA‑11a | Make 09b generate axe assertions | Agent edit | QA‑11 | ⬜ |
+| QA‑11b | Capture AI candidate bundles in the companion + ingest them | Runner + Backend | QA‑11a | ⬜ |
+| QA‑12 | Add the AI‑checks pass to the testing flow | Agent edit + Backend | QA‑03, QA‑06, QA‑07, QA‑11b | ⬜ |
+| QA‑13 | Add source/confidence/fix fields to the report | Backend | QA‑12, QA‑12a | ⬜ |
 | QA‑16 | Make the test‑automation agent script the AI checks | Agent edit | QA‑12 | ⬜ |
 
-**QA‑11 — Move the testing agent's scan to WCAG 2.2**
-- **Epic:** E5 · **Story:** US‑E1 · **Type:** Agent edit · **Status:** ⬜ Pending · **Depends On:** QA‑04 · **Blocks:** QA‑12
-- **Description:** The testing agent currently scans against the older WCAG 2.1, but the whole POC targets 2.2, so the scan and the agent's wording need to move up one version — a small, careful edit that leaves the agent's testing method untouched. In build terms: in `agents/09_testing/agent.md`, change the axe scan configuration and every standard reference in Step 9 (plus the Evidence Base and gate wording) from "WCAG 2.1 AA" to "WCAG 2.2 AA". Treat this as a "data‑reference" edit under the platform's 75/15/10 migration rule — do not rewrite the agent's reasoning — and run the platform's reference sweep afterward. Edge case: don't miss references outside Step 9 (Evidence Base, quality gate, severity notes) — a stray "2.1" there causes confusion downstream.
+**QA‑11 — Move the accessibility standard to WCAG 2.2 (agents + gate)** — **SCOPE EXPANDED (R3)**
+- **Epic:** E5 · **Story:** US‑E1 · **Type:** Agent edit + Backend · **Status:** ⬜ Pending · **Depends On:** QA‑04 · **Blocks:** QA‑11a
+- **Description:** Everything in the platform still says WCAG 2.1 while the whole POC targets 2.2, so the standard has to move up one version **everywhere it is written down** — a careful data-reference edit that leaves reasoning untouched. In build terms, three places: (1) `agents/09_testing/agent.md` — Step 9, the Evidence Base, the quality gate and the severity notes; (2) `agents/09b_test_automation/agent.md` — any standard reference it carries; and (3) **`backend/apps/gates/wcag.py`** — replace its hardcoded 9-criterion WCAG **2.1** checklist with one derived from the QA‑05 criterion registry, filtered to the **human-owned** criteria, at 2.2. Treat the agent edits as "data-reference" edits under the 75/15/10 rule and run the reference sweep afterward. Edge case: a stray "2.1" outside Step 9 causes silent confusion downstream — sweep the whole body, not the step.
+  > **Why the gate file is now in scope (R3).** `gates/wcag.py` is real, live, and **no task in either backlog touched it**. Left alone it would sit at WCAG 2.1 forever while every other surface moved to 2.2 — a split-brain nobody would notice until an audit. It stays **reviewer-attested on the design gate**, which is correct: those are genuine human judgement calls. The *computed* test gate is a separate thing and is QA‑15.
+  > **Honest scope (R1).** This task changes what the platform *says*, not what it *does* — agent 09 has never executed a scan. The first executable accessibility check is **QA‑11a**. Do not claim this task "moved the scan to 2.2."
 - **Acceptance Criteria:**
-  - [ ] Given the testing agent runs, when Step 9 executes, then axe scans at WCAG 2.2.
-  - [ ] Given the agent body, when searched, then no "WCAG 2.1" references remain in the accessibility content.
-  - [ ] Given the reference sweep, when run on the edited agent, then it passes.
+  - [ ] Given the 09 and 09b agent bodies, when searched, then no "WCAG 2.1" reference remains in their accessibility content.
+  - [ ] Given `gates/wcag.py`, when read, then its checklist is derived from the QA‑05 registry at 2.2 and lists the human-owned criteria.
+  - [ ] Given an existing design gate approval, when opened after the change, then it still functions (regression proven by the existing gate tests).
+  - [ ] Given the reference sweep, when run on both edited agents, then it passes.
+  - [ ] Tests cover the derived checklist and the design-gate regression, with ≥ 90% coverage on new code.
 
-**QA‑12 — Add the AI‑checks pass to the testing agent** *(critical path)*
-- **Epic:** E5 · **Story:** US‑E2 · **Type:** Agent edit + Backend · **Status:** ⬜ Pending · **Depends On:** QA‑03, QA‑06, QA‑11 · **Blocks:** QA‑13, QA‑14, QA‑16, QA‑17
-- **Description:** Today the testing phase only runs the rule scanner; this task adds the AI checks right after it, so a single test run reports both the rule findings and the "meaning" findings the rules can't see, side by side. In build terms: extend Step 9 of the testing agent so that, after axe runs on a screen, the platform calls `a11yai.check_*` on that screen's candidate elements — images for alt, controls for semantics/label, coloured status indicators for colour — and merges the returned findings into the same accessibility report, each tagged with its source (rule or AI), confidence, and cited criterion. AI findings pass through the QA‑06 triage before they land in the report, so low‑confidence ones show as "needs review". Edge case: a screen with no candidate elements for a given checker simply produces no AI finding for it (not an error).
+**QA‑11a — Make 09b generate axe assertions** *(critical path)* — **NEW (R1)**
+- **Epic:** E5 · **Story:** US‑E1 · **Type:** Agent edit · **Status:** ⬜ Pending · **Depends On:** QA‑11 · **Blocks:** QA‑11b, QA‑12
+- **Description:** This is the task that makes an accessibility scan actually *run* for the first time — and it needs no platform code at all, because the path already exists. Agent 09b already generates Playwright tests, runs them in the companion's worktree against the live preview app, and its JUnit output already flows through `collect_test_results` → `import_test_results` → **defects that open and close themselves**. `@axe-core/playwright` assertions are simply Playwright tests. In build terms: extend `agents/09b_test_automation/agent.md` so that, alongside the functional scripts it already writes, it generates an **axe assertion per screen** at WCAG 2.2, named so the JUnit `<testcase>` carries the screen's test-case id (the parser recovers `TC-###` from the test name — see `backend/apps/quality/junit.py`). Follow the agent's existing rule never to overwrite scaffolding — extend, don't clobber. Edge case: a screen the preview cannot serve is reported as a failing test with the reason, never skipped silently.
+  > **What this buys, and what it does not.** It buys real axe violations arriving as tracked, self-closing defects with zero platform change. It does **not** buy structured per-element axe data — JUnit carries only `test_ref`, `status` and free text capped at 2000 characters, so no screenshot, no accessibility-tree node, no element selector, no criterion as data. That is QA‑11b's job.
 - **Acceptance Criteria:**
-  - [ ] Given a screen, when Step 9 runs, then the report contains both axe findings and AI findings in one place.
+  - [ ] Given a screen, when 09b generates its scripts, then an axe assertion for that screen is among them, at WCAG 2.2.
+  - [ ] Given the generated scripts, when the suite runs, then axe violations appear as failing tests in the JUnit report.
+  - [ ] Given those failures are imported, when the run completes, then a defect opens per failing screen and closes on a later passing run.
+  - [ ] Given existing scaffolding, when 09b runs, then it is not overwritten.
+  - [ ] Given a screen the preview cannot serve, when the suite runs, then it fails with a reason rather than being skipped.
+
+**QA‑11b — Capture AI candidate bundles in the companion + ingest them** *(critical path)* — **NEW (R1, R2)**
+- **Epic:** E5 · **Story:** US‑E2 · **Type:** Runner + Backend · **Status:** ⬜ Pending · **Depends On:** QA‑11a · **Blocks:** QA‑12
+- **Description:** The AI cannot judge what it cannot see, and the only place a rendered page, a screenshot and an accessibility tree exist is the companion — the app under test runs from `preview_start` at a **localhost URL on the developer's machine that the server cannot reach**. This task captures what the AI needs and gets it to the platform. In build terms: add `runner/companion/a11ycapture.py` as a sibling of `runner/companion/testresults.py`, following its exact discipline — *the companion only knows **where** to look; the platform owns the parsing; no report ⇒ no results ⇒ no import*. During the 09b run it captures, per screen, a **candidate bundle** for each element worth judging: element selector, its accessibility-tree node, a cropped screenshot (staged to S3, pointer only in state — #1/#3), the surrounding text, and **axe's structured result for that element**. Add an ingestion endpoint `POST /api/projects/<id>/a11y-candidates/`, mirroring the proven `POST /api/projects/<id>/test-results/` — CI-token auth, raw body, provenance query params. Edge cases: an absent or unreadable capture is **never** an empty pass (mirror `collect_test_results` — the platform declines to import it); a screen whose screenshot fails to capture yields a bundle marked uncapturable so QA‑02a records `uncertain` rather than a false verdict.
+  > **Candidate selection is what keeps this affordable.** Bundle only elements worth asking about — images for alt, controls for semantics/label, coloured indicators for colour-only — not every node. With ~10 screens per run this is the difference between a viable run and exhausting the subscription.
+- **Acceptance Criteria:**
+  - [ ] Given a screen with images, controls and a coloured status indicator, when capture runs, then a bundle is produced for each with selector, a11y-tree node, screenshot pointer, context text and axe's result.
+  - [ ] Given bundles are posted, when ingested, then they are stored tenant-scoped and readable by the dispatch layer.
+  - [ ] Given no capture file, when the run completes, then nothing is imported and no run reports a false green.
+  - [ ] Given a screenshot that cannot be captured, when bundled, then it is marked uncapturable rather than dropped.
+  - [ ] Given a second tenant, when it ingests, then it cannot read the first tenant's bundles (proven by an RLS test).
+  - [ ] Tests cover capture, ingestion, the no-file case, the uncapturable case and isolation, with ≥ 90% coverage on new code.
+
+**QA‑12 — Add the AI‑checks pass to the testing flow** *(critical path)* — **CORRECTED (R1)**
+- **Epic:** E5 · **Story:** US‑E2 · **Type:** Agent edit + Backend · **Status:** ⬜ Pending · **Depends On:** QA‑03, QA‑06, QA‑07, QA‑11b · **Blocks:** QA‑13, QA‑14, QA‑16, QA‑17
+- **Was:** "after axe runs on a screen, the platform calls `a11yai.check_*`" — **there was no point at which axe ran.** Agent 09 has no browser, shell or worktree. The scan now runs in 09b (QA‑11a) and the candidates arrive as ingested bundles (QA‑11b), so this task joins the two halves rather than hooking a scan that never existed.
+- **Description:** A single test run should report both the rule findings and the "meaning" findings the rules can't see, side by side, in one place. In build terms: when a run's candidate bundles have been ingested, hand them to the QA‑02 dispatch layer, put every returned verdict through the QA‑06 triage, and merge the results with that run's axe findings into one accessibility report — each entry tagged with its source (rule or AI), confidence and cited WCAG 2.2 criterion. Low-confidence verdicts appear as "needs review", never as failures. Update `agents/09_testing/agent.md` Step 9 so the agent's report format reflects the merged view it will now receive. Edge case: a screen with no candidate elements for a given checker simply produces no AI finding for it — not an error.
+  > **This is the milestone proof point.** M1 is only done when a **real feature run** shows axe and AI findings in one report. Demonstrate it on a live run, not fixtures — a fixture-only demonstration here is precisely the failure this whole correction pass exists to prevent.
+- **Acceptance Criteria:**
+  - [ ] Given a screen, when a test run completes, then the report contains both axe findings and AI findings in one place.
   - [ ] Given each AI finding, when shown, then it carries source = AI, a confidence, and a cited WCAG 2.2 criterion.
   - [ ] Given a low‑confidence AI finding, when merged, then it appears as "needs review", not a failure.
+  - [ ] Given axe and the AI disagree on the same element and criterion, when merged, then the axe verdict stands (QA‑06's rule, now provable end-to-end).
+  - [ ] Given a **live run on a real feature**, when it completes, then the merged report is demonstrated from that run — not from fixtures.
   - [ ] Tests cover the merged report on a sample screen, with ≥ 90% coverage on new code.
 
-**QA‑13 — Add source/confidence/fix columns to the report**
-- **Epic:** E5 · **Story:** US‑E2 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑12 · **Blocks:** QA‑24
-- **Description:** A reader of the accessibility report should be able to tell at a glance which findings came from the rules vs the AI, how sure the AI is, and what fix is suggested — this task adds those columns without disturbing the existing report. In build terms: extend the `test_report` / `a11y_report` artifact to carry `source` (rule/AI/human), `confidence`, `criterion`, and `suggested_fix` per finding, keep every existing field, and make the finding render readably in the platform UI/preview. Edge case: an older report saved before this change must still open (backward compatible — missing fields render as blank, not an error).
+**QA‑13 — Add source/confidence/fix fields to the report** — **SHRUNK**
+- **Epic:** E5 · **Story:** US‑E2 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑12, QA‑12a · **Blocks:** QA‑24
+- **Description:** A reader of the accessibility report should be able to tell at a glance which findings came from the rules vs the AI, how sure the AI is, and what fix is suggested — this task adds those fields without disturbing the existing report. In build terms: render an `a11y_report` artifact from the QA‑12a findings ledger carrying `source` (rule/AI/human), `confidence`, `criterion` and `suggested_fix` per finding, grouped by criterion, keeping every existing `test_report` field intact. Register it as **markdown**. Edge case: an older report saved before this change must still open — missing fields render blank, never an error.
+  > **No new UI needed here.** `ArtifactPreviewScreen` already renders artifacts **generically by `content_type`** (markdown, HTML, mermaid), and `Artifact.type` is a free-form field — so an `a11y_report` registered as markdown displays with **no frontend work at all**. My earlier assessment that this needed new screens was wrong. The only genuinely new accessibility UI in this backlog is the SME console (QA‑23).
 - **Acceptance Criteria:**
   - [ ] Given a report with mixed findings, when viewed, then each row shows source, confidence, criterion, and suggested fix.
   - [ ] Given a pre‑change report, when opened, then it still renders.
@@ -223,11 +310,28 @@ Reuses the platform's existing bug loop so a real accessibility finding becomes 
 
 | ID | Title | Type | Depends On | Status |
 |----|-------|------|-----------|--------|
-| QA‑14 | Route accessibility findings into the defect loopback | Backend | QA‑12, QA‑06 | ⬜ |
+| QA‑12a | The accessibility findings ledger + review queue | Backend | QA‑06 | ⬜ |
+| QA‑14 | Route accessibility findings into the defect loopback | Backend | QA‑12, QA‑12a, QA‑06 | ⬜ |
 
-**QA‑14 — Route accessibility findings into the defect loopback** *(critical path)*
-- **Epic:** E9 · **Story:** US‑I1 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑12, QA‑06 · **Blocks:** QA‑15, QA‑18, QA‑21
-- **Description:** When a real accessibility problem is found it should automatically become a tracked bug that a developer fixes and that closes itself once the fix passes — exactly the loop the platform already uses for other test failures — so this task connects accessibility findings to that loop. In build terms: wire the merged findings into the existing defect loopback (PG11): a high‑confidence AI‑confirmed finding or an axe violation opens a `defect` with severity mapped from the WCAG level (the mapping already lives in agent 09); a low‑confidence finding instead goes to the SME review queue (QA‑23), not a defect; and when a later run shows the check passing, the defect auto‑closes. Edge case: a finding that flips between runs (present, then absent, then present) must not spawn duplicate defects — reopen the same one.
+**QA‑12a — The accessibility findings ledger + review queue** *(critical path)* — **NEW (R3)**
+- **Epic:** E9 · **Story:** US‑I1 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑06 · **Blocks:** QA‑13, QA‑14, QA‑18, QA‑21, QA‑23
+- **Description:** Accessibility findings currently have nowhere to live — results are prose inside a report document, and the platform's bug loop keys everything on a *test case id*, which a finding like "the submit button on /checkout has no accessible name" simply doesn't have. Without an identity for a finding, four separate acceptance criteria elsewhere in this backlog are unimplementable. This task gives findings a home. In build terms: create a `backend/apps/a11y/` app with an `A11yFinding` model, **RLS-scoped from its first migration** (non-negotiable #6), holding criterion, source (rule/AI/human/agentic), verdict, confidence, severity, evidence, suggested fix, element selector, screenshot **pointer** (body stays in S3 — #1/#3), model/prompt version, adjudication status, and first/last-seen run. The load-bearing field is a stable **`fingerprint`** = hash of *(route + normalised element selector + criterion + checker)*. Edge case: a finding whose element selector cannot be normalised falls back to a positional key and is flagged low-stability, so it is never silently merged with a different element.
+  > **Why the fingerprint is the whole point.** It is what turns four "impossible" criteria into one-liners: same fingerprint ⇒ a re-run **updates** instead of duplicating (QA‑18), a finding that vanishes and returns **reopens** instead of twinning (QA‑14), and the same problem found by both the static check and the keyboard agent collapses into **one** bug (QA‑21).
+  > **Why a table and not something that already exists.** I checked the alternatives. Defect WorkItems are right for *blocking* findings (QA‑14 uses them) but a WorkItem per uncertain finding would flood the board, which QA‑14 explicitly forbids. `Clarification` looks like a review queue but **blocks the agent** — `ask_human` holds the engine open until answered — while an SME queue must be asynchronous and outlive the run. An artifact is a document and cannot carry adjudication state. Hence a small, purpose-built table.
+  > **This is state, not content.** A finding is a pointer, a provenance record and a verdict — exactly what non-negotiables #1 and #3 say the platform should own. The screenshot body lives in S3.
+- **Acceptance Criteria:**
+  - [ ] Given the same problem seen on two runs, when recorded, then one finding row exists with an updated last-seen run — not two rows.
+  - [ ] Given a finding that disappears and returns, when recorded, then the original row is reused rather than a new one created.
+  - [ ] Given two different elements on one screen failing the same criterion, when recorded, then they are two distinct findings.
+  - [ ] Given an unnormalisable selector, when recorded, then it uses the fallback key and is flagged low-stability.
+  - [ ] Given a second tenant, when it queries findings, then it cannot see the first tenant's rows (proven by a DB-level RLS test).
+  - [ ] Tests cover dedupe, reopen, distinctness, the fallback key and isolation, with ≥ 90% coverage on new code.
+
+**QA‑14 — Route accessibility findings into the defect loopback** *(critical path)* — **RE‑SCOPED (R3)**
+- **Epic:** E9 · **Story:** US‑I1 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑12, QA‑12a, QA‑06 · **Blocks:** QA‑15, QA‑18, QA‑21
+- **Description:** When a real accessibility problem is found it should automatically become a tracked bug that a developer fixes and that closes itself once the fix passes — exactly the loop the platform already uses — so this task connects accessibility findings to it. In build terms: **copy `record_security_findings` (`backend/apps/quality/services.py`)**, which already does this whole reconciliation for security: it keys child defect WorkItems on `external_ref.finding`, reopens one that had been closed, closes one no longer blocking, and is deliberately scoped so it "never touches test defects." Do the same for accessibility, keyed on the QA‑12a **fingerprint** with `kind: "a11y"`, severity mapped from the WCAG level (the mapping already lives in agent 09). A low-confidence finding goes to the SME queue (QA‑23), **never** a defect. Edge case: a finding that flips between runs must reopen the same defect, never spawn a duplicate — which the copied pattern already handles.
+  > **Much smaller than originally written.** I first reported that "no duplicates" and "reopen a flapper" were unimplementable. They are not — this is a copy of a ~60-line function that already works in production for security findings. The only genuinely new part is the fingerprint key, which QA‑12a provides.
+  > **One difference from security you must keep.** Security *drops* its non-blocking findings — only Critical/High become WorkItems. Accessibility **cannot**: the uncertain ones must persist in the QA‑12a ledger for the SME queue. Blocking ⇒ defect **and** ledger row. Non-blocking ⇒ ledger row only.
 - **Acceptance Criteria:**
   - [ ] Given a failing a11y check, when the run is recorded, then a defect opens with the correct severity.
   - [ ] Given a later run where that check passes, when recorded, then the defect auto‑closes.
@@ -248,7 +352,9 @@ Lets a user point the accessibility tests straight at an imported app that never
 
 **QA‑17 — Run the accessibility checks against an onboarded app**
 - **Epic:** E‑BF · **Story:** US‑BF1 · **Type:** Backend · **Status:** ⬜ Pending · **Depends On:** QA‑12 · (consumes **OP‑06**) · **Blocks:** QA‑18
-- **Description:** A user who imports an existing app should be able to point the accessibility tests straight at it, even though it never went through our design phase and has no accessibility spec — this task lets the testing engine run against an already‑built app's live pages. In build terms: add an entry point that runs axe + the `a11yai` checks against an onboarded project's registered routes/screens (the route list comes from onboarding, OP‑06) without requiring a `docs/ux/ACCESSIBILITY.md`; reuse the same Step‑9 machinery, changing only where the screen list comes from. Edge case: a route that fails to load (auth wall, 404, timeout) is reported as an audit error for that route, never silently skipped.
+- **Description:** A user who imports an existing app should be able to point the accessibility tests straight at it, even though it never went through our design phase and has no accessibility spec — this task lets the testing engine run against an already‑built app's live pages. In build terms: add an entry point that runs axe + the `a11yai` checks against an onboarded project's registered routes/screens (the route list comes from onboarding, OP‑06) **without requiring an `accessibility` artifact to exist**; reuse the same capture-and-judge machinery from QA‑11a/11b/12, changing only where the screen list comes from. Edge case: a route that fails to load (auth wall, 404, timeout) is reported as an audit error for that route, never silently skipped.
+  > **Path correction (R5).** The original block said "without requiring a `docs/ux/ACCESSIBILITY.md`". **That file does not exist in this platform** — the design phase registers an artifact of type **`accessibility`**. Never reintroduce the file path.
+  > **Sizing warning.** This is the worst case for judgment volume: the whole app, first run, empty cache. QA‑02's per-run cap and QA‑07's caching are what keep it viable — do not run this before both are `🟢`.
 - **Acceptance Criteria:**
   - [ ] Given an onboarded app with a registered route list and no accessibility spec, when the baseline audit runs, then it produces findings for those routes.
   - [ ] Given a route that fails to load, when audited, then it is reported as an error, not skipped.
@@ -316,11 +422,22 @@ A human expert reviews the AI's uncertain calls, and produces a defensible, huma
 
 | ID | Title | Type | Depends On | Status |
 |----|-------|------|-----------|--------|
-| QA‑23 | Build the SME review console for uncertain findings | Frontend + Backend | QA‑06 | ⬜ |
+| QA‑23a | Design the SME console + report screens (mockups) | Design | — | ⬜ |
+| QA‑23 | Build the SME review console for uncertain findings | Frontend + Backend | QA‑06, QA‑12a, QA‑23a | ⬜ |
 | QA‑24 | Draft, sign, and export a conformance / VPAT report | Frontend + Backend | QA‑13, QA‑23 | ⬜ |
 
+**QA‑23a — Design the SME console + report screens (mockups)** — **NEW**
+- **Epic:** E11 · **Story:** US‑K1 · **Type:** Design · **Status:** ⬜ Pending · **Depends On:** — · **Blocks:** QA‑23
+- **Description:** The SME review console is the only genuinely new screen in this backlog, and the platform's own UI discipline says a screen is not done until it matches its mockup state for state — *"put your screen side-by-side with `docs/design/screens/S-NN.html`; every state must match."* Neither backlog had a task to produce that mockup, so the UI tasks were unbuildable to the platform's own standard. In build terms: produce the `S-NN.html` mockup(s) for the SME review queue — with every state the console needs (loading, empty queue, an item under review, decision submitted, error) — using the existing design system and component catalog, and add the screen→component→endpoint row to `docs/SCREEN_BUILD_MAP.md`. Edge case: the review item shows a screenshot of a real page, so the mockup must show how a wide or tall screenshot is contained without breaking layout.
+- **Acceptance Criteria:**
+  - [ ] Given the design system, when the mockup is produced, then it uses existing tokens and components and adds no new one-off styles.
+  - [ ] Given the console's states, when the mockup is reviewed, then every state listed above is present and labelled.
+  - [ ] Given `SCREEN_BUILD_MAP.md`, when read, then it carries the row for this screen.
+  - [ ] Given the mockup, when checked for accessibility itself, then it meets the bar we are selling — focus rings, labelled controls, ≥ 4.5:1, status never colour-alone.
+
 **QA‑23 — Build the SME review console for uncertain findings**
-- **Epic:** E11 · **Story:** US‑K1 · **Type:** Frontend + Backend · **Status:** ⬜ Pending · **Depends On:** QA‑06 · **Blocks:** QA‑24
+- **Epic:** E11 · **Story:** US‑K1 · **Type:** Frontend + Backend · **Status:** ⬜ Pending · **Depends On:** QA‑06, QA‑12a, QA‑23a · **Blocks:** QA‑24
+  > **Build it as its own feature folder** — `frontend/src/features/a11y/` — matching the platform's one-owner-per-folder rule in `AGENTS.md`. It reads and writes the QA‑12a findings ledger.
 - **Description:** A human accessibility expert needs a simple place to look at the AI's uncertain calls and say "yes, that's a real problem" or "no, that's fine" — both to keep the platform honest and to make our checks smarter over time — and this task builds that review screen. In build terms: build a queue UI that lists each uncertain/low‑confidence AI finding with everything needed to judge it — the element, a screenshot, the cited criterion, and the AI's draft verdict — and lets the reviewer confirm or reject it; record each decision to telemetry (and, internally, to Edvensoft's eval set) and update the finding's status. Edge case: two reviewers opening the same item shouldn't double‑decide — lock an item to the reviewer who opens it, or last‑write‑wins with an audit trail.
 - **Acceptance Criteria:**
   - [ ] Given an uncertain finding, when the SME opens the console, then they see the element, screenshot, criterion, and AI draft verdict.
@@ -344,8 +461,12 @@ A task is **Done** only when all of these pass — no "mostly done":
 - [ ] Behaviour matches the Description and every Acceptance Criterion is demonstrated on a real screen/run.
 - [ ] Unit + integration tests written; ≥ 90% coverage on the new code; new tenant‑scoped tables prove RLS isolation.
 - [ ] `make test` / `make lint` (backend) and `npm run lint` + `tsc -b` (frontend) pass.
-- [ ] Any agent‑file edit (09/09b) passes the platform reference sweep (no leftover local paths; I/O via platform capabilities).
+- [ ] Any agent‑file edit (09/09b/09c) passes the platform reference sweep (no leftover local paths; I/O via platform capabilities).
 - [ ] An AI finding never asserts conformance on its own; low confidence routes to a human; axe failures always stand.
 - [ ] The task box is ticked `🟢` here with a one‑line "what shipped" note.
 
-**Cross‑refs:** build order + dependency map = `BUILD_PLAN_QA.md`; journeys = `USER_JOURNEYS.md`; the other phases = `TASK_BACKLOG_OTHER_PHASES.md`.
+**Two additions after the 2026‑08‑12 source review:**
+- [ ] **No fixture-only completions.** If a task's behaviour can only be shown with fabricated data, say so at review and name what would prove it for real. Several tasks in this backlog could be made to pass their tests while demonstrating nothing — that is the failure this correction pass exists to prevent.
+- [ ] **Coverage must actually be measured.** `pytest-cov` is not installed today, so this bar is currently unverifiable. Add it plus a **module-scoped** `make cov` before QA‑01 — scoped deliberately, because running the full backend suite is known to be killed.
+
+**Cross‑refs:** what the research got wrong = `RESEARCH_CORRECTIONS.md`; build order + dependency map = `BUILD_PLAN_QA.md`; journeys = `USER_JOURNEYS.md`; the other phases = `TASK_BACKLOG_OTHER_PHASES.md`.
