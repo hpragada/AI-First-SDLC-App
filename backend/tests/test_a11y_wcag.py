@@ -1,4 +1,4 @@
-"""QA-04 — WCAG 2.2 + ACT loaded per tenant, and the grounding helper checkers use.
+"""QA-04 — the platform's copy of WCAG 2.2 + ACT, and the grounding helper checkers use.
 
 What these prove, against the task's acceptance criteria:
 
@@ -16,8 +16,10 @@ Beyond the ACs, and deliberately:
     exact expected numbers, no obsolete 4.1.1, every one carrying an explicit ACT answer
   * `no_act_rule` is a recorded fact for the 25 criteria with no ACT rule (team decision,
     2026-08-13), so a later phase reads "none exists" instead of guessing from an empty list
-  * one tenant cannot read another's copy of the standard (RLS), which is what makes the
-    per-tenant load safe to amend
+  * the standard is **one copy for the whole platform** and the app role cannot write it, so
+    "no tenant amends the standard" is a database guarantee rather than a convention
+  * a row that is not in the published set stops a reload and is named, rather than being
+    deleted quietly or surviving unnoticed
 """
 import json
 import re
@@ -35,6 +37,7 @@ from apps.a11y.models import ActRule, WcagCriterion, WcagTerm
 from apps.a11y.wcag import (
     DEFAULT_VERSION,
     UnknownCriterion,
+    UnpublishedRows,
     WcagNotLoaded,
     criterion,
     criterion_text,
@@ -43,7 +46,6 @@ from apps.a11y.wcag import (
     load_wcag,
     terms_for,
 )
-from apps.tenancy.models import Tenant
 
 # The 55 Level A/AA success criteria of WCAG 2.2. Written out rather than derived from the
 # dataset, so a parser that dropped or invented a criterion fails here instead of agreeing
@@ -69,15 +71,14 @@ POC_CRITERIA = ["1.1.1", "1.3.1", "1.4.1", "2.5.3", "4.1.2"]
 
 
 @pytest.fixture
-def tenant(db):
-    """A bare tenant with the standard loaded.
+def loaded(db):
+    """The standard, loaded — no tenant involved, which is the point.
 
-    Created directly rather than through `create_tenant`, matching the other a11y tests, so
-    the load under test is explicit instead of arriving as a side effect of the fixture.
+    Migration `0006_wcag_platform_wide` loads it, so it is already present on a migrated
+    database; calling it explicitly keeps these tests independent of that and exercises the
+    reload path at the same time.
     """
-    t = Tenant.objects.create(name="Acme")
-    load_wcag(t.id)
-    return t
+    return load_wcag()
 
 
 # ── the committed dataset ────────────────────────────────────────────
@@ -202,38 +203,38 @@ def test_dataset_records_its_provenance():
 
 
 # ── the exact text (AC1) ─────────────────────────────────────────────
-def test_criterion_text_is_the_exact_published_wording(tenant):
+def test_criterion_text_is_the_exact_published_wording(loaded):
     """Quoted from w3.org, not from our own file — so a truncating parser cannot pass."""
-    assert criterion_text(tenant.id, "1.4.1").splitlines()[0] == (
+    assert criterion_text("1.4.1").splitlines()[0] == (
         "Color is not used as the only visual means of conveying information, indicating an"
     )
-    assert criterion_text(tenant.id, "2.5.3").startswith(
+    assert criterion_text("2.5.3").startswith(
         "For user interface components with labels that include text or images of text, "
         "the name contains the text that is presented visually."
     )
-    assert criterion_text(tenant.id, "1.3.1") == (
+    assert criterion_text("1.3.1") == (
         "Information, structure, and relationships conveyed through presentation can be "
         "programmatically determined or are available in text."
     )
 
 
-def test_criterion_text_matches_the_committed_dataset_for_every_criterion(tenant):
+def test_criterion_text_matches_the_committed_dataset_for_every_criterion(loaded):
     by_number = {c["number"]: c for c in dataset()["criteria"]}
     for number, expected in by_number.items():
-        assert criterion_text(tenant.id, number) == expected["text"]
+        assert criterion_text(number) == expected["text"]
 
 
-def test_criterion_keeps_the_exceptions_and_notes(tenant):
+def test_criterion_keeps_the_exceptions_and_notes(loaded):
     """The parts most easily lost in extraction — a bare first sentence is not the rule."""
-    non_text = criterion_text(tenant.id, "1.1.1")
+    non_text = criterion_text("1.1.1")
     for exception in ("Controls, Input", "Time-Based Media", "Test", "Sensory",
                       "CAPTCHA", "Decoration, Formatting, Invisible"):
         assert exception in non_text, f"1.1.1 lost its {exception!r} exception"
-    assert "Note" in criterion_text(tenant.id, "1.4.1")
+    assert "Note" in criterion_text("1.4.1")
 
 
-def test_criterion_returns_the_whole_row_not_just_text(tenant):
-    row = criterion(tenant.id, "2.5.3")
+def test_criterion_returns_the_whole_row_not_just_text(loaded):
+    row = criterion("2.5.3")
     assert (row.handle, row.level, row.added_in) == ("Label in Name", "A", "2.1")
     assert row.guideline_handle == "Input Modalities"
     assert row.principle_handle == "Operable"
@@ -241,125 +242,125 @@ def test_criterion_returns_the_whole_row_not_just_text(tenant):
 
 
 # ── grounding a checker's prompt (AC2) ───────────────────────────────
-def test_grounding_carries_the_criterion_into_the_prompt(tenant):
-    block = grounding(tenant.id, ["1.4.1"])
+def test_grounding_carries_the_criterion_into_the_prompt(loaded):
+    block = grounding(["1.4.1"])
     assert "WCAG 2.2 Success Criterion 1.4.1 Use of Color (Level A)" in block
-    assert criterion_text(tenant.id, "1.4.1") in block
+    assert criterion_text("1.4.1") in block
     assert "Intent:" in block
 
 
-def test_grounding_can_omit_the_informative_intent(tenant):
-    block = grounding(tenant.id, ["1.4.1"], include_intent=False)
-    assert criterion_text(tenant.id, "1.4.1") in block
+def test_grounding_can_omit_the_informative_intent(loaded):
+    block = grounding(["1.4.1"], include_intent=False)
+    assert criterion_text("1.4.1") in block
     assert "Intent:" not in block
 
 
-def test_grounding_carries_the_defined_terms_the_rule_hinges_on(tenant):
+def test_grounding_carries_the_defined_terms_the_rule_hinges_on(loaded):
     """3.3.8 is meaningless without W3C's definition of "cognitive function test"."""
-    block = grounding(tenant.id, ["3.3.8"])
+    block = grounding(["3.3.8"])
     assert "Defined terms used above (WCAG glossary):" in block
     assert "cognitive function test: A task that requires the user to remember" in block
 
 
-def test_grounding_can_omit_the_terms(tenant):
-    block = grounding(tenant.id, ["3.3.8"], include_terms=False)
+def test_grounding_can_omit_the_terms(loaded):
+    block = grounding(["3.3.8"], include_terms=False)
     assert "Defined terms used above" not in block
 
 
-def test_grounding_omits_the_terms_block_when_a_rule_uses_none(tenant):
+def test_grounding_omits_the_terms_block_when_a_rule_uses_none(loaded):
     """1.4.1 cites no defined term — no empty "Defined terms" heading should appear."""
-    assert "Defined terms used above" not in grounding(tenant.id, ["1.4.1"])
+    assert "Defined terms used above" not in grounding(["1.4.1"])
 
 
-def test_terms_are_deduplicated_across_criteria(tenant):
+def test_terms_are_deduplicated_across_criteria(loaded):
     """Two criteria sharing a term must not repeat its definition in one prompt."""
-    ids = [t.term_id for t in terms_for(tenant.id, ["1.1.1", "4.1.2"])]
+    ids = [t.term_id for t in terms_for(["1.1.1", "4.1.2"])]
     assert len(ids) == len(set(ids))
     assert "dfn-non-text-content" in ids
 
 
-def test_terms_for_returns_nothing_when_no_criterion_defines_one(tenant):
-    assert terms_for(tenant.id, ["1.4.1"]) == []
+def test_terms_for_returns_nothing_when_no_criterion_defines_one(loaded):
+    assert terms_for(["1.4.1"]) == []
 
 
-def test_grounding_covers_every_poc_checker_criterion(tenant):
+def test_grounding_covers_every_poc_checker_criterion(loaded):
     """The four QA-03 checkers must all be groundable, or a checker ships un-grounded."""
-    block = grounding(tenant.id, POC_CRITERIA)
+    block = grounding(POC_CRITERIA)
     for number in POC_CRITERIA:
-        assert criterion_text(tenant.id, number) in block
+        assert criterion_text(number) in block
 
 
-def test_grounding_fails_whole_block_on_one_unknown_criterion(tenant):
+def test_grounding_fails_whole_block_on_one_unknown_criterion(loaded):
     """Better to fail than to hand back a prompt quietly missing one of its rules."""
     with pytest.raises(UnknownCriterion):
-        grounding(tenant.id, ["1.4.1", "9.9.9"])
+        grounding(["1.4.1", "9.9.9"])
 
 
-def test_grounding_rejects_an_empty_request(tenant):
+def test_grounding_rejects_an_empty_request(loaded):
     with pytest.raises(ValueError):
-        grounding(tenant.id, [])
+        grounding([])
 
 
 # ── the unknown-criterion case (AC4) ─────────────────────────────────
-def test_unknown_criterion_raises_with_a_readable_message(tenant):
+def test_unknown_criterion_raises_with_a_readable_message(loaded):
     with pytest.raises(UnknownCriterion) as err:
-        criterion_text(tenant.id, "9.9.9")
+        criterion_text("9.9.9")
     assert "9.9.9" in str(err.value) and "WCAG 2.2" in str(err.value)
 
 
-def test_a_aaa_criterion_is_unknown_not_empty(tenant):
+def test_a_aaa_criterion_is_unknown_not_empty(loaded):
     """1.4.6 is a real criterion but AAA — out of scope, and it must say so, not return ''."""
     with pytest.raises(UnknownCriterion):
-        criterion_text(tenant.id, "1.4.6")
+        criterion_text("1.4.6")
 
 
-def test_tenant_without_the_standard_loaded_is_told_so(db):
+def test_a_database_without_the_standard_loaded_is_told_so(db):
     """Distinguished from "unknown criterion": nothing is loaded, so nothing is knowable."""
-    bare = Tenant.objects.create(name="Empty")
+    WcagCriterion.objects.all().delete()
     with pytest.raises(WcagNotLoaded) as err:
-        criterion_text(bare.id, "1.1.1")
+        criterion_text("1.1.1")
     assert "load_wcag" in str(err.value)
 
 
 # ── loading, reloading, versioning (AC3) ─────────────────────────────
-def test_load_writes_every_criterion_and_rule(tenant):
-    assert WcagCriterion.objects.filter(tenant_id=tenant.id).count() == 55
-    assert ActRule.objects.filter(tenant_id=tenant.id).count() == len(dataset()["act_rules"])
-    assert ActRule.objects.filter(tenant_id=tenant.id, w3c_published=True).count() == 87
-    assert WcagTerm.objects.filter(tenant_id=tenant.id).count() == 101
+def test_load_writes_every_criterion_and_rule(loaded):
+    assert WcagCriterion.objects.count() == 55
+    assert ActRule.objects.count() == len(dataset()["act_rules"])
+    assert ActRule.objects.filter(w3c_published=True).count() == 87
+    assert WcagTerm.objects.count() == 101
 
 
-def test_reloading_updates_in_place_and_never_duplicates(tenant):
-    counts = load_wcag(tenant.id)
+def test_reloading_updates_in_place_and_never_duplicates(loaded):
+    counts = load_wcag()
     assert counts["criteria_created"] == 0 and counts["criteria_updated"] == 55
     assert counts["rules_created"] == 0 and counts["terms_created"] == 0
     assert counts["terms_updated"] == 101
-    assert WcagCriterion.objects.filter(tenant_id=tenant.id).count() == 55
+    assert WcagCriterion.objects.count() == 55
 
 
-def test_reload_repairs_a_locally_edited_criterion(tenant):
-    WcagCriterion.objects.filter(tenant_id=tenant.id, number="1.4.1").update(text="broken")
-    load_wcag(tenant.id)
-    assert criterion_text(tenant.id, "1.4.1").startswith("Color is not used")
+def test_reload_repairs_a_locally_edited_criterion(loaded):
+    WcagCriterion.objects.filter(number="1.4.1").update(text="broken")
+    load_wcag()
+    assert criterion_text("1.4.1").startswith("Color is not used")
 
 
-def test_a_newer_version_loads_alongside_the_old_one_with_no_code_change(tenant):
+def test_a_newer_version_loads_alongside_the_old_one_with_no_code_change(loaded):
     """AC3: a WCAG release is a data reload. Checkers keep reading 2.2 until asked not to."""
     future = json.loads(json.dumps(dataset()))
     future["version"] = "2.3"
     future["criteria"][0]["text"] = "Revised wording for the next version."
-    load_wcag(tenant.id, version="2.3", data=future)
+    load_wcag(version="2.3", data=future)
 
     number = future["criteria"][0]["number"]
-    assert criterion_text(tenant.id, number, version="2.3") == (
+    assert criterion_text(number, version="2.3") == (
         "Revised wording for the next version.")
-    assert criterion_text(tenant.id, number) == dataset()["criteria"][0]["text"]
-    assert WcagCriterion.objects.filter(tenant_id=tenant.id).count() == 110
+    assert criterion_text(number) == dataset()["criteria"][0]["text"]
+    assert WcagCriterion.objects.count() == 110
 
 
-def test_loading_a_version_the_dataset_does_not_hold_is_refused(tenant):
+def test_loading_a_version_the_dataset_does_not_hold_is_refused(loaded):
     with pytest.raises(ValueError) as err:
-        load_wcag(tenant.id, version="9.9")
+        load_wcag(version="9.9")
     assert "2.2" in str(err.value)
 
 
@@ -367,22 +368,16 @@ def test_default_version_matches_the_dataset():
     assert DEFAULT_VERSION == dataset()["version"]
 
 
-# ── tenant isolation ─────────────────────────────────────────────────
+# ── one copy for everyone, and nobody may amend it ───────────────────
 @pytest.mark.django_db(transaction=True)
-def test_one_tenant_cannot_read_anothers_copy_of_the_standard():
-    """RLS proven under the real app role — the Django connection is the privileged
-    migration role and bypasses row-level security, so it could never show this.
+def test_the_app_role_can_read_the_standard_but_never_write_it():
+    """"No tenant amends the standard" is a database guarantee, not a convention.
 
-    `transaction=True` so the rows are committed: a second connection cannot see another
-    connection's open transaction, and without it this would fail for that reason rather
-    than because the policy worked.
+    Checked on a connection opened as the real app role — the Django test connection is the
+    privileged migration role and could write regardless, so it could never show this.
+    `transaction=True` so the rows are committed and the second connection can see them.
     """
-    a = Tenant.objects.create(name="A")
-    b = Tenant.objects.create(name="B")
-    load_wcag(a.id)
-    load_wcag(b.id)
-    WcagCriterion.objects.filter(tenant_id=a.id, number="1.4.1").update(
-        text="A's amended wording")
+    load_wcag()
 
     sd = connection.settings_dict
     with connection.cursor() as cur:
@@ -394,37 +389,123 @@ def test_one_tenant_cannot_read_anothers_copy_of_the_standard():
     )
     try:
         with raw.cursor() as cur:
-            cur.execute("SELECT set_config('app.tenant_id', %s, false)", [str(a.id)])
+            # Readable with no tenant context at all — there is no tenant to be in.
             cur.execute("SELECT count(*) FROM a11y_wcagcriterion")
             assert cur.fetchone()[0] == 55
-            cur.execute("SELECT text FROM a11y_wcagcriterion WHERE number = '1.4.1'")
-            assert cur.fetchall() == [("A's amended wording",)]
+            cur.execute("SELECT count(*) FROM a11y_wcagterm")
+            assert cur.fetchone()[0] == 101
 
-            # B keeps the published wording — A's amendment did not leak.
-            cur.execute("SELECT set_config('app.tenant_id', %s, false)", [str(b.id)])
+            for statement in (
+                "UPDATE a11y_wcagcriterion SET text = 'amended' WHERE number = '1.4.1'",
+                "DELETE FROM a11y_wcagterm",
+                "INSERT INTO a11y_actrule (id, created_at, updated_at, version, rule_id, "
+                "name, description, applicability, expectation, background, url, "
+                "w3c_published, primary_criteria, secondary_criteria) VALUES "
+                "(gen_random_uuid(), now(), now(), '2.2', 'zzzzzz', 'x', '', '', '', '', "
+                "'', false, '{}', '{}')",
+            ):
+                with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                    cur.execute(statement)
+
+            # Unchanged after every attempt.
             cur.execute("SELECT text FROM a11y_wcagcriterion WHERE number = '1.4.1'")
             assert cur.fetchone()[0].startswith("Color is not used")
-
-            cur.execute("SELECT set_config('app.tenant_id', %s, false)", [""])
-            cur.execute("SELECT count(*) FROM a11y_wcagcriterion")
-            assert cur.fetchone()[0] == 0        # no tenant context -> fail closed
-            cur.execute("SELECT count(*) FROM a11y_actrule")
-            assert cur.fetchone()[0] == 0
-            cur.execute("SELECT count(*) FROM a11y_wcagterm")
-            assert cur.fetchone()[0] == 0
     finally:
         raw.close()
 
 
-# ── the journey: a new workspace can ground a checker immediately ────
-def test_a_new_tenant_has_the_standard_from_the_moment_it_exists(db):
-    """Without this, QA-03's checkers would fail on a real workspace and the failure would
-    surface mid-run rather than at setup."""
+def test_the_standard_is_one_copy_shared_by_every_tenant(db):
+    """Two workspaces, one rulebook — the row count does not grow with tenants.
+
+    This is the storage decision made visible: per tenant it was 250 rows each (2.5 million
+    at 10,000 tenants); platform-wide it is 250, full stop.
+    """
     from apps.tenancy.services import create_tenant
 
-    created = create_tenant(name="Fresh Co")
-    assert WcagCriterion.objects.filter(tenant_id=created.id).count() == 55
-    assert criterion_text(created.id, "1.1.1").startswith("All non-text content")
+    load_wcag()
+    before = WcagCriterion.objects.count() + WcagTerm.objects.count() + ActRule.objects.count()
+    create_tenant(name="Alpha Co")
+    create_tenant(name="Beta Co")
+    after = WcagCriterion.objects.count() + WcagTerm.objects.count() + ActRule.objects.count()
+    assert before == after == 250
+
+
+def test_a_new_workspace_can_ground_a_checker_immediately(db):
+    """The standard exists before any tenant does, so a checker is never un-grounded."""
+    from apps.tenancy.services import create_tenant
+
+    load_wcag()
+    create_tenant(name="Fresh Co")
+    assert criterion_text("1.1.1").startswith("All non-text content")
+
+
+# ── a row that is not in the published set ───────────────────────────
+def test_a_stray_row_stops_a_reload_and_is_named(loaded):
+    """Nothing in the platform writes these. If one appears, a person decides — it is the
+    only row that cannot be rebuilt from the committed file, so it is never auto-deleted."""
+    WcagCriterion.objects.create(
+        version="2.2", number="1.4.99", handle="House rule", level="AA", slug="x",
+        text="Our own addition.",
+    )
+    with pytest.raises(UnpublishedRows) as err:
+        load_wcag()
+    assert "1.4.99" in str(err.value) and "criteria" in str(err.value)
+
+
+def test_a_stray_row_is_not_deleted_by_the_refused_reload(loaded):
+    """A refused load leaves the database exactly as it found it."""
+    WcagCriterion.objects.create(
+        version="2.2", number="1.4.99", handle="House rule", level="AA", slug="x", text="x")
+    WcagCriterion.objects.filter(number="1.4.1").update(text="edited")
+    with pytest.raises(UnpublishedRows):
+        load_wcag()
+    assert WcagCriterion.objects.filter(number="1.4.99").exists()
+    assert criterion_text("1.4.1") == "edited"      # not half-applied either
+
+
+def test_stray_glossary_terms_and_act_rules_are_caught_too(loaded):
+    WcagTerm.objects.create(version="2.2", term_id="dfn-made-up", term="made up",
+                            definition="x")
+    ActRule.objects.create(version="2.2", rule_id="zzzzzz", name="Invented")
+    with pytest.raises(UnpublishedRows) as err:
+        load_wcag()
+    assert "dfn-made-up" in str(err.value) and "zzzzzz" in str(err.value)
+
+
+def test_load_command_loads_and_reports(db, capsys):
+    WcagCriterion.objects.all().delete()
+    WcagTerm.objects.all().delete()
+    ActRule.objects.all().delete()
+    call_command("load_wcag")
+    assert "55 criteria created" in capsys.readouterr().out
+    assert WcagCriterion.objects.count() == 55
+
+
+def test_load_command_check_reports_what_is_loaded(loaded, capsys):
+    call_command("load_wcag", "--check")
+    out = capsys.readouterr().out
+    assert "55 criteria, 101 glossary terms, 94 ACT rules" in out
+    assert "matches the committed dataset" in out
+
+
+def test_load_command_check_fails_when_something_is_missing(loaded):
+    WcagTerm.objects.filter(term_id="dfn-non-text-content").delete()
+    with pytest.raises(CommandError, match="does not match the committed dataset"):
+        call_command("load_wcag", "--check")
+
+
+def test_load_command_surfaces_a_stray_row(loaded):
+    ActRule.objects.create(version="2.2", rule_id="zzzzzz", name="Invented")
+    with pytest.raises(CommandError, match="zzzzzz"):
+        call_command("load_wcag")
+
+
+def test_an_older_version_is_not_treated_as_a_stray(loaded):
+    """Loading 2.2 must not object to 2.1 rows kept deliberately alongside it."""
+    WcagCriterion.objects.create(
+        version="2.1", number="4.1.1", handle="Parsing", level="A", slug="parsing", text="x")
+    load_wcag()                                     # must not raise
+    assert WcagCriterion.objects.filter(version="2.1").count() == 1
 
 
 # ── the build: parsing and its completeness proof ────────────────────

@@ -23,7 +23,7 @@ verdict belongs to the project whose screens it came from.
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
-from apps.base import TenantScopedModel
+from apps.base import TenantScopedModel, UUIDModel
 
 
 class A11yJudgmentCache(TenantScopedModel):
@@ -64,12 +64,22 @@ class A11yJudgmentCache(TenantScopedModel):
         return f"a11y:{self.checker}:{self.verdict} ({self.content_hash[:12]})"
 
 
-class WcagCriterion(TenantScopedModel):
-    """One WCAG success criterion, in this tenant's copy of the standard (QA-04).
+class WcagCriterion(UUIDModel):
+    """One WCAG success criterion — **one copy for the whole platform** (QA-04).
 
-    Tenant-scoped rather than platform-wide so a client can carry an amended set without it
-    leaking to anyone else (team decision, 2026-08-13). `version` lets a new WCAG release
-    load alongside the old one, so a reload never pulls the ground out from under a run.
+    **Why this table has no `tenant_id`.** It is the only kind of table that may not: it
+    holds published W3C text, identical for everyone, that no tenant may amend (team
+    decision, 2026-08-13, superseding the earlier per-tenant plan). There is no tenant data
+    in it to leak, so non-negotiable #6 has nothing to protect here — see the carve-out
+    recorded in migration `0006_wcag_platform_wide`. Storing it per tenant meant 250
+    duplicate rows each: 2.5 million rows and ~5.6 GB of identical public text at 10,000
+    tenants, to support amendments the team has decided will never exist.
+
+    The app database role has **SELECT only** on this table, so universality is enforced by
+    the database rather than by everyone remembering the rule.
+
+    `version` lets a new WCAG release load alongside the old one, so a reload never pulls the
+    ground out from under a run in flight.
     """
 
     version = models.CharField(max_length=8, default="2.2")
@@ -102,7 +112,7 @@ class WcagCriterion(TenantScopedModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["tenant", "version", "number"], name="uniq_tenant_wcag_criterion"
+                fields=["version", "number"], name="uniq_wcag_criterion"
             )
         ]
         ordering = ["number"]
@@ -111,12 +121,14 @@ class WcagCriterion(TenantScopedModel):
         return f"WCAG {self.version} {self.number} {self.handle} ({self.level})"
 
 
-class WcagTerm(TenantScopedModel):
-    """One WCAG glossary definition, in this tenant's copy of the standard (QA-04).
+class WcagTerm(UUIDModel):
+    """One WCAG glossary definition — **one copy for the whole platform** (QA-04).
 
     The criteria are written in defined terms — 3.3.8 turns on "cognitive function test",
     1.1.1 on "non-text content". Loading them means a checker can be handed the rule *and*
     W3C's definition of the words the rule hinges on.
+
+    Platform-wide and SELECT-only to the app role, for the reasons on `WcagCriterion`.
     """
 
     version = models.CharField(max_length=8, default="2.2")
@@ -127,7 +139,7 @@ class WcagTerm(TenantScopedModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["tenant", "version", "term_id"], name="uniq_tenant_wcag_term"
+                fields=["version", "term_id"], name="uniq_wcag_term"
             )
         ]
         ordering = ["term"]
@@ -136,8 +148,10 @@ class WcagTerm(TenantScopedModel):
         return f"WCAG {self.version} term: {self.term}"
 
 
-class ActRule(TenantScopedModel):
-    """One ACT rule and the criteria it maps to (QA-04).
+class ActRule(UUIDModel):
+    """One ACT rule and the criteria it maps to — **one copy for the whole platform** (QA-04).
+
+    Platform-wide and SELECT-only to the app role, for the reasons on `WcagCriterion`.
 
     `w3c_published` separates the rules W3C publishes from the community group's drafts —
     only the published ones are mapped onto criteria, so a draft can never be cited as
@@ -163,7 +177,7 @@ class ActRule(TenantScopedModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["tenant", "version", "rule_id"], name="uniq_tenant_act_rule"
+                fields=["version", "rule_id"], name="uniq_act_rule"
             )
         ]
         ordering = ["rule_id"]

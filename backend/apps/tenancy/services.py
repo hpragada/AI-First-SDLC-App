@@ -82,16 +82,13 @@ def create_tenant(*, name: str, config: dict | None = None,
     # Same reason, for the platform's own credential-free capabilities (a11yai): there is
     # nothing for a human to connect, so the workspace gets them from the start rather than
     # via a setup step that would present an empty form.
-    from apps.a11y.wcag import load_wcag
     from apps.integrations.services import provision_builtin_capabilities
 
     with tenant_context(tenant.id):
         provision_builtin_capabilities(tenant)
 
-    # The tenant's own copy of WCAG 2.2 (QA-04). Loaded at creation rather than on first
-    # use, because an accessibility checker that finds no criterion has nothing to judge
-    # against — and the failure would surface mid-run, not here.
-    load_wcag(tenant.id)
+    # Note: WCAG 2.2 is NOT loaded here. The standard is platform-wide — one copy everyone
+    # reads (QA-04) — so a new workspace already has it before it exists. See apps.a11y.wcag.
     return tenant
 
 

@@ -1,16 +1,23 @@
-"""WCAG 2.2 grounding — load the standard per tenant and hand a checker the exact rule (QA-04).
+"""WCAG 2.2 grounding — the platform's copy of the standard, and the rule a checker judges by.
 
 Two jobs, deliberately separated:
 
-* **`load_wcag(tenant_id)`** copies the committed dataset into the tenant's own rows. Per
-  tenant, not platform-wide, so one client's adjustments can never leak into another's and a
-  tenant can carry an amended set (team decision, 2026-08-13). Idempotent — re-running
-  updates in place and reports what changed, so a WCAG release is a reload, not a migration.
+* **`load_wcag()`** copies the committed dataset into the platform's tables. **One copy for
+  everyone** — the standard is published W3C text, identical for every client, and no tenant
+  may amend it (team decision, 2026-08-13). Idempotent: re-running updates in place and
+  reports what changed, so a WCAG release is a reload, not a migration.
 * **`criterion(...)` / `grounding(...)`** return the exact normative text for a criterion, to
   drop verbatim into a checker's prompt — together with the **glossary definitions** that
   criterion is written in. The AI must judge against the standard's words, not its own
   recollection of them, and a criterion whose defined terms are missing ("cognitive function
   test", "non-text content") grounds it in less than it appears to.
+
+**Why there is no tenant here.** Every other platform table carries `tenant_id` under
+non-negotiable #6, whose purpose is that no tenant can read another's data. These tables
+hold no tenant data at all, so there is nothing to isolate — and a per-tenant copy would
+have meant 250 duplicate rows each (2.5 million rows, ~5.6 GB of identical public text at
+10,000 tenants) to support amendments that will never exist. The carve-out and its boundary
+are recorded in migration `0006_wcag_platform_wide`.
 
 **Why a table and not the Knowledge Index.** The Knowledge Index cannot answer this question
 at all: its BM25 tokenizer drops tokens shorter than two characters, so `retrieve("1.4.1")`
@@ -27,7 +34,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from apps.tenancy.context import tenant_context
+from django.db import transaction
 
 DATASET_PATH = Path(__file__).resolve().parent / "data" / "wcag22.json"
 
@@ -40,7 +47,20 @@ class UnknownCriterion(LookupError):
 
 
 class WcagNotLoaded(RuntimeError):
-    """The tenant has no WCAG set loaded — `load_wcag(tenant_id)` has never run for it."""
+    """The standard has never been loaded — `load_wcag()` has not run on this database."""
+
+
+class UnpublishedRows(RuntimeError):
+    """The tables hold rows that are not in the published set.
+
+    Nothing in the platform creates these: the standard is loaded from one committed file
+    and is not tenant-writable. A stray row therefore means something wrote to the database
+    out of band, and that copy of the rulebook silently differs from W3C's.
+
+    Reported rather than deleted, and the load refuses to proceed. Every other row can be
+    rebuilt from the committed file; a stray row is the one thing that cannot, so a person
+    decides what it was and whether to remove it.
+    """
 
 
 @lru_cache(maxsize=1)
@@ -49,11 +69,35 @@ def dataset() -> dict:
     return json.loads(DATASET_PATH.read_text(encoding="utf-8"))
 
 
-def load_wcag(tenant_id, *, version: str = DEFAULT_VERSION, data: dict | None = None) -> dict:
-    """Load (or refresh) the tenant's copy of the standard. Returns a per-table change count.
+def _strays(version: str, data: dict) -> dict[str, list[str]]:
+    """Rows of `version` that the published set does not contain, per table."""
+    from .models import ActRule, WcagCriterion, WcagTerm
 
-    Idempotent: rows are matched on (tenant, version, number) and updated in place, so a
-    reload never duplicates and never orphans a criterion a checker might be mid-way through.
+    found = {}
+    for label, model, field, published in (
+        ("criteria", WcagCriterion, "number", {c["number"] for c in data["criteria"]}),
+        ("glossary terms", WcagTerm, "term_id", set(data["glossary"])),
+        ("ACT rules", ActRule, "rule_id", set(data["act_rules"])),
+    ):
+        have = set(model.objects.filter(version=version).values_list(field, flat=True))
+        if extra := sorted(have - published):
+            found[label] = extra
+    return found
+
+
+def load_wcag(*, version: str = DEFAULT_VERSION, data: dict | None = None) -> dict:
+    """Load (or refresh) the platform's copy of the standard. Returns a per-table count.
+
+    Idempotent: rows are matched on (version, key) and updated in place, so a reload never
+    duplicates and never orphans a criterion a checker might be mid-way through.
+
+    Refuses to run if the tables hold anything the published set does not — see
+    `UnpublishedRows`. Checked *before* anything is written, so a refused load leaves the
+    database exactly as it found it rather than half-applied.
+
+    Writes require the migration/owner role: the app role has SELECT only on these tables,
+    which is what makes "no tenant may amend the standard" a database guarantee rather than
+    a convention.
     """
     from .models import ActRule, WcagCriterion, WcagTerm
 
@@ -62,13 +106,20 @@ def load_wcag(tenant_id, *, version: str = DEFAULT_VERSION, data: dict | None = 
         raise ValueError(
             f"dataset holds WCAG {data.get('version')!r}, asked to load {version!r}")
 
+    if strays := _strays(version, data):
+        detail = "; ".join(f"{label}: {', '.join(rows)}" for label, rows in strays.items())
+        raise UnpublishedRows(
+            f"WCAG {version} tables hold rows that are not in the published set — {detail}. "
+            f"Nothing in the platform writes these. Remove them deliberately, then reload."
+        )
+
     counts = {"criteria_created": 0, "criteria_updated": 0,
               "rules_created": 0, "rules_updated": 0,
               "terms_created": 0, "terms_updated": 0}
-    with tenant_context(tenant_id):
+    with transaction.atomic():
         for crit in data["criteria"]:
             _, created = WcagCriterion.objects.update_or_create(
-                tenant_id=tenant_id, version=version, number=crit["number"],
+                version=version, number=crit["number"],
                 defaults={
                     "handle": crit["handle"],
                     "level": crit["level"],
@@ -92,14 +143,14 @@ def load_wcag(tenant_id, *, version: str = DEFAULT_VERSION, data: dict | None = 
 
         for term_id, term in data["glossary"].items():
             _, created = WcagTerm.objects.update_or_create(
-                tenant_id=tenant_id, version=version, term_id=term_id,
+                version=version, term_id=term_id,
                 defaults={"term": term["term"], "definition": term["definition"]},
             )
             counts["terms_created" if created else "terms_updated"] += 1
 
         for rule_id, rule in data["act_rules"].items():
             _, created = ActRule.objects.update_or_create(
-                tenant_id=tenant_id, version=version, rule_id=rule_id,
+                version=version, rule_id=rule_id,
                 defaults={
                     "name": rule["name"],
                     "description": rule["description"],
@@ -116,33 +167,30 @@ def load_wcag(tenant_id, *, version: str = DEFAULT_VERSION, data: dict | None = 
     return counts
 
 
-def criterion(tenant_id, number: str, *, version: str = DEFAULT_VERSION):
-    """The tenant's `WcagCriterion` row for `number`. Raises rather than returning nothing."""
+def criterion(number: str, *, version: str = DEFAULT_VERSION):
+    """The `WcagCriterion` row for `number`. Raises rather than returning nothing."""
     from .models import WcagCriterion
 
-    with tenant_context(tenant_id):
-        row = WcagCriterion.objects.filter(
-            tenant_id=tenant_id, version=version, number=number).first()
-        if row is not None:
-            return row
-        loaded = WcagCriterion.objects.filter(tenant_id=tenant_id, version=version).exists()
+    row = WcagCriterion.objects.filter(version=version, number=number).first()
+    if row is not None:
+        return row
 
-    if not loaded:
+    if not WcagCriterion.objects.filter(version=version).exists():
         raise WcagNotLoaded(
-            f"tenant {tenant_id} has no WCAG {version} set loaded; "
-            f"call apps.a11y.wcag.load_wcag(tenant_id) for it"
+            f"no WCAG {version} set is loaded on this database; "
+            f"run `python manage.py load_wcag` (as the migration role)"
         )
     raise UnknownCriterion(
         f"{number!r} is not a Level A/AA success criterion in WCAG {version}"
     )
 
 
-def criterion_text(tenant_id, number: str, *, version: str = DEFAULT_VERSION) -> str:
+def criterion_text(number: str, *, version: str = DEFAULT_VERSION) -> str:
     """The exact normative text of one criterion (QA-04 AC1)."""
-    return criterion(tenant_id, number, version=version).text
+    return criterion(number, version=version).text
 
 
-def terms_for(tenant_id, numbers, *, version: str = DEFAULT_VERSION) -> list:
+def terms_for(numbers, *, version: str = DEFAULT_VERSION) -> list:
     """The glossary definitions the given criteria lean on, in a stable order.
 
     A criterion is written in defined terms; without them a judge reads "cognitive function
@@ -152,19 +200,18 @@ def terms_for(tenant_id, numbers, *, version: str = DEFAULT_VERSION) -> list:
 
     wanted: list[str] = []
     for number in numbers:
-        for term_id in criterion(tenant_id, number, version=version).terms:
+        for term_id in criterion(number, version=version).terms:
             if term_id not in wanted:
                 wanted.append(term_id)
     if not wanted:
         return []
-    with tenant_context(tenant_id):
-        found = {t.term_id: t for t in WcagTerm.objects.filter(
-            tenant_id=tenant_id, version=version, term_id__in=wanted)}
+    found = {t.term_id: t for t in WcagTerm.objects.filter(
+        version=version, term_id__in=wanted)}
     return [found[term_id] for term_id in wanted if term_id in found]
 
 
-def grounding(tenant_id, numbers, *, version: str = DEFAULT_VERSION,
-              include_intent: bool = True, include_terms: bool = True) -> str:
+def grounding(numbers, *, version: str = DEFAULT_VERSION, include_intent: bool = True,
+              include_terms: bool = True) -> str:
     """The grounding block a checker drops into its prompt (QA-04 AC2).
 
     Every requested criterion must resolve; one unknown number fails the whole block rather
@@ -176,7 +223,7 @@ def grounding(tenant_id, numbers, *, version: str = DEFAULT_VERSION,
 
     blocks = []
     for number in numbers:
-        row = criterion(tenant_id, number, version=version)
+        row = criterion(number, version=version)
         block = [f"WCAG {version} Success Criterion {row.number} {row.handle} "
                  f"(Level {row.level})", "", row.text]
         if include_intent and row.intent:
@@ -184,7 +231,7 @@ def grounding(tenant_id, numbers, *, version: str = DEFAULT_VERSION,
         blocks.append("\n".join(block))
 
     if include_terms:
-        defined = terms_for(tenant_id, numbers, version=version)
+        defined = terms_for(numbers, version=version)
         if defined:
             blocks.append("\n".join(
                 ["Defined terms used above (WCAG glossary):", ""]
