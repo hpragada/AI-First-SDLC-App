@@ -247,7 +247,9 @@ def gate(project, monkeypatch):
     signals = []
     monkeypatch.setattr(
         gate_services, "_default_signal_sender",
-        lambda wf, dec, uid, comment: signals.append((wf, dec)),
+        # `revise` is part of the signal contract (a rejection can ask for a revision
+        # rather than end the run); a stub that omits it fails on the real call.
+        lambda wf, dec, uid, comment, revise=False: signals.append((wf, dec)),
     )
     return {"approval": approval, "po": po, "eng": eng, "signals": signals}
 
@@ -314,21 +316,28 @@ def test_source_document_upload_extract_and_adopt(client, project, monkeypatch):
         {"file": upload, "artifact_type": "prd"}, format="multipart", **_hdr(project.tenant_id),
     )
     assert up.status_code == 201
-    sd_id, aid = up.data["source_document_id"], up.data["artifact_ids"][0]
-    assert Artifact.objects.get(id=aid).status == "draft"  # awaiting the review gate
+    sd_id = up.data["source_document_id"]
+    # An upload extracts but registers NO artifact — the registry entry is created once, at
+    # adopt, so a document uploaded once is one artifact at v1 rather than a v1 the upload
+    # made and a v2 that replaced it. Everything shown before adopting comes from the
+    # source document itself.
+    assert up.data["artifact_ids"] == []
+    assert not Artifact.objects.filter(project=project).exists()
 
     listed = client.get(
         f"/api/projects/{project.id}/source-documents/", **_hdr(project.tenant_id)
     )
     assert [s["id"] for s in listed.data] == [sd_id]
 
-    # Review gate: product_owner adopts → draft becomes published.
+    # Review gate: product_owner adopts → the artifact is created, published.
     res = client.post(
         f"/api/source-documents/{sd_id}/adopt/", {"user_id": str(po.id)},
         format="json", **_hdr(project.tenant_id),
     )
     assert res.status_code == 200
-    assert Artifact.objects.get(id=aid).status == "published"
+    adopted = Artifact.objects.filter(project=project)
+    assert adopted.count() == 1
+    assert adopted.first().status == "published"
 
 
 def test_onboard_atlassian_endpoint(client, project, monkeypatch):

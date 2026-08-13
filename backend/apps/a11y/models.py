@@ -62,3 +62,111 @@ class A11yJudgmentCache(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"a11y:{self.checker}:{self.verdict} ({self.content_hash[:12]})"
+
+
+class WcagCriterion(TenantScopedModel):
+    """One WCAG success criterion, in this tenant's copy of the standard (QA-04).
+
+    Tenant-scoped rather than platform-wide so a client can carry an amended set without it
+    leaking to anyone else (team decision, 2026-08-13). `version` lets a new WCAG release
+    load alongside the old one, so a reload never pulls the ground out from under a run.
+    """
+
+    version = models.CharField(max_length=8, default="2.2")
+    number = models.CharField(max_length=16)              # "1.4.1"
+    handle = models.CharField(max_length=128)             # "Use of Color"
+    level = models.CharField(max_length=4)                # "A" | "AA"
+    slug = models.CharField(max_length=128)               # w3.org anchor
+    text = models.TextField()                             # the exact normative wording
+
+    guideline_number = models.CharField(max_length=8, blank=True)
+    guideline_handle = models.CharField(max_length=128, blank=True)
+    principle_number = models.CharField(max_length=4, blank=True)
+    principle_handle = models.CharField(max_length=64, blank=True)
+
+    added_in = models.CharField(max_length=8, blank=True)  # "2.0" | "2.1" | "2.2"
+    url = models.URLField(blank=True)
+    understanding_url = models.URLField(blank=True)
+    intent = models.TextField(blank=True)                 # informative grounding
+    techniques = models.JSONField(default=dict)           # sufficient/advisory/failure ids
+
+    # The glossary terms this criterion's own wording leans on ("cognitive function test").
+    # A judge given the rule but not its defined terms is grounded in less than it looks.
+    terms = ArrayField(models.CharField(max_length=128), default=list)
+
+    act_rules = ArrayField(models.CharField(max_length=16), default=list)
+    # 25 of the 55 have no ACT rule because they are not machine-testable. Recorded as a
+    # fact so a later phase reads "none exists" instead of guessing from an empty list.
+    no_act_rule = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "version", "number"], name="uniq_tenant_wcag_criterion"
+            )
+        ]
+        ordering = ["number"]
+
+    def __str__(self) -> str:
+        return f"WCAG {self.version} {self.number} {self.handle} ({self.level})"
+
+
+class WcagTerm(TenantScopedModel):
+    """One WCAG glossary definition, in this tenant's copy of the standard (QA-04).
+
+    The criteria are written in defined terms — 3.3.8 turns on "cognitive function test",
+    1.1.1 on "non-text content". Loading them means a checker can be handed the rule *and*
+    W3C's definition of the words the rule hinges on.
+    """
+
+    version = models.CharField(max_length=8, default="2.2")
+    term_id = models.CharField(max_length=128)            # "dfn-cognitive-function-test"
+    term = models.CharField(max_length=256)               # "cognitive function test"
+    definition = models.TextField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "version", "term_id"], name="uniq_tenant_wcag_term"
+            )
+        ]
+        ordering = ["term"]
+
+    def __str__(self) -> str:
+        return f"WCAG {self.version} term: {self.term}"
+
+
+class ActRule(TenantScopedModel):
+    """One ACT rule and the criteria it maps to (QA-04).
+
+    `w3c_published` separates the rules W3C publishes from the community group's drafts —
+    only the published ones are mapped onto criteria, so a draft can never be cited as
+    evidence of conformance.
+    """
+
+    version = models.CharField(max_length=8, default="2.2")
+    rule_id = models.CharField(max_length=16)             # "674b10"
+    name = models.CharField(max_length=256)
+    description = models.TextField(blank=True)
+    applicability = models.TextField(blank=True)
+    expectation = models.TextField(blank=True)
+    background = models.TextField(blank=True)
+    url = models.URLField(blank=True)
+    w3c_published = models.BooleanField(default=False)
+
+    # A *primary* mapping means failing the rule fails the criterion. A *secondary* mapping
+    # means the ACT authors state the rule is stricter or looser than the criterion, so it
+    # must never stand in as a conformance test for it.
+    primary_criteria = ArrayField(models.CharField(max_length=16), default=list)
+    secondary_criteria = ArrayField(models.CharField(max_length=16), default=list)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "version", "rule_id"], name="uniq_tenant_act_rule"
+            )
+        ]
+        ordering = ["rule_id"]
+
+    def __str__(self) -> str:
+        return f"ACT {self.rule_id} {self.name}"
