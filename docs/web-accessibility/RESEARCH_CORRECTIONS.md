@@ -118,7 +118,24 @@ This is not cosmetic: QA‑05 must load exactly 55 criteria and **fail loudly** 
 
 *Claimed in:* Addendum A §3.3.
 
-The prose rounds; the **lists are exact and internally consistent**: 15 + 15 = 30 human-primary, and 20 + 20 + 15 = 55 total. Where prose and list disagree, **the enumerated lists are authoritative** — QA‑05 is built from the lists.
+The prose rounds; the **lists are exact and internally consistent**: 15 + 15 = 30 human-primary. Where prose and list disagree, **the enumerated lists are authoritative** — QA‑05 is built from the lists. (Same rule, same section: §4.2's "~5 remaining AI-primary criteria" lists 6.)
+
+> **Corrected while building QA‑05 (2026‑08‑13).** This entry previously said the tier split was "20 + 20 + 15 = 55". The authoritative per-criterion table gives **19 IN POC + 21 PHASE 2 + 15 HUMAN**. The 20 / 20 figure is the count from *before* decision D5 (R7 above) moved 2.4.6 Headings and Labels out of the POC — recomputing with 2.4.6 back in the POC reproduces 20 / 20 / 15 exactly, which is how it was traced. Addendum A's own table already reflects D5, so there is no source conflict left; only this summary line was stale. The registry is loaded from the table and **fails to build** if the split is not 19 / 21 / 15.
+
+---
+
+## R10 — Addendum A's "Hybrid note" list disagrees with its own table — **the table wins**
+
+*Conflict inside:* Addendum A §2.3's hybrid note vs the §3 per-criterion table. Found while building QA‑05 (2026‑08‑13).
+
+The hybrid note reads *"criteria marked AI where a rule also contributes (1.1.1, 1.3.1, 2.4.4, **2.4.6**, 4.1.2)"*. The table supports a different set, differing by exactly two:
+
+- **2.4.7 Focus Visible is missing from the note.** Its row reads *"Rule detects outline:none; AI/visual confirms a visible focus indicator"* — plainly a rule contribution.
+- **2.4.6 Headings and Labels should not be in it.** Its row names no rule at all: *"AI judges if headings/labels are descriptive (partially touched by POC semantics checker)"* — and the POC semantics checker is the AI, not a rule.
+
+**Decision (D6): the per-criterion table wins**, the same precedent as R7 and R8 — the table is the more detailed source and the prose rounds. The hybrid set is therefore **{1.1.1, 1.3.1, 2.4.4, 2.4.7, 4.1.2}**.
+
+This is not cosmetic: QA‑05 stores hybrid contributions as `secondary_checks` so routing can act on them. The build **asserts the difference is exactly these two** — if the report is ever corrected, the build stops and a person decides, rather than the registry changing unnoticed.
 
 ---
 

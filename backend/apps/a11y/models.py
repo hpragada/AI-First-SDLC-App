@@ -184,3 +184,82 @@ class ActRule(UUIDModel):
 
     def __str__(self) -> str:
         return f"ACT {self.rule_id} {self.name}"
+
+
+class Owner(models.TextChoices):
+    """Who makes the decisive determination for a criterion (Addendum A §2.2)."""
+
+    RULE = "rule", "Rule engine"      # a deterministic engine decides the typical case
+    AI = "ai", "AI"                   # the decisive check is semantic or visual
+    HUMAN = "human", "Human"          # judgment, assistive tech, media or process knowledge
+
+
+class Tier(models.TextChoices):
+    """When — if ever — a criterion gets an automated or AI check (Addendum A §3).
+
+    `HUMAN` is not the same statement as `Owner.HUMAN`: 30 criteria are human-*owned*, but
+    only these 15 stay that way once Phase 2 is built.
+    """
+
+    IN_POC = "in_poc", "In POC"       # shipped in the Scope-A POC
+    PHASE_2 = "phase_2", "Phase 2"    # AI-extendable later (incl. agentic)
+    HUMAN = "human", "Human"          # human-led with human sign-off, always
+
+
+class CriterionOwnership(UUIDModel):
+    """Who checks one WCAG criterion, and when — **one copy for the whole platform** (QA-05).
+
+    The routing table for an accessibility run: given a criterion, it says whether the rule
+    engine, the AI or a person decides it, and whether a check for it exists in the POC, in
+    Phase 2, or never.
+
+    **Why this is separate from `WcagCriterion`.** That table is the standard — published
+    W3C text, quoted verbatim, and true regardless of what we build. This one is Edvensoft's
+    engineering judgment about our own coverage, and it changes when our capabilities change
+    (2.1.1 Keyboard moves the day agentic interaction testing lands). Keeping our opinion out
+    of the standard's table means a WCAG reload never touches our routing, and a change of
+    plan never edits the standard.
+
+    **Why no `tenant_id`.** The same narrow carve-out as `WcagCriterion`, recorded in
+    migration `0006_wcag_platform_wide`: no tenant data, derived wholly from a committed
+    file, never tenant-writable. The app role has SELECT only, so a tenant cannot decide a
+    criterion needs less checking than it does.
+
+    Keyed on (version, number) rather than a foreign key to `WcagCriterion`. A foreign key
+    would only prevent an ownership row without a criterion; the dangerous direction is the
+    other one — a criterion with no ownership row, which nothing would ever route — and no
+    key can prevent that. `ownership.verify_complete()` checks both directions instead.
+    """
+
+    version = models.CharField(max_length=8, default="2.2")
+    number = models.CharField(max_length=16)                    # "1.4.1"
+    owner = models.CharField(max_length=8, choices=Owner.choices)
+    tier = models.CharField(max_length=8, choices=Tier.choices)
+
+    # The report's own one-line reason, kept so a coverage report can say *why* a criterion
+    # needs a person rather than only that it does.
+    rationale = models.TextField(blank=True)
+
+    # What another engine contributes where it is not the decider: `[{"engine", "note"}]`.
+    # Most criteria are hybrids — 3.3.2 is rule-owned but "AI judges adequacy of
+    # instructions", and 1.2.2 is human-owned but a rule "can flag a missing caption track".
+    # Without this, routing sees only the primary owner and those contributions exist purely
+    # as English prose in `rationale`, where nothing can act on them.
+    secondary_checks = models.JSONField(default=list, blank=True)
+
+    # Addendum B §2.2: 6 of the 15 human-led criteria still get partial machine flagging
+    # (a missing caption track, a flash rate). It never means the criterion can be decided
+    # automatically — it means a reviewer starts from a hint rather than a blank page. False
+    # for every criterion that is not human-led, where the question does not arise.
+    partial_auto_flag = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["version", "number"], name="uniq_criterion_ownership"
+            )
+        ]
+        ordering = ["number"]
+
+    def __str__(self) -> str:
+        return f"WCAG {self.version} {self.number}: {self.owner} / {self.tier}"
