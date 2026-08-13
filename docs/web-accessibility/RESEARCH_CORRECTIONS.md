@@ -124,6 +124,32 @@ The prose rounds; the **lists are exact and internally consistent**: 15 + 15 = 3
 
 ---
 
+## R11 — What happens to a *low*-confidence finding — **the sources disagree; nothing is dropped**
+
+*Conflict between:* Report 1 §④ ("TRIAGE, DEDUPE & CONFIDENCE GATING") and the User Journeys document. Found while building QA‑06 (2026‑08‑13).
+
+| Source | Low-confidence finding → |
+|---|---|
+| **Report 1 §④** | *"high-confidence → report as a failure; mid-confidence → report as 'review'; **low-confidence → drop** (logged for tuning)"* — three bands |
+| **User Journeys** (twice: §"low-confidence items route to the SME, not to a hard fail" and §"low-confidence → SME queue") | routed to a person — two bands |
+| **QA‑06's own task text** | *"medium or **low** becomes 'needs human review'"* — two bands |
+
+**Decision (D7): two bands. Nothing is ever dropped.** Dropping is the only option here that can make the platform **silently miss a real accessibility defect**, and it would be the first place in this build that discards rather than routes — everything else refuses to (an unanswerable judgment becomes `uncertain`, an unowned criterion stops a load, a stray row stops a reload).
+
+Report 1's counter-argument is real and recorded rather than dismissed: *"low noise protects adoption."* If the review queue proves noisy once QA‑09/QA‑10 measure it, a floor can be added **with evidence**. It is not being added on a guess.
+
+---
+
+## R12 — No source specifies a confidence threshold — **0.80, provisional**
+
+*Claimed in:* nowhere. Searched all four research documents while building QA‑06 (2026‑08‑13).
+
+There is **no confidence threshold in any source.** The one number that looks like one — Report 1's *"≥85% on high-confidence findings"* — is a **precision target for the accuracy harness** (QA‑09/QA‑10), not a confidence cutoff. Using 0.85 because it appears in the report would conflate two different measurements.
+
+**Decision (D8): 0.80 for all four checkers to start, per-checker configurable per tenant.** Explicitly provisional: the correct values are unknowable until the golden set exists, which is exactly why the thresholds are configuration and not code — tuning them is a settings change, never a release.
+
+---
+
 ## R10 — Addendum A's "Hybrid note" list disagrees with its own table — **the table wins**
 
 *Conflict inside:* Addendum A §2.3's hybrid note vs the §3 per-criterion table. Found while building QA‑05 (2026‑08‑13).

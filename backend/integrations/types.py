@@ -326,6 +326,44 @@ class A11yJudgment:
         return self.criteria[0]
 
 
+@dataclass(frozen=True)
+class A11yRuleFailure:
+    """One accessibility failure a **deterministic rule scanner proved** (QA-06).
+
+    Deliberately **not** named after axe (#9). axe-core is what runs today, but the platform
+    must never bake a vendor into a type any more than it calls `jira.*` directly — a
+    different scanner, or a second one alongside it, must not need this renamed.
+
+    This is the other half of the safety valve. A rule scanner *measures*: it computed the
+    contrast ratio, it read the `lang` attribute. An AI *judges*. Where the two disagree the
+    measurement wins, and this is what a judgment is compared against to know that.
+
+    **The identity is `(route, selector, criterion)`** — the same key QA-12a's finding
+    fingerprint uses, minus the checker, so "the same problem" means the same thing in both
+    places by construction rather than by coincidence. A scanner failure on one element does
+    not silence an AI judgment about a different element, a different screen, or a different
+    criterion.
+
+    Populated for real in QA-11b, which is when structured scanner output first reaches the
+    platform; QA-06 builds and unit-tests the rule that consumes it.
+    """
+
+    criterion: str              # the WCAG criterion the scanner proved a failure of
+    selector: str = ""          # CSS selector of the failing element, as the scanner saw it
+    route: str = ""             # the screen/route it was found on
+    rule_id: str = ""           # the scanner's own rule id, so the report can cite it
+    evidence: str = ""          # what the scanner reported
+
+    def __post_init__(self) -> None:
+        if not self.criterion:
+            raise ValueError("a rule failure must name the WCAG criterion it failed")
+
+    @property
+    def key(self) -> tuple[str, str, str]:
+        """What makes this the *same* thing as an AI judgment about the same element."""
+        return (self.route, self.selector, self.criterion)
+
+
 def uncertain(criteria: tuple[str, ...], *, checker: str, reason: str) -> A11yJudgment:
     """The well-formed "I could not answer this" judgment.
 
