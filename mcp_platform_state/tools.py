@@ -567,6 +567,56 @@ def submit_gap_report(tenant_id, project_id, phases, resume_phase=None, blockers
     )
 
 
+def get_a11y_batch(tenant_id, run_id) -> dict:
+    """The elements this accessibility judgment run must judge (09c_a11y_judge, QA-02a).
+
+    `dispatch` decided what needed judging and attached it to the run; this is that list, one
+    screen at a time. Each element carries the short `id` the judge echoes back to
+    `record_a11y_finding` — the internal content hash never leaves the platform, because a
+    model copying 64 hex characters back is one typo away from filing a verdict against a
+    different element."""
+    from apps.a11y.judge import batch_for_run
+
+    return batch_for_run(tenant_id, run_id)
+
+
+def get_wcag_grounding(tenant_id, criteria) -> dict:
+    """The exact WCAG 2.2 wording for these criteria, plus the glossary terms they lean on.
+
+    The judge decides against the standard's own words, not its recollection of them — and
+    against W3C's definitions of the terms those words hinge on ("non-text content",
+    "cognitive function test"), which read as ordinary English without them. `tenant_id` is
+    accepted for signature symmetry and unused: the standard is one platform-wide copy that
+    no tenant may amend (QA-04)."""
+    from apps.a11y.judge import grounding_for
+
+    return grounding_for(criteria)
+
+
+def record_a11y_finding(tenant_id, element_id, criteria, verdict, confidence, evidence,
+                        suggested_fix="", run_id=None, project_id=None) -> dict:
+    """Record ONE accessibility verdict for ONE element of the dispatched batch (QA-02a).
+
+    Hands the agent's judgement to the shared validator+writer, which coerces what is safely
+    coercible and rejects the rest with a message the agent can act on — so a model typo can
+    never degrade a conformance report. The checker is read from the batch rather than taken
+    from the agent, so a call cannot mislabel which check it was.
+
+    `criteria` is a LIST (team decision D-A11Y-2): one broken thing can breach more than one
+    requirement — a `div` dressed as a button breaks 1.3.1 *and* 4.1.2 — and one fix repairs
+    both. Report the ones that actually apply, never the whole set by reflex.
+
+    `run_id` is LOAD-BEARING: it is how the element is found and how the verdict is stamped
+    with the model that produced it."""
+    from apps.a11y.judge import record_finding
+
+    return record_finding(
+        tenant_id=tenant_id, run_id=run_id, element_id=element_id, criteria=criteria,
+        verdict=verdict, confidence=confidence, evidence=evidence,
+        suggested_fix=suggested_fix, project_id=project_id,
+    )
+
+
 def log_event(tenant_id, actor, action, target_type, target_id, payload=None) -> dict:
     with tenant_context(tenant_id):
         event = Event.objects.create(

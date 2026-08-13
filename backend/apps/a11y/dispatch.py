@@ -191,14 +191,35 @@ def _split_at_cap(
     return taken, []
 
 
+def element_handle(index: int, content_hash: str) -> str:
+    """The short id the judge echoes back to say which element a finding is about (QA-02a).
+
+    The batch already carries each element's 64-character content hash, but asking a model to
+    copy that back exactly is the most error-prone thing we could ask — and a single wrong
+    character would file a verdict against a different element. So the agent never sees the
+    hash: it sees this, and the platform maps it back.
+
+    Deliberately not a bare counter. `e1` mistyped as `e2` is another *valid* element and the
+    verdict lands silently on the wrong one; `3-a91f0c2e` mistyped is almost certainly no
+    element at all, which the tool rejects out loud. The index keeps it readable and ordered,
+    and disambiguates two identical elements on one page (same markup, same hash).
+    """
+    return f"{index}-{content_hash[:8]}"
+
+
 def _group_by_screen(requests: list[A11yRequest]) -> list[dict]:
     """The run's input: one batch per screen, in first-seen order, so the judge reads a page
-    at a time instead of a shuffled pile of elements."""
+    at a time instead of a shuffled pile of elements.
+
+    `content_hash` stays here because the platform needs it to store the verdict; it is
+    stripped before the agent ever sees the batch (`judge.batch_for_run`).
+    """
     batches: dict[str, dict] = {}
-    for request in requests:
+    for index, request in enumerate(requests, start=1):
         route = request.candidate.route
         batch = batches.setdefault(route, {"route": route, "elements": []})
         batch["elements"].append({
+            "id": element_handle(index, request.content_hash),
             "content_hash": request.content_hash,
             "checker": request.checker,
             "criteria": list(A11Y_CHECKER_CRITERIA[request.checker]),

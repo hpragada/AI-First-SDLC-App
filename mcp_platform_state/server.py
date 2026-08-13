@@ -204,6 +204,41 @@ def add_trace_edge(from_artifact_id: str, to_artifact_id: str, rel: str) -> dict
 
 
 @server.tool()
+def get_a11y_batch() -> dict:
+    """The accessibility elements THIS run must judge, one screen at a time. Each element
+    carries a short `id` — echo that exact id back to `record_a11y_finding`. Call this first:
+    it is the only list of what you are being asked to judge."""
+    return tools.get_a11y_batch(_tenant(), _bound_run())
+
+
+@server.tool()
+def get_wcag_grounding(criteria: list[str]) -> dict:
+    """The exact WCAG 2.2 wording for these success criteria, with the glossary definitions
+    they depend on. Judge against THIS text, not your recollection of the standard."""
+    return tools.get_wcag_grounding(_tenant(), criteria)
+
+
+@server.tool()
+def record_a11y_finding(
+    element_id: str,
+    criteria: list[str],
+    verdict: str,
+    confidence: float,
+    evidence: str,
+    suggested_fix: str = "",
+) -> dict:
+    """Record your verdict for ONE element. `verdict` is pass | fail | uncertain, `confidence`
+    is 0-1, `criteria` lists every criterion this element actually breaches (a div-as-button
+    breaches 1.3.1 AND 4.1.2), and `evidence` quotes what led you there. Call it exactly once
+    per element in the batch — an element you never report on is recorded as unjudged and
+    fails the run."""
+    return tools.record_a11y_finding(
+        _tenant(), element_id, criteria, verdict, confidence, evidence,
+        suggested_fix=suggested_fix, run_id=_bound_run(),
+    )
+
+
+@server.tool()
 def log_event(
     actor: str, action: str, target_type: str,
     target_id: str | None = None, payload: dict | None = None,

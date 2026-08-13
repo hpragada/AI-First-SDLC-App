@@ -19,6 +19,7 @@ from django.conf import settings
 from mcp_platform_state import tools
 from temporalio import activity
 
+from apps.a11y.judge import JUDGE_PHASE as A11Y_JUDGE_PHASE
 from apps.gates.models import Approval
 from apps.registry.models import AgentSpec, Artifact
 from apps.runs.models import Run
@@ -665,6 +666,19 @@ def verify_write_completeness_core(
     text's digest, so an empty one is provable. A pointer-only artifact registered with a
     foreign hash makes no claim about its body and is left alone.
     """
+    # The accessibility judge (09c, QA-02a) writes verdicts, not artifacts, so "did it register
+    # a document?" is the wrong question for it entirely — and it runs auto-apply, so without
+    # this branch the check below would fail every judgment run. Its own bar is coverage: every
+    # element dispatched to it must have been reported on. Checked FIRST so the phase is decided
+    # before the artifact-shaped rules get a chance to answer for it.
+    if inp.phase == A11Y_JUDGE_PHASE:
+        from apps.a11y.judge import verify_judgment_completeness
+
+        counts = verify_judgment_completeness(
+            tenant_id=inp.tenant_id, project_id=inp.project_id, run_id=inp.run_id)
+        return {"present": [f"{counts['judged']} judged"],
+                "expected": [f"{counts['dispatched']} dispatched"]}
+
     # Auto-apply runs (00e document vision, Part B) don't register a phase-typed artifact — they
     # re-register the TARGET document as a new version carrying its own type, then publish without
     # a gate. So the bar here is "the run actually produced content", not a phase-type match:

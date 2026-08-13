@@ -77,6 +77,11 @@ _BUILD_STATE_TOOLS = {
     # Agent-driven onboarding: 00_onboarding writes its gap report through the shared, shape-safe
     # writer (never a raw external_ref).
     "submit_gap_report": tools.submit_gap_report,
+    # Accessibility judging (09c_a11y_judge, QA-02a): read the dispatched elements, read the
+    # exact WCAG wording to judge them against, and report one validated verdict per element.
+    "get_a11y_batch": tools.get_a11y_batch,
+    "get_wcag_grounding": tools.get_wcag_grounding,
+    "record_a11y_finding": tools.record_a11y_finding,
 }
 
 # The build agent may move a WorkItem forward through working states (e.g. -> in_progress at

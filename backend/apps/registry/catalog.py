@@ -100,6 +100,15 @@ AGENT_CATALOG: list[AgentDefinition] = [
                     needs_artifacts=("prd", "requirements", "architecture", "api_spec")),
     AgentDefinition("09b_test_automation", "test-automation", "test_automation", "09b_test_automation_agent.md", "P3", "qa_lead", rides_build=True, imports_test_results=True,
                     needs_artifacts=("architecture", "api_spec", "test_case")),
+    # 09c Accessibility Judge — PLATFORM-NATIVE (QA-02a): the legacy suite had no accessibility
+    # capability at all, so there is no v6 body to migrate; it is authored fresh under /agents,
+    # like 00e Document Vision. It judges what a rule scanner cannot decide — whether alt text
+    # is meaningful, whether a div is really a button — against the exact WCAG 2.2 wording the
+    # platform loaded in QA-04. It registers no artifacts: its work product is one verdict per
+    # dispatched element, so `verify_write_completeness_core` checks its COVERAGE instead.
+    # `needs_artifacts` is empty on purpose — its inputs arrive on the run, not from the
+    # registry, so declaring required types would render a gap for documents it never reads.
+    AgentDefinition("09c_a11y_judge", "a11y-judge", "a11y_judge", "", "P4", "qa_lead", native=True),
     AgentDefinition("10_security", "security", "security", "10-security-agent.md", "P3", "security_engineer", reads_code=True,
                     needs_artifacts=("architecture", "adr", "security_architecture", "api_spec")),
     AgentDefinition("11_cicd", "cicd", "cicd", "11_cicd_agent.md", "P2", "devops", rides_build=True,

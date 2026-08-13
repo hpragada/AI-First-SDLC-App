@@ -49,6 +49,12 @@ BUILD_STATE_TOOLS = [
     # no artifact to come from, so get_artifact_body cannot serve it.
     "get_page_images",
     "get_source_extraction",
+    # Accessibility judging (QA-02a): 09c reads its dispatched elements and the exact WCAG
+    # wording, and reports one validated verdict per element. Without these three granted the
+    # judge can see no work, has no rulebook, and has no way to answer.
+    "get_a11y_batch",
+    "get_wcag_grounding",
+    "record_a11y_finding",
 ]
 # Filesystem + shell for editing/testing the worktree; platform-state over MCP.
 # Deliberately NO CodeHost and no networked tools — the platform owns Git side-effects (D2).
