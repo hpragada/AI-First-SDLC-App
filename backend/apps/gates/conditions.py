@@ -3,7 +3,7 @@
 A gate condition is a checklist item on the `Approval` that must be satisfied before an
 APPROVED decision is accepted. Never an engine hook. Two kinds compose here:
 
-  - **reviewer-attested** (D6) — the WCAG 2.1 AA checklist on the design gate and the
+  - **reviewer-attested** (D6) — the WCAG 2.2 AA checklist on the design gate and the
     pre-deployment readiness checklist on the deployment gate: a human inspects and marks
     each criterion satisfied.
   - **derived** (D9) — the blocking-test rule on the test gate: the platform evaluates it

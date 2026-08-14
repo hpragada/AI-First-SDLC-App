@@ -40,10 +40,14 @@ _REASONING = {
         "Atomic Design", "Cognitive Walkthrough", "WCAG 2.1 AA", "Nielsen Norman",
         "a wireframe without states is not a wireframe", "Loading State Classification",
     ],
+    # 09 reads "WCAG 2.2 AA" since QA-11. The *version* of a standard is a data reference (the
+    # 15%), not reasoning (the 75%) — pinning it here as verbatim reasoning was the reason a
+    # version uplift looked like a broken migration. What must survive is that the agent is
+    # grounded in WCAG at all; which edition is data, and it now matches the loaded standard.
     "09_testing": [
         "Lead QA Engineer and Test Automation Architect", "test to break, not to pass",
         "Test Pyramid", "IEEE 829", "Requirements Traceability Coverage Map",
-        "warm-up ramp", "axe-core", "WCAG 2.1 AA", "OWASP",
+        "warm-up ramp", "axe-core", "WCAG 2.2 AA", "OWASP",
     ],
     "09b_test_automation": [
         "Senior Test Automation Engineer", "never guess a locator", "Page Object Model",

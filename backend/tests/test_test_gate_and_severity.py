@@ -69,7 +69,9 @@ def _approve(world, approval_id, sender, **kw):
 
 
 # ── seeding ─────────────────────────────────────────────────────────
-def test_conditions_for_phase_seeds_blocking_test_rule_only_for_testing():
+def test_conditions_for_phase_seeds_blocking_test_rule_only_for_testing(db):
+    """`db` since QA-11: the design phase's WCAG checklist is now read from the loaded
+    standard, so the last assertion below touches the database."""
     testing = conditions_for_phase("testing")
     assert [c["key"] for c in testing] == [BLOCKING_TESTS_KEY]
     assert testing[0]["required"] and testing[0]["derived"] and not testing[0]["satisfied"]

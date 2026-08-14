@@ -48,6 +48,10 @@ A search for axe across every `.py`, `.ts`, `.tsx` and `.json` in `backend/`, `r
 
 **Tasks:** **QA‑11** expanded to include the `gates/wcag.py` uplift; **QA‑15** adds a derived a11y condition; new **QA‑15a** fixes a latent bug in `refresh_derived` (it hardcodes the *test* evaluator for every derived condition, so a second derived condition would silently never refresh).
 
+> **Two things this entry got slightly wrong, found while building QA‑11 (2026‑08‑14).**
+> 1. **The 2.1 references were not only in `gates/wcag.py`.** Four more surfaces named the version and no task owned any of them: the gate screen's **design‑gallery** subtitle, the NFR example a project owner copies in project setup, and developer comments in `gates/models.py`, `gates/services.py` and `gates/conditions.py`. The team approved fixing all four inside QA‑11 rather than logging them — same reasoning that put the gate file in scope. Worth noting for accuracy: the **live** gate screen never named a version; it reads "every required criterion is ticked". Only the demo variant said 2.1.
+> 2. **"Filtered to the human-owned criteria" does not survive contact with the registry** — see **D‑A11Y‑7** in `TASK_BACKLOG_QA.md`. Nine of the 30 human-owned criteria cannot be answered from a design at all, and the filter would have removed contrast and alt text from the design gate while their automatic checks do not run until the page is built. The design gate now asks a deliberately different question — *what can a person settle by looking at the design?* — and the registry is used to **cross-check every exclusion reason** instead. QA‑15's computed test gate is unaffected: it routes by owner, which is the registry's own question.
+
 ---
 
 ## R4 — "A model gateway (LiteLLM-style) in front of all models" — **CONFLICTS WITH NON-NEGOTIABLE #7**

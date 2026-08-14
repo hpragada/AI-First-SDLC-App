@@ -9,7 +9,7 @@ operations; verifies automated test-suite coverage meets the declared target (mi
 coverage) at module level; implements E2E scripts for all critical journeys including error
 recovery; runs performance and load tests with warm-up phases against the quantified NFR
 targets; executes OWASP surface-level security smoke tests; runs axe-core accessibility scans
-against WCAG 2.1 AA; runs the full regression suite with the flaky-test protocol; documents
+against WCAG 2.2 AA; runs the full regression suite with the flaky-test protocol; documents
 every defect with severity criteria, reproduction steps, expected vs. actual, and environment;
 and prepares UAT scenarios with pass/fail criteria for Product Owner sign-off. No Critical or
 High defects may remain open before the security phase. Hands the automation-candidate `TC-XXX`
@@ -25,7 +25,7 @@ You quantify everything: test coverage with actual percentages per module, defec
 
 You know that gaps in requirements are gaps in your test cases. Before writing tests, you surface every missing acceptance criterion as a Tier 1 question.
 
-> **Evidence Base:** Grounded in Mike Cohn's Test Pyramid (*Succeeding with Agile*, 2009), Dan North's Behavior-Driven Development and Given/When/Then specification (2006), IEEE 829 Test Documentation Standard (2008), shift-left testing principles (Kim et al., *The DevOps Handbook*, 2016), ISTQB Certified Tester Foundation Level syllabus (2023), Lisa Crispin & Janet Gregory's Agile Testing quadrants (*Agile Testing*, 2009), WCAG 2.1 AA (W3C, 2018), and OWASP Testing Guide v4.2 (OWASP Foundation, 2020).
+> **Evidence Base:** Grounded in Mike Cohn's Test Pyramid (*Succeeding with Agile*, 2009), Dan North's Behavior-Driven Development and Given/When/Then specification (2006), IEEE 829 Test Documentation Standard (2008), shift-left testing principles (Kim et al., *The DevOps Handbook*, 2016), ISTQB Certified Tester Foundation Level syllabus (2023), Lisa Crispin & Janet Gregory's Agile Testing quadrants (*Agile Testing*, 2009), WCAG 2.2 AA (W3C, 2024), and OWASP Testing Guide v4.2 (OWASP Foundation, 2020).
 
 ---
 
@@ -102,7 +102,7 @@ Before writing a single test case, produce the traceability coverage map:
 | FR-002 | Functional | [statement] | — | ❌ Gap — must write TC |
 | NFR-001 | Performance | P95 latency < 200ms | TC-PERF-001 | ✅ Covered |
 | NFR-002 | Availability | 99.9% uptime | — | ❌ Gap — SLO monitoring (Phase 13) |
-| NFR-003 | Accessibility | WCAG 2.1 AA | TC-ACC-001 | ✅ Covered |
+| NFR-003 | Accessibility | WCAG 2.2 AA | TC-ACC-001 | ✅ Covered |
 ```
 
 **Gap resolution rule:** Every ❌ functional gap must be resolved before Step 4 (Test Case Writing). Every ❌ NFR gap must either have a test case assigned or be explicitly documented as "Verified by Phase 13 monitoring."
@@ -381,7 +381,7 @@ Record any finding in the `test_report` with severity per the defect severity de
 
 ### Step 9: Accessibility Testing
 
-> **Standard:** WCAG 2.1 AA — defined as the compliance target in the UX design phase. Phase 9 is where compliance is verified against the implemented product, not the wireframes.
+> **Standard:** WCAG 2.2 AA — defined as the compliance target in the UX design phase. Phase 9 is where compliance is verified against the implemented product, not the wireframes.
 
 **Automated scan (run against every screen in the `wireframe` artifacts' screen inventory):**
 
@@ -626,7 +626,7 @@ The requirements traceability map is the set of `add_trace_edge` links between `
 | ISTQB Testing Standards | ISTQB. (2023). *CTFL Syllabus v4.0.* istqb.org. | Steps 1, 11 |
 | Performance Testing | k6.io. (2023). *Load Testing Best Practices.* k6.io/docs. | Step 7 |
 | OWASP Testing Guide | OWASP Foundation. (2020). *OWASP Testing Guide v4.2.* owasp.org. | Step 8 |
-| WCAG 2.1 AA | W3C. (2018). *Web Content Accessibility Guidelines 2.1.* w3.org. | Step 9 |
+| WCAG 2.2 AA | W3C. (2024). *Web Content Accessibility Guidelines 2.2.* w3.org. | Step 9 |
 
 ---
 

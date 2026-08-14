@@ -1,8 +1,8 @@
 """P3 — a11y (WCAG) gate · per-tenant theming · design↔code round-trip.
 
 - The a11y gate is a control-plane checklist on the design Approval (D6): the design
-  phase's gate is seeded with the WCAG 2.1 AA criteria, and an APPROVED decision is blocked
-  while any required criterion is unsatisfied.
+  phase's gate is seeded with the WCAG 2.2 AA criteria (QA-11 — derived from the loaded
+  standard), and an APPROVED decision is blocked while any required criterion is unsatisfied.
 - Per-tenant theming (PG23/D10): ProjectProfile.theme flows verbatim into the rendered
   manifest (tokens + responsive breakpoints) — no per-tenant code fork.
 - design↔code round-trip (PG22): read-as-SoR (05) + Code Connect mapping + the deferred
@@ -33,10 +33,12 @@ class _Recorder:
 
 
 # ── a11y (WCAG) gate: checklist seeding ─────────────────────────────
-def test_conditions_for_phase_seeds_wcag_only_for_design():
+def test_conditions_for_phase_seeds_wcag_only_for_design(db):
+    """Needs the database since QA-11: the checklist is read from the loaded 2.2 standard
+    rather than typed into the module, so building it is a query."""
     design = conditions_for_phase("ux_design")
     keys = {c["key"] for c in design}
-    assert {"1.1.1", "1.4.3", "2.1.1", "4.1.2"} <= keys      # WCAG 2.1 AA criteria present
+    assert {"1.1.1", "1.4.3", "2.1.1", "2.4.7"} <= keys      # WCAG 2.2 AA criteria present
     assert all(c["required"] and not c["satisfied"] for c in design)
     assert conditions_for_phase("prd") == []                 # no other phase carries it
 
@@ -112,7 +114,7 @@ def test_decide_gate_blocks_approve_until_wcag_satisfied(world):
 
 def test_decide_gate_partial_wcag_still_blocks(world):
     approval_id = open_gate_core(_inp(world, "ux_design"))
-    partial = [{"key": "1.1.1", "satisfied": True}]            # only one of nine
+    partial = [{"key": "1.1.1", "satisfied": True}]            # one of the checklist, not all
     with pytest.raises(GateConditionsError):
         decide_gate(tenant_id=str(world["t"].id), approval_id=approval_id,
                     user_id=world["designer_id"], decision="approved",

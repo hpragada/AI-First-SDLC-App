@@ -212,7 +212,7 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
                     <Textarea
                       value={form.nfrs}
                       onChange={(e) => update("nfrs")(e.target.value)}
-                      placeholder={"e.g.\nAPI response < 300ms (P95)\n99.9% uptime\nWCAG 2.1 AA accessibility"}
+                      placeholder={"e.g.\nAPI response < 300ms (P95)\n99.9% uptime\nWCAG 2.2 AA accessibility"}
                     />
                   </Field>
                   <Field label="Constraints">

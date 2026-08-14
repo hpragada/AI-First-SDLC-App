@@ -32,7 +32,7 @@ class GateRoleError(GateError):
 
 
 class GateConditionsError(GateError):
-    """A required gate condition (e.g. a WCAG 2.1 AA criterion) is not yet satisfied."""
+    """A required gate condition (e.g. a WCAG 2.2 AA criterion) is not yet satisfied."""
 
 
 def _merge_conditions(existing: list, updates: list | None) -> list:
@@ -96,7 +96,7 @@ def decide_gate(
 ) -> dict:
     """Record a gate decision (after role check + condition check) and signal the workflow
     to resume. `conditions` carries the reviewer's `satisfied` updates for the gate's
-    checklist (e.g. the WCAG 2.1 AA criteria on the design gate); an APPROVED decision is
+    checklist (e.g. the WCAG 2.2 AA criteria on the design gate); an APPROVED decision is
     rejected while any *required* condition is unsatisfied (D6). Derived conditions (e.g. the
     test gate's blocking-test rule, D9) are recomputed from live state here and ignore the
     reviewer's `satisfied` — they are the platform's finding, not the reviewer's.
