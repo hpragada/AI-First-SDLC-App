@@ -106,6 +106,23 @@ def world(db):
     return {"t": str(tenant.id), "p": str(project.id), "tenant": tenant, "project": project}
 
 
+def _make_run(world, workflow_id: str, inputs=None):
+    """A real `Run` for this project — used wherever a test needs two runs to be genuinely
+    different rather than pretended to be."""
+    from apps.registry.models import AgentSpec
+    from apps.runs.models import Run
+    from apps.workitems.models import WorkItem
+
+    wi = WorkItem.objects.filter(project=world["project"]).first() or WorkItem.objects.create(
+        tenant=world["tenant"], project=world["project"], type=WorkItem.Type.STORY)
+    spec = AgentSpec.objects.filter(tenant=world["tenant"], key="09c_a11y_judge").first() \
+        or AgentSpec.objects.create(tenant=world["tenant"], key="09c_a11y_judge", body_ref="x")
+    return Run.objects.create(
+        tenant=world["tenant"], work_item=wi, agent_spec=spec,
+        temporal_workflow_id=workflow_id, inputs=inputs or {},
+    )
+
+
 class _WatchingStore(InMemoryObjectStore):
     """An object store that remembers every key written, so "was a crop cut?" is checkable."""
 
@@ -286,8 +303,15 @@ def test_the_unselected_element_costs_no_crop_and_no_write(world):
                   screen=parse_capture(json.dumps(_screen()))[0], object_store=store)
     # One page image + exactly one crop per SELECTED element. Never three.
     assert len(store.writes) == 3
-    assert sum(1 for k in store.writes if "element-" in k) == 2
-    assert not any(k.endswith("element-0002.png") for k in store.writes)   # the plain <p>
+    assert sum(1 for k in store.writes if "/elements/" in k) == 2
+    # ...and the plain <p>'s own region was never cut, so its pixels are nowhere in the store.
+    page = store.get([k for k in store.writes if "/pages/" in k][0])
+    with PILImage.open(io.BytesIO(page)) as im:
+        blurb = im.crop((0, 200 - 12, 300 + 12, 220 + 12))
+    buf = io.BytesIO()
+    blurb.save(buf, format="PNG")
+    assert not any(store.get(k) == buf.getvalue()
+                   for k in store.writes if "/elements/" in k)
 
 
 def test_the_crop_is_the_elements_own_region_of_the_page_image(world):
@@ -377,7 +401,7 @@ def test_a_large_crop_is_downscaled_before_it_is_stored(world):
 def test_a_store_that_refuses_one_crop_still_stores_the_element(world):
     class _RefusesCrops(InMemoryObjectStore):
         def put(self, key, body, content_type="text/markdown"):
-            if "element-" in key:
+            if "/elements/" in key:
                 raise RuntimeError("the bucket is full")
             return super().put(key, body, content_type=content_type)
 
@@ -431,6 +455,57 @@ def test_requests_carry_the_platforms_crop_pointer_not_the_captures_claim(world)
     assert request.checker == "alt"
     assert request.candidate.screenshot_ref.startswith("a11y/") and store.get(
         request.candidate.screenshot_ref)
+
+
+def test_an_unchanged_element_keeps_its_cache_key_on_a_later_run(world):
+    """The defect this test exists for, and it was live and invisible.
+
+    `dispatch.content_hash` fingerprints everything the judge looks at — including the pointer
+    to the element's picture — so a cached verdict can never be stale. Naming a crop after the
+    run that took it gave the same untouched element a new pointer every run, so the
+    fingerprint changed every run and **the cache could never hit**: every run would re-judge
+    every element of every screen. Nothing dispatches yet, so nothing failed; it would have
+    surfaced as a first real audit that was inexplicably enormous.
+    """
+    store = InMemoryObjectStore()
+    parsed = parse_capture(json.dumps(_screen()))[0]
+    keys = []
+    for run in (_make_run(world, "wf-1"), _make_run(world, "wf-2")):
+        ingest_screen(tenant_id=world["t"], project_id=world["p"], screen=parsed,
+                      run_id=str(run.id), object_store=store)
+        request = next(r for r in requests_for(world["t"], world["p"], str(run.id))
+                       if r.candidate.selector == "img.hero")
+        keys.append((request.candidate.screenshot_ref, request.content_hash))
+    assert keys[0] == keys[1]
+
+
+def test_a_changed_element_gets_a_new_cache_key(world):
+    """The other direction, and it is the half that makes caching safe: different pixels are a
+    different picture, and the visual question may have a different answer."""
+    store = InMemoryObjectStore()
+    hashes = []
+    for colour in ((200, 40, 40), (40, 200, 40)):
+        screen = parse_capture(json.dumps(_screen(
+            screenshot_base64=base64.b64encode(_png(colour=colour)).decode("ascii"))))[0]
+        ingest_screen(tenant_id=world["t"], project_id=world["p"], screen=screen,
+                      object_store=store)
+        hashes.append(next(r.content_hash for r in requests_for(world["t"], world["p"])
+                           if r.candidate.selector == "img.hero"))
+    assert hashes[0] != hashes[1]
+
+
+def test_the_cache_key_reads_exactly_the_four_things_the_judge_looks_at(world):
+    """Pinned so a field cannot be added to the fingerprint without someone deciding to.
+
+    Every input added here is a new way for two identical elements to look different, and the
+    cost of getting that wrong is silent: the cache stops hitting and nobody is told."""
+    import inspect
+
+    from apps.a11y import dispatch
+
+    source = inspect.getsource(dispatch.content_hash)
+    assert "parts = (checker, candidate.html, candidate.screenshot_ref, candidate.context)" \
+        in source
 
 
 def test_requests_are_in_a_stable_order(world):

@@ -26,6 +26,7 @@ are objects, and a bundle row carries only their keys.
 from __future__ import annotations
 
 import io
+from hashlib import sha256
 
 from apps.tenancy.context import tenant_context
 
@@ -48,12 +49,6 @@ def _object_store(injected=None):
     from storage import s3_from_settings
 
     return s3_from_settings()
-
-
-def _slug(value: str) -> str:
-    """A route as a safe object-key segment. `/` becomes `_` so the key stays one level."""
-    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(value or ""))
-    return safe.strip("_")[:120] or "root"
 
 
 def _crop(page_png: bytes, box: dict) -> tuple[bytes, str]:
@@ -103,15 +98,27 @@ def _crop(page_png: bytes, box: dict) -> tuple[bytes, str]:
         return b"", f"the element's image could not be cut from the page screenshot ({exc})"
 
 
-def _page_key(tenant_id, project_id, run_key: str, route: str) -> str:
-    return f"a11y/{tenant_id}/{project_id}/{run_key or 'norun'}/{_slug(route)}/page.png"
+def _image_key(tenant_id, project_id, kind: str, data: bytes) -> str:
+    """An image's key, derived from **its own bytes** rather than from the run that took it.
 
+    This is load-bearing, and getting it wrong is silent. `dispatch.content_hash` fingerprints
+    everything the judge looks at — the markup, the surrounding text, and *the pointer to the
+    picture* — so that a cached verdict can never be stale. Naming a crop after its run gave the
+    same untouched element a new pointer on every run, so the fingerprint changed every time and
+    **the cache could never hit**: every run would re-judge every element of every screen, which
+    is exactly the cost QA-07 exists to prevent. It was invisible because nothing dispatches yet.
 
-def _crop_key(tenant_id, project_id, run_key: str, route: str, index: int) -> str:
-    return (
-        f"a11y/{tenant_id}/{project_id}/{run_key or 'norun'}/{_slug(route)}/"
-        f"element-{index:04d}.png"
-    )
+    Content-addressing fixes both directions at once. An unchanged element re-renders to
+    byte-identical pixels, so the same name, so the same fingerprint, so a cache hit. A changed
+    element produces different pixels and a different name, so it is judged again — which is
+    correct, and is the property the cache's own safety argument rests on.
+
+    Consequence worth knowing: a screen whose pixels genuinely differ between runs (a clock, a
+    rotating banner, a carousel mid-animation) will re-judge. That is the right answer rather
+    than a defect — the visual question may have a different answer — but it means caching pays
+    off on stable screens and not on animated ones.
+    """
+    return f"a11y/{tenant_id}/{project_id}/{kind}/{sha256(data).hexdigest()}.png"
 
 
 def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_store=None) -> dict:
@@ -133,7 +140,7 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_st
     page_png, page_reason = screenshot_bytes(screen)
     if page_png:
         try:
-            store.put(_page_key(tenant_id, project_id, run_key, route), page_png,
+            store.put(_image_key(tenant_id, project_id, "pages", page_png), page_png,
                       content_type="image/png")
         except Exception as exc:  # noqa: BLE001 — the elements still matter without the picture
             page_png, page_reason = b"", f"the page screenshot could not be stored ({exc})"
@@ -163,7 +170,7 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_st
             else:
                 crop, reason = _crop(page_png, box)
                 if crop:
-                    key = _crop_key(tenant_id, project_id, run_key, route, index)
+                    key = _image_key(tenant_id, project_id, "elements", crop)
                     try:
                         store.put(key, crop, content_type="image/png")
                         screenshot_ref = key
