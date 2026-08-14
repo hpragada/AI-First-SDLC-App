@@ -30,7 +30,7 @@ from hashlib import sha256
 
 from apps.tenancy.context import tenant_context
 
-from .capture import screenshot_bytes
+from .capture import fingerprint, screenshot_bytes
 
 #: Long edge a stored crop is reduced to. Element crops are small already; this only catches a
 #: full-width hero on a retina capture, and keeps what the judge is sent inside the transport
@@ -121,6 +121,66 @@ def _image_key(tenant_id, project_id, kind: str, data: bytes) -> str:
     return f"a11y/{tenant_id}/{project_id}/{kind}/{sha256(data).hexdigest()}.png"
 
 
+def _carry_forward(tenant_id, project_id, run_key: str, route: str, screen_hash: str):
+    """This run's rows for a screen already captured identically before, or None (QA-07).
+
+    **Skip the work, never the coverage.** The obvious saving is to notice an unchanged screen
+    and do nothing — and that would be wrong: a run's candidates are read by its own run key,
+    so a screen that produced no rows for this run would simply be absent from what the AI pass
+    covers, and absent from the conformance report, with nothing anywhere saying why. So the
+    previous capture's rows are copied to this run instead. No decode, no crop, no object
+    write; the crop pointers stay valid because a picture is named after its own bytes.
+
+    Deliberately keyed on (project, route, screen_hash) and NOT on the run: the point is to
+    recognise the screen across runs. Rows already filed under *this* run key are excluded, so
+    re-posting a screen inside one run still takes the ordinary idempotent path.
+    """
+    from .models import A11yCandidateBundle
+
+    with tenant_context(tenant_id):
+        previous = list(
+            A11yCandidateBundle.objects
+            .filter(tenant_id=tenant_id, project_id=project_id, route=route,
+                    screen_hash=screen_hash)
+            .exclude(run_key=run_key)
+            .order_by("-created_at", "position")
+        )
+        if not previous:
+            return None
+        # One prior capture, not a merge of several: rows from two different runs of the same
+        # screen are the same rows, and taking the newest run's set keeps them consistent.
+        source_run = previous[0].run_key
+        rows = [row for row in previous if row.run_key == source_run]
+        for row in sorted(rows, key=lambda r: r.position):
+            A11yCandidateBundle.objects.update_or_create(
+                tenant_id=tenant_id, project_id=project_id, run_key=run_key,
+                route=route, selector=row.selector,
+                defaults={
+                    "run_id": run_key or None,
+                    "position": row.position,
+                    "url": row.url,
+                    "checkers": list(row.checkers),
+                    "element": row.element,
+                    "axe": row.axe,
+                    "screenshot_ref": row.screenshot_ref,
+                    "uncapturable_reason": row.uncapturable_reason,
+                    "screen_hash": screen_hash,
+                },
+            )
+    uncapturable = sum(1 for row in rows if not row.screenshot_ref)
+    return {
+        "route": route,
+        "captured": len(rows),
+        "selected": len(rows),
+        "skipped": 0,
+        "uncapturable": uncapturable,
+        "page_image": any(row.screenshot_ref for row in rows),
+        "page_image_reason": "",
+        "reused": True,
+        "screen_hash": screen_hash,
+    }
+
+
 def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_store=None) -> dict:
     """Store one captured screen's candidate bundles. Idempotent per (run, route, selector).
 
@@ -136,6 +196,14 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_st
     elements = list(screen.get("elements") or [])
     run_key = str(run_id or "")
     store = _object_store(object_store)
+
+    # QA-07: has this exact screen already been captured for this project? If so, carry those
+    # rows forward and do no image work at all. Checked before anything is decoded or cropped,
+    # because everything below this line is the cost being avoided.
+    screen_hash = fingerprint(screen)
+    carried = _carry_forward(tenant_id, project_id, run_key, route, screen_hash)
+    if carried is not None:
+        return carried
 
     page_png, page_reason = screenshot_bytes(screen)
     if page_png:
@@ -191,6 +259,7 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_st
                     "axe": (raw or {}).get("axe") or {},
                     "screenshot_ref": screenshot_ref,
                     "uncapturable_reason": reason,
+                    "screen_hash": screen_hash,
                 },
             )
             stored += 1
@@ -203,6 +272,8 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_st
         "uncapturable": uncapturable,
         "page_image": bool(page_png),
         "page_image_reason": page_reason,
+        "reused": False,
+        "screen_hash": screen_hash,
     }
 
 
@@ -223,6 +294,12 @@ def ingest_capture(*, tenant_id, project_id, text: str, run_id=None, object_stor
                       run_id=run_id, object_store=object_store)
         for screen in screens
     ]
+    reused = sum(1 for r in results if r["reused"])
+    summary = summarize(screens)
+    if reused:
+        # Said out loud, because "did the saving work?" is otherwise unanswerable — and the
+        # cache defect this task opened with was invisible for exactly that reason.
+        summary = f"{summary}; {reused} screen(s) unchanged and carried forward"
     return {
         "imported": True,
         "screens": results,
@@ -230,7 +307,8 @@ def ingest_capture(*, tenant_id, project_id, text: str, run_id=None, object_stor
         "selected": sum(r["selected"] for r in results),
         "skipped": sum(r["skipped"] for r in results),
         "uncapturable": sum(r["uncapturable"] for r in results),
-        "summary": summarize(screens),
+        "reused_screens": reused,
+        "summary": summary,
     }
 
 

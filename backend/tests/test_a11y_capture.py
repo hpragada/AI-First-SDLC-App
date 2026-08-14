@@ -441,6 +441,237 @@ def test_ingest_capture_stores_every_screen_in_the_document(world):
     assert {b.route for b in A11yCandidateBundle.objects.all()} == {"/home", "/two"}
 
 
+# ── QA-07: only do the work for what changed ────────────────────────────────────────
+
+def test_the_same_screen_captured_twice_has_the_same_fingerprint():
+    from apps.a11y.capture import fingerprint
+
+    parsed = parse_capture(json.dumps(_screen()))
+    assert fingerprint(parsed[0]) == fingerprint(parse_capture(json.dumps(_screen()))[0])
+
+
+@pytest.mark.parametrize("change", [
+    {"elements": [_element(attrs={"alt": "Our spring range"})]},          # markup
+    {"elements": [_element(text="Buy now")]},                            # visible text
+    {"elements": [_element(accessible_name="Purchase")]},                # announced name
+    {"elements": [_element(styles={**_STYLES, "color": "rgb(200,0,0)"})]},  # a computed style
+    {"elements": [_element(context="Clearance")]},                       # surrounding text
+    {"elements": [_element(box={"x": 40, "y": 20, "width": 120, "height": 80})]},  # moved
+    {"route": "/checkout"},                                              # a different screen
+    {"screenshot_base64": base64.b64encode(_png(colour=(9, 9, 9))).decode("ascii")},  # pixels
+])
+def test_anything_that_could_change_a_verdict_changes_the_fingerprint(change):
+    """The dangerous direction is a screen that looks unchanged after a change that mattered —
+    that is a stale verdict in a conformance report. Every fact anything downstream reads has
+    to move the fingerprint, so the elements are hashed whole rather than a chosen subset."""
+    from apps.a11y.capture import fingerprint
+
+    base = fingerprint(parse_capture(json.dumps(_screen()))[0])
+    changed = fingerprint(parse_capture(json.dumps(_screen(**change)))[0])
+    assert base != changed
+
+
+def test_an_unchanged_screen_is_carried_forward_with_no_image_work(world):
+    """The saving: no decode, no crop, no object write for a screen nobody touched."""
+    store = _WatchingStore()
+    parsed = parse_capture(json.dumps(_screen()))[0]
+    first = _make_run(world, "wf-1")
+    ingest_screen(tenant_id=world["t"], project_id=world["p"], screen=parsed,
+                  run_id=str(first.id), object_store=store)
+    writes_after_first = len(store.writes)
+
+    second = _make_run(world, "wf-2")
+    out = ingest_screen(tenant_id=world["t"], project_id=world["p"], screen=parsed,
+                        run_id=str(second.id), object_store=store)
+    assert out["reused"] is True
+    assert len(store.writes) == writes_after_first          # nothing new was written
+
+
+def test_a_carried_forward_screen_keeps_its_coverage(world):
+    """Skip the work, never the coverage. A run's candidates are read by its own run key, so a
+    screen that produced no rows for this run would simply be absent from what the AI pass
+    covered — and absent from the conformance report, with nothing saying why."""
+    store = InMemoryObjectStore()
+    parsed = parse_capture(json.dumps(_screen()))[0]
+    first, second = _make_run(world, "wf-1"), _make_run(world, "wf-2")
+    for run in (first, second):
+        ingest_screen(tenant_id=world["t"], project_id=world["p"], screen=parsed,
+                      run_id=str(run.id), object_store=store)
+
+    before = [(r.checker, r.candidate.selector, r.candidate.screenshot_ref)
+              for r in requests_for(world["t"], world["p"], str(first.id))]
+    after = [(r.checker, r.candidate.selector, r.candidate.screenshot_ref)
+             for r in requests_for(world["t"], world["p"], str(second.id))]
+    assert after == before and len(after) == 2
+
+
+def test_a_changed_screen_is_captured_again(world):
+    store = _WatchingStore()
+    first, second = _make_run(world, "wf-1"), _make_run(world, "wf-2")
+    ingest_screen(tenant_id=world["t"], project_id=world["p"],
+                  screen=parse_capture(json.dumps(_screen()))[0],
+                  run_id=str(first.id), object_store=store)
+    writes_after_first = len(store.writes)
+
+    changed = parse_capture(json.dumps(_screen(
+        elements=[_element(attrs={"alt": "Our spring range"})])))[0]
+    out = ingest_screen(tenant_id=world["t"], project_id=world["p"], screen=changed,
+                        run_id=str(second.id), object_store=store)
+    assert out["reused"] is False and len(store.writes) > writes_after_first
+
+
+def test_reposting_a_screen_inside_one_run_is_not_a_reuse(world):
+    """Rows already filed under THIS run take the ordinary idempotent path — otherwise a
+    re-post would be reported as a saving that never happened."""
+    store = InMemoryObjectStore()
+    parsed = parse_capture(json.dumps(_screen()))[0]
+    run = _make_run(world, "wf-1")
+    outs = [ingest_screen(tenant_id=world["t"], project_id=world["p"], screen=parsed,
+                          run_id=str(run.id), object_store=store) for _ in range(2)]
+    assert [o["reused"] for o in outs] == [False, False]
+    assert A11yCandidateBundle.objects.count() == 2
+
+
+def test_the_capture_summary_says_what_was_carried_forward(world):
+    store = InMemoryObjectStore()
+    body = json.dumps(_screen())
+    first, second = _make_run(world, "wf-1"), _make_run(world, "wf-2")
+    ingest_capture(tenant_id=world["t"], project_id=world["p"], text=body,
+                   run_id=str(first.id), object_store=store)
+    out = ingest_capture(tenant_id=world["t"], project_id=world["p"], text=body,
+                         run_id=str(second.id), object_store=store)
+    assert out["reused_screens"] == 1 and "carried forward" in out["summary"]
+
+
+def test_a_judgment_run_records_its_cost_like_every_other_run(world):
+    """QA-07 AC2, already true before this task and pinned here so it stays true.
+
+    Judging IS a `Run`, so `Run.cost_usd` carries it and every existing cost display works
+    unchanged — which is exactly why correction R6 says not to build a metering table. Nothing
+    new was written for this; a claim that costs are recorded should still be checkable."""
+    from decimal import Decimal
+
+    from apps.runs.models import Run
+    from orchestration.activities import register_phase_result_core
+    from orchestration.types import AgentRunInput, PhaseReport
+
+    run = _make_run(world, "wf-cost")
+    register_phase_result_core(
+        AgentRunInput(run_id=str(run.id), tenant_id=world["t"], project_id=world["p"],
+                      work_item_id=str(run.work_item_id), agent_spec_id=str(run.agent_spec_id),
+                      phase="a11y_judge"),
+        PhaseReport(status="ok", body="judged 12 elements", cost_usd=0.42),
+    )
+    assert Run.objects.get(id=run.id).cost_usd == Decimal("0.4200")
+
+
+def test_a_stored_verdict_names_the_model_that_produced_it(world):
+    """QA-07 AC3, already true from QA-02 and pinned here for the same reason. Read from the
+    `Run`, never from the agent — which model produced a verdict is the one fact in a
+    compliance record that must not be self-declared."""
+    from apps.a11y.dispatch import record_verdict
+    from apps.a11y.models import A11yJudgmentCache
+    from integrations.types import A11yJudgment
+
+    run = _make_run(world, "wf-audit")
+    run.engine, run.model, run.prompt_version = "claude-code", "a-specific-model", "v9"
+    run.save(update_fields=["engine", "model", "prompt_version"])
+    record_verdict(
+        tenant_id=world["t"], project_id=world["p"], run_id=str(run.id),
+        content_hash="c" * 64,
+        judgment=A11yJudgment(criteria=("1.1.1",), verdict="pass", confidence=0.9,
+                              evidence="looked", suggested_fix="", checker="alt"),
+    )
+    row = A11yJudgmentCache.objects.get()
+    assert (row.engine, row.model, row.prompt_version) == ("claude-code", "a-specific-model", "v9")
+
+
+def test_the_screen_fingerprint_is_deliberately_broader_than_the_judgment_cache(world):
+    """The two layers answer different questions, and the difference is load-bearing.
+
+    The fingerprint asks "is this capture identical?" and must be strict, because it decides
+    whether to look at a screen at all. The judgment cache asks "has this exact question been
+    answered?" and reads only what the judge sees. So a change to something only the selection
+    rules read — an attribute that decides *whether* an element is judged — re-captures the
+    screen but does not re-judge an element whose markup, context and picture are unchanged.
+    Costing a crop to be safe is the right trade; skipping a judgment that had to be redone is
+    not.
+    """
+    store = InMemoryObjectStore()
+    first, second = _make_run(world, "wf-1"), _make_run(world, "wf-2")
+    # `tabindex` makes `semantics` apply; nothing about the markup the judge reads changes.
+    base = _screen(elements=[_element(tag="div", attrs={}, text="Buy", accessible_name="Buy",
+                                      interactive=True, html="<div>Buy</div>")])
+    tweaked = _screen(elements=[_element(tag="div", attrs={"tabindex": "0"}, text="Buy",
+                                         accessible_name="Buy", interactive=True,
+                                         html="<div>Buy</div>")])
+    out_a = ingest_screen(tenant_id=world["t"], project_id=world["p"], screen=base,
+                          run_id=str(first.id), object_store=store)
+    out_b = ingest_screen(tenant_id=world["t"], project_id=world["p"], screen=tweaked,
+                          run_id=str(second.id), object_store=store)
+    assert out_a["screen_hash"] != out_b["screen_hash"]     # re-captured...
+    assert (requests_for(world["t"], world["p"], str(first.id))[0].content_hash
+            == requests_for(world["t"], world["p"], str(second.id))[0].content_hash)
+    #                                                       # ...but the same question
+
+
+def test_only_the_changed_screen_reaches_the_ai(world, monkeypatch):
+    """QA-07 AC1, end to end: two screens, one edited, and the second run asks the AI about
+    exactly one of them. Both savings have to work together — the screen is carried forward
+    without image work, and its elements are then served from the judgment cache."""
+    from apps.a11y import dispatch
+    from apps.a11y.dispatch import dispatch_judgments, record_verdict
+    from integrations.types import A11Y_CHECKER_CRITERIA, A11yJudgment
+
+    store = InMemoryObjectStore()
+    first, second = _make_run(world, "wf-1"), _make_run(world, "wf-2")
+    # The two screens must be genuinely different, not two copies: the judgment cache is keyed
+    # on what the judge LOOKS AT and deliberately excludes the route, so identical markup in an
+    # identical page image is the same question wherever it sits (QA-02).
+    home = _screen(elements=[_element()])
+    checkout = _screen(
+        route="/checkout",
+        screenshot_base64=base64.b64encode(_png(colour=(20, 60, 160))).decode("ascii"),
+        elements=[_element(selector="img.promo", attrs={"alt": "IMG_9"},
+                           html='<img class="promo" alt="IMG_9">')])
+    ingest_capture(tenant_id=world["t"], project_id=world["p"],
+                   text=json.dumps({"screens": [home, checkout]}),
+                   run_id=str(first.id), object_store=store)
+
+    # The first run judged everything, so every element has a stored verdict.
+    for request in requests_for(world["t"], world["p"], str(first.id)):
+        record_verdict(tenant_id=world["t"], project_id=world["p"], run_id=str(first.id),
+                       content_hash=request.content_hash,
+                       judgment=A11yJudgment(
+                           criteria=A11Y_CHECKER_CRITERIA[request.checker], verdict="pass",
+                           confidence=0.9, evidence="looked", suggested_fix="",
+                           checker=request.checker))
+
+    # Second run: /home is untouched, /checkout's image got real alt text.
+    fixed = dict(checkout, elements=[_element(
+        selector="img.promo", attrs={"alt": "Spring sale — 20% off"},
+        html='<img class="promo" alt="Spring sale — 20% off">')])
+    out = ingest_capture(tenant_id=world["t"], project_id=world["p"],
+                         text=json.dumps({"screens": [home, fixed]}),
+                         run_id=str(second.id), object_store=store)
+    assert out["reused_screens"] == 1                       # /home did no image work
+
+    monkeypatch.setattr(dispatch, "judge_available", lambda *a, **k: "")
+    triggered: list = []
+
+    def _trigger(**kw):
+        triggered.append(kw)
+        return type("O", (), {"run_id": str(second.id)})()
+
+    result = dispatch_judgments(
+        tenant_id=world["t"], project_id=world["p"],
+        work_item_id=str(second.work_item_id),
+        requests=requests_for(world["t"], world["p"], str(second.id)), trigger=_trigger,
+    )
+    assert result.screens == ["/checkout"]                  # and nothing from /home
+    assert len(result.from_cache) == 1 and len(result.dispatched) == 1
+
+
 # ── what dispatch reads back ────────────────────────────────────────────────────────
 
 def test_requests_carry_the_platforms_crop_pointer_not_the_captures_claim(world):

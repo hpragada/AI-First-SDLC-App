@@ -25,6 +25,7 @@ import base64
 import binascii
 import json
 from collections.abc import Mapping
+from hashlib import sha256
 
 #: The format version the companion writes and this parser reads. Bumped only for a change a
 #: reader must know about; a *new field* is not one — `CapturedElement.from_dict` ignores what
@@ -219,6 +220,36 @@ def parse_capture(text: str) -> list[dict]:
             f"Nothing was stored — post them in smaller batches."
         )
     return [_screen(screen) for screen in screens]
+
+
+def fingerprint(screen: Mapping) -> str:
+    """One screen's identity — everything about it that could change what gets judged (QA-07).
+
+    Two captures of a screen nobody touched produce the same string, which is what lets the
+    platform skip the work of cropping and storing it again. So this has to cover **every**
+    fact downstream reads: the selection rules read the tag, role, attributes, text, accessible
+    name, interactivity and computed styles; the judge reads the markup, the surrounding text
+    and the picture. Leave one out and an unchanged-looking screen would be skipped after a
+    change that mattered — a stale verdict in a compliance report, which is the one failure
+    this whole layer exists to prevent.
+
+    So it hashes the elements **whole**, rather than a chosen subset. A capture that grows a
+    new field therefore changes the fingerprint and costs one re-judgment, which is the safe
+    direction: re-doing work is expensive, and skipping work that needed doing is wrong.
+
+    The page image is hashed by its bytes, so a re-render that shifted a pixel is a different
+    screen. That is deliberate for the same reason, and it means this saving lands on stable
+    screens rather than on animated ones.
+    """
+    digest = sha256()
+    digest.update(str(screen.get("route") or "").encode("utf-8"))
+    image, reason = screenshot_bytes(screen)
+    digest.update(sha256(image).digest() if image else reason.encode("utf-8"))
+    digest.update(
+        json.dumps(list(screen.get("elements") or []), sort_keys=True,
+                   separators=(",", ":"), default=str).encode("utf-8")
+    )
+    return digest.hexdigest()
 
 
 def summarize(screens: list[dict]) -> str:

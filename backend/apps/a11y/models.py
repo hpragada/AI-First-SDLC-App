@@ -105,6 +105,10 @@ class A11yCandidateBundle(TenantScopedModel):
     # come out the same way twice: a run that cannot be reproduced cannot be compared against
     # the golden set (QA-09).
     position = models.PositiveIntegerField(default=0)
+    # The whole screen's identity at capture time (QA-07, `capture.fingerprint`). A later run
+    # whose capture of this route hashes the same is carried forward from these rows instead of
+    # being cropped and stored again — the screen's coverage is kept, only the work is skipped.
+    screen_hash = models.CharField(max_length=64, blank=True, db_index=True)
     # Bounded, not a TextField: it sits in a unique index, and Postgres refuses an index entry
     # over ~2.7 KB. Ingest truncates rather than failing the whole screen on one long selector.
     selector = models.CharField(max_length=512)       # unique within a route
