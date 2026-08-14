@@ -96,19 +96,49 @@ def _looks_encoded(seg: str) -> bool:
     return case_flips >= 3 and digits >= 1
 
 
-def _is_code_reference(value: str) -> bool:
-    """True when the RHS is an attribute/name reference (code), not a credential literal.
+#: A plain identifier — no dots. `isClosingBracketToken`, `refresh_token_expiry`.
+_BARE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+#: camelCase / PascalCase / snake_case word boundaries, so an identifier can be read as the
+#: words it is made of. `isClosingBracketToken` -> is · Closing · Bracket · Token.
+_WORD_PARTS = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z]+|[a-z]+|[0-9]+")
+_MIN_WORDS = 2
 
-    Signature of code: a dotted identifier that is either receiver-prefixed (`self.`/`cls.`/`this.`)
-    or snake_case, and whose segments read as words rather than base64/hex blobs. This keeps a real
-    token that merely contains a dot (a JWT-ish `eyJ….eyJ…`, a base64url blob) flagged — those have
-    encoded-looking segments — while letting an attribute chain like `self.refresh_token_expiry`
-    through (JWTs are also caught independently by the high-precision `_PATTERNS`)."""
-    if not _DOTTED_IDENTIFIER.match(value):
-        return False
-    if not (value.startswith(("self.", "cls.", "this.")) or "_" in value):
-        return False
-    return not any(_looks_encoded(seg) for seg in value.split("."))
+
+def _reads_as_words(value: str) -> bool:
+    """True when the value decomposes into two or more real words — how a programmer names a
+    thing, and not how a credential looks.
+
+    This is the distinction that matters: `isClosingBracketToken` is four words, while
+    `abcdefghijklmnopqrst` is one long run of letters and stays flagged. A generated secret has
+    no word structure, so requiring two words costs nothing in detection."""
+    words = [part for part in _WORD_PARTS.findall(value) if part.isalpha() and len(part) >= 2]
+    return len(words) >= _MIN_WORDS
+
+
+def _is_code_reference(value: str) -> bool:
+    """True when the RHS is a name in the source (code), not a credential literal.
+
+    Two shapes count as code, and both must still read as words rather than as a base64/hex
+    blob — so a real token is never let through by either:
+
+    * **A dotted attribute chain** that is receiver-prefixed (`self.`/`cls.`/`this.`) or
+      snake_case: `self.refresh_token_expiry` (S.No 151). A real token that merely contains a
+      dot (a JWT-ish `eyJ….eyJ…`, a base64url blob) has encoded-looking segments and stays
+      flagged — and JWTs are caught independently by the high-precision `_PATTERNS` anyway.
+    * **A bare identifier** whose name happens to contain a keyword: `isClosingBracketToken`,
+      where `_ASSIGNMENT` matched "Token" *inside* the name rather than as a field called
+      "token". This is the same failure as S.No 151 with the dot removed, and it is what turned
+      one `npm install` into 535 "high entropy secrets" — every one a variable name in a
+      dependency. `supersecretpassword123` is NOT let through: digits make it read as encoded,
+      and it is one word, not two.
+    """
+    if _DOTTED_IDENTIFIER.match(value):
+        if not (value.startswith(("self.", "cls.", "this.")) or "_" in value):
+            return False
+        return not any(_looks_encoded(seg) for seg in value.split("."))
+    if _BARE_IDENTIFIER.match(value):
+        return not _looks_encoded(value) and _reads_as_words(value)
+    return False
 
 # Committed *template* files are meant to hold illustrative placeholders, so the generic entropy
 # heuristic (which guesses at "custom" secrets) is skipped for them — a placeholder there is by
