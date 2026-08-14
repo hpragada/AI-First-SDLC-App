@@ -102,7 +102,7 @@ Before writing a single test case, produce the traceability coverage map:
 | FR-002 | Functional | [statement] | — | ❌ Gap — must write TC |
 | NFR-001 | Performance | P95 latency < 200ms | TC-PERF-001 | ✅ Covered |
 | NFR-002 | Availability | 99.9% uptime | — | ❌ Gap — SLO monitoring (Phase 13) |
-| NFR-003 | Accessibility | WCAG 2.2 AA | TC-ACC-001 | ✅ Covered |
+| NFR-003 | Accessibility | WCAG 2.2 AA | TC-031 | ✅ Covered |
 ```
 
 **Gap resolution rule:** Every ❌ functional gap must be resolved before Step 4 (Test Case Writing). Every ❌ NFR gap must either have a test case assigned or be explicitly documented as "Verified by Phase 13 monitoring."
@@ -397,6 +397,16 @@ npx axe https://staging.[domain]/[route] --exit
 - Zero Critical violations (WCAG Level A failures — color contrast, missing alt text, missing form labels)
 - Zero Serious violations (WCAG Level AA failures)
 - Report all Moderate and Minor violations for tracking but do not block the quality gate
+
+**Write one Accessibility test case per screen — this is what makes the scan run.**
+
+The scan above does not execute by itself: the Test Automation agent (09b) automates **test cases**, one per run, so a screen with no accessibility test case is a screen nobody scans. For every screen in the `wireframe` artifacts' screen inventory, write a case in the Step 5 format with:
+
+- **Type:** `Accessibility`, and **Automation Candidate:** `Yes` — 09b turns it into a real axe assertion against that route.
+- **A plain `TC-XXX` number from the same sequence as every other case.** Never a decorated id such as `TC-ACC-001`: the platform recovers a test case's identity from the test's name, and a decorated id does not resolve to a case — the defect that opens for it then loses its priority and lands as Critical whatever the finding was.
+- **Its own case per screen.** Never attach the accessibility check to a screen's functional case: results are identified by test case, so a passing functional test and a failing accessibility test sharing one id read to the platform as one test that flipped — which is the definition of a flaky test, and a flaky test is quarantined and **stops blocking the gate**. A real accessibility failure would disappear from the gate. One screen, one accessibility case, its own number.
+- **Priority set from the WCAG level the screen is held to**, because the defect that opens inherits it: a Level A failure is `Critical`, a Level AA failure is `High`. State it in the case so the severity of any defect is decided here, by you, and not by a fallback.
+- **Expected Result:** zero Critical and zero Serious violations at WCAG 2.2 AA on that route; Moderate and Minor are reported but do not fail the case.
 
 **Manual keyboard navigation checks (required — cannot be automated):**
 

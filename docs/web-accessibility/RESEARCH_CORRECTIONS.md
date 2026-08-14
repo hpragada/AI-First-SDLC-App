@@ -24,6 +24,12 @@ A search for axe across every `.py`, `.ts`, `.tsx` and `.json` in `backend/`, `r
 
 **Tasks:** new **QA‑11a** (09b generates axe assertions) and **QA‑11b** (capture AI candidate bundles). QA‑12 consumes the bundles rather than hooking a scan that doesn't exist.
 
+> **Amended while building QA‑11a (2026‑08‑14) — this entry was itself too generous about 09b.**
+> "09b already generates Playwright tests, **runs them in the worktree**, and its JUnit output already flows through" is two-thirds true. The road from a JUnit report to self-closing defects is real and works. But **09b did not run what it generated** — its step was called *Dry Run Attempt* and compiled or type-checked only, telling one stack in as many words not to execute the test — and **nothing configured a JUnit reporter**, so no report existed for the companion to collect. "No platform code at all" was therefore wrong in three ways, each now fixed in QA‑11a:
+> 1. **The suite has to actually run**, and the report has to land where the companion looks (`test-results/junit.xml`).
+> 2. **An accessibility result needs its own test case.** Naming the scan after the screen's *functional* test id — as the task text said — would make one pass and one failure share an id, which the platform reads as a **flaky test**: quarantined, and quarantined tests do not block the gate. A real accessibility failure would have disappeared from the gate while looking like correct behaviour. (D‑A11Y‑8.)
+> 3. **Evidence was being destroyed at the door.** The failure text was cut to 2000 characters *at parse time*, because the `test_report` artifact had no body and a database column was the only place it could live. Eighteen violations arrived as four. The artifact now carries its full body in the object store, which is what #1/#3 prescribed all along. (D‑A11Y‑11.)
+
 ---
 
 ## R2 — "Rendered capture + accessibility tree — ALREADY EXISTS" — **TRUE BUT NARROW**

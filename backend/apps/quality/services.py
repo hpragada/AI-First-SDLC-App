@@ -25,9 +25,17 @@ from apps.registry.models import Artifact, TraceEdge
 from apps.tenancy.context import tenant_context
 from apps.workitems.models import WorkItem
 
+from .junit import summarize
 from .models import TestExecution, TestQuarantine
 
 _BLOCKING_FAIL = "FAIL"
+
+#: How much of a failure's text stays on the stored row — and therefore goes to the tracker,
+#: which imposes its own hard field limit (Jira caps a text field at 32,767 characters, and a
+#: push that exceeds it fails, breaking the loop that opens and closes defects). The complete
+#: text is never lost: it is the `test_report` artifact's body in the object store, and a row
+#: that is shortened says where the rest is (QA-11a).
+_ROW_EVIDENCE_CHARS = 2000
 
 
 def _normalize(results: list) -> list[dict]:
@@ -40,6 +48,29 @@ def _normalize(results: list) -> list[dict]:
             test_ref, status, evidence = r.test_ref, r.status, getattr(r, "evidence", "")
         if test_ref and status:
             out.append({"test_ref": test_ref, "status": status.upper(), "evidence": evidence})
+    return out
+
+
+def _rows_for_state(rows: list[dict], report_id: str | None) -> list[dict]:
+    """The rows as they are stored and pushed to the tracker: full text where it fits, and
+    where it does not, as much as fits followed by **where the rest is**.
+
+    Deliberately not a "truncated" warning. Telling a reader their evidence was cut is a
+    confession; naming the report that holds all of it is a destination — and nobody has to
+    re-run anything to see it, which would be a different execution and therefore different
+    evidence anyway.
+    """
+    out = []
+    for row in rows:
+        evidence = row.get("evidence") or ""
+        if len(evidence) > _ROW_EVIDENCE_CHARS:
+            pointer = (
+                f"\n\nFull evidence: this run's test report (artifact {report_id})."
+                if report_id else "\n\nFull evidence: this run's test report."
+            )
+            keep = max(0, _ROW_EVIDENCE_CHARS - len(pointer))
+            evidence = evidence[:keep].rstrip() + pointer
+        out.append({**row, "evidence": evidence})
     return out
 
 
@@ -123,6 +154,16 @@ def import_test_results(
     passing = _passing(rows, quarantined)
     overall = TestExecution.Status.FAILED if failing else TestExecution.Status.PASSED
 
+    # File the full results FIRST — body to the object store, pointer on the artifact (#1/#3).
+    # Order is the whole point: everything below stores or forwards a *bounded* copy, so the
+    # complete text has to be filed before anything shortens it. Doing this last (as it was
+    # until QA-11a) is why evidence could only ever be as long as a database column allowed.
+    report_id = _register_test_report(tenant_id, project_id, run_id, rows)
+    code_id = _latest_code_artifact_id(tenant_id, work_item_id)
+    if code_id:
+        tools.add_trace_edge(tenant_id, report_id, code_id, "tests")
+    rows = _rows_for_state(rows, report_id)
+
     # Optional SoR push (idempotent via the prior execution ref).
     external_ref = None
     if push_to_sor:
@@ -152,12 +193,6 @@ def import_test_results(
                 tenant_id=tenant_id, work_item_id=work_item_id, **defaults
             )
 
-    # Register the test_report artifact (pointer/hash) + lineage to the code under test.
-    report_id = _register_test_report(tenant_id, project_id, run_id, rows)
-    code_id = _latest_code_artifact_id(tenant_id, work_item_id)
-    if code_id:
-        tools.add_trace_edge(tenant_id, report_id, code_id, "tests")
-
     # Defect loopback: open defects for failing tests, close those whose test now passes.
     opened, closed = _reconcile_defects(tenant_id, project_id, work_item_id, failing, passing,
                                         report_id)
@@ -178,18 +213,80 @@ def import_test_results(
     }
 
 
+def _report_body(rows: list[dict]) -> str:
+    """The run's results as a readable document — every failure's evidence, in full.
+
+    This is the body the `test_report` artifact never had (QA-11a). Until it existed, the only
+    place a failure's text could live was a database column, a column has to be bounded, and so
+    the evidence a developer needs was cut to a couple of thousand characters at the moment it
+    was parsed. Bodies belong in the object store (#1/#3); this builds one.
+    """
+    failing = [r for r in rows if r["status"] == _BLOCKING_FAIL]
+    other = [r for r in rows if r["status"] != _BLOCKING_FAIL]
+    lines = [
+        "# Test report",
+        "",
+        f"{summarize(rows)} — {len(rows)} result(s).",
+        "",
+    ]
+    if failing:
+        lines.append("## Failures")
+        lines.append("")
+        for row in failing:
+            lines.append(f"### {row['test_ref']}")
+            lines.append("")
+            evidence = row.get("evidence") or ""
+            if evidence:
+                # Fenced so a message containing markdown (or an HTML snippet from a scanner)
+                # renders as what it is rather than being interpreted.
+                lines.extend(["```", evidence, "```", ""])
+            else:
+                lines.extend(["_No evidence was reported for this failure._", ""])
+    if other:
+        lines.append("## Other results")
+        lines.append("")
+        lines.extend(f"- `{row['test_ref']}` — {row['status']}" for row in other)
+        lines.append("")
+    return "\n".join(lines)
+
+
 def _register_test_report(tenant_id, project_id, run_id, rows: list[dict]) -> str:
+    """Register (or update) the run's `test_report` artifact, with its full body staged.
+
+    Best-effort on the body: if the object store is unreachable the artifact is still
+    registered from the hash alone, exactly as before. A test import must never fail because
+    the evidence could not be filed — the defect loopback is what a red suite depends on.
+    """
     digest = hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
+    body = _report_body(rows)
+    staged = None
+    try:
+        # The key is deterministic per (tenant, project, run, phase, filename), so a re-import
+        # of the same run overwrites its own snapshot instead of accumulating copies.
+        staged = tools.stage_artifact_body(
+            tenant_id, project_id, run_id, "testing", "test-report.md", body,
+            content_type="text/markdown",
+        )
+    except Exception:  # noqa: BLE001 — see the docstring: never fail an import over the body
+        staged = None
+
     if run_id:
         with tenant_context(tenant_id):
             existing = Artifact.objects.filter(
                 tenant_id=tenant_id, run_id=run_id, type="test_report").first()
         if existing:
-            tools.update_artifact(tenant_id, str(existing.id), content_hash=digest)
+            # `update_artifact` carries no `s3_key`, and it does not need one: the staged key is
+            # deterministic, so re-staging above replaced the body behind the pointer this row
+            # already holds. Only the hash has to move.
+            tools.update_artifact(
+                tenant_id, str(existing.id),
+                content_hash=(staged or {}).get("content_hash") or digest,
+            )
             return str(existing.id)
     created = tools.register_artifact(
         tenant_id, project_id, run_id, "testing", "test_report", "internal",
-        content_hash=digest,
+        content_hash=(staged or {}).get("content_hash") or digest,
+        s3_key=(staged or {}).get("s3_key"),
     )
     return created["id"]
 

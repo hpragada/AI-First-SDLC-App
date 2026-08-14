@@ -207,9 +207,19 @@ def scan_worktree(worktree_path) -> list[SecretFinding]:
 
 
 # ── egress allowlist ────────────────────────────────────────────────
-# Always-allowed hosts: the tenant's GitHub, the Anthropic API. The platform host (from the
-# task's api_url) and any declared registries are merged in `for_task`.
-_DEFAULT_ALLOWED = ("api.github.com", "github.com", "codeload.github.com", "api.anthropic.com")
+# Always-allowed hosts: the tenant's GitHub, the Anthropic API, the npm registry. The platform
+# host (from the task's api_url) and any declared registries are merged in `for_task`.
+#
+# `registry.npmjs.org` is here because a JavaScript app under test cannot be **started** — let
+# alone tested — without installing its dependencies, so registry access is already a
+# precondition of every 09b build on such a project, not something accessibility introduced
+# (QA-11a). Naming it means the day real network isolation lands, those builds keep working
+# instead of failing for a reason nobody would connect to this list. yarn and pnpm default to
+# the same host. Other ecosystems' registries (NuGet, Maven, PyPI) are deliberately NOT added:
+# per-project declaration is what `extra_allowed_hosts` is for, and that path needs a
+# server-side way to declare them, which does not exist yet.
+_DEFAULT_ALLOWED = ("api.github.com", "github.com", "codeload.github.com", "api.anthropic.com",
+                    "registry.npmjs.org")
 
 
 def _host(url_or_host: str) -> str:

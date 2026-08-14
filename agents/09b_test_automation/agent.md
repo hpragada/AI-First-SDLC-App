@@ -8,8 +8,11 @@ Playwright MCP to discover real DOM locators, then generates fully compilable sc
 the Page Object Model pattern. Supports any language and framework: Selenium C# (NUnit), Selenium
 Java (TestNG), Playwright TypeScript, Playwright Python, Playwright C#, Cypress, and others. The
 tech stack is read from `# Project`; if absent, the agent asks once. Detects existing scaffolding
-(base classes, fixtures, config) in the worktree before creating it, to avoid overwrites. The
-generated scripts are code written into the companion worktree.
+(base classes, fixtures, config) in the worktree before creating it, to avoid overwrites. An
+`Accessibility` test case becomes a real axe-core scan of that screen at WCAG 2.2 AA. Then runs
+the suite against the live application and leaves its JUnit report where the platform collects
+it — a result is the only thing defects, the gate and the loopback can act on. The generated
+scripts are code written into the companion worktree.
 
 ## Role
 
@@ -398,7 +401,42 @@ tests/automated/
 
 ---
 
-## Step 6: Dry Run Attempt
+## Step 5a: Accessibility Cases — Generate a Real axe Scan (WCAG 2.2 AA)
+
+When the assigned `test_case` is `Type: Accessibility`, the script you generate scans that screen's route with axe-core instead of walking a functional flow. Everything else in this agent still applies: you still explore the live application first (Step 4), you still never overwrite scaffolding, and you still generate **one script for the one assigned TC**.
+
+**Which engine, per stack — and never add a dependency the project has not already accepted on your own initiative.** A test dependency you install lands in the client's pull request, so an unvetted package is a decision you are not entitled to make for them.
+
+| Stack | What to use |
+|---|---|
+| **Playwright TypeScript / JavaScript** | `@axe-core/playwright` — Deque's own integration for the engine accessibility tooling is standardised on. Add it as a dev dependency (`npm install -D @axe-core/playwright`) and say so when you report. |
+| **Playwright Python** | Use the axe integration the project **already** depends on. If it has none, stop and report that accessibility scanning is not wired for this stack — the available pure-Python wrappers are small community packages, and which one a client accepts is a human decision, not yours. |
+| **Any other stack** (Selenium C# / Java, Cypress, …) | Not wired yet. Report the case as `🚫 Not supported on this stack` and name the stack. **Never guess a package name** — a plausible-looking wrong import is worse than an honest gap, because it looks like a scan that ran. |
+
+**Scope the scan to the standard the project is held to**, so that every finding cites a criterion that exists in it:
+
+```ts
+new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa'])
+```
+
+**What fails the test.** Any violation of impact `critical` or `serious` fails it. `moderate` and `minor` are reported in the message and do **not** fail — that is the accessibility test case's own Expected Result, written by Phase 9.
+
+**The failure message is a developer's account of what is wrong, so write it for a reader.** Total first, then one line per violation, worst impact first:
+
+```
+18 violations on /checkout — 3 critical, 7 serious, 8 moderate
+1.4.3  serious    color-contrast   12 elements   .btn-secondary
+4.1.2  critical   button-name       2 elements   header > div:nth-child(3)
+1.1.1  critical   image-alt         1 element    img.hero
+```
+
+Take the WCAG criterion number from the rule's own `wcag…` tag (`wcag143` → 1.4.3) so the finding names the criterion rather than only axe's rule id. **Write the whole list — you are not writing to a size limit.** The platform keeps the complete output as the run's test report; the total on the first line is there so the summary on the defect reads correctly, not because the rest is discarded.
+
+**One route per accessibility case.** If a screen has several states worth scanning (an error state, a modal open), navigate to each within the one test and label each check with its state — still one test case, still one result.
+
+---
+
+## Step 6: Run the Suite and Leave the Report Where the Platform Reads It
 
 Where the tech stack supports it, attempt to verify the generated script compiles and runs in the worktree:
 
@@ -437,6 +475,30 @@ If Playwright MCP browser tools are available, optionally run a headed dry run:
 mcp__playwright__browser_navigate(url="[app_url]")
 # Verify the starting page loads correctly before declaring the script ready
 ```
+
+### Then actually run the suite
+
+A script that compiles has proved it is syntactically valid and nothing else. **Run it against the live application** — the preview URL you explored in Step 4 is up for exactly this — because a result is the only thing the platform can act on: the defect that opens, the one that closes itself on a later green run, and the gate all read the suite's report, and nothing else in the platform ever executes a test.
+
+**First, make the suite write a JUnit report where the platform looks.** The platform reads a fixed set of conventional locations, the first of which is `test-results/junit.xml`, relative to the worktree root. Add the reporter if it is missing — **never remove or replace a reporter the project already configures**:
+
+| Stack | How |
+|---|---|
+| Playwright TypeScript | in `playwright.config.ts`: `reporter: [['list'], ['junit', { outputFile: 'test-results/junit.xml' }]]` — keep any existing entries and append |
+| pytest | `--junitxml=test-results/junit.xml` in the project's pytest config (`addopts`), or on the command line if the project keeps no config |
+
+**Then run it:**
+
+```bash
+npx playwright test          # Playwright TypeScript
+python -m pytest             # pytest
+```
+
+**A failing test is a result, not a problem to make go away.** Do not edit the application to turn a failure green, do not delete or edit the report, and do not skip a failing test. Report what ran and what failed; the platform opens the defects and closes them when a later run passes.
+
+**If the suite cannot run at all** (the app will not come up, the browser is missing, dependencies will not install), say so plainly and name the reason. An absent report is read by the platform as "nothing ran" — which is correct and safe — while a report that says everything passed because nothing executed would be the one failure mode that matters.
+
+> The report is **collected from the worktree by the platform before teardown**, and `test-results/` is in the `.gitignore` from Step 3 — so it reaches the platform without ever being committed. Both are deliberate: do not "fix" the ignore rule to commit results, and do not move the report out of the conventional path to keep it.
 
 ---
 
@@ -478,6 +540,8 @@ The platform commits the generated scripts in the worktree, pushes the branch, a
 - [ ] No existing file overwritten
 - [ ] Script follows framework-specific code standards (waits, assertions, overlay handling)
 - [ ] Dry run attempted — compile/type check passes
+- [ ] The suite was **run** against the live application, and a JUnit report exists at the conventional path (or the reason it could not run is reported)
+- [ ] For an `Accessibility` case: the scan is scoped to WCAG 2.2 AA, fails on critical/serious, and its message leads with the violation totals
 - [ ] A `test_report` artifact registered with status, script path, and dry-run result
 
 ---
