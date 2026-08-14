@@ -26,6 +26,12 @@ failure — worse than returning none, because it reads as a clean pass. So ever
 element is accounted for: anything unjudged is stored as `uncertain` so it still reaches a
 person, **and** the run fails so nobody mistakes it for a complete one (team, 2026-08-13).
 
+**What `record_finding` accepts is checker-specific (QA-03).** Beyond the universal rules below
+it applies `checkers.schema`, which asks each checker's *failures* for the one thing that makes
+them actionable — the replacement alt text, the missing second colour cue, both sides of a
+label mismatch. Failures only, so an `uncertain` is never stranded on a requirement it just
+said it could not meet.
+
 **Malformed calls correct themselves.** Every rejection here is a `ValueError` carrying what
 was wrong and what is valid, which `RunnerStateView` returns as a 400 rather than a 500 — an
 agent reading "500" concludes the platform is broken and repeats the same call, while one
@@ -36,6 +42,7 @@ from __future__ import annotations
 
 from integrations.types import A11Y_VERDICTS, A11yJudgment, uncertain
 
+from .checkers import verify_answer
 from .dispatch import record_verdict
 
 #: The catalog phase this agent runs as — the key the completeness check keys off.
@@ -185,10 +192,19 @@ def record_finding(*, tenant_id, run_id, element_id, criteria, verdict, confiden
             f"or what you saw that led to it"
         )
 
+    # ...and the one further thing THIS check's failures need to be actionable (QA-03,
+    # D-A11Y-5). Applies to failures only, so an `uncertain` is never stranded on a
+    # requirement it just said it could not meet.
+    suggested_fix = str(suggested_fix or "").strip()
+    verify_answer(
+        checker=element.get("checker", ""), verdict=verdict,
+        evidence=evidence, suggested_fix=suggested_fix,
+    )
+
     judgment = A11yJudgment(
         criteria=tuple(reported), verdict=verdict,
         confidence=_coerce_confidence(confidence), evidence=evidence,
-        suggested_fix=str(suggested_fix or "").strip(),
+        suggested_fix=suggested_fix,
         # From the batch, never the agent's claim — see the module docstring.
         checker=element.get("checker", ""),
     )

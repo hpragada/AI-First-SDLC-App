@@ -80,27 +80,115 @@ turns on a defined term, that definition is the test — not your paraphrase of 
 Work through the batch in the order given. Screens are grouped deliberately: an element's
 meaning often depends on what else is on the page with it.
 
-For each element, ask only the question its `checker` names:
+For each element, ask only the question its `checker` names. The four are set out in full
+below — read the one you are being asked, including its boundary cases, before you answer.
 
-- **`alt` — WCAG 1.1.1.** Does the alternative text serve the same *purpose* the image serves
-  here? An image that conveys information needs an alternative carrying that information; a
-  purely decorative image needs to be hidden from assistive technology, not described.
-  `alt="image"`, `alt="photo"`, a filename, or a description of the picture that misses what it
-  is *for* all fail. Judge against what the surrounding context shows the image is doing.
-- **`semantics` — WCAG 1.3.1 and 4.1.2.** Is the structure real, or drawn? A heading that is
-  only large bold text, a list that is only styled divs, a table that is only aligned columns,
-  a control that is a `div` with a click handler — these look right and are unusable. Note that
-  **one element can breach both**: a `div` acting as a button fails 1.3.1 (the structure does
-  not say a control is there) *and* 4.1.2 (assistive technology cannot tell what it is or what
-  it is called). A real `<button>` with no accessible name breaches 4.1.2 alone.
-- **`color` — WCAG 1.4.1.** Is information conveyed by colour with no other cue? A required
-  field marked only red, a status shown only as a green or red dot, a chart legend
-  distinguished only by hue. There must be a second cue — text, a shape, a pattern, an icon.
-  This one usually needs to be *seen*; without visual evidence, say so.
-- **`label` — WCAG 2.5.3.** Does the accessible name contain the visible label text? A user
-  saying "click Buy now" must reach a control whose visible label is "Buy now"; an
-  `aria-label` of "Purchase" over a button reading "Buy now" breaks that. Compare the visible
-  text with the computed accessible name.
+### `alt` — WCAG 1.1.1 Non-text Content
+
+**The question:** does the alternative text serve the same *purpose* the image serves here?
+
+An image that conveys information needs an alternative carrying that information. A purely
+decorative image needs to be **hidden** from assistive technology, not described — a screen
+reader announcing "decorative swirl" is noise a sighted user never has to hear.
+
+The purpose is set by what surrounds the image, not by what is in the picture. The same
+photograph of a bridge is `alt="Golden Gate Bridge"` in an article about the bridge, and
+`alt=""` beside a paragraph that uses it as a mood image. Read the `context` before deciding.
+
+**Fails:** `alt="image"`, `alt="photo"`, `alt="icon"`; a filename (`alt="IMG_1234.jpg"`); text
+that describes the picture but misses what it is *for* (`alt="a bar chart"` where the chart is
+the only place the figures appear); an empty `alt` on an image carrying information; a
+described image that is purely decorative; alt text that repeats the caption or the link text
+next to it word for word.
+
+**Passes:** an empty `alt` on genuinely decorative content; alt text that conveys the same
+information the image does, at the length the purpose needs; a functional image inside a link
+or button whose alt names the **action** (`alt="Search"` on a magnifying glass), not the
+picture.
+
+**Boundary cases that are not failures.** Long is not wrong — a complex image may need a long
+alternative. An alt that differs in wording from the caption is fine as long as it does not
+duplicate it. An image whose alternative is genuinely provided in adjacent text may correctly
+carry `alt=""`; say so as the evidence for your pass.
+
+**Uncertain when:** you cannot see the image and the markup does not settle it. `alt=""` on an
+`<img src="chart.png">` with no surrounding text could be correct decoration or a lost chart,
+and guessing either way is worse than asking.
+
+### `semantics` — WCAG 1.3.1 Info and Relationships, and 4.1.2 Name, Role, Value
+
+**The question:** is the structure real, or drawn?
+
+A heading that is only large bold text, a list that is only styled `div`s, a table that is only
+aligned columns, a control that is a `div` with a click handler — these look right and are
+unusable. Keyboard users cannot reach them, screen-reader users cannot find them, and nothing
+announces what they are.
+
+**Name the two criteria separately — they are different failures:**
+
+- **1.3.1** is broken when the *structure* is not conveyed: the thing is a heading, a list, a
+  table or a control to the eye, and the markup does not say so.
+- **4.1.2** is broken when a *control's* role, name or state is not exposed: no accessible
+  name, a wrong role, a toggle whose pressed state is never announced.
+
+**One element can breach both.** A `div` with a click handler acting as a button fails 1.3.1
+(the structure does not say a control is there) *and* 4.1.2 (assistive technology cannot tell
+what it is or what it is called). One fix repairs both, so it is one finding naming both.
+
+**One element can breach only one.** A real `<button>` with no accessible name breaches
+**4.1.2 alone** — the structure is fine, the name is missing. Bold text standing in for a
+heading breaches **1.3.1 alone** — there is no control involved, so 4.1.2 does not apply.
+Naming both when only one broke puts a breach in the conformance report that was never found.
+
+**Passes:** a native control, or a `div` with a correct `role`, an accessible name, a
+`tabindex` making it reachable and state exposed through ARIA — a correctly built custom
+control is not a failure just because it is custom.
+
+**Uncertain when:** you can see a role and a name in the markup but cannot tell whether the
+state is kept up to date, or when the element's behaviour is not visible in what you were
+given.
+
+### `color` — WCAG 1.4.1 Use of Color
+
+**The question:** is information conveyed by colour with **no other visual cue**?
+
+A required field marked only red. A status shown only as a green or red dot. A chart legend
+distinguished only by hue. A link inside a paragraph that is only a different colour from the
+text around it. In each case a user who cannot distinguish those colours loses the
+information entirely.
+
+The test is *only*. A red asterisk is fine — the asterisk is the second cue. An error message
+in red **text** is fine — the words carry the meaning. A red border plus the word "Overdue" is
+fine. The failure is when removing the colour removes the meaning.
+
+**Note this is not contrast.** Whether the red is dark enough to read is 1.4.3, and a scanner
+measures that. You are asked only whether colour is doing work nothing else is doing.
+
+**Uncertain when you cannot see it — which will often be the case.** This question is usually
+settled by looking. If no image is available to you, record `uncertain` saying the element
+could not be seen. Do not infer from a class name, a colour value in the markup, or what the
+component is probably called. A `<span class="status-error">Failed</span>` visibly contains
+the word "Failed", so it may well pass — but say what you actually observed.
+
+### `label` — WCAG 2.5.3 Label in Name
+
+**The question:** does the accessible name **contain** the visible label text?
+
+Someone using voice control says "click Buy now" because that is what the button says. If the
+button's accessible name is "Purchase", the command does not reach it and the control is
+unusable by voice.
+
+**Contains, not equals.** A visible label "Buy now" with an accessible name "Buy now — opens
+in a new window" **passes**: the visible text is all there, in order, and the extra words are
+additional. "Purchase" fails. "Now buy" fails — the words are reordered, so speech recognition
+will not match it. A leading or trailing difference in punctuation or case is not a failure.
+
+**Only the visible text counts as the label** — the words a sighted user reads on the control
+itself, including text inside an image of text. Placeholder text is not a label. A separate
+description elsewhere on the page is not a label.
+
+**Uncertain when:** the visible label is an image of text you cannot see, or the accessible
+name is computed from something not present in what you were given.
 
 ### Step 4: Report each element as you finish it
 
@@ -117,6 +205,17 @@ record_a11y_finding(
   suggested_fix = what to change, for a "fail"
 )
 ```
+
+**What a `fail` has to carry, per check.** A failure a developer cannot act on is not a
+finding. These are enforced — a call missing them comes back rejected with the reason, and
+they apply to `fail` only, never to `pass` or `uncertain`:
+
+| check | a `fail` must also give |
+|---|---|
+| `alt` | the **replacement alt text**, in `suggested_fix`. Not "write better alt text" — the actual words to use. Proposing it is the reason this check is worth doing. |
+| `color` | the **missing second cue**, in `suggested_fix`. e.g. "add the word Overdue beside the red dot", "underline links inside body text". |
+| `label` | **both strings, quoted**, in `evidence` — the visible label and the accessible name. e.g. `visible label "Buy now", accessible name "Purchase"`. One alone is not a mismatch anyone can check. |
+| `semantics` | nothing extra — but name the criteria that actually broke, and quote the markup in `evidence`. |
 
 If a call is rejected, read the message: it names exactly what was wrong. Correct it and call
 again. Do not move on leaving an element unreported.

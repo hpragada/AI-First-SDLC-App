@@ -91,8 +91,12 @@ def ids_of(run_fixture) -> list[str]:
 
 def report(run_fixture, element_id, **kwargs):
     tenant, proj, row, _ = run_fixture
+    # `suggested_fix` is not decoration here: since QA-03 a failing `alt` finding must propose
+    # the replacement text, because "your alt is wrong" does not tell a developer what to
+    # write. See `apps.a11y.checkers.schema` and tests/test_a11y_checkers.py.
     payload = {"criteria": ["1.1.1"], "verdict": "fail", "confidence": 0.9,
-               "evidence": "alt is 'image', which says nothing about what it shows"}
+               "evidence": "alt is 'image', which says nothing about what it shows",
+               "suggested_fix": "Sales rose steadily through 2025, peaking in Q4"}
     payload.update(kwargs)
     return judge.record_finding(
         tenant_id=tenant.id, run_id=row.id, project_id=proj.id,
@@ -190,9 +194,16 @@ def test_grounding_needs_at_least_one_criterion():
 def test_a_full_batch_records_one_finding_per_element(run):
     tenant, proj, row, requests = run
     handles = ids_of(run)
+    # Evidence per checker rather than one generic line: since QA-03 a failing `label` finding
+    # has to quote both the visible label and the accessible name it disagrees with.
+    evidence_for = {
+        "alt": "alt is 'image', which says nothing about what it shows",
+        "semantics": "<div class='cta' onclick='buy()'>Buy</div> — nothing announces a control",
+        "label": "visible label \"Buy now\", accessible name \"Purchase\"",
+    }
     for handle, request in zip(handles, requests, strict=True):
         report(run, handle, criteria=[A11Y_CHECKER_CRITERIA[request.checker][0]],
-               verdict="fail", confidence=0.9, evidence="the markup shows it")
+               verdict="fail", confidence=0.9, evidence=evidence_for[request.checker])
     assert A11yJudgmentCache.objects.filter(
         tenant_id=tenant.id, project_id=proj.id, run_id=row.id).count() == len(requests)
     assert judge.verify_judgment_completeness(

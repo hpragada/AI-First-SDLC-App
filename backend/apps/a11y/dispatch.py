@@ -148,16 +148,36 @@ def caps_for(tenant_id) -> tuple[int, int | None]:
 def _cached(tenant_id, project_id, request: A11yRequest) -> A11yJudgment | None:
     from apps.a11y.models import A11yJudgmentCache
 
-    row = A11yJudgmentCache.objects.filter(
-        tenant_id=tenant_id, project_id=project_id,
-        checker=request.checker, content_hash=request.content_hash,
-    ).first()
+    rows = A11yJudgmentCache.objects.filter(
+        tenant_id=tenant_id, checker=request.checker, content_hash=request.content_hash,
+    )
+    if project_id is not None:
+        rows = rows.filter(project_id=project_id)
+    # Newest wins when the caller did not name a project. Ordered explicitly because an
+    # unordered `.first()` over more than one row is whatever the database felt like.
+    row = rows.order_by("-updated_at").first()
     if row is None:
         return None
     return A11yJudgment(
         criteria=tuple(row.criteria), verdict=row.verdict, confidence=row.confidence,
         evidence=row.evidence, suggested_fix=row.suggested_fix, checker=row.checker,
     )
+
+
+def stored_judgment(*, tenant_id, checker: str, candidate: A11yCandidate,
+                    project_id=None) -> A11yJudgment | None:
+    """The verdict already held for this exact input, or None if it has not been judged.
+
+    This is what the `a11yai` capability's four `check_*` methods answer from (D-A11Y-4). It
+    can look across the tenant's projects when `project_id` is not given, and that is sound for
+    the same reason the cache is sound at all: the key is a hash of everything the judge
+    looked at, so identical input means the same answer whoever asked. It never crosses a
+    tenant boundary — the query is tenant-filtered and runs under that tenant's RLS role.
+    """
+    from apps.tenancy.context import tenant_context
+
+    with tenant_context(tenant_id):
+        return _cached(tenant_id, project_id, A11yRequest(checker=checker, candidate=candidate))
 
 
 def _unjudged(requests: list[A11yRequest], reason: str) -> list[A11yJudgment]:

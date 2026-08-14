@@ -13,9 +13,11 @@ They also pin the three team decisions of 2026-08-12: every tenant is auto-provi
 "connect" step for a capability with nothing to connect), one judgment carries every WCAG
 criterion it breaches, and the vendor slug names the platform rather than a model.
 
-NOTE: at QA-01 every check returns `uncertain` — the judge is built in QA-02/QA-02a. These
-tests therefore assert the *contract* (shape, completeness, scoping), and deliberately
-assert that the stub is honest about itself rather than pretending to judge.
+UPDATED BY QA-03 (D-A11Y-4). QA-01 shipped these four checks as a stub returning `NOT_WIRED`,
+with a test pinning that string so its removal would be *provable* rather than assumed. This
+is that removal: the checks now answer from the judgments the batch path has stored, and say
+"not judged yet" when there are none. `NOT_WIRED` no longer exists anywhere in the codebase —
+the tests below assert the real behaviour in its place.
 """
 import psycopg
 import pytest
@@ -25,7 +27,7 @@ from django.db import connection
 from apps.integrations.models import IntegrationConnection
 from apps.integrations.services import AUTO_PROVISIONED, provision_builtin_capabilities
 from apps.tenancy.models import Tenant
-from integrations.a11yai.builtin import NO_INPUT, NOT_WIRED, BuiltinA11yAI
+from integrations.a11yai.builtin import NO_INPUT, NOT_JUDGED_YET, BuiltinA11yAI
 from integrations.capabilities import A11yAI
 from integrations.registry import get_builder, get_capability
 from integrations.types import (
@@ -135,24 +137,39 @@ def test_missing_inputs_return_uncertain_with_a_reason_not_a_partial(
     assert judgment.criteria == criteria and judgment.checker == checker_name
 
 
-def test_a_screenshot_alone_is_enough_input_to_judge():
+def test_a_screenshot_alone_is_enough_input_to_judge(tenant):
     """Colour and 'is this really a button' are visual questions — an element with no markup
     but an image is a valid candidate, so it must not be rejected as missing input."""
-    checker = BuiltinA11yAI(tenant_id=None)
+    checker = BuiltinA11yAI(tenant_id=tenant.id)
     judgment = checker.check_color(candidate=A11yCandidate(screenshot_ref="s3://shots/a.png"))
-    assert judgment.evidence == NOT_WIRED  # reached the judge path, not the no-input path
+    # Reached the lookup path, not the no-input path.
+    assert judgment.evidence == NOT_JUDGED_YET
 
 
 @pytest.mark.parametrize(("method", "_checker", "_criteria"), CHECKS)
-def test_the_stub_says_it_is_a_stub(tenant, method, _checker, _criteria):
-    """QA-01 delivers the seam only. Until QA-02a wires the judge, every answer must be an
-    honest `uncertain` that routes to a human — never a fabricated pass. When the judge
-    lands, no judgment should carry NOT_WIRED any more, and this test is what makes the
-    stub's removal provable instead of assumed."""
+def test_an_unjudged_element_says_so_rather_than_passing(tenant, method, _checker, _criteria):
+    """An element nothing has judged yet must come back as an honest `uncertain` naming that
+    reason — never a fabricated pass, which downstream reads as "no problem here" (D-A11Y-3).
+
+    This replaces QA-01's `test_the_stub_says_it_is_a_stub`. That test pinned the `NOT_WIRED`
+    placeholder precisely so removing it would have to be deliberate; this is the removal.
+    """
     _connect_a11yai(tenant)
     judgment = getattr(get_capability(tenant.id, "a11yai"), method)(candidate=_candidate())
     assert judgment.verdict == A11Y_UNCERTAIN
-    assert judgment.evidence == NOT_WIRED
+    assert judgment.evidence == NOT_JUDGED_YET
+
+
+def test_the_wiring_stub_is_gone_from_the_codebase():
+    """QA-01 left `NOT_WIRED` greppable on purpose so its removal would be provable rather
+    than assumed. Nothing may reintroduce it."""
+    from pathlib import Path
+
+    import integrations.a11yai.builtin as builtin
+
+    assert not hasattr(builtin, "NOT_WIRED")
+    source = Path(builtin.__file__).read_text(encoding="utf-8")
+    assert "NOT_WIRED" not in source
 
 
 def test_an_unanswered_semantics_check_leaves_both_of_its_criteria_open(tenant):

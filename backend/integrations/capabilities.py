@@ -188,22 +188,31 @@ class A11yAI(Protocol):
         see, it does not overrule what axe proved.
       - A check that cannot answer returns `uncertain` (see `types.uncertain`) so the item
         goes to human review. It never guesses, raises, or returns a partial result.
+
+    **These four are a per-element question, not a way to start work** (D-A11Y-4, QA-03). The
+    platform's own implementation judges in batches — one agent run per dispatch, so ten
+    screens cost one run and not four hundred — so asking it about a single element answers
+    from what has already been judged, and says `uncertain` ("not judged yet") when nothing
+    has. An outside accessibility-AI service is free to answer synchronously here instead;
+    that is why the shape stays per-element, and why no caller has to care which it is
+    talking to. `project_id` narrows the answer to one project's judgments; without it the
+    answer comes from anything the tenant has judged with the same input.
     """
 
-    def check_alt(self, *, candidate: A11yCandidate) -> A11yJudgment:
+    def check_alt(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
         """WCAG 1.1.1 — is the alt text meaningful *for what this image does here*?"""
         ...
 
-    def check_semantics(self, *, candidate: A11yCandidate) -> A11yJudgment:
+    def check_semantics(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
         """WCAG 1.3.1 / 4.1.2 — is a thing that looks and behaves like a control actually
         exposed as one (real role/name/state), or a styled `div` faking it?"""
         ...
 
-    def check_color(self, *, candidate: A11yCandidate) -> A11yJudgment:
+    def check_color(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
         """WCAG 1.4.1 — is meaning conveyed by colour alone, with no text/shape/icon backup?"""
         ...
 
-    def check_label(self, *, candidate: A11yCandidate) -> A11yJudgment:
+    def check_label(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
         """WCAG 2.5.3 — does the visible label match the accessible name a screen reader and a
         voice-control user would say?"""
         ...
