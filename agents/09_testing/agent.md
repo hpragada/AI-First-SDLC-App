@@ -419,12 +419,24 @@ For each critical user journey:
 
 **Report format:**
 
-| Screen | Route | Critical Violations | Serious Violations | Keyboard Pass | Status |
-|--------|-------|--------------------|--------------------|---------------|--------|
-| SCR-001 | /products | 0 | 0 | ✅ | PASS |
-| SCR-002 | /checkout | 1 | 2 | ❌ | FAIL |
+| Screen | Route | Critical Violations | Serious Violations | AI Failures | Needs Review | Keyboard Pass | Status |
+|--------|-------|--------------------|--------------------|-------------|--------------|---------------|--------|
+| SCR-001 | /products | 0 | 0 | 0 | 1 | ✅ | PASS |
+| SCR-002 | /checkout | 1 | 2 | 1 | 3 | ❌ | FAIL |
 
 Record all violations in the `test_report`. Critical and Serious violations are defect severity High and open a defect through the platform's defect loopback.
+
+**Two engines check a screen, and your report has to show both.**
+
+The scan measures what can be measured. It cannot tell you whether `alt="chart"` means anything, whether a `div` is really a button, whether a status is shown only in red, or whether the label a person reads matches the name a screen reader announces. Those four questions are answered by the platform's accessibility judge, which runs automatically after the automated cases execute and writes an **`a11y_report`** artifact against that run — rule findings and AI findings in one document, each one tagged with which engine produced it, how sure it is, and every WCAG 2.2 criterion it breaches.
+
+Find it with `list_artifacts(type="a11y_report")` and read it with `get_artifact_body`, then carry its numbers into the table above. Three rules about how you read it, and none of them is optional:
+
+- **"Needs review" is not a failure and never counts as one.** An AI check that was not sure enough routes to a person by design. It does not fail a screen, it does not open a defect, and reporting it as a violation would teach a team to distrust the whole thing.
+- **Where the scan and the AI disagree about the same element and criterion, the scan stands.** A measurement is not overturned by an opinion. The platform has already applied this before you see the report — you do not need to reconcile anything, and you must not "correct" a row back the other way.
+- **An incomplete check is not a pass.** If the report says at the top that elements were selected but never judged, say so in your Status column and in the summary. A screen whose AI checks did not run is a screen we have not finished checking, whatever the scan said.
+
+If no `a11y_report` exists for the run, say that plainly in the report rather than leaving the AI columns blank — a blank cell reads as a zero, and "nobody asked" is not the same finding as "nothing found".
 
 ---
 
@@ -610,6 +622,8 @@ The requirements traceability map is the set of `add_trace_edge` links between `
 
 **Accessibility:**
 - [ ] axe-core scan run against all screens — zero Critical and Serious violations
+- [ ] The run's `a11y_report` read, and its rule findings **and** AI findings both carried into the Step 9 table
+- [ ] No AI finding marked "needs review" counted as a failure, and no screen with unjudged elements reported as a pass
 - [ ] Keyboard navigation manually verified for all critical user journeys
 
 **UAT:**

@@ -54,6 +54,14 @@ MAX_HTML_CHARS = 8_000
 MAX_CONTEXT_CHARS = 4_000
 MAX_SELECTOR_CHARS = 512
 
+#: What the rule scanner said about the screen AS A WHOLE (QA-12). Generous, because these are
+#: small objects and a genuinely bad page produces a lot of them: refusing a real scan would be
+#: worse than carrying it. Over the limit is still a refusal rather than a trim, for the same
+#: reason every other bound here is — a scan that quietly lost half its violations reads as a
+#: page with half as much wrong with it.
+MAX_AXE_VIOLATIONS = 400
+MAX_AXE_NODES = 500
+
 
 class CaptureError(ValueError):
     """A capture document could not be read. Carries what was wrong, for a human."""
@@ -117,6 +125,39 @@ def _element(raw) -> dict:
     }
 
 
+def _violation(raw, route: str) -> dict:
+    """One thing the rule scanner proved about this screen, normalised (QA-12).
+
+    Screen-level, and deliberately NOT derived from the captured elements. An element only gets
+    stored if one of the four AI checks applies to it, so a scanner failure on anything else —
+    a missing `lang`, a duplicate id, a landmark problem — would have no record anywhere in the
+    platform. Its text would still be in the test report, as prose an LLM wrote, which is not
+    something the merge may parse and rely on. So the scan reports itself, whole.
+
+    `criteria` may legitimately be empty: axe ships best-practice rules with no WCAG tag. Those
+    are kept and counted rather than dropped — the merge reports them separately, because a
+    finding with no criterion cannot become an `A11yRuleFailure` and must not silently vanish.
+    """
+    data = _mapping(raw)
+    nodes = data.get("nodes")
+    nodes = nodes if isinstance(nodes, list) else []
+    rule = _text(data.get("rule") or data.get("id"), 128)
+    if len(nodes) > MAX_AXE_NODES:
+        raise CaptureError(
+            f"screen {route!r} reports rule {rule or '(unnamed)'!r} against {len(nodes)} "
+            f"elements, over the limit of {MAX_AXE_NODES}. Nothing was stored for this screen "
+            f"— scan the region under test rather than the whole document."
+        )
+    return {
+        "rule": rule,
+        "impact": _text(data.get("impact"), 32).strip().lower(),
+        "criteria": [_text(c, 16).strip() for c in (data.get("criteria") or [])
+                     if _text(c, 16).strip()],
+        "help": _text(data.get("help"), 1_000),
+        "nodes": [_text(n, MAX_SELECTOR_CHARS) for n in nodes],
+    }
+
+
 def _screen(raw) -> dict:
     data = _mapping(raw)
     route = _text(data.get("route") or data.get("url"), 512)
@@ -131,9 +172,23 @@ def _screen(raw) -> dict:
             f"{MAX_ELEMENTS_PER_SCREEN}. Nothing was stored for it — capture the elements the "
             f"four checks look at, not every node on the page."
         )
+    violations = data.get("axe_violations")
+    if violations is None:
+        # Absent is "the scan reported nothing here", which is the same shape as a clean page.
+        # It is NOT read as "no scan ran": that distinction belongs to the test report, which
+        # says whether the accessibility case executed at all.
+        violations = []
+    if not isinstance(violations, list):
+        raise CaptureError(f"screen {route!r} has an `axe_violations` that is not a list")
+    if len(violations) > MAX_AXE_VIOLATIONS:
+        raise CaptureError(
+            f"screen {route!r} reports {len(violations)} scanner violations, over the limit "
+            f"of {MAX_AXE_VIOLATIONS}. Nothing was stored for it."
+        )
     return {
         "route": route,
         "url": _text(data.get("url"), 1_000),
+        "axe_violations": [_violation(v, route) for v in violations],
         "screenshot_base64": _text(data.get("screenshot_base64"), MAX_SCREENSHOT_BYTES * 2),
         # Why there is no picture, in the capture's own words. Carried through to the judge, so
         # "could not be seen" is a reported fact rather than an absence someone has to infer.
@@ -237,6 +292,12 @@ def fingerprint(screen: Mapping) -> str:
     new field therefore changes the fingerprint and costs one re-judgment, which is the safe
     direction: re-doing work is expensive, and skipping work that needed doing is wrong.
 
+    The scanner's own violations are hashed for exactly that reason (QA-12). A screen carried
+    forward keeps the scan it was carried forward with, so anything that changes what the
+    scanner said — a fix on a node this capture does not record, a scanner upgrade that adds a
+    rule — has to change this hash, or the merged report would quote a scan that is no longer
+    true of the page.
+
     The page image is hashed by its bytes, so a re-render that shifted a pixel is a different
     screen. That is deliberate for the same reason, and it means this saving lands on stable
     screens rather than on animated ones.
@@ -245,10 +306,11 @@ def fingerprint(screen: Mapping) -> str:
     digest.update(str(screen.get("route") or "").encode("utf-8"))
     image, reason = screenshot_bytes(screen)
     digest.update(sha256(image).digest() if image else reason.encode("utf-8"))
-    digest.update(
-        json.dumps(list(screen.get("elements") or []), sort_keys=True,
-                   separators=(",", ":"), default=str).encode("utf-8")
-    )
+    for part in ("elements", "axe_violations"):
+        digest.update(
+            json.dumps(list(screen.get(part) or []), sort_keys=True,
+                       separators=(",", ":"), default=str).encode("utf-8")
+        )
     return digest.hexdigest()
 
 

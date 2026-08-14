@@ -181,6 +181,33 @@ def _carry_forward(tenant_id, project_id, run_key: str, route: str, screen_hash:
     }
 
 
+def _record_scan(tenant_id, project_id, run_key: str, run_id, screen: dict,
+                 screen_hash: str) -> int:
+    """Store what the rule scanner said about this whole screen (QA-12). Returns the count.
+
+    Written on EVERY ingest, including one that carries its elements forward, and written
+    before the carry-forward check rather than inside it. Two reasons, both learned from the
+    bug QA-07 opened with: it costs nothing (a small JSON document, no decode, no crop, no
+    object write), and a screen whose scan was only stored on the path that does the expensive
+    work is a screen whose scan silently disappears the second time it is captured.
+    """
+    from .models import A11yScreenScan
+
+    violations = list(screen.get("axe_violations") or [])
+    with tenant_context(tenant_id):
+        A11yScreenScan.objects.update_or_create(
+            tenant_id=tenant_id, project_id=project_id, run_key=run_key,
+            route=str(screen.get("route") or ""),
+            defaults={
+                "run_id": run_key or None,
+                "url": str(screen.get("url") or "")[:200],
+                "screen_hash": screen_hash,
+                "violations": violations,
+            },
+        )
+    return len(violations)
+
+
 def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_store=None) -> dict:
     """Store one captured screen's candidate bundles. Idempotent per (run, route, selector).
 
@@ -201,9 +228,10 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_st
     # rows forward and do no image work at all. Checked before anything is decoded or cropped,
     # because everything below this line is the cost being avoided.
     screen_hash = fingerprint(screen)
+    violations = _record_scan(tenant_id, project_id, run_key, run_id, screen, screen_hash)
     carried = _carry_forward(tenant_id, project_id, run_key, route, screen_hash)
     if carried is not None:
-        return carried
+        return {**carried, "violations": violations}
 
     page_png, page_reason = screenshot_bytes(screen)
     if page_png:
@@ -274,6 +302,7 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_st
         "page_image_reason": page_reason,
         "reused": False,
         "screen_hash": screen_hash,
+        "violations": violations,
     }
 
 
@@ -308,6 +337,7 @@ def ingest_capture(*, tenant_id, project_id, text: str, run_id=None, object_stor
         "skipped": sum(r["skipped"] for r in results),
         "uncapturable": sum(r["uncapturable"] for r in results),
         "reused_screens": reused,
+        "violations": sum(r["violations"] for r in results),
         "summary": summary,
     }
 

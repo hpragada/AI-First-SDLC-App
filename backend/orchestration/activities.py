@@ -672,10 +672,19 @@ def verify_write_completeness_core(
     # element dispatched to it must have been reported on. Checked FIRST so the phase is decided
     # before the artifact-shaped rules get a chance to answer for it.
     if inp.phase == A11Y_JUDGE_PHASE:
+        from apps.a11y.aipass import finish_ai_pass
         from apps.a11y.judge import verify_judgment_completeness
 
-        counts = verify_judgment_completeness(
-            tenant_id=inp.tenant_id, project_id=inp.project_id, run_id=inp.run_id)
+        try:
+            counts = verify_judgment_completeness(
+                tenant_id=inp.tenant_id, project_id=inp.project_id, run_id=inp.run_id)
+        finally:
+            # QA-12: the merged report is published whether or not the judging was complete.
+            # `finally`, not "after", because an incomplete run raises above — and that is
+            # precisely the run whose report matters most: its unjudged elements have just been
+            # recorded as `uncertain` for a human, and without a report nobody can see them.
+            # The report itself says the check was incomplete (D-A11Y-3).
+            finish_ai_pass(tenant_id=inp.tenant_id, judge_run_id=inp.run_id)
         return {"present": [f"{counts['judged']} judged"],
                 "expected": [f"{counts['dispatched']} dispatched"]}
 

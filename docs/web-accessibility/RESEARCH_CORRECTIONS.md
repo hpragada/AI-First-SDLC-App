@@ -30,6 +30,9 @@ A search for axe across every `.py`, `.ts`, `.tsx` and `.json` in `backend/`, `r
 > 2. **An accessibility result needs its own test case.** Naming the scan after the screen's *functional* test id — as the task text said — would make one pass and one failure share an id, which the platform reads as a **flaky test**: quarantined, and quarantined tests do not block the gate. A real accessibility failure would have disappeared from the gate while looking like correct behaviour. (D‑A11Y‑8.)
 > 3. **Evidence was being destroyed at the door.** The failure text was cut to 2000 characters *at parse time*, because the `test_report` artifact had no body and a database column was the only place it could live. Eighteen violations arrived as four. The artifact now carries its full body in the object store, which is what #1/#3 prescribed all along. (D‑A11Y‑11.)
 
+> **Amended again while building QA‑12 (2026‑08‑14) — "the scan's findings are in the test report" is true and not enough.**
+> The full axe output does reach the platform, as the `test_report` artifact's body. But that body is **prose an agent wrote**, and a merged accessibility report may not be built by parsing it: a text format an LLM produces is exactly the input that degrades silently, and this is the one document a client or auditor reads. The structured half only covered elements the AI checks applied to, because a `A11yCandidateBundle` row exists only for those — so a violation on a missing `lang`, a duplicate id or a landmark had **no structured record anywhere in the platform**. QA‑12 therefore added a screen-level `axe_violations` list to the capture format (D‑A11Y‑20). Both halves are kept and neither is redundant: the per-element one makes a rule finding and an AI finding *comparable on one element*, the screen-level one makes the report *complete*.
+
 ---
 
 ## R2 — "Rendered capture + accessibility tree — ALREADY EXISTS" — **TRUE BUT NARROW**

@@ -451,6 +451,11 @@ So the same accessibility test also writes **`test-results/a11y-candidates.json`
     "route": "/checkout",
     "url": "http://localhost:5173/checkout",
     "screenshot_base64": "<the full-page PNG, base64>",
+    "axe_violations": [{
+      "rule": "color-contrast", "impact": "serious", "criteria": ["1.4.3"],
+      "help": "Elements must meet minimum colour contrast ratio thresholds",
+      "nodes": [".btn-secondary", "footer a"]
+    }],
     "elements": [{
       "selector": "main > form > button.pay",
       "tag": "button", "role": "",
@@ -480,6 +485,10 @@ So the same accessibility test also writes **`test-results/a11y-candidates.json`
 **What to offer.** Capture the elements the four questions could apply to, and no more: images, `<svg>`, `<area>`, `input[type=image]`, anything with `role="img"`; every native control and link; anything carrying a `role` or a `tabindex`; anything with a click or key handler bound to it; and text or filled areas whose colour differs from their surroundings. Over-offering is safe — the platform runs the selection rules and discards the rest — but a screen may not exceed **600** elements, and the whole file may not exceed **60** screens. If a page is bigger than that, capture the region under test rather than the entire document, and say so when you report.
 
 **`axe` is what the scan you just ran said about that element**, if anything: its rule id, impact, and the WCAG criteria from the rule's own `wcag…` tags. Take it from the violation's `nodes[].target` — matching by selector — so the rule finding and the AI finding can later be shown side by side without running axe twice. Leave it out for an element axe said nothing about; an empty object is not a claim that it passed.
+
+**`axe_violations` is the same scan reported for the screen as a whole** — every violation, whether or not it landed on an element you captured. Write one entry per violation: the `rule` id, its `impact`, the WCAG `criteria` from its `wcag…` tags (an empty list for a best-practice rule that maps to none — say so rather than omitting the violation), the rule's own `help` text, and `nodes` as every `nodes[].target` selector it failed on.
+
+This is not a duplicate of the per-element `axe` field and you must write both. The per-element one is what makes a rule finding and an AI finding comparable on the same element. This one is what makes the report *complete*: the platform only keeps elements one of the four AI checks applies to, so a violation on anything else — a missing `lang`, a duplicate id, a landmark problem — would exist nowhere in the platform if you did not write it here. Report it exactly as the scan gave it to you; never re-word a rule and never leave a violation out because it looks minor.
 
 **If the screenshot fails**, still write the screen: set `"screenshot_error"` to the reason instead of `screenshot_base64`. The elements are still worth judging from their markup, and the questions that needed to be seen will correctly come back "could not be seen" rather than guessed.
 
@@ -594,6 +603,7 @@ The platform commits the generated scripts in the worktree, pushes the branch, a
 - [ ] The suite was **run** against the live application, and a JUnit report exists at the conventional path (or the reason it could not run is reported)
 - [ ] For an `Accessibility` case: the scan is scoped to WCAG 2.2 AA, fails on critical/serious, and its message leads with the violation totals
 - [ ] For an `Accessibility` case: `test-results/a11y-candidates.json` was written — one full-page screenshot per screen, each element carrying its box, the browser's **computed** accessible name, and all six `styles` / `parent_styles` keys
+- [ ] For an `Accessibility` case: that same file carries `axe_violations` for each screen — **every** violation the scan reported, not only the ones that landed on a captured element
 - [ ] A `test_report` artifact registered with status, script path, and dry-run result
 
 ---

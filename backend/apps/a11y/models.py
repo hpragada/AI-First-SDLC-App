@@ -141,6 +141,53 @@ class A11yCandidateBundle(TenantScopedModel):
         return f"a11y-candidate {self.route} {self.selector[:40]} ({','.join(self.checkers)})"
 
 
+class A11yScreenScan(TenantScopedModel):
+    """What the rule scanner said about one whole screen (QA-12).
+
+    The other half of the merged report. `A11yCandidateBundle.axe` carries the scanner's verdict
+    on an element the AI is going to be asked about, which is what makes the two comparable —
+    but a row only exists for an element one of the four checks applies to. A scanner failure on
+    anything else has no bundle, so without this table the merged report's rule half would
+    quietly cover a subset of the scan and read as the whole of it.
+
+    Stored whole rather than one row per violation. The scan is a document the scanner produced
+    about a page at a moment; splitting it into rows would invent an identity for each violation
+    that the scanner never gave it, and the thing that *does* need a stable identity — a finding
+    a reviewer tracks across runs — is QA-12a's ledger, keyed on a fingerprint, not on this.
+
+    Keyed like `A11yCandidateBundle` (tenant, project, run_key, route) and for the same reasons:
+    re-posting a screen updates its scan, and `run_key` is a string because a CI post has no run
+    and a NULL compares unequal to itself in a Postgres unique index.
+    """
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="a11y_screen_scans"
+    )
+    run = models.ForeignKey(
+        "runs.Run", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    run_key = models.CharField(max_length=128, blank=True, db_index=True)
+
+    route = models.CharField(max_length=512)
+    url = models.URLField(blank=True)
+    screen_hash = models.CharField(max_length=64, blank=True, db_index=True)
+
+    # [{rule, impact, criteria[], help, nodes[]}] exactly as `capture._violation` normalises it.
+    violations = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "project", "run_key", "route"],
+                name="uniq_tenant_project_a11y_screen_scan",
+            )
+        ]
+        ordering = ["route"]
+
+    def __str__(self) -> str:
+        return f"a11y-scan {self.route} ({len(self.violations or [])} violation(s))"
+
+
 class WcagCriterion(UUIDModel):
     """One WCAG success criterion — **one copy for the whole platform** (QA-04).
 
