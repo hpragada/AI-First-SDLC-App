@@ -188,6 +188,123 @@ class A11yScreenScan(TenantScopedModel):
         return f"a11y-scan {self.route} ({len(self.violations or [])} violation(s))"
 
 
+class A11yFinding(TenantScopedModel):
+    """One accessibility problem, with an identity that outlives the run that found it (QA-12a).
+
+    Until this table, a finding was a line in a document the platform re-rendered from scratch
+    every time it was asked to — a snapshot, not a record. Nothing could say "this is the same
+    broken button we saw last week", so nothing could open a bug that closes itself, avoid
+    raising the same bug twice, or hand a person a queue to work through.
+
+    **The `fingerprint` is the whole point.** It hashes *(route + normalised selector + primary
+    criterion + checker)*, and it is what turns three otherwise-unimplementable requirements
+    into one-liners: the same problem on two runs is one row with a new `last_seen_run`; a
+    problem that disappears and returns reuses the original row; two different elements failing
+    one criterion stay two findings.
+
+    **It is NOT `A11yJudgmentCache.content_hash`, and the two must never be merged.** That key
+    identifies identical *input* — the markup, the picture, the surrounding text — so that a
+    model is not asked the same question twice. This one identifies the same *problem*, so a
+    person is not shown it twice. An element whose markup is edited gets a new content hash and
+    keeps this fingerprint, which is exactly right: it is still the same button on the same
+    screen breaching the same criterion.
+
+    **Severity comes from the standard, not from prose.** `WcagCriterion.level` is loaded from
+    W3C, so a Level A breach is Critical and a Level AA breach is High without anything having
+    to restate the mapping. The scanner's own `impact` is kept beside it and never conflated —
+    they measure different things, and only severity decides whether a defect opens (QA-14).
+
+    **`status` is resolved by absence, but only where we actually looked.** A run reports on the
+    screens it captured; a finding on a screen this run never visited is untouched. The same
+    discipline `import_test_results` applies when it closes defects only for tests that were
+    *reported passing*, never for tests that simply did not run.
+
+    **This is state, not content** (#1/#3): a pointer, a provenance record and a verdict. The
+    screenshot body stays in the object store.
+    """
+
+    class Source(models.TextChoices):
+        RULE = "rule", "Rule scanner"
+        AI = "AI", "AI judge"
+        HUMAN = "human", "Human"
+        AGENTIC = "agentic", "Agentic testing"
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        RESOLVED = "resolved", "Resolved"
+
+    class Adjudication(models.TextChoices):
+        PENDING = "pending", "Pending"
+        CONFIRMED = "confirmed", "Confirmed by a reviewer"
+        REJECTED = "rejected", "Rejected by a reviewer"
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="a11y_findings"
+    )
+    fingerprint = models.CharField(max_length=64, db_index=True)
+
+    route = models.CharField(max_length=512)
+    selector = models.CharField(max_length=512)
+    # False when the selector is the platform's own positional fallback, so this row's identity
+    # is "where it sat on the page" and a reorder will record the problem again. Flagged rather
+    # than dropped: a finding with a weak handle beats no finding, and a reviewer seeing an
+    # apparent duplicate can tell why.
+    stable = models.BooleanField(default=True)
+
+    criterion = models.CharField(max_length=16)                       # the primary one
+    criteria = ArrayField(models.CharField(max_length=16), default=list)
+    wcag_level = models.CharField(max_length=4, blank=True)           # "A" | "AA", "" if unknown
+    checker = models.CharField(max_length=16, blank=True)             # "" for a scanner finding
+
+    source = models.CharField(max_length=8, choices=Source.choices)
+    # What the AI said (`pass`/`fail`/`uncertain`) and what the platform decided about it
+    # (`failure`/`needs_review`) — deliberately two fields. A `pass` verdict on an element the
+    # scanner failed comes out of triage as a failure, and a report that stored only one of
+    # these could not show a reviewer why.
+    verdict = models.CharField(max_length=16, blank=True)
+    outcome = models.CharField(max_length=16)
+    confidence = models.FloatField(null=True, blank=True)             # None for a measurement
+    severity = models.CharField(max_length=16)                        # critical|high|medium|low
+    impact = models.CharField(max_length=16, blank=True)              # the scanner's own word
+
+    evidence = models.TextField(blank=True)
+    suggested_fix = models.TextField(blank=True)
+    screenshot_ref = models.CharField(max_length=512, blank=True)     # pointer, never an image
+    rule_id = models.CharField(max_length=128, blank=True)
+
+    engine = models.CharField(max_length=32, blank=True)
+    model = models.CharField(max_length=64, blank=True)
+    prompt_version = models.CharField(max_length=64, blank=True)
+
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN)
+    adjudication = models.CharField(
+        max_length=16, choices=Adjudication.choices, default=Adjudication.PENDING
+    )
+    adjudicated_by = models.ForeignKey(
+        "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    adjudication_note = models.TextField(blank=True)
+
+    first_seen_run = models.ForeignKey(
+        "runs.Run", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    last_seen_run = models.ForeignKey(
+        "runs.Run", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "project", "fingerprint"],
+                name="uniq_tenant_project_a11y_finding",
+            )
+        ]
+        ordering = ["route", "criterion", "selector"]
+
+    def __str__(self) -> str:
+        return f"a11y-finding {self.criterion} {self.route} {self.selector[:40]} ({self.status})"
+
+
 class WcagCriterion(UUIDModel):
     """One WCAG success criterion — **one copy for the whole platform** (QA-04).
 

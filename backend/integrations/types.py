@@ -353,6 +353,11 @@ class A11yRuleFailure:
     route: str = ""             # the screen/route it was found on
     rule_id: str = ""           # the scanner's own rule id, so the report can cite it
     evidence: str = ""          # what the scanner reported
+    # The scanner's OWN severity word ("critical"/"serious"/…), carried verbatim and never
+    # conflated with the platform's severity (QA-12a). They measure different things: ours comes
+    # from the WCAG conformance level the criterion sits at, and decides whether a defect opens;
+    # this one is the scanner's judgement of impact, and is shown so a reader can see both.
+    impact: str = ""
 
     def __post_init__(self) -> None:
         if not self.criterion:

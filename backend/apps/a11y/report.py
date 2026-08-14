@@ -70,6 +70,18 @@ class ReportRow:
     suggested_fix: str = ""
     checker: str = ""
     rule_id: str = ""
+    #: What the AI actually said (`pass`/`fail`/`uncertain`), which is NOT `outcome` — a `pass`
+    #: on an element the scanner failed comes out of triage as a failure, and the ledger has to
+    #: be able to show a reviewer both halves of that.
+    verdict: str = ""
+    impact: str = ""                  # the scanner's own severity word, never conflated with ours
+    screenshot_ref: str = ""          # pointer to the element's picture, never the image
+    # Which engine, model and prompt version produced the verdict — read from the `Run` when it
+    # was stored (QA-02), never from the agent's own claim. Blank on a rule finding: a
+    # measurement has no model.
+    engine: str = ""
+    model: str = ""
+    prompt_version: str = ""
 
     @property
     def blocks(self) -> bool:
@@ -107,7 +119,7 @@ class MergedReport:
         return not self.unjudged
 
 
-def _row_from_triage(finding: TriagedFinding) -> ReportRow:
+def _row_from_triage(finding: TriagedFinding, audit: dict | None = None) -> ReportRow:
     """One triaged judgment as a report row.
 
     The source is the **scanner** whenever a scanner failure decided the row — including the
@@ -115,6 +127,7 @@ def _row_from_triage(finding: TriagedFinding) -> ReportRow:
     measured rather than judged, and the AI's agreement does not make it an AI finding.
     """
     failure = finding.rule_failure
+    audit = audit or {}
     return ReportRow(
         source=SOURCE_RULE if failure is not None else SOURCE_AI,
         outcome=finding.outcome,
@@ -127,6 +140,12 @@ def _row_from_triage(finding: TriagedFinding) -> ReportRow:
         suggested_fix=finding.judgment.suggested_fix,
         checker=finding.judgment.checker,
         rule_id=(failure.rule_id if failure is not None else ""),
+        verdict=finding.judgment.verdict,
+        impact=(failure.impact if failure is not None else ""),
+        screenshot_ref=finding.candidate.screenshot_ref,
+        engine=str(audit.get("engine") or ""),
+        model=str(audit.get("model") or ""),
+        prompt_version=str(audit.get("prompt_version") or ""),
     )
 
 
@@ -140,12 +159,18 @@ def _row_from_rule(failure: A11yRuleFailure) -> ReportRow:
         source=SOURCE_RULE, outcome=TRIAGE_FAILURE, criteria=(failure.criterion,),
         route=failure.route, selector=failure.selector, evidence=failure.evidence,
         reason="The rule scanner proved this failure. No AI check was asked about this element.",
-        confidence=None, rule_id=failure.rule_id,
+        confidence=None, rule_id=failure.rule_id, impact=failure.impact,
     )
 
 
-def _judgments_for(tenant_id, project_id, hashes: list[str]) -> dict[str, A11yJudgment]:
-    """Every stored verdict for these inputs, by content hash — one query, not one per element."""
+def _judgments_for(tenant_id, project_id,
+                   hashes: list[str]) -> dict[str, tuple[A11yJudgment, dict]]:
+    """Every stored verdict for these inputs, with what produced it — one query, not one each.
+
+    The audit half travels with the judgment rather than being looked up again later, because
+    the pair has to stay together: a verdict and the model that produced it are one fact, and
+    two queries could disagree about it if a run re-judged in between.
+    """
     from .models import A11yJudgmentCache
 
     if not hashes:
@@ -157,9 +182,12 @@ def _judgments_for(tenant_id, project_id, hashes: list[str]) -> dict[str, A11yJu
             .order_by("updated_at")
         )
     return {
-        row.content_hash: A11yJudgment(
-            criteria=tuple(row.criteria), verdict=row.verdict, confidence=row.confidence,
-            evidence=row.evidence, suggested_fix=row.suggested_fix, checker=row.checker,
+        row.content_hash: (
+            A11yJudgment(
+                criteria=tuple(row.criteria), verdict=row.verdict, confidence=row.confidence,
+                evidence=row.evidence, suggested_fix=row.suggested_fix, checker=row.checker,
+            ),
+            {"engine": row.engine, "model": row.model, "prompt_version": row.prompt_version},
         )
         for row in rows
     }
@@ -179,7 +207,7 @@ def merge_run(*, tenant_id, project_id, run_id) -> MergedReport:
                           without_criterion=list(scan.without_criterion))
     matched: set = set()
     for request in requests:
-        judgment = judgments.get(request.content_hash)
+        judgment, audit = judgments.get(request.content_hash, (None, {}))
         if judgment is None:
             report.unjudged.append({
                 "route": request.candidate.route,
@@ -193,7 +221,7 @@ def merge_run(*, tenant_id, project_id, run_id) -> MergedReport:
                          rule_failures=scan.failures, thresholds=thresholds)
         if finding.rule_failure is not None:
             matched.add(finding.rule_failure.key)
-        report.rows.append(_row_from_triage(finding))
+        report.rows.append(_row_from_triage(finding, audit))
 
     for failure in scan.failures:
         if failure.key not in matched:
@@ -314,12 +342,29 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
     run updates its report rather than stacking a second one. Best-effort on the body, matching
     `_register_test_report` — a report registered from its hash alone is worse than one with a
     body, and far better than no report because the object store blinked.
+
+    **The ledger is written from this same merge** (QA-12a), not from a second pass over the
+    data. One merge, two destinations: a document a person reads now, and rows that outlive the
+    run. Recording them separately would let the report and the ledger drift into disagreeing
+    about what was found, which is the one thing a conformance record may not do.
     """
     from mcp_platform_state import tools
 
     from apps.registry.models import Artifact
 
+    from .findings import record_run_findings
+
     report = merge_run(tenant_id=tenant_id, project_id=project_id, run_id=run_id)
+    ledger: dict = {"opened": [], "seen_again": [], "resolved": []}
+    try:
+        ledger = record_run_findings(tenant_id=tenant_id, project_id=project_id,
+                                     run_id=run_id, report=report)
+    except Exception as exc:  # noqa: BLE001
+        # Best-effort for the same reason the body is: the report is what a person reads NOW,
+        # and losing it because the ledger write failed is the worse trade. The failure is
+        # returned and logged rather than swallowed, because a silent ledger failure would mean
+        # QA-14 opening no defects with nothing anywhere saying why.
+        ledger["error"] = str(exc)
     body = report_body(report, title=title)
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     staged = None
@@ -354,7 +399,11 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
             tenant_id, "a11y", "a11y.report_merged", "artifact", artifact_id,
             {"failures": len(report.failures), "needs_review": len(report.needs_review),
              "passed": len(report.passes), "unjudged": len(report.unjudged),
-             "from_rules": report.from_rules, "complete": report.complete},
+             "from_rules": report.from_rules, "complete": report.complete,
+             "findings_opened": len(ledger["opened"]),
+             "findings_seen_again": len(ledger["seen_again"]),
+             "findings_resolved": len(ledger["resolved"]),
+             "findings_error": ledger.get("error", "")},
         )
     return {
         "artifact_id": artifact_id,
@@ -364,6 +413,7 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
         "unjudged": len(report.unjudged),
         "from_rules": report.from_rules,
         "complete": report.complete,
+        "ledger": ledger,
         "summary": _summary_line(report),
     }
 

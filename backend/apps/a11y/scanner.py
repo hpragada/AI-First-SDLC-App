@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from apps.tenancy.context import tenant_context
 from integrations.types import A11yRuleFailure
 
+from .selectors import normalise as _norm
+
 #: How the scanner's own severity words read in the report. Kept as a mapping rather than
 #: title-cased on the fly so an unexpected value from a future scanner shows up as itself
 #: instead of being silently dressed up as one of ours (#9 — the platform is not axe-shaped).
@@ -40,17 +42,6 @@ IMPACT_LABELS = {
     "moderate": "Moderate",
     "minor": "Minor",
 }
-
-
-def _norm(selector: str) -> str:
-    """A selector reduced to what makes it the same selector — whitespace collapsed.
-
-    Not a CSS parser and not trying to be. `A11yRuleFailure`'s identity is textual by design
-    (QA-06), and two spellings of the same selector that differ by more than spacing will be
-    reported as two elements. That is the safe direction: showing one element twice is a
-    reviewer's minor annoyance, and merging two different elements into one would hide a defect.
-    """
-    return " ".join(str(selector or "").split())
 
 
 @dataclass(frozen=True)
@@ -111,7 +102,7 @@ def rule_findings_for(tenant_id, project_id, run_id=None) -> RuleScan:
         for criterion in [str(c).strip() for c in (axe.get("criteria") or []) if str(c).strip()]:
             failure = A11yRuleFailure(
                 criterion=criterion, selector=_norm(row.selector), route=row.route,
-                rule_id=rule,
+                rule_id=rule, impact=impact,
                 evidence=_evidence(rule, impact, str(axe.get("help") or ""), row.selector),
             )
             failures.setdefault(failure.key, failure)
@@ -139,7 +130,8 @@ def rule_findings_for(tenant_id, project_id, run_id=None) -> RuleScan:
                 for selector in nodes or [""]:
                     failure = A11yRuleFailure(
                         criterion=criterion, selector=selector, route=scan.route,
-                        rule_id=rule, evidence=_evidence(rule, impact, help_text, selector),
+                        rule_id=rule, impact=impact,
+                        evidence=_evidence(rule, impact, help_text, selector),
                     )
                     failures.setdefault(failure.key, failure)
 
