@@ -69,10 +69,16 @@ def test_09_testing_cites_the_2_2_recommendation_by_its_published_year():
     assert "W3C, 2024" in body
 
 
-def test_09b_carries_no_accessibility_standard_reference_to_move():
-    """09b has no standard reference at all — stated as a fact, not ticked as if edited.
-    Its accessibility content arrives in QA-11a, and adding it here would be building that."""
-    assert "WCAG" not in _body("09b_test_automation")
+def test_09b_names_the_current_standard_and_no_older_one():
+    """**Retired and replaced (QA-12).** This asserted `"WCAG" not in 09b` because at QA-11 the
+    agent had no accessibility content at all — and its own docstring named QA-11a as the task
+    that would give it some. QA-11a duly did, and left this assertion behind, so it has been
+    failing ever since against a body that is exactly right. What it was actually protecting is
+    the same thing every other check in this file protects: 09b must name 2.2 and never 2.1.
+    """
+    body = _body("09b_test_automation")
+    assert "WCAG 2.2 AA" in body
+    assert "WCAG 2.1" not in body
 
 
 def test_the_design_agent_is_deliberately_untouched():
