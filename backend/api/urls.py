@@ -13,7 +13,7 @@ from .auth_views import (
     ResetView,
     SignupView,
 )
-from .ci_views import CITestResultsView
+from .ci_views import CIA11yCandidatesView, CITestResultsView
 from .runner_views import (
     RunnerBuildFetchView,
     RunnerBuildReportView,
@@ -71,6 +71,10 @@ urlpatterns = [
     # stays isolated from the session-authed project actions.
     path("projects/<uuid:project_id>/test-results/", CITestResultsView.as_view(),
          name="ci-test-results"),
+    # Accessibility capture ingestion (QA-11b): the same CI-token front door, for what a run
+    # saw on each screen. Explicit path before the router include, for the same reason.
+    path("projects/<uuid:project_id>/a11y-candidates/", CIA11yCandidatesView.as_view(),
+         name="ci-a11y-candidates"),
     # Phase catalog (S-18 trigger picker, gap C): tenant-scoped via session / header.
     path("phases/", PhaseCatalogView.as_view(), name="phases"),
     # Server-session auth (P4.7-T1, DECISION-3). Tenant is resolved from the session

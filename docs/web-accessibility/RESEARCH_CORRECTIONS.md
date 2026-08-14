@@ -40,6 +40,12 @@ A search for axe across every `.py`, `.ts`, `.tsx` and `.json` in `backend/`, `r
 
 **Why this matters more than it sounds.** The app under test runs at a **localhost URL on a developer's laptop**. The server cannot reach it. Any design that assumes the platform can open a browser and visit the app is wrong. Browser work belongs in the companion; judgment, triage, findings and gates belong server-side.
 
+> **Amendment (2026‑08‑14, while building QA‑11b).** That split has a consequence the backlog's own task text did not survive. QA‑11b asked for **a cropped screenshot per element** *and* for **selection to run before cropping** ("that is most of the saving"). Both are right, and on one machine they are incompatible: cropping happens in the browser, on the laptop; the selection rules are Python and live on the platform; by the time Python can run them the browser is closed and the worktree is deleted. Read literally the task needs two browser passes with a network round trip in the middle of a test run.
+>
+> **Resolution (D‑A11Y‑12):** the capture takes **one full-page image per screen** plus each element's rectangle in it, and the platform crops — after selection, from an image it already holds. The ordering the task asked for is preserved exactly; it just happens on the other side of the wall this correction is about. ~10 images per run instead of ~300.
+>
+> A second consequence of the same wall: the capture must **not** ride the build report. That report is a Temporal signal payload, and a screen carries a full-page PNG. The companion posts each screen over the runner-token route it already authenticates on, one screen per call, and only a summary line travels on the report (D‑A11Y‑15).
+
 ---
 
 ## R3 — "WCAG gate / merge gate — ALREADY EXISTS" — **MISLEADING**

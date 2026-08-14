@@ -82,6 +82,14 @@ _BUILD_STATE_TOOLS = {
     "get_a11y_batch": tools.get_a11y_batch,
     "get_wcag_grounding": tools.get_wcag_grounding,
     "record_a11y_finding": tools.record_a11y_finding,
+    # QA-11b: the judge's eyes — the captured crop of each element it must judge.
+    "get_a11y_screenshots": tools.get_a11y_screenshots,
+    # QA-11b: the COMPANION posts what the suite captured from the live application. Reachable
+    # on this route because that is the channel the companion already authenticates on, but
+    # deliberately NOT in the companion's engine tool grant (`runner.BUILD_STATE_TOOLS`) — an
+    # agent able to write candidate bundles could describe a page instead of one having been
+    # captured, and the whole point of a capture is that it is machine truth.
+    "ingest_a11y_candidates": tools.ingest_a11y_candidates,
 }
 
 # The build agent may move a WorkItem forward through working states (e.g. -> in_progress at

@@ -212,6 +212,40 @@ def get_a11y_batch() -> dict:
 
 
 @server.tool()
+def get_a11y_screenshots(start: int = 0) -> list:
+    """SEE the elements you are judging — a picture of each element in this run's batch, as
+    viewable image blocks labelled with the element `id`. Call this before judging anything
+    visual: `color` asks what a thing looks like, and `alt` often does too. Paginated; the
+    summary gives a `next_start` and names any element that has no captured image."""
+    import base64
+
+    from mcp.server.fastmcp import Image as McpImage
+
+    res = tools.get_a11y_screenshots(_tenant(), _bound_run(), start) or {}
+    images = res.get("images") or []
+    unseen = res.get("unseen") or []
+    nxt = res.get("next_start")
+    summary = (
+        f"{res.get('returned', len(images))} of {res.get('total', 0)} element image(s), "
+        f"starting at index {res.get('start', start)}. "
+        + (f"Call get_a11y_screenshots(start={nxt}) for the next batch."
+           if nxt is not None else "This is the last batch.")
+        + (f" {len(unseen)} element(s) have no captured image: "
+           f"{', '.join(u.get('id', '') for u in unseen[:12])}." if unseen else "")
+    )
+    blocks: list = [summary]
+    for im in images:
+        try:
+            raw = base64.b64decode(im.get("data_base64") or "")
+        except Exception:  # noqa: BLE001 — skip one unreadable image, keep the rest
+            continue
+        if raw:
+            blocks.append(f"element {im.get('name')}:")
+            blocks.append(McpImage(data=raw, format=(im.get("mime") or "image/png").split("/")[-1]))
+    return blocks
+
+
+@server.tool()
 def get_wcag_grounding(criteria: list[str]) -> dict:
     """The exact WCAG 2.2 wording for these success criteria, with the glossary definitions
     they depend on. Judge against THIS text, not your recollection of the standard."""

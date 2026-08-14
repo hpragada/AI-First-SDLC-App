@@ -617,6 +617,48 @@ def record_a11y_finding(tenant_id, element_id, criteria, verdict, confidence, ev
     )
 
 
+def get_a11y_screenshots(tenant_id, run_id, start=0, object_store=None) -> dict:
+    """SEE the elements this judgment run must judge (QA-11b).
+
+    The batch carries a `screenshot_ref` per element, which is a pointer and not a picture.
+    This reads those crops from the object store, downscales them to a vision-sane size and
+    hands them back as image data — the same pipe `get_page_images` uses for a document's
+    pages, because it is the same problem.
+
+    Without it the `color` check could never answer: 1.4.1 asks whether meaning is carried by
+    colour alone, which is a question about what a thing looks like. Each image is labelled
+    with the element's own `id`, so a verdict is filed against the element that was seen.
+
+    Paginated — a few elements per call, with `next_start` until the last batch. Elements with
+    no captured image are not returned as blanks; they are listed in `unseen` with the reason,
+    which is what the judge quotes when it records `uncertain`.
+    """
+    from apps.a11y.judge import screenshot_pointers
+
+    pointers, unseen = screenshot_pointers(tenant_id, run_id)
+    window = _build_page_image_window(pointers, _obj_store(object_store), start)
+    window["unseen"] = unseen
+    return window
+
+
+def ingest_a11y_candidates(tenant_id, project_id, screen, run_id=None) -> dict:
+    """Store one captured screen's accessibility candidate bundles (QA-11b).
+
+    Called by the **companion**, not by an agent: the capture is machine truth written by the
+    suite's own run against the live application, and the companion collects it from the
+    worktree before teardown. It is deliberately absent from the companion's engine tool grant
+    — an agent able to write candidate bundles could describe a page instead of one having
+    been captured.
+
+    One screen per call. A screen carries a full-page PNG, and ten of those in one request body
+    is past what the request layer accepts.
+    """
+    from apps.a11y.ingest import ingest_screen
+
+    return ingest_screen(tenant_id=tenant_id, project_id=project_id, screen=screen,
+                         run_id=run_id)
+
+
 def log_event(tenant_id, actor, action, target_type, target_id, payload=None) -> dict:
     with tenant_context(tenant_id):
         event = Event.objects.create(

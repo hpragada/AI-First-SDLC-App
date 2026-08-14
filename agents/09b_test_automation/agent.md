@@ -9,10 +9,12 @@ the Page Object Model pattern. Supports any language and framework: Selenium C# 
 Java (TestNG), Playwright TypeScript, Playwright Python, Playwright C#, Cypress, and others. The
 tech stack is read from `# Project`; if absent, the agent asks once. Detects existing scaffolding
 (base classes, fixtures, config) in the worktree before creating it, to avoid overwrites. An
-`Accessibility` test case becomes a real axe-core scan of that screen at WCAG 2.2 AA. Then runs
-the suite against the live application and leaves its JUnit report where the platform collects
-it — a result is the only thing defects, the gate and the loopback can act on. The generated
-scripts are code written into the companion worktree.
+`Accessibility` test case becomes a real axe-core scan of that screen at WCAG 2.2 AA, and also
+captures what the AI accessibility pass will judge later — the live application exists only on
+this machine, and only while this run lasts. Then runs the suite against the live application
+and leaves its JUnit report where the platform collects it — a result is the only thing defects,
+the gate and the loopback can act on. The generated scripts are code written into the companion
+worktree.
 
 ## Role
 
@@ -434,6 +436,53 @@ Take the WCAG criterion number from the rule's own `wcag…` tag (`wcag143` → 
 
 **One route per accessibility case.** If a screen has several states worth scanning (an error state, a modal open), navigate to each within the one test and label each check with its state — still one test case, still one result.
 
+### Also capture what the AI pass has to look at
+
+axe answers what can be measured. It cannot say whether `alt="chart"` means anything, whether a `div` is really a button, whether a status is shown only in red, or whether the label a person reads matches the name a screen reader announces. Those are judged later, by an accessibility specialist agent — **and it will never see this page.** The application runs on this machine, at a `localhost` address the platform cannot reach, and it is stopped and deleted minutes after your run. Whatever the specialist is ever going to look at, you take now.
+
+So the same accessibility test also writes **`test-results/a11y-candidates.json`** — the same directory the JUnit report goes to, already in the `.gitignore` from Step 3, collected by the platform before teardown. If the file is absent the platform imports nothing, which is correct and safe; a scan that captured nothing must never read as a page with nothing wrong on it.
+
+**One screenshot per screen, not one per element.** Take a single full-page screenshot and record each element's rectangle within it. The platform decides which elements are worth judging and cuts their pictures from that image — so a per-element screenshot would be work spent on elements nobody will ever ask about.
+
+```json
+{
+  "version": 1,
+  "screens": [{
+    "route": "/checkout",
+    "url": "http://localhost:5173/checkout",
+    "screenshot_base64": "<the full-page PNG, base64>",
+    "elements": [{
+      "selector": "main > form > button.pay",
+      "tag": "button", "role": "",
+      "attrs": {"class": "pay", "aria-label": "Purchase"},
+      "text": "Buy now",
+      "accessible_name": "Purchase",
+      "interactive": true,
+      "rendered": true,
+      "styles": {"color": "rgb(255, 255, 255)", "background-color": "rgb(0, 90, 200)",
+                 "text-decoration-line": "none", "font-size": "16px",
+                 "font-weight": "600", "border-style": "none"},
+      "parent_styles": {"…the same six keys, on the parent element…": ""},
+      "html": "<button class=\"pay\" aria-label=\"Purchase\">Buy now</button>",
+      "context": "the visible text immediately around it",
+      "box": {"x": 412, "y": 980, "width": 160, "height": 44},
+      "axe": {"rule": "button-name", "impact": "critical", "criteria": ["4.1.2"]}
+    }]
+  }]
+}
+```
+
+**Every field matters, and two of them are traps:**
+
+- **`accessible_name` must be the browser's computed name**, from Playwright's accessibility API — `page.accessibility.snapshot({ root: handle })` and take its `name` (use `locator.ariaSnapshot()` where your Playwright version has removed that). **Never approximate it** from `aria-label`, the text content, or a `<label>` you found yourself. The whole point of the `label` check is the case where the computed name and the visible text disagree; an approximation makes them agree by construction and the check silently stops working.
+- **`styles` and `parent_styles` must carry all six keys** — `color`, `background-color`, `text-decoration-line`, `font-size`, `font-weight`, `border-style` — from `getComputedStyle`. A missing key does not raise anything: it reads as "no", and every element it would have selected quietly stops being judged.
+
+**What to offer.** Capture the elements the four questions could apply to, and no more: images, `<svg>`, `<area>`, `input[type=image]`, anything with `role="img"`; every native control and link; anything carrying a `role` or a `tabindex`; anything with a click or key handler bound to it; and text or filled areas whose colour differs from their surroundings. Over-offering is safe — the platform runs the selection rules and discards the rest — but a screen may not exceed **600** elements, and the whole file may not exceed **60** screens. If a page is bigger than that, capture the region under test rather than the entire document, and say so when you report.
+
+**`axe` is what the scan you just ran said about that element**, if anything: its rule id, impact, and the WCAG criteria from the rule's own `wcag…` tags. Take it from the violation's `nodes[].target` — matching by selector — so the rule finding and the AI finding can later be shown side by side without running axe twice. Leave it out for an element axe said nothing about; an empty object is not a claim that it passed.
+
+**If the screenshot fails**, still write the screen: set `"screenshot_error"` to the reason instead of `screenshot_base64`. The elements are still worth judging from their markup, and the questions that needed to be seen will correctly come back "could not be seen" rather than guessed.
+
 ---
 
 ## Step 6: Run the Suite and Leave the Report Where the Platform Reads It
@@ -498,7 +547,7 @@ python -m pytest             # pytest
 
 **If the suite cannot run at all** (the app will not come up, the browser is missing, dependencies will not install), say so plainly and name the reason. An absent report is read by the platform as "nothing ran" — which is correct and safe — while a report that says everything passed because nothing executed would be the one failure mode that matters.
 
-> The report is **collected from the worktree by the platform before teardown**, and `test-results/` is in the `.gitignore` from Step 3 — so it reaches the platform without ever being committed. Both are deliberate: do not "fix" the ignore rule to commit results, and do not move the report out of the conventional path to keep it.
+> The report is **collected from the worktree by the platform before teardown**, and `test-results/` is in the `.gitignore` from Step 3 — so it reaches the platform without ever being committed. Both are deliberate: do not "fix" the ignore rule to commit results, and do not move the report out of the conventional path to keep it. The same is true of `test-results/a11y-candidates.json` from Step 5a: collected from that directory, never committed, gone with the worktree if it was not written.
 
 ---
 
@@ -526,6 +575,8 @@ Status values: `✅ Generated` / `⏳ Pending` / `❌ Failed` / `🚫 Excluded (
 | `tests/automated/[pages or PageObjects]/[PageName]Page.[ext]` (in the worktree) | Always — one per page in the test case |
 | `tests/automated/[Tests or tests]/TC[XXX]-[slug].[ext]` (in the worktree) | Always — the test script |
 | `conftest.py` / `playwright.config.ts` / `*.csproj` (in the worktree) | Config — only if not present |
+| `test-results/junit.xml` (in the worktree, gitignored) | The suite ran — collected by the platform, never committed |
+| `test-results/a11y-candidates.json` (in the worktree, gitignored) | An `Accessibility` case ran — same collection, same rule |
 
 The platform commits the generated scripts in the worktree, pushes the branch, and opens the PR; register a `test_report` artifact recording the generation and `log_event` after every successful run.
 
@@ -542,6 +593,7 @@ The platform commits the generated scripts in the worktree, pushes the branch, a
 - [ ] Dry run attempted — compile/type check passes
 - [ ] The suite was **run** against the live application, and a JUnit report exists at the conventional path (or the reason it could not run is reported)
 - [ ] For an `Accessibility` case: the scan is scoped to WCAG 2.2 AA, fails on critical/serious, and its message leads with the violation totals
+- [ ] For an `Accessibility` case: `test-results/a11y-candidates.json` was written — one full-page screenshot per screen, each element carrying its box, the browser's **computed** accessible name, and all six `styles` / `parent_styles` keys
 - [ ] A `test_report` artifact registered with status, script path, and dry-run result
 
 ---

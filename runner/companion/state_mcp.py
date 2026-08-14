@@ -97,6 +97,41 @@ def build_server(
         return blocks
 
     @server.tool()
+    def get_a11y_screenshots(start: int = 0) -> list:
+        """SEE the elements you are judging. Returns a one-line summary, then a picture of each
+        element in this run's batch as a viewable image block, labelled with the element `id`
+        you echo back to `record_a11y_finding`.
+
+        Call this before judging anything visual — `color` is a question about what a thing
+        looks like, and `alt` often is too. Paginated: a few elements per call; the summary
+        gives a `next_start`, so call get_a11y_screenshots(start=<next_start>) until it says
+        this is the last batch. Elements with no captured picture are named in the summary —
+        for those, judge from the markup or record `uncertain` saying it could not be seen."""
+        res = client.call("get_a11y_screenshots", start=start) or {}
+        images = res.get("images") or []
+        unseen = res.get("unseen") or []
+        nxt = res.get("next_start")
+        summary = (
+            f"{res.get('returned', len(images))} of {res.get('total', 0)} element image(s), "
+            f"starting at index {res.get('start', start)}. "
+            + (f"Call get_a11y_screenshots(start={nxt}) for the next batch."
+               if nxt is not None else "This is the last batch.")
+            + (f" {len(unseen)} element(s) have no captured image: "
+               f"{', '.join(u.get('id', '') for u in unseen[:12])}." if unseen else "")
+        )
+        blocks: list = [summary]
+        for im in images:
+            try:
+                raw = base64.b64decode(im.get("data_base64") or "")
+            except Exception:  # noqa: BLE001 — skip one unreadable image, keep the rest
+                continue
+            if raw:
+                blocks.append(f"element {im.get('name')}:")
+                fmt = (im.get("mime") or "image/png").split("/")[-1]
+                blocks.append(McpImage(data=raw, format=fmt))
+        return blocks
+
+    @server.tool()
     def list_artifacts(project_id: str, phase: str | None = None,
                        status: str | None = None, type: str | None = None) -> list:
         """List artifact pointers, optionally filtered. Pass `type` to fetch a specific upstream

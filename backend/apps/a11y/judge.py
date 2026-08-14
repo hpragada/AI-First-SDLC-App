@@ -101,6 +101,32 @@ def batch_for_run(tenant_id, run_id) -> dict:
     }
 
 
+def screenshot_pointers(tenant_id, run_id) -> tuple[list[dict], list[dict]]:
+    """(images to fetch, elements with no image) for this run's batch — the judge's eyes (QA-11b).
+
+    Returns the crop pointers in batch order, each labelled with the element's own handle so a
+    picture can never be attributed to a different element, and separately the elements that
+    have no picture at all. The second list is the important one: an element with no image is a
+    fact the judge is told, so it records `uncertain` naming what was missing, rather than
+    quietly judging from markup a question that had to be seen.
+    """
+    elements = list(_elements(_batches(tenant_id, run_id)).values())
+    pointers: list[dict] = []
+    unseen: list[dict] = []
+    for index, element in enumerate(elements):
+        ref = str(element.get("screenshot_ref") or "")
+        if ref:
+            pointers.append({"name": element["id"], "page": index, "s3_key": ref})
+        else:
+            unseen.append({
+                "id": element["id"],
+                "checker": element.get("checker", ""),
+                "reason": "no image of this element was captured — judge it from the markup, "
+                          "or record `uncertain` if the question needs to be seen",
+            })
+    return pointers, unseen
+
+
 def grounding_for(criteria) -> dict:
     """The exact WCAG 2.2 wording for the criteria an element is queued against (QA-04).
 

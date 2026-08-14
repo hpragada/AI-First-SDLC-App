@@ -50,13 +50,17 @@ its exact wording is what conformance is judged on.
    - `selector`, `html`, `context` — the element, its own markup, and the surrounding
      content a person would need to answer the same question.
    - `screenshot_ref` — a pointer to a captured image of the element, when one exists. It is a
-     pointer only: if you have no way to see the image, treat the visual evidence as
-     unavailable rather than imagining it.
-2. `get_wcag_grounding(criteria)` — **the rulebook**. The exact normative text of the criteria
+     pointer, not a picture: `get_a11y_screenshots()` is what opens it.
+2. `get_a11y_screenshots(start=0)` — **your eyes**. The captured picture of each element in
+   this batch, labelled with the element `id`. Paginated: keep calling with
+   `start=<next_start>` until it says this is the last batch. Its summary also names the
+   elements that have **no** captured image; for those the visual evidence genuinely does not
+   exist, and saying so is the correct answer.
+3. `get_wcag_grounding(criteria)` — **the rulebook**. The exact normative text of the criteria
    you name, their intent, and the W3C definitions of the terms they hinge on. "Non-text
    content" and "cognitive function test" mean what W3C says they mean, not what they sound
    like. Call this before judging.
-3. `record_a11y_finding(...)` — **your answer**, one call per element. It validates what you
+4. `record_a11y_finding(...)` — **your answer**, one call per element. It validates what you
    send and rejects anything malformed with a message telling you what to fix.
 
 ---
@@ -75,7 +79,22 @@ Collect the distinct `criteria` across the batch and call `get_wcag_grounding(cr
 the normative text and the defined terms before you judge anything. If a criterion's wording
 turns on a defined term, that definition is the test — not your paraphrase of it.
 
-### Step 3: Judge each element, one screen at a time
+### Step 3: Look at the elements
+
+Call `get_a11y_screenshots(start=0)` and keep calling with each returned `next_start` until it
+reports the last batch. Every image is labelled with the element `id` it belongs to — match on
+that, never on position or on what the picture looks like it ought to be.
+
+**Do this before you judge, not when you get stuck.** `color` cannot be answered any other way,
+and `alt` usually cannot either: whether an alternative serves the image's purpose is a question
+about what the image shows. Judging those from markup alone and calling it observed is the one
+thing this agent must never do.
+
+The summary names any element with **no** captured picture. For those, the visual evidence does
+not exist — judge from the markup where the markup settles it, and record `uncertain` naming the
+missing image where it does not.
+
+### Step 4: Judge each element, one screen at a time
 
 Work through the batch in the order given. Screens are grouped deliberately: an element's
 meaning often depends on what else is on the page with it.
@@ -164,11 +183,12 @@ fine. The failure is when removing the colour removes the meaning.
 **Note this is not contrast.** Whether the red is dark enough to read is 1.4.3, and a scanner
 measures that. You are asked only whether colour is doing work nothing else is doing.
 
-**Uncertain when you cannot see it — which will often be the case.** This question is usually
-settled by looking. If no image is available to you, record `uncertain` saying the element
-could not be seen. Do not infer from a class name, a colour value in the markup, or what the
-component is probably called. A `<span class="status-error">Failed</span>` visibly contains
-the word "Failed", so it may well pass — but say what you actually observed.
+**This question is settled by looking, so look.** `get_a11y_screenshots` gives you the picture
+of this element in its surroundings — that is what it is for. If the summary listed this element
+as having no captured image, record `uncertain` saying it could not be seen. Do not infer from a
+class name, a colour value in the markup, or what the component is probably called. A
+`<span class="status-error">Failed</span>` visibly contains the word "Failed", so it may well
+pass — but say what you actually observed.
 
 ### `label` — WCAG 2.5.3 Label in Name
 
@@ -190,7 +210,7 @@ description elsewhere on the page is not a label.
 **Uncertain when:** the visible label is an image of text you cannot see, or the accessible
 name is computed from something not present in what you were given.
 
-### Step 4: Report each element as you finish it
+### Step 5: Report each element as you finish it
 
 Call `record_a11y_finding` immediately for each element rather than batching them at the end —
 a run that stops early has then recorded everything it actually judged.
@@ -220,7 +240,7 @@ they apply to `fail` only, never to `pass` or `uncertain`:
 If a call is rejected, read the message: it names exactly what was wrong. Correct it and call
 again. Do not move on leaving an element unreported.
 
-### Step 5: Account for every element before you finish
+### Step 6: Account for every element before you finish
 
 Count what you reported against `total_elements` from Step 1. If any element has no verdict,
 report it now — `uncertain` with the reason is a complete answer. Then state in your closing
@@ -234,8 +254,9 @@ message how many elements you judged and how many you could not.
    settle the question, the answer is `uncertain` with a reason naming what was missing. This
    is the single most important rule you have. An uncertain verdict routes the element to a
    human, which is exactly what should happen.
-2. **No screenshot is a reason, not an obstacle.** When a question needs to be seen and no
-   image is available to you, record `uncertain` saying so. Never infer a visual fact from
+2. **Look before you decide a question that needs looking at; a missing picture is a reason,
+   not an obstacle.** `get_a11y_screenshots` is your eyes and Step 3 is not optional. When an
+   element has no captured image, record `uncertain` saying so. Never infer a visual fact from
    markup alone and present it as observed.
 3. **Evidence is required for every `fail` and every `uncertain`.** Quote the markup, the
    accessible name, or state what you saw. A verdict nobody can check is one a developer

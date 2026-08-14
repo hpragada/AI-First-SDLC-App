@@ -66,6 +66,11 @@ class BuildReport:
     # companion stays dumb and the routing rule lives in one place.
     test_results: list = field(default_factory=list)
     test_summary: str = ""      # "12 passed, 1 failed" — for the run console / build message
+    # QA-11b: one line saying what the accessibility capture took ("104 element(s) captured on
+    # 6 screen(s)"), or "" when a phase captured nothing. The capture ITSELF never travels here
+    # — the companion posts it straight to the platform, because a screen carries a full-page
+    # PNG and this payload rides a Temporal signal.
+    a11y_summary: str = ""
     # The companion-local preview URL the app was brought up on for a test-automation build (D7 /
     # P3-09bR): the live target 09b's Playwright explored. The platform records it on a `PreviewEnv`
     # and links it on the PR. "" for phases that bring no app up (07/11) or when no preview ran.

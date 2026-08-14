@@ -22,6 +22,8 @@ from .guardrails import (
     playwright_tools_for,
     scan_worktree,
 )
+from .a11ycapture import collect_a11y_candidates, post_a11y_candidates
+from .a11ycapture import summarize as summarize_capture
 from .testresults import collect_test_results, summarize
 from .worktree import (
     assert_remote_matches,
@@ -55,7 +57,16 @@ BUILD_STATE_TOOLS = [
     "get_a11y_batch",
     "get_wcag_grounding",
     "record_a11y_finding",
+    # QA-11b: the judge's eyes. `color` is a question about what a thing looks like, and
+    # `alt` is often one too — without this the judge holds a pointer to a picture it has no
+    # way to open, and correctly records `uncertain` on every element that needed seeing.
+    "get_a11y_screenshots",
 ]
+# NOT in the list above, deliberately: `ingest_a11y_candidates`. The COMPANION posts the
+# capture (see `run_build`), not the agent — the file is machine truth from the suite's own
+# run, and an agent able to write candidate bundles could describe a page instead of one
+# having been captured. It is allowed on the platform's build-state route, which is what the
+# companion calls; it is never granted to the engine.
 # Filesystem + shell for editing/testing the worktree; platform-state over MCP.
 # Deliberately NO CodeHost and no networked tools — the platform owns Git side-effects (D2).
 BUILD_ALLOWED_TOOLS = (
@@ -433,8 +444,20 @@ def _commit_message(task: BuildTask) -> str:
     return f"{ctype}({task.work_item_key}): {subject}"
 
 
+def _state_client(task: BuildTask):
+    """The platform-state client the companion itself uses (not the agent's MCP proxy).
+
+    Same endpoint, same enrollment token, tenant resolved server-side — this is the companion
+    speaking for itself, to post what the suite left behind.
+    """
+    from runner.companion.state_client import RemoteStateClient
+
+    return RemoteStateClient(api_url=task.api_url, tenant_id=task.tenant_id,
+                             token=task.runner_token)
+
+
 async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
-                    keep_worktree: bool = False) -> dict:
+                    keep_worktree: bool = False, state_client=None) -> dict:
     """Provision → environment → run the build agent in the worktree → **scan for secrets** →
     collect → teardown. Guardrails v1 (§6): the per-phase allowlist is asserted (PG12), the
     egress allowlist gates provisioning, and the changed files are secret-scanned before the
@@ -481,11 +504,26 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
         # D4: the worktree executed the suite — collect its JUnit report BEFORE teardown below
         # (the worktree, and the report in it, are gone once the `finally` runs).
         test_results = collect_test_results(worktree)
+        # QA-11b: same window, same reason — the rendered page, its screenshots and everything
+        # the AI pass will ever look at exist only until the `finally` below removes the
+        # worktree and stops the app. Posted straight to the platform rather than carried on
+        # the build report: a screen carries a full-page PNG, and the report rides a Temporal
+        # signal that is no place for megabytes of image.
+        a11y_screens = collect_a11y_candidates(worktree)
+        a11y_post = {"posted": 0, "failed": []}
+        if a11y_screens:
+            a11y_post = post_a11y_candidates(
+                a11y_screens, client=state_client or _state_client(task),
+                project_id=task.project_id, run_id=task.run_id,
+            )
         out = {
             "run_id": task.run_id, "branch": branch, "worktree": str(worktree),
             "changed_files": files,
             "test_results": test_results,
             "test_summary": summarize(test_results),
+            "a11y_summary": summarize_capture(a11y_screens),
+            "a11y_posted": a11y_post["posted"],
+            "a11y_failed": a11y_post["failed"],
             "preview_url": preview.url if preview else "",
             "cost_usd": getattr(result, "cost_usd", 0.0),
             "outputs": getattr(result, "outputs", {}),
@@ -566,4 +604,8 @@ def to_build_report(result: dict) -> dict:
             "changed_files": result.get("changed_files", []),
             "test_results": result.get("test_results", []),
             "test_summary": result.get("test_summary", ""),
+            # The capture itself was already posted straight to the platform (QA-11b); what
+            # travels here is the one line saying what was taken, so the run console can show
+            # that an accessibility capture happened — or that none did.
+            "a11y_summary": result.get("a11y_summary", ""),
             "preview_url": result.get("preview_url", "")}

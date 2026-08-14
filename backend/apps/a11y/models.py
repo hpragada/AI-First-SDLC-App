@@ -64,6 +64,79 @@ class A11yJudgmentCache(TenantScopedModel):
         return f"a11y:{self.checker}:{self.verdict} ({self.content_hash[:12]})"
 
 
+class A11yCandidateBundle(TenantScopedModel):
+    """One captured element from a real screen, and what the AI pass should ask about it (QA-11b).
+
+    The app under test runs on the developer's own machine at a localhost address the server
+    cannot reach, so a rendered page exists for a few minutes and then is gone. This table is
+    what survives that window: the facts about one element, a pointer to a picture of it, and
+    whatever the rule scanner already said about it.
+
+    **Selection happened before this row existed.** The capture reports everything it saw; the
+    platform runs `checkers.rules` on ingest and stores only elements at least one checker
+    applies to, with `checkers` naming which. An element nothing applies to is counted and
+    dropped — see `skipped` on the ingest result — so "why was this never judged?" stays an
+    answerable question (`rules.explain`) rather than a silence.
+
+    **`screenshot_ref` is a pointer, never an image.** The crop lives in the object store
+    (#1/#3). Blank means no picture could be produced, and `uncapturable_reason` says why —
+    that is a fact the judge is told, not a row that is quietly dropped, because an element
+    with no image still needs a person to look at it.
+
+    Keyed for re-ingest by (tenant, project, run_key, route, selector): posting the same screen
+    twice updates its elements rather than doubling them. `run_key` is a string rather than the
+    `run` FK because a CI post has no run — and a NULL in a unique constraint compares unequal
+    to itself in Postgres, so two CI posts of the same page would both be stored.
+    """
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="a11y_candidates"
+    )
+    # The run that captured this, when there was one. CI posts carry no run.
+    run = models.ForeignKey(
+        "runs.Run", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    run_key = models.CharField(max_length=128, blank=True, db_index=True)
+
+    route = models.CharField(max_length=512)          # "/checkout"
+    url = models.URLField(blank=True)                 # the companion-local URL it was seen at
+    # Where this element sat in the capture — page order. Stored because a primary key is a
+    # UUID and tells you nothing about sequence, and the batch a judgment run is given has to
+    # come out the same way twice: a run that cannot be reproduced cannot be compared against
+    # the golden set (QA-09).
+    position = models.PositiveIntegerField(default=0)
+    # Bounded, not a TextField: it sits in a unique index, and Postgres refuses an index entry
+    # over ~2.7 KB. Ingest truncates rather than failing the whole screen on one long selector.
+    selector = models.CharField(max_length=512)       # unique within a route
+
+    # Which of the four checks apply to this element, in `rules.CHECKERS` order.
+    checkers = ArrayField(models.CharField(max_length=16), default=list)
+
+    # The captured element exactly as `rules.CapturedElement.from_dict` reads it. Stored whole
+    # rather than as columns: the capture format will grow (an accessibility-tree node, more
+    # styles), and a growing format must not be a migration every time.
+    element = models.JSONField(default=dict)
+
+    # What the rule scanner already said about this element, if anything. Carried so a later
+    # merge can put the rule finding and the AI finding side by side without re-running axe.
+    axe = models.JSONField(default=dict, blank=True)
+
+    screenshot_ref = models.CharField(max_length=512, blank=True)
+    uncapturable_reason = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "project", "run_key", "route", "selector"],
+                name="uniq_tenant_project_a11y_candidate",
+            )
+        ]
+        ordering = ["route", "position", "selector"]
+
+    def __str__(self) -> str:
+        return f"a11y-candidate {self.route} {self.selector[:40]} ({','.join(self.checkers)})"
+
+
 class WcagCriterion(UUIDModel):
     """One WCAG success criterion — **one copy for the whole platform** (QA-04).
 
