@@ -62,6 +62,18 @@ def _is_live_worktree(worktree_path) -> bool:
     return bool(_git(worktree_path, "rev-parse", "--git-dir", check=False).strip())
 
 
+def _ref_exists(repo_path, ref: str) -> bool:
+    """Whether `ref` resolves in this repo.
+
+    Used to decide whether a freshly-fetched remote base is actually available: an offline
+    companion, or one whose remote refused the fetch, must still be able to build — so the
+    caller falls back to the local ref rather than failing the run.
+    """
+    return bool(
+        _git(repo_path, "rev-parse", "--verify", "--quiet", ref, check=False).strip()
+    )
+
+
 def provision_worktree(*, repo_path, branch: str, base: str, worktree_path,
                        remote: str = "origin") -> Path:
     """Create (or reuse) a worktree at `worktree_path` on `branch`. Idempotent: an existing
@@ -77,7 +89,9 @@ def provision_worktree(*, repo_path, branch: str, base: str, worktree_path,
     remote tip `<remote>/<branch>` — the true shared source of the work-in-progress — so ANY
     companion continues exactly where the last cycle left off. This also subsumes the stale
     local-branch empty-build case (#145): we no longer trust a leftover local branch. Only when
-    the remote has NO such branch (the very first build, or offline) do we branch from `base`."""
+    the remote has NO such branch (the very first build, or offline) do we branch from `base` —
+    and `base` is fetched from the remote first, for exactly the same reason: a local ref is
+    whatever that one clone last happened to update, not the shared truth of the project."""
     repo_path = Path(repo_path)
     worktree_path = Path(worktree_path)
     if worktree_path.exists():
@@ -114,9 +128,19 @@ def provision_worktree(*, repo_path, branch: str, base: str, worktree_path,
         _git(repo_path, "fetch", remote, f"+{branch}:refs/remotes/{remote}/{branch}", check=False)
         start = f"refs/remotes/{remote}/{branch}"
     else:
-        # First build (or offline): start from `base`. `-B` still resets any stale local branch of
-        # the same name to `base`, so a leftover local branch can't cause an empty/wrong build (#145).
-        start = base
+        # First build, or the branch was deleted. `base` names the developer's LOCAL branch — and
+        # git NEVER moves a local branch on fetch, so a clone where nobody ever checks `main` out
+        # stays at whatever commit it was cloned at, indefinitely. Observed on the PeopleDesk
+        # pilot: a companion whose local `main` was still the repository's FIRST commit, thirteen
+        # merged PRs behind, so the agent scaffolded a frontend that already existed and the PR
+        # came back with 23 conflicted files and two rival auth contexts. The failure is silent —
+        # the build succeeds, and only the merge reveals it was built against the wrong world.
+        # Same reasoning as the branch path above: ask the remote, never trust a local ref.
+        remote_base = f"refs/remotes/{remote}/{base}"
+        _git(repo_path, "fetch", remote, f"+{base}:{remote_base}", check=False)
+        # Offline, no remote, or a refused fetch → fall back to the local ref, which is what this
+        # did before. A companion with no network must still be able to build.
+        start = remote_base if _ref_exists(repo_path, remote_base) else base
     _git(repo_path, "worktree", "add", "-B", branch, str(worktree_path), start)
     _exclude_platform_scratch(worktree_path)
     # Fail HERE, not eight minutes from now. Everything downstream — `changed_files`,
