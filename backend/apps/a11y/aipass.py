@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from apps.tenancy.context import tenant_context
 
-from .dispatch import dispatch_judgments
+from .dispatch import dispatch_judgments, record_verdict
 from .ingest import requests_for
 from .report import publish_report
 
@@ -123,6 +123,15 @@ def start_ai_pass(*, tenant_id, project_id, run_id, work_item_id=None, title: st
         "deferred": len(result.deferred),
         "reason": result.unavailable_reason,
     }
+    # Whatever could not be asked about is FILED, not just reported (QA-13). `dispatch` builds
+    # a complete `uncertain` for each one carrying the real reason — "no judge is registered in
+    # this workspace", "no machine is connected" — and until this line the caller read that
+    # sentence and threw the results away. Two things went wrong because of it: the report said
+    # "no verdict was recorded" instead of why, and nothing reached the review queue, so the
+    # queue stood empty in precisely the situation that should fill it.
+    out["filed_unjudged"] = _file_unjudged(
+        tenant_id=tenant_id, project_id=project_id, result=result)
+
     if result.run_id:
         _remember_source_run(tenant_id, result.run_id, run_id)
         # The report waits for the judge — half its verdicts are still in flight.
@@ -133,6 +142,19 @@ def start_ai_pass(*, tenant_id, project_id, run_id, work_item_id=None, title: st
     out["report"] = _publish(tenant_id=tenant_id, project_id=project_id, run_id=run_id,
                              title=title)
     return out
+
+
+def _file_unjudged(*, tenant_id, project_id, result) -> int:
+    """Store the `uncertain` results for everything the dispatch could not ask about.
+
+    Safe to store *because* the dispatch cache no longer serves an `uncertain` back to a later
+    dispatch (see `dispatch._cached`). Without that, filing these would be the worse bug: the
+    element would be permanently answered "the judge was unavailable" and never asked again.
+    """
+    for request, judgment in zip(result.unjudged_requests, result.unjudged, strict=True):
+        record_verdict(tenant_id=tenant_id, project_id=project_id, run_id=None,
+                       content_hash=request.content_hash, judgment=judgment)
+    return len(result.unjudged_requests)
 
 
 def finish_ai_pass(*, tenant_id, judge_run_id) -> dict:

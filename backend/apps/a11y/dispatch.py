@@ -28,7 +28,13 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
-from integrations.types import A11Y_CHECKER_CRITERIA, A11yCandidate, A11yJudgment, uncertain
+from integrations.types import (
+    A11Y_CHECKER_CRITERIA,
+    A11Y_UNCERTAIN,
+    A11yCandidate,
+    A11yJudgment,
+    uncertain,
+)
 
 #: The platform-native agent that does the judging. Built in QA-02a — until then this key
 #: resolves to no AgentSpec, which is exactly the "judge unavailable" path below, exercised
@@ -91,9 +97,26 @@ class DispatchResult:
     from_cache: list[A11yJudgment] = field(default_factory=list)
     dispatched: list[A11yRequest] = field(default_factory=list)
     deferred: list[A11yRequest] = field(default_factory=list)
-    unjudged: list[A11yJudgment] = field(default_factory=list)   # uncertain, for human review
+    #: The requests nothing could be asked about, for human review. Held as *requests* rather
+    #: than as bare judgments because the caller has to be able to file them: a judgment on its
+    #: own does not say which element it is about, so a result that carried only judgments could
+    #: be reported and never recorded — which is exactly what happened (QA-13).
+    unjudged_requests: list[A11yRequest] = field(default_factory=list)
     run_id: str | None = None
     unavailable_reason: str = ""
+
+    @property
+    def unjudged(self) -> list[A11yJudgment]:
+        """Those requests as complete `uncertain` results carrying the reason.
+
+        Derived rather than stored, so the judgments and the requests they belong to can never
+        drift apart or be set to different lengths.
+        """
+        return [
+            uncertain(A11Y_CHECKER_CRITERIA[r.checker], checker=r.checker,
+                      reason=self.unavailable_reason)
+            for r in self.unjudged_requests
+        ]
 
     @property
     def screens(self) -> list[str]:
@@ -145,12 +168,31 @@ def caps_for(tenant_id) -> tuple[int, int | None]:
     return int(judgments), (None if screens is None else int(screens))
 
 
-def _cached(tenant_id, project_id, request: A11yRequest) -> A11yJudgment | None:
+def _cached(tenant_id, project_id, request: A11yRequest,
+            *, include_uncertain: bool = False) -> A11yJudgment | None:
+    """The stored verdict for this input, or None.
+
+    **`uncertain` is not served to a dispatch, and this is load-bearing.** An `uncertain` means
+    no answer was reached — the judge was unavailable, the run ended without reporting on it, a
+    picture could not be cut. Serving it back would turn a *transient* inability into a
+    permanent one: the element would be skipped on every future run, for ever, and the platform
+    would go on reporting "sent for human review" long after the reason had gone away. Nothing
+    is saved by it either, because no judgment was ever made to reuse.
+
+    The cost of the other direction is bounded and worth paying: an element that genuinely
+    cannot be answered is re-asked each run, capped by the per-run limit like everything else.
+
+    `include_uncertain=True` for the *read* path (`stored_judgment`), where the question is
+    "what do we know about this element?" and "we could not tell, because …" is a real answer a
+    reader needs. Only the dispatch decision excludes them.
+    """
     from apps.a11y.models import A11yJudgmentCache
 
     rows = A11yJudgmentCache.objects.filter(
         tenant_id=tenant_id, checker=request.checker, content_hash=request.content_hash,
     )
+    if not include_uncertain:
+        rows = rows.exclude(verdict=A11Y_UNCERTAIN)
     if project_id is not None:
         rows = rows.filter(project_id=project_id)
     # Newest wins when the caller did not name a project. Ordered explicitly because an
@@ -177,19 +219,9 @@ def stored_judgment(*, tenant_id, checker: str, candidate: A11yCandidate,
     from apps.tenancy.context import tenant_context
 
     with tenant_context(tenant_id):
-        return _cached(tenant_id, project_id, A11yRequest(checker=checker, candidate=candidate))
-
-
-def _unjudged(requests: list[A11yRequest], reason: str) -> list[A11yJudgment]:
-    """Turn requests we could not judge into complete `uncertain` results carrying the reason.
-
-    Never an exception and never an empty list: an outage that produced *nothing* would read
-    downstream as "no accessibility problems found", which is the one wrong answer here.
-    """
-    return [
-        uncertain(A11Y_CHECKER_CRITERIA[r.checker], checker=r.checker, reason=reason)
-        for r in requests
-    ]
+        return _cached(tenant_id, project_id,
+                       A11yRequest(checker=checker, candidate=candidate),
+                       include_uncertain=True)
 
 
 def _split_at_cap(
@@ -318,7 +350,7 @@ def dispatch_judgments(
     unavailable = judge_available(tenant_id, project_id, triggered_by)
     if unavailable:
         result.unavailable_reason = unavailable
-        result.unjudged = _unjudged(pending + result.deferred, unavailable)
+        result.unjudged_requests = pending + result.deferred
         result.deferred = []
         return result
 
@@ -336,7 +368,7 @@ def dispatch_judgments(
     except Exception as exc:  # noqa: BLE001 — every failure mode is "send it to a human"
         reason = DISPATCH_FAILED.format(detail=exc)
         result.unavailable_reason = reason
-        result.unjudged = _unjudged(pending + result.deferred, reason)
+        result.unjudged_requests = pending + result.deferred
         result.deferred = []
         return result
 

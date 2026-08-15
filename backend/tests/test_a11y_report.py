@@ -70,7 +70,7 @@ from apps.runs.enrollment import enroll_runner
 from apps.runs.models import Run
 from apps.tenancy.models import Tenant, User
 from apps.workitems.models import WorkItem
-from integrations.types import A11Y_FAIL, A11Y_PASS, A11yJudgment
+from integrations.types import A11Y_FAIL, A11Y_PASS, A11Y_UNCERTAIN, A11yJudgment
 from storage.object_store import InMemoryObjectStore
 
 # ── a page with an image, a fake button and a real button ──────────────────────────
@@ -618,15 +618,89 @@ def test_when_every_answer_is_already_known_the_report_is_published_at_once(worl
 
 def test_a_judge_that_cannot_be_started_still_produces_a_report(world):
     """D-A11Y-3 end to end: an outage that produced nothing would read downstream as "no
-    accessibility problems found"."""
+    accessibility problems found".
+
+    Note what `complete` now means here, and why it flipped in QA-13. Every element DID get an
+    answer — a well-formed `uncertain` naming the outage — so coverage is complete and the
+    report is not missing anything. What makes the run untrustworthy is the *reason* those
+    answers say, which is why the outage banner is asserted separately below rather than being
+    inferred from a missing verdict.
+    """
     _ingest(world)
     trigger = FakeTrigger(world, fail=RuntimeError("temporal is down"))
     out = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"],
                         trigger=trigger)
     assert out["started"] is False
     assert "temporal is down" in out["reason"]
-    assert out["report"]["artifact_id"], "the report exists and says what was not judged"
-    assert out["report"]["complete"] is False
+    assert out["report"]["artifact_id"], "the report exists"
+    assert out["filed_unjudged"] == 2, "and every element it could not ask about was FILED"
+    assert out["report"]["needs_review"] == 2, "each one routed to a person, not lost"
+
+
+def test_an_uncertain_verdict_is_never_served_back_to_a_later_dispatch(world):
+    """The repair QA-13 opened with, and the more serious half of it.
+
+    `verify_judgment_completeness` has stored an `uncertain` for every element a judge finished
+    without reporting on since QA-02a, and the dispatch cache served ANY stored verdict back.
+    So one judge run that fell over would answer that element "sent for human review" **for
+    ever** — never re-asked, on any future run, with nothing anywhere saying why. A transient
+    failure became a permanent hole in a compliance report.
+
+    Nothing was saved by caching it either: no judgment was ever made to reuse.
+    """
+    from apps.a11y.dispatch import dispatch_judgments
+
+    _ingest(world)
+    request = _by_checker(world, "alt")
+    _judge(world, request, A11Y_UNCERTAIN, 0.0, evidence="the judge was unavailable")
+
+    result = dispatch_judgments(
+        tenant_id=world["t"], project_id=world["p"], work_item_id=str(world["story"].id),
+        requests=[request], triggered_by=str(world["user"].id), trigger=FakeTrigger(world))
+    assert result.from_cache == [], "an 'I could not tell' is not an answer to reuse"
+    assert len(result.dispatched) == 1, "so it gets asked again"
+
+
+def test_a_real_verdict_is_still_served_from_the_cache(world):
+    """The saving QA-07 exists for is untouched — only `uncertain` is excluded."""
+    from apps.a11y.dispatch import dispatch_judgments
+
+    _ingest(world)
+    request = _by_checker(world, "alt")
+    _judge(world, request, A11Y_FAIL, 0.95, evidence="filename")
+
+    trigger = FakeTrigger(world)
+    result = dispatch_judgments(
+        tenant_id=world["t"], project_id=world["p"], work_item_id=str(world["story"].id),
+        requests=[request], triggered_by=str(world["user"].id), trigger=trigger)
+    assert len(result.from_cache) == 1 and trigger.calls == []
+
+
+def test_the_capability_still_reports_why_it_could_not_tell(world):
+    """The read path keeps its uncertains. "We could not tell, because …" is a real answer a
+    reader needs — it is only the *dispatch decision* that must ignore it."""
+    from apps.a11y.dispatch import stored_judgment
+
+    _ingest(world)
+    request = _by_checker(world, "alt")
+    _judge(world, request, A11Y_UNCERTAIN, 0.0, evidence="no machine was connected")
+    held = stored_judgment(tenant_id=world["t"], checker="alt",
+                           candidate=request.candidate, project_id=world["p"])
+    assert held is not None and held.verdict == A11Y_UNCERTAIN
+    assert "no machine was connected" in held.evidence
+
+
+def test_what_could_not_be_asked_about_reaches_the_review_queue(world):
+    """The half that made the queue empty exactly when it should be fullest."""
+    from apps.a11y.findings import review_queue
+
+    _ingest(world)
+    start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"],
+                  trigger=FakeTrigger(world, fail=RuntimeError("temporal is down")))
+    queue = review_queue(world["t"], world["p"])
+    assert len(queue) == 2
+    assert all("could not be started" in f.evidence for f in queue), \
+        "and each one says WHY, not just that no verdict was recorded"
 
 
 def test_starting_the_pass_never_raises_at_the_build(world, monkeypatch):
