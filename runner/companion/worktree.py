@@ -62,6 +62,18 @@ def _is_live_worktree(worktree_path) -> bool:
     return bool(_git(worktree_path, "rev-parse", "--git-dir", check=False).strip())
 
 
+def _ref_exists(repo_path, ref: str) -> bool:
+    """Whether `ref` resolves in this repo.
+
+    Used to decide whether a freshly-fetched remote base is actually available: an offline
+    companion, or one whose remote refused the fetch, must still be able to build — so the
+    caller falls back to the local ref rather than failing the run.
+    """
+    return bool(
+        _git(repo_path, "rev-parse", "--verify", "--quiet", ref, check=False).strip()
+    )
+
+
 def provision_worktree(*, repo_path, branch: str, base: str, worktree_path,
                        remote: str = "origin") -> Path:
     """Create (or reuse) a worktree at `worktree_path` on `branch`. Idempotent: an existing
@@ -77,7 +89,9 @@ def provision_worktree(*, repo_path, branch: str, base: str, worktree_path,
     remote tip `<remote>/<branch>` — the true shared source of the work-in-progress — so ANY
     companion continues exactly where the last cycle left off. This also subsumes the stale
     local-branch empty-build case (#145): we no longer trust a leftover local branch. Only when
-    the remote has NO such branch (the very first build, or offline) do we branch from `base`."""
+    the remote has NO such branch (the very first build, or offline) do we branch from `base` —
+    and `base` is fetched from the remote first, for exactly the same reason: a local ref is
+    whatever that one clone last happened to update, not the shared truth of the project."""
     repo_path = Path(repo_path)
     worktree_path = Path(worktree_path)
     if worktree_path.exists():
@@ -114,9 +128,19 @@ def provision_worktree(*, repo_path, branch: str, base: str, worktree_path,
         _git(repo_path, "fetch", remote, f"+{branch}:refs/remotes/{remote}/{branch}", check=False)
         start = f"refs/remotes/{remote}/{branch}"
     else:
-        # First build (or offline): start from `base`. `-B` still resets any stale local branch of
-        # the same name to `base`, so a leftover local branch can't cause an empty/wrong build (#145).
-        start = base
+        # First build, or the branch was deleted. `base` names the developer's LOCAL branch — and
+        # git NEVER moves a local branch on fetch, so a clone where nobody ever checks `main` out
+        # stays at whatever commit it was cloned at, indefinitely. Observed on the PeopleDesk
+        # pilot: a companion whose local `main` was still the repository's FIRST commit, thirteen
+        # merged PRs behind, so the agent scaffolded a frontend that already existed and the PR
+        # came back with 23 conflicted files and two rival auth contexts. The failure is silent —
+        # the build succeeds, and only the merge reveals it was built against the wrong world.
+        # Same reasoning as the branch path above: ask the remote, never trust a local ref.
+        remote_base = f"refs/remotes/{remote}/{base}"
+        _git(repo_path, "fetch", remote, f"+{base}:{remote_base}", check=False)
+        # Offline, no remote, or a refused fetch → fall back to the local ref, which is what this
+        # did before. A companion with no network must still be able to build.
+        start = remote_base if _ref_exists(repo_path, remote_base) else base
     _git(repo_path, "worktree", "add", "-B", branch, str(worktree_path), start)
     _exclude_platform_scratch(worktree_path)
     # Fail HERE, not eight minutes from now. Everything downstream — `changed_files`,
@@ -150,10 +174,77 @@ def teardown_worktree(*, repo_path, worktree_path) -> None:
               file=sys.stderr, flush=True)
 
 
+#: Directories a build *generates* — dependencies it installed, caches it wrote. They are
+#: never the agent's work, they must never be committed to the client's repo, and the secret
+#: scanner must never read them: 30,000 vendored files produce nothing but noise (a single
+#: `npm install` yielded 535 "findings", every one of them a JavaScript variable name).
+#:
+#: **Only unambiguous names are listed here.** `dist`, `build`, `out`, `target`, `bin` and
+#: `vendor` were considered and deliberately left out: each is a real source directory in some
+#: ecosystem (Go commits `vendor/` on purpose), and excluding a directory means silently not
+#: committing the work inside it — the safe direction to be wrong in is to include too little.
+#: The general answer to generated output is a `.gitignore`, which is the project's to own;
+#: this list is the backstop for the cases that are never anything else.
+GENERATED_DIRS = frozenset({
+    "node_modules", "bower_components",
+    ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache", ".gradle",
+})
+
+
+def _segments(rel: str) -> list[str]:
+    return rel.replace("\\", "/").strip("/").split("/")
+
+
+def is_generated_path(rel: str) -> bool:
+    """True when any segment of the path is a generated/vendored directory — so a nested
+    `frontend/node_modules/...` is caught as surely as a top-level one."""
+    return any(seg in GENERATED_DIRS for seg in _segments(rel))
+
+
+def _porcelain(worktree_path) -> list[tuple[str, str]]:
+    """(status, path) per changed entry.
+
+    `--untracked-files=all` is load-bearing, not a tidy-up. Git's default collapses a brand-new
+    directory to a single `dir/` entry, and the secret scanner — which asks "is this a file?"
+    before reading it — then skips the whole directory in silence. A real credential in any
+    newly created folder therefore passed the gate and was committed and pushed. Listing
+    untracked files individually is what closes that hole; `GENERATED_DIRS` below is what stops
+    the same change drowning the scan in vendored dependencies.
+    """
+    out = _git(worktree_path, "status", "--porcelain", "--untracked-files=all")
+    return [(line[:2], line[3:]) for line in out.splitlines() if line.strip()]
+
+
+def generated_roots(worktree_path) -> list[str]:
+    """The generated directories present in this worktree but NOT tracked by git.
+
+    Scoped to untracked on purpose: a repository that deliberately commits a vendored directory
+    keeps working exactly as before, because its files never appear as untracked and so never
+    reach this list. Returned as directory roots (`frontend/node_modules`), not the files under
+    them — a command line carrying 30,000 paths would exceed the OS limit.
+    """
+    roots: set[str] = set()
+    for status, rel in _porcelain(worktree_path):
+        if status != "??":
+            continue
+        segments = _segments(rel)
+        for index, segment in enumerate(segments):
+            if segment in GENERATED_DIRS:
+                roots.add("/".join(segments[: index + 1]))
+                break
+    return sorted(roots)
+
+
 def changed_files(worktree_path) -> list[str]:
-    """The paths the agent changed in the worktree (porcelain, excludes platform scratch)."""
-    out = _git(worktree_path, "status", "--porcelain")
-    return [line[3:] for line in out.splitlines() if line.strip()]
+    """The paths the agent changed in the worktree (porcelain, excludes platform scratch).
+
+    Untracked generated directories are omitted — they are the machine's output, not the
+    agent's work, and reporting 30,000 dependency files as "changed" would be both useless and
+    wrong. Tracked files are never filtered, whatever their path.
+    """
+    return [rel for status, rel in _porcelain(worktree_path)
+            if not (status == "??" and is_generated_path(rel))]
 
 
 def head_sha(worktree_path) -> str:
@@ -184,9 +275,19 @@ def commit_all(worktree_path, message: str) -> str | None:
     """Stage and commit every change on the worktree's feature branch (D2: the platform owns
     Git side-effects — the agent never runs git). `.sdlc/` scratch is already git-excluded, so
     it never enters the commit. Returns the new commit sha, or None if there was nothing to
-    commit (the agent produced no change)."""
+    commit (the agent produced no change).
+
+    Untracked generated directories are unstaged again before committing. Without this a single
+    `npm install` put ~30,000 dependency files into the client's repository — and from the next
+    run onward those files were *tracked*, so every later build tripped the secret scanner on
+    them and the branch could never be pushed again. Computed BEFORE `add -A`, because
+    afterwards nothing is untracked any more."""
+    generated = generated_roots(worktree_path)
     _git(worktree_path, "add", "-A")
-    if not _git(worktree_path, "status", "--porcelain").strip():
+    if generated:
+        # By root directory, not by file: 30,000 paths would exceed the command-line limit.
+        _git(worktree_path, "reset", "-q", "--", *generated)
+    if not changed_files(worktree_path):
         return None
     _git(worktree_path, "commit", "--no-verify", "-m", message)
     return head_sha(worktree_path)

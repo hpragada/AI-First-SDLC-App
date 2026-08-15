@@ -744,3 +744,98 @@ def test_state_mcp_server_builds_with_a_client():
 
     server = build_server(RemoteStateClient(api_url="http://x", tenant_id="T", token="t"))
     assert server is not None                                     # FastMCP wired, no import error
+
+
+# ── the base must come from the remote, not a stale local ref (PeopleDesk, 2026-08-15) ───────
+# A companion clone is only ever used to create feature branches — nobody checks `main` out in
+# it, and `git fetch` does not move a local branch. So local `main` sits at whatever commit the
+# clone was made at, forever. Observed in the pilot: local `main` was still the repository's
+# FIRST commit, thirteen merged PRs behind, so the agent scaffolded a frontend that already
+# existed. The build "succeeded" — only the merge revealed it was built against the wrong world.
+def _advance_origin(bare: Path, tmp_path: Path, filename: str = "landed.py") -> str:
+    """Simulate another PR merging into main while this clone isn't looking."""
+    other = tmp_path / "other-clone"
+    subprocess.run(["git", "clone", str(bare), str(other)], check=True, capture_output=True)
+    for cfg in (("user.email", "o@o.test"), ("user.name", "Other")):
+        subprocess.run(["git", "-C", str(other), "config", *cfg], check=True, capture_output=True)
+    (other / filename).write_text("# merged by someone else\n")
+    subprocess.run(["git", "-C", str(other), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(other), "commit", "-m", "another PR merged"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(other), "push", "origin", "main"],
+                   check=True, capture_output=True)
+    return filename
+
+
+def test_a_new_branch_is_based_on_the_remote_not_a_stale_local_main(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    bare = _add_remote(repo)
+    landed = _advance_origin(bare, tmp_path)
+
+    # This clone never pulls — exactly the companion's real state.
+    behind = subprocess.run(["git", "-C", str(repo), "rev-parse", "main"],
+                            capture_output=True, text=True).stdout.strip()
+
+    wt = provision_worktree(repo_path=repo, branch="feature/ST-FRESH", base="main",
+                            worktree_path=tmp_path / "wt" / "ST-FRESH")
+
+    assert (wt / landed).exists(), (
+        "the worktree was based on the stale local main — the agent would build without seeing "
+        "what has already merged")
+    head = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+    assert head != behind
+
+
+def test_the_stale_base_bug_is_real_without_the_fetch(tmp_path):
+    """Guards the guard: prove the scenario above genuinely fails when the base is taken from
+    the local ref, so the test above cannot quietly stop testing anything."""
+    repo = _init_repo(tmp_path / "repo")
+    bare = _add_remote(repo)
+    landed = _advance_origin(bare, tmp_path)
+
+    # What the old code did: branch straight from the local `main`.
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-B", "feature/OLD",
+                    str(tmp_path / "wt" / "OLD"), "main"], check=True, capture_output=True)
+
+    assert not (tmp_path / "wt" / "OLD" / landed).exists()
+
+
+def test_an_offline_companion_still_builds_from_its_local_base(tmp_path):
+    """A fetch that cannot reach the remote must not fail the run — it falls back to the local
+    ref, which is what this did before. A developer on a train keeps working."""
+    repo = _init_repo(tmp_path / "repo")
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                    str(tmp_path / "nonexistent-remote.git")], check=True, capture_output=True)
+
+    wt = provision_worktree(repo_path=repo, branch="feature/ST-OFFLINE", base="main",
+                            worktree_path=tmp_path / "wt" / "ST-OFFLINE")
+
+    assert wt.exists() and (wt / "README.md").exists()
+
+
+def test_a_repo_with_no_remote_at_all_still_provisions(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    wt = provision_worktree(repo_path=repo, branch="feature/ST-NOREMOTE", base="main",
+                            worktree_path=tmp_path / "wt" / "ST-NOREMOTE")
+    assert wt.exists() and (wt / "README.md").exists()
+
+
+def test_an_existing_remote_branch_still_wins_over_the_base(tmp_path):
+    """The other half of the rule is unchanged: when a prior cycle already pushed the feature
+    branch, we continue from ITS tip, not from base — however fresh base now is."""
+    repo = _init_repo(tmp_path / "repo")
+    bare = _add_remote(repo)
+
+    first = provision_worktree(repo_path=repo, branch="feature/ST-CYCLE", base="main",
+                               worktree_path=tmp_path / "wt" / "ST-CYCLE")
+    (first / "cycle1.py").write_text("x = 1\n")
+    commit_all(first, "cycle 1")
+    push_branch(first, "feature/ST-CYCLE")
+    teardown_worktree(repo_path=repo, worktree_path=first)
+
+    _advance_origin(bare, tmp_path)          # main moves on underneath it
+
+    second = provision_worktree(repo_path=repo, branch="feature/ST-CYCLE", base="main",
+                                worktree_path=tmp_path / "wt" / "ST-CYCLE")
+    assert (second / "cycle1.py").exists(), "a remediation cycle lost the prior cycle's work"

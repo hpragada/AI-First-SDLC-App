@@ -21,6 +21,7 @@ from runner.companion.guardrails import (
     scan_worktree,
 )
 from runner.companion.runner import BUILD_ALLOWED_TOOLS, BuildTask, run_build, to_build_report
+from runner.companion.worktree import changed_files, commit_all, generated_roots
 
 from drivers.base import RunResult
 
@@ -238,3 +239,133 @@ def test_dotted_identifier_skip_does_not_weaken_real_tokens():
     # a base64url token that sneaks an underscore in still doesn't pass as "code" (segment entropy)
     assert scan_text('token = A1b2C3d4E5f6G7h8_j9.K0l1M2n3O4p5Q6r7',
                      path="backend/app/auth.py")
+
+
+# ── an ordinary code identifier is not a credential (QA secret-scan block, 2026-08-14) ───────
+# The PeopleDesk block: 535 "high_entropy_secret" findings across a single `npm install`, every
+# one of them a variable name in a dependency. `_ASSIGNMENT` looks for `token`/`secret`/`key`
+# before an `=` with NO word boundary, so it matched "Token" *inside* `isClosingBracketToken` —
+# and the same identifier on the right then cleared the entropy threshold. This is Bugs S.No 151
+# with the dot removed, and it is the fourth appearance of the same class (S.No 143, 150, 151).
+@pytest.mark.parametrize("line", [
+    # verbatim shapes from the blocked run (@eslint-community/eslint-utils, @babel/code-frame)
+    "exports.isClosingBracketToken = isClosingBracketToken;",
+    "exports.isNotClosingBracketToken = isNotClosingBracketToken;",
+    "const isNotClosingParenToken = isNotClosingParenTokenImpl;",
+    "const jsTokensNamespaceObject = jsTokensNamespaceObject;",
+    # the same shape in ordinary first-party source
+    "this.accessToken = incomingAccessTokenValue",
+    "api_key = default_api_key_provider",
+])
+def test_scan_text_skips_a_bare_code_identifier(line):
+    assert scan_text(line, path="node_modules/@eslint-community/eslint-utils/index.js") == []
+    # ...and equally in the project's own source — this is about the value, not the location
+    assert scan_text(line, path="frontend/src/auth.ts") == []
+
+
+@pytest.mark.parametrize("line", [
+    f"api_key = {_RANDOM}",                       # contiguous high-entropy blob
+    "password = supersecretpassword123",          # one word + digits: not an identifier shape
+    "client_secret = abcdefghijklmnopqrstuvwx",   # one long letter run, no word structure
+    "auth_token = A1b2C3d4E5f6G7h8J9k0L1m2",      # case-flipping with digits: encoded
+])
+def test_bare_identifier_skip_does_not_weaken_real_secrets(line):
+    """The guard turns on *word structure*, not on "looks like a name". A generated credential
+    has no words in it, so requiring two costs nothing in detection."""
+    assert scan_text(line, path="backend/app/config.py"), f"stopped catching: {line}"
+
+
+def test_high_precision_patterns_still_fire_inside_a_dependency_path():
+    """The identifier skip is scoped to the entropy heuristic. A REAL key shape is still caught
+    wherever it appears — the format patterns are untouched by any of this."""
+    assert {f.kind for f in scan_text(f"const k = '{_AWS}'", path="node_modules/pkg/index.js")} \
+        == {"aws_access_key_id"}
+
+
+# ── the scan must see inside a NEW directory (security hole, 2026-08-14) ─────────────────────
+# `git status --porcelain` collapses a brand-new directory to a single `dir/` entry. The scan
+# asked "is this a file?", found it wasn't, and skipped the whole directory in silence — so a
+# real credential in any newly created folder passed the gate and was committed and pushed.
+def _git_in(path, *a):
+    subprocess.run(["git", "-C", str(path), *a], check=True, capture_output=True)
+
+
+def test_a_secret_in_a_brand_new_directory_is_found(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "deploy" / "secrets").mkdir(parents=True)
+    (repo / "deploy" / "secrets" / "prod.env").write_text(f"AWS_ACCESS_KEY_ID = {_AWS}\n")
+
+    findings = scan_worktree(repo)
+
+    assert [f.kind for f in findings] == ["aws_access_key_id"]
+    assert findings[0].path.replace("\\", "/") == "deploy/secrets/prod.env"
+    assert _AWS not in findings[0].preview                      # still redacted
+
+
+# ── generated dependency directories are neither scanned nor committed ───────────────────────
+# One `npm install` put ~30,000 files into the client's repo. From the next run onward they were
+# *tracked*, so every later build tripped the scanner on them and the branch could never be
+# pushed again — which is why a Retry never helped.
+def _with_node_modules(repo):
+    lib = repo / "node_modules" / "@eslint-community" / "eslint-utils"
+    lib.mkdir(parents=True)
+    (lib / "index.js").write_text("exports.isClosingBracketToken = isClosingBracketToken;\n")
+    # A minified bundle chunk that the entropy heuristic genuinely DOES flag — deliberately not
+    # identifier-shaped, so this test turns on the directory exclusion rather than on the
+    # code-identifier guard above. Without it the test would pass either way and prove nothing.
+    (repo / "node_modules" / "bundle.min.js").write_text(
+        'var e={token:"aB3xK9mQ7pR2sT5vW8yZ1cD4fG6h"};\n')
+    return repo
+
+
+def test_the_dependency_payload_is_one_the_scanner_would_otherwise_flag():
+    """Guards the guard: if this line ever stops being a finding, the exclusion test below
+    silently stops testing the exclusion."""
+    assert [f.kind for f in scan_text('var e={token:"aB3xK9mQ7pR2sT5vW8yZ1cD4fG6h"};',
+                                      path="src/app.js")] == ["high_entropy_secret"]
+
+
+def test_an_installed_dependency_tree_is_not_scanned(tmp_path):
+    repo = _with_node_modules(_init_repo(tmp_path / "repo"))
+    (repo / "app.py").write_text("x = 1\n")
+
+    assert scan_worktree(repo) == []
+    assert changed_files(repo) == ["app.py"]
+    assert generated_roots(repo) == ["node_modules"]
+
+
+def test_an_installed_dependency_tree_is_never_committed(tmp_path):
+    """The step that poisoned the branch. `git add -A` staged node_modules; from then on those
+    files were tracked and no later build for that work item could ever push."""
+    repo = _with_node_modules(_init_repo(tmp_path / "repo"))
+    (repo / "app.py").write_text("x = 1\n")
+
+    assert commit_all(repo, "scaffold") is not None
+    tracked = subprocess.run(["git", "-C", str(repo), "ls-files"],
+                             capture_output=True, text=True).stdout.split()
+    assert "app.py" in tracked
+    assert not [p for p in tracked if "node_modules" in p]
+
+
+def test_a_build_that_only_installed_dependencies_commits_nothing(tmp_path):
+    """Installing packages is not work. With nothing else changed there is nothing to commit,
+    and the saga correctly reports an empty build rather than an empty commit."""
+    repo = _with_node_modules(_init_repo(tmp_path / "repo"))
+    assert changed_files(repo) == []
+    assert commit_all(repo, "nothing to see") is None
+
+
+def test_a_deliberately_vendored_directory_is_still_tracked_and_reported(tmp_path):
+    """The exclusion applies to UNTRACKED files only, exactly like a gitignore. A repository
+    that commits its dependencies on purpose (Go's `vendor/`, a pinned `node_modules`) keeps
+    working — its files never appear as untracked, so they never reach the exclusion."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "node_modules").mkdir()
+    (repo / "node_modules" / "lib.js").write_text("module.exports = 1;\n")
+    _git_in(repo, "add", "-f", "-A")
+    _git_in(repo, "commit", "-m", "vendored on purpose")
+
+    (repo / "node_modules" / "lib.js").write_text("module.exports = 2;\n")
+
+    assert changed_files(repo) == ["node_modules/lib.js"]        # a tracked change: still reported
+    assert generated_roots(repo) == []                           # nothing untracked to exclude
