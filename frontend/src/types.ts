@@ -30,6 +30,11 @@ export interface ProjectProfile {
   glossary: Record<string, unknown>;
   // Phase-scoped manual-export overrides (bare phase name -> capability | "internal").
   export_policy?: Record<string, string | null>;
+  // Accessibility policy (QA-08): {target, gate:{block_severities, min_confidence,
+  // block_on_incomplete_run, design_checks}}. Absent = the documented default; the effective
+  // policy is readable at GET /projects/{id}/a11y-policy/. No editor for it yet — the profile
+  // PUT is partial, so a client that never sends this key leaves it untouched.
+  a11y?: Record<string, unknown>;
   important_context: string;
   version: number;
 }

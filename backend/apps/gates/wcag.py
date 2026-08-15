@@ -181,6 +181,45 @@ DESIGN_CHECKS: tuple[DesignCheck, ...] = (
     ),
 )
 
+#: The questions a project can **switch on** in its accessibility policy (QA-08). A designer can
+#: answer all five; they are off by default for the reason `NOT_ASKED_REASONS` gives — a
+#: twenty-eight-question checklist gets ticked in bulk rather than read. A project that wants a
+#: stricter design gate turns them on in `ProjectProfile.a11y.gate.design_checks.extra_criteria`,
+#: with no code change. They stay recorded in `NOT_ASKED` because "not asked" remains true of the
+#: default gate, and `verify_complete()` still has to account for them either way.
+OPTIONAL_DESIGN_CHECKS: tuple[DesignCheck, ...] = (
+    DesignCheck(
+        "2.2.1",
+        "any time limit can be turned off, adjusted, or extended before it expires",
+        "the timeout is invented in the design — a session warning or a countdown has to be "
+        "drawn before it can be built, and adding the extend control afterwards is a redesign",
+    ),
+    DesignCheck(
+        "2.3.1",
+        "nothing flashes more than three times a second",
+        "flashing is a property of the animation the design specifies, and this one can cause a "
+        "seizure — it is the cheapest possible thing to catch at design time",
+    ),
+    DesignCheck(
+        "2.5.4",
+        "nothing is triggered only by tilting, shaking or moving the device",
+        "a motion gesture is a design decision; the button that does the same thing has to be "
+        "drawn beside it",
+    ),
+    DesignCheck(
+        "3.2.4",
+        "the same function is named and iconed the same way on every screen",
+        "consistency across screens is visible only when the screens are seen together — the "
+        "design review, not a per-page scan",
+    ),
+    DesignCheck(
+        "3.3.4",
+        "anything legal, financial or irreversible can be reviewed, corrected or undone",
+        "whether a confirm step exists is a flow decision, made here; retrofitting one changes "
+        "the journey",
+    ),
+)
+
 #: Why each remaining criterion is not asked here, in plain words. Keyed by bucket so the
 #: reason is written once and every criterion in it inherits the same, checkable claim.
 NOT_ASKED_REASONS: dict[str, str] = {
@@ -197,9 +236,10 @@ NOT_ASKED_REASONS: dict[str, str] = {
         "focus, on typing, or when a status message fires"
     ),
     "answerable_at_design_but_not_asked": (
-        "a designer could answer it, and it is deliberately left off to keep the list short "
-        "enough to be read honestly rather than ticked in bulk; nothing else asks it today, "
-        "so it is a candidate for the per-project gate policy in QA-08"
+        "a designer could answer it, and it is left off the default list to keep the list short "
+        "enough to be read honestly rather than ticked in bulk; a project that wants it can "
+        "switch it on in its accessibility policy (QA-08), and the question is written and "
+        "waiting in OPTIONAL_DESIGN_CHECKS"
     ),
 }
 
@@ -223,6 +263,30 @@ NOT_ASKED: dict[str, tuple[str, ...]] = {
 _WCAG_GATED_PHASES = {"ux_design"}
 
 _CHECKS_BY_NUMBER: dict[str, DesignCheck] = {check.number: check for check in DESIGN_CHECKS}
+_OPTIONAL_BY_NUMBER: dict[str, DesignCheck] = {c.number: c for c in OPTIONAL_DESIGN_CHECKS}
+
+
+def _sort_key(check: DesignCheck) -> tuple[int, ...]:
+    """Numeric order of the standard — so 2.4.11 follows 2.4.7 rather than preceding it."""
+    return tuple(int(part) for part in check.number.split("."))
+
+
+def _checks_for(extra) -> tuple[DesignCheck, ...]:
+    """The default questions plus whichever optional ones this project switched on.
+
+    An unknown number raises rather than being skipped: a project that believes it asks about
+    flashing must not have that question silently dropped. The policy validator rejects these
+    first, so reaching here means something wrote the profile without going through the API.
+    """
+    numbers = [str(n).strip() for n in (extra or []) if str(n).strip()]
+    if unknown := sorted(set(numbers) - set(_OPTIONAL_BY_NUMBER)):
+        raise ChecklistGap(
+            f"the project's accessibility policy switches on design-gate questions that do not "
+            f"exist: {', '.join(unknown)} — the optional ones are "
+            f"{', '.join(sorted(_OPTIONAL_BY_NUMBER))}"
+        )
+    chosen = [_OPTIONAL_BY_NUMBER[n] for n in sorted(set(numbers))]
+    return tuple(sorted(DESIGN_CHECKS + tuple(chosen), key=_sort_key))
 
 
 def _bucket_of(number: str) -> str | None:
@@ -232,11 +296,14 @@ def _bucket_of(number: str) -> str | None:
     return None
 
 
-def wcag_aa_checklist(*, version: str = DEFAULT_VERSION) -> list[dict]:
+def wcag_aa_checklist(*, version: str = DEFAULT_VERSION, extra=()) -> list[dict]:
     """A fresh WCAG 2.2 AA design checklist (all required, none yet satisfied).
 
     The wording of each item is assembled from the loaded standard, so the criterion's number,
     title and level are the published ones rather than a copy that can drift out of date.
+
+    `extra` is the project's switched-on optional questions (QA-08); empty — the default —
+    produces exactly the checklist this function produced before that policy existed.
 
     Raises `WcagNotLoaded` when the standard has not been loaded on this database, and
     `ChecklistGap` when a question here names a criterion the loaded standard does not have —
@@ -245,11 +312,11 @@ def wcag_aa_checklist(*, version: str = DEFAULT_VERSION) -> list[dict]:
     """
     from apps.a11y.models import WcagCriterion
 
+    checks = _checks_for(extra)
+    asked = {check.number: check for check in checks}
     rows = {
         row.number: row
-        for row in WcagCriterion.objects.filter(
-            version=version, number__in=list(_CHECKS_BY_NUMBER)
-        )
+        for row in WcagCriterion.objects.filter(version=version, number__in=list(asked))
     }
     if not rows:
         raise WcagNotLoaded(
@@ -257,7 +324,7 @@ def wcag_aa_checklist(*, version: str = DEFAULT_VERSION) -> list[dict]:
             f"checklist cannot be built; run `python manage.py load_wcag` (as the migration "
             f"role)"
         )
-    if missing := sorted(set(_CHECKS_BY_NUMBER) - set(rows)):
+    if missing := sorted(set(asked) - set(rows)):
         raise ChecklistGap(
             f"the design checklist asks about criteria the loaded WCAG {version} set does not "
             f"contain: {', '.join(missing)}. Either the standard moved or a question here has "
@@ -275,14 +342,16 @@ def wcag_aa_checklist(*, version: str = DEFAULT_VERSION) -> list[dict]:
             "satisfied": False,
             "note": check.why,
         }
-        for check in DESIGN_CHECKS
+        for check in checks
     ]
 
 
-def conditions_for_wcag_phase(phase: str, *, version: str = DEFAULT_VERSION) -> list[dict]:
+def conditions_for_wcag_phase(phase: str, *, version: str = DEFAULT_VERSION,
+                              extra=()) -> list[dict]:
     """The WCAG checklist for the design review (PG21), empty for every other phase.
-    Composed with the other phases' conditions in `apps.gates.conditions`."""
-    return wcag_aa_checklist(version=version) if phase in _WCAG_GATED_PHASES else []
+    Composed with the other phases' conditions in `apps.gates.conditions`, which is where the
+    project's policy is read and turned into `extra`."""
+    return wcag_aa_checklist(version=version, extra=extra) if phase in _WCAG_GATED_PHASES else []
 
 
 def explain(number: str) -> str:
@@ -293,6 +362,11 @@ def explain(number: str) -> str:
     """
     if check := _CHECKS_BY_NUMBER.get(number):
         return f"asked at the design gate: {check.question} — {check.why}"
+    if check := _OPTIONAL_BY_NUMBER.get(number):
+        return (
+            f"not asked at the design gate by default, but a project can switch it on in its "
+            f"accessibility policy (QA-08), and it then asks: {check.question} — {check.why}"
+        )
     if bucket := _bucket_of(number):
         return f"not asked at the design gate: {NOT_ASKED_REASONS[bucket]}"
     raise ChecklistGap(
@@ -305,6 +379,13 @@ def describe_checklist() -> str:
     """The whole set in plain words — what is asked, and what is not, with the reasons."""
     lines = [f"Asked at the design gate ({len(DESIGN_CHECKS)} criteria, WCAG 2.2 AA):"]
     lines.extend(f"  {c.number}  {c.question}\n        why: {c.why}" for c in DESIGN_CHECKS)
+    lines.append(
+        f"Available to switch on per project ({len(OPTIONAL_DESIGN_CHECKS)} criteria, "
+        f"accessibility policy):"
+    )
+    lines.extend(
+        f"  {c.number}  {c.question}\n        why: {c.why}" for c in OPTIONAL_DESIGN_CHECKS
+    )
     for bucket, numbers in NOT_ASKED.items():
         lines.append(f"Not asked — {NOT_ASKED_REASONS[bucket]}:")
         lines.append(f"  {', '.join(numbers)}")

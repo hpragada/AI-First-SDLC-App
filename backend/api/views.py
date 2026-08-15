@@ -352,6 +352,36 @@ class ProjectViewSet(
             },
         })
 
+    @action(detail=True, methods=["get"], url_path="a11y-policy")
+    def a11y_policy(self, request, pk=None):
+        """The project's accessibility policy (QA-08): what it aims at, and what blocks.
+
+        Read-only, and shaped like `export-policy` on purpose — defaults, the project's own
+        overrides, and the effective result, so a reader never has to merge two dicts in their
+        head. Writes go through `PUT …/profile/`, which validates the block.
+
+        `error` is non-empty only when the stored block cannot be honoured (which the profile
+        endpoint refuses to create): the effective policy is then the documented default, and
+        saying so beats showing a policy that is not the one in force.
+        """
+        from apps.a11y.policy import (
+            DEFAULT_TARGET,
+            default_policy,
+            describe_policy,
+            policy_or_default,
+        )
+
+        project = self.get_object()
+        profile = getattr(project, "profile", None)
+        policy, error = policy_or_default(self.tenant_id, str(project.id))
+        return Response({
+            "defaults": default_policy(DEFAULT_TARGET),
+            "overrides": (profile.a11y if profile else {}) or {},
+            "effective": policy,
+            "summary": describe_policy(policy),
+            "error": error,
+        })
+
     @action(detail=True, methods=["get"])
     def traceability(self, request, pk=None):
         """Lineage graph for the viewer (spec §5): artifact nodes + their TraceEdges,

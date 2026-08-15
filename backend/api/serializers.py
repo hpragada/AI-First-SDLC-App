@@ -310,10 +310,27 @@ class ProjectProfileSerializer(serializers.ModelSerializer):
         model = ProjectProfile
         fields = [
             "id", "project", "description", "domain", "tech_stack", "coding_standards",
-            "nfrs", "constraints", "glossary", "export_policy", "important_context",
+            "nfrs", "constraints", "glossary", "export_policy", "a11y", "important_context",
             "version",
         ]
         read_only_fields = ["id", "project", "version"]
+
+    def validate_a11y(self, value):
+        """Reject an accessibility policy the platform cannot honour, at the point of writing.
+
+        This is the real guard (QA-08): a stored policy is read while a gate is opening and
+        while defects are reconciled, and neither of those may fail — so a typo has to be caught
+        here, with a 400 someone can read, rather than at 3am inside a workflow.
+        """
+        from apps.a11y.policy import A11yPolicyError, validate_policy
+
+        try:
+            validate_policy(value)
+        except A11yPolicyError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+        # The raw block is stored, not the resolved one: a project that has only set a target
+        # should keep following the default severities if that default is ever revised.
+        return value
 
 
 # ── WorkItem ────────────────────────────────────────────────────────

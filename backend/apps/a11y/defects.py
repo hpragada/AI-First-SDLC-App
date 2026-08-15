@@ -37,11 +37,14 @@ from __future__ import annotations
 
 from apps.tenancy.context import tenant_context
 
-#: The severities that open a defect. The same bar security uses, and the bar QA-08's policy
-#: will state. QA-12a derives severity from the WCAG conformance level, so in practice every
-#: Level A breach (Critical) and every Level AA breach (High) opens one — which is exactly the
-#: AA conformance target the design phase commits a project to.
-A11Y_BLOCKING = {"critical", "high"}
+from .policy import blocks, default_policy, policy_or_default
+
+#: The severities that open a defect **by default**. The same bar security uses. QA-12a derives
+#: severity from the WCAG conformance level, so in practice every Level A breach (Critical) and
+#: every Level AA breach (High) opens one — which is exactly the AA conformance target a project
+#: commits to. Since QA-08 this is the *default*, not the rule: a project's own policy is read
+#: below, and this set is what a project with no policy gets.
+A11Y_BLOCKING = set(default_policy()["gate"]["block_severities"])
 
 #: Marks these rows as ours in `external_ref`, alongside the key. Not load-bearing on its own —
 #: `a11y_finding` is what scopes the query — but it is what a person reads on the work item.
@@ -123,6 +126,11 @@ def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
     Idempotent. Running it twice changes nothing the second time, and a finding that flips
     between runs reuses its own defect rather than spawning a duplicate — the fingerprint is the
     key, so "the same problem" means the same thing here as everywhere else.
+
+    Which findings are "blocking" is the project's own policy since QA-08, and the effective
+    policy is returned so a reader can see the bar this reconciliation actually applied. Raising
+    the bar closes defects that no longer clear it — correct, and worth knowing: an admin
+    narrowing the policy is choosing to stop tracking those, and the event log records each one.
     """
     from mcp_platform_state import tools
 
@@ -133,14 +141,27 @@ def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
     opened: list[str] = []
     closed: list[str] = []
     reopened: list[str] = []
+    # The project's policy decides the bar (QA-08). `policy_or_default` never raises: a policy
+    # nobody can read falls back to the documented default and hands back the reason, which is
+    # returned to the caller below — a bad JSON key must not leave real failures untracked.
+    policy, policy_error = policy_or_default(tenant_id, project_id)
+    severities = policy["gate"]["block_severities"]
     with tenant_context(tenant_id):
-        blocking = {
-            finding.fingerprint: finding
-            for finding in A11yFinding.objects
+        candidates = (
+            A11yFinding.objects
             .filter(tenant_id=tenant_id, project_id=project_id,
                     status=A11yFinding.Status.OPEN, outcome="failure",
-                    severity__in=sorted(A11Y_BLOCKING))
+                    severity__in=sorted(severities))
             .select_related("first_seen_run", "first_seen_run__work_item")
+        )
+        # The severity filter runs in the database because it is a plain column; the confidence
+        # bar runs here because it also depends on the source — a rule-scanner measurement is
+        # never held back by a confidence dial (see `policy.blocks`).
+        blocking = {
+            finding.fingerprint: finding
+            for finding in candidates
+            if blocks(policy, severity=finding.severity, confidence=finding.confidence,
+                      source=finding.source)
         }
         existing = {
             (item.external_ref or {}).get("a11y_finding"): item
@@ -150,8 +171,9 @@ def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
         }
 
         # Close what is no longer blocking. "No longer blocking" is a statement about the
-        # LEDGER — resolved, or downgraded to needs-review by a later run — never about this
-        # run's coverage.
+        # LEDGER — resolved, or downgraded to needs-review by a later run — or about the
+        # POLICY, if an admin has since raised the bar past it. Never about this run's
+        # coverage: a screen this run did not visit keeps every defect it had.
         for fingerprint, item in existing.items():
             if fingerprint not in blocking and item.state != WorkItem.State.DONE:
                 item.state = WorkItem.State.DONE
@@ -185,5 +207,8 @@ def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
                                 str(open_item.id), {"finding": fingerprint})
                 reopened.append(str(open_item.id))
 
-    return {"opened": opened, "closed": closed, "reopened": reopened,
-            "blocking": sorted(blocking)}
+    out: dict = {"opened": opened, "closed": closed, "reopened": reopened,
+                 "blocking": sorted(blocking), "policy": policy}
+    if policy_error:
+        out["policy_error"] = policy_error
+    return out

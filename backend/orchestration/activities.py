@@ -305,8 +305,11 @@ def open_gate_core(inp: AgentRunInput) -> str:
                 "required_role": inp.required_role,
                 "decision": Approval.Decision.PENDING,
                 # Control-plane gate conditions (#2/#5): the WCAG checklist on the design
-                # gate (D6), the blocking-test rule on the test gate (D9).
-                "conditions": conditions_for_phase(inp.phase),
+                # gate (D6), the blocking-test rule on the test gate (D9). The project is
+                # passed so the design checklist can honour the project's accessibility
+                # policy (QA-08) — without it, every project gets the default questions.
+                "conditions": conditions_for_phase(
+                    inp.phase, tenant_id=inp.tenant_id, project_id=inp.project_id),
             },
         )
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
