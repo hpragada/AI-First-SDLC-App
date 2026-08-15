@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from apps.tenancy.context import tenant_context
 
+from .defects import record_a11y_findings
 from .dispatch import dispatch_judgments, record_verdict
 from .ingest import requests_for
 from .report import publish_report
@@ -182,16 +183,29 @@ def finish_ai_pass(*, tenant_id, judge_run_id) -> dict:
 
 
 def _publish(*, tenant_id, project_id, run_id, title: str) -> dict:
-    """`publish_report`, with its failures turned into a reported fact.
+    """`publish_report`, then the defect loopback — with failures turned into a reported fact.
 
     The merge reads a tenant's configured thresholds, and `thresholds_for` deliberately raises
     on a misconfiguration rather than falling back — that is right, and it must not take a
     build down with it. The build already has its branch, its tests and its defects; losing the
     accessibility report is a smaller loss than losing those, and the reason is returned so it
     is visible rather than swallowed.
+
+    The defect loopback runs **here rather than inside `publish_report`** (QA-14), so the
+    sequence reads dispatch → report → defects and a function called "publish report" stays one
+    that renders and registers. It runs after, and separately, because a report that could not
+    be written is not a reason to leave a real accessibility failure untracked — nor the other
+    way round.
     """
+    out: dict
     try:
-        return publish_report(tenant_id=tenant_id, project_id=project_id, run_id=run_id,
-                              title=title)
+        out = publish_report(tenant_id=tenant_id, project_id=project_id, run_id=run_id,
+                             title=title)
     except Exception as exc:  # noqa: BLE001 — see the docstring
-        return {"artifact_id": None, "error": str(exc)}
+        out = {"artifact_id": None, "error": str(exc)}
+    try:
+        out["defects"] = record_a11y_findings(tenant_id=tenant_id, project_id=project_id,
+                                              run_id=run_id)
+    except Exception as exc:  # noqa: BLE001 — same trade: never fail a build over the loopback
+        out["defects"] = {"error": str(exc)}
+    return out
