@@ -10,13 +10,59 @@ APPROVED decision is accepted. Never an engine hook. Two kinds compose here:
     from live state at decide time; a reviewer cannot attest it.
 
 Keyed off phase so triggers stay generic — a phase with no conditions gets `[]`.
+
+**Derived conditions are dispatched by key (QA-15a).** This used to hand *every* derived
+condition to the **test** evaluator, which returns anything it does not recognise untouched.
+That was harmless while there was exactly one derived condition and silently fatal the moment
+there were two: the second would be handed to the wrong evaluator, returned as-is, and so keep
+whatever `satisfied` value it was seeded with when the gate opened. Since a fresh derived
+condition is seeded `satisfied: False` and `services._merge_conditions` refuses a reviewer's
+attestation on a derived condition **by design**, the result would not be a subtly wrong
+answer — it would be a testing gate that nobody in the platform could ever approve, on every
+work item, in every project.
+
+So each derived condition names its own evaluator in `_DERIVED_EVALUATORS`, and a key with no
+entry passes through untouched, which is exactly what happened before and is the right default:
+a gate must never crash on a condition it does not recognise.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from .readiness import conditions_for_readiness_phase
-from .testgate import conditions_for_test_phase
-from .testgate import evaluate as _evaluate_test_condition
+from .testgate import BLOCKING_TESTS_KEY, conditions_for_test_phase
+from .testgate import evaluate as evaluate_blocking_tests
 from .wcag import conditions_for_wcag_phase
+
+
+@dataclass(frozen=True)
+class ConditionContext:
+    """What an evaluator is allowed to look at — the gate's own coordinates, nothing more.
+
+    One object rather than a growing parameter list, because every evaluator has to accept
+    the same shape and each new derived condition needs a different subset: the blocking-test
+    rule reads the work item's defects, and the accessibility gate (QA-15) needs the project
+    (to read its QA-08 policy) and the run (to know which test run it is judging). Passing
+    all four now means the registry is not re-plumbed for the second evaluator.
+
+    `run_id` and `project_id` are optional so a caller that genuinely has neither — a unit
+    test, or a future non-run gate — still gets today's behaviour rather than a TypeError.
+    """
+
+    tenant_id: str
+    work_item_id: str
+    run_id: str | None = None
+    project_id: str | None = None
+
+
+#: condition key → the evaluator that owns it. An explicit mapping rather than a decorator
+#: that registers on import: a decorator only fires if its module happens to have been
+#: imported, and "silently not registered" is precisely the failure this registry exists to
+#: remove. `test_gate_condition_registry` asserts every derived condition the platform can
+#: seed has an entry here, so forgetting one fails a test rather than a gate.
+_DERIVED_EVALUATORS = {
+    BLOCKING_TESTS_KEY: evaluate_blocking_tests,
+}
 
 
 def conditions_for_phase(phase: str, *, tenant_id=None, project_id=None) -> list[dict]:
@@ -56,15 +102,33 @@ def _design_extras(tenant_id, project_id) -> tuple[str, ...]:
     return extra_design_criteria(policy)
 
 
-def refresh_derived(conditions, *, tenant_id, work_item_id) -> list[dict]:
-    """Re-evaluate every `derived` condition from live state.
+def derived_evaluators() -> dict:
+    """A copy of the registry — for the completeness test, and for anyone asking "who owns
+    this condition?" without importing a private name."""
+    return dict(_DERIVED_EVALUATORS)
+
+
+def refresh_derived(conditions, *, tenant_id, work_item_id, run_id=None,
+                    project_id=None) -> list[dict]:
+    """Re-evaluate every `derived` condition from live state, each by its own evaluator.
 
     Called at decide time so neither a stale value seeded when the gate opened nor a
     reviewer's payload can stand in for the real state. Reviewer-attested conditions pass
     through untouched, and a gate with no derived conditions costs no queries.
+
+    A derived condition whose key has no registered evaluator also passes through untouched.
+    That is deliberate, and it is the same behaviour this function had before QA-15a: a gate
+    must not raise on a condition it does not recognise — an approval that cannot be *decided*
+    is worse than one carrying an item nobody computes, and the completeness test is what
+    catches the missing registration long before a reviewer meets it.
     """
-    return [
-        _evaluate_test_condition(c, tenant_id=tenant_id, work_item_id=work_item_id)
-        if c.get("derived") else c
-        for c in (conditions or [])
-    ]
+    context = ConditionContext(tenant_id=str(tenant_id), work_item_id=str(work_item_id),
+                               run_id=str(run_id) if run_id else None,
+                               project_id=str(project_id) if project_id else None)
+    refreshed = []
+    for condition in (conditions or []):
+        evaluator = (
+            _DERIVED_EVALUATORS.get(condition.get("key")) if condition.get("derived") else None
+        )
+        refreshed.append(evaluator(condition, context) if evaluator else condition)
+    return refreshed

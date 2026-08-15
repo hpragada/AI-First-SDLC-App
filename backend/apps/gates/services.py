@@ -142,8 +142,12 @@ def decide_gate(
         # Fold in the reviewer's checklist updates, re-derive the platform-evaluated ones from
         # live state, then enforce required conditions on APPROVE.
         approval.conditions = _merge_conditions(approval.conditions, conditions)
+        # The run and the project travel with the refresh (QA-15a): the blocking-test rule
+        # needs only the work item, but the accessibility gate reads the project's policy and
+        # the run whose findings it is judging, and every evaluator takes the same context.
         approval.conditions = refresh_derived(
             approval.conditions, tenant_id=tenant_id, work_item_id=approval.work_item_id,
+            run_id=approval.run_id, project_id=approval.work_item.project_id,
         )
         if decision == "approved":
             unmet = [
