@@ -18,11 +18,17 @@ that names no WCAG criterion. All three are counted and stated at the top (D-A11
 an incomplete accessibility check that reads as a clean one is the single worst outcome
 available to this feature.
 
-**No ledger yet.** QA-12a gives findings a stable identity and a home; until then this renders
-from the judgment cache and the stored capture each time it is asked to. That is why nothing
-here tries to decide whether a finding is "the same" as one from a previous run — that question
-belongs to the fingerprint QA-12a builds, and answering it here with a second, weaker rule would
-be exactly the kind of drift the two-keys note in `A11yJudgmentCache` warns about.
+**The document is rendered from the ledger, not alongside it** (QA-13). `publish_report` merges,
+records the findings, then reads the rows back and renders those — so the report and the stored
+record are the same data by construction rather than two renderings that have to be kept in
+step. What the ledger does not hold comes from the merge and only from it: the passes (not
+findings), the elements that were never judged, and the scanner's best-practice violations that
+map to no criterion. Those are facts about *this run*, and they are exactly the facts that stop
+an incomplete report reading as a clean one.
+
+Nothing here decides whether a finding is "the same" as one from a previous run. That question
+belongs to QA-12a's fingerprint, and answering it here with a second, weaker rule would be
+exactly the kind of drift the two-keys note in `A11yJudgmentCache` warns about.
 """
 from __future__ import annotations
 
@@ -30,7 +36,7 @@ import hashlib
 from dataclasses import dataclass, field
 
 from apps.tenancy.context import tenant_context
-from integrations.types import A11yJudgment, A11yRuleFailure
+from integrations.types import A11Y_UNCERTAIN, A11yJudgment, A11yRuleFailure
 
 from .triage import (
     TRIAGE_FAILURE,
@@ -257,15 +263,83 @@ def _rows_table(rows: list[ReportRow]) -> list[str]:
     return lines
 
 
-def report_body(report: MergedReport, *, title: str = "") -> str:
+def _primary(row) -> str:
+    """The criterion a row is filed under.
+
+    Reads a stored `A11yFinding` and an in-memory `ReportRow` the same way, deliberately: a
+    finding and the row it was built from are the same thing seen twice, and a renderer that
+    needed to know which one it had would be a second place for them to disagree.
+    """
+    stored = getattr(row, "criterion", "")
+    if stored:
+        return stored
+    criteria = getattr(row, "criteria", ()) or ()
+    return criteria[0] if criteria else ""
+
+
+def _grouped(rows: list, headings: dict) -> list[str]:
+    """Rows under one heading per WCAG criterion, worst-numbered first within the group.
+
+    Grouping by criterion is what makes the document answer a conformance question — "where do
+    we stand on 1.1.1?" — instead of only an engineering one. The failure / needs-review / pass
+    split is kept ABOVE it, because a reader's first question is what is broken and the second
+    is which rule it breaks; folding both into one axis would put a blocking failure and a
+    low-confidence question side by side in the same block.
+    """
+    by_criterion: dict[str, list] = {}
+    for row in rows:
+        by_criterion.setdefault(_primary(row), []).append(row)
+
+    lines: list[str] = []
+    for criterion in sorted(by_criterion):
+        detail = headings.get(criterion) or {}
+        handle = detail.get("handle") or ""
+        level = detail.get("level") or ""
+        name = f"{criterion} {handle}".strip() or "(no criterion named)"
+        lines.append(f"### {name}{f' — Level {level}' if level else ''}")
+        lines.append("")
+        lines.extend(_rows_table(by_criterion[criterion]))
+    return lines
+
+
+def _could_not_answer(rows: list) -> list:
+    """Rows a person has to look at because the check reached no verdict — not because it was
+    unsure.
+
+    Told apart **structurally**, not by reading the text: an item the judge could not be asked
+    about carries the `uncertain` verdict, while a low-confidence one carries a real `fail` or
+    `pass` that the confidence gate held back. Matching on the reason's wording would break the
+    moment someone improved a sentence.
+    """
+    return [row for row in rows if getattr(row, "verdict", "") == A11Y_UNCERTAIN]
+
+
+def report_body(report: MergedReport, *, findings: list | None = None, title: str = "",
+                resolved: int = 0) -> str:
     """The merged report as a document a person reads.
 
     Markdown, because the platform's artifact preview renders it generically by content type —
     an `a11y_report` registered as markdown displays with no frontend work at all.
+
+    `findings` are the ledger rows this run left open (QA-13). When given, they are what the
+    failure and needs-review sections render from, so the document and the stored record are
+    the same data rather than two renderings of it. Left out, it falls back to the merge — which
+    is what a caller wants when there is no run to key a ledger on.
     """
+    from .findings import describe_criteria
+
+    rows = list(findings) if findings is not None else [
+        row for row in report.rows if row.outcome != TRIAGE_PASS
+    ]
+    failures = [row for row in rows if row.outcome == TRIAGE_FAILURE]
+    review = [row for row in rows if row.outcome == TRIAGE_REVIEW]
+    unanswered = _could_not_answer(review)
+    headings = describe_criteria(
+        [_primary(row) for row in rows] + [_primary(row) for row in report.passes])
+
     lines = [f"# Accessibility report{f' — {title}' if title else ''}", ""]
     lines.append(
-        f"{len(report.failures)} failure(s), {len(report.needs_review)} needing human review, "
+        f"{len(failures)} failure(s), {len(review)} needing human review, "
         f"{len(report.passes)} passed — across {len(report.routes) or 'no'} screen(s)."
     )
     lines.append("")
@@ -273,10 +347,25 @@ def report_body(report: MergedReport, *, title: str = "") -> str:
         f"{report.judged} element(s) were judged by the AI checks and {report.from_rules} "
         f"further finding(s) came from the rule scanner alone."
     )
+    if resolved:
+        lines.append("")
+        lines.append(f"{resolved} finding(s) open before this run were not found again.")
     lines.append("")
 
-    # D-A11Y-3: an incomplete check must never be readable as a clean one. This is the first
-    # thing after the totals, before anyone reaches the tables.
+    # D-A11Y-3, and it is the first thing after the totals on purpose — before anyone reaches a
+    # table and starts counting rows. Two different silences, said separately because they mean
+    # different things to whoever has to act on them.
+    if unanswered:
+        reasons = sorted({(getattr(row, "evidence", "") or "").strip() for row in unanswered})
+        lines.extend([
+            "> **The AI checks did not fully run for this report.** "
+            f"{len(unanswered)} item(s) were sent for human review because no verdict could be "
+            "reached, not because the check was unsure. Nothing about them here says whether "
+            "they are accessible.",
+            "",
+        ])
+        lines.extend([f"> - {_cell(reason, 400)}" for reason in reasons if reason])
+        lines.append("")
     if report.unjudged:
         lines.extend([
             "> **This check is incomplete.** "
@@ -286,19 +375,19 @@ def report_body(report: MergedReport, *, title: str = "") -> str:
             "",
         ])
 
-    if report.failures:
+    if failures:
         lines.extend(["## Failures", ""])
-        lines.extend(_rows_table(report.failures))
-    if report.needs_review:
+        lines.extend(_grouped(failures, headings))
+    if review:
         lines.extend([
             "## Needs human review", "",
             "Nothing here is a failure and nothing here blocks. Each one is a question the "
             "check could not answer confidently enough to state.", "",
         ])
-        lines.extend(_rows_table(report.needs_review))
+        lines.extend(_grouped(review, headings))
     if report.passes:
         lines.extend(["## Passed", ""])
-        lines.extend(_rows_table(report.passes))
+        lines.extend(_grouped(report.passes, headings))
 
     if report.without_criterion:
         lines.extend([
@@ -326,7 +415,7 @@ def report_body(report: MergedReport, *, title: str = "") -> str:
             )
         lines.append("")
 
-    if not report.rows and not report.unjudged:
+    if not rows and not report.passes and not report.unjudged:
         lines.extend([
             "No accessibility findings were produced for this run. That is only a clean result "
             "if a scan actually ran — check this run's test report for the accessibility "
@@ -352,7 +441,7 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
 
     from apps.registry.models import Artifact
 
-    from .findings import record_run_findings
+    from .findings import open_findings_for_run, record_run_findings
 
     report = merge_run(tenant_id=tenant_id, project_id=project_id, run_id=run_id)
     ledger: dict = {"opened": [], "seen_again": [], "resolved": []}
@@ -365,7 +454,14 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
         # returned and logged rather than swallowed, because a silent ledger failure would mean
         # QA-14 opening no defects with nothing anywhere saying why.
         ledger["error"] = str(exc)
-    body = report_body(report, title=title)
+
+    # Read the rows back rather than rendering what we just handed over (QA-13): the document
+    # then says exactly what the ledger holds, including a problem first seen three runs ago
+    # and still open. If the write above failed there is nothing to read, so the merge is used
+    # — a report from slightly different data beats no report at all.
+    stored = [] if ledger.get("error") else open_findings_for_run(tenant_id, project_id, run_id)
+    body = report_body(report, findings=stored or None, title=title,
+                       resolved=len(ledger["resolved"]))
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     staged = None
     try:

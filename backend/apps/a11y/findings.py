@@ -81,6 +81,46 @@ def levels_for(criteria) -> dict[str, str]:
     )
 
 
+def describe_criteria(criteria) -> dict[str, dict]:
+    """{number: {handle, level}} from the loaded standard — for headings a person can read.
+
+    "1.1.1 Non-text Content (Level A)" tells a reviewer what the rule *is*; a bare number tells
+    them to go and look it up. Same platform-wide table, same absence rule as `levels_for`.
+    """
+    from .models import WcagCriterion
+    from .wcag import DEFAULT_VERSION
+
+    numbers = sorted({str(c).strip() for c in (criteria or []) if str(c).strip()})
+    if not numbers:
+        return {}
+    return {
+        number: {"handle": handle, "level": level}
+        for number, handle, level in WcagCriterion.objects
+        .filter(version=DEFAULT_VERSION, number__in=numbers)
+        .values_list("number", "handle", "level")
+    }
+
+
+def open_findings_for_run(tenant_id, project_id, run_id) -> list:
+    """The ledger rows this run left open — what the report renders from (QA-13).
+
+    Read back after recording rather than rendered from the merge, so the document and the rows
+    are the same data by construction. `last_seen_run` is the filter because that is exactly
+    "what this run found", including a problem first seen three runs ago and still open.
+    """
+    from .models import A11yFinding
+
+    if not run_id:
+        return []
+    with tenant_context(tenant_id):
+        return list(
+            A11yFinding.objects.filter(
+                tenant_id=tenant_id, project_id=project_id, last_seen_run_id=run_id,
+                status=A11yFinding.Status.OPEN,
+            )
+        )
+
+
 def severity_for(level: str) -> str:
     return SEVERITY_BY_LEVEL.get((level or "").strip().upper(), DEFAULT_SEVERITY)
 
