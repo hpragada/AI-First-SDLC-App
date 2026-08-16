@@ -146,23 +146,30 @@ every label.
 
 ### `public/styles.css` — the palette
 
-These values are computed, not estimated. Do not change them.
+These values are computed, not estimated. Do not change them without re-running
+`npm run verify:contrast`.
 
 ```css
 :root {
-  --bg: #ffffff;
-  --ink: #1a1a1a;      /* 17.40:1 on white — body text */
-  --muted: #757575;    /* 4.61:1 on white — PASSES AA for normal text */
-  --faint: #929292;    /* 3.11:1 on white — FAILS AA. Deliberate. Only on /about/opening-hours */
-  --link: #0b5fa5;     /* 6.57:1 on white */
+  --ground: #f2f0ea;      /* the page behind the content card */
+  --surface: #ffffff;     /* the content card — every ratio below is measured against this */
+  --surface-alt: #f7f5f0; /* panels and table headings */
+
+  --ink: #1a1a1a;         /* 17.40:1 on surface — body text */
+  --ink-soft: #43423f;    /* 10.05:1 on surface — secondary text */
+  --muted: #666666;       /* 5.74:1 on surface, 5.27:1 on a panel — passes everywhere it is used */
+  --faint: #929292;       /* 3.11:1 on surface — FAILS AA. Deliberate. /about/opening-hours only */
+  --link: #0b5fa5;        /* 6.57:1 on surface */
+  --required: #c0392b;    /* 5.44:1 on surface */
+
+  --brand: #14434e;       /* white on this = 10.81:1 — header, buttons */
+  --brand-deep: #0e3038;  /* white on this = 14.01:1 — footer */
+  --brand-soft: #cfdde1;  /* on brand-deep = 10.06:1 — footer secondary text */
+
   --tint-overdue:  #fdecea;   /* ink on this = 15.22:1 */
   --tint-due-soon: #fff8e1;   /* ink on this = 16.38:1 */
   --tint-on-loan:  #e8f5e9;   /* ink on this = 15.47:1 */
 }
-body { background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
-a { color: var(--link); }
-.muted { color: var(--muted); }
-:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
 ```
 
 > **Why the status tints are so pale.** The colour-only pages (§8.4) must fail 1.4.1 and **nothing
@@ -170,9 +177,62 @@ a { color: var(--link); }
 > report it, and you could no longer tell which engine found what. Every tint above keeps text above
 > 15:1. Verified, not guessed.
 
-**No external resources.** No CDN fonts, no hosted scripts, no remote images. Playwright is launched
-with `--allowed-origins` scoped to the preview host, so a cross-origin asset may be blocked — and a
-page that renders differently under scan than in your expert's browser invalidates its labels.
+> **Why page content sits on white.** `--faint` fails at exactly 3.11:1 *against white*. Tint the
+> surface it sits on and the planted failure moves, possibly out of failing range. Keep the warmth
+> in the ground around the content card, never under the content.
+
+### `tools/check-contrast.js` — compute the palette, do not choose it
+
+Sixteen pairs pass and one has to fail. Write a checker that asserts both, so the failing pair is
+guarded as carefully as the passing ones:
+
+```js
+function luminance(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const lin = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+const ratio = (fg, bg) => {
+  const [a, b] = [luminance(fg), luminance(bg)].sort((x, y) => y - x);
+  return (a + 0.05) / (b + 0.05);
+};
+```
+
+This earns its place immediately. The first palette used `#757575` for muted text — a documented
+4.61:1 on white — which drops to **4.23:1** the moment that text sits on a panel. It is now
+`#666666`. axe would have caught it eventually, on whichever pages happened to have panels; this
+catches it while choosing the colour.
+
+### The design has to be good enough to show people
+
+The demo script in the spec opens with *"here is an ordinary-looking library application"*. A page
+that reads as unstyled HTML undermines that before the first finding lands, so the fixture carries a
+real design: a brand header, a content card on a tinted ground, a serif display face, card grids, a
+four-column footer.
+
+**Do the design work before the dataset is labelled.** Screenshots are part of the judgment cache
+key. A redesign afterwards invalidates the answer key and buys you the labelling cost twice.
+
+Three constraints are not negotiable, because each one silently breaks a planted defect:
+
+**The shell contributes no `<img>` and no form control.** It renders on all 68 pages, so a logo
+image or a header search box becomes a candidate on *every* page — including `/about/terms`, whose
+entire job is to hold **zero**, and `/account/full-profile`, which must hold exactly 15 controls.
+Text and CSS only; draw the monogram as a `background-image` on `::before` with empty content.
+
+**The site header is not `position: sticky`.** `/catalogue/all-titles` plants WCAG 2.4.11 with a
+sticky column header at the top of the viewport. A second sticky bar above it changes the geometry
+the defect depends on.
+
+**Keep the shell's link count modest.** Every link in the header and footer is a candidate for the
+fake-semantics checker on all 68 pages. Five nav links and twelve footer links is a realistic site
+and a bearable judging cost; forty would triple the bill for no extra coverage.
+
+**No external resources.** No CDN fonts, no hosted scripts, no remote images. Use system font stacks
+(`"Iowan Old Style", Palatino, Georgia, serif` for display) and `data:` URIs for anything drawn.
+Playwright is launched with `--allowed-origins` scoped to the preview host, so a cross-origin asset
+may be blocked — and a page that renders differently under scan than in your expert's browser
+invalidates its labels.
 
 ---
 
@@ -835,6 +895,12 @@ per-element property, and scopes cleanly to one list:
 list, walking back up reaches the top of the document before any row needs top-aligning, and the
 defect never gets a chance to appear.
 
+**And afterwards, never put `overflow` on the container.** This one bit twice. `overflow: hidden` on
+the list wrapper — the obvious way to clip its rounded corners — makes that wrapper the scroll
+container for its own sticky child. The header then sticks to a box that never scrolls and slides
+off the top of the screen with everything else. The page still looks right until you scroll it.
+Round the corners on the header and the last row individually instead.
+
 > **If you write a check for this, note that `element.focus()` will not reproduce it.** Chromium
 > centres a programmatically focused element in the viewport, where nothing covers it. Sequential
 > focus navigation aligns to the nearest edge — the top, when moving up — which is what a keyboard
@@ -894,6 +960,9 @@ one-commit repo looks like exactly what it is.
 - [ ] Every "pass" twin reports **zero** violations
 - [ ] The completeness pages hold exactly 12 / 20 / 15 / 8 candidates — counted, not assumed
 - [ ] Every journey page behaves as planted, and each twin behaves correctly — driven, not assumed
+- [ ] Every colour pair the stylesheet uses is computed, including the one that must keep failing
+- [ ] The shell holds no `<img>` and no form control, and the site header is not sticky
+- [ ] The site looks like something you would show a client
 - [ ] Every element named in §8 has a stable, neutral `id`, and each twin reuses its counterpart's
 - [ ] `verify.js` output is committed as the fixture's baseline
 - [ ] `routes.json` is generated, not hand-edited, and regenerated after adding a route
