@@ -258,6 +258,20 @@ hash is part of the judgment cache key; drift means the label stops describing w
 Not in a comment, a class name, a data attribute, a route, or an `id`. The judge sees the rendered
 page and the URL. Class names describe appearance (`.status-row`), never intent (`.planted-fail`).
 
+> **The stylesheet and the scripts count as "the page".** They are fetched by every route, so a
+> comment in `styles.css` is exactly as readable as the markup. This is the easiest rule in the
+> guide to break, because the comments that give the game away are the ones you most want to write
+> — the ones stopping the next developer "fixing" the CSS. The first build of this fixture shipped
+> ten of them, including `/* Required marked by colour alone — one page depends on this being the
+> only cue. */` sitting directly above the class that does it.
+>
+> The rule that resolves it: **CSS and JS comments say what the code does, never why it is that
+> way.** The why goes in `CONTRIBUTING.md` and this guide, neither of which a browser downloads.
+> Where a developer genuinely needs the warning, point at `CONTRIBUTING.md` rather than explaining.
+>
+> `CONTRIBUTING.md` itself disclosing that the app is deliberately wrong is fine and intended — it
+> is what stops a well-meaning fix. What must never leak is *which element on which page*.
+
 ---
 
 ## 3. Seed data — `data/seed.json`
@@ -947,6 +961,67 @@ one-commit repo looks like exactly what it is.
 
 ---
 
+## 10a. The two checks that catch what the others cannot
+
+Everything described so far proves axe reports the right thing. For roughly two thirds of this app
+the right thing is **nothing** — and nothing is also what you get from a page that has quietly lost
+the markup it was built around. Two more checks close that gap. Build both.
+
+### `tools/verify-plants.js` — assert the defect is still there
+
+One entry per planted case, stating the DOM fact its label depends on, asserted **in both
+directions**: the broken page must be broken *and* the twin must be correct. A check that only
+asserts the failure still passes when both halves of a pair are broken.
+
+```js
+{
+  route: "/account/notifications", criterion: "1.3.1", verdict: "fail",
+  what: "radios with individual labels but no group",
+  test: () => {
+    const group = document.getElementById("notify-group");
+    const radios = group.querySelectorAll('input[type="radio"]');
+    if (radios.length !== 3) return `${radios.length} radios, expected 3`;
+    if (group.closest("fieldset")) return "the group is in a fieldset — the defect is gone";
+    return true;
+  },
+}
+```
+
+Return `true` or a **string saying what was found instead**. When one of these fires a year from
+now, the string is the whole diagnosis.
+
+It should also compare **twin page heights**. The demo turns on two pages being indistinguishable
+to a sighted person; a structural divergence shows up as a height difference long before anyone
+notices it by eye.
+
+### `tools/audit.js` — the invariants no single page owns
+
+- no comment in any **served** file names a defect (see §2)
+- no page references an external origin — `xmlns` declarations are not fetches, allow those
+- every route returns byte-identical HTML on two consecutive requests
+- no page has a duplicate `id`, which would silently change what a dataset selector resolves to
+- every view on disk is routed, and every route appears in `routes.json`
+- no console errors anywhere
+
+### Sizing check — is there enough here to label?
+
+Before committing to a dataset version, count the candidates the app actually offers per checker.
+Measured on this fixture at 68 routes:
+
+| Checker | Candidates | Pages holding any |
+|---|---|---|
+| meaningful-alt | 48 | 19 |
+| fake-semantics | 366 | 43 |
+| colour-only | 41 | 8 |
+| label | 68 | 23 |
+
+Comfortable for **v0.1 (100 records, 20 per criterion)**. For **v1.0 (250 records, 50 per
+criterion)** `meaningful-alt` and `colour-only` have no headroom and need more pages first —
+every record is a distinct `(route, checker, selector)`, so candidates cannot be reused. Count
+before labelling, not after.
+
+---
+
 ## 11. Definition of done
 
 - [ ] `npm start` serves on 4180 and logs `Meridian Library listening on …`
@@ -960,8 +1035,12 @@ one-commit repo looks like exactly what it is.
 - [ ] Every "pass" twin reports **zero** violations
 - [ ] The completeness pages hold exactly 12 / 20 / 15 / 8 candidates — counted, not assumed
 - [ ] Every journey page behaves as planted, and each twin behaves correctly — driven, not assumed
+- [ ] Every planted case is asserted present, and every twin asserted correct — in both directions
 - [ ] Every colour pair the stylesheet uses is computed, including the one that must keep failing
+- [ ] No **served** file — markup, CSS or JS — carries a comment naming a defect
+- [ ] No duplicate `id` on any page, and every view on disk is routed
 - [ ] The shell holds no `<img>` and no form control, and the site header is not sticky
+- [ ] There are enough candidates per checker for the dataset version you intend to label
 - [ ] The site looks like something you would show a client
 - [ ] Every element named in §8 has a stable, neutral `id`, and each twin reuses its counterpart's
 - [ ] `verify.js` output is committed as the fixture's baseline
