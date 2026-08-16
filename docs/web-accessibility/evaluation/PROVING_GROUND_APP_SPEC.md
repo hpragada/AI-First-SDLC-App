@@ -248,7 +248,7 @@ against a hand-provided list until OP-06 lands. This app therefore ships one, at
 
 ```json
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "base_url": "http://localhost:4180",
   "routes": [
     { "path": "/",                      "title": "Home",            "in_scope": true },
@@ -262,6 +262,9 @@ against a hand-provided list until OP-06 lands. This app therefore ships one, at
 Rules: every rendered route appears exactly once; `in_scope: false` only for `/health`; the file is
 updated **in the same commit** as any route addition or removal. A route that renders but is missing
 from `routes.json` is a bug in the fixture, and QA-17's coverage numbers will be quietly wrong.
+
+The way to hold that rule is not discipline: the app keeps its routes in one declarative table and
+generates `routes.json` from it, so the manifest cannot disagree with what the server serves.
 
 > `routes.json` carries **titles only, never verdicts.** It ships in the app repo, so anything in it
 > is visible to the judge.
@@ -312,7 +315,7 @@ same problem twice when both axe and the AI see it.
 | `/about/opening-hours` | Body text at 3.1:1 on its background | `color-contrast` |
 | `/contact` | `<input>` with no label, no `aria-label`, no `title` | `label` |
 | `/about/membership` | `<html>` with no `lang` | `html-has-lang` |
-| `/events/calendar` | Two elements sharing an `id`, one referenced by `aria-describedby` | `duplicate-id-aria` |
+| `/events/calendar` | A link whose only content is an image with an empty `alt` | `link-name` |
 | `/catalogue/reserve` | `<button></button>` with a CSS background icon | `button-name` |
 | `/about/history` | **Control page — zero axe violations** | — |
 | `/events/tickets` | A 20×20 tap target, below the 24×24 minimum | `target-size` *(the WCAG 2.2 canary)* |
@@ -322,6 +325,22 @@ catches the scan **over**-reporting: violations there mean the configuration is 
 other number that day is suspect. `/events/tickets` catches it **under**-reporting: `target-size` is
 tagged `wcag22aa`, so if that page comes back clean the WCAG 2.2 ruleset is not running at all and
 every 2.2 result is a false pass.
+
+> **Two things about axe that QA-11a needs to know before it configures a scan.** Both were found by
+> running the fixture, and both produce a report that looks complete while being silently narrower
+> than intended.
+>
+> **`target-size` (2.5.8) and `label-content-name-mismatch` (2.5.3) ship disabled.** Selecting rules
+> by WCAG tag does not run them. A scan configured with tags alone reports every page clean on those
+> two criteria — no warning, no gap in the output. They must be named individually in `rules`.
+>
+> **`AxeBuilder.options()` overwrites the builder's options rather than merging.** So
+> `.withTags(tags).options({ rules })` silently discards the tag filter and runs every rule axe has,
+> best-practice included. The two settings have to go in a single `options()` call.
+>
+> A third, smaller one: axe returns some rules as **`incomplete`** rather than as violations when it
+> cannot decide automatically. Whatever consumes the results should decide what happens to those
+> rather than reading `violations` and letting the rest fall on the floor.
 
 > **Do not expect axe to catch 2.4.11.** Whether a sticky header covers the focused element depends
 > on scroll position and live layout, so it is not statically decidable and axe has no rule for it.
@@ -364,10 +383,10 @@ explains why the expected verdict there is `uncertain`, not a coin-flip guess.
 
 ```html
 <!-- views/catalogue/new-arrivals.ejs — the defect axe cannot see -->
-<img src="/assets/covers/tidewater.jpg" alt="cover">
+<img src="/assets/covers/tidewater.svg" alt="cover">
 
 <!-- views/catalogue/staff-picks.ejs — its twin -->
-<img src="/assets/covers/tidewater.jpg"
+<img src="/assets/covers/tidewater.svg"
      alt="Tidewater by Ursula Vane — cover showing a flooded harbour at dusk">
 ```
 
