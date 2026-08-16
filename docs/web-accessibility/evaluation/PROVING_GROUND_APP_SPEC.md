@@ -315,9 +315,19 @@ same problem twice when both axe and the AI see it.
 | `/events/calendar` | Two elements sharing an `id`, one referenced by `aria-describedby` | `duplicate-id-aria` |
 | `/catalogue/reserve` | `<button></button>` with a CSS background icon | `button-name` |
 | `/about/history` | **Control page — zero axe violations** | — |
+| `/events/tickets` | A 20×20 tap target, below the 24×24 minimum | `target-size` *(the WCAG 2.2 canary)* |
 
-`/about/history` is the most important row. A run reporting violations there means the scan
-configuration is wrong, and every other number that day is suspect.
+**The last two rows are instrumentation, and they matter more than the rest.** `/about/history`
+catches the scan **over**-reporting: violations there mean the configuration is wrong and every
+other number that day is suspect. `/events/tickets` catches it **under**-reporting: `target-size` is
+tagged `wcag22aa`, so if that page comes back clean the WCAG 2.2 ruleset is not running at all and
+every 2.2 result is a false pass.
+
+> **Do not expect axe to catch 2.4.11.** Whether a sticky header covers the focused element depends
+> on scroll position and live layout, so it is not statically decidable and axe has no rule for it.
+> `/catalogue/all-titles` (§10) is caught by the M3 agent, not the scanner. axe's real WCAG 2.2
+> coverage is much narrower than the criteria list implies — the build guide shows how to enumerate
+> what you actually get.
 
 ### The seam between the two engines
 
@@ -459,9 +469,14 @@ short journey with one planted defect and a correct twin.
 | `/catalogue/results` | "3 results found" injected with no live region | 4.1.3 |
 | `/catalogue/quick-find` | Same message in `aria-live="polite"` | 4.1.3 |
 
-**2.4.11 deserves a note.** It is new in WCAG 2.2 and the sticky-header case is its canonical form.
-It is here specifically to prove the 2.1 → 2.2 uplift took effect — if `/catalogue/all-titles` is
-never flagged, something is still scanning at 2.1.
+**2.4.11 deserves a note.** It is new in WCAG 2.2 and the sticky-header case is its canonical form —
+but **axe has no rule for it**, because whether a sticky region covers the focused element depends
+on scroll position and live layout rather than markup. So `/catalogue/all-titles` is silent under the
+scanner by design, and the M3 agent is the only thing that can catch it. That makes it the clearest
+single argument for building M3 at all: a defect a scanner structurally cannot see, that a user hits
+immediately.
+
+Proof that the WCAG **2.2 ruleset** is running lives elsewhere — the `/events/tickets` canary in §7.
 
 ---
 
@@ -538,6 +553,9 @@ the client demo while the expert is still working through §8.
 
 ## Cross-references
 
+- **What to actually write:** `PROVING_GROUND_BUILD_GUIDE.md` — exact markup per page, the verified
+  colour palette, the axe configuration and acceptance procedure. Build from that; this document is
+  the reasoning behind it.
 - **The answer key over this app:** `GOLDEN_DATASET_SPEC.md` (Doc B).
 - **Corrections that shaped this spec:** `../RESEARCH_CORRECTIONS.md` — R1 (no scan exists; 09b is the
   route), R2 (companion-local, localhost), R4 (judgment via ExecutionDriver; write-completeness),
