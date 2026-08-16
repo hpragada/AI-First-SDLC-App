@@ -67,8 +67,8 @@ added by the pack audit continue at **TC-251**, which collides with nothing.
   is zero, raise it against the phase agent as described below.
 
 **Notes**
-- **Why edges are not an oracle here.** Trace edges are not derived by the platform; they exist
-  only if the phase agent chose to record one while it ran. A graph with correct nodes and no edges
+- **Why edges are not an oracle here.** Trace edges are *mostly* not derived by the platform; they
+  exist only if the phase agent chose to record one while it ran. A graph with correct nodes and no edges
   is an agent-behaviour problem in the phase that should have recorded the link, not a defect in
   `/traceability` — and this screen gives you no way to tell the two apart. If you see zero edges
   after two chained phases, raise it as **Medium** against the *later* phase's agent (the one whose
@@ -78,6 +78,12 @@ added by the pack audit continue at **TC-251**, which collides with nothing.
   expected, not a defect.
 - Edge relationships in the data are `derives` / `implements` / `tests` / `deploys`; the rendered
   lines are unlabelled, so you can only verify that a connection exists, not which kind.
+- **One edge type is now platform-derived: `tests`.** Importing test results registers the run's
+  `test_report` artifact and records a `tests` edge from it to the latest code artifact,
+  automatically (August 2026). So after TS-13 TC-214 or a 09b run you should see at least one edge
+  that no agent had to choose to record. If the graph is empty *after a test import has happened*,
+  that is a stronger signal than an empty graph after two planning phases — note which case
+  produced the data when you record the edge count.
 - The raw `draft` / `published` token on the node's second line is deliberate in this pass — it is
   inconsistent with the humanized badge on `/artifacts`, which is tracked separately. Do not raise
   it.

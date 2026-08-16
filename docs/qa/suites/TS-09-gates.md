@@ -671,7 +671,7 @@ logging out and logging back in — never by editing data.
 
 ---
 
-### TC-137 · The UX Design gate blocks approval until all 9 WCAG criteria are ticked
+### TC-137 · The UX Design gate blocks approval until all 22 WCAG 2.2 criteria are ticked
 
 | Field | Value |
 |---|---|
@@ -695,34 +695,63 @@ logging out and logging back in — never by editing data.
 2. Select the UX Design gate and read the `Required checklist` block.
 3. Count the criteria and read the counter.
 4. Read the `Approve` button without ticking anything.
-5. Tick eight of the nine criteria and re-read the button.
-6. Tick the ninth criterion and re-read the button.
-7. Add the comment `A11y reviewed against WCAG 2.1 AA.` and click `Approve`.
+5. Scan the criterion numbers. Confirm `2.4.11`, `2.5.7`, `2.5.8`, `3.3.7` and `3.3.8` are present,
+   and that `1.4.4` and `4.1.2` are **absent**.
+6. Tick 21 of the 22 criteria and re-read the button.
+7. Tick the last criterion and re-read the button.
+8. Add the comment `A11y reviewed against WCAG 2.2 AA.` and click `Approve`.
 
 **Expected**
-- The card shows a `Required checklist` block with a counter reading `0 of 9 met`, and **nine**
-  criteria, each marked with `*` because all are required — including
-  `Contrast (minimum): text ≥ 4.5:1, large text & UI ≥ 3:1`,
-  `All functionality is keyboard operable` and
-  `Components expose name, role, and value (ARIA)`.
-- With nothing ticked, `Approve` is **disabled** and its label reads `Approve (9 remaining)`.
-- With eight ticked, the counter reads `8 of 9 met` and the button reads `Approve (1 remaining)`,
+- The card shows a `Required checklist` block with a counter reading `0 of 22 met`, and **22**
+  criteria, each marked with `*` because all are required.
+- Each row reads `<number> <criterion title> · Level <A|AA> — <the question>`, e.g.
+  `1.4.3 Contrast (Minimum) · Level AA — text contrast is at least 4.5:1, or 3:1 for large text`.
+  The number, title and level are read from the WCAG 2.2 standard the platform loaded; only the
+  question wording is written by the platform.
+- The 22 numbers are exactly: `1.1.1`, `1.4.1`, `1.4.3`, `1.4.11`, `1.4.13`, `2.1.1`, `2.2.2`,
+  `2.4.3`, `2.4.5`, `2.4.6`, `2.4.7`, `2.4.11`, `2.5.1`, `2.5.7`, `2.5.8`, `3.2.3`, `3.2.6`,
+  `3.3.1`, `3.3.2`, `3.3.3`, `3.3.7`, `3.3.8`.
+- `1.4.4` and `4.1.2` are **not** on the list. Both were on the old WCAG 2.1 checklist and were
+  deliberately removed — see Notes.
+- With nothing ticked, `Approve` is **disabled** and its label reads `Approve (22 remaining)`.
+- With 21 ticked, the counter reads `21 of 22 met` and the button reads `Approve (1 remaining)`,
   still disabled.
-- With all nine ticked, the counter reads `9 of 9 met` and the button becomes enabled and reads
+- With all 22 ticked, the counter reads `22 of 22 met` and the button becomes enabled and reads
   plainly `Approve`.
 - Clicking `Approve` records the decision; the gate leaves `Pending` and the run resumes.
 - `Reject` stays enabled the whole time, at every tick count.
 
 **Test data**
-- Comment: `A11y reviewed against WCAG 2.1 AA.`
+- Comment: `A11y reviewed against WCAG 2.2 AA.`
 
 **Pass / Fail**
-- PASS if approval is impossible until all nine required criteria are ticked, and possible
+- PASS if approval is impossible until all 22 required criteria are ticked, and possible
   immediately after.
-- FAIL — **Critical** — if `Approve` is enabled with a required criterion unticked, if fewer than
-  nine criteria are listed, or if the counter disagrees with the ticks.
+- FAIL — **Critical** — if `Approve` is enabled with a required criterion unticked, or if the
+  counter disagrees with the ticks.
+- FAIL — **High** — if the count is 9 rather than 22, or if `1.4.4` or `4.1.2` appear. Either means
+  the design gate is still running the old hand-typed WCAG 2.1 list.
 
 **Notes**
+- **This checklist changed in August 2026 and the change is deliberate.** It used to be nine
+  criteria typed by hand against WCAG 2.1. It is now built from the WCAG 2.2 standard the platform
+  loaded, so a future release of the standard is a data reload rather than a code edit
+  (`backend/apps/gates/wcag.py`). Do not raise a defect for the count being 22.
+- **Why `1.4.4` and `4.1.2` left the list.** 1.4.4 Resize Text is measured by zooming the built
+  page, and 4.1.2 Name, Role, Value cannot be judged from a drawing — a wireframe exposes no name
+  or role to assistive technology. Both are now checked later, on the built page.
+- **The list is not "the criteria a human owns".** It answers a different question — *what can a
+  person settle by looking at a design?* — so it deliberately includes criteria a rule scanner or
+  the AI also checks later, such as contrast and alt text. That overlap is by design, not
+  duplication.
+- **22 is the default, not a hard number.** A project's accessibility policy can switch on optional
+  extra questions (`design_checks.extra_criteria`), which would make the list longer. There is **no
+  editor for that policy yet**, so on a project created through the UI it is always 22. If you ever
+  see more, check the project's policy before raising anything.
+- **22 ticks is a lot.** Watch whether the list stays usable at that length: does it scroll
+  sensibly, can you tell what you have already ticked, does the page stay responsive? A checklist
+  nobody can complete honestly gets ticked without being read, which defeats the gate. Any usability
+  problem here is worth a **Medium** defect even though the mechanics pass.
 - Nothing is persisted by a blocked approve attempt: the gate stays pending and your ticks are not
   saved if you navigate away. Re-ticking after a reload is expected, not a bug.
 
@@ -1067,7 +1096,7 @@ logging out and logging back in — never by editing data.
 | Automation | No |
 
 **Preconditions**
-- A pending UX Design gate (required role `designer`) with its 9-item WCAG checklist —
+- A pending UX Design gate (required role `designer`) with its 22-item WCAG 2.2 checklist —
   TC-137's precondition. **Needs its own completed run: 20–30 minutes typical, max wait 45 minutes.**
 - **Sequential only**, and this case **consumes the gate**: run it on a UX Design gate you are
   willing to lose, or run TC-137 first, re-trigger UX Design, and use the second gate here.
@@ -1075,7 +1104,7 @@ logging out and logging back in — never by editing data.
 
 **Steps**
 1. Log in as P4 and select the UX Design gate on `/gates`.
-2. Confirm the counter reads `0 of 9 met` and `Approve` is disabled reading `Approve (9 remaining)`.
+2. Confirm the counter reads `0 of 22 met` and `Approve` is disabled reading `Approve (22 remaining)`.
 3. Confirm `Reject` is **enabled** with nothing ticked.
 4. Type the comment `Rejected — secondary button contrast is 3.1:1 on white.`
 5. Click `Reject`.
@@ -1090,7 +1119,7 @@ logging out and logging back in — never by editing data.
 - After the reload the gate has left `Pending` and appears on `Decided history` badged `Rejected`.
 - The run console badge reads `Failed` with the red banner `Gate rejected` /
   `The gate was rejected. Re-trigger to try again.`
-- The re-triggered run opens a **fresh** gate whose counter reads `0 of 9 met` — no tick from the
+- The re-triggered run opens a **fresh** gate whose counter reads `0 of 22 met` — no tick from the
   rejected gate carries over.
 
 **Pass / Fail**

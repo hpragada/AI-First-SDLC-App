@@ -379,7 +379,7 @@ produces a red `Trigger failed` banner (TS-14 TC-217), not a queued run.
 
 ---
 
-### TC-206 · UX Design — the criteria gate needs all 9 WCAG criteria ticked
+### TC-206 · UX Design — the criteria gate needs all 22 WCAG 2.2 criteria ticked
 
 | Field | Value |
 |---|---|
@@ -401,29 +401,35 @@ produces a red `Trigger failed` banner (TS-14 TC-217), not a queued run.
 3. Log in as **P4 Designer**, reload `/gates`, and open the UX Design gate's criteria screen.
 4. Read the criteria list and the state of the **Approve** button before ticking anything.
 5. Tick the criteria one at a time, watching the button label after each tick.
-6. With all 9 ticked, click **Approve**.
+6. With all 22 ticked, click **Approve**.
 7. Reload `/gates`, then check `/artifacts`.
 
 **Expected**
-- The criteria screen lists **9 required criteria** — the WCAG 2.1 AA set (1.1.1, 1.4.3, 1.4.4,
-  2.1.1, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2).
-- With none ticked, the approve button is disabled and reads `Approve (9 remaining)`.
-- The count in the label decreases by one with each tick — `Approve (8 remaining)`, `Approve (7
+- The criteria screen lists **22 required criteria**, all required, at **WCAG 2.2 AA**:
+  `1.1.1`, `1.4.1`, `1.4.3`, `1.4.11`, `1.4.13`, `2.1.1`, `2.2.2`, `2.4.3`, `2.4.5`, `2.4.6`,
+  `2.4.7`, `2.4.11`, `2.5.1`, `2.5.7`, `2.5.8`, `3.2.3`, `3.2.6`, `3.3.1`, `3.3.2`, `3.3.3`,
+  `3.3.7`, `3.3.8`.
+- The counter above the list reads `0 of 22 criteria met`.
+- With none ticked, the approve button is disabled and reads `Approve (22 remaining)`.
+- The count in the label decreases by one with each tick — `Approve (21 remaining)`, `Approve (20
   remaining)`, and so on.
-- With 8 of 9 ticked, the button still reads `Approve (1 remaining)` and is still disabled.
-- With all 9 ticked, the label becomes `Approve` and the button is enabled.
+- With 21 of 22 ticked, the button still reads `Approve (1 remaining)` and is still disabled.
+- With all 22 ticked, the label becomes `Approve` and the button is enabled.
 - After approving, the gate leaves the `Pending (N)` tab and the ux_design artifact reads
   **`Published`** in `/artifacts`.
 
 **Pass / Fail**
-- PASS if approval is impossible until all 9 criteria are ticked and the remaining-count label
+- PASS if approval is impossible until all 22 criteria are ticked and the remaining-count label
   tracks the ticks exactly.
 - FAIL if the button enables early, the count is wrong, or the criteria can be bypassed from the
   plain `/gates` card.
+- FAIL — **High** — if the list has 9 criteria rather than 22, or if `1.4.4` or `4.1.2` appear. That
+  means the design gate is still on the old hand-typed WCAG 2.1 list and the 2.2 uplift did not
+  reach it.
 - **Blocked** (not Fail) if the run has not reached `Awaiting gate` within **40 minutes**.
 
 **Test data**
-- Phase: `UX Design` · Gate role: `designer` · 9 required WCAG criteria
+- Phase: `UX Design` · Gate role: `designer` · 22 required WCAG 2.2 criteria
 
 **Notes**
 - **What this case adds beyond the TS-09 criteria-gate cases.** TS-09 tests the criteria screen's
@@ -432,6 +438,15 @@ produces a red `Trigger failed` banner (TS-14 TC-217), not a queued run.
   TC-202 can reach and clear it, and that clearing it lets the chain continue to Task Breakdown.
   Its unique risk is a checklist gate becoming an unclearable dead end mid-lifecycle. Do not
   re-verify per-criterion toggling minutiae here.
+- **The checklist grew from 9 criteria to 22 in August 2026, deliberately.** It used to be nine
+  hand-typed WCAG 2.1 criteria; it is now derived from the WCAG 2.2 standard the platform loaded, so
+  a future release of the standard is a data reload rather than a code edit. `1.4.4` Resize Text and
+  `4.1.2` Name, Role, Value both left the list on purpose — neither can be judged from a drawing.
+  Do not raise a defect for the count. See TS-09 TC-137's Notes for the full reasoning.
+- **Budget for the ticking.** 22 ticks in the middle of a 60-minute case is real time and real
+  tedium. If the list is hard to work through — no sense of what you have already ticked, awkward
+  scrolling — raise it as a **Medium** usability defect even though the mechanics pass. A checklist
+  nobody can complete honestly gets ticked without being read, which defeats the gate.
 - **Time estimate: 60 minutes. Max wait: 40 minutes** to `Awaiting gate`.
 - Also confirm from the plain `/gates` list that the same gate cannot be approved there without the
   criteria — if it can, that is a **Critical** gate-bypass finding.
