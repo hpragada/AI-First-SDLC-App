@@ -106,5 +106,9 @@ Read as a sentence: build the front door, the dispatch layer, the judge agent, t
 - **What the research got wrong about the platform (read first):** `RESEARCH_CORRECTIONS.md`.
 - **Task detail (read before building any task):** `TASK_BACKLOG_QA.md`.
 - **The user journeys these serve:** `USER_JOURNEYS.md` (J1, J4, J5‑audit, J8, J9).
+- **How we prove the checkers are accurate (E‑EVAL, Edvensoft‑internal):** `evaluation/` —
+  `PROVING_GROUND_APP_SPEC.md` is the fixture app with deliberately planted WCAG defects, and
+  `GOLDEN_DATASET_SPEC.md` is the hand‑labelled answer key over it. Read both before QA‑09/QA‑10.
+  The same fixture serves the M2 brownfield audit, the M3 keyboard journeys, and the client demo.
 - **The other phases (build after this):** `BUILD_PLAN_OTHER_PHASES.md`.
 - **Why / the accessibility facts:** Report 1 + Addendum A (Rule/AI/Human split), Addendum B (LLM vs VLM + tech stack), Feasibility Assessment (reuse vs new) — all read **subject to** `RESEARCH_CORRECTIONS.md`.

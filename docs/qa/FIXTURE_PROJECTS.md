@@ -31,6 +31,17 @@ at once, a failure could not be attributed.
 > so a stack-bias defect surfaces on day one rather than on the most expensive project in week two.
 > **Any Python in PeopleDesk's output is a defect.**
 
+> **Two things every fixture needs before accessibility testing works.** All three profiles target
+> **WCAG 2.2 AA** (not 2.1) because the accessibility capability being built targets 2.2 — at 2.1
+> the four criteria new in 2.2 would never be exercised. And each project must have **preview
+> configuration** on its UI-serving repository, or the companion cannot start the app: 09b
+> test-automation never runs, no scan happens, and you get silence rather than an error. The preview
+> config is set on the Repositories screen, not in the profile. See each project's *Repository &
+> preview configuration* section. Note these fixtures test that the accessibility pipeline **runs** —
+> proving its findings are **correct** needs the hand-built A11y Proving Ground
+> (`docs/web-accessibility/evaluation/PROVING_GROUND_APP_SPEC.md`), because here the platform wrote the app and
+> you have no independent answer key.
+
 
 ---
 ---
@@ -111,7 +122,8 @@ produced by a global exception filter — never a raw framework error
 ```
 API Response Time (P95): < 300 ms
 Dashboard Page Load (LCP): < 2.5 s
-Accessibility: WCAG 2.1 Level AA on every screen
+Accessibility: WCAG 2.2 Level AA on every screen, including the criteria new in 2.2 — focus not
+obscured (2.4.11), dragging movements (2.5.7), target size (2.5.8) and redundant entry (3.3.7)
 Availability: 99.5% during business hours (08:00-20:00 IST, Mon-Fri)
 Audit: every leave approval and every change to an employee record is written to an immutable
 audit log, retained for 7 years
@@ -175,6 +187,28 @@ Out of scope, do not build:
 Payroll, recruitment, performance reviews, timesheets, expense claims, benefits administration,
 org-chart visualisation, employee self-service document vault, HRIS integration, mobile app.
 ```
+
+### Repository & preview configuration
+
+| Name | Role | Base branch |
+|---|---|---|
+| `acme/peopledesk` | frontend | `main` |
+
+Set on the repository (S-13 Repositories), **not** in the profile. Without it the companion cannot
+start the app, so 09b test-automation and every accessibility scan silently never run:
+
+```json
+{
+  "command": "pnpm dev",
+  "port": 5173,
+  "health_path": "/",
+  "ready_timeout_s": 120,
+  "ready_log": "Local:"
+}
+```
+
+> Role is `frontend` deliberately — preview config belongs to the repo that serves the UI, and this
+> repo serves both packages.
 
 
 
@@ -285,8 +319,10 @@ Error responses: a consistent { "detail": str, "code": str } shape on every 4xx 
 Order Lookup Response Time (P95): < 200 ms — a queue is forming at the counter while this runs
 Returns API Response Time (P95): < 300 ms
 Counter Screen Page Load (LCP): < 2.0 s
-Accessibility: WCAG 2.1 Level AA on every screen. Counter staff work standing at a shared terminal
-and must be able to complete a return using the keyboard alone
+Accessibility: WCAG 2.2 Level AA on every screen, including the criteria new in 2.2 — focus not
+obscured (2.4.11), dragging movements (2.5.7), target size (2.5.8) and redundant entry (3.3.7).
+Counter staff work standing at a shared terminal and must be able to complete a return using the
+keyboard alone
 Availability: 99.9% during store trading hours
 Degraded operation: if order-lookup-svc is unavailable, the counter application must say so
 explicitly and remain usable for anything that does not need an order lookup. It must never show a
@@ -373,6 +409,25 @@ shipping, customer accounts, loyalty points, gift cards, warranty claims, suppli
 | `retail/returns-api` | backend | `main` |
 | `retail/order-lookup-svc` | service | `main` |
 
+**Preview configuration — on `retail/returns-web` only.** The served thing is the UI; a backend or
+service repo has no UI to preview. Without this the companion cannot start the app, so 09b
+test-automation and every accessibility scan silently never run:
+
+```json
+{
+  "command": "npm run dev",
+  "port": 5173,
+  "health_path": "/",
+  "ready_timeout_s": 120,
+  "ready_log": "Local:"
+}
+```
+
+> The counter screens call `returns-api`, which calls `order-lookup-svc`, so all three services must
+> be up for the preview to be usable. How that is orchestrated locally is a genuine question for the
+> Architecture gate — and if the scan runs against a UI whose backend is down, expect findings about
+> error states rather than about the screens you meant to test.
+
 > Register all three **before** the first phase run. Topology is derived from the repo count
 > (0-1 `single` · 2 `split` · 3+ `multi`), so three repos gives you `multi` — the mode that
 > enables the repo-assignment review at the Task Breakdown gate and the cross-repo API contract.
@@ -454,7 +509,8 @@ that suit it, and record them so later phases can be held to them.
 ```
 API Response Time (P95): < 400 ms
 Due Board Page Load (LCP): < 2.5 s
-Accessibility: WCAG 2.1 Level AA on every screen
+Accessibility: WCAG 2.2 Level AA on every screen, including the criteria new in 2.2 — focus not
+obscured (2.4.11), dragging movements (2.5.7), target size (2.5.8) and redundant entry (3.3.7)
 Availability: 99.5%
 Correctness: the due calculation is the heart of this application. A vehicle must never be shown as
 compliant when it is overdue on either the date rule or the odometer rule
@@ -539,7 +595,27 @@ accident and incident reporting, vehicle acquisition and disposal, mobile app.
 ### Repositories
 | Name | Role | Base branch |
 |---|---|---|
-| `fleet/fleetcare` | backend | `main` |
+| `fleet/fleetcare` | frontend | `main` |
+
+**Preview configuration.** Without it the companion cannot start the app, so 09b test-automation and
+every accessibility scan silently never run. The `command` and `port` below are **placeholders** —
+this project's stack is chosen by the Architecture Agent, so fill them in from whatever it decided
+and approved at its gate, before the build tier starts:
+
+```json
+{
+  "command": "<the run command for the approved stack>",
+  "port": 3000,
+  "health_path": "/",
+  "ready_timeout_s": 120,
+  "ready_log": "<a line the chosen server prints when ready>"
+}
+```
+
+> This is itself a small test. A project profile that leaves the stack open cannot have a preview
+> command written in advance — so watch whether the Architecture artifact says enough to fill this
+> in. If it names a framework but never says how the thing is started or on what port, the decision
+> was less complete than it looked.
 
 
 ---
