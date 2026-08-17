@@ -83,6 +83,11 @@ class BuildReport:
     # diagnosable after the fact and can seed the retry's prior-attempt context.
     # Bounded at `_MAX_CARRIED_FINDINGS` companion-side — this payload rides a Temporal signal.
     secret_findings: list = field(default_factory=list)
+    # How the engine's run ENDED — "success", or an abnormal subtype like "error_max_turns".
+    # "" means no ResultMessage arrived at all. The plan/review path has always inspected this;
+    # the build path discarded it with the rest of `outputs`, so a build whose engine ended
+    # abnormally but exited 0 was indistinguishable from a clean one.
+    result_subtype: str = ""
 
 
 def contains_nul(value) -> bool:
@@ -140,6 +145,35 @@ def is_empty_build(exc) -> bool:
     if getattr(cause, "type", "") == "EmptyBuild":
         return True
     return "empty build" in failure_reason(exc).lower()
+
+
+#: Signatures of "the AI engine went away", as opposed to "the build genuinely failed". Kept in
+#: sync with the engine branches of `classify_build_failure`.
+_ENGINE_EXIT_MARKERS = (
+    "exit code", "command failed", "processerror", "engine stderr", "engine output",
+    "usage limit", "usage_limit", "rate limit", "too many requests", "overloaded", "quota",
+    "failed to start claude code", "claude code not found",
+)
+
+
+def is_engine_exit(message: str) -> bool:
+    """True when a companion-reported failure was the ENGINE dying rather than the build failing.
+
+    This is the one recoverable-looking failure the build had no recourse for. A secret block
+    auto-retries, remediation-exhaustion auto-retries, a merge error parks — an engine exit called
+    `mark_build_failed` and returned, which closes the Temporal history for good. On TASK-014 that
+    destroyed a run that already had a working PR and a completed code review, for a failure that
+    had nothing to do with either.
+
+    Deliberately narrow. An EMPTY BUILD must stay terminal (`is_empty_build`): waiting does not
+    make a diff appear, and offering a Resume that cannot work is worse than a clear failure. A
+    secret block is excluded too — it has its own bounded auto-retry, which is the better answer
+    there because the agent needs a fresh attempt, not the same one resumed.
+    """
+    text = (message or "").lower()
+    if "secret scan" in text or "empty build" in text or "no changes" in text:
+        return False
+    return any(marker in text for marker in _ENGINE_EXIT_MARKERS)
 
 
 def is_merge_conflict(exc) -> bool:

@@ -468,3 +468,87 @@ async def test_background_tools_are_denied_on_every_phase_path(tmp_path, repo_sc
         assert tool not in allowed
     # ToolSearch itself must SURVIVE — blocking it is what made the write tools vanish.
     assert "ToolSearch" not in denied
+
+
+# ── the engine's failure reason must survive (Bugs S.No 146, second pass) ────────────────────
+# Nine builds across two tenants died with a byte-identical message and none could be
+# root-caused, because all three channels carrying the reason are dropped:
+#   1. The CLI's diagnostic notices (incl. "Claude AI usage limit reached|<epoch>") arrive on
+#      STDOUT as non-JSON lines. The SDK skips them at `logger.debug` and the companion
+#      configures no logging at all, so those records go nowhere.
+#   2. The SDK hard-codes ProcessError(stderr="Check stderr output for details") — the real
+#      stderr is never in the exception. The S.No 146 fix listened to stderr, which stays empty.
+#   3. Everything the stream produced is discarded when the exception propagates.
+# These tests pin all three. They FAIL on the pre-fix driver.
+_SDK_LOGGER = "claude_agent_sdk._internal.transport.subprocess_cli"
+_USAGE_LINE = "Claude AI usage limit reached|1755432000"
+_PLACEHOLDER = ("Command failed with exit code 1 (exit code: 1)\n"
+                "Error output: Check stderr output for details")
+
+
+def _engine_exit(*, log_lines=(), messages=(), logger_name=_SDK_LOGGER):
+    """A query_fn that behaves exactly like the real SDK on a non-zero CLI exit: it logs the
+    CLI's non-JSON stdout through the SDK logger, yields whatever streamed first, then raises
+    the placeholder ProcessError."""
+    import logging
+
+    async def fake_query(*, prompt, options, transport=None):
+        for line in log_lines:
+            logging.getLogger(logger_name).debug("Skipping non-JSON line from CLI stdout: %s", line)
+        for m in messages:
+            yield m
+        raise RuntimeError(_PLACEHOLDER)
+
+    return fake_query
+
+
+async def test_the_engines_stdout_diagnostic_reaches_the_failure_reason(tmp_path, monkeypatch):
+    """The whole point: a usage limit must be readable in the reason, not deleted."""
+    import pytest
+
+    import drivers.claude_driver as cd
+
+    monkeypatch.setattr(cd, "_LAUNCH_BACKOFF", 0)
+    driver = ClaudeDriver(query_fn=_engine_exit(log_lines=[_USAGE_LINE]),
+                          body_loader=lambda s: "b", workdir_base=tmp_path)
+    with pytest.raises(Exception) as exc:
+        await driver.run_planning_task(manifest="m", agent_spec=_spec(), mcp_servers={},
+                                       allowed_tools=[], work_item=SimpleNamespace(id="w1"))
+    assert "usage limit" in str(exc.value).lower(), (
+        "the CLI said why it exited and the platform threw it away — this is the defect")
+
+
+async def test_partial_work_is_reported_when_the_engine_dies_mid_run(tmp_path, monkeypatch):
+    """TASK-014 ran 12.5 minutes and left no record of what it did. Whatever streamed before the
+    exit must survive into the reason, so a fast failure never again reads like a slow one."""
+    import pytest
+
+    import drivers.claude_driver as cd
+
+    monkeypatch.setattr(cd, "_LAUNCH_BACKOFF", 0)
+    driver = ClaudeDriver(query_fn=_engine_exit(messages=_messages()[:1]),
+                          body_loader=lambda s: "b", workdir_base=tmp_path)
+    with pytest.raises(Exception) as exc:
+        await driver.run_planning_task(manifest="m", agent_spec=_spec(), mcp_servers={},
+                                       allowed_tools=[], work_item=SimpleNamespace(id="w1"))
+    text = str(exc.value)
+    assert "Drafting the PRD" in text or "1 message" in text, (
+        "the run streamed real work before dying and none of it survived the exception")
+
+
+async def test_capturing_the_sdk_log_does_not_leave_global_logging_state(tmp_path, monkeypatch):
+    """Installing a handler on a library logger is global; it must be removed afterwards or the
+    companion accumulates one handler per run."""
+    import logging
+
+    import drivers.claude_driver as cd
+
+    monkeypatch.setattr(cd, "_LAUNCH_BACKOFF", 0)
+    logger = logging.getLogger(_SDK_LOGGER.split(".")[0])
+    before = list(logger.handlers), logger.level, logger.propagate
+    captured: dict = {}
+    driver = ClaudeDriver(query_fn=_fake_query_factory(_messages(), captured),
+                          body_loader=lambda s: "b", workdir_base=tmp_path)
+    await driver.run_planning_task(manifest="m", agent_spec=_spec(), mcp_servers={},
+                                   allowed_tools=[], work_item=SimpleNamespace(id="w1"))
+    assert (list(logger.handlers), logger.level, logger.propagate) == before

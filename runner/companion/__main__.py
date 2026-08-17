@@ -144,6 +144,19 @@ def _serve(args) -> int:
     if getattr(args, "headed", False):
         os.environ["SDLC_COMPANION_HEADED"] = "1"
 
+    # Write the engine's own output to a file (Bugs S.No 146, second pass). Without this the only
+    # record of an engine failure is the terminal, which is why eight of nine such builds could
+    # never be diagnosed. Announce the path so the operator knows where to look — and so "check
+    # the companion terminal" stops being the only answer we can give them.
+    from .enginelog import setup_engine_log
+
+    log_path = setup_engine_log(args.worktrees)
+    if log_path:
+        print(f"[companion] engine log: {log_path}", file=sys.stderr, flush=True)
+    else:
+        print("[companion] engine log could not be opened — engine output stays terminal-only",
+              file=sys.stderr, flush=True)
+
     repo_paths = _parse_repo_map(args.repo)
     daemon = CompanionDaemon(
         api_url=args.api_url, tenant_id=args.tenant, token=args.token,

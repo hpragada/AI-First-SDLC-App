@@ -782,7 +782,7 @@ def test_review_survives_duplicate_pre_pr_code_pointer(world, monkeypatch):
      "could not start"),
     # bare non-zero exit with no captured stderr (the exact WI-32 symptom) still reads clearly
     ("Command failed with exit code 1 (exit code: 1)\nError output: Check stderr output for "
-     "details", "exited with an error"),
+     "details", "exited before finishing"),
 ])
 def test_classify_build_failure_engine_reasons(raw, expect_substr):
     assert expect_substr in ba.classify_build_failure(raw).lower()
@@ -798,3 +798,126 @@ def test_classify_build_failure_engine_reasons(raw, expect_substr):
 ])
 def test_classify_build_failure_leaves_other_paths_intact(raw, expect_substr):
     assert expect_substr in ba.classify_build_failure(raw).lower()
+
+
+# ── the engine-failure corpus: distinct causes must READ distinctly ──────────────────────────
+# Nine builds across two tenants died with a byte-identical message and none could be
+# root-caused. They lasted 0.2, 2.7, 7.3, 9.3, 12.5, 23.8 and 75.2 minutes — they cannot all
+# have been the one cause the message asserted ("most common cause is a usage/rate limit").
+# The old wording was a guess stated as a finding, and it directed the investigation.
+#
+# This corpus is the ratchet: each row is a raw engine failure and what a human must be able to
+# tell from the classified reason. Add a row whenever a new engine failure shape appears.
+_ENGINE_FAILURE_CORPUS = [
+    # (label, raw reason, must contain, must NOT contain)
+    ("usage limit, with a reset time the notice carried",
+     "Command failed with exit code 1 (exit code: 1)\nEngine output (tail):\n"
+     "[engine] Skipping non-JSON line from CLI stdout: Claude AI usage limit reached|1755432000",
+     ["usage or rate limit", "resets at", "2025-08-17"], []),
+    ("usage limit with no timestamp — still named, just no reset time",
+     "Engine output (tail):\n[engine] Claude AI usage limit reached",
+     ["usage or rate limit"], ["resets at"]),
+    ("bare exit, nothing captured — must NOT invent a cause",
+     "Command failed with exit code 1 (exit code: 1)\nError output: Check stderr output for "
+     "details",
+     ["exited before finishing", "exit code 1"], ["most common cause", "usage or rate limit"]),
+    ("engine died 12 seconds in, before producing anything",
+     "Command failed with exit code 1 (exit code: 1)\n"
+     "Engine progress before the failure: 0 message(s).",
+     ["0 message(s)"], ["usage or rate limit"]),
+    ("engine died 12 minutes in, after real work — must read differently from the row above",
+     "Command failed with exit code 1 (exit code: 1)\nEngine progress before the failure: "
+     "214 message(s), 2 artifact(s) registered.\nLast agent output: …applying the review fix to "
+     "auth.service.ts",
+     ["214 message(s)", "auth.service.ts"], ["usage or rate limit"]),
+    ("could not launch at all",
+     "Failed to start Claude Code: open_process() got an unexpected keyword argument 'user'",
+     ["could not start"], ["usage or rate limit"]),
+]
+
+
+@pytest.mark.parametrize("label,raw,must,must_not",
+                         _ENGINE_FAILURE_CORPUS, ids=[c[0][:38] for c in _ENGINE_FAILURE_CORPUS])
+def test_engine_failure_corpus(label, raw, must, must_not):
+    out = ba.classify_build_failure(raw)
+    low = out.lower()
+    for phrase in must:
+        assert phrase.lower() in low, f"{label}: missing {phrase!r} in {out!r}"
+    for phrase in must_not:
+        assert phrase.lower() not in low, f"{label}: must not claim {phrase!r} — {out!r}"
+
+
+def test_two_different_engine_failures_never_render_identically():
+    """The defect in one line: a 12-second failure and a 12-minute one used to produce the same
+    string, which is why nine occurrences looked like one bug."""
+    fast = ba.classify_build_failure(
+        "Command failed with exit code 1 (exit code: 1)\n"
+        "Engine progress before the failure: 0 message(s).")
+    slow = ba.classify_build_failure(
+        "Command failed with exit code 1 (exit code: 1)\n"
+        "Engine progress before the failure: 214 message(s), 2 artifact(s) registered.")
+    assert fast != slow
+
+
+def test_the_classified_reason_never_points_only_at_the_companion_terminal():
+    """The old message told the user to check a terminal that no longer existed by the time they
+    read it. It must name the log file the companion now writes."""
+    out = ba.classify_build_failure(
+        "Command failed with exit code 1 (exit code: 1)\n"
+        "Error output: Check stderr output for details")
+    assert "companion-engine.log" in out
+
+
+def test_an_unrecognised_engine_shape_still_shows_the_raw_output():
+    """Never drop evidence in favour of a sentence we made up — an unknown shape is shown as-is."""
+    out = ba.classify_build_failure(
+        "processerror: the engine said something we have never seen before, verbatim")
+    assert "something we have never seen before" in out
+
+
+def test_the_planning_path_classifies_the_same_way():
+    """05_ux_design and 06_task_breakdown both died with this too — the planning mirror must not
+    drift from the build classifier."""
+    from orchestration.activities import classify_phase_failure
+
+    raw = ("Command failed with exit code 1 (exit code: 1)\nEngine output (tail):\n"
+           "[engine] Claude AI usage limit reached|1755432000")
+    out = classify_phase_failure(raw)
+    assert "usage or rate limit" in out.lower() and "resets at" in out.lower()
+    bare = classify_phase_failure("Command failed with exit code 1 (exit code: 1)")
+    assert "most common cause" not in bare.lower() and "companion-engine.log" in bare
+
+
+# ── an engine exit must PARK, not kill the run (Bugs S.No 146, second pass) ──────────────────
+# TASK-014's engine exited during remediation and took a run that already had a working PR and a
+# completed code review with it. Every other recoverable failure in this workflow has a recourse
+# (secret block → auto-retry, remediation exhaustion → auto-retry, merge error → park); this one
+# called mark_build_failed and returned, which closes the Temporal history for good.
+@pytest.mark.parametrize("message,parks,why", [
+    ("Command failed with exit code 1 (exit code: 1)\nError output: Check stderr output for "
+     "details", True, "the exact nine-occurrence symptom"),
+    ("Engine output (tail):\n[engine] Claude AI usage limit reached|1755432000", True,
+     "a usage limit is transient by definition"),
+    ("Failed to start Claude Code: open_process() ...", True, "the engine never came up"),
+    # ...but these are NOT the engine going away, and must stay on their own paths
+    ("Empty build: the agent produced no changes to commit.", False,
+     "no amount of waiting makes a diff appear — a Resume that cannot work is worse than a "
+     "clear failure"),
+    ("secret scan blocked the push: 1 finding(s): [high_entropy_secret] a.ts:1", False,
+     "has its own auto-retry; the agent needs a FRESH attempt, not the same one resumed"),
+    ("git add -A failed: fatal: not a git repository", False, "a real build failure"),
+    ("", False, "nothing to go on"),
+])
+def test_is_engine_exit_separates_a_dead_engine_from_a_failed_build(message, parks, why):
+    from orchestration.build_types import is_engine_exit
+
+    assert is_engine_exit(message) is parks, why
+
+
+def test_the_empty_build_guard_still_holds_against_the_engine_markers():
+    """An empty build's message can mention an exit code without becoming resumable."""
+    from orchestration.build_types import is_empty_build, is_engine_exit
+
+    msg = "Empty build: the agent produced no changes to commit. (exit code: 0)"
+    assert is_engine_exit(msg) is False
+    assert is_empty_build(SimpleNamespace(cause=None, message=msg)) or "empty build" in msg.lower()

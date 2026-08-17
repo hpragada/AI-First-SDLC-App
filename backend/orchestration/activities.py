@@ -197,19 +197,29 @@ def classify_phase_failure(reason: str) -> str:
     / Check stderr output for details' — so the run console showed no usable reason. An already
     specific message passes through unchanged (never lost)."""
     r = (reason or "").lower()
+    from .build_activities import (
+        _ENGINE_LOG_NAME,
+        _engine_detail,
+        _exit_code_hint,
+        _usage_reset_hint,
+    )
+
     if ("usage limit" in r or "usage_limit" in r or "rate limit" in r or "rate-limit" in r
             or "429" in r or "too many requests" in r or "overloaded" in r or "quota" in r):
         return ("The AI engine hit its usage or rate limit, so the phase could not finish. "
-                "Wait for the limit to reset, then re-trigger the phase.")
+                f"{_usage_reset_hint(reason)}Re-trigger the phase once the limit resets.")
     if ("failed to start claude code" in r or "claude code not found" in r
             or "open_process()" in r):
         return ("The AI engine (Claude Code) could not start on the companion — check the engine "
                 "install on the dev machine, then re-trigger.")
+    # Same correction as the build path: report what happened instead of asserting a cause we
+    # have not established, and show the engine's own output rather than pointing at a terminal
+    # that is gone by the time anyone reads this.
     if ("exit code" in r or "command failed" in r or "processerror" in r
-            or "engine stderr" in r):
-        return ("The AI engine exited with an error before finishing the phase. The most common "
-                "cause is a usage or rate limit; check the companion terminal for the engine "
-                "output, then re-trigger.")
+            or "engine stderr" in r or "engine output" in r):
+        return (f"The AI engine exited before finishing the phase{_exit_code_hint(reason)}. "
+                "The engine's own output is below; the full log is on the companion at "
+                f"`<worktrees>/{_ENGINE_LOG_NAME}`.\n\n{_engine_detail(reason)}")
     if r.strip() in ("", "phase reported failed"):
         return "The phase agent failed without reporting a specific reason."
     return reason

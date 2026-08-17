@@ -607,7 +607,13 @@ def to_build_report(result: dict) -> dict:
                 # D6: the redacted findings now travel as structured data too, not just prose, so
                 # the platform can persist them and seed the retry with what actually tripped.
                 "secret_findings": findings[:_MAX_CARRIED_FINDINGS]}
+    # How the engine ENDED, not just what it produced. The plan/review path has always checked
+    # this (daemon: "engine ended abnormally (<subtype>)"); the build path dropped `outputs`
+    # wholesale, so an abnormal-but-exit-0 ending (e.g. `error_max_turns`) looked like a clean
+    # build. "" means no ResultMessage arrived at all — itself worth knowing.
+    subtype = (result.get("outputs") or {}).get("result_subtype", "")
     return {"status": "ok", "branch": result.get("branch", ""),
+            "result_subtype": subtype,
             "head_sha": result.get("head_sha", ""),
             "changed_files": result.get("changed_files", []),
             "test_results": result.get("test_results", []),
