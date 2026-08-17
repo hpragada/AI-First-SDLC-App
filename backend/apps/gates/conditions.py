@@ -6,8 +6,8 @@ APPROVED decision is accepted. Never an engine hook. Two kinds compose here:
   - **reviewer-attested** (D6) — the WCAG 2.2 AA checklist on the design gate and the
     pre-deployment readiness checklist on the deployment gate: a human inspects and marks
     each criterion satisfied.
-  - **derived** (D9) — the blocking-test rule on the test gate: the platform evaluates it
-    from live state at decide time; a reviewer cannot attest it.
+  - **derived** (D9) — the blocking-test rule and the accessibility rule on the test gate: the
+    platform evaluates each from live state at decide time; a reviewer cannot attest them.
 
 Keyed off phase so triggers stay generic — a phase with no conditions gets `[]`.
 
@@ -29,6 +29,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .a11ygate import A11Y_GATE_KEY, conditions_for_a11y_phase
+from .a11ygate import evaluate as evaluate_a11y
 from .readiness import conditions_for_readiness_phase
 from .testgate import BLOCKING_TESTS_KEY, conditions_for_test_phase
 from .testgate import evaluate as evaluate_blocking_tests
@@ -62,6 +64,7 @@ class ConditionContext:
 #: seed has an entry here, so forgetting one fails a test rather than a gate.
 _DERIVED_EVALUATORS = {
     BLOCKING_TESTS_KEY: evaluate_blocking_tests,
+    A11Y_GATE_KEY: evaluate_a11y,
 }
 
 
@@ -76,6 +79,7 @@ def conditions_for_phase(phase: str, *, tenant_id=None, project_id=None) -> list
     return (
         conditions_for_wcag_phase(phase, extra=_design_extras(tenant_id, project_id))
         + conditions_for_test_phase(phase)
+        + conditions_for_a11y_phase(phase)
         + conditions_for_readiness_phase(phase)
     )
 

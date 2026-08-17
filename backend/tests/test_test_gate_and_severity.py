@@ -73,8 +73,10 @@ def test_conditions_for_phase_seeds_blocking_test_rule_only_for_testing(db):
     """`db` since QA-11: the design phase's WCAG checklist is now read from the loaded
     standard, so the last assertion below touches the database."""
     testing = conditions_for_phase("testing")
-    assert [c["key"] for c in testing] == [BLOCKING_TESTS_KEY]
-    assert testing[0]["required"] and testing[0]["derived"] and not testing[0]["satisfied"]
+    # QA-15 added a second derived condition here (the accessibility rule), so this asserts the
+    # blocking-test rule is present and correctly shaped rather than that it is the only one.
+    rule = next(c for c in testing if c["key"] == BLOCKING_TESTS_KEY)
+    assert rule["required"] and rule["derived"] and not rule["satisfied"]
     assert conditions_for_phase("prd") == []
     # The design gate keeps its reviewer-attested WCAG checklist and gains no test rule.
     assert BLOCKING_TESTS_KEY not in {c["key"] for c in conditions_for_phase("ux_design")}
@@ -82,7 +84,9 @@ def test_conditions_for_phase_seeds_blocking_test_rule_only_for_testing(db):
 
 def test_open_gate_core_seeds_the_blocking_test_condition(world):
     approval = Approval.objects.get(id=open_gate_core(_inp(world)))
-    assert [c["key"] for c in approval.conditions] == [BLOCKING_TESTS_KEY]
+    # Since QA-15 the testing gate also carries the accessibility rule; this test owns the
+    # blocking-test one, and `test_a11y_gate.py` owns the other.
+    assert BLOCKING_TESTS_KEY in {c["key"] for c in approval.conditions}
 
 
 def test_a_non_test_phase_gate_carries_no_test_condition(world):

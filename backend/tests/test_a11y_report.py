@@ -856,12 +856,15 @@ def test_rls_hides_one_tenants_scan_from_another():
         raw.close()
 
 
-def test_the_merged_report_reaches_no_gate_yet():
-    """QA-08 and QA-15 own blocking. Saying so as a test keeps the scope honest — a reviewer
-    reading this report must not believe it is holding anything shut.
+def test_only_the_accessibility_gate_reads_these_findings():
+    """This used to assert that NO gate read the findings — QA-08 and QA-15 owned blocking, and
+    saying so as a test kept the scope honest. QA-15 has since landed, so the assertion is
+    inverted rather than deleted: `apps/gates/a11ygate.py` is allowed to read them, and no other
+    gate module may.
 
-    Deliberately narrow. `apps/gates/wcag.py` is QA-11's design-phase WCAG checklist and reads
-    the criteria tables legitimately; what must not exist yet is a gate reading these FINDINGS.
+    Still deliberately narrow. `apps/gates/wcag.py` is QA-11's design-phase WCAG checklist and
+    reads the criteria tables legitimately; what must not spread is a *second* gate reasoning
+    about these findings, which is exactly how two definitions of "failing" drift apart.
     """
     from pathlib import Path
 
@@ -870,6 +873,7 @@ def test_the_merged_report_reaches_no_gate_yet():
     hits = {
         p.name: [w for w in watched if w in p.read_text(encoding="utf-8")]
         for p in gates.glob("*.py")
+        if p.name != "a11ygate.py"
     }
     early = {name: found for name, found in hits.items() if found}
-    assert early == {}, f"accessibility findings reached the gate layer early: {early}"
+    assert early == {}, f"accessibility findings reached another gate module: {early}"
