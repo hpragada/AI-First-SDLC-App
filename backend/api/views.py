@@ -459,6 +459,48 @@ class ProjectViewSet(
             for a in audits
         ]})
 
+    @action(detail=True, methods=["get"], url_path="a11y-backlog")
+    def a11y_backlog(self, request, pk=None):
+        """What to fix first, worst first (QA-18), with where the project stands by criterion.
+
+        `?all=1` widens it from the items that clear the project's blocking bar to every open
+        finding, including the ones waiting on a reviewer. Narrow by default so the list a
+        person opens is the list their tracker holds — the same items, the same order.
+
+        Read-only. Deciding a finding's fate is the reviewer console's job (QA-23); this is the
+        queue of work, not the queue of decisions.
+        """
+        from apps.a11y.backlog import backlog_container, prioritised
+        from apps.a11y.baseline_report import BASELINE_TYPE, criterion_rows
+
+        project = self.get_object()
+        include_all = str(request.query_params.get("all", "")).strip().lower() in ("1", "true")
+        items = prioritised(self.tenant_id, str(project.id), blocking_only=not include_all)
+        baseline = (
+            Artifact.objects
+            .filter(tenant_id=self.tenant_id, project_id=project.id, type=BASELINE_TYPE)
+            .order_by("-version", "-created_at").first()
+        )
+        container = backlog_container(self.tenant_id, str(project.id))
+        return Response({
+            "backlog": [
+                {k: v for k, v in item.items() if k != "finding"} | {
+                    "finding_id": str(item["finding"].id),
+                }
+                for item in items
+            ],
+            "by_criterion": [
+                {k: v for k, v in row.items()} for row in
+                criterion_rows(self.tenant_id, str(project.id))
+            ],
+            "container": {"id": str(container.id), "key": container.key,
+                          "title": container.title},
+            "baseline": None if baseline is None else {
+                "artifact_id": str(baseline.id), "version": baseline.version,
+                "updated_at": baseline.updated_at,
+            },
+        })
+
     @action(detail=True, methods=["get"])
     def traceability(self, request, pk=None):
         """Lineage graph for the viewer (spec §5): artifact nodes + their TraceEdges,

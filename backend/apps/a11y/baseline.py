@@ -235,13 +235,36 @@ def finish_baseline_audit(*, tenant_id, audit_id, trigger=None) -> dict:
     # A pass that dispatched nothing has already published its report (everything was cached, or
     # there was no judge to ask); one that dispatched is still in flight and completes when the
     # judge's run ends — see `aipass.finish_ai_pass`, which closes this audit from there.
+    started = bool(result.get("started"))
     with tenant_context(tenant_id):
-        audit.status = (A11yBaselineAudit.Status.JUDGING if result.get("started")
+        audit.status = (A11yBaselineAudit.Status.JUDGING if started
                         else A11yBaselineAudit.Status.COMPLETE)
         audit.summary = summary
         audit.save(update_fields=["status", "summary", "updated_at"])
-    return {"audit_id": run_key, "status": audit.status, "report": result.get("report"),
-            **summary}
+    out = {"audit_id": run_key, "status": audit.status, "report": result.get("report"),
+           **summary}
+    if not started:
+        # Everything knowable is known, so the baseline is written now (QA-18). When a judge
+        # IS dispatched it is written after that run ends instead — a baseline published while
+        # half the verdicts are still in flight would state a position that is about to change.
+        out["baseline"] = publish_baseline_for(tenant_id=tenant_id, audit=audit)
+    return out
+
+
+def publish_baseline_for(*, tenant_id, audit) -> dict:
+    """Write this project's baseline, with the audit's own coverage stated in it. Never raises.
+
+    Best-effort like every other document on this path: an audit that found real problems, filed
+    them and opened their defects has done its job, and losing the summary document is a smaller
+    loss than losing any of that. The reason comes back rather than being swallowed.
+    """
+    from .baseline_report import publish_baseline
+
+    try:
+        return publish_baseline(tenant_id=tenant_id, project_id=str(audit.project_id),
+                                audit=audit)
+    except Exception as exc:  # noqa: BLE001 — see the docstring
+        return {"artifact_id": None, "error": str(exc)}
 
 
 def _title(audit) -> str:
@@ -274,4 +297,8 @@ def complete_audit(tenant_id, capture_key) -> bool:
             return False
         audit.status = A11yBaselineAudit.Status.COMPLETE
         audit.save(update_fields=["status", "updated_at"])
+    # Now, and not a moment earlier: the verdicts are in and the defects are reconciled, so the
+    # baseline states a position that has actually settled (QA-18). Writing it when the audit's
+    # capture closed would have published a standing that was still changing.
+    publish_baseline_for(tenant_id=tenant_id, audit=audit)
     return True

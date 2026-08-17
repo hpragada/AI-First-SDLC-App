@@ -154,13 +154,33 @@ def test_a_defect_hangs_off_the_story_the_problem_was_first_seen_on(world):
     assert str(_a11y_defects(world)[0].parent_id) == str(world["story"].id)
 
 
-def test_a_finding_with_no_run_behind_it_still_becomes_a_defect(world):
-    """A CI post has no run. A parentless defect in the right project is still trackable, and
-    dropping the finding to avoid one would be far worse."""
+def test_a_finding_with_no_run_behind_it_hangs_off_the_accessibility_backlog(world):
+    """A CI post and a baseline audit both have no run to parent a defect to.
+
+    Until QA-18 these defects were deliberately **parentless** — trackable, but loose in the
+    project with nothing naming them as one body of work. They now hang off the project's
+    accessibility backlog instead, which is what OP-08's remediation campaign picks up.
+    """
+    from apps.a11y.backlog import BACKLOG_TITLE
+
     record_run_findings(tenant_id=world["t"], project_id=world["p"], run_id=None,
                         report=MergedReport(rows=[_row()], routes=["/checkout"]))
     _reconcile(world)
-    assert _a11y_defects(world)[0].parent_id is None
+    parent = _a11y_defects(world)[0].parent
+    assert parent is not None and parent.title == BACKLOG_TITLE
+
+
+def test_a_project_whose_findings_all_come_from_builds_grows_no_container(world):
+    """The container is created lazily. A greenfield project that never audits anything must
+    not sprout an empty epic in its backlog."""
+    from apps.a11y.backlog import BACKLOG_STREAM
+    from apps.workitems.models import WorkItem
+
+    run = _run(world)
+    _record(world, run, [_row()])
+    _reconcile(world)
+    assert not WorkItem.objects.filter(
+        tenant_id=world["t"], feature_stream=BACKLOG_STREAM).exists()
 
 
 def test_a_low_severity_failure_opens_no_defect(world):

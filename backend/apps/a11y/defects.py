@@ -88,7 +88,8 @@ def _description(finding) -> str:
     return "\n".join(lines)
 
 
-def _external_ref(finding) -> dict:
+def _external_ref(finding, rank: dict | None = None) -> dict:
+    rank = rank or {}
     return {
         "defect": f"DEF-A11Y-{finding.fingerprint[:12]}",
         # The key this reconciliation scopes on. Deliberately NOT `finding`, which is security's
@@ -100,20 +101,29 @@ def _external_ref(finding) -> dict:
         "route": finding.route,
         "selector": finding.selector[:512],
         "ledger_id": str(finding.id),
+        # Where this sits in the fix order, and why (QA-18). Written onto the ticket rather
+        # than left as a query result because a defect leaves the platform — it reaches a task
+        # tracker, where nothing of ours can re-derive it. Recomputed on every reconciliation,
+        # so an item whose neighbours were fixed moves up rather than keeping a stale number.
+        "priority": rank.get("priority"),
+        "pages_affected": rank.get("pages_affected"),
     }
 
 
-def _parent_for(finding):
+def _parent_for(finding, container=None):
     """The work item a defect hangs off — where the problem was **first** seen.
 
     First rather than last on purpose. A finding that is still open when a second story's test
     run sees it again would otherwise migrate between stories run by run, and a developer would
-    lose track of a bug that kept moving. `None` when the finding has no run behind it (a CI
-    post, or a direct ledger write): a parentless defect in the right project is still a
-    trackable defect, and dropping the finding to avoid one would be much worse.
+    lose track of a bug that kept moving.
+
+    With no run behind it — a baseline audit, a CI post, a direct ledger write — it hangs off
+    the project's accessibility backlog instead (QA-18). Until that container existed these
+    defects were parentless: still trackable, but scattered across the project with nothing
+    naming them as one body of work, which is precisely what OP-08's campaign has to pick up.
     """
     run = finding.first_seen_run
-    return run.work_item if run is not None else None
+    return run.work_item if run is not None else container
 
 
 def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
@@ -136,6 +146,7 @@ def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
 
     from apps.workitems.models import WorkItem
 
+    from .backlog import backlog_container, breadth_by_criterion, open_findings, ranks
     from .models import A11yFinding
 
     opened: list[str] = []
@@ -169,6 +180,14 @@ def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
                 tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.DEFECT)
             if (item.external_ref or {}).get("a11y_finding")
         }
+        # What to fix first (QA-18). Ranked over exactly the set about to become tickets, so
+        # the order on the ticket and the order in the backlog listing cannot disagree; breadth
+        # is counted over every open finding, which is the one definition of that number.
+        rank = ranks(blocking.values(),
+                     breadth_by_criterion(open_findings(tenant_id, project_id)))
+        # Created lazily, and only for a finding that has no run behind it — a project whose
+        # accessibility work all comes from builds never grows an empty container.
+        container = None
 
         # Close what is no longer blocking. "No longer blocking" is a statement about the
         # LEDGER — resolved, or downgraded to needs-review by a later run — or about the
@@ -186,26 +205,34 @@ def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
             finding = blocking[fingerprint]
             open_item = existing.get(fingerprint)
             if open_item is None:
+                if finding.first_seen_run is None and container is None:
+                    container = backlog_container(tenant_id, project_id)
                 created = WorkItem.objects.create(
                     tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.DEFECT,
-                    parent=_parent_for(finding), title=_title(finding),
+                    parent=_parent_for(finding, container), title=_title(finding),
                     description=_description(finding), state=WorkItem.State.IN_PROGRESS,
-                    external_ref=_external_ref(finding),
+                    external_ref=_external_ref(finding, rank.get(fingerprint)),
                 )
                 tools.log_event(tenant_id, "a11y", "a11y.defect.opened", "work_item",
                                 str(created.id), {"finding": fingerprint,
                                                   "severity": finding.severity,
                                                   "criterion": finding.criterion})
                 opened.append(str(created.id))
-            elif open_item.state == WorkItem.State.DONE:
-                # The same problem came back. The SAME defect reopens — a second one would give
-                # a developer two tickets for one fix and lose the history of the first.
-                open_item.state = WorkItem.State.IN_PROGRESS
-                open_item.description = _description(finding)
-                open_item.save(update_fields=["state", "description", "updated_at"])
-                tools.log_event(tenant_id, "a11y", "a11y.defect.reopened", "work_item",
-                                str(open_item.id), {"finding": fingerprint})
-                reopened.append(str(open_item.id))
+            else:
+                # The order changes as its neighbours are fixed, so an existing ticket is
+                # restamped rather than left holding the number it was opened with — a
+                # priority nobody maintains is worse than none at all.
+                open_item.external_ref = _external_ref(finding, rank.get(fingerprint))
+                if open_item.state == WorkItem.State.DONE:
+                    # The same problem came back. The SAME defect reopens — a second one would
+                    # give a developer two tickets for one fix and lose the first's history.
+                    open_item.state = WorkItem.State.IN_PROGRESS
+                    open_item.description = _description(finding)
+                    tools.log_event(tenant_id, "a11y", "a11y.defect.reopened", "work_item",
+                                    str(open_item.id), {"finding": fingerprint})
+                    reopened.append(str(open_item.id))
+                open_item.save(update_fields=["state", "description", "external_ref",
+                                              "updated_at"])
 
     out: dict = {"opened": opened, "closed": closed, "reopened": reopened,
                  "blocking": sorted(blocking), "policy": policy}

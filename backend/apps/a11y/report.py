@@ -261,15 +261,40 @@ def _cell(text: str, limit: int = 300) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
 
 
-def _rows_table(rows: list[ReportRow]) -> list[str]:
-    lines = [
-        "| Source | Criteria | Route | Element | Confidence | What was found | Suggested fix |",
-        "|---|---|---|---|---|---|---|",
-    ]
+def severity_of(row, headings: dict | None = None) -> str:
+    """What this row's breach is worth — Critical, High or Medium (QA-18).
+
+    Reads a stored `A11yFinding` and an in-memory `ReportRow` the same way `_primary` does,
+    and for the same reason. The ledger row already holds the severity QA-12a derived from the
+    standard; a merge row has not been through the ledger yet, so it is derived here from the
+    criterion's conformance level using the one mapping there is (`findings.severity_for`).
+
+    **Why this function exists at all.** Severity has been computed since QA-12a, blocks the
+    gate since QA-15 and decides whether a defect opens since QA-14 — and until now it appeared
+    nowhere in the document a person actually reads. A reviewer could see twenty findings and
+    have no way to tell which four stop the release.
+    """
+    from .findings import severity_for
+
+    stored = str(getattr(row, "severity", "") or "")
+    if stored:
+        return stored
+    level = ((headings or {}).get(_primary(row)) or {}).get("level", "")
+    return severity_for(level)
+
+
+def _rows_table(rows: list, headings: dict | None = None, *,
+                severity: bool = True) -> list[str]:
+    """One table of findings. `severity` is off for the passes table on purpose — a row that
+    passed has nothing to weigh, and a severity beside it reads as something left to fix."""
+    head = "| Source |" + (" Severity |" if severity else "") + \
+           " Criteria | Route | Element | Confidence | What was found | Suggested fix |"
+    lines = [head, "|---|" + ("---|" if severity else "") + "---|---|---|---|---|---|"]
     for row in rows:
         confidence = "measured" if row.confidence is None else f"{row.confidence:.0%}"
+        weight = f" {severity_of(row, headings).title()} |" if severity else ""
         lines.append(
-            f"| {row.source} | {', '.join(row.criteria)} | {_cell(row.route, 80)} "
+            f"| {row.source} |{weight} {', '.join(row.criteria)} | {_cell(row.route, 80)} "
             f"| `{_cell(row.selector, 80)}` | {confidence} | {_cell(row.evidence)} "
             f"| {_cell(row.suggested_fix)} |"
         )
@@ -291,7 +316,7 @@ def _primary(row) -> str:
     return criteria[0] if criteria else ""
 
 
-def _grouped(rows: list, headings: dict) -> list[str]:
+def _grouped(rows: list, headings: dict, *, severity: bool = True) -> list[str]:
     """Rows under one heading per WCAG criterion, worst-numbered first within the group.
 
     Grouping by criterion is what makes the document answer a conformance question — "where do
@@ -312,7 +337,7 @@ def _grouped(rows: list, headings: dict) -> list[str]:
         name = f"{criterion} {handle}".strip() or "(no criterion named)"
         lines.append(f"### {name}{f' — Level {level}' if level else ''}")
         lines.append("")
-        lines.extend(_rows_table(by_criterion[criterion]))
+        lines.extend(_rows_table(by_criterion[criterion], headings, severity=severity))
     return lines
 
 
@@ -433,7 +458,7 @@ def report_body(report: MergedReport, *, findings: list | None = None, title: st
         lines.extend(_grouped(review, headings))
     if report.passes:
         lines.extend(["## Passed", ""])
-        lines.extend(_grouped(report.passes, headings))
+        lines.extend(_grouped(report.passes, headings, severity=False))
 
     if report.without_criterion:
         lines.extend([
