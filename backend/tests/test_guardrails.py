@@ -227,18 +227,25 @@ def test_scan_text_skips_unquoted_dotted_identifier(line):
 
 
 def test_dotted_identifier_skip_does_not_weaken_real_tokens():
+    """Quoted for the same reason as `test_bare_identifier_skip_does_not_weaken_real_secrets` —
+    a credential in a `.py` file is a string literal; the unquoted spelling these fixtures used
+    to carry is a NameError, not a leak. The claim being pinned is unchanged: a token-shaped
+    literal is still caught in real source even though it contains dots."""
     # a contiguous high-entropy token (no dotted-identifier structure) is STILL caught...
-    assert scan_text(f'api_key = {_RANDOM}', path="backend/app/services/auth_service.py")
+    assert scan_text(f'api_key = "{_RANDOM}"', path="backend/app/services/auth_service.py")
     # ...and a real JWT literal (which DOES contain dots) is still caught — the dotted-identifier
     # skip must not let it through (its segments read as encoded blobs, and `_PATTERNS` flags it too).
-    assert "jwt" in {f.kind for f in scan_text(f"token = {_JWT}", path="backend/app/auth.py")}
+    assert "jwt" in {f.kind for f in scan_text(f'token = "{_JWT}"', path="backend/app/auth.py")}
     # a base64url blob that is technically an identifier chain (long high-entropy segments, no
     # receiver prefix) is a token, not code — the guard keeps it flagged.
-    assert scan_text('secret = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOjEyMzR9xZ',
+    assert scan_text('secret = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOjEyMzR9xZ"',
                      path="backend/app/services/auth_service.py")
     # a base64url token that sneaks an underscore in still doesn't pass as "code" (segment entropy)
-    assert scan_text('token = A1b2C3d4E5f6G7h8_j9.K0l1M2n3O4p5Q6r7',
+    assert scan_text('token = "A1b2C3d4E5f6G7h8_j9.K0l1M2n3O4p5Q6r7"',
                      path="backend/app/auth.py")
+    # and the unquoted JWT still blocks anywhere, because the high-precision pattern is not
+    # subject to any of this — the quoting rule scopes ONLY the generic entropy heuristic.
+    assert "jwt" in {f.kind for f in scan_text(f"token = {_JWT}", path="backend/app/auth.py")}
 
 
 # ── an ordinary code identifier is not a credential (QA secret-scan block, 2026-08-14) ───────
@@ -264,14 +271,20 @@ def test_scan_text_skips_a_bare_code_identifier(line):
 
 
 @pytest.mark.parametrize("line", [
-    f"api_key = {_RANDOM}",                       # contiguous high-entropy blob
-    "password = supersecretpassword123",          # one word + digits: not an identifier shape
-    "client_secret = abcdefghijklmnopqrstuvwx",   # one long letter run, no word structure
-    "auth_token = A1b2C3d4E5f6G7h8J9k0L1m2",      # case-flipping with digits: encoded
+    f'api_key = "{_RANDOM}"',                       # contiguous high-entropy blob
+    'password = "supersecretpassword123"',          # one word + digits: not an identifier shape
+    'client_secret = "abcdefghijklmnopqrstuvwx"',   # one long letter run, no word structure
+    'auth_token = "A1b2C3d4E5f6G7h8J9k0L1m2"',      # case-flipping with digits: encoded
 ])
 def test_bare_identifier_skip_does_not_weaken_real_secrets(line):
     """The guard turns on *word structure*, not on "looks like a name". A generated credential
-    has no words in it, so requiring two costs nothing in detection."""
+    has no words in it, so requiring two costs nothing in detection.
+
+    These fixtures are QUOTED because that is how a hardcoded credential appears in a `.py` file —
+    `api_key = 8f3Kd9…` unquoted is a NameError, not a leak. The unquoted spelling they used to
+    carry could not occur in the language, and scoring it is what blocked TASK-013 (see
+    `_scans_bare_values`). What is being pinned — a real literal in real source still blocks — is
+    unchanged."""
     assert scan_text(line, path="backend/app/config.py"), f"stopped catching: {line}"
 
 
@@ -280,6 +293,88 @@ def test_high_precision_patterns_still_fire_inside_a_dependency_path():
     wherever it appears — the format patterns are untouched by any of this."""
     assert {f.kind for f in scan_text(f"const k = '{_AWS}'", path="node_modules/pkg/index.js")} \
         == {"aws_access_key_id"}
+
+
+# ── the regression corpus: every false positive this scanner has ever produced ───────────────
+# Five builds on two tenants have been blocked by a finding that was not a credential, and each
+# was fixed by adding one more downstream exception — placeholders, then template files, then
+# test files, then dotted identifiers, then bare identifiers. Each exception was narrower than
+# the class, so the class came back in a new shape. The cause was one line: `_ASSIGNMENT` made
+# the quotes optional, which let any identifier, attribute chain or method call be scored as a
+# credential. `_scans_bare_values` fixes that at the source.
+#
+# This corpus is the ratchet. Every shape that has ever wrongly blocked lives here, so a future
+# change to the scanner is measured against the WHOLE history in one place rather than against
+# the one incident that prompted it. Add a row here whenever a new false positive is found.
+_FALSE_POSITIVE_CORPUS = [
+    # (path, line, what it was)
+    ("backend/.env.example", "JWT_SECRET=change-me-minimum-32-characters-long",
+     "WI-32 / S.No 144 — hyphenated placeholder in a template"),
+    ("frontend/src/test/authStore.test.ts", 'MOCK_TOKEN = "Zk9xQ2mL7vRt4Wp1Ns6Yb3Hd0Fj8Gc5"',
+     "WI-34 — mock token in a test fixture (a FULL JWT there is a real hit by design; see "
+     "test_test_files_still_block_real_key_shapes)"),
+    ("backend/apps/auth_service.py", "self.refresh_token = self.refresh_token_expiry_seconds",
+     "WI-38 / S.No 151 — dotted attribute chain"),
+    ("node_modules/@eslint-community/eslint-utils/index.js",
+     "exports.isClosingBracketToken = isClosingBracketToken;",
+     "PeopleDesk 2026-08-14 — one of 535 dependency identifiers"),
+    ("node_modules/@babel/code-frame/lib/index.js",
+     "const jsTokensNamespaceObject = jsTokensNamespaceObject;",
+     "PeopleDesk 2026-08-14 — same block"),
+    ("packages/backend/src/auth/jwt.strategy.ts",
+     "    secret: configService.getOrThrow<string>('JWT_SECRET'),",
+     "PeopleDesk TASK-013 2026-08-16 — a NestJS config CALL, reported as conf***ow (24 chars)"),
+    # the same class, in shapes that had not blocked yet but would have on the next auth module
+    ("packages/backend/src/auth/auth.service.ts",
+     "    const token = authService.generateAccessToken(user);", "a method call"),
+    ("src/api/client.ts", "  const authToken = useAuthStore.getState().accessToken;",
+     "a store read"),
+    ("src/auth/token.service.ts",
+     "    const secret = process.env.JWT_SECRET ?? this.cfg.jwtSecretValue;", "an env read"),
+]
+
+
+@pytest.mark.parametrize("path,line,why", _FALSE_POSITIVE_CORPUS,
+                         ids=[c[0].rsplit("/", 1)[-1] for c in _FALSE_POSITIVE_CORPUS])
+def test_no_recorded_false_positive_blocks_a_build(path, line, why):
+    assert scan_text(line, path=path) == [], f"regressed on {why}"
+
+
+# The other half of the ratchet: none of the above may be bought with lost detection. Every real
+# credential shape the scanner is responsible for, including the two the team ruled TRUE
+# positives (S.No 193 — a literal high-entropy value in a config file is a leak even when it is
+# only a dev or CI one, and the scanner is deliberately NOT weakened for them).
+_TRUE_POSITIVE_CORPUS = [
+    ("src/config.ts", f'  const apiKey = "{_RANDOM}";', "hardcoded literal in TypeScript"),
+    ("backend/app/config.py", f'API_KEY = "{_RANDOM}"', "hardcoded literal in Python"),
+    (".env", f"JWT_SECRET={_RANDOM}", "unquoted secret in a .env"),
+    ("docker-compose.yml", f"      JWT_SECRET: {_RANDOM}", "S.No 193 — compose literal"),
+    (".github/workflows/ci.yml", f"          JWT_SECRET: {_RANDOM}",
+     "FOUND-005 — same class as S.No 193, in CI"),
+    ("Dockerfile", f"ENV API_KEY={_RANDOM}", "extensionless file still scans unquoted values"),
+    ("infra/main.tf", f'  client_secret = "{_RANDOM}"', "terraform"),
+    ("backend/app/config.py", f"# api_key = {_RANDOM}",
+     "a key pasted into a COMMENT is unquoted but still a leak"),
+    ("src/auth.ts", f"// const secret = {_RANDOM}", "same, in a // comment"),
+    ("src/aws.ts", f'  accessKeyId: "{_AWS}",', "AWS format pattern"),
+    ("src/gh.ts", f'  const t = "{_GH}";', "GitHub token format pattern"),
+    ("node_modules/pkg/index.js", f"const k = '{_AWS}'", "format patterns fire in dependencies"),
+]
+
+
+_TP_IDS = [f"{i}-{c[2].split()[0]}" for i, c in enumerate(_TRUE_POSITIVE_CORPUS)]
+
+
+@pytest.mark.parametrize("path,line,why", _TRUE_POSITIVE_CORPUS, ids=_TP_IDS)
+def test_every_real_secret_shape_still_blocks(path, line, why):
+    assert scan_text(line, path=path), f"stopped catching: {why}"
+
+
+def test_a_quoted_secret_blocks_even_on_a_line_that_also_holds_an_expression():
+    """The quoted pattern is tried FIRST, so a code file's real hardcoded literal is still caught
+    on a line that also contains the call-shaped text which now suppresses bare scanning."""
+    line = f'  const secret = "{_RANDOM}"; const other = configService.getOrThrow;'
+    assert scan_text(line, path="src/auth.ts")
 
 
 # ── the scan must see inside a NEW directory (security hole, 2026-08-14) ─────────────────────

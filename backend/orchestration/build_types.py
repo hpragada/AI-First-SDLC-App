@@ -70,6 +70,14 @@ class BuildReport:
     # P3-09bR): the live target 09b's Playwright explored. The platform records it on a `PreviewEnv`
     # and links it on the PR. "" for phases that bring no app up (07/11) or when no preview ran.
     preview_url: str = ""
+    # The pre-push secret scan's findings, already redacted by the companion (kind + path + line +
+    # a `conf***ow (24 chars)` preview — never the value). Previously these died in the companion's
+    # process: `to_build_report` kept only a prose string capped at 8, so a 535-finding block told
+    # the platform the count and 8 identities, and findings 9-535 existed nowhere (decision D6,
+    # docs/truncation_issues_resolve.md §T5). Persisted on the run via `report_build`, so a block is
+    # diagnosable after the fact and can seed the retry's prior-attempt context.
+    # Bounded at `_MAX_CARRIED_FINDINGS` companion-side — this payload rides a Temporal signal.
+    secret_findings: list = field(default_factory=list)
 
 
 def contains_nul(value) -> bool:

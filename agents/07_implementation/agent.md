@@ -194,6 +194,26 @@ Proceed only after scope confirmation, exploration complete, and any deviation/d
 - No hardcoded secrets, API keys, or environment-specific values.
 - All config via environment variables; the platform injects real secrets into the worktree — never commit them.
 - Any new required environment variable must be added to the project's env-example with a safe placeholder, and validated at startup.
+- **Never write a literal high-entropy value into a committed file — not even a local, dev, or CI
+  one.** Reference every credential as an environment variable (`process.env.JWT_SECRET`,
+  `configService.getOrThrow('JWT_SECRET')`, `os.environ["API_KEY"]`), and put a named placeholder
+  in the env-example instead of a value. This includes CI workflow files and compose files: a
+  literal there is caught by the pre-push secret scan and **fails the build before it can open a
+  PR**, even when the value is obviously fake. If a test or pipeline needs a stub secret, inject
+  it from the test setup rather than committing it.
+- The scan reads string **literals**. Reading a secret through a call or a variable is always
+  correct and is never flagged — it is only the pasted-in value that blocks.
+
+**Generated Output**
+- The platform commits **everything** left in the worktree — you never run Git. So anything a
+  dependency install or a build step drops on disk gets committed unless it is ignored.
+- Before finishing, make sure a `.gitignore` at the **worktree root** excludes generated output —
+  create it if absent, or append any missing lines (never remove existing entries). Cover at least
+  the dependency and build directories for the confirmed stack: `**/node_modules/`,
+  `**/__pycache__/`, `**/.venv/`, `**/dist/`, `**/build/`, `**/.next/`, `**/target/`, `**/obj/`,
+  plus `.env` itself so a real local env file can never be committed.
+- This matters more than it looks: one `npm install` without it put ~30,000 dependency files into
+  a client repository, and every later build then failed on them.
 
 **Track-Specific Rules (if applicable):**
 
@@ -280,6 +300,9 @@ Record every Tier-3 inference made this phase as a type `assumption` artifact (p
 - [ ] Unit test coverage ≥ 90%.
 - [ ] Track-specific tests written.
 - [ ] No linting errors.
-- [ ] No hardcoded secrets.
+- [ ] No hardcoded secrets — no literal high-entropy value in any committed file, including CI
+      workflows and compose files (a hardcoded literal trips the pre-push secret scan and fails
+      the build).
+- [ ] A `.gitignore` at the worktree root covers the stack's dependency and build directories.
 - [ ] Every acceptance criterion verified.
 - [ ] WorkItem transitioned and the `code` artifact + trace edges registered.

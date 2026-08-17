@@ -62,6 +62,32 @@ def test_report_records_and_signals_the_workflow(dispatched, monkeypatch):
     assert run.outputs["report"]["branch"] == "feature/ST-1"
 
 
+def test_secret_findings_survive_ingestion_and_reach_the_workflow(dispatched):
+    """D6: `report_build` admits only fields declared on `BuildReport`, so the findings would be
+    silently dropped at this boundary if the field were missing. Pin that they are persisted on
+    the run (making a block diagnosable after the fact) AND reach the signalled report, which is
+    what lets the workflow seed the retry with them."""
+    from dataclasses import asdict
+
+    from orchestration.build_report import report_build
+
+    t, run, _token = dispatched
+    sent = {}
+    findings = [{"kind": "high_entropy_secret",
+                 "path": "packages/backend/src/auth/jwt.strategy.ts",
+                 "line": 73, "preview": "conf***ow (24 chars)"}]
+    report_build(
+        tenant_id=str(t.id), run_id=str(run.id),
+        report={"status": "failed", "branch": "feature/ST-1",
+                "message": "secret scan blocked the push: 1 finding(s)",
+                "secret_findings": findings},
+        signal_sender=lambda wf, rep: sent.update(report=asdict(rep)),
+    )
+    run.refresh_from_db()
+    assert run.outputs["report"]["secret_findings"] == findings
+    assert sent["report"]["secret_findings"] == findings
+
+
 def test_report_scrubs_nul_bytes_before_persisting(dispatched):
     """A NUL (\\x00) in companion-reported text — 09b captures live browser/app output that can
     carry one — must be stripped at ingestion. Otherwise the Postgres JSON write ("run.outputs"

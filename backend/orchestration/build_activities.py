@@ -462,6 +462,78 @@ def classify_build_failure(reason: str) -> str:
     return reason  # a specific message we don't need to reclassify
 
 
+def handle_secret_block_core(inp: BuildInput, reason: str, findings: list | None = None) -> dict:
+    """A pre-push secret block used to be a dead end. The build failed, the branch was never
+    pushed, the companion tore the worktree down, and the agent was never told what tripped — so
+    the only way forward was a human re-trigger with a brand-new agent context and no memory of
+    it. That is the same shape as remediation-exhaustion (S.No 161), and it gets the same answer:
+    ONE bounded auto-retry seeded with what blocked the last attempt, then a terminal failure.
+
+    Deliberately a fresh run rather than an in-place fix: nothing was pushed and the worktree is
+    already gone (`runner.teardown_worktree`), so there is no branch for the agent to correct. A
+    new attempt that KNOWS what tripped is the most that is available — and is enough, because the
+    findings name the file, the line, and the redacted shape.
+
+    The redacted previews are safe to carry into the next prompt: they are `conf***ow (24 chars)`,
+    never the value (`guardrails._redact`). If a finding is a real credential, the agent is being
+    told the location and that it must not be committed — not the secret itself.
+    """
+    findings = findings or []
+    if findings:
+        digest = "\n".join(
+            f"- [{f.get('kind', 'secret')}] {f.get('path', '?')}:{f.get('line', 0)}"
+            f" — {f.get('preview', '')}"
+            for f in findings
+        )
+    else:
+        digest = reason
+
+    if inp.attempt < inp.max_auto_attempts:
+        from .trigger import trigger_build
+
+        prior_context = (
+            (f"{inp.prior_attempt_context}\n\n" if inp.prior_attempt_context else "")
+            + f"Attempt {inp.attempt} was BLOCKED by the pre-push secret scan, so nothing was "
+              "committed or pushed. The scan flags string literals that look like credentials "
+              "(the value shown is redacted — only its first/last characters and length):\n"
+            + f"{digest}\n"
+              "Do not commit a literal credential anywhere, including CI workflow and compose "
+              "files. Read every secret from an environment variable instead, and put a named "
+              "placeholder — not a value — in the env-example. If one of these is not a secret, "
+              "the value still must not be a committed literal."
+        )
+        with tenant_context(inp.tenant_id):
+            run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+            triggered_by_id = str(run.triggered_by_id) if run.triggered_by_id else None
+            run.status = Run.Status.FAILED
+            run.outputs = {
+                **(run.outputs or {}),
+                "error": (f"Secret scan blocked the push on attempt {inp.attempt}/"
+                          f"{inp.max_auto_attempts} — auto-retrying with a fresh agent attempt."),
+                "secret_findings": findings,
+            }
+            run.save(update_fields=["status", "outputs", "updated_at"])
+            tools.log_event(inp.tenant_id, "orchestrator", "build.secret_blocked_retry",
+                            "run", inp.run_id,
+                            {"attempt": inp.attempt, "next_attempt": inp.attempt + 1,
+                             "finding_count": len(findings)})
+        result = trigger_build(
+            tenant_id=inp.tenant_id, project_id=inp.project_id, work_item_id=inp.work_item_id,
+            repo=inp.repo, base=inp.base, work_item_key=inp.work_item_key,
+            required_role=inp.required_role, triggered_by=triggered_by_id,
+            attempt=inp.attempt + 1, prior_attempt_context=prior_context,
+        )
+        with tenant_context(inp.tenant_id):
+            run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+            run.outputs = {**(run.outputs or {}), "retry_run_id": result.run_id}
+            run.save(update_fields=["outputs", "updated_at"])
+        return {"action": "retried", "retry_run_id": result.run_id}
+
+    # Auto-retries exhausted — terminal, exactly as before this change. A secret block does NOT
+    # park for a human resume: parking resumes mid-workflow, and there is no branch to resume onto.
+    return {"action": "failed", "reason": reason}
+
+
 def mark_build_failed_core(inp: BuildInput, reason: str) -> dict:
     """Dead-letter / failed-build compensation: flag the run failed, return the WorkItem to
     in_progress (the branch/draft PR are left for human disposition — register-don't-recreate).
@@ -984,6 +1056,11 @@ def handle_remediation_exhausted_activity(inp: BuildInput) -> dict:
     return _boundary(handle_remediation_exhausted_core, inp)
 
 
+@activity.defn(name="handle_secret_block")
+def handle_secret_block_activity(inp: BuildInput, reason: str, findings: list) -> dict:
+    return _boundary(handle_secret_block_core, inp, reason, findings)
+
+
 @activity.defn(name="reject_build")
 def reject_build_activity(inp: BuildInput, comment: str) -> dict:
     return _boundary(reject_build_core, inp, comment)
@@ -1024,6 +1101,7 @@ BUILD_ACTIVITIES = [
     mark_takeover_activity,
     mark_build_failed_activity,
     handle_remediation_exhausted_activity,
+    handle_secret_block_activity,
     reject_build_activity,
     reopen_merge_gate_activity,
     publish_build_artifacts_activity,

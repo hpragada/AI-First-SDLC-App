@@ -739,6 +739,40 @@ def test_to_build_report_caps_secret_findings_at_eight():
     assert "f11.py:11" not in msg                              # beyond the cap, not listed
 
 
+def test_to_build_report_carries_the_findings_as_structured_data():
+    """D6: the prose `message` is capped at 8, so on a large block the platform used to know the
+    COUNT and only 8 identities — findings 9-N existed nowhere. The structured list travels too,
+    so a block is diagnosable after the fact and can seed the retry's prior-attempt context."""
+    from runner.companion.runner import to_build_report
+    findings = [{"kind": "high_entropy_secret", "path": f"f{i}.py", "line": i,
+                 "preview": "ab***cd"} for i in range(12)]
+    rep = to_build_report({"status": "secret_blocked", "branch": "b",
+                           "secret_findings": findings})
+    assert len(rep["secret_findings"]) == 12          # all 12, not the 8 the prose shows
+    assert rep["secret_findings"][11]["path"] == "f11.py"
+    assert "f11.py:11" not in rep["message"]          # ...while the prose stays bounded
+
+
+def test_the_carried_findings_are_bounded_and_never_hold_a_raw_value():
+    """The payload rides a Temporal signal, so it is capped — and it carries only the previews the
+    companion already redacted, never a value."""
+    from runner.companion.runner import _MAX_CARRIED_FINDINGS, to_build_report
+    findings = [{"kind": "high_entropy_secret", "path": f"f{i}.py", "line": i,
+                 "preview": "ab***cd"} for i in range(_MAX_CARRIED_FINDINGS + 25)]
+    rep = to_build_report({"status": "secret_blocked", "branch": "b",
+                           "secret_findings": findings})
+    assert len(rep["secret_findings"]) == _MAX_CARRIED_FINDINGS
+    assert f"{_MAX_CARRIED_FINDINGS + 25} finding(s)" in rep["message"]   # true count survives
+    assert all("***" in f["preview"] for f in rep["secret_findings"])
+
+
+def test_a_clean_build_carries_no_secret_findings_key():
+    """The new field is scoped to the block path — an ok build's report is unchanged."""
+    from runner.companion.runner import to_build_report
+    rep = to_build_report({"status": "ok", "branch": "b", "head_sha": "abc"})
+    assert "secret_findings" not in rep
+
+
 def test_state_mcp_server_builds_with_a_client():
     from runner.companion.state_mcp import build_server
 

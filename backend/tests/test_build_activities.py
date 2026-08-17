@@ -615,6 +615,74 @@ def test_remediation_exhausted_parks_once_auto_retries_are_also_exhausted(world)
     assert world.run.status == Run.Status.PENDING     # untouched — the park activity does this
 
 
+# ── a pre-push secret block is not a dead end ───────────────────────
+_SECRET_FINDINGS = [
+    {"kind": "high_entropy_secret", "path": "packages/backend/src/auth/jwt.strategy.ts",
+     "line": 73, "preview": "conf***ow (24 chars)"},
+]
+
+
+def test_a_secret_block_auto_retries_with_the_findings_seeded(world, monkeypatch):
+    """Before this, a secret block failed the run and the agent was never told what tripped — the
+    only way forward was a human re-trigger with no memory of it. Now it gets the same bounded
+    auto-retry as remediation-exhaustion, seeded with the redacted findings."""
+    from apps.tenancy.models import User
+    from orchestration import trigger as trigger_mod
+
+    user = User.objects.create_user(email="dev2@acme.test", name="Dev", tenant=world.t,
+                                    password="p")
+    world.run.triggered_by = user
+    world.run.save(update_fields=["triggered_by"])
+    started = {}
+    monkeypatch.setattr(trigger_mod, "_default_build_starter",
+                        lambda workflow_id, inp: started.update(workflow_id=workflow_id, inp=inp))
+
+    out = ba.handle_secret_block_core(
+        _inp(world, attempt=1),
+        "secret scan blocked the push: 1 finding(s)", _SECRET_FINDINGS)
+
+    assert out["action"] == "retried"
+    ctx = started["inp"].prior_attempt_context
+    assert started["inp"].attempt == 2
+    assert "jwt.strategy.ts:73" in ctx                 # the agent is told WHERE
+    assert "conf***ow (24 chars)" in ctx               # ...and only the REDACTED shape
+    assert "environment variable" in ctx               # ...and what to do instead
+    world.run.refresh_from_db()
+    assert world.run.status == Run.Status.FAILED
+    assert world.run.outputs["retry_run_id"] == str(started["inp"].run_id)
+    # D6: the findings are persisted on the run, so the block is diagnosable after the fact
+    assert world.run.outputs["secret_findings"] == _SECRET_FINDINGS
+
+
+def test_a_secret_block_fails_terminally_once_retries_are_exhausted(world):
+    """Bounded: the last attempt does NOT retry again, and does not park either — parking resumes
+    mid-workflow and there is no branch to resume onto (nothing was ever pushed)."""
+    out = ba.handle_secret_block_core(
+        _inp(world, attempt=2, max_auto_attempts=2), "secret scan blocked the push",
+        _SECRET_FINDINGS)
+
+    assert out["action"] == "failed"
+    world.run.refresh_from_db()
+    assert world.run.status == Run.Status.PENDING     # untouched — mark_build_failed does this
+
+
+def test_the_retry_context_never_carries_an_unredacted_value(world, monkeypatch):
+    """The previews are what `guardrails._redact` produced, so seeding the next prompt with them
+    cannot leak a credential — pin that the activity passes them through rather than re-deriving."""
+    from orchestration import trigger as trigger_mod
+
+    started = {}
+    monkeypatch.setattr(trigger_mod, "_default_build_starter",
+                        lambda workflow_id, inp: started.update(inp=inp))
+    ba.handle_secret_block_core(
+        _inp(world, attempt=1), "blocked",
+        [{"kind": "high_entropy_secret", "path": "a.ts", "line": 1,
+          "preview": "sk_l***hL (38 chars)"}])
+    ctx = started["inp"].prior_attempt_context
+    assert "sk_l***hL" in ctx
+    assert "sk_live" not in ctx        # the full value shape never appears
+
+
 # ── code review + remediation loop (07<->08) ────────────────────────
 class _ScriptedReviewer:
     """Returns successive finding lists per review call (last one repeats)."""
