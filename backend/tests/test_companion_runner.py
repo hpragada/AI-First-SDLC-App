@@ -873,3 +873,61 @@ def test_an_existing_remote_branch_still_wins_over_the_base(tmp_path):
     second = provision_worktree(repo_path=repo, branch="feature/ST-CYCLE", base="main",
                                 worktree_path=tmp_path / "wt" / "ST-CYCLE")
     assert (second / "cycle1.py").exists(), "a remediation cycle lost the prior cycle's work"
+
+
+# ── the companion must write down what the engine said (Bugs S.No 146, second pass) ──────────
+# Nine engine-exit builds, eight undiagnosable, because the companion kept no log file and the
+# SDK's diagnostics are emitted through `logging` that nobody had configured.
+def test_the_engine_log_captures_what_the_sdk_would_otherwise_discard(tmp_path):
+    import logging
+
+    from runner.companion.enginelog import setup_engine_log
+
+    path = setup_engine_log(tmp_path)
+    assert path is not None and path.parent == tmp_path
+    try:
+        # exactly the two records that carried the cause and went nowhere
+        sdk = logging.getLogger("claude_agent_sdk._internal.transport.subprocess_cli")
+        sdk.debug("Skipping non-JSON line from CLI stdout: %s", "Claude AI usage limit reached|1")
+        logging.getLogger("claude_agent_sdk._internal.query").error(
+            "Fatal error in message reader: Command failed with exit code 1")
+        for h in logging.getLogger("claude_agent_sdk").handlers:
+            h.flush()
+        written = path.read_text(encoding="utf-8")
+        assert "Claude AI usage limit reached" in written   # the DEBUG one — previously discarded
+        assert "Fatal error in message reader" in written   # terminal-only before
+    finally:
+        lg = logging.getLogger("claude_agent_sdk")
+        for h in list(lg.handlers):
+            if getattr(h, "_sdlc_tag", ""):
+                h.close()
+                lg.removeHandler(h)
+
+
+def test_setting_up_the_engine_log_twice_does_not_double_write(tmp_path):
+    import logging
+
+    from runner.companion.enginelog import setup_engine_log
+
+    try:
+        first = setup_engine_log(tmp_path)
+        second = setup_engine_log(tmp_path)
+        assert first == second
+        tagged = [h for h in logging.getLogger("claude_agent_sdk").handlers
+                  if getattr(h, "_sdlc_tag", "")]
+        assert len(tagged) == 1, "serving twice in one process would duplicate every line"
+    finally:
+        lg = logging.getLogger("claude_agent_sdk")
+        for h in list(lg.handlers):
+            if getattr(h, "_sdlc_tag", ""):
+                h.close()
+                lg.removeHandler(h)
+
+
+def test_an_unwritable_log_location_never_stops_the_companion(tmp_path):
+    """A companion that cannot open its log must still run builds."""
+    from runner.companion.enginelog import setup_engine_log
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x")            # a FILE where the log directory would go
+    assert setup_engine_log(path=blocker / "sub" / "engine.log") is None

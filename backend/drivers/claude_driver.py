@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import os
 import shutil
 import sys
 import tempfile
 from collections import deque
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -82,7 +84,19 @@ _OPTIONS_ACCEPTS_CLI_PATH = "cli_path" in inspect.signature(ClaudeAgentOptions).
 # registered on options.stderr; otherwise ProcessError.stderr is the bare "Check stderr output
 # for details" placeholder and the real cause (e.g. a usage-limit notice) is lost (Bugs S.No 146).
 _OPTIONS_ACCEPTS_STDERR = "stderr" in inspect.signature(ClaudeAgentOptions).parameters
-_STDERR_TAIL_LINES = 40  # trailing engine-stderr lines kept for the failure reason
+_STDERR_TAIL_LINES = 80  # trailing engine-output lines kept for the failure reason
+# …but stderr is the wrong channel, which is why the S.No 146 fix never once fired: across nine
+# engine-exit failures on two tenants, not one carried an "Engine stderr" tail. The CLI's
+# diagnostic notices — including "Claude AI usage limit reached|<epoch>" — arrive on **stdout**
+# as non-JSON lines, and the SDK drops them at `logger.debug` (subprocess_cli: "Skipping non-JSON
+# line from CLI stdout"). The companion configures no logging anywhere, so the root logger has no
+# handlers and logging.lastResort is WARNING-level: those records are discarded outright, and the
+# reason reaching the platform degrades to the bare placeholder for every cause alike.
+#
+# Attaching a handler to the SDK's own logger is the supported seam for this — no SDK fork, and it
+# also picks up query.py's `logger.error("Fatal error in message reader: …")`, the line the QA
+# member could see in the companion terminal but the platform never received.
+_SDK_LOGGER_NAME = "claude_agent_sdk"
 
 if TYPE_CHECKING:
     from apps.registry.models import AgentSpec
@@ -228,25 +242,78 @@ class ClaudeDriver:
         # failure carries a human-readable cause instead of the SDK's opaque placeholder.
         self._stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
 
-    # ── engine stderr capture (Bugs S.No 146) ─────────────────────
+    # ── engine output capture (Bugs S.No 146) ─────────────────────
     def _collect_stderr(self, line: str) -> None:
         """options.stderr callback: keep a bounded tail of the engine's stderr for the failure
         reason, and echo it live to the companion console (registering this callback pipes stderr,
         which would otherwise inherit the console — so we re-emit it to preserve live output)."""
         text = line.rstrip("\n")
         if text:
-            self._stderr_tail.append(text)
+            self._stderr_tail.append(f"[stderr] {text}")
         print(line, end="" if line.endswith("\n") else "\n", file=sys.stderr, flush=True)
 
+    @contextmanager
+    def _capturing_sdk_log(self):
+        """Capture the SDK's own log records into the same tail for the duration of one run.
+
+        This is where the cause actually lives (see `_SDK_LOGGER_NAME`). The handler is installed
+        and removed around the run: attaching to a library logger is global state, and a companion
+        that serves builds all day would otherwise accumulate one handler per run. The previous
+        level and `propagate` are restored too, so we never leave the SDK noisier than we found it
+        — and `propagate=False` while we hold it keeps the DEBUG flood off anyone else's console.
+        """
+        logger = logging.getLogger(_SDK_LOGGER_NAME)
+        tail = self._stderr_tail
+
+        class _TailHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                try:
+                    tail.append(f"[engine] {record.getMessage()}")
+                except Exception:      # noqa: BLE001 — diagnostics must never break the run
+                    pass
+
+        handler = _TailHandler(level=logging.DEBUG)
+        prev_level, prev_propagate = logger.level, logger.propagate
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+        try:
+            yield
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(prev_level)
+            logger.propagate = prev_propagate
+
+    @staticmethod
+    def _with_progress(exc: Exception, *, messages: int, text: str, artifacts: int,
+                       cost_usd: float, subtype: str) -> Exception:
+        """Attach how far the run actually got to an exception raised mid-stream.
+
+        A run that dies after 200 messages and one that dies before the first are different
+        failures; without this they are the same string. The last of the agent's own words is the
+        most useful single line here — it says what it was doing when the engine went away."""
+        parts = [f"{messages} message(s)"]
+        if artifacts:
+            parts.append(f"{artifacts} artifact(s) registered")
+        if cost_usd:
+            parts.append(f"${cost_usd:.4f}")
+        if subtype:
+            parts.append(f"result subtype {subtype!r}")
+        progress = f"Engine progress before the failure: {', '.join(parts)}."
+        tail = " ".join(text.split())[-400:]
+        if tail:
+            progress += f"\nLast agent output: …{tail}"
+        return RuntimeError(f"{exc}\n{progress}")
+
     def _with_stderr_tail(self, exc: Exception) -> Exception:
-        """Fold the captured engine-stderr tail into the error when the SDK only surfaced its
+        """Fold the captured engine output into the error when the SDK only surfaced its
         'Check stderr output for details' placeholder, so the platform can classify the failure
         (e.g. a usage/rate limit) and a human can read WHY (Bugs S.No 146). Returns the original
-        exception unchanged when there is no extra stderr to add."""
+        exception unchanged when there is nothing to add."""
         tail = "\n".join(self._stderr_tail).strip()
         if not tail or tail.lower() in str(exc).lower():
             return exc
-        return RuntimeError(f"{exc}\nEngine stderr (tail):\n{tail[-1500:]}")
+        return RuntimeError(f"{exc}\nEngine output (tail):\n{tail[-4000:]}")
 
     # ── body resolution ────────────────────────────────────────────
     def _read_body_file(self, agent_spec: AgentSpec) -> str:
@@ -357,8 +424,12 @@ class ClaudeDriver:
         happens before any message streams, so retrying the whole run never double-processes. The
         old large-body overflow can no longer occur here: the system prompt (body + manifest) is
         delivered via `--system-prompt-file`, so it never touches the command line at all."""
-        last_exc: Exception | None = None
         self._stderr_tail.clear()  # fresh capture per run (Bugs S.No 146)
+        with self._capturing_sdk_log():
+            return await self._consume_retrying(prompt, options)
+
+    async def _consume_retrying(self, prompt: str, options: ClaudeAgentOptions) -> RunResult:
+        last_exc: Exception | None = None
         for attempt in range(_LAUNCH_RETRIES):
             try:
                 return await self._consume_stream(prompt, options)
@@ -436,20 +507,31 @@ class ClaudeDriver:
             transport = SubprocessCLITransport(
                 prompt=prompt, options=options, cli_path=str(self._cli_path))
 
-        async for message in self._query(prompt=prompt, options=options, transport=transport):
-            raw_messages.append(message)
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        text_parts.append(block.text)
-                    elif isinstance(block, ToolUseBlock) and block.name.endswith(
-                        _REGISTER_ARTIFACT_TOOL
-                    ):
-                        artifacts.append(self._artifact_from_tool_use(block.input))
-            elif isinstance(message, ResultMessage):
-                cost_usd = message.total_cost_usd or 0.0
-                final_result = message.result
-                result_subtype = getattr(message, "subtype", "") or ""
+        # The stream can die PART WAY THROUGH — the transport raises when the CLI exits non-zero,
+        # after however much real work already streamed. Everything below used to be local state
+        # discarded by that exception: TASK-014 ran 12.5 minutes and left no record of what it did,
+        # while another failure died in 12 seconds, and both reported the identical message. Keep
+        # what we have and fold it into the error so the two can never again be confused.
+        try:
+            async for message in self._query(prompt=prompt, options=options, transport=transport):
+                raw_messages.append(message)
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            text_parts.append(block.text)
+                        elif isinstance(block, ToolUseBlock) and block.name.endswith(
+                            _REGISTER_ARTIFACT_TOOL
+                        ):
+                            artifacts.append(self._artifact_from_tool_use(block.input))
+                elif isinstance(message, ResultMessage):
+                    cost_usd = message.total_cost_usd or 0.0
+                    final_result = message.result
+                    result_subtype = getattr(message, "subtype", "") or ""
+        except Exception as exc:
+            raise self._with_progress(
+                exc, messages=len(raw_messages), text="".join(text_parts),
+                artifacts=len(artifacts), cost_usd=cost_usd, subtype=result_subtype,
+            ) from exc
 
         joined = "".join(text_parts)
         # `result_subtype` travels so callers can tell a normal end ("success") from an

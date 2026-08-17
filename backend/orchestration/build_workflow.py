@@ -20,6 +20,7 @@ with workflow.unsafe.imports_passed_through():
         BuildReport,
         failure_reason,
         is_empty_build,
+        is_engine_exit,
         is_merge_conflict,
     )
     from .types import GateDecision
@@ -108,29 +109,37 @@ class BuildWorkflow:
 
     @workflow.run
     async def run(self, inp: BuildInput) -> dict:
-        await workflow.execute_activity(
-            "dispatch_build", inp,
-            start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
-        )
-
-        # Await the companion's report; an offline runner → human takeover (never hang).
-        try:
-            await workflow.wait_condition(
-                lambda: self._report is not None,
-                timeout=timedelta(seconds=inp.report_timeout_seconds),
-            )
-        except TimeoutError:
+        # Dispatch, await the report, and — when the ENGINE (not the build) went away — park for a
+        # human and re-dispatch on Resume. Looping is what makes the run survive a transient
+        # engine failure: `mark_build_failed` + `return` closes the Temporal history for good, and
+        # a closed workflow can never be signalled, so the only way forward was a fresh run that
+        # rebuilt everything (S.No 146 second pass; the recourse S.No 157 gave every OTHER
+        # recoverable failure). Bounded by the human: each pass waits on Resume or Take over.
+        while True:
             await workflow.execute_activity(
-                "mark_takeover", inp,
-                start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                "dispatch_build", inp,
+                start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
             )
-            return {"status": "takeover", "run_id": inp.run_id}
+            # Await the companion's report; an offline runner → human takeover (never hang).
+            try:
+                await workflow.wait_condition(
+                    lambda: self._report is not None,
+                    timeout=timedelta(seconds=inp.report_timeout_seconds),
+                )
+            except TimeoutError:
+                await workflow.execute_activity(
+                    "mark_takeover", inp,
+                    start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                )
+                return {"status": "takeover", "run_id": inp.run_id}
 
-        report = self._report
-        # `wait_condition` above returned, so the signal has landed — narrow for the type checker,
-        # which cannot see that through the lambda.
-        assert report is not None
-        if report.status != "ok":
+            report = self._report
+            # `wait_condition` returned, so the signal has landed — narrow for the type checker,
+            # which cannot see that through the lambda.
+            assert report is not None
+            if report.status == "ok":
+                break
+
             # A pre-push SECRET BLOCK gets one bounded auto-retry seeded with the redacted
             # findings, instead of dying here with the agent never told what tripped. Same
             # two-tier shape as remediation-exhaustion (S.No 161); see handle_secret_block_core.
@@ -145,6 +154,14 @@ class BuildWorkflow:
                     # The retry is its OWN run/workflow — this one is already marked failed.
                     return {"status": "secret_blocked_retried", "run_id": inp.run_id,
                             "retry_run_id": outcome["retry_run_id"]}
+            # The engine going away is not the build failing. Park; on Resume the loop
+            # re-dispatches. An empty build and a secret block are excluded (`is_engine_exit`).
+            elif is_engine_exit(report.message):
+                self._report = None       # consume, so the next pass awaits a FRESH report
+                if await self._park(inp, report.message, "dispatch_build"):
+                    continue
+                return {"status": "build_failed", "run_id": inp.run_id}
+
             await workflow.execute_activity(
                 "mark_build_failed", args=[inp, report.message or "build reported failed"],
                 start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
@@ -242,10 +259,26 @@ class BuildWorkflow:
                         )
                         await self._teardown_preview(inp)
                         return {"status": "takeover", "run_id": inp.run_id}
-                    if self._report.status != "ok":
+                    remediation_report = self._report
+                    assert remediation_report is not None      # wait_condition returned
+                    if remediation_report.status != "ok":
+                        # This is where TASK-014 died: the engine exited during remediation and
+                        # took a run that already had a working PR and a completed code review
+                        # with it. Park instead, so Resume re-dispatches the remediation and none
+                        # of that work is thrown away.
+                        if is_engine_exit(remediation_report.message):
+                            self._report = None    # consume, so the retry awaits a FRESH report
+                            if await self._park(inp, remediation_report.message,
+                                                "dispatch_remediation"):
+                                # Give the cycle back: the engine going away is not the agent
+                                # failing review, and must not eat the remediation budget.
+                                cycle -= 1
+                                continue
+                            await self._teardown_preview(inp)
+                            return {"status": "build_failed", "run_id": inp.run_id}
                         await workflow.execute_activity(
                             "mark_build_failed",
-                            args=[inp, self._report.message or "remediation build failed"],
+                            args=[inp, remediation_report.message or "remediation build failed"],
                             start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
                         )
                         await self._teardown_preview(inp)

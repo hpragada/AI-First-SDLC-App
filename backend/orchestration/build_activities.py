@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from mcp_platform_state import tools
@@ -416,6 +418,48 @@ def mark_takeover_core(inp: BuildInput) -> dict:
     return {"status": "takeover"}
 
 
+# Where the companion writes the engine's own output (runner/companion/enginelog.py). Named in
+# the failure reason so "check the companion terminal" is never again the only pointer we can give.
+_ENGINE_LOG_NAME = "companion-engine.log"
+#: Claude Code announces a usage limit as `Claude AI usage limit reached|<unix-epoch>` — the epoch
+#: is when it resets, which is exactly what a human needs and what we used to throw away.
+_USAGE_RESET = re.compile(r"usage limit reached\s*\|\s*(\d{9,11})", re.IGNORECASE)
+_EXIT_CODE = re.compile(r"exit code:?\s*(\d+)", re.IGNORECASE)
+#: The engine's captured output, appended by `ClaudeDriver._with_stderr_tail` / `_with_progress`.
+_ENGINE_DETAIL_MARKERS = ("Engine output (tail):", "Engine stderr (tail):",
+                          "Engine progress before the failure:")
+_MAX_ENGINE_DETAIL = 2000
+
+
+def _usage_reset_hint(reason: str) -> str:
+    """"Resets at 14:30 UTC." — or nothing when the notice carried no timestamp."""
+    match = _USAGE_RESET.search(reason or "")
+    if not match:
+        return ""
+    try:
+        when = datetime.fromtimestamp(int(match.group(1)), tz=UTC)
+    except (ValueError, OverflowError, OSError):
+        return ""
+    return f"It resets at {when:%Y-%m-%d %H:%M} UTC. "
+
+
+def _exit_code_hint(reason: str) -> str:
+    match = _EXIT_CODE.search(reason or "")
+    return f" (exit code {match.group(1)})" if match else ""
+
+
+def _engine_detail(reason: str) -> str:
+    """The engine's own words out of the raw reason — the part worth showing a human.
+
+    Falls back to the whole raw string rather than dropping it: an unrecognised shape is still
+    better evidence than a sentence we invented."""
+    text = reason or ""
+    starts = [text.find(m) for m in _ENGINE_DETAIL_MARKERS]
+    first = min((i for i in starts if i >= 0), default=-1)
+    detail = (text[first:] if first >= 0 else text).strip()
+    return detail[:_MAX_ENGINE_DETAIL] if detail else "(the engine produced no output)"
+
+
 def classify_build_failure(reason: str) -> str:
     """Map a raw failure reason / exception string to a single plain-language, classified reason
     (Bugs S.No 139). The build.failed reason was populated inconsistently across paths — a bare
@@ -432,8 +476,8 @@ def classify_build_failure(reason: str) -> str:
     if ("usage limit" in r or "usage_limit" in r or "rate limit" in r or "rate-limit" in r
             or "429" in r or "too many requests" in r or "overloaded" in r or "quota" in r):
         return ("The AI engine hit its usage or rate limit, so the build could not finish. "
-                "Wait for the limit to reset, then retry the build (no rebuild of earlier work "
-                "is needed once resume lands).")
+                f"{_usage_reset_hint(reason)}Retry the build once the limit resets — the run is "
+                "parked, so the branch, PR and review already completed are kept.")
     if ("failed to start claude code" in r or "claude code not found" in r
             or "open_process()" in r):
         return ("The AI engine (Claude Code) could not start on the companion — check the engine "
@@ -450,13 +494,20 @@ def classify_build_failure(reason: str) -> str:
                 "maximum retry cycles.")
     if "no changes" in r or "empty build" in r or "nothing to commit" in r:
         return "Empty build: the agent produced no changes to commit."
-    # Generic engine exit (Bugs S.No 146) — kept after the specific usage-limit/launch checks so a
-    # bare non-zero exit still reads clearly instead of as a raw "Command failed with exit code 1".
+    # Generic engine exit (Bugs S.No 146, second pass) — kept after the specific usage-limit and
+    # launch checks, so it only ever describes a failure we could NOT identify.
+    #
+    # It used to end "The most common cause is a usage/rate limit; check the companion terminal".
+    # That was a guess stated as a finding, and it sent the team looking for a usage limit across
+    # nine failures that lasted anywhere from 12 seconds to 75 minutes — they cannot all have been
+    # one cause. Worse, the terminal it pointed at was the only place the evidence existed, and it
+    # was always gone by the time anyone read the message. Say what is known, show what the engine
+    # actually printed, and name a cause only when the evidence names one.
     if ("exit code" in r or "command failed" in r or "processerror" in r
-            or "engine stderr" in r):
-        return ("The AI engine exited with an error before finishing the build. The most common "
-                "cause is a usage/rate limit; check the companion terminal for the engine output, "
-                "then retry.")
+            or "engine stderr" in r or "engine output" in r):
+        return (f"The AI engine exited before finishing the build{_exit_code_hint(reason)}. "
+                "The engine's own output is below; the full log is on the companion at "
+                f"`<worktrees>/{_ENGINE_LOG_NAME}`.\n\n{_engine_detail(reason)}")
     if r.strip() in ("", "build reported failed", "remediation build failed"):
         return "The build agent failed without reporting a specific reason."
     return reason  # a specific message we don't need to reclassify
