@@ -236,6 +236,26 @@ registry, linked by trace edge to the build). The 8-line cap then stays exactly 
 a *display* limit over data that is safely stored — which is what the cap was always intended to
 be.
 
+**BUILT 2026-08-17 — with one deliberate simplification, flagged rather than done silently.**
+The list now travels (`BuildReport.secret_findings`, bounded at `_MAX_CARRIED_FINDINGS = 50`
+because the report rides a Temporal signal) and is persisted — but on **`run.outputs`**, not as a
+registered Artifact. Two reasons: the payload is a handful of short redacted dicts, not a
+document, so an S3 body plus a registry pointer plus a trace edge is heavier machinery than the
+data warrants; and `run.outputs` is where the directly analogous diagnostic (`review_cycles`)
+already lives, so this follows an existing precedent instead of adding a new artifact type. The
+8-line prose cap stays exactly as described above — a display limit over stored data.
+If the team wants the findings surfaced in Artifacts & Traceability rather than only on the run,
+promoting them to a registered artifact is a small follow-up on top of what now exists.
+
+The findings also now feed the recourse, which is the part T5 could not have: a block triggers one
+bounded auto-retry seeded with them (`handle_secret_block_core`), so the agent is told what
+tripped instead of the run dying with the knowledge trapped in the companion's memory.
+
+**Correction to point 1 above:** "triage opens" was taken from the Phase-2 spec's wording, but no
+triage object is created anywhere — `mark_build_failed_core` logs `build.failed` and returns the
+work item to `in_progress`. The spec has been corrected (§6) rather than left promising something
+that was never built.
+
 ---
 
 #### T6 · Test-failure evidence capped at 2,000 characters

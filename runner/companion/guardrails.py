@@ -5,6 +5,9 @@ Three defenses for a **developer-trusted** runner (full gVisor/Firecracker sandb
 1. **Secret scanning** — before the branch is pushed, scan the worktree's changed files for
    credentials (known key formats + Shannon entropy). A hit **blocks the push/PR** (PG14):
    secrets never reach GitHub. Values are redacted in findings — never logged in full.
+   The entropy half only ever scores a **string literal**: quoted anywhere, or unquoted in a
+   config file / a comment. An unquoted value in source code is an expression, not a credential
+   (`_scans_bare_values`) — the distinction the four earlier false-positive fixes each guessed at.
 2. **Egress allowlist** — build-step network targets are restricted to approved hosts (the
    tenant's GitHub, the platform, the Anthropic API, declared registries). A denial raises.
 3. **Per-phase tool allowlist (PG12)** — the build phase gets only filesystem/Bash + the
@@ -56,12 +59,20 @@ _PATTERNS = [
     ("jwt", re.compile(r"\beyJ[0-9A-Za-z_\-]{8,}\.eyJ[0-9A-Za-z_\-]{8,}\.[0-9A-Za-z_\-]{8,}")),
 ]
 # Generic "<keyword> = <value>" where the value looks high-entropy (catches custom secrets).
-_ASSIGNMENT = re.compile(
-    r"""(?i)(?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key
-        |client[_-]?secret|private[_-]?key|auth[_-]?token)
-        \s*[:=]\s*['"]?([A-Za-z0-9/+_\-.]{16,})['"]?""",
-    re.VERBOSE,
+#
+# There are TWO of these because a credential and a piece of code look identical to a regex once
+# the quotes are optional — which is what the single original pattern allowed, and what every
+# false positive this scanner has ever produced came down to (see `_scans_bare_values`).
+_KEYWORD = r"""(?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key
+                |client[_-]?secret|private[_-]?key|auth[_-]?token)"""
+_VALUE = r"""([A-Za-z0-9/+_\-.]{16,})"""
+#: `secret = "…"` / `secret: '…'` / `` secret: `…` `` — a string LITERAL. A hardcoded credential
+#: is always one of these, in every language, so this pattern runs on every file.
+_ASSIGNMENT_QUOTED = re.compile(
+    r"(?i)" + _KEYWORD + r"""\s*[:=]\s*(?P<q>['"`])""" + _VALUE + r"(?P=q)", re.VERBOSE,
 )
+#: `SECRET=…` with no quotes — a literal only in a config file. See `_scans_bare_values`.
+_ASSIGNMENT_BARE = re.compile(r"(?i)" + _KEYWORD + r"\s*[:=]\s*" + _VALUE, re.VERBOSE)
 _ENTROPY_MIN = 3.5
 _ENTROPY_LEN_MIN = 20
 # Obvious non-secrets that trip the entropy heuristic — don't cry wolf on placeholders. The
@@ -172,6 +183,39 @@ def _is_test_file(path: str) -> bool:
             or any(seg in ("/" + p) for seg in _TEST_DIR_SEGMENTS))
 
 
+# Source files, where an unquoted right-hand side is an EXPRESSION and never a credential.
+#
+# This is the rule the four previous false-positive fixes were each approximating. `api_key =
+# 8f3Kd9Lm2Qp7Rs4Tv6Wx1Zy0Ab5Cd` with no quotes is not valid Python, TypeScript, Java, Go or
+# anything else — a hardcoded credential in code is ALWAYS a quoted string literal. So an
+# unquoted value after a `secret`/`token` keyword in one of these files is a call, a variable or
+# an attribute chain: `configService.getOrThrow` (the TASK-013 block), `isClosingBracketToken`
+# (the 535-finding block), `self.refresh_token_expiry_seconds` (S.No 151). Scoring those for
+# entropy is what produced every one of them.
+#
+# Config files are the mirror image — they hold no expressions, so an unquoted value there IS a
+# literal and must keep being scanned (`JWT_SECRET=…` in `.env`, `ENV API_KEY=…` in a Dockerfile,
+# `client_secret: …` in YAML). Anything not listed here — including extensionless files like
+# `Dockerfile`, `Makefile`, `Procfile` — is treated as config, so an unknown file type fails
+# TOWARD detection rather than away from it.
+_CODE_SUFFIXES = frozenset({
+    "py", "ts", "tsx", "js", "jsx", "mjs", "cjs", "java", "go", "rb", "cs", "php", "kt", "swift",
+    "scala", "rs", "c", "cc", "cpp", "h", "hpp", "m", "dart", "vue", "svelte",
+})
+#: A comment line. The "unquoted means code" reasoning holds for *statements*, not for prose — a
+#: real key pasted into a `# …` / `// …` note is unquoted and is still a leak, so comments in code
+#: files keep the bare scan.
+_COMMENT_LINE = re.compile(r"^\s*(?:#|//|/\*|\*|--|;)")
+
+
+def _scans_bare_values(path: str, line: str) -> bool:
+    """True when an UNQUOTED value on this line could be a credential literal — i.e. the file is
+    config-shaped, or the line is a comment inside a code file."""
+    suffix = (path or "").lower().replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)
+    is_code = len(suffix) == 2 and suffix[1] in _CODE_SUFFIXES
+    return not is_code or bool(_COMMENT_LINE.match(line))
+
+
 def shannon_entropy(s: str) -> float:
     if not s:
         return 0.0
@@ -189,6 +233,21 @@ def _redact(value: str) -> str:
     return f"{value[:4]}***{value[-2:]} ({len(value)} chars)"
 
 
+def _candidate_value(line: str, path: str) -> str | None:
+    """The one value on this line that could be a hardcoded credential, or None.
+
+    A quoted literal always counts. An unquoted one counts only where an unquoted value can BE a
+    literal — see `_scans_bare_values`. Quoted is tried first so a code file's quoted secret is
+    still caught on a line that also contains an expression."""
+    quoted = _ASSIGNMENT_QUOTED.search(line)
+    if quoted:
+        return quoted.group(2)
+    if not _scans_bare_values(path, line):
+        return None
+    bare = _ASSIGNMENT_BARE.search(line)
+    return bare.group(1) if bare else None
+
+
 def scan_text(text: str, *, path: str = "") -> list[SecretFinding]:
     """Scan one blob for credentials. Pattern hits are high-precision; the entropy heuristic
     catches custom tokens while skipping obvious placeholders / env-var references."""
@@ -204,9 +263,8 @@ def scan_text(text: str, *, path: str = "") -> list[SecretFinding]:
             if match and (lineno, kind) not in seen:
                 seen.add((lineno, kind))
                 findings.append(SecretFinding(kind, path, lineno, _redact(match.group(0))))
-        assignment = None if skip_entropy else _ASSIGNMENT.search(line)
-        if assignment:
-            value = assignment.group(1)
+        value = None if skip_entropy else _candidate_value(line, path)
+        if value is not None:
             if (
                 len(value) >= _ENTROPY_LEN_MIN
                 and shannon_entropy(value) >= _ENTROPY_MIN

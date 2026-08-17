@@ -568,6 +568,10 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
 
 
 _MAX_REPORTED_FINDINGS = 8
+#: How many redacted findings travel to the platform as structured data. Higher than the prose cap
+#: because this is what makes a block diagnosable (D6), but still bounded — the report rides a
+#: Temporal signal payload. The `message` always carries the TRUE count either way.
+_MAX_CARRIED_FINDINGS = 50
 
 
 def _format_secret_findings(findings: list[dict], limit: int = _MAX_REPORTED_FINDINGS) -> list[str]:
@@ -598,7 +602,10 @@ def to_build_report(result: dict) -> dict:
         # code that will never land. Opening defects off it would litter the board with
         # findings about a discarded branch.
         return {"status": "failed", "branch": result.get("branch", ""),
-                "message": f"secret scan blocked the push: {len(findings)} finding(s): {detail}"}
+                "message": f"secret scan blocked the push: {len(findings)} finding(s): {detail}",
+                # D6: the redacted findings now travel as structured data too, not just prose, so
+                # the platform can persist them and seed the retry with what actually tripped.
+                "secret_findings": findings[:_MAX_CARRIED_FINDINGS]}
     return {"status": "ok", "branch": result.get("branch", ""),
             "head_sha": result.get("head_sha", ""),
             "changed_files": result.get("changed_files", []),

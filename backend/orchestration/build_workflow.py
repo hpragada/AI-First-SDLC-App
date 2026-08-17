@@ -127,7 +127,24 @@ class BuildWorkflow:
             return {"status": "takeover", "run_id": inp.run_id}
 
         report = self._report
+        # `wait_condition` above returned, so the signal has landed — narrow for the type checker,
+        # which cannot see that through the lambda.
+        assert report is not None
         if report.status != "ok":
+            # A pre-push SECRET BLOCK gets one bounded auto-retry seeded with the redacted
+            # findings, instead of dying here with the agent never told what tripped. Same
+            # two-tier shape as remediation-exhaustion (S.No 161); see handle_secret_block_core.
+            if report.secret_findings:
+                outcome = await workflow.execute_activity(
+                    "handle_secret_block",
+                    args=[inp, report.message or "secret scan blocked the push",
+                          report.secret_findings],
+                    start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY,
+                )
+                if outcome["action"] == "retried":
+                    # The retry is its OWN run/workflow — this one is already marked failed.
+                    return {"status": "secret_blocked_retried", "run_id": inp.run_id,
+                            "retry_run_id": outcome["retry_run_id"]}
             await workflow.execute_activity(
                 "mark_build_failed", args=[inp, report.message or "build reported failed"],
                 start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
