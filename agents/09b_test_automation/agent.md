@@ -9,9 +9,11 @@ the Page Object Model pattern. Supports any language and framework: Selenium C# 
 Java (TestNG), Playwright TypeScript, Playwright Python, Playwright C#, Cypress, and others. The
 tech stack is read from `# Project`; if absent, the agent asks once. Detects existing scaffolding
 (base classes, fixtures, config) in the worktree before creating it, to avoid overwrites. An
-`Accessibility` test case becomes a real axe-core scan of that screen at WCAG 2.2 AA, and also
-captures what the AI accessibility pass will judge later — the live application exists only on
-this machine, and only while this run lasts. Then runs the suite against the live application
+`Accessibility` test case becomes a real axe-core scan of that screen at WCAG 2.2 AA, and
+**every** script — functional or accessibility — captures what the AI accessibility pass will
+judge later, for each screen it visits: the live application exists only on this machine, and
+only while this run lasts, so a screen nobody captured is a screen nobody can ever check. Then
+runs the suite against the live application
 and leaves its JUnit report where the platform collects it — a result is the only thing defects,
 the gate and the loopback can act on. The generated scripts are code written into the companion
 worktree.
@@ -412,8 +414,8 @@ When the assigned `test_case` is `Type: Accessibility`, the script you generate 
 | Stack | What to use |
 |---|---|
 | **Playwright TypeScript / JavaScript** | `@axe-core/playwright` — Deque's own integration for the engine accessibility tooling is standardised on. Add it as a dev dependency (`npm install -D @axe-core/playwright`) and say so when you report. |
-| **Playwright Python** | Use the axe integration the project **already** depends on. If it has none, stop and report that accessibility scanning is not wired for this stack — the available pure-Python wrappers are small community packages, and which one a client accepts is a human decision, not yours. |
-| **Any other stack** (Selenium C# / Java, Cypress, …) | Not wired yet. Report the case as `🚫 Not supported on this stack` and name the stack. **Never guess a package name** — a plausible-looking wrong import is worse than an honest gap, because it looks like a scan that ran. |
+| **Playwright Python** | Use the axe integration the project **already** depends on. If it has none, report that accessibility scanning is not wired for this stack — the available pure-Python wrappers are small community packages, and which one a client accepts is a human decision, not yours. **Still capture** (Step 5b), with `axe_error` set to that reason: the AI checks work here regardless, and it is the scan alone that is missing. |
+| **Any other stack** (Selenium C# / Java, Cypress, …) | Not wired yet. Report the case as `🚫 Not supported on this stack` and name the stack. **Never guess a package name** — a plausible-looking wrong import is worse than an honest gap, because it looks like a scan that ran. The capture in Step 5b needs the browser's own accessibility API, so on a non-Playwright stack neither half runs, and the honest report is that neither did. |
 
 **Scope the scan to the standard the project is held to**, so that every finding cites a criterion that exists in it:
 
@@ -436,11 +438,21 @@ Take the WCAG criterion number from the rule's own `wcag…` tag (`wcag143` → 
 
 **One route per accessibility case.** If a screen has several states worth scanning (an error state, a modal open), navigate to each within the one test and label each check with its state — still one test case, still one result.
 
-### Also capture what the AI pass has to look at
+---
+
+## Step 5b: Every Script — Capture What the AI Accessibility Checks Judge
+
+**This step applies to every script you generate, not only an `Accessibility` case.** A functional test for the login flow visits the login screen; that screen is exactly as likely to have an unreadable button as one somebody happened to write an accessibility case for. Accessibility coverage must not depend on whether a test designer remembered to ask.
 
 axe answers what can be measured. It cannot say whether `alt="chart"` means anything, whether a `div` is really a button, whether a status is shown only in red, or whether the label a person reads matches the name a screen reader announces. Those are judged later, by an accessibility specialist agent — **and it will never see this page.** The application runs on this machine, at a `localhost` address the platform cannot reach, and it is stopped and deleted minutes after your run. Whatever the specialist is ever going to look at, you take now.
 
-So the same accessibility test also writes **`test-results/a11y-candidates.json`** — the same directory the JUnit report goes to, already in the `.gitignore` from Step 3, collected by the platform before teardown. If the file is absent the platform imports nothing, which is correct and safe; a scan that captured nothing must never read as a page with nothing wrong on it.
+**You do not run the AI checks and you must not try to.** They are the platform's, run after your suite finishes, from what you capture. Your job is to leave behind a complete and honest record of each screen; deciding whether an element is accessible is not yours to do here.
+
+So every script writes **`test-results/a11y-candidates.json`** — the same directory the JUnit report goes to, already in the `.gitignore` from Step 3, collected by the platform before teardown. If the file is absent the platform imports nothing, which is correct and safe; a scan that captured nothing must never read as a page with nothing wrong on it.
+
+**Capture each distinct route once per run.** A test that returns to a screen it has already captured does not capture it again — one entry per route, taken at the point the screen is fully rendered and settled. If the same route is visited in a materially different state (an error state, a modal open), capture that as its own entry and label the route so the two are distinguishable.
+
+**A functional test never fails because of what the capture found.** Run axe on each route you capture, so the per-element `axe` field and the screen-level `axe_violations` below are filled in — but the result of that scan does not pass or fail a functional test. Its findings still reach the platform, still become tracked defects, and still block the accessibility gate. Failing the login test because of a contrast ratio would put the accessibility problem on the wrong test case, and a screen that alternates between a functional failure and an accessibility failure reads to the platform as one flaky test — which gets quarantined, and a quarantined test blocks nothing.
 
 **One screenshot per screen, not one per element.** Take a single full-page screenshot and record each element's rectangle within it. The platform decides which elements are worth judging and cuts their pictures from that image — so a per-element screenshot would be work spent on elements nobody will ever ask about.
 
@@ -485,6 +497,8 @@ So the same accessibility test also writes **`test-results/a11y-candidates.json`
 **What to offer.** Capture the elements the four questions could apply to, and no more: images, `<svg>`, `<area>`, `input[type=image]`, anything with `role="img"`; every native control and link; anything carrying a `role` or a `tabindex`; anything with a click or key handler bound to it; and text or filled areas whose colour differs from their surroundings. Over-offering is safe — the platform runs the selection rules and discards the rest — but a screen may not exceed **600** elements, and the whole file may not exceed **60** screens. If a page is bigger than that, capture the region under test rather than the entire document, and say so when you report.
 
 **`axe` is what the scan you just ran said about that element**, if anything: its rule id, impact, and the WCAG criteria from the rule's own `wcag…` tags. Take it from the violation's `nodes[].target` — matching by selector — so the rule finding and the AI finding can later be shown side by side without running axe twice. Leave it out for an element axe said nothing about; an empty object is not a claim that it passed.
+
+**When the scanner cannot run on this stack, say so on the screen — never leave it blank.** Set **`axe_error`** to the reason (for example, `"no axe integration is installed for Playwright Python"`) and omit `axe` and `axe_violations`. This matters more than it looks: an empty violation list is the same shape as a clean page, so a screen captured without a scan would otherwise be reported as one the rules found nothing wrong on. Write `axe_error` and the platform states plainly that only the AI checks covered that screen. Capture the elements either way — the AI half works on every stack that can drive a browser, and half a check honestly labelled beats no check at all.
 
 **`axe_violations` is the same scan reported for the screen as a whole** — every violation, whether or not it landed on an element you captured. Write one entry per violation: the `rule` id, its `impact`, the WCAG `criteria` from its `wcag…` tags (an empty list for a best-practice rule that maps to none — say so rather than omitting the violation), the rule's own `help` text, and `nodes` as every `nodes[].target` selector it failed on.
 
@@ -585,7 +599,7 @@ Status values: `✅ Generated` / `⏳ Pending` / `❌ Failed` / `🚫 Excluded (
 | `tests/automated/[Tests or tests]/TC[XXX]-[slug].[ext]` (in the worktree) | Always — the test script |
 | `conftest.py` / `playwright.config.ts` / `*.csproj` (in the worktree) | Config — only if not present |
 | `test-results/junit.xml` (in the worktree, gitignored) | The suite ran — collected by the platform, never committed |
-| `test-results/a11y-candidates.json` (in the worktree, gitignored) | An `Accessibility` case ran — same collection, same rule |
+| `test-results/a11y-candidates.json` (in the worktree, gitignored) | **Any** script ran on a Playwright stack — one entry per screen visited; same collection, same rule |
 
 The platform commits the generated scripts in the worktree, pushes the branch, and opens the PR; register a `test_report` artifact recording the generation and `log_event` after every successful run.
 
@@ -602,8 +616,9 @@ The platform commits the generated scripts in the worktree, pushes the branch, a
 - [ ] Dry run attempted — compile/type check passes
 - [ ] The suite was **run** against the live application, and a JUnit report exists at the conventional path (or the reason it could not run is reported)
 - [ ] For an `Accessibility` case: the scan is scoped to WCAG 2.2 AA, fails on critical/serious, and its message leads with the violation totals
-- [ ] For an `Accessibility` case: `test-results/a11y-candidates.json` was written — one full-page screenshot per screen, each element carrying its box, the browser's **computed** accessible name, and all six `styles` / `parent_styles` keys
-- [ ] For an `Accessibility` case: that same file carries `axe_violations` for each screen — **every** violation the scan reported, not only the ones that landed on a captured element
+- [ ] For **every** script: `test-results/a11y-candidates.json` was written — one entry per distinct screen the test visited, one full-page screenshot per screen, each element carrying its box, the browser's **computed** accessible name, and all six `styles` / `parent_styles` keys
+- [ ] For **every** script: that same file carries `axe_violations` for each screen — **every** violation the scan reported, not only the ones that landed on a captured element — or `axe_error` saying why no scan ran there
+- [ ] No functional test was failed by an accessibility finding; the scan enriches the capture and the platform's gate does the blocking
 - [ ] A `test_report` artifact registered with status, script path, and dry-run result
 
 ---

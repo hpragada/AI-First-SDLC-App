@@ -11,12 +11,14 @@ no evidence is *needs review*; and where the scanner proved a failure on the sam
 criterion, the scanner's verdict stands whatever the AI said. That is QA-06's safety valve, and
 this module is its first real caller.
 
-**Silence is reported, never inferred.** Three things could quietly make a report look clean:
+**Silence is reported, never inferred.** Four things could quietly make a report look clean:
 an element that was captured but never judged (the run hit its cap, or the judge was
-unavailable), a screen that was scanned but had nothing worth judging, and a scanner violation
-that names no WCAG criterion. All three are counted and stated at the top (D-A11Y-3), because
-an incomplete accessibility check that reads as a clean one is the single worst outcome
-available to this feature.
+unavailable), a screen that was scanned but had nothing worth judging, a scanner violation
+that names no WCAG criterion, and — since QA-16, when capture stopped being limited to
+dedicated accessibility cases — a screen the rule scanner never ran on at all, whose empty
+violation list is the same shape as a clean page. All four are counted and stated at the top
+(D-A11Y-3), because an incomplete accessibility check that reads as a clean one is the single
+worst outcome available to this feature.
 
 **The document is rendered from the ledger, not alongside it** (QA-13). `publish_report` merges,
 records the findings, then reads the rows back and renders those — so the report and the stored
@@ -104,6 +106,11 @@ class MergedReport:
     #: Scanner violations carrying no WCAG criterion (axe best-practice rules).
     without_criterion: list[dict] = field(default_factory=list)
     routes: list[str] = field(default_factory=list)
+    #: Screens the rule scanner never ran on, with the reason: [{route, reason}] (QA-16).
+    #: Distinct from `unjudged`, which is the AI half — a screen can have every element judged
+    #: and still have had no scan, and vice versa. Both are "we did not look", and neither may
+    #: be inferred from a quiet result.
+    unscanned: list[dict] = field(default_factory=list)
     judged: int = 0
     from_rules: int = 0
 
@@ -210,7 +217,8 @@ def merge_run(*, tenant_id, project_id, run_id) -> MergedReport:
     judgments = _judgments_for(tenant_id, project_id, [r.content_hash for r in requests])
 
     report = MergedReport(routes=list(scan.routes),
-                          without_criterion=list(scan.without_criterion))
+                          without_criterion=list(scan.without_criterion),
+                          unscanned=list(scan.unscanned))
     matched: set = set()
     for request in requests:
         judgment, audit = judgments.get(request.content_hash, (None, {}))
@@ -374,6 +382,22 @@ def report_body(report: MergedReport, *, findings: list | None = None, title: st
             "listed at the end and need a person to look at them.",
             "",
         ])
+    if report.unscanned:
+        # The third silence (QA-16). The rule half and the AI half fail independently: a screen
+        # can have every element judged and still never have been scanned, and an empty
+        # violation list looks exactly like a clean page. Naming the routes matters — "some
+        # screens were not scanned" is not something a reader can act on.
+        routes = sorted({str(item.get("route") or "").strip() for item in report.unscanned})
+        reasons = sorted({str(item.get("reason") or "").strip() for item in report.unscanned})
+        lines.extend([
+            "> **The rule scanner did not run on every screen.** "
+            f"{len(routes)} screen(s) were captured without a scan, so the measurable checks "
+            "(contrast, missing names, landmarks) say nothing about them — only the AI checks "
+            f"did. Screens: {_cell(', '.join(r for r in routes if r), 400)}.",
+            "",
+        ])
+        lines.extend([f"> - {_cell(reason, 400)}" for reason in reasons if reason])
+        lines.append("")
 
     if failures:
         lines.extend(["## Failures", ""])
@@ -496,6 +520,7 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
             {"failures": len(report.failures), "needs_review": len(report.needs_review),
              "passed": len(report.passes), "unjudged": len(report.unjudged),
              "from_rules": report.from_rules, "complete": report.complete,
+             "unscanned": len(report.unscanned),
              "findings_opened": len(ledger["opened"]),
              "findings_seen_again": len(ledger["seen_again"]),
              "findings_resolved": len(ledger["resolved"]),
@@ -509,6 +534,7 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
         "unjudged": len(report.unjudged),
         "from_rules": report.from_rules,
         "complete": report.complete,
+        "unscanned": len(report.unscanned),
         "ledger": ledger,
         "summary": _summary_line(report),
     }

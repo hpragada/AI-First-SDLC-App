@@ -203,6 +203,7 @@ def _record_scan(tenant_id, project_id, run_key: str, run_id, screen: dict,
                 "url": str(screen.get("url") or "")[:200],
                 "screen_hash": screen_hash,
                 "violations": violations,
+                "scan_error": str(screen.get("axe_error") or "")[:1_000],
             },
         )
     return len(violations)

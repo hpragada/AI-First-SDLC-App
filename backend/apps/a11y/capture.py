@@ -175,8 +175,12 @@ def _screen(raw) -> dict:
     violations = data.get("axe_violations")
     if violations is None:
         # Absent is "the scan reported nothing here", which is the same shape as a clean page.
-        # It is NOT read as "no scan ran": that distinction belongs to the test report, which
-        # says whether the accessibility case executed at all.
+        # It is NOT read as "no scan ran" — `axe_error` below is what says that.
+        #
+        # Until QA-16 that distinction lived in the test report, because a capture only existed
+        # for a dedicated accessibility case and the case either executed or it did not. Now
+        # every screen the suite visits is captured, including on a stack with no scanner
+        # wired, so the fact has to travel with the screen it is about.
         violations = []
     if not isinstance(violations, list):
         raise CaptureError(f"screen {route!r} has an `axe_violations` that is not a list")
@@ -189,6 +193,9 @@ def _screen(raw) -> dict:
         "route": route,
         "url": _text(data.get("url"), 1_000),
         "axe_violations": [_violation(v, route) for v in violations],
+        # Why the rule scanner did not run here, in the capture's own words — blank when it
+        # did (QA-16). The same shape and the same reasoning as `screenshot_error` below.
+        "axe_error": _text(data.get("axe_error"), 1_000),
         "screenshot_base64": _text(data.get("screenshot_base64"), MAX_SCREENSHOT_BYTES * 2),
         # Why there is no picture, in the capture's own words. Carried through to the judge, so
         # "could not be seen" is a reported fact rather than an absence someone has to infer.
@@ -311,6 +318,11 @@ def fingerprint(screen: Mapping) -> str:
             json.dumps(list(screen.get(part) or []), sort_keys=True,
                        separators=(",", ":"), default=str).encode("utf-8")
         )
+    # Whether the scanner ran at all changes what the merged report may claim about this
+    # screen, so it changes the identity too (QA-16) — same reasoning as the violations above.
+    # A screen carried forward from a scanned run must not silently inherit "scanned" when
+    # this run could not scan it, nor the reverse.
+    digest.update(str(screen.get("axe_error") or "").encode("utf-8"))
     return digest.hexdigest()
 
 

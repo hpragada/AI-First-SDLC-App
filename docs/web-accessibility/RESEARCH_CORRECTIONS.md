@@ -51,6 +51,8 @@ A search for axe across every `.py`, `.ts`, `.tsx` and `.json` in `backend/`, `r
 > **Resolution (D‑A11Y‑12):** the capture takes **one full-page image per screen** plus each element's rectangle in it, and the platform crops — after selection, from an image it already holds. The ordering the task asked for is preserved exactly; it just happens on the other side of the wall this correction is about. ~10 images per run instead of ~300.
 >
 > A second consequence of the same wall: the capture must **not** ride the build report. That report is a Temporal signal payload, and a screen carries a full-page PNG. The companion posts each screen over the runner-token route it already authenticates on, one screen per call, and only a summary line travels on the report (D‑A11Y‑15).
+>
+> **Third consequence, found while building QA‑16 (2026‑08‑15).** That task's acceptance criterion says *"the script runs both axe and the AI checks"*. It cannot. The AI checks are a server-side capability reached through `ExecutionDriver`, the generated script runs in the companion on a developer's laptop, and putting orchestration into a test script would break non‑negotiable #2 as well as this wall. The buildable form is the one the platform already implements: the script runs axe and **captures what the AI checks judge**, and the platform runs them after the suite finishes. Corrected in the backlog as **D‑A11Y‑42**, and the agent body now states it outright so a later edit cannot reintroduce the idea. The general lesson is the same one R2 opened with: any task text that has the companion *doing* platform work is describing something the architecture forbids, however reasonable it sounds.
 
 ---
 

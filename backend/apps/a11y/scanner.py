@@ -56,6 +56,11 @@ class RuleScan:
     #: The routes a scan was stored for — which is not the same as the routes that had
     #: candidates, and a screen scanned but never judged has to be visible as exactly that.
     routes: list[str] = field(default_factory=list)
+    #: Screens the rule scanner could not run on, with the reason: [{route, reason}] (QA-16).
+    #: A screen captured on a stack with no scanner wired stores an empty violations list,
+    #: which is the same shape as a clean page — so without this the report would claim the
+    #: rules found nothing wrong on a screen the rules never looked at.
+    unscanned: list[dict] = field(default_factory=list)
 
 
 def _evidence(rule: str, impact: str, help_text: str, selector: str) -> str:
@@ -139,4 +144,8 @@ def rule_findings_for(tenant_id, project_id, run_id=None) -> RuleScan:
         failures=list(failures.values()),
         without_criterion=without,
         routes=[scan.route for scan in scans],
+        unscanned=[
+            {"route": scan.route, "reason": scan.scan_error.strip()}
+            for scan in scans if (scan.scan_error or "").strip()
+        ],
     )

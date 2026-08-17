@@ -174,6 +174,14 @@ class A11yScreenScan(TenantScopedModel):
 
     # [{rule, impact, criteria[], help, nodes[]}] exactly as `capture._violation` normalises it.
     violations = models.JSONField(default=list, blank=True)
+    # Why the rule scanner did not run on this screen, in the capture's own words — blank when
+    # it did (QA-16). Until QA-16 a capture only existed for a dedicated accessibility test
+    # case, so "did a scan run?" was answered by whether that case executed. Now every screen
+    # the suite visits is captured, including on a stack with no scanner wired, and an empty
+    # `violations` list would otherwise be indistinguishable from a clean page — the exact
+    # "incomplete check reading as a clean one" D-A11Y-3 exists to prevent. Mirrors
+    # `screenshot_error`: an absence with a stated reason beats an absence.
+    scan_error = models.TextField(blank=True, default="")
 
     class Meta:
         constraints = [
