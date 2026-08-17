@@ -31,6 +31,18 @@ That last one is a deliberate decision rather than an oversight. Blocking it wou
 unusable on work with no UI at all; staying quiet about it is the exact failure D-A11Y-3 exists
 to prevent — an incomplete check that reads as a clean one. So it passes and says why, and the
 sentence travels on the approval where a reviewer sees it.
+
+**Inherited debt is a fourth state, and it was silent until QA-19.** An audit of an application
+the platform never built (QA-17) produces problems that belong to no piece of work — nobody was
+building anything — so they hang off the project's accessibility backlog rather than a story,
+and the scoping above looked straight past them. That is the RIGHT default: a team should not
+have their pipeline stopped on day one by two hundred problems they inherited. But it was true
+by accident of a filter rather than by decision, nothing said so, and nothing tested it — so the
+next widening of that filter would have turned a health check into a pipeline stop for every
+brownfield client with no warning. It is now a decision (`policy.block_on_baseline_debt`, off by
+default), it is asserted, and — crucially — while it is off the gate **passes and says the debt
+is there**. A green gate on an application with 47 known problems must not look identical to a
+green gate on one with none.
 """
 from __future__ import annotations
 
@@ -99,6 +111,37 @@ def open_a11y_defects(*, tenant_id, work_item_id) -> list[dict]:
         ]
     return sorted(refs, key=lambda r: (r.get("route", ""), r.get("criterion", ""),
                                        r.get("selector", "")))
+
+
+def baseline_debt(*, tenant_id, project_id) -> list[dict]:
+    """The `external_ref`s of this project's still-open **inherited** accessibility defects.
+
+    "Inherited" means exactly one thing here, and it needs no new data to say it: the defect
+    hangs off the project's accessibility backlog rather than a story (QA-18). A defect lands
+    there precisely when no run could be attributed to it — an audit of an already-built
+    application, or a CI post — which is the same set as "this was not caused by a piece of
+    work we can point at".
+
+    Project-wide on purpose. A story's own failures are `open_a11y_defects`' business and stay
+    scoped to that story; this is the debt the project carries, and enforcing it is a decision
+    about the project rather than about any one story.
+    """
+    from apps.a11y.backlog import BACKLOG_STREAM
+    from apps.tenancy.context import tenant_context
+    from apps.workitems.models import WorkItem
+
+    with tenant_context(tenant_id):
+        defects = WorkItem.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.DEFECT,
+            parent__feature_stream=BACKLOG_STREAM,
+        ).exclude(state=WorkItem.State.DONE)
+        refs = [
+            dict(item.external_ref or {})
+            for item in defects
+            if (item.external_ref or {}).get("a11y_finding")
+        ]
+    return sorted(refs, key=lambda r: (r.get("priority") or 10**6, r.get("route", ""),
+                                       r.get("criterion", "")))
 
 
 def unanswered_checks(*, tenant_id, project_id, work_item_id) -> list:
@@ -233,8 +276,32 @@ def evaluate(condition: dict, context) -> dict:
             f"{_named([f'{f.route} ({f.selector or f.criterion})' for f in unanswered])}"
         ))
 
-    # 3. Clean — or never looked at, which is a different thing and says so.
+    # 3. The problems this application came with (QA-19). Blocking only where the project has
+    #    said they should — and never silent when they have not, because a green gate on an
+    #    application with known problems must not read like a green gate on a clean one.
+    from apps.a11y.policy import enforces_baseline
+
+    debt = baseline_debt(tenant_id=tenant_id, project_id=project_id)
+    if debt and enforces_baseline(policy):
+        return _result(condition, False, (
+            f"{len(debt)} accessibility problem(s) from this application's baseline are still "
+            f"open, and this project has chosen to be held to them: "
+            f"{_named([_describe(ref) for ref in debt])}. Fix them, or turn baseline "
+            f"enforcement off in the project's accessibility settings to go back to reporting "
+            f"them only."
+        ))
+
+    # 4. Clean — or one of the things that only LOOKS clean. Both notes can be true at once (a
+    #    story with no UI, in a project carrying inherited debt), so they are joined rather than
+    #    ranked: dropping either would leave a reviewer approving over something unsaid.
+    notes = []
+    if debt:
+        notes.append(
+            f"this project has {len(debt)} open accessibility problem(s) inherited from its "
+            f"baseline audit; they are reported and do not block, because baseline enforcement "
+            f"is off for this project"
+        )
     if not has_been_checked(tenant_id=tenant_id, project_id=project_id,
                             work_item_id=work_item_id):
-        return _result(condition, True, NOT_CHECKED_DETAIL)
-    return _result(condition, True, "")
+        notes.append(NOT_CHECKED_DETAIL)
+    return _result(condition, True, " — ".join(notes))

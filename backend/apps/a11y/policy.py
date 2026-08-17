@@ -79,7 +79,8 @@ RULE_SOURCE = "rule"
 #: separation gets a real role then, and this constant is the one place that changes.
 ACCESSIBILITY_REVIEWER_ROLE = "qa_lead"
 
-_GATE_KEYS = ("block_severities", "min_confidence", "block_on_incomplete_run", "design_checks")
+_GATE_KEYS = ("block_severities", "min_confidence", "block_on_incomplete_run",
+              "block_on_baseline_debt", "design_checks")
 
 
 def severities_for_target(target: str) -> tuple[str, ...]:
@@ -95,6 +96,17 @@ def default_policy(target: str = DEFAULT_TARGET) -> dict:
             "block_severities": list(severities_for_target(target)),
             "min_confidence": 0.0,
             "block_on_incomplete_run": True,
+            # QA-19. Off, and the ONE default here that is deliberately permissive.
+            #
+            # The first audit of an application somebody else built is a health check, not an
+            # exam: a team should not have their pipeline stopped on day one by two hundred
+            # problems they inherited. So inherited debt is reported and does not block — until
+            # the project says it should, at which point the same list starts holding the line.
+            #
+            # It governs ONLY problems that belong to no piece of work. A failure found while
+            # building a story stays attached to that story and keeps stopping it whatever this
+            # says, which is what makes a permissive default safe: nothing M1 built moves.
+            "block_on_baseline_debt": False,
             "design_checks": {"extra_criteria": []},
         },
     }
@@ -199,11 +211,12 @@ def validate_policy(raw) -> dict:
         policy["gate"]["block_severities"] = _validate_severities(gate["block_severities"])
     if "min_confidence" in gate:
         policy["gate"]["min_confidence"] = _validate_confidence(gate["min_confidence"])
-    if "block_on_incomplete_run" in gate:
-        value = gate["block_on_incomplete_run"]
-        if not isinstance(value, bool):
-            _reject(f"`gate.block_on_incomplete_run` must be true or false, not {value!r}")
-        policy["gate"]["block_on_incomplete_run"] = value
+    for flag in ("block_on_incomplete_run", "block_on_baseline_debt"):
+        if flag in gate:
+            value = gate[flag]
+            if not isinstance(value, bool):
+                _reject(f"`gate.{flag}` must be true or false, not {value!r}")
+            policy["gate"][flag] = value
     if "design_checks" in gate:
         policy["gate"]["design_checks"] = _validate_design_checks(gate["design_checks"])
     return policy
@@ -271,6 +284,29 @@ def extra_design_criteria(policy: dict) -> tuple[str, ...]:
     return tuple(policy["gate"]["design_checks"]["extra_criteria"])
 
 
+def enforces_baseline(policy: dict) -> bool:
+    """Whether this project has chosen to be held to the problems it inherited (QA-19)."""
+    return bool(policy["gate"]["block_on_baseline_debt"])
+
+
+def describe_baseline_enforcement(policy: dict) -> str:
+    """The one sentence that says which mode a project is in — used wherever it is said.
+
+    Written once and read from the same boolean in both places it appears (the policy summary
+    and the baseline document), so the two can never end up telling a client different things
+    about whether their backlog currently stops anything.
+    """
+    if enforces_baseline(policy):
+        return (
+            "Problems inherited from this application's own baseline audit MUST be fixed "
+            "before work is signed off."
+        )
+    return (
+        "Problems inherited from this application's own baseline audit are reported only and "
+        "do not stop work. Problems introduced by new work still do."
+    )
+
+
 def describe_policy(policy: dict) -> str:
     """The policy in plain words, for a reviewer, the report, or an admin screen."""
     gate = policy["gate"]
@@ -295,6 +331,7 @@ def describe_policy(policy: dict) -> str:
         if gate["block_on_incomplete_run"]
         else "A test run that could not complete does NOT block the gate."
     )
+    lines.append(describe_baseline_enforcement(policy))
     if extra := extra_design_criteria(policy):
         lines.append(f"Extra design-gate questions switched on: {', '.join(extra)}.")
     lines.append(f"Signed off by: the accessibility reviewer ({ACCESSIBILITY_REVIEWER_ROLE}).")

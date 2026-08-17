@@ -181,7 +181,7 @@ def _backlog_table(items: list[dict]) -> list[str]:
 def baseline_body(*, tenant_id, project_id, audit=None) -> str:
     """The baseline as a document a person reads. Markdown, like every other report here."""
     from .findings import describe_criteria
-    from .policy import describe_policy, policy_or_default
+    from .policy import describe_policy, enforces_baseline, policy_or_default
     from .routes import describe_routes
 
     rows = criterion_rows(tenant_id, project_id)
@@ -274,6 +274,19 @@ def baseline_body(*, tenant_id, project_id, audit=None) -> str:
         lines.extend([
             "In order. Every item below is tracked as its own work item, closes itself when a "
             "later check no longer finds it, and reopens as the same item if it comes back.",
+            "",
+            # QA-19. A client reading "47 problems" has to be able to see whether those
+            # currently stop anything — a list of forty-seven items means something very
+            # different depending on the answer, and leaving them to guess is not an option.
+            (
+                "**These currently stop work.** Until they are fixed, this project's gates "
+                "will not pass."
+                if enforces_baseline(policy) else
+                "**These do not currently stop any work.** They are reported so the team can "
+                "plan; turn baseline enforcement on in this project's accessibility settings "
+                "when you are ready to be held to them. Problems introduced by *new* work "
+                "still stop that work either way."
+            ),
             "",
         ])
         lines.extend(_backlog_table(items))
