@@ -386,12 +386,16 @@ def test_a_failing_report_does_not_stop_a_real_failure_being_tracked(world, monk
 
 # ══ scope kept honest ════════════════════════════════════════════════════════════
 
-def test_an_accessibility_defect_still_blocks_nothing(world):
-    """QA-08 writes the policy and QA-15 enforces it. Until then a defect is tracked work, not
-    a gate — asserted so that changing it is a decision someone makes."""
+def test_exactly_one_gate_reads_these_defects(world):
+    """Until QA-15 this asserted that *no* gate read them, so that switching blocking on would
+    be a decision somebody made rather than a side effect. QA-15 made that decision: the
+    accessibility gate reads them, and nothing else does.
+
+    The guard keeps its value inverted — it still fails if a second gate quietly starts closing
+    or blocking on accessibility defects, which is the drift `testgate.py` warns about."""
     from pathlib import Path
 
     gates = Path(__file__).resolve().parents[1] / "apps/gates"
     hits = {p.name for p in gates.glob("*.py")
             if "a11y_finding" in p.read_text(encoding="utf-8")}
-    assert hits == set()
+    assert hits == {"a11ygate.py"}

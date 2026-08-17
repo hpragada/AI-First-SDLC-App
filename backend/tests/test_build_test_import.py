@@ -109,7 +109,10 @@ def test_the_defect_blocks_the_qa_gate_until_the_test_passes(world):
     )
     approval_id = open_gate_core(gate_inp)
     conditions = Approval.objects.get(id=approval_id).conditions
-    assert [c["key"] for c in conditions] == [BLOCKING_TESTS_KEY]
+    # Since QA-15 the testing gate also carries the accessibility rule. This test is about the
+    # blocking-test rule, so it asserts that rule is there rather than that it is alone; the
+    # accessibility one is satisfied here (nothing was ever scanned for this story).
+    assert BLOCKING_TESTS_KEY in {c["key"] for c in conditions}
 
     with pytest.raises(GateConditionsError, match="TC-9"):
         decide_gate(tenant_id=str(world["t"].id), approval_id=approval_id,
