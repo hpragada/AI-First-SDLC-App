@@ -61,6 +61,9 @@ class RuleScan:
     #: which is the same shape as a clean page — so without this the report would claim the
     #: rules found nothing wrong on a screen the rules never looked at.
     unscanned: list[dict] = field(default_factory=list)
+    #: Routes that never opened, with the reason: [{route, reason}] (QA-17). An auth wall, a
+    #: 404, a timeout. Deliberately NOT in `routes` above — see `rule_findings_for`.
+    unreachable: list[dict] = field(default_factory=list)
 
 
 def _evidence(rule: str, impact: str, help_text: str, selector: str) -> str:
@@ -140,12 +143,22 @@ def rule_findings_for(tenant_id, project_id, run_id=None) -> RuleScan:
                     )
                     failures.setdefault(failure.key, failure)
 
+    # A route that never opened is not a route we looked at (QA-17). `routes` is read by
+    # `findings.record_run_findings` as this run's coverage — the set of screens whose absent
+    # findings may be declared fixed — so leaving an unreachable route in it would close every
+    # accessibility defect on a page the audit could not even reach. It is also kept out of
+    # `unscanned`, which means "seen but not measured": these were not seen.
+    opened = [scan for scan in scans if not (scan.load_error or "").strip()]
     return RuleScan(
         failures=list(failures.values()),
         without_criterion=without,
-        routes=[scan.route for scan in scans],
+        routes=[scan.route for scan in opened],
         unscanned=[
             {"route": scan.route, "reason": scan.scan_error.strip()}
-            for scan in scans if (scan.scan_error or "").strip()
+            for scan in opened if (scan.scan_error or "").strip()
+        ],
+        unreachable=[
+            {"route": scan.route, "reason": scan.load_error.strip()}
+            for scan in scans if (scan.load_error or "").strip()
         ],
     )

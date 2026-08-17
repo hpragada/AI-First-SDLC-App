@@ -62,11 +62,12 @@ BUILD_STATE_TOOLS = [
     # way to open, and correctly records `uncertain` on every element that needed seeing.
     "get_a11y_screenshots",
 ]
-# NOT in the list above, deliberately: `ingest_a11y_candidates`. The COMPANION posts the
-# capture (see `run_build`), not the agent — the file is machine truth from the suite's own
-# run, and an agent able to write candidate bundles could describe a page instead of one
-# having been captured. It is allowed on the platform's build-state route, which is what the
-# companion calls; it is never granted to the engine.
+# NOT in the list above, deliberately: `ingest_a11y_candidates`, and QA-17's `start_a11y_audit`
+# / `ingest_a11y_audit_screen` / `finish_a11y_audit`. The COMPANION posts the capture (see
+# `run_build` and `a11yaudit`), not the agent — the file is machine truth from a real visit to
+# the application, and an agent able to write candidate bundles could describe a page instead of
+# one having been captured. They are allowed on the platform's build-state route, which is what
+# the companion calls; they are never granted to the engine.
 # Filesystem + shell for editing/testing the worktree; platform-state over MCP.
 # Deliberately NO CodeHost and no networked tools — the platform owns Git side-effects (D2).
 BUILD_ALLOWED_TOOLS = (

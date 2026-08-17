@@ -182,6 +182,19 @@ class A11yScreenScan(TenantScopedModel):
     # "incomplete check reading as a clean one" D-A11Y-3 exists to prevent. Mirrors
     # `screenshot_error`: an absence with a stated reason beats an absence.
     scan_error = models.TextField(blank=True, default="")
+    # Why the page never opened — an auth wall, a 404, a timeout (QA-17). Blank when it did.
+    #
+    # A THIRD state, not a variant of the two above. `violations=[]` with both blank is a
+    # clean page; `scan_error` set is a page that was seen but not measured; this is a page
+    # that was never seen at all. A baseline audit of an app that never went through our
+    # design phase hits this on real routes, and the row exists so the route is still part of
+    # the run's coverage with a stated reason rather than being absent from it.
+    #
+    # Load-bearing beyond the report: `scanner.rule_findings_for` leaves these routes OUT of
+    # `RuleScan.routes`, because that list is what `findings.record_run_findings` reads as
+    # "where we looked". A route counted as looked-at would resolve every open finding on it
+    # by absence — closing a screen's accessibility defects because nobody could reach it.
+    load_error = models.TextField(blank=True, default="")
 
     class Meta:
         constraints = [
@@ -311,6 +324,107 @@ class A11yFinding(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"a11y-finding {self.criterion} {self.route} {self.selector[:40]} ({self.status})"
+
+
+class A11yRoute(TenantScopedModel):
+    """One page of an app that a baseline audit should look at (QA-17).
+
+    Every accessibility check so far has been a *side effect of building something*: a story
+    ran, its test suite drove some screens, and whatever it happened to visit got captured.
+    An app that was imported rather than built here has no story and no suite, so nothing
+    anywhere says which pages exist. This table is that list.
+
+    **Why a table and not a key on the project profile.** The profile's `a11y` block is gate
+    *policy*, validated against a deliberately strict allow-list so a misspelled setting is
+    refused rather than silently ignored (`policy.validate_policy`). A route list is audit
+    *input* — it grows, gets disabled a route at a time, and will be written by onboarding
+    (OP-06) rather than by a person editing settings. Mixing the two would loosen the
+    validator that exists to catch typos in the thing that decides what blocks a release.
+
+    `source` records who put a route here, so a list onboarding discovered stays
+    distinguishable from one a person typed. `enabled` is how a route leaves the audit
+    without leaving the record — a page behind a login the audit cannot pass is a fact worth
+    keeping, and deleting the row would invite someone to add it again next month.
+    """
+
+    class Source(models.TextChoices):
+        MANUAL = "manual", "Entered by a person"
+        ONBOARDING = "onboarding", "Discovered during onboarding"
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="a11y_routes"
+    )
+    # The path only — "/checkout". NOT a full URL: where the app is running is a property of
+    # the machine auditing it (a localhost port today, a staging host tomorrow) and changes
+    # between runs, while the route is the app's own and does not.
+    path = models.CharField(max_length=512)
+    label = models.CharField(max_length=200, blank=True)      # "Checkout — payment step"
+    source = models.CharField(max_length=16, choices=Source.choices, default=Source.MANUAL)
+    enabled = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)                      # "needs a signed-in session"
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "project", "path"], name="uniq_tenant_project_a11y_route",
+            )
+        ]
+        ordering = ["path"]
+
+    def __str__(self) -> str:
+        return f"a11y-route {self.path}{'' if self.enabled else ' (disabled)'}"
+
+
+class A11yBaselineAudit(TenantScopedModel):
+    """One pass over a project's registered routes, start to finish (QA-17).
+
+    **Why this is not a `Run`.** A `Run` in this platform is an agent run — a Temporal
+    workflow with an `AgentSpec` behind it (#8). Visiting a list of URLs and writing down
+    what is on each page needs no intelligence and no engine, so manufacturing a `Run` for it
+    would put a row in the runs table that no agent ever executed, and every screen in the
+    product that lists runs would show it. `CodeIntelJob` made the same call for the same
+    reason. The judging that follows *is* a real run, dispatched the ordinary way.
+
+    **Its id is the capture's `run_key`.** Candidates, screen scans and the merged report are
+    all partitioned by that string, so an audit gets its own bucket: re-running it does not
+    collide with the last one, and neither collides with the project-wide bucket a CI post
+    lands in. Everything downstream reads the key as a string and does not care that no `Run`
+    has that id — the two places that looked one up (`findings.record_run_findings`,
+    `report.publish_report`) resolve it and carry on without one.
+
+    **`routes` is frozen at the start.** The audit has to be able to say "this route was
+    asked for and never came back", which cannot be answered from the captures alone — that
+    is precisely the silence it would be reading. Re-reading the registry at the end would
+    also mean a route added mid-audit looked like one that failed.
+    """
+
+    class Status(models.TextChoices):
+        CAPTURING = "capturing", "Capturing"      # waiting for screens from the companion
+        JUDGING = "judging", "Judging"            # captures in, AI pass dispatched
+        COMPLETE = "complete", "Complete"
+        FAILED = "failed", "Failed"
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="a11y_audits"
+    )
+    # Where the app was reachable FROM THE MACHINE THAT AUDITED IT. Recorded as provenance,
+    # never as something the platform will connect to: the server cannot reach a developer's
+    # localhost, and the whole capture design exists because of that (R2).
+    base_url = models.CharField(max_length=512, blank=True)
+    #: The paths this audit was asked to visit, frozen at start: ["/", "/login", …].
+    routes = models.JSONField(default=list, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.CAPTURING)
+    started_by = models.ForeignKey(
+        "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    #: What happened, in numbers a person can check — see `baseline.finish_baseline_audit`.
+    summary = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"a11y-audit {self.project_id} ({self.status})"
 
 
 class WcagCriterion(UUIDModel):

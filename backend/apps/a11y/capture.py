@@ -163,7 +163,17 @@ def _screen(raw) -> dict:
     route = _text(data.get("route") or data.get("url"), 512)
     if not route:
         raise CaptureError("a captured screen has no route — name the path it was taken on")
+    # Why the page never opened at all — an auth wall, a 404, a timeout (QA-17). A DIFFERENT
+    # fact from `axe_error` below, and the two must never be conflated: `axe_error` says a
+    # screen was seen but not measured, this says the screen was never seen. A baseline audit
+    # of an app nobody wrote tests for will hit this on real routes, and a route quietly
+    # missing from the results would make the audit read as "we checked everything".
+    load_error = _text(data.get("load_error"), 1_000)
     elements = data.get("elements")
+    if elements is None and load_error:
+        # A route that never opened has no elements by definition. Demanding the key would
+        # lose the one fact the entry exists to carry.
+        elements = []
     if not isinstance(elements, list):
         raise CaptureError(f"screen {route!r} has no `elements` list")
     if len(elements) > MAX_ELEMENTS_PER_SCREEN:
@@ -196,6 +206,8 @@ def _screen(raw) -> dict:
         # Why the rule scanner did not run here, in the capture's own words — blank when it
         # did (QA-16). The same shape and the same reasoning as `screenshot_error` below.
         "axe_error": _text(data.get("axe_error"), 1_000),
+        # Why the page could not be opened at all (QA-17); blank when it was.
+        "load_error": load_error,
         "screenshot_base64": _text(data.get("screenshot_base64"), MAX_SCREENSHOT_BYTES * 2),
         # Why there is no picture, in the capture's own words. Carried through to the judge, so
         # "could not be seen" is a reported fact rather than an absence someone has to infer.
@@ -273,7 +285,12 @@ def parse_capture(text: str) -> list[dict]:
 
     screens = data.get("screens")
     if screens is None:
-        screens = [data] if data.get("elements") is not None else []
+        # A lone screen object. Recognised by carrying elements — or, since QA-17, by saying
+        # why it has none: a route that never opened is still a screen this document is about,
+        # and reading it as "not a capture at all" would drop the very fact it exists to carry.
+        looks_like_a_screen = (data.get("elements") is not None
+                               or str(data.get("load_error") or "").strip())
+        screens = [data] if looks_like_a_screen else []
     if not isinstance(screens, list):
         raise CaptureError("`screens` must be a list of captured screens")
     if len(screens) > MAX_SCREENS:
@@ -323,6 +340,10 @@ def fingerprint(screen: Mapping) -> str:
     # A screen carried forward from a scanned run must not silently inherit "scanned" when
     # this run could not scan it, nor the reverse.
     digest.update(str(screen.get("axe_error") or "").encode("utf-8"))
+    # And whether the page opened at all (QA-17), for the same reason one step further back:
+    # a route that failed to load this time must not be carried forward from the run where it
+    # worked, which would report a screen nobody could reach as freshly checked.
+    digest.update(str(screen.get("load_error") or "").encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -330,7 +351,13 @@ def summarize(screens: list[dict]) -> str:
     """One line for the run console — the platform's single summarizer for a capture."""
     if not screens:
         return "no accessibility capture"
-    elements = sum(len(s.get("elements") or []) for s in screens)
-    unseen = sum(1 for s in screens if not (s.get("screenshot_base64") or "").strip())
-    line = f"{elements} element(s) captured on {len(screens)} screen(s)"
-    return f"{line}, {unseen} with no page image" if unseen else line
+    opened = [s for s in screens if not str(s.get("load_error") or "").strip()]
+    unreachable = len(screens) - len(opened)
+    elements = sum(len(s.get("elements") or []) for s in opened)
+    unseen = sum(1 for s in opened if not (s.get("screenshot_base64") or "").strip())
+    line = f"{elements} element(s) captured on {len(opened)} screen(s)"
+    if unseen:
+        line += f", {unseen} with no page image"
+    if unreachable:
+        line += f", {unreachable} screen(s) could not be opened"
+    return line

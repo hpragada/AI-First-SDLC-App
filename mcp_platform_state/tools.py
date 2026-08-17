@@ -659,6 +659,52 @@ def ingest_a11y_candidates(tenant_id, project_id, screen, run_id=None) -> dict:
                          run_id=run_id)
 
 
+def start_a11y_audit(tenant_id, project_id, base_url="", routes=None) -> dict:
+    """Open a baseline accessibility audit and return the manifest to visit (QA-17).
+
+    Called by the **companion**, for the same reason `ingest_a11y_candidates` is: the app under
+    audit runs on a machine the platform cannot reach, so the visiting happens there. The
+    platform decides *what* to visit (the project's registered routes) and reconciles what comes
+    back; it never opens a page itself.
+
+    `routes` overrides the registry for a one-off pass. Omitted — the normal case — the
+    project's enabled routes are used, and an empty registry is refused rather than producing an
+    audit of nothing that would read as an application with nothing wrong.
+    """
+    from apps.a11y.baseline import audit_manifest, start_baseline_audit
+
+    audit = start_baseline_audit(tenant_id=tenant_id, project_id=project_id,
+                                 base_url=base_url, routes=routes)
+    return {"audit_id": str(audit.id), "status": audit.status,
+            "manifest": audit_manifest(audit)}
+
+
+def ingest_a11y_audit_screen(tenant_id, audit_id, screen) -> dict:
+    """Store one screen captured for a baseline audit (QA-17). One screen per call.
+
+    The audit's own bucket, not a run's — see `apps.a11y.models.A11yBaselineAudit`. Companion
+    only, and deliberately absent from the engine tool grant for the same reason its sibling is:
+    an agent able to write a capture could describe a page instead of one having been visited.
+    """
+    from apps.a11y.baseline import ingest_audit_capture
+    import json as _json
+
+    return ingest_audit_capture(tenant_id=tenant_id, audit_id=audit_id,
+                                text=_json.dumps(screen))
+
+
+def finish_a11y_audit(tenant_id, audit_id) -> dict:
+    """Close a baseline audit: account for every route asked for, then ask the AI checks (QA-17).
+
+    The reconciliation is the part that matters. A route that never reported is recorded as
+    unreachable with that as its reason, so an audit that covered 38 of 50 screens says so
+    instead of reading as a complete pass over an application with fewer problems than it has.
+    """
+    from apps.a11y.baseline import finish_baseline_audit
+
+    return finish_baseline_audit(tenant_id=tenant_id, audit_id=audit_id)
+
+
 def log_event(tenant_id, actor, action, target_type, target_id, payload=None) -> dict:
     with tenant_context(tenant_id):
         event = Event.objects.create(

@@ -121,7 +121,7 @@ def _image_key(tenant_id, project_id, kind: str, data: bytes) -> str:
     return f"a11y/{tenant_id}/{project_id}/{kind}/{sha256(data).hexdigest()}.png"
 
 
-def _carry_forward(tenant_id, project_id, run_key: str, route: str, screen_hash: str):
+def _carry_forward(tenant_id, project_id, run_key: str, run_id, route: str, screen_hash: str):
     """This run's rows for a screen already captured identically before, or None (QA-07).
 
     **Skip the work, never the coverage.** The obvious saving is to notice an unchanged screen
@@ -156,7 +156,7 @@ def _carry_forward(tenant_id, project_id, run_key: str, route: str, screen_hash:
                 tenant_id=tenant_id, project_id=project_id, run_key=run_key,
                 route=route, selector=row.selector,
                 defaults={
-                    "run_id": run_key or None,
+                    "run_id": run_id or None,
                     "position": row.position,
                     "url": row.url,
                     "checkers": list(row.checkers),
@@ -199,30 +199,39 @@ def _record_scan(tenant_id, project_id, run_key: str, run_id, screen: dict,
             tenant_id=tenant_id, project_id=project_id, run_key=run_key,
             route=str(screen.get("route") or ""),
             defaults={
-                "run_id": run_key or None,
+                "run_id": run_id or None,
                 "url": str(screen.get("url") or "")[:200],
                 "screen_hash": screen_hash,
                 "violations": violations,
                 "scan_error": str(screen.get("axe_error") or "")[:1_000],
+                "load_error": str(screen.get("load_error") or "")[:1_000],
             },
         )
     return len(violations)
 
 
-def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_store=None) -> dict:
+def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, run_key=None,
+                  object_store=None) -> dict:
     """Store one captured screen's candidate bundles. Idempotent per (run, route, selector).
 
     Returns what happened in numbers a person can check: how many elements the capture offered,
     how many the rules selected, how many were dropped and how many have no image. Those
     numbers are the answer to "was this screen really checked?", so they are reported rather
     than inferred from a row count.
+
+    **`run_key` and `run_id` are two different things, and QA-17 is why.** The key is the
+    partition every reader groups a capture by; the id is a foreign key to an actual agent run.
+    They were the same string until a baseline audit needed a bucket of its own without
+    inventing a `Run` nobody executed (see `models.A11yBaselineAudit`). Pass `run_key` alone
+    for a capture that belongs to no run; pass `run_id` and the key follows from it, which is
+    what every existing caller does.
     """
     from .checkers.rules import CapturedElement, checkers_for
     from .models import A11yCandidateBundle
 
     route = str(screen.get("route") or "")
     elements = list(screen.get("elements") or [])
-    run_key = str(run_id or "")
+    run_key = str(run_id or "") if run_key is None else str(run_key)
     store = _object_store(object_store)
 
     # QA-07: has this exact screen already been captured for this project? If so, carry those
@@ -230,7 +239,7 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_st
     # because everything below this line is the cost being avoided.
     screen_hash = fingerprint(screen)
     violations = _record_scan(tenant_id, project_id, run_key, run_id, screen, screen_hash)
-    carried = _carry_forward(tenant_id, project_id, run_key, route, screen_hash)
+    carried = _carry_forward(tenant_id, project_id, run_key, run_id, route, screen_hash)
     if carried is not None:
         return {**carried, "violations": violations}
 
@@ -307,7 +316,8 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, object_st
     }
 
 
-def ingest_capture(*, tenant_id, project_id, text: str, run_id=None, object_store=None) -> dict:
+def ingest_capture(*, tenant_id, project_id, text: str, run_id=None, run_key=None,
+                   object_store=None) -> dict:
     """Parse a posted capture document and store every screen in it.
 
     `imported` is False when the body held no readable screen — the caller maps that to a 4xx,
@@ -321,7 +331,7 @@ def ingest_capture(*, tenant_id, project_id, text: str, run_id=None, object_stor
                 "screens": [], "summary": "no accessibility capture"}
     results = [
         ingest_screen(tenant_id=tenant_id, project_id=project_id, screen=screen,
-                      run_id=run_id, object_store=object_store)
+                      run_id=run_id, run_key=run_key, object_store=object_store)
         for screen in screens
     ]
     reused = sum(1 for r in results if r["reused"])

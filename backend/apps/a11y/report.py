@@ -11,14 +11,15 @@ no evidence is *needs review*; and where the scanner proved a failure on the sam
 criterion, the scanner's verdict stands whatever the AI said. That is QA-06's safety valve, and
 this module is its first real caller.
 
-**Silence is reported, never inferred.** Four things could quietly make a report look clean:
+**Silence is reported, never inferred.** Five things could quietly make a report look clean:
 an element that was captured but never judged (the run hit its cap, or the judge was
 unavailable), a screen that was scanned but had nothing worth judging, a scanner violation
-that names no WCAG criterion, and — since QA-16, when capture stopped being limited to
-dedicated accessibility cases — a screen the rule scanner never ran on at all, whose empty
-violation list is the same shape as a clean page. All four are counted and stated at the top
-(D-A11Y-3), because an incomplete accessibility check that reads as a clean one is the single
-worst outcome available to this feature.
+that names no WCAG criterion, a screen the rule scanner never ran on at all — whose empty
+violation list is the same shape as a clean page (QA-16, when capture stopped being limited to
+dedicated accessibility cases) — and, since QA-17's baseline audit, a route that never opened
+at all. All five are counted and stated at the top (D-A11Y-3), because an incomplete
+accessibility check that reads as a clean one is the single worst outcome available to this
+feature.
 
 **The document is rendered from the ledger, not alongside it** (QA-13). `publish_report` merges,
 records the findings, then reads the rows back and renders those — so the report and the stored
@@ -111,6 +112,10 @@ class MergedReport:
     #: and still have had no scan, and vice versa. Both are "we did not look", and neither may
     #: be inferred from a quiet result.
     unscanned: list[dict] = field(default_factory=list)
+    #: Routes that never opened, with the reason: [{route, reason}] (QA-17). The strongest of
+    #: the silences — nothing at all was seen — and the only one that also has to be kept out
+    #: of `routes`, so an unreachable page cannot resolve its own findings by absence.
+    unreachable: list[dict] = field(default_factory=list)
     judged: int = 0
     from_rules: int = 0
 
@@ -218,7 +223,8 @@ def merge_run(*, tenant_id, project_id, run_id) -> MergedReport:
 
     report = MergedReport(routes=list(scan.routes),
                           without_criterion=list(scan.without_criterion),
-                          unscanned=list(scan.unscanned))
+                          unscanned=list(scan.unscanned),
+                          unreachable=list(scan.unreachable))
     matched: set = set()
     for request in requests:
         judgment, audit = judgments.get(request.content_hash, (None, {}))
@@ -398,6 +404,22 @@ def report_body(report: MergedReport, *, findings: list | None = None, title: st
         ])
         lines.extend([f"> - {_cell(reason, 400)}" for reason in reasons if reason])
         lines.append("")
+    if report.unreachable:
+        # The strongest silence (QA-17), and the one a reader is most likely to mistake for
+        # good news: a route that 404s or sits behind a login produces no findings at all.
+        # Named, with the reason, because "some pages were not reached" tells nobody which
+        # part of their application is still unaudited.
+        routes = sorted({str(item.get("route") or "").strip() for item in report.unreachable})
+        reasons = sorted({str(item.get("reason") or "").strip() for item in report.unreachable})
+        lines.extend([
+            "> **Some screens could not be opened at all.** "
+            f"{len(routes)} route(s) never loaded, so neither the rule scanner nor the AI "
+            "checks saw them and nothing here says anything about whether they are "
+            f"accessible. Routes: {_cell(', '.join(r for r in routes if r), 400)}.",
+            "",
+        ])
+        lines.extend([f"> - {_cell(reason, 400)}" for reason in reasons if reason])
+        lines.append("")
 
     if failures:
         lines.extend(["## Failures", ""])
@@ -460,10 +482,17 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
     data. One merge, two destinations: a document a person reads now, and rows that outlive the
     run. Recording them separately would let the report and the ledger drift into disagreeing
     about what was found, which is the one thing a conformance record may not do.
+
+    **`run_id` is a capture key, and it may name no run at all** (QA-17). A baseline audit
+    partitions its capture by its own id rather than manufacturing a `Run` no agent executed,
+    so the run is *resolved* here rather than assumed: found, the report hangs off it as it
+    always has; not found, the artifact is registered against the project with the key in its
+    `external_ref`, which is what keeps two audits of one project from overwriting each other.
     """
     from mcp_platform_state import tools
 
     from apps.registry.models import Artifact
+    from apps.runs.models import Run
 
     from .findings import open_findings_for_run, record_run_findings
 
@@ -497,8 +526,18 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
         staged = None
 
     with tenant_context(tenant_id):
-        existing = Artifact.objects.filter(
-            tenant_id=tenant_id, run_id=run_id, type=REPORT_TYPE).first()
+        run = Run.objects.filter(id=run_id, tenant_id=tenant_id).first() if run_id else None
+        if run is not None:
+            existing = Artifact.objects.filter(
+                tenant_id=tenant_id, run_id=run_id, type=REPORT_TYPE).first()
+        else:
+            # No run behind this key. Scoped to the key rather than to "any run-less a11y
+            # report in this project", which would make every audit overwrite the previous
+            # one's report — and a baseline you cannot compare against is not a baseline.
+            existing = Artifact.objects.filter(
+                tenant_id=tenant_id, project_id=project_id, run__isnull=True,
+                type=REPORT_TYPE, external_ref__a11y_capture=str(run_id or ""),
+            ).first() if run_id else None
     if existing is not None:
         tools.update_artifact(
             tenant_id, str(existing.id),
@@ -507,9 +546,11 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
         artifact_id = str(existing.id)
     else:
         created = tools.register_artifact(
-            tenant_id, project_id, run_id, "testing", REPORT_TYPE, "internal",
+            tenant_id, project_id, str(run.id) if run is not None else None,
+            "testing", REPORT_TYPE, "internal",
             content_hash=(staged or {}).get("content_hash") or digest,
             s3_key=(staged or {}).get("s3_key"),
+            external_ref=None if run is not None else {"a11y_capture": str(run_id or "")},
             title=f"Accessibility report{f' — {title}' if title else ''}",
         )
         artifact_id = created["id"]
@@ -521,6 +562,7 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
              "passed": len(report.passes), "unjudged": len(report.unjudged),
              "from_rules": report.from_rules, "complete": report.complete,
              "unscanned": len(report.unscanned),
+             "unreachable": len(report.unreachable),
              "findings_opened": len(ledger["opened"]),
              "findings_seen_again": len(ledger["seen_again"]),
              "findings_resolved": len(ledger["resolved"]),
@@ -535,6 +577,7 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
         "from_rules": report.from_rules,
         "complete": report.complete,
         "unscanned": len(report.unscanned),
+        "unreachable": len(report.unreachable),
         "ledger": ledger,
         "summary": _summary_line(report),
     }
@@ -546,4 +589,6 @@ def _summary_line(report: MergedReport) -> str:
             f"{len(report.needs_review)} for human review")
     if report.unjudged:
         line += f", {len(report.unjudged)} not judged"
+    if report.unreachable:
+        line += f", {len(report.unreachable)} screen(s) never opened"
     return line

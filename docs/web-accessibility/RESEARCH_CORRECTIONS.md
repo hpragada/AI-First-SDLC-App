@@ -53,6 +53,8 @@ A search for axe across every `.py`, `.ts`, `.tsx` and `.json` in `backend/`, `r
 > A second consequence of the same wall: the capture must **not** ride the build report. That report is a Temporal signal payload, and a screen carries a full-page PNG. The companion posts each screen over the runner-token route it already authenticates on, one screen per call, and only a summary line travels on the report (D‑A11Y‑15).
 >
 > **Third consequence, found while building QA‑16 (2026‑08‑15).** That task's acceptance criterion says *"the script runs both axe and the AI checks"*. It cannot. The AI checks are a server-side capability reached through `ExecutionDriver`, the generated script runs in the companion on a developer's laptop, and putting orchestration into a test script would break non‑negotiable #2 as well as this wall. The buildable form is the one the platform already implements: the script runs axe and **captures what the AI checks judge**, and the platform runs them after the suite finishes. Corrected in the backlog as **D‑A11Y‑42**, and the agent body now states it outright so a later edit cannot reintroduce the idea. The general lesson is the same one R2 opened with: any task text that has the companion *doing* platform work is describing something the architecture forbids, however reasonable it sounds.
+>
+> **Fourth consequence, found while building QA‑17 (2026‑08‑17).** The brownfield baseline audit reads as a server-side job — "point the platform at an app and audit it" — and it cannot be one, for this wall and for a second reason: there is no browser in the platform's containers at all. So the audit is split the same way everything else is. The platform owns the plan (which routes), the reconciliation (what came back against what was asked for) and the judgment; the machine that can see the application does the visiting. The visiting itself is **not an agent**: driving a browser to a fixed list of URLs needs no intelligence, so it is a reviewed script the companion ships (`runner/companion/assets/a11y_audit.mjs`) rather than JavaScript synthesised per audit or an engine run spending subscription usage on `page.goto`. Recorded as **D‑A11Y‑47** and the "who visits the routes" note on QA‑17.
 
 ---
 
@@ -104,11 +106,13 @@ So business logic calling a model directly — even from inside a capability con
 |---|---|
 | `docs/ux/ACCESSIBILITY.md` | an artifact of type **`accessibility`** |
 | `docs/design/screens/S-NN.html` | **`wireframe`** artifacts — one per screen, state HTML in S3 via `external_ref.states` |
-| "register the app's screens/routes" | nothing — no route registry exists |
+| "register the app's screens/routes" | **`A11yRoute`** — built by QA‑17 (2026‑08‑17); was *nothing* until then |
 
 This is exactly the failure the migration spec warns about (*"a migrated agent still naming a local file is a FAILED migration"*) — except here it is the **plans** naming dead files, not the agents.
 
 **Tasks:** OP‑01, OP‑02, OP‑06, OP‑07 and QA‑17 updated to name artifact types instead of file paths.
+
+> **Closed for QA‑17 (2026‑08‑17).** Two halves, and only one of them needed code. The `docs/ux/ACCESSIBILITY.md` half was already fine: nothing in the accessibility chain reads an `accessibility` artifact either, so "audit an app without an accessibility spec" needed verifying, not building — a test now proves it against a project holding **zero artifacts**. The route-registry half was the real gap, and is now `A11yRoute` (**D‑A11Y‑46**). **OP‑06 writes the same table** rather than inventing its own — it sets `source: onboarding` and nothing else about the audit changes.
 
 ---
 

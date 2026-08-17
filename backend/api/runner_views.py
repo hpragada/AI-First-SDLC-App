@@ -90,6 +90,13 @@ _BUILD_STATE_TOOLS = {
     # agent able to write candidate bundles could describe a page instead of one having been
     # captured, and the whole point of a capture is that it is machine truth.
     "ingest_a11y_candidates": tools.ingest_a11y_candidates,
+    # QA-17: the same channel for a baseline audit of an app the platform never built. The
+    # companion opens the audit, visits the registered routes, posts each screen and closes it;
+    # the platform decides what to visit and accounts for what came back. Companion-only for
+    # the reason above — a capture is machine truth or it is nothing.
+    "start_a11y_audit": tools.start_a11y_audit,
+    "ingest_a11y_audit_screen": tools.ingest_a11y_audit_screen,
+    "finish_a11y_audit": tools.finish_a11y_audit,
 }
 
 # The build agent may move a WorkItem forward through working states (e.g. -> in_progress at

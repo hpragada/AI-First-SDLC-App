@@ -382,6 +382,83 @@ class ProjectViewSet(
             "error": error,
         })
 
+    @action(detail=True, methods=["get", "put"], url_path="a11y-routes")
+    def a11y_routes(self, request, pk=None):
+        """The pages a baseline accessibility audit should visit (QA-17).
+
+        `GET` lists them, disabled ones included — a route that stopped being audited is a fact
+        about the application, and hiding it would make the list look like the whole story.
+        `PUT` registers a list; pass `replace: true` to make it the definitive one, which
+        **disables** anything not named rather than deleting it (see `routes.register_routes`).
+
+        Onboarding (OP-06) will write the same table with `source: onboarding`. Everything here
+        is `manual`, because a person is the one typing it.
+        """
+        from apps.a11y.routes import RouteError, describe_routes, register_routes
+
+        project = self.get_object()
+        if request.method == "PUT":
+            try:
+                result = register_routes(
+                    tenant_id=self.tenant_id, project_id=str(project.id),
+                    routes=request.data.get("routes", []),
+                    replace=bool(request.data.get("replace")),
+                )
+            except RouteError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            result = None
+
+        from apps.a11y.models import A11yRoute
+
+        rows = list(A11yRoute.objects.filter(tenant_id=self.tenant_id, project_id=project.id))
+        payload = {
+            "routes": [
+                {"id": str(row.id), "path": row.path, "label": row.label,
+                 "source": row.source, "enabled": row.enabled, "notes": row.notes}
+                for row in rows
+            ],
+            "summary": describe_routes(self.tenant_id, str(project.id)),
+        }
+        if result is not None:
+            payload["changed"] = result
+        return Response(payload)
+
+    @action(detail=True, methods=["get", "post"], url_path="a11y-audits")
+    def a11y_audits(self, request, pk=None):
+        """Baseline audits of this project (QA-17). `POST` opens one and returns its manifest.
+
+        Opening an audit does not visit anything — it cannot. The manifest is handed to whoever
+        can reach the running application, which is never this server (R2). The audit stays
+        `capturing` until that machine posts what it saw and closes it.
+        """
+        from apps.a11y.baseline import BaselineError, audit_manifest, start_baseline_audit
+        from apps.a11y.models import A11yBaselineAudit
+
+        project = self.get_object()
+        if request.method == "POST":
+            try:
+                audit = start_baseline_audit(
+                    tenant_id=self.tenant_id, project_id=str(project.id),
+                    base_url=request.data.get("base_url", ""),
+                    routes=request.data.get("routes"),
+                    started_by=getattr(request.user, "id", None),
+                )
+            except BaselineError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"audit_id": str(audit.id), "status": audit.status,
+                             "manifest": audit_manifest(audit)},
+                            status=status.HTTP_201_CREATED)
+
+        audits = list(A11yBaselineAudit.objects.filter(
+            tenant_id=self.tenant_id, project_id=project.id)[:50])
+        return Response({"audits": [
+            {"id": str(a.id), "status": a.status, "base_url": a.base_url,
+             "routes": list(a.routes or []), "summary": a.summary or {},
+             "created_at": a.created_at}
+            for a in audits
+        ]})
+
     @action(detail=True, methods=["get"])
     def traceability(self, request, pk=None):
         """Lineage graph for the viewer (spec §5): artifact nodes + their TraceEdges,

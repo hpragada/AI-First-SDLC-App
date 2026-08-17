@@ -95,12 +95,16 @@ def _triggering_user(tenant_id, run_id):
 
 
 def start_ai_pass(*, tenant_id, project_id, run_id, work_item_id=None, title: str = "",
-                  trigger=None) -> dict:
+                  trigger=None, triggered_by=None) -> dict:
     """Ask the AI checks about everything this run captured. Never raises.
 
     Returns what happened in numbers a person can check — how many elements were already known,
     how many were sent, how many were left for the next run at the cap — because "did the AI
     pass actually do anything?" must be answerable without reading a log.
+
+    `run_id` is the capture's **key**, which is normally an agent run's id and since QA-17 may
+    instead be a baseline audit's. `triggered_by` exists for that case: the judge runs on
+    somebody's companion, and with no `Run` to read the user off, the caller has to say who.
     """
     requests = requests_for(tenant_id, project_id, run_id)
     if not requests:
@@ -113,7 +117,8 @@ def start_ai_pass(*, tenant_id, project_id, run_id, work_item_id=None, title: st
                              parent_work_item_id=work_item_id, title=title)
     result = dispatch_judgments(
         tenant_id=tenant_id, project_id=project_id, work_item_id=str(item.id),
-        requests=requests, triggered_by=_triggering_user(tenant_id, run_id), trigger=trigger,
+        requests=requests,
+        triggered_by=triggered_by or _triggering_user(tenant_id, run_id), trigger=trigger,
     )
 
     out: dict = {
@@ -177,9 +182,16 @@ def finish_ai_pass(*, tenant_id, judge_run_id) -> dict:
         # Not a judgment run this module started (or a run that has since gone). Nothing to
         # publish, and nothing wrong: say so rather than guessing which run it meant.
         return {"published": False, "reason": "this run carries no accessibility source run"}
-    return {"published": True,
-            "report": _publish(tenant_id=tenant_id, project_id=project_id,
-                               run_id=source_run, title="")}
+    out = {"published": True,
+           "report": _publish(tenant_id=tenant_id, project_id=project_id,
+                              run_id=source_run, title="")}
+    # If that capture key was a baseline audit's rather than a build run's, this is where the
+    # audit ends (QA-17). Asked after the report is published, so an audit is never shown as
+    # complete before the document it is complete *because of* exists.
+    from .baseline import complete_audit
+
+    out["audit_completed"] = complete_audit(tenant_id, source_run)
+    return out
 
 
 def _publish(*, tenant_id, project_id, run_id, title: str) -> dict:
