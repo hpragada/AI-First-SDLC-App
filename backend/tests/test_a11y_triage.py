@@ -248,8 +248,16 @@ def _scopes(tenant, scopes):
 
 
 def test_a_tenant_with_no_settings_gets_the_defaults(tenant):
-    assert thresholds_for(tenant.id) == {
-        "alt": 0.80, "semantics": 0.80, "color": 0.80, "label": 0.80}
+    """Every check the platform runs, element and journey alike (QA-20 widened this from the
+    four element checks: a tenant must be able to tune `trap` for a check that will actually
+    run against them, and before QA-20 configuring it was rejected as a check that "does not
+    exist")."""
+    from integrations.types import A11Y_ALL_CHECKER_CRITERIA
+
+    resolved = thresholds_for(tenant.id)
+    assert set(resolved) == set(A11Y_ALL_CHECKER_CRITERIA)
+    assert set(resolved.values()) == {0.80}
+    assert resolved["alt"] == resolved["trap"] == 0.80
 
 
 def test_a_tenant_tunes_one_check_without_restating_the_others(tenant):
@@ -303,8 +311,11 @@ def test_an_unconfigured_tenant_still_gets_thresholds(db):
     with tenant_context(other.id):
         IntegrationConnection.objects.filter(
             tenant_id=other.id, capability="a11yai").delete()
-    assert thresholds_for(other.id) == {
-        "alt": 0.80, "semantics": 0.80, "color": 0.80, "label": 0.80}
+    from integrations.types import A11Y_ALL_CHECKER_CRITERIA
+
+    resolved = thresholds_for(other.id)
+    assert set(resolved) == set(A11Y_ALL_CHECKER_CRITERIA)
+    assert set(resolved.values()) == {0.80}
 
 
 # ── the result object ────────────────────────────────────────────────

@@ -427,6 +427,104 @@ class A11yBaselineAudit(TenantScopedModel):
         return f"a11y-audit {self.project_id} ({self.status})"
 
 
+class A11yJourneyRun(TenantScopedModel):
+    """One keyboard-and-interaction pass over one critical journey (QA-20).
+
+    **Why a journey needs a row of its own at all.** Every other accessibility check is about a
+    place — a screen, an element. This one is about a *path*, and a path has something no screen
+    has: steps that may never be reached. If the agent gets three steps into a five-step journey
+    and the login breaks, the two remaining steps were not clean and were not broken. They were
+    never tested, and nothing in the element ledger can express that.
+
+    **`steps` is frozen at the start**, the same rule and the same reason as `A11yBaselineAudit.
+    routes`: the honest question at the end is "which steps never reported?", and that cannot be
+    answered from what *did* report — that is the silence itself. Re-reading the test case
+    afterwards would also mean a step edited mid-run looked like a step that failed.
+
+    `run` is nullable and `run_key` carries the identity, mirroring the baseline audit: the pass
+    is normally a real `Run`, but nothing downstream may *require* one.
+    """
+
+    class Status(models.TextChoices):
+        WALKING = "walking", "Walking"      # dispatched; the agent is operating the app
+        COMPLETE = "complete", "Complete"
+        FAILED = "failed", "Failed"
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="a11y_journey_runs"
+    )
+    run = models.ForeignKey(
+        "runs.Run", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    #: The test case this journey came from — "TC-031". Provenance, not a foreign key: the
+    #: journey is defined by a document, and that document's identity is its TC-ID.
+    test_ref = models.CharField(max_length=64, blank=True)
+    title = models.CharField(max_length=512, blank=True)
+    #: Pointer to the `test_case` artifact the steps were read from (#1/#3 — never the body).
+    artifact_id = models.CharField(max_length=64, blank=True)
+    #: The steps as parsed at start: [{"number": 1, "text": "...", "route": "/login"}, …].
+    steps = models.JSONField(default=list, blank=True)
+    preconditions = models.JSONField(default=list, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.WALKING)
+    started_by = models.ForeignKey(
+        "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    #: What happened, in numbers a person can check — asked / walked / blocked / never reported.
+    summary = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["tenant", "project", "test_ref"])]
+
+    def __str__(self) -> str:
+        return f"a11y-journey {self.test_ref or self.title} ({self.status})"
+
+
+class A11yJourneyStepResult(TenantScopedModel):
+    """What became of one step of one journey pass (QA-20) — the sixth silence, stored.
+
+    Three outcomes, and the difference between them is the whole point of this table:
+
+      * **walked** — the agent got here and operated it. Judgments for this step mean something.
+      * **blocked** — the agent got here and could not go on, and said why. Everything after it
+        is untested, and the report must say so rather than let the journey read as covered.
+      * **not_reached** — the agent never mentioned this step at all. The platform's own
+        reconciliation writes this by subtracting what was reported from the frozen list; it is
+        never something the agent claims, because an agent that stopped early cannot be relied
+        on to report that it stopped.
+
+    A blocked or unreached step produces **no judgment**, deliberately. "I never got there" is
+    not a verdict, and giving it one — pass *or* fail — is how an untested journey comes back
+    looking either clean or broken when the truth is neither.
+    """
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="a11y_journey_steps"
+    )
+    journey_run = models.ForeignKey(
+        A11yJourneyRun, on_delete=models.CASCADE, related_name="step_results"
+    )
+    number = models.PositiveIntegerField()
+    text = models.TextField(blank=True)
+    route = models.CharField(max_length=512, blank=True)
+    outcome = models.CharField(max_length=16)          # walked | blocked | not_reached
+    #: Why the agent could not go on, in its own words. Required for `blocked` — a step that
+    #: reports it was blocked without saying by what is not actionable by anyone.
+    reason = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["number"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("tenant", "journey_run", "number"),
+                name="uniq_tenant_journey_step",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"step {self.number}: {self.outcome}"
+
+
 class WcagCriterion(UUIDModel):
     """One WCAG success criterion — **one copy for the whole platform** (QA-04).
 

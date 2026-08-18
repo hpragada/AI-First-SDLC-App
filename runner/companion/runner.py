@@ -61,6 +61,16 @@ BUILD_STATE_TOOLS = [
     # `alt` is often one too — without this the judge holds a pointer to a picture it has no
     # way to open, and correctly records `uncertain` on every element that needed seeing.
     "get_a11y_screenshots",
+    # Accessibility journeys (QA-20): 09d reads the frozen step list, records what became of
+    # each step, and reports up to eight verdicts per step. These ARE granted to the engine —
+    # unlike the capture tools below — because a journey result is a judgement about what
+    # happened while operating the application, which is the agent's to make and nobody
+    # else's. The step list it reports against is the platform's, frozen before it started,
+    # so an agent cannot widen or narrow its own contract.
+    "get_a11y_journey",
+    "record_a11y_journey_step",
+    "record_a11y_journey_finding",
+    "finish_a11y_journey",
 ]
 # NOT in the list above, deliberately: `ingest_a11y_candidates`, and QA-17's `start_a11y_audit`
 # / `ingest_a11y_audit_screen` / `finish_a11y_audit`. The COMPANION posts the capture (see

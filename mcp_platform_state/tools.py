@@ -705,6 +705,78 @@ def finish_a11y_audit(tenant_id, audit_id) -> dict:
     return finish_baseline_audit(tenant_id=tenant_id, audit_id=audit_id)
 
 
+def get_a11y_journey(tenant_id, run_id) -> dict:
+    """The journey this run must operate with a keyboard (09d_a11y_journey, QA-20).
+
+    Your contract, read once at the start. `steps` are frozen — the numbering here is what you
+    report against, NOT the numbering printed in the test case body, because a body that jumps
+    1, 2, 4 would otherwise leave a step nobody can file against. `total_steps` is the count to
+    check yourself against before you finish.
+
+    `checks` names the eight questions and the WCAG criterion each one owns. A verdict may name
+    only the criteria its own check owns; anything else is rejected.
+    """
+    from apps.a11y.journey import journey_for_run
+
+    return journey_for_run(tenant_id, run_id)
+
+
+def record_a11y_journey_step(tenant_id, run_id, step, outcome, reason="") -> dict:
+    """Record what became of ONE step: `walked` or `blocked` (QA-20).
+
+    Call this for **every** step, including the ones that went fine — the platform cannot tell
+    "I walked it and it was clean" from "I never got there" unless you say which.
+
+    `blocked` means you reached this step and could not go on; `reason` is what stopped you, in
+    your own words ("the login form rejected the seeded account"). Everything after a blocked
+    step is untested and will be recorded as such — that is correct and expected, and far better
+    than a guess. There is no `not_reached` here: the platform writes that itself for steps you
+    never mention, because a run that stopped early cannot report that it stopped.
+    """
+    from apps.a11y.journey import record_step
+
+    return record_step(tenant_id=tenant_id, run_id=run_id, number=step,
+                       outcome=outcome, reason=reason)
+
+
+def record_a11y_journey_finding(tenant_id, run_id, step, checker, verdict, confidence, evidence,
+                                criteria=None, suggested_fix="", route="", selector="") -> dict:
+    """Record ONE check's answer about ONE step of the journey (QA-20).
+
+    One call per (step, check) you can answer. `checker` is one of the eight from
+    `get_a11y_journey().checks`; leave `criteria` unset and the check's own criterion is used.
+
+    A confident **pass** is recorded as a pass and stored as no finding — its absence next run is
+    how a fixed problem is recognised. A **fail** needs `evidence` a developer can act on. If you
+    could not tell, say `uncertain`: it routes to a person and is a first-class answer here, not
+    a failure to answer. Never report a verdict for a step you did not reach — record the step as
+    `blocked` instead.
+
+    `selector` is optional: some of these checks are about a screen rather than one element
+    ("focus order on this page"), and inventing an element for them would file the finding
+    against something that is not what is wrong.
+    """
+    from apps.a11y.journey import record_journey_finding
+
+    return record_journey_finding(
+        tenant_id=tenant_id, run_id=run_id, step=step, checker=checker, criteria=criteria,
+        verdict=verdict, confidence=confidence, evidence=evidence,
+        suggested_fix=suggested_fix, route=route, selector=selector,
+    )
+
+
+def finish_a11y_journey(tenant_id, run_id) -> dict:
+    """Close the journey pass: account for every step, then report (QA-20).
+
+    The reconciliation is the part that matters, exactly as it is for a baseline audit. Every
+    frozen step you never reported on is recorded as *not reached* — so a journey that walked
+    two of six steps says so, instead of reading as a keyboard-clean journey.
+    """
+    from apps.a11y.journey import finish_journey
+
+    return finish_journey(tenant_id=tenant_id, run_id=run_id)
+
+
 def log_event(tenant_id, actor, action, target_type, target_id, payload=None) -> dict:
     with tenant_context(tenant_id):
         event = Event.objects.create(

@@ -48,7 +48,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from integrations.types import (
-    A11Y_CHECKER_CRITERIA,
+    A11Y_ALL_CHECKER_CRITERIA,
     A11Y_FAIL,
     A11Y_PASS,
     A11Y_UNCERTAIN,
@@ -260,15 +260,18 @@ def thresholds_for(tenant_id) -> dict[str, float]:
     conn = get_connection(tenant_id, "a11yai")
     configured = ((conn.scopes or {}).get("confidence_thresholds") or {}) if conn else {}
 
-    if unknown := sorted(set(configured) - set(A11Y_CHECKER_CRITERIA)):
+    # The union of element and journey checks (QA-20). A journey check has a confidence and a
+    # threshold like any other, so it must be tunable here — the alternative is a tenant being
+    # told `trap` "does not exist" for a check the platform is actively running against them.
+    if unknown := sorted(set(configured) - set(A11Y_ALL_CHECKER_CRITERIA)):
         raise ValueError(
             f"`confidence_thresholds` names accessibility checks that do not exist: "
             f"{', '.join(unknown)} — the checks are "
-            f"{', '.join(sorted(A11Y_CHECKER_CRITERIA))}"
+            f"{', '.join(sorted(A11Y_ALL_CHECKER_CRITERIA))}"
         )
 
     resolved = {}
-    for checker in A11Y_CHECKER_CRITERIA:
+    for checker in A11Y_ALL_CHECKER_CRITERIA:
         raw = configured.get(checker)
         if raw is None:
             resolved[checker] = DEFAULT_CONFIDENCE_THRESHOLD

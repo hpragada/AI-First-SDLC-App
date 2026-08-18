@@ -237,11 +237,49 @@ A11Y_VERDICTS = frozenset({A11Y_PASS, A11Y_FAIL, A11Y_UNCERTAIN})
 #: checker -> the WCAG 2.2 criteria it judges. The first entry is the criterion a judgment
 #: is reported against; `check_semantics` legitimately spans two, which is why this is a
 #: tuple per checker rather than a single string.
+#:
+#: **These four are the POC ELEMENT checkers and this map stays exactly four** (QA-20). They
+#: answer a question about one element of a page standing still, `checkers/rules.py` selects
+#: candidates for them, and `test_a11y_ownership` pins them to the criteria the registry marks
+#: `owner=ai, tier=in_poc`. The journey checks below are a different shape with a different
+#: tier, so they get their own map rather than widening this one — merging them would silently
+#: break that drift test, which exists precisely so extending AI coverage is a decision.
 A11Y_CHECKER_CRITERIA: dict[str, tuple[str, ...]] = {
     "alt": ("1.1.1",),                  # Non-text Content — is the alt text meaningful?
     "semantics": ("1.3.1", "4.1.2"),    # Info and Relationships / Name, Role, Value
     "color": ("1.4.1",),                # Use of Color — is meaning carried by colour alone?
     "label": ("2.5.3",),                # Label in Name — does the visible label match the AN?
+}
+
+#: checker -> criteria for the **journey** checks (QA-20, Phase 2). These cannot be answered
+#: from a captured page at all: each one is a question about what happens *while you operate
+#: the application*, so the only way to answer it is to drive the app and watch.
+#:
+#: **One checker per criterion, deliberately.** QA-22 promotes or demotes reliability *per
+#: checker*, and its stated edge case is that a proven keyboard-trap check may gate while a
+#: newer check stays advisory. Grouping all eight under one `journey` checker would make that
+#: impossible — one weak check would hold back seven good ones, or worse, ride in on them.
+#:
+#: The eight are not invented here: `apps/a11y/data/ownership.json` classifies every one as
+#: `tier=phase_2`, and five of them carry the rationale "(agentic Phase 2)" in the registry's
+#: own words. `test_a11y_journey` pins this map to that registry so the two cannot drift.
+A11Y_JOURNEY_CRITERIA: dict[str, tuple[str, ...]] = {
+    "keyboard": ("2.1.1",),         # Keyboard — can everything be reached and operated?
+    "trap": ("2.1.2",),             # No Keyboard Trap — can you always get back out?
+    "focus_order": ("2.4.3",),      # Focus Order — does tab order preserve meaning?
+    "focus_visible": ("2.4.7",),    # Focus Visible — is the focus indicator actually drawn?
+    "focus_obscured": ("2.4.11",),  # Focus Not Obscured — is focus hidden behind sticky UI?
+    "on_focus": ("3.2.1",),         # On Focus — no unexpected context change on focus
+    "on_input": ("3.2.2",),         # On Input — no surprise change on input
+    "status": ("4.1.3",),           # Status Messages — is a status announced to assistive tech?
+}
+
+#: Every checker the platform has, of either shape. This is what *validates* a judgment; the
+#: two maps above are what each half of the system iterates. Kept as a derived view so a new
+#: checker can never be added to one without being validated by the other.
+A11Y_ALL_CHECKER_CRITERIA: dict[str, tuple[str, ...]] = {
+    **A11Y_CHECKER_CRITERIA,
+    **A11Y_JOURNEY_CRITERIA,
 }
 
 
@@ -266,6 +304,68 @@ class A11yCandidate:
         """Whether there is anything at all to judge. Neither markup nor an image means the
         checker must return `uncertain` with a reason, never a partial or invented result."""
         return bool(self.html.strip() or self.screenshot_ref.strip())
+
+
+#: What became of one step of a journey (QA-20). Deliberately NOT verdicts: a step is not
+#: something that passes or fails accessibility — it is the ground a check gets to stand on.
+#:
+#: `BLOCKED` and `NOT_REACHED` are the sixth silence, and they are two different silences.
+#: `BLOCKED` is the agent saying "I got here and could not go on, and here is why".
+#: `NOT_REACHED` is the platform's own reconciliation answering for a step the agent never
+#: mentioned at all — the same shape as QA-17's `NEVER_REPORTED` routes, and for the same
+#: reason: a step that reports nothing is indistinguishable from a clean one unless the
+#: platform froze the list beforehand and subtracted.
+A11Y_STEP_WALKED = "walked"
+A11Y_STEP_BLOCKED = "blocked"
+A11Y_STEP_NOT_REACHED = "not_reached"
+A11Y_STEP_OUTCOMES = frozenset({A11Y_STEP_WALKED, A11Y_STEP_BLOCKED, A11Y_STEP_NOT_REACHED})
+
+
+@dataclass(frozen=True)
+class A11yJourneyStep:
+    """One step of a critical journey, exactly as the test case wrote it (QA-20).
+
+    `text` is the step's own instruction ("Enter a valid email and submit"), not a rewrite of
+    it: the agent walks what QA wrote, and a paraphrase here would quietly change what was
+    tested. `route` is filled only when the step names one — most do not, and guessing would
+    be worse than leaving it empty.
+    """
+
+    number: int
+    text: str
+    route: str = ""
+
+
+@dataclass(frozen=True)
+class A11yJourney:
+    """A critical path through the application, to be operated with a keyboard (QA-20).
+
+    Pointer-not-body (#1/#3): `artifact_id` locates the test case whose text this came from;
+    the body itself lives in the object store and is read through, never copied here.
+
+    The journey is a **test case the platform already wrote and a human already reviewed**
+    (team decision D1). It is not a second definition of "critical path" maintained beside the
+    first — which is exactly what a design-document journey or a bare route list would have
+    become, and why both were rejected.
+    """
+
+    test_ref: str                                   # "TC-031"
+    title: str
+    steps: tuple[A11yJourneyStep, ...] = ()
+    preconditions: tuple[str, ...] = ()
+    work_item_id: str = ""
+    artifact_id: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "steps", tuple(self.steps))
+        object.__setattr__(self, "preconditions", tuple(self.preconditions))
+
+    @property
+    def is_walkable(self) -> bool:
+        """Whether there is a journey here at all. A test case with no parsable steps cannot
+        be walked, and the honest answer is to say so rather than dispatch an agent to operate
+        nothing and report a clean run."""
+        return bool(self.steps)
 
 
 @dataclass(frozen=True)
@@ -309,7 +409,10 @@ class A11yJudgment:
             raise ValueError(f"a11y confidence must be between 0 and 1, got {self.confidence!r}")
         if not self.criteria or not all(self.criteria):
             raise ValueError("an a11y judgment must name the WCAG criteria it judged")
-        owned = A11Y_CHECKER_CRITERIA.get(self.checker)
+        # The union, so a journey checker (QA-20) is held to the same rule as an element one:
+        # a check reporting against a criterion it does not own corrupts the conformance
+        # report either way, and the report cannot tell which half of the system produced it.
+        owned = A11Y_ALL_CHECKER_CRITERIA.get(self.checker)
         if owned is not None and not set(self.criteria) <= set(owned):
             # A checker reporting against a criterion it does not own would silently corrupt
             # the conformance report — the one artifact a client or auditor actually reads.

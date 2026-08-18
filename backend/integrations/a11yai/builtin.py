@@ -28,7 +28,14 @@ which is why it is a `no_secret` vendor in the connector catalog.
 """
 from __future__ import annotations
 
-from integrations.types import A11Y_CHECKER_CRITERIA, A11yCandidate, A11yJudgment, uncertain
+from integrations.types import (
+    A11Y_CHECKER_CRITERIA,
+    A11Y_JOURNEY_CRITERIA,
+    A11yCandidate,
+    A11yJourney,
+    A11yJudgment,
+    uncertain,
+)
 
 #: Returned when the candidate carries neither markup nor an image. There is nothing to
 #: judge, so there is nothing to be confident about.
@@ -42,6 +49,21 @@ NO_INPUT = (
 NOT_JUDGED_YET = (
     "This element has not been judged yet — no accessibility judgment run has covered it. "
     "Run an accessibility check for this screen, or send it for human review."
+)
+
+#: Returned per check when the journey has no readable steps. There is nothing to walk, so
+#: there is nothing to be confident about — the journey half of `NO_INPUT`.
+NO_STEPS = (
+    "Nothing to walk: this journey has no readable steps, so no interaction check could run."
+)
+
+#: Returned per check when no journey pass has covered this journey yet. A real answer, not an
+#: error, and deliberately never phrased as "no problems found" (D-A11Y-3): the eight criteria
+#: these checks cover are the ones nothing else in the platform can see, so an unwalked journey
+#: is the least safe place in the whole build to let silence read as a pass.
+NOT_WALKED_YET = (
+    "This journey has not been walked yet — no keyboard/interaction pass has covered it. "
+    "Run an accessibility journey check for it, or send it for human review."
 )
 
 
@@ -69,6 +91,31 @@ class BuiltinA11yAI:
 
     def check_label(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
         return self._judge("label", candidate, project_id)
+
+    def check_journey(self, *, journey: A11yJourney, project_id=None) -> list[A11yJudgment]:
+        """The eight interaction checks, answered from what a journey pass already found.
+
+        Same shape and same discipline as the four above (D-A11Y-4): this reads stored results,
+        it does not start a walk. Starting one is `apps.a11y.journey.start_journey_check`, and
+        for a stronger reason than batching — a walk drives a real browser on the companion for
+        as long as the journey takes, so producing one as a side effect of somebody asking a
+        question would be a surprising and expensive thing to do.
+
+        A journey nobody has walked comes back as one `uncertain` per check, never as an empty
+        list. An empty list reads as "eight checks ran and found nothing", which is the exact
+        confusion between silence and a clean result this build refuses to make anywhere else.
+        """
+        from apps.a11y.journey import stored_journey_judgments
+
+        if not journey.is_walkable:
+            return [uncertain(criteria, checker=checker, reason=NO_STEPS)
+                    for checker, criteria in A11Y_JOURNEY_CRITERIA.items()]
+        found = stored_journey_judgments(
+            tenant_id=self._tenant_id, journey=journey, project_id=project_id)
+        if found:
+            return found
+        return [uncertain(criteria, checker=checker, reason=NOT_WALKED_YET)
+                for checker, criteria in A11Y_JOURNEY_CRITERIA.items()]
 
     # ── one path for all four ───────────────────────────────────────────
     def _judge(self, checker: str, candidate: A11yCandidate, project_id=None) -> A11yJudgment:

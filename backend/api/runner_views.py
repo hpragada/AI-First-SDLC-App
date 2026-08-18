@@ -97,6 +97,14 @@ _BUILD_STATE_TOOLS = {
     "start_a11y_audit": tools.start_a11y_audit,
     "ingest_a11y_audit_screen": tools.ingest_a11y_audit_screen,
     "finish_a11y_audit": tools.finish_a11y_audit,
+    # Accessibility journeys (09d_a11y_journey, QA-20): read the frozen steps, report what
+    # became of each one, and record up to eight verdicts per step. Unlike the capture tools
+    # above these ARE an agent's grant — a journey result is a judgement about what happened
+    # while operating the app, so it is the agent's to make, exactly like 09c's verdicts.
+    "get_a11y_journey": tools.get_a11y_journey,
+    "record_a11y_journey_step": tools.record_a11y_journey_step,
+    "record_a11y_journey_finding": tools.record_a11y_journey_finding,
+    "finish_a11y_journey": tools.finish_a11y_journey,
 }
 
 # The build agent may move a WorkItem forward through working states (e.g. -> in_progress at

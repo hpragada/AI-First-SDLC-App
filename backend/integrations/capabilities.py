@@ -10,6 +10,7 @@ from typing import Protocol, runtime_checkable
 
 from .types import (
     A11yCandidate,
+    A11yJourney,
     A11yJudgment,
     BranchRef,
     ComponentRef,
@@ -215,4 +216,22 @@ class A11yAI(Protocol):
     def check_label(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
         """WCAG 2.5.3 — does the visible label match the accessible name a screen reader and a
         voice-control user would say?"""
+        ...
+
+    def check_journey(self, *, journey: A11yJourney, project_id=None) -> list[A11yJudgment]:
+        """WCAG 2.1.1 / 2.1.2 / 2.4.3 / 2.4.7 / 2.4.11 / 3.2.1 / 3.2.2 / 4.1.3 — the eight
+        questions that can only be answered by **operating** the application (QA-20).
+
+        The four checks above ask about a page standing still. This one asks what happens while
+        someone uses it: does tabbing ever trap you, does focus stay visible and unobscured,
+        does anything change under you when an element takes focus or a field is typed in, is a
+        status message announced at all. None of it is visible in a captured page, which is why
+        this is the one check whose input is a *journey* rather than an element.
+
+        Returns a list, not one judgment: eight checkers report separately so QA-22 can promote
+        a proven one while a newer one stays advisory. A journey step the agent could not reach
+        produces **no judgment for that step** — it is recorded as a blocked step instead. Never
+        a pass: "I never got there" and "I got there and it was fine" are different answers, and
+        collapsing them is how an untested journey comes back clean.
+        """
         ...

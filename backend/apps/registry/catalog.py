@@ -109,6 +109,15 @@ AGENT_CATALOG: list[AgentDefinition] = [
     # `needs_artifacts` is empty on purpose — its inputs arrive on the run, not from the
     # registry, so declaring required types would render a gap for documents it never reads.
     AgentDefinition("09c_a11y_judge", "a11y-judge", "a11y_judge", "", "P4", "qa_lead", native=True),
+    # 09d Accessibility Journey — PLATFORM-NATIVE (QA-20, Phase 2). Also no v6 source: the
+    # legacy suite had no interaction testing of any kind. Where 09c judges a page standing
+    # still, this one OPERATES the application — tabbing through a critical journey and
+    # watching what focus does, what changes under it, and what assistive technology is told.
+    # It registers no artifacts either: its work product is one step outcome and up to eight
+    # verdicts per step, so `verify_journey_completeness` checks its COVERAGE of the frozen
+    # step list instead. `needs_artifacts` is empty for 09c's reason and one more: its input is
+    # a single `test_case` body it is handed by id, not a slice of the registry.
+    AgentDefinition("09d_a11y_journey", "a11y-journey", "a11y_journey", "", "P4", "qa_lead", native=True),
     AgentDefinition("10_security", "security", "security", "10-security-agent.md", "P3", "security_engineer", reads_code=True,
                     needs_artifacts=("architecture", "adr", "security_architecture", "api_spec")),
     AgentDefinition("11_cicd", "cicd", "cicd", "11_cicd_agent.md", "P2", "devops", rides_build=True,
