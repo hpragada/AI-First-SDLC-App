@@ -116,6 +116,8 @@ you" (`.needs--clar/--gate`); `.status-dot`; `.avatar` (+ `--sm/--lg`, `.avatar-
 `.panel__header`; `.tabs`/`.tab`; `.table`; `.artifact-row`; `.criteria-item`;
 `.clar-card`; `.toast` (4 hues); `.empty`; `.skeleton`.
 
+**Media** — `.doc-preview`/`.prose` (read-only artifact body); `.diagram-frame` (centred embed placeholder); **`.shot`** (a captured page, contained — `--fit` scales the whole thing to judge layout, the default scrolls at 1:1 inside the frame to judge contrast, focus rings and text size; `.shot__marker` points at the element and travels with the scroll; `.shot--missing` for a finding with no capture).
+
 **Organisms / signature** — `.rail` (type-adaptive lifecycle rail: node states +
 `.rail__loop` + `.rail__branch`); `.board` + `.board__col` + `.wi-card` (columns are phases);
 `.gate-panel` + `.criteria-list`; `.console` (dark run log); `.modal`; the app shell
@@ -160,8 +162,9 @@ you" (`.needs--clar/--gate`); `.status-dot`; `.avatar` (+ `--sm/--lg`, `.avatar-
 - **Batch 4 — Auth (unauth)** ✅ S-01, S-02, S-03, S-04.
 - **Decision-gated** ✅ S-33 transcript (DECISION-7), S-34 export/publish (DECISION-8) —
   decisions locked, now **fully built**.
+- **Batch 5 — Accessibility (QA-23a)** ✅ S-36 review queue, S-37 conformance/VPAT. Adds the `.shot` component. These are the UI half of QA-23 and QA-24.
 
-**Gallery complete:** S-00 + S-01…S-34 all built = **35/35**.
+**Gallery:** S-00 + S-01…S-37 (plus S-23b) = **39 files**. The "35/35 complete" line here was written before S-23b, S-35, S-36 and S-37 arrived and is corrected as of 2026-08-18.
 
 > These mockups define the **new** design target. Phase 4.8 replaces the current
 > `frontend/src/styles.css` (dark-blue) shell + tokens to match this gallery.

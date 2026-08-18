@@ -45,8 +45,17 @@ Legend — endpoints: `4.7-Tn` = Phase 4.7 task; `B` = Phase 4.8 bucket-B; `(exi
 | **S-32** Offline takeover | J21 | parked · reconnecting · resumed | Card, Banner, ConnStatus, Console, Kv | `GET /runners/` (4.7-T11), `take-over/` (exists) | T5 |
 | **S-33** Run transcript | persist | runs-list · transcript · empty | Table, Transcript/Turn, Banner | `GET /runs/{id}/transcript/` **(new, DECISION-7)** | T5 |
 | **S-34** Export / publish | publish | choose-target · publishing · success · blocked | Modal, Field, Banner, SorChip | `POST /artifacts/{id}/publish/` **(new, DECISION-8, gate-respecting)** | T5 |
+| **S-35** Test cases | 09b | list · coverage tab · generate · empty | Table, Tabs, Chip, Button | test-case work items (exists) | T4 |
+| **S-36** Accessibility review | a11y | default(queue+item) · actual-size · tall/no-capture · loading · submitted · locked-by-other · **not-your-role** · error · empty | Table, Panel, **Shot**, Banner, Field, Toast, Skeleton, Empty, Badge, Tabs | queue + adjudicate + **screenshot read-through** + **lock/claim** **(all new, QA-23)** | QA-23 |
+| **S-37** Conformance / VPAT | a11y | per-criterion · draft-edit · export-refused · signing · signed · empty | Table, Tile, ArtifactRow, Check, Field, GatePanel, Banner, Tabs | conformance artifact + sign + export **(new, QA-24; gate-respecting)** | QA-24 |
 
 ## Notes for builders
+
+- **S-36 `Shot` is a new component** (`components.css`, rendered in `S-00`): a captured page is routinely 2560px wide and taller than the viewport, and the existing `.diagram-frame` is a centred *placeholder* with no overflow handling — it breaks the panel. `Shot` has two modes and both are needed: **fit** to judge layout, **actual size** to judge the things a scaled image destroys (contrast, focus rings, text size).
+- **S-36/S-37 are one destination, not two pages.** Both live under the new **Accessibility** sidebar item (`shell.js`, count badge like Gates): S-36 is the landing page, S-37 its second tab. Always present — never revealed by a run, or "no menu" and "never checked" look the same.
+- **S-36/S-37 have no endpoints yet.** They are the UI half of QA-23 and QA-24. The queue already exists as a query over the findings ledger (QA-12a), but **four things do not exist and the mockup needs them** (D-A11Y-98): element bounding boxes, a screenshot read-through endpoint, confirm-flips-outcome-to-failure, and a lock field on the finding.
+- **Never show the engine, prompt version or scanner version on S-37** (D-A11Y-96). They are recorded on the export and are not the client's business.
+- **S-35 was missing from this map** until 2026-08-18 — the file existed with no row. Added above.
 
 - **Type-adaptive rail (S-15/16/17):** the `lifecycle/` endpoint returns `tier` — render the plan rail
   for epics, the build rail (only) for tasks, the remediation rail for defects. Never show plan phases

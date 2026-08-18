@@ -31,6 +31,7 @@
     integrations: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>',
     repos: '<path d="M5 3h11l3 3v15H5z"/><path d="M9 7h6M9 11h6M9 15h4"/>',
     admin: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1c0-3.3 3.6-5 8-5s8 1.7 8 5v1"/>',
+    a11y: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="7.5" r="1.4"/><path d="M7 10.5h10M12 11v4M12 15l-2.2 3.5M12 15l2.2 3.5"/>',
     bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>'
   };
 
@@ -48,7 +49,12 @@
       { id: 'runs',          label: 'Phases & Runs',           icon: ICON.runs,      href: 'S-18-phases-runs.html' },
       { id: 'gates',         label: 'Gates',                   icon: ICON.gate,      href: 'S-21-gates.html', count: 3 },
       { id: 'clarifications',label: 'Clarifications',          icon: ICON.clar,      href: 'S-20-clarifications.html', count: 1 },
-      { id: 'artifacts',     label: 'Artifacts & Traceability',icon: ICON.artifacts, href: 'S-28-artifacts.html' }
+      { id: 'artifacts',     label: 'Artifacts & Traceability',icon: ICON.artifacts, href: 'S-28-artifacts.html' },
+      // Accessibility (QA-23a). Its own item rather than buried under Gates/Artifacts: it is a
+      // named job a named role does repeatedly, and the count is how the reviewer learns there
+      // is work without going to look. ALWAYS present, never revealed by a run — "no menu" and
+      // "nothing was ever checked" must not look the same.
+      { id: 'a11y',          label: 'Accessibility',           icon: ICON.a11y,      href: 'S-36-a11y-review.html', count: 7 }
     ]},
     { section: 'Project', items: [
       { id: 'profile',       label: 'Project Profile',         icon: ICON.profile,      href: 'S-10-project-profile.html' },
