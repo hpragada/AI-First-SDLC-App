@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
+import { useA11yReviewQueue } from "../features/a11y/hooks";
 import { useRunners } from "../features/identity/hooks";
 import { useDashboard } from "../features/observability/hooks";
 import { cx, StatusDot } from "./ui";
@@ -212,7 +213,22 @@ export function AppShell() {
   const dashboard = useDashboard(selectedProject?.project_id);
   const gateCount = dashboard.data?.needs_me.gates.length ?? 0;
   const clarCount = dashboard.data?.needs_me.clarifications.length ?? 0;
-  const navCounts: Partial<Record<NavId, number>> = { gates: gateCount, clarifications: clarCount };
+  // Accessibility findings waiting on THIS person (QA-23, D-A11Y-94). The item is always in the
+  // sidebar; the count is how a reviewer learns there is work without going to look, and it was
+  // missing — the item shipped as a plain link while the mockup and the decision both said
+  // otherwise.
+  //
+  // Gated on `can_review`, and that is the point of the number rather than a detail: the badge
+  // means "waiting on you". Someone without the reviewer role can still open the queue and read
+  // every finding — they simply have no work there, so no badge. A count on their sidebar would
+  // be an alert for something they cannot act on.
+  const a11yQueue = useA11yReviewQueue(selectedProject?.project_id);
+  const a11yCount = a11yQueue.data?.can_review ? a11yQueue.data.queue.length : 0;
+  const navCounts: Partial<Record<NavId, number>> = {
+    gates: gateCount,
+    clarifications: clarCount,
+    a11y: a11yCount,
+  };
   const bellCount = gateCount + clarCount;
 
   // Companion pill reflects the real runner status (Bugs.xlsx row 30) — not a hardcoded "Ready".

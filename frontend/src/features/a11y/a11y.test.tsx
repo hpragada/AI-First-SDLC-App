@@ -261,5 +261,38 @@ describe("the Accessibility destination", () => {
     renderWithProviders(<AppShell />);
     const link = await screen.findByRole("link", { name: /Accessibility/ });
     expect(link.getAttribute("href")).toBe("/a11y");
+    // Present, and with no badge, because nothing is waiting. The two facts are different and
+    // the sidebar has to be able to say both.
+    expect(link.querySelector(".nav-item__count")).toBeNull();
+  });
+
+  it("carries the count of findings waiting on this reviewer", async () => {
+    // D-A11Y-94: "the count is how the reviewer learns there is work without going to look."
+    // The item shipped as a plain link with no count — this is the regression test for that.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [item(), item({ id: "b" }), item({ id: "c" })],
+                           can_review: true, lock_minutes: 15 }],
+    ]));
+    renderWithProviders(<AppShell />);
+
+    const link = await screen.findByRole("link", { name: /Accessibility/ });
+    await waitFor(() =>
+      expect(link.querySelector(".nav-item__count")?.textContent).toBe("3"),
+    );
+  });
+
+  it("shows no count to someone who cannot act on it", async () => {
+    // The badge means "waiting on YOU". A developer can still open the queue and read every
+    // finding; an alert for work they cannot do would just be noise on their sidebar.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [item(), item({ id: "b" })], can_review: false,
+                           lock_minutes: 15 }],
+    ]));
+    renderWithProviders(<AppShell />);
+
+    const link = await screen.findByRole("link", { name: /Accessibility/ });
+    await waitFor(() => expect(link.querySelector(".nav-item__count")).toBeNull());
   });
 });
