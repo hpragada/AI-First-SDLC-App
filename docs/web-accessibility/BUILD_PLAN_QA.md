@@ -12,8 +12,9 @@
 
 **M0 — Foundation: the shared judgment engine.**
 Goal: a working, swappable, grounded `a11yai` capability the testing flow can call, with the guardrails and volume controls around it. Nothing else can run until this exists.
-Tasks: QA‑01, QA‑02, **QA‑02a**, QA‑03, QA‑04, QA‑05, QA‑06, QA‑07, QA‑08 — plus the internal‑only accuracy tasks **QA‑10a**, QA‑09, QA‑10 (local `make`, run alongside).
-*Prerequisite before QA‑01:* add `pytest-cov` + a module-scoped `make cov`, or the "≥ 90% coverage" bar is unmeasurable on every task.
+Tasks: QA‑01, QA‑02, **QA‑02a**, QA‑03, QA‑04, QA‑05, QA‑06, QA‑07, QA‑08 — plus the internal‑only accuracy tasks **QA‑10a**, ~~QA‑09~~, QA‑10 (local `make`, run alongside).
+*Prerequisite before QA‑01:* ~~add `pytest-cov` + a module-scoped `make cov`~~ — **done**.
+> **QA‑09 is ⏸ parked (team, 2026‑08‑17).** It is expert labelling work, not code, and the screens do not exist yet. **QA‑10a and QA‑10 are not parked**: the harness scores from whatever label sources exist, and one — the reviewer verdicts stored on every finding since QA‑12a — exists already. See `TASK_BACKLOG_QA.md` D‑A11Y‑62 … D‑A11Y‑66.
 
 **M1 — Testing POC: the core deliverable.**
 Goal: a test run scans with the rules **and** judges with the AI at WCAG 2.2, reports both together with confidence, opens/closes defects automatically, and blocks the gate on real failures.
@@ -33,7 +34,10 @@ Tasks: QA‑20, QA‑21, QA‑22.
 Goal: a human expert reviews uncertain findings and produces a defensible, human‑signed conformance/VPAT — the platform never auto‑certifies.
 Tasks: **QA‑23a**, QA‑23, QA‑24.
 
-> **Do M0 → M1 first.** M2, M3, and M4 all build on M1 and can then be done in any order (or in parallel by different people). QA‑09/QA‑10 run alongside so we can prove accuracy before release — but note the golden-set screens are **not ready yet**, and those two gate only QA‑22 (Phase 2), so they never hold up M0 or M1.
+> **Do M0 → M1 first.** M2, M3, and M4 all build on M1 and can then be done in any order (or in parallel by different people). ~~QA‑09/QA‑10 run alongside so we can prove accuracy before release — but note the golden-set screens are **not ready yet**, and those two gate only QA‑22 (Phase 2), so they never hold up M0 or M1.~~
+> **Superseded 2026‑08‑17:** **QA‑09 is ⏸ parked** and now gates nothing. **QA‑10a → QA‑10** run alongside and gate only **QA‑22** (Phase 2), so they never hold up M0 or M1.
+
+**Status at 2026‑08‑17:** M0 complete except the E‑EVAL tasks · M1 complete (QA‑11a and QA‑12 are 🟡, awaiting the live checkpoint) · M2 complete · M3 and M4 not started.
 
 ---
 
@@ -79,7 +83,7 @@ Read as a sentence: build the front door, the dispatch layer, the judge agent, t
 - **QA‑08** (gate policy, reviewer role, WCAG target) has no dependencies — any time before QA‑15.
 - **QA‑15a** (the `refresh_derived` fix) has no dependencies — any time before QA‑15. Small; good first task for someone new.
 - **QA‑07** needs only QA‑02 — build alongside QA‑02a/QA‑03, and it must be `🟢` before QA‑12 touches anything real.
-- **QA‑10a** has no dependencies. **QA‑09 + QA‑10** wait on the golden-set screens, which are still being prepared — they gate only QA‑22.
+- **QA‑10a** has no dependencies. **QA‑10** needs only QA‑10a — it no longer waits on the golden set (D‑A11Y‑63). **QA‑09** is ⏸ parked and blocks nothing. The QA‑10a → QA‑10 pair gates only QA‑22.
 - **The capture chain (QA‑11 → QA‑11a → QA‑11b) is fully parallel to the judgment chain** — it only needs QA‑04. This is the biggest parallelisation win in the plan: one person on capture, one on judgment, joining at QA‑12.
 - **QA‑23a** (mockups) has no dependencies and is a different skill — start it any time.
 - Within M1, **QA‑13** and **QA‑16** branch off QA‑12, parallel to the QA‑14 → QA‑15 chain.
@@ -108,7 +112,7 @@ Read as a sentence: build the front door, the dispatch layer, the judge agent, t
 - **The user journeys these serve:** `USER_JOURNEYS.md` (J1, J4, J5‑audit, J8, J9).
 - **How we prove the checkers are accurate (E‑EVAL, Edvensoft‑internal):** `evaluation/` —
   `PROVING_GROUND_APP_SPEC.md` is the fixture app with deliberately planted WCAG defects, and
-  `GOLDEN_DATASET_SPEC.md` is the hand‑labelled answer key over it. Read both before QA‑09/QA‑10.
+  `GOLDEN_DATASET_SPEC.md` is the hand‑labelled answer key over it. Read both before QA‑09/QA‑10. **Both describe QA‑09, which is ⏸ parked (2026‑08‑17)** — they stay in the repo as the spec to build to when it is un-parked, and QA‑10 must not be built to assume the golden set is present.
   The same fixture serves the M2 brownfield audit, the M3 keyboard journeys, and the client demo.
 - **The other phases (build after this):** `BUILD_PLAN_OTHER_PHASES.md`.
 - **Why / the accessibility facts:** Report 1 + Addendum A (Rule/AI/Human split), Addendum B (LLM vs VLM + tech stack), Feasibility Assessment (reuse vs new) — all read **subject to** `RESEARCH_CORRECTIONS.md`.

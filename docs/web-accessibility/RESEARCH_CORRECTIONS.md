@@ -164,7 +164,9 @@ The prose rounds; the **lists are exact and internally consistent**: 15 + 15 = 3
 
 **Decision (D7): two bands. Nothing is ever dropped.** Dropping is the only option here that can make the platform **silently miss a real accessibility defect**, and it would be the first place in this build that discards rather than routes — everything else refuses to (an unanswerable judgment becomes `uncertain`, an unowned criterion stops a load, a stray row stops a reload).
 
-Report 1's counter-argument is real and recorded rather than dismissed: *"low noise protects adoption."* If the review queue proves noisy once QA‑09/QA‑10 measure it, a floor can be added **with evidence**. It is not being added on a guess.
+Report 1's counter-argument is real and recorded rather than dismissed: *"low noise protects adoption."* If the review queue proves noisy once ~~QA‑09/QA‑10~~ **QA‑10** measures it, a floor can be added **with evidence**. It is not being added on a guess.
+
+> **Update 2026‑08‑17.** QA‑09 is ⏸ parked; QA‑10 is not, and it measures **precision** from the reviewer verdicts the queue itself produces (`A11yFinding.adjudication`) — which is exactly the "is this queue noisy?" question. So this decision still has a route to evidence. What parking does cost is **recall**: nothing can tell us what the checkers stayed silent about until the golden set exists. See `TASK_BACKLOG_QA.md` D‑A11Y‑62 … D‑A11Y‑66.
 
 ---
 
@@ -175,6 +177,8 @@ Report 1's counter-argument is real and recorded rather than dismissed: *"low no
 There is **no confidence threshold in any source.** The one number that looks like one — Report 1's *"≥85% on high-confidence findings"* — is a **precision target for the accuracy harness** (QA‑09/QA‑10), not a confidence cutoff. Using 0.85 because it appears in the report would conflate two different measurements.
 
 **Decision (D8): 0.80 for all four checkers to start, per-checker configurable per tenant.** Explicitly provisional: the correct values are unknowable until the golden set exists, which is exactly why the thresholds are configuration and not code — tuning them is a settings change, never a release.
+
+> **Update 2026‑08‑17 — 0.80 stays provisional for longer than planned.** With QA‑09 ⏸ parked, the golden set that D8 said would settle these numbers does not exist and has no date. **0.80 is therefore an unmeasured placeholder in production, not a tuned value**, and that must be said out loud rather than allowed to harden into a fact by age. Note also that the *precision target* this correction distinguishes it from — the 85% — **is** measurable without the golden set, from live reviewer verdicts (D‑A11Y‑63). So the accuracy bar QA‑22 reads has a route to evidence; this threshold does not.
 
 ---
 
