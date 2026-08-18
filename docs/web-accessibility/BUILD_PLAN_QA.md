@@ -27,7 +27,7 @@ Tasks: QA‑17, QA‑18, QA‑19. *(Needs the onboarding hook OP‑06 from the o
 *This is the highest-volume run in the whole build — the whole app, first pass, empty cache. Do not run it before QA‑02's cap and QA‑07's caching are `🟢`.*
 
 **M3 — Phase 2, agentic testing: operate the app, don't just scan it.**
-Goal: an AI agent that keyboard‑ and interaction‑tests a journey, feeding the same bug loop — kept advisory until it's proven accurate.
+Goal: an AI agent that keyboard‑ and interaction‑tests a journey, feeding the same bug loop — ~~kept advisory until it's proven accurate~~ **advisory always, so it never stands in a client's way (D‑A11Y‑83)**.
 Tasks: QA‑20, QA‑21, QA‑22.
 
 **M4 — Phase 2, governance: human review + a signed conformance report.**
@@ -35,9 +35,12 @@ Goal: a human expert reviews uncertain findings and produces a defensible, human
 Tasks: **QA‑23a**, QA‑23, QA‑24.
 
 > **Do M0 → M1 first.** M2, M3, and M4 all build on M1 and can then be done in any order (or in parallel by different people). ~~QA‑09/QA‑10 run alongside so we can prove accuracy before release — but note the golden-set screens are **not ready yet**, and those two gate only QA‑22 (Phase 2), so they never hold up M0 or M1.~~
-> **Superseded 2026‑08‑17:** **QA‑09 is ⏸ parked** and now gates nothing. **QA‑10a → QA‑10** run alongside and gate only **QA‑22** (Phase 2), so they never hold up M0 or M1.
+> **Superseded 2026‑08‑17:** **QA‑09 is ⏸ parked** and now gates nothing. ~~**QA‑10a → QA‑10** run alongside and gate only **QA‑22** (Phase 2)~~
+> **Superseded again 2026‑08‑18 (D‑A11Y‑82):** the internal accuracy evaluation is **decoupled from the platform entirely** — it is our report card, and nothing in the product reads it. **QA‑10a and QA‑10 now gate NOTHING**, and QA‑22 depends only on QA‑20. The whole of E‑EVAL can be scheduled whenever it suits; it is no longer on anyone's critical path.
 
-**Status at 2026‑08‑18:** M0 complete except the E‑EVAL tasks · M1 complete · M2 complete · **M3: QA‑20 and QA‑21 built (🟡); QA‑22 waits on QA‑10** · M4 not started.
+**Status at 2026‑08‑18:** M0 complete except the E‑EVAL tasks · M1 complete · M2 complete · **M3: QA‑20 and QA‑21 built (🟡); QA‑22 is now unblocked and ready to build** · M4 not started.
+
+> **2026‑08‑18 — E‑EVAL is off the critical path for good (D‑A11Y‑82).** The internal accuracy evaluation no longer feeds anything in the product, so QA‑10a and QA‑10 gate nothing and QA‑22 depends only on QA‑20.
 
 > **Four tasks now share one live checkpoint: QA‑11a, QA‑12, QA‑20 and QA‑21.** All four are built and fully tested, and none has driven a real browser. One session against a running application closes all four.
 
@@ -67,7 +70,7 @@ M1 TESTING POC
 M2 BROWNFIELD          M3 AGENTIC (P2)          M4 GOVERNANCE (P2)
   QA-12 ──► QA-17        QA-16 ──► QA-20        QA-23a ────────┐
   QA-17,14 ► QA-18       QA-20 ──► QA-21        QA-06, QA-12a ─┴► QA-23
-  QA-15 ──► QA-19        QA-10,20 ► QA-22       QA-13, QA-23 ───► QA-24
+  QA-15 ──► QA-19        QA-20 ──► QA-22       QA-13, QA-23 ───► QA-24
   (QA-17 consumes OP-06)
 ```
 
@@ -85,7 +88,7 @@ Read as a sentence: build the front door, the dispatch layer, the judge agent, t
 - **QA‑08** (gate policy, reviewer role, WCAG target) has no dependencies — any time before QA‑15.
 - **QA‑15a** (the `refresh_derived` fix) has no dependencies — any time before QA‑15. Small; good first task for someone new.
 - **QA‑07** needs only QA‑02 — build alongside QA‑02a/QA‑03, and it must be `🟢` before QA‑12 touches anything real.
-- **QA‑10a** has no dependencies. **QA‑10** needs only QA‑10a — it no longer waits on the golden set (D‑A11Y‑63). **QA‑09** is ⏸ parked and blocks nothing. The QA‑10a → QA‑10 pair gates only QA‑22.
+- **QA‑10a** has no dependencies. **QA‑10** needs only QA‑10a — it no longer waits on the golden set (D‑A11Y‑63). **QA‑09** is ⏸ parked and blocks nothing. ~~The QA‑10a → QA‑10 pair gates only QA‑22.~~ **2026‑08‑18 (D‑A11Y‑82): the pair gates nothing at all** — the evaluation is internal and no part of the product reads it. Schedule E‑EVAL whenever; it holds up nobody.
 - **The capture chain (QA‑11 → QA‑11a → QA‑11b) is fully parallel to the judgment chain** — it only needs QA‑04. This is the biggest parallelisation win in the plan: one person on capture, one on judgment, joining at QA‑12.
 - **QA‑23a** (mockups) has no dependencies and is a different skill — start it any time.
 - Within M1, **QA‑13** and **QA‑16** branch off QA‑12, parallel to the QA‑14 → QA‑15 chain.
