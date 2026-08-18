@@ -12,10 +12,14 @@ close itself, reopen instead of twinning, and never be raised twice.
 **Resolution is by absence — but only where we actually looked.** This is the rule that is easy
 to get wrong and expensive to get wrong, and `import_test_results` already learned it: it closes
 a defect only for a test *reported passing*, never for a test that simply did not run. The same
-applies here in two ways at once. A finding on a screen this run never visited is untouched. And
-a finding on an element that WAS captured this run but never actually judged is untouched too —
+applies here in three ways at once. A finding on a screen this run never visited is untouched.
+A finding on an element that WAS captured this run but never actually judged is untouched too —
 "we did not get an answer" is not "the problem is gone", and treating it as such would close a
-real accessibility defect on the strength of a judgment run that fell over.
+real accessibility defect on the strength of a judgment run that fell over. **And since QA-21
+(D-A11Y-79), a finding from a check this kind of run cannot make is untouched:** the journey
+checks judge what happens while the application is *operated*, which a captured page cannot
+answer either way, so their absence from a scan means nothing and closed them all. Coverage is
+by screen and by kind.
 
 **Severity comes from the standard.** `WcagCriterion.level` is loaded from W3C, so Level A is
 Critical and Level AA is High without anything restating the mapping in prose. A criterion whose
@@ -29,6 +33,7 @@ from __future__ import annotations
 from hashlib import sha256
 
 from apps.tenancy.context import tenant_context
+from integrations.types import A11Y_JOURNEY_CRITERIA
 
 from .selectors import is_positional, normalise
 
@@ -169,6 +174,14 @@ def record_run_findings(*, tenant_id, project_id, run_id, report) -> dict:
     # module docstring; this is the half of the rule that stops a finding on an unvisited page
     # being declared fixed.
     covered = {row.route for row in report.rows} | set(report.routes)
+    #
+    # **And a third half, added by QA-21: coverage is by screen AND by kind.** A journey check
+    # is never in this report, because a captured page cannot answer "does tabbing ever reach
+    # this region". Left alone, absence would close every keyboard finding on every screen this
+    # run captured — D-A11Y-71 in the opposite direction, and the more dangerous direction,
+    # because a static run happens far more often than a journey does. The journey checkers are
+    # excluded from the resolution below; only a journey pass that actually walked the route
+    # may close one (`journey._resolve_walked`).
     # ...and this is the other half: an element captured this run but never judged. We have no
     # answer for it, and "no answer" must never resolve a finding.
     unanswered = {(item["route"], normalise(item["selector"])) for item in report.unjudged}
@@ -203,7 +216,9 @@ def record_run_findings(*, tenant_id, project_id, run_id, report) -> dict:
         resolved = []
         for finding in A11yFinding.objects.filter(
             tenant_id=tenant_id, project_id=project_id, status=A11yFinding.Status.OPEN,
-        ).exclude(fingerprint__in=seen or [""]):
+        ).exclude(fingerprint__in=seen or [""]).exclude(
+            checker__in=sorted(A11Y_JOURNEY_CRITERIA)
+        ):
             if finding.route not in covered:
                 continue
             if (finding.route, normalise(finding.selector)) in unanswered:

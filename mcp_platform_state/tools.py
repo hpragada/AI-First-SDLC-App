@@ -740,7 +740,8 @@ def record_a11y_journey_step(tenant_id, run_id, step, outcome, reason="") -> dic
 
 
 def record_a11y_journey_finding(tenant_id, run_id, step, checker, verdict, confidence, evidence,
-                                criteria=None, suggested_fix="", route="", selector="") -> dict:
+                                criteria=None, suggested_fix="", route="", selector="",
+                                measurement=None) -> dict:
     """Record ONE check's answer about ONE step of the journey (QA-20).
 
     One call per (step, check) you can answer. `checker` is one of the eight from
@@ -755,13 +756,25 @@ def record_a11y_journey_finding(tenant_id, run_id, step, checker, verdict, confi
     `selector` is optional: some of these checks are about a screen rather than one element
     ("focus order on this page"), and inventing an element for them would file the finding
     against something that is not what is wrong.
+
+    **`measurement` — two of these checks have a half that can be read rather than judged.**
+    Run the probe named in your agent body and pass back exactly what it returned:
+
+      * `focus_visible` → `{"outline_style", "outline_width", "box_shadow"}`, read with the
+        element focused. Values come from `getComputedStyle`, verbatim.
+      * `status` → `{"live_region_count"}`, the number of live regions on the screen.
+
+    Report the raw values and nothing else — do not decide what they mean and do not adjust your
+    verdict to match them. The platform applies the rule, and where the reading proves a failure
+    that ruling stands over your verdict; where it proves nothing, your verdict is untouched.
+    Omit `measurement` entirely if you could not run the probe.
     """
     from apps.a11y.journey import record_journey_finding
 
     return record_journey_finding(
         tenant_id=tenant_id, run_id=run_id, step=step, checker=checker, criteria=criteria,
         verdict=verdict, confidence=confidence, evidence=evidence,
-        suggested_fix=suggested_fix, route=route, selector=selector,
+        suggested_fix=suggested_fix, route=route, selector=selector, measurement=measurement,
     )
 
 

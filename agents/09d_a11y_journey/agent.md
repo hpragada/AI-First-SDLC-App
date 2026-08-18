@@ -163,6 +163,18 @@ nothing put back.
 That is a judgement about contrast and thickness which reasonable specialists disagree on, and
 this is exactly the case that belongs with a person rather than in a build result.
 
+**Read the measurement as well as judging.** While the element is focused, evaluate exactly this
+and pass the result back as `measurement`:
+
+```js
+(() => { const el = document.activeElement; if (!el) return null;
+  const s = getComputedStyle(el); return {outline_style: s.outlineStyle,
+  outline_width: s.outlineWidth, box_shadow: s.boxShadow}; })()
+```
+
+Report the three values verbatim. Do not change your verdict because of them and do not decide
+what they mean — the platform applies the rule. If you could not run it, leave `measurement` out.
+
 ### `focus_obscured` — WCAG 2.4.11 Focus Not Obscured (Minimum)
 
 When an element takes focus, is it **hidden by other content**?
@@ -213,6 +225,18 @@ message and say what you found in the markup.
 **Not this criterion:** a message that receives focus, or one delivered by a change of context.
 4.1.3 is specifically about being told *without* focus moving.
 
+**Read the measurement as well as judging.** On the screen where the status message appears,
+evaluate exactly this and pass the result back as `measurement`:
+
+```js
+(() => ({live_region_count: document.querySelectorAll(
+  '[aria-live], [role=status], [role=alert], [role=log], output').length}))()
+```
+
+A count of zero settles it: nothing on that screen can announce anything. A count above zero
+settles nothing — whether the right text reaches the region at the right moment is still your
+judgement, and it is the whole of this check. Report the number, not a conclusion.
+
 ---
 
 ## Step 5: Report each step as you finish it
@@ -238,12 +262,17 @@ record_a11y_journey_finding(
     suggested_fix=<what to change>,           # required on a fail
     route=<the path you were on>,
     selector=<the element, when there is one>,
+    measurement=<the probe result, for `focus_visible` and `status` only>,
 )
 ```
 
 `selector` is optional and should be left out when the finding is about the screen rather than one
 element — focus order is a property of the page, and pinning it to an arbitrary element files the
 problem against something that is not what is wrong.
+
+`measurement` applies to two checks only — `focus_visible` and `status` — and is exactly what the
+probe in that check's section returned, unedited. Six of the eight have nothing to measure and
+must not be sent one.
 
 **Evidence is what you saw, in enough detail that someone can reproduce it.** "Focus trap" is not
 evidence. "Tabbed 12 times inside the date picker; focus cycled between the month and year
@@ -292,3 +321,7 @@ finish_a11y_journey()
    what you found, at the confidence you hold, and let the platform apply those rules.
 10. **Everything comes from the platform tools and the running application.** No project files, no
     remembered WCAG text, no assumptions about the codebase.
+11. **A measurement is reported, never interpreted.** Where a check has a probe, run it exactly as
+    written and send back what it returned. Do not round it, summarise it, omit a value you think
+    is uninteresting, or move your verdict toward it. The reading is yours; the ruling is the
+    platform's, and keeping those apart is the only reason the reading is worth anything.

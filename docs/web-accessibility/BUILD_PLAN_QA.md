@@ -37,9 +37,9 @@ Tasks: **QA‑23a**, QA‑23, QA‑24.
 > **Do M0 → M1 first.** M2, M3, and M4 all build on M1 and can then be done in any order (or in parallel by different people). ~~QA‑09/QA‑10 run alongside so we can prove accuracy before release — but note the golden-set screens are **not ready yet**, and those two gate only QA‑22 (Phase 2), so they never hold up M0 or M1.~~
 > **Superseded 2026‑08‑17:** **QA‑09 is ⏸ parked** and now gates nothing. **QA‑10a → QA‑10** run alongside and gate only **QA‑22** (Phase 2), so they never hold up M0 or M1.
 
-**Status at 2026‑08‑18:** M0 complete except the E‑EVAL tasks · M1 complete · M2 complete · **M3 started — QA‑20 built (🟡)** · M4 not started.
+**Status at 2026‑08‑18:** M0 complete except the E‑EVAL tasks · M1 complete · M2 complete · **M3: QA‑20 and QA‑21 built (🟡); QA‑22 waits on QA‑10** · M4 not started.
 
-> **Three tasks now share one live checkpoint: QA‑11a, QA‑12 and QA‑20.** All three are built and fully tested, and none has driven a real browser. One session against a running application closes all three.
+> **Four tasks now share one live checkpoint: QA‑11a, QA‑12, QA‑20 and QA‑21.** All four are built and fully tested, and none has driven a real browser. One session against a running application closes all four.
 
 ---
 

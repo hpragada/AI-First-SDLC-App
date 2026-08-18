@@ -23,9 +23,15 @@ the same reason as QA-17's route reconciliation (D-A11Y-50).
 a journey pass went through that path it would close every static finding on the routes it
 walked — a keyboard walk of `/checkout` would silently mark the missing alt text there as fixed,
 because a keyboard walk has nothing to say about alt text and absence would be read as a clean
-bill. So journey passes never call it. `_resolve_walked` closes only rows that are **agentic AND
-one of this module's own checkers AND on a route this pass actually walked**, and each of those
-three conditions has a test in both directions.
+bill. So journey passes never call it. `_resolve_walked` closes only rows that carry **one of this
+module's own checkers AND sit on a route this pass actually walked AND come from a source this
+module can produce**, and each of those three conditions has a test in both directions.
+
+**And the same mistake was live in the opposite direction (QA-21, D-A11Y-79).** These checks are
+never in a static run's report — a captured page cannot answer "does tabbing ever reach this
+region" — so `record_run_findings` was closing every keyboard finding on every screen a scan
+covered. That was the more dangerous direction of the two, because a static run happens far more
+often than a journey does. Coverage is by screen *and* by kind; the fix lives in `findings.py`.
 """
 from __future__ import annotations
 
@@ -257,21 +263,28 @@ def _mark_walked(tenant_id, row, number: int) -> None:
 
 
 def record_journey_finding(*, tenant_id, run_id, step, checker, verdict, confidence, evidence,
-                           criteria=None, suggested_fix="", route="", selector="") -> dict:
+                           criteria=None, suggested_fix="", route="", selector="",
+                           measurement=None) -> dict:
     """One check's answer about one step, triaged and written to the ledger.
 
     Validation is `A11yJudgment`'s, unchanged and deliberately: a journey judgment naming a
     criterion its checker does not own would corrupt the conformance report exactly as an
     element judgment would, and the report cannot tell which half of the system produced it.
 
-    **`rule_failures` is empty, and that is a stated gap rather than an oversight.** Two of the
-    eight criteria have a deterministic sub-check the scanner can make (2.4.7 `outline:none`,
-    4.1.3 the presence of a live region), so QA-06's "a measurement beats an opinion" ought to
-    apply. It is not wired here because a journey pass runs no scan of its own, and reaching for
-    another run's scan would apply a measurement taken at a different time, on a different page
-    state, to a page this agent has since interacted with. Wiring it needs a scan of the journey
-    itself; logged for QA-21.
+    **`measurement` closes D-A11Y-72 (QA-21).** Two of the eight criteria have a deterministic
+    half — 2.4.7's suppressed outline and 4.1.3's absent live region — and the agent reads them
+    with a prescribed probe while it has the element focused, which is the only moment they are
+    true. `journey_rules` decides what the reading means; nothing here interprets it, and a
+    reading that proves nothing leaves the agent's verdict exactly as it was. See that module
+    for why the reading being the agent's does not make the ruling the agent's.
+
+    A measurement that overrules the agent makes the row a **`rule`** finding rather than an
+    agentic one, mirroring `report._row_from_triage` — a reader deciding whether to trust a
+    finding needs to know it was measured, and the AI's agreement does not make it an AI
+    finding. It also means the project's confidence dial no longer applies to it (`policy.blocks`
+    exempts measurements), which is the correct consequence and not a side effect.
     """
+    from .journey_rules import rule_failures_for
     from .models import A11yFinding
     from .triage import TRIAGE_FAILURE, TRIAGE_REVIEW, thresholds_for, triage
 
@@ -308,18 +321,26 @@ def record_journey_finding(*, tenant_id, run_id, step, checker, verdict, confide
     # across runs of the same journey, which is what lets a fixed problem resolve.
     selector = (str(selector or "").strip() or f"step:{step}")[:512]
 
+    proven = rule_failures_for(checker=checker, route=route, selector=selector,
+                               measurement=measurement)
     triaged = triage(judgment, A11yCandidate(selector=selector, route=route),
-                     rule_failures=(), thresholds=thresholds_for(tenant_id))
+                     rule_failures=proven, thresholds=thresholds_for(tenant_id))
     _mark_walked(tenant_id, row, step)
 
     if triaged.outcome not in (TRIAGE_FAILURE, TRIAGE_REVIEW):
         # A confident pass is not a finding — its absence next run is how a fix is recognised.
         return {"step": step, "checker": checker, "outcome": triaged.outcome,
-                "recorded": False, "reason": triaged.reason}
+                "recorded": False, "reason": triaged.reason, "measured": False}
 
     criterion = judgment.criterion
     level = levels_for(judgment.criteria).get(criterion, "")
+    # The fingerprint keeps the checker whatever the source becomes. It is the *identity* of the
+    # problem, and "the focus indicator on this element" is one problem whether the measurement
+    # or the agent settled it this time — a key that moved when a probe happened to run would
+    # give one problem two rows and two tickets across consecutive runs.
     key = fingerprint(route=route, selector=selector, criterion=criterion, checker=checker)
+    proof = triaged.rule_failure
+    measured = proof is not None
     with tenant_context(tenant_id):
         finding, created = A11yFinding.objects.update_or_create(
             tenant_id=tenant_id, project_id=row.project_id, fingerprint=key,
@@ -328,10 +349,16 @@ def record_journey_finding(*, tenant_id, run_id, step, checker, verdict, confide
                 "stable": not is_positional(selector, route),
                 "criterion": criterion, "criteria": list(judgment.criteria),
                 "wcag_level": level, "checker": checker,
-                "source": A11yFinding.Source.AGENTIC,
+                "source": (A11yFinding.Source.RULE if proof is not None
+                           else A11yFinding.Source.AGENTIC),
                 "verdict": judgment.verdict, "outcome": triaged.outcome,
-                "confidence": judgment.confidence, "severity": severity_for(level),
-                "evidence": judgment.evidence, "suggested_fix": judgment.suggested_fix,
+                # A measurement has no confidence to doubt, and storing the agent's alongside it
+                # would invite a reader to discount a proven failure by how unsure the AI was.
+                "confidence": None if proof is not None else judgment.confidence,
+                "severity": severity_for(level),
+                "rule_id": proof.rule_id if proof is not None else "",
+                "evidence": (proof.evidence if proof is not None else judgment.evidence),
+                "suggested_fix": judgment.suggested_fix,
                 "last_seen_run_id": run_id,
                 "status": A11yFinding.Status.OPEN,
             },
@@ -340,7 +367,8 @@ def record_journey_finding(*, tenant_id, run_id, step, checker, verdict, confide
             finding.first_seen_run_id = run_id
             finding.save(update_fields=["first_seen_run", "updated_at"])
     return {"step": step, "checker": checker, "outcome": triaged.outcome, "recorded": True,
-            "finding_id": str(finding.id), "opened": created, "reason": triaged.reason}
+            "finding_id": str(finding.id), "opened": created, "reason": triaged.reason,
+            "measured": measured}
 
 
 def _reconcile_steps(tenant_id, row) -> dict:
@@ -374,13 +402,16 @@ def _reconcile_steps(tenant_id, row) -> dict:
 
 
 def _resolve_walked(tenant_id, row, walked_routes: set[str], seen: set[str]) -> list[str]:
-    """Close agentic journey findings on routes this pass walked and did not report again.
+    """Close journey findings on routes this pass walked and did not report again.
 
     Three conditions, every one of them load-bearing — see the module docstring:
-      * `source=agentic` — a keyboard walk has nothing to say about alt text, so it may never
-        close a finding the element checks or the scanner made.
+      * the source is one **this module can produce** — agentic, or `rule` where a measurement
+        overrode the agent (QA-21). A keyboard walk still has nothing to say about alt text, so
+        it may never close a finding the element checks or a page scan made.
       * `checker in A11Y_JOURNEY_CRITERIA` — and nothing else, so a future agentic check of a
-        different shape does not inherit this resolution by accident.
+        different shape does not inherit this resolution by accident. This is the condition
+        actually doing the narrowing: a scanner row has no checker at all, so widening the
+        source above cannot reach one.
       * the route was **walked** — not blocked, not unreached. A route the agent never got to
         is not a route it found clean.
     """
@@ -393,7 +424,7 @@ def _resolve_walked(tenant_id, row, walked_routes: set[str], seen: set[str]) -> 
         stale = A11yFinding.objects.filter(
             tenant_id=tenant_id, project_id=row.project_id,
             status=A11yFinding.Status.OPEN,
-            source=A11yFinding.Source.AGENTIC,
+            source__in=[A11yFinding.Source.AGENTIC, A11yFinding.Source.RULE],
             checker__in=sorted(A11Y_JOURNEY_CRITERIA),
             route__in=sorted(walked_routes),
         ).exclude(fingerprint__in=sorted(seen) or [""])
@@ -422,10 +453,14 @@ def finish_journey(*, tenant_id, run_id) -> dict:
         walked_routes = {
             r.route for r in row.step_results.filter(outcome=A11Y_STEP_WALKED) if r.route
         }
+        # Both sources, and it must be both: a finding this very pass recorded as `rule`
+        # because a measurement overrode the agent (QA-21) would otherwise be absent from
+        # `seen`, and `_resolve_walked` would close it as fixed the moment it was found.
         seen = set(
             A11yFinding.objects.filter(
                 tenant_id=tenant_id, project_id=row.project_id,
-                source=A11yFinding.Source.AGENTIC, last_seen_run_id=run_id,
+                source__in=[A11yFinding.Source.AGENTIC, A11yFinding.Source.RULE],
+                checker__in=sorted(A11Y_JOURNEY_CRITERIA), last_seen_run_id=run_id,
             ).values_list("fingerprint", flat=True)
         )
     resolved = _resolve_walked(tenant_id, row, walked_routes, seen)
@@ -449,6 +484,29 @@ def finish_journey(*, tenant_id, run_id) -> dict:
             "the application was running and reachable from the machine that ran the journey, "
             "and that the journey's preconditions (test accounts, seeded data) hold."
         )
+    # QA-21: what the agent found becomes a real ticket, in the same loop as everything else.
+    #
+    # **Only when something was walked.** The loopback reconciles the whole project ledger, so
+    # calling it after a journey that walked nothing would open tickets from other runs'
+    # findings and hang them off a journey that tested nothing — the same rule as the `reason`
+    # above, one line further on.
+    #
+    # Wrapped exactly as `aipass._publish` wraps it, and for the same trade: a loopback that
+    # fell over is not a reason to lose the journey result, which is the more expensive half
+    # (a real browser walked a real application to produce it). The error is returned rather
+    # than swallowed, and it is stored on the run so it is still there tomorrow.
+    if complete:
+        from .defects import record_a11y_findings
+        try:
+            loop = record_a11y_findings(
+                tenant_id=tenant_id, project_id=row.project_id, run_id=run_id)
+            # The ticket ids only. The loopback also hands back the policy it applied and the
+            # whole blocking set, which belong to the report that asked for them — copying them
+            # onto every journey run would store the same policy over and over.
+            summary["defects"] = {key: loop[key] for key in ("opened", "closed", "reopened")}
+        except Exception as exc:  # noqa: BLE001 — see above
+            summary["defects"] = {"error": str(exc)}
+
     with tenant_context(tenant_id):
         row.status = (A11yJourneyRun.Status.COMPLETE if complete
                       else A11yJourneyRun.Status.FAILED)
