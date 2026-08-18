@@ -880,3 +880,61 @@ export interface DashboardRollup {
   };
   recent_publishes: { title: string }[];
 }
+
+// ── Accessibility review console (QA-23, S-36) ────────────────────────────
+// One finding a check could not settle, with everything a person needs to settle it.
+export interface A11yReviewLock {
+  held: boolean;
+  by_me: boolean;
+  held_by: string | null;
+  held_by_name: string;
+  expires_at: string | null;
+}
+
+export interface A11yReviewItem {
+  id: string;
+  criterion: string;
+  criterion_handle: string;
+  wcag_level: string;
+  route: string;
+  selector: string;
+  stable_selector: boolean;
+  checker: string;
+  // What the AI SAID (pass/fail/uncertain) — not what the platform decided about it.
+  // `uncertain` means "I looked and cannot tell", and the screen prints that as "No verdict"
+  // rather than 0%, which would read as "the AI was 0% confident" (D-A11Y-95).
+  verdict: string;
+  confidence: number | null;
+  severity_if_confirmed: string;
+  evidence: string;
+  suggested_fix: string;
+  page_image: boolean;
+  element_image: boolean;
+  box: { x: number; y: number; width: number; height: number } | null;
+  url: string;
+  // Why there is no picture. Blank when there is one. Never left unsaid.
+  capture_reason: string;
+  lock: A11yReviewLock;
+  // Present on the single-item read only.
+  can_review?: boolean;
+  locked_out?: string;
+  adjudication?: string;
+  note?: string;
+}
+
+export interface A11yReviewQueue {
+  queue: A11yReviewItem[];
+  can_review: boolean;
+  lock_minutes: number;
+}
+
+export interface A11yReviewDecision {
+  id: string;
+  adjudication: string;
+  outcome: string;
+  status: string;
+  severity: string;
+  // True only when this project's policy will actually raise a ticket, so the screen never
+  // promises a defect that will not exist.
+  opens_defect: boolean;
+}

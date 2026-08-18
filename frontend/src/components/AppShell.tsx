@@ -13,6 +13,7 @@ type NavId =
   | "gates"
   | "clarifications"
   | "artifacts"
+  | "a11y"
   | "profile"
   | "onboarding"
   | "integrations"
@@ -34,6 +35,7 @@ const ICON = {
   repos: "M5 3h11l3 3v15H5z M9 7h6M9 11h6M9 15h4",
   "test-reporting": "M9 3h6v2H9z M6 5h12v16H6z M9 12l2 2 4-4",
   admin: "M12 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8z M4 21v-1c0-3.3 3.6-5 8-5s8 1.7 8 5v1",
+  a11y: "M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18z M12 6.1a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8z M7 10.5h10 M12 11v4 M12 15l-2.2 3.5 M12 15l2.2 3.5",
   bell: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9 M13.7 21a2 2 0 0 1-3.4 0",
 };
 
@@ -50,6 +52,11 @@ const NAV: Array<{
       { id: "gates", label: "Gates", icon: "gate", href: "/gates" },
       { id: "clarifications", label: "Clarifications", icon: "clar", href: "/clarifications" },
       { id: "artifacts", label: "Artifacts & Traceability", icon: "artifacts", href: "/artifacts" },
+      // Accessibility (QA-23). Its own item rather than buried under Gates or Artifacts: it is a
+      // named job a named role does repeatedly, and the count is how the reviewer learns there is
+      // work without going to look. ALWAYS present, never revealed by a run — "no menu" and
+      // "nothing was ever checked" must not look the same (D-A11Y-94).
+      { id: "a11y", label: "Accessibility", icon: "a11y", href: "/a11y" },
     ],
   },
   {
@@ -97,6 +104,7 @@ function activeNav(pathname: string): NavId {
   if (pathname.startsWith("/gates")) return "gates";
   if (pathname.startsWith("/clarifications")) return "clarifications";
   if (pathname.startsWith("/artifacts") || pathname.startsWith("/traceability")) return "artifacts";
+  if (pathname.startsWith("/a11y")) return "a11y";
   if (pathname.startsWith("/profile")) return "profile";
   if (pathname.startsWith("/onboarding")) return "onboarding";
   if (pathname.startsWith("/integrations")) return "integrations";

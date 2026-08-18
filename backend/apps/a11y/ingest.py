@@ -175,6 +175,11 @@ def _carry_forward(tenant_id, project_id, run_key: str, run_id, route: str, scre
         "skipped": 0,
         "uncapturable": uncapturable,
         "page_image": any(row.screenshot_ref for row in rows),
+        # No image work happens on this path by design, so this run took no page screenshot —
+        # but the review console still has one to show, because `_record_scan` inherited the
+        # pointer from the earlier capture of this identical screen. Reported as blank because
+        # that is the truth about THIS ingest; the scan row is where the pointer lives.
+        "page_image_ref": "",
         "page_image_reason": "",
         "reused": True,
         "screen_hash": screen_hash,
@@ -194,10 +199,26 @@ def _record_scan(tenant_id, project_id, run_key: str, run_id, screen: dict,
     from .models import A11yScreenScan
 
     violations = list(screen.get("axe_violations") or [])
+    route = str(screen.get("route") or "")
     with tenant_context(tenant_id):
+        # An identical screen has identical pixels, and a picture is named after its own bytes
+        # (`_image_key`) — so the page image a previous run stored for this exact screen_hash is
+        # byte-for-byte the one this capture would produce, under the same key. Inheriting it
+        # here is what gives the carry-forward path (QA-07, which deliberately does no image
+        # work at all) a page to show the reviewer. Without it, every screen the cache saved
+        # money on would be a screen with no picture in the review console.
+        inherited = (
+            A11yScreenScan.objects
+            .filter(tenant_id=tenant_id, project_id=project_id, route=route,
+                    screen_hash=screen_hash)
+            .exclude(page_image_ref="")
+            .order_by("-created_at")
+            .values_list("page_image_ref", flat=True)
+            .first()
+        ) or ""
         A11yScreenScan.objects.update_or_create(
             tenant_id=tenant_id, project_id=project_id, run_key=run_key,
-            route=str(screen.get("route") or ""),
+            route=route,
             defaults={
                 "run_id": run_id or None,
                 "url": str(screen.get("url") or "")[:200],
@@ -205,6 +226,7 @@ def _record_scan(tenant_id, project_id, run_key: str, run_id, screen: dict,
                 "violations": violations,
                 "scan_error": str(screen.get("axe_error") or "")[:1_000],
                 "load_error": str(screen.get("load_error") or "")[:1_000],
+                "page_image_ref": inherited,
             },
         )
     return len(violations)
@@ -227,7 +249,7 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, run_key=N
     what every existing caller does.
     """
     from .checkers.rules import CapturedElement, checkers_for
-    from .models import A11yCandidateBundle
+    from .models import A11yCandidateBundle, A11yScreenScan
 
     route = str(screen.get("route") or "")
     elements = list(screen.get("elements") or [])
@@ -244,12 +266,21 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, run_key=N
         return {**carried, "violations": violations}
 
     page_png, page_reason = screenshot_bytes(screen)
+    page_ref = ""
     if page_png:
         try:
-            store.put(_image_key(tenant_id, project_id, "pages", page_png), page_png,
-                      content_type="image/png")
+            page_ref = _image_key(tenant_id, project_id, "pages", page_png)
+            store.put(page_ref, page_png, content_type="image/png")
         except Exception as exc:  # noqa: BLE001 — the elements still matter without the picture
-            page_png, page_reason = b"", f"the page screenshot could not be stored ({exc})"
+            page_png, page_ref = b"", ""
+            page_reason = f"the page screenshot could not be stored ({exc})"
+    if page_ref:
+        # The key was previously computed inline as an argument and never kept, so the page
+        # image existed in the object store with nothing anywhere pointing at it (QA-23).
+        with tenant_context(tenant_id):
+            A11yScreenScan.objects.filter(
+                tenant_id=tenant_id, project_id=project_id, run_key=run_key, route=route,
+            ).update(page_image_ref=page_ref)
 
     stored = 0
     uncapturable = 0
@@ -309,6 +340,7 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, run_key=N
         "skipped": len(elements) - stored,
         "uncapturable": uncapturable,
         "page_image": bool(page_png),
+        "page_image_ref": page_ref,
         "page_image_reason": page_reason,
         "reused": False,
         "screen_hash": screen_hash,

@@ -22,6 +22,7 @@ import {
   Repositories,
   TestReporting,
 } from "./features/setup";
+import { A11yReview } from "./features/a11y";
 import {
   Clarifications,
   CriteriaGate,
@@ -142,6 +143,10 @@ export function AppRoutes() {
           <Route path="/artifacts/:id" element={<ArtifactPreviewScreen />} />
           <Route path="/artifacts/:id/publish" element={<ExportPublish />} />
           <Route path="/traceability" element={<TraceabilityView />} />
+          {/* Accessibility review console (QA-23, S-36). Always routed, never conditional on a
+              run having happened — the empty state is what tells "nothing is waiting" apart
+              from "nothing was ever checked". */}
+          <Route path="/a11y" element={<A11yReview />} />
           <Route path="/profile" element={<ProjectProfileEditor />} />
           <Route path="/projects/new" element={<CreateProject />} />
           <Route path="/onboarding" element={<OnboardingHub />} />

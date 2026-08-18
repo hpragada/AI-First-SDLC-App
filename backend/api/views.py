@@ -178,6 +178,23 @@ class TenantCreateView(APIView):
         return Response(TenantSerializer(tenant).data, status=status.HTTP_201_CREATED)
 
 
+def _a11y_would_ticket(tenant_id, project_id, finding) -> bool:
+    """Will confirming this finding actually raise a defect? (QA-23.)
+
+    Asked rather than assumed, because a project may block on `critical` only — or on nothing
+    at all, which `policy` has supported since QA-08. Telling a reviewer "a defect has been
+    opened" when their project's bar means no ticket will ever exist would be the console
+    lying about its own consequence, which is the one thing it cannot do and remain useful.
+    """
+    from apps.a11y.policy import blocks, policy_or_default
+
+    if finding.outcome != "failure":
+        return False
+    policy, _ = policy_or_default(tenant_id, project_id)
+    return blocks(policy, severity=finding.severity, confidence=finding.confidence,
+                  source=finding.source)
+
+
 # ── Projects + Profile ──────────────────────────────────────────────
 class ProjectViewSet(
     TenantScopedMixin,
@@ -209,6 +226,13 @@ class ProjectViewSet(
             return [IsAuthenticatedMember()]
         # Dashboard rollup (S-31): authenticated member.
         if self.action == "dashboard":
+            return [IsAuthenticatedMember()]
+        # Accessibility review console (QA-23): any authenticated member may READ the queue and
+        # the captures — a developer wanting to see what a reviewer is looking at is exactly the
+        # transparency this build is for. Only the accessibility reviewer may ANSWER, and that
+        # is enforced per-project inside `review.adjudicate`, not here, because the role is a
+        # project Membership and this class-level hook has no project in hand.
+        if self.action in {"a11y_review", "a11y_review_item", "a11y_review_screenshot"}:
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
@@ -458,6 +482,114 @@ class ProjectViewSet(
              "created_at": a.created_at}
             for a in audits
         ]})
+
+    @action(detail=True, methods=["get"], url_path="a11y-review")
+    def a11y_review(self, request, pk=None):
+        """The findings waiting on a person, worst first, with the evidence to judge them (QA-23).
+
+        This is the queue `findings.review_queue` has always described and nothing has ever
+        been able to open. Every row carries the element, the criterion, what the check saw and
+        whether a picture exists — and, when one does not, the reason, because an empty frame
+        with no explanation is the silence this build exists against.
+
+        `can_review` says whether THIS user may answer. A reader without the role still sees
+        everything; the console renders read-only rather than showing controls that fail on
+        click (S-36's ninth state).
+        """
+        from apps.a11y.review import LOCK_MINUTES, can_review, queue
+
+        project = self.get_object()
+        user_id = getattr(request.user, "id", None)
+        return Response({
+            "queue": queue(tenant_id=self.tenant_id, project_id=str(project.id),
+                           user_id=user_id),
+            "can_review": can_review(tenant_id=self.tenant_id, project_id=str(project.id),
+                                     user_id=user_id),
+            "lock_minutes": LOCK_MINUTES,
+        })
+
+    @action(detail=True, methods=["get", "post"], url_path=r"a11y-review/(?P<finding_id>[^/]+)")
+    def a11y_review_item(self, request, pk=None, finding_id=None):
+        """`GET` opens one item (which claims it); `POST` records the reviewer's answer.
+
+        Opening is what takes and renews the claim, so the lock follows what the reviewer is
+        actually doing rather than needing a button nobody remembers to press. A `GET` that
+        cannot claim still returns the item — `locked_out` carries the sentence to show, and
+        the screen goes read-only. That is a state, not an error, and a 409 here would make an
+        ordinary second reviewer look like a failure.
+
+        `POST` refuses on three grounds and says which: wrong role, someone else holds it, or
+        it was already decided. Each refusal states that nothing was changed, because the one
+        thing a reviewer must never wonder is whether their answer half-landed.
+        """
+        from apps.a11y.review import (
+            ReviewError,
+            ReviewLockError,
+            ReviewRoleError,
+            adjudicate,
+            open_item,
+        )
+
+        project = self.get_object()
+        user_id = getattr(request.user, "id", None)
+        if request.method == "POST":
+            try:
+                finding = adjudicate(
+                    tenant_id=self.tenant_id, project_id=str(project.id),
+                    finding_id=finding_id, user_id=user_id,
+                    decision=request.data.get("decision", ""),
+                    note=request.data.get("note", ""),
+                )
+            except ReviewRoleError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+            except ReviewLockError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+            except ReviewError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                "id": str(finding.id),
+                "adjudication": finding.adjudication,
+                "outcome": finding.outcome,
+                "status": finding.status,
+                "severity": finding.severity,
+                # True only when this will actually raise a ticket, so the screen never promises
+                # "a defect has been opened" for a finding under the project's blocking bar.
+                "opens_defect": _a11y_would_ticket(self.tenant_id, str(project.id), finding),
+            })
+
+        try:
+            return Response(open_item(
+                tenant_id=self.tenant_id, project_id=str(project.id),
+                finding_id=finding_id, user_id=user_id,
+            ))
+        except ReviewError as exc:
+            raise NotFound(str(exc)) from exc
+
+    @action(detail=True, methods=["get"],
+            url_path=r"a11y-review/(?P<finding_id>[^/]+)/screenshot")
+    def a11y_review_screenshot(self, request, pk=None, finding_id=None):
+        """Stream the page (or element) picture behind one finding — read-through (QA-23).
+
+        `screenshot_ref` has always been an object-store key with nothing able to turn it into
+        something a browser can show. A reviewer cannot judge what they cannot see, so this is
+        the endpoint that makes the console possible at all. The key is validated against this
+        project's own prefix before it is fetched, never trusted because it came out of a row.
+        """
+        from django.http import HttpResponse
+
+        from apps.a11y.review import ReviewError, screenshot
+
+        project = self.get_object()
+        try:
+            data, mime = screenshot(
+                tenant_id=self.tenant_id, project_id=str(project.id), finding_id=finding_id,
+                kind=request.query_params.get("kind", "page"),
+            )
+        except ReviewError as exc:
+            raise NotFound(str(exc)) from exc
+        resp = HttpResponse(data, content_type=mime)
+        resp["Content-Disposition"] = 'inline; filename="a11y-capture.png"'
+        return resp
 
     @action(detail=True, methods=["get"], url_path="a11y-backlog")
     def a11y_backlog(self, request, pk=None):

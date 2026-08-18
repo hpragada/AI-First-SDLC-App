@@ -153,7 +153,39 @@ def _row_fields(row, level: str) -> dict:
         "engine": row.engine,
         "model": row.model,
         "prompt_version": row.prompt_version,
+        "content_hash": row.content_hash,
     }
+
+
+#: The columns a human decision OWNS. When a reviewer's ruling still applies, a fresh run may
+#: refresh everything about a finding except these — they are the ruling.
+#:
+#: `status` is in the list and that is the point of including it: a rejected finding is closed,
+#: and without this the next run's blanket `status=OPEN` would quietly reopen something a person
+#: had already dealt with.
+HUMAN_OWNED_FIELDS = ("outcome", "verdict", "confidence", "source", "status")
+
+
+def _ruling_still_applies(existing, incoming_hash: str) -> bool:
+    """Does the reviewer's answer still describe the element in front of us? (QA-23, B1.)
+
+    True only when a person actually ruled AND the judge's inputs are byte-identical to what
+    they ruled on. Both halves are load-bearing:
+
+    * no ruling → nothing to protect, the run writes what it found;
+    * a ruling on *different* markup → the answer is about an element that no longer exists,
+      and letting a stale "this is fine" sit over edited code is the failure this whole build
+      is against. It goes back to the queue instead.
+
+    An empty hash on either side is treated as "cannot prove they match", so it does NOT hold
+    the ruling. That is the conservative direction: re-asking a person is a cost, while keeping
+    a verdict we cannot justify is a lie.
+    """
+    from .models import A11yFinding
+
+    if existing.adjudication == A11yFinding.Adjudication.PENDING:
+        return False
+    return bool(incoming_hash) and incoming_hash == existing.adjudicated_content_hash
 
 
 def record_run_findings(*, tenant_id, project_id, run_id, report) -> dict:
@@ -196,15 +228,37 @@ def record_run_findings(*, tenant_id, project_id, run_id, report) -> dict:
                               criterion=criterion, checker=row.checker)
             seen.add(key)
             fields = _row_fields(row, levels.get(criterion, ""))
+            defaults = {
+                **fields,
+                "last_seen_run": run,
+                # Reopened rather than replaced: a problem that went away and came back is
+                # the SAME problem, and QA-14 depends on that being one defect.
+                "status": A11yFinding.Status.OPEN,
+            }
+            # A reviewer's decision is not just another opinion to be overwritten by the next
+            # run (QA-23). Read the row BEFORE writing it, because `update_or_create` decides
+            # everything in one statement and this needs to know what was already there.
+            existing = A11yFinding.objects.filter(
+                tenant_id=tenant_id, project_id=project_id, fingerprint=key,
+            ).first()
+            if existing is not None:
+                if _ruling_still_applies(existing, fields["content_hash"]):
+                    for field in HUMAN_OWNED_FIELDS:
+                        defaults.pop(field, None)
+                elif existing.adjudication != A11yFinding.Adjudication.PENDING:
+                    # The element changed under a decision that was made about the old one. The
+                    # decision does not transfer, and pretending it does would be the worst of
+                    # both worlds — so it is cleared, by name, and the item returns to the queue.
+                    defaults |= {
+                        "adjudication": A11yFinding.Adjudication.PENDING,
+                        "adjudicated_by": None,
+                        "adjudication_note": "",
+                        "adjudicated_at": None,
+                        "adjudicated_content_hash": "",
+                    }
             finding, created = A11yFinding.objects.update_or_create(
                 tenant_id=tenant_id, project_id=project_id, fingerprint=key,
-                defaults={
-                    **fields,
-                    "last_seen_run": run,
-                    # Reopened rather than replaced: a problem that went away and came back is
-                    # the SAME problem, and QA-14 depends on that being one defect.
-                    "status": A11yFinding.Status.OPEN,
-                },
+                defaults=defaults,
             )
             if created:
                 finding.first_seen_run = run

@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from apps.tenancy.context import tenant_context
 from integrations.types import A11Y_UNCERTAIN, A11yJudgment, A11yRuleFailure
 
+from .dispatch import content_hash
 from .triage import (
     TRIAGE_FAILURE,
     TRIAGE_PASS,
@@ -91,6 +92,11 @@ class ReportRow:
     engine: str = ""
     model: str = ""
     prompt_version: str = ""
+    #: `dispatch.content_hash` for this row — the fingerprint of exactly what the judge looked
+    #: at. Blank on a rule finding, which has no judge and never reaches the review console.
+    #: Carried here so `findings.record_run_findings` can tell "the same element, judged again"
+    #: from "a different element now", which is what makes a human ruling durable (QA-23).
+    content_hash: str = ""
 
     @property
     def blocks(self) -> bool:
@@ -164,6 +170,7 @@ def _row_from_triage(finding: TriagedFinding, audit: dict | None = None) -> Repo
         engine=str(audit.get("engine") or ""),
         model=str(audit.get("model") or ""),
         prompt_version=str(audit.get("prompt_version") or ""),
+        content_hash=content_hash(finding.judgment.checker, finding.candidate),
     )
 
 

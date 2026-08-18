@@ -2,6 +2,9 @@
 // `X-Tenant-ID` header (the pre-auth scoping mechanism); tenant-create is the one
 // call that doesn't. No business logic lives here — it mirrors the server surface.
 import type {
+  A11yReviewDecision,
+  A11yReviewItem,
+  A11yReviewQueue,
   AcceptInviteRequest,
   AdminUser,
   AdoptResult,
@@ -462,6 +465,28 @@ export const api = {
     fetchBlobUrl(`/source-documents/${sourceDocumentId}/original/`),
   getSourcePageUrl: (sourceDocumentId: string, name: string) =>
     fetchBlobUrl(`/source-documents/${sourceDocumentId}/page/?name=${encodeURIComponent(name)}`),
+
+  // ── Accessibility review console (QA-23, S-36) ──────────────────────────
+  a11yReviewQueue: (tenantId: string, projectId: string) =>
+    req<A11yReviewQueue>("GET", `/projects/${projectId}/a11y-review/`, { tenantId }),
+  // GET is also what claims the item (and renews the claim), so the lock follows what the
+  // reviewer is doing rather than needing a button nobody remembers to press.
+  a11yReviewItem: (tenantId: string, projectId: string, findingId: string) =>
+    req<A11yReviewItem>("GET", `/projects/${projectId}/a11y-review/${findingId}/`, { tenantId }),
+  a11yReviewDecide: (
+    tenantId: string,
+    projectId: string,
+    findingId: string,
+    body: { decision: "confirm" | "reject"; note?: string },
+  ) =>
+    req<A11yReviewDecision>("POST", `/projects/${projectId}/a11y-review/${findingId}/`, {
+      tenantId,
+      body,
+    }),
+  // The capture itself. A raw cross-origin <img src> would not carry the session, so this
+  // fetches with credentials and hands back a blob URL — revoke it when the item changes.
+  getA11yCaptureUrl: (projectId: string, findingId: string, kind: "page" | "element") =>
+    fetchBlobUrl(`/projects/${projectId}/a11y-review/${findingId}/screenshot/?kind=${kind}`),
   startCodeIntel: (projectId: string, repoId: string) =>
     // mode "agent" → the 00c agent runs on the companion; "mechanical" → the CodeIntelJob
     // fallback (no companion enrolled for this user).

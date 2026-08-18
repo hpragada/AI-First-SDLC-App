@@ -1,0 +1,265 @@
+// @vitest-environment jsdom
+//
+// S-36 — the accessibility review console (QA-23).
+//
+// These assert the sentences, not the styling. Every one of them is a place where a screen that
+// rendered "successfully" would still have told the reviewer something untrue: an empty queue
+// that reads as a clean bill of health, a "0%" that reads as "the AI was 0% confident", a
+// promised defect that this project's policy will never raise, an empty picture frame with no
+// reason, or editable controls for someone who is not the reviewer.
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+
+import { AppShell } from "../../components/AppShell";
+import { renderWithProviders } from "../../test/utils";
+import { A11yReview } from "./A11yReview";
+
+const PROJECT = "11111111-1111-1111-1111-111111111111";
+const FINDING = "22222222-2222-2222-2222-222222222222";
+
+const ME = {
+  user: { id: "u1", email: "aisha@acme.test", name: "Aisha Khan", is_tenant_admin: false },
+  tenant: { id: "t1", name: "Acme" },
+  memberships: [{ project_id: PROJECT, project_name: "Payments", role: "qa_lead" }],
+};
+
+function item(over: Record<string, unknown> = {}) {
+  return {
+    id: FINDING,
+    criterion: "1.1.1",
+    criterion_handle: "Non-text Content",
+    wcag_level: "A",
+    route: "/checkout",
+    selector: "img.hero",
+    stable_selector: true,
+    checker: "alt",
+    verdict: "uncertain",
+    confidence: null,
+    severity_if_confirmed: "critical",
+    evidence: "The alt reads like a filename rather than a description.",
+    suggested_fix: "Describe it, or mark it decorative.",
+    page_image: false,
+    element_image: false,
+    box: null,
+    url: "http://localhost:3000/checkout",
+    capture_reason: "",
+    lock: { held: false, by_me: false, held_by: null, held_by_name: "", expires_at: null },
+    ...over,
+  };
+}
+
+// A fetch stub that answers by URL, because this screen makes three different calls and a
+// single blanket response cannot tell them apart.
+function stubRoutes(routes: Array<[RegExp, unknown, number?]>) {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    for (const [pattern, body, status = 200] of routes) {
+      if (pattern.test(url)) {
+        return {
+          ok: status < 400,
+          status,
+          statusText: "stub",
+          text: async () => JSON.stringify(body),
+        } as Response;
+      }
+    }
+    return { ok: false, status: 404, statusText: "stub", text: async () => "{}" } as Response;
+  });
+}
+
+const AUTHED: Array<[RegExp, unknown, number?]> = [
+  [/\/auth\/me\//, ME],
+  [/\/runners\//, []],
+  [/\/dashboard\//, { needs_me: { gates: [], clarifications: [] } }],
+];
+
+beforeEach(() => {
+  localStorage.setItem("selectedProjectId", PROJECT);
+});
+afterEach(() => {
+  // This repo runs vitest without `globals: true`, so RTL's automatic cleanup is not wired up
+  // and every render would otherwise stack in one document — the second test then finds two of
+  // every button and fails for a reason that has nothing to do with the screen.
+  cleanup();
+  vi.unstubAllGlobals();
+  localStorage.clear();
+});
+
+describe("S-36 accessibility review console", () => {
+  it("empty · refuses to read as a clean bill of health", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [], can_review: true, lock_minutes: 15 }],
+    ]));
+    renderWithProviders(<A11yReview />);
+
+    await screen.findByText("Nothing is waiting on you");
+    // D-A11Y-93. This is the whole reason the empty state has a sentence rather than a shrug.
+    expect(
+      screen.getByText(/not that no problems were found/),
+    ).toBeDefined();
+  });
+
+  it("default · the queue lists the work, worst first, with the criterion named", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, {
+        queue: [item(), item({ id: "other", criterion: "1.4.3", criterion_handle: "Contrast (Minimum)", wcag_level: "AA", confidence: 0.58, verdict: "fail" })],
+        can_review: true,
+        lock_minutes: 15,
+      }],
+      [/a11y-review\/22222222/, item({ can_review: true, locked_out: "" })],
+    ]));
+    renderWithProviders(<A11yReview />);
+
+    await screen.findByText("1.1.1 Non-text Content");
+    expect(screen.getByText("1.4.3 Contrast (Minimum)")).toBeDefined();
+    // An `uncertain` verdict has a confidence of 0 by construction. "0%" would read as "the AI
+    // was 0% confident" when it means "the AI gave no verdict" (D-A11Y-95).
+    expect(screen.getAllByText("No verdict").length).toBeGreaterThan(0);
+    expect(screen.getByText("Not sure · 58%")).toBeDefined();
+  });
+
+  it("no capture · says why, instead of showing an empty frame", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/22222222/, item({
+        can_review: true,
+        capture_reason: "the capture recorded no on-screen rectangle for this element",
+      })],
+    ]));
+    renderWithProviders(<A11yReview />);
+
+    await screen.findByText("There is no picture of this one");
+    expect(screen.getByText(/no on-screen rectangle/)).toBeDefined();
+    expect(screen.getByText(/You can still judge it/)).toBeDefined();
+  });
+
+  it("read-only · someone who is not the reviewer gets no controls, and is told why", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [item()], can_review: false, lock_minutes: 15 }],
+      [/a11y-review\/22222222/, item({ can_review: false })],
+    ]));
+    renderWithProviders(<A11yReview />);
+
+    await screen.findByText("You are not the accessibility reviewer");
+    expect(screen.queryByRole("button", { name: /this is a real problem/ })).toBeNull();
+    // Read-only, not blind — the evidence is still on screen.
+    expect(screen.getByText(/reads like a filename/)).toBeDefined();
+  });
+
+  it("locked · the second reviewer is told who has it, and cannot answer", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/22222222/, item({
+        can_review: true,
+        locked_out: "Tom Reyes is reviewing this one. It returns to the queue on its own if they stop.",
+        lock: { held: true, by_me: false, held_by: "u2", held_by_name: "Tom Reyes", expires_at: null },
+      })],
+    ]));
+    renderWithProviders(<A11yReview />);
+
+    await screen.findByText("Someone else is already on this one");
+    expect(screen.getByText(/Tom Reyes is reviewing this one/)).toBeDefined();
+    expect(screen.queryByRole("button", { name: /this is a real problem/ })).toBeNull();
+  });
+
+  it("confirmed · says a defect was opened only when one really was", async () => {
+    // The POST shares the item's GET url, so this stub branches on the METHOD.
+    const base = stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/22222222/, item({ can_review: true })],
+    ]);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return {
+          ok: true,
+          status: 200,
+          statusText: "stub",
+          text: async () =>
+            JSON.stringify({ id: FINDING, adjudication: "confirmed", outcome: "failure",
+                             status: "open", severity: "critical", opens_defect: true }),
+        } as Response;
+      }
+      return base(input);
+    }));
+    renderWithProviders(<A11yReview />);
+
+    const yes = await screen.findByRole("button", { name: /this is a real problem/ });
+    await userEvent.click(yes);
+    await screen.findByText("Recorded as a real problem");
+    expect(screen.getByText(/A defect has been opened/)).toBeDefined();
+  });
+
+  it("confirmed · promises nothing when the project's policy raises no ticket", async () => {
+    const base = stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/22222222/, item({ can_review: true })],
+    ]);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return {
+          ok: true, status: 200, statusText: "stub",
+          text: async () =>
+            JSON.stringify({ id: FINDING, adjudication: "confirmed", outcome: "failure",
+                             status: "open", severity: "low", opens_defect: false }),
+        } as Response;
+      }
+      return base(input);
+    }));
+    renderWithProviders(<A11yReview />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /this is a real problem/ }));
+    await screen.findByText("Recorded as a real problem");
+    // A project may block on nothing at all (QA-08). Saying "a defect has been opened" there
+    // would be the console lying about its own consequence.
+    expect(screen.getByText(/does not raise a ticket at this severity/)).toBeDefined();
+    expect(screen.queryByText(/A defect has been opened/)).toBeNull();
+  });
+
+  it("error · a refused decision says nothing was changed and keeps the note", async () => {
+    const base = stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/22222222/, item({ can_review: true })],
+    ]);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return {
+          ok: false, status: 409, statusText: "stub",
+          text: async () =>
+            JSON.stringify({ detail: "Tom Reyes is reviewing this one, so your answer was not saved." }),
+        } as Response;
+      }
+      return base(input);
+    }));
+    renderWithProviders(<A11yReview />);
+
+    const note = await screen.findByPlaceholderText(/Why is this a real problem/);
+    await userEvent.type(note, "the heading already says it");
+    await userEvent.click(screen.getByRole("button", { name: /this is fine/ }));
+
+    await screen.findByText("The decision could not be saved");
+    await waitFor(() =>
+      expect((note as HTMLTextAreaElement).value).toBe("the heading already says it"),
+    );
+  });
+});
+
+describe("the Accessibility destination", () => {
+  it("is in the sidebar from day one, not revealed by a run", async () => {
+    // D-A11Y-94. If the item only appeared after the first accessibility run, then "no menu"
+    // and "nothing has ever been checked" would look identical — the exact silence this build
+    // exists to prevent. Nothing here has ever run a check, and it is still there.
+    vi.stubGlobal("fetch", stubRoutes([...AUTHED]));
+    renderWithProviders(<AppShell />);
+    const link = await screen.findByRole("link", { name: /Accessibility/ });
+    expect(link.getAttribute("href")).toBe("/a11y");
+  });
+});

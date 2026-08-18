@@ -196,6 +196,21 @@ class A11yScreenScan(TenantScopedModel):
     # by absence — closing a screen's accessibility defects because nobody could reach it.
     load_error = models.TextField(blank=True, default="")
 
+    #: Object-store key of the WHOLE page as it looked, never the image (#1/#3).
+    #:
+    #: The picture was always taken and always stored — what was missing until QA-23 is
+    #: that its key was computed inline as an argument and then dropped on the floor, so
+    #: the platform held every element's rectangle and had thrown away the thing those
+    #: rectangles are coordinates *into*. The reviewer console needs both halves: an
+    #: element crop shows a button with no page around it, and most of what this reviewer
+    #: decides ("is this image decorative, given what sits next to it?") is a question
+    #: about the surroundings.
+    #:
+    #: Blank is a real answer and is kept apart from "not stored yet": a page whose
+    #: screenshot could not be taken or could not be written has no key, and the console
+    #: says so rather than showing an empty frame.
+    page_image_ref = models.CharField(max_length=512, blank=True, default="")
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -305,6 +320,38 @@ class A11yFinding(TenantScopedModel):
         "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     adjudication_note = models.TextField(blank=True)
+    adjudicated_at = models.DateTimeField(null=True, blank=True)
+
+    #: The hash of what the judge actually looked at — the markup, the surrounding text
+    #: and the pointer to the picture (`dispatch.content_hash`). Stored on the finding so
+    #: a later run can ask one question: **is this still the same element?**
+    content_hash = models.CharField(max_length=64, blank=True, default="")
+    #: What `content_hash` was at the moment a person ruled on this. The two together are
+    #: how a human decision survives the next run (QA-23, team decision B1).
+    #:
+    #: Without this, the console silently undoes itself: `record_run_findings` rewrites
+    #: `outcome`/`verdict`/`confidence` from every fresh report, so a reviewer confirms a
+    #: real problem, a defect opens, the next run re-judges, the AI is still unsure, the
+    #: outcome falls back to `needs_review`, and the defect loop closes the very ticket the
+    #: reviewer raised. Equal hashes mean nothing the judge can see has changed, so the
+    #: answer is still good and the human's ruling stands. A different hash means it is a
+    #: different element now — the ruling is cleared and it returns to the queue, which is
+    #: the honest outcome rather than a stale "this is fine" sitting over edited markup.
+    adjudicated_content_hash = models.CharField(max_length=64, blank=True, default="")
+
+    #: Who is reviewing this right now, and since when (QA-23, team decision C1).
+    #:
+    #: Two QA Leads opening one item is not hypothetical, and without a lock the second
+    #: decision silently overwrites the first — leaving a defect open for a finding the
+    #: record says was rejected, with neither reviewer aware. The claim is held for
+    #: `review.LOCK_MINUTES` and renewed while the reviewer is on the item; it releases
+    #: itself when they stop, so nobody has to remember to hand an item back. An expired
+    #: lock is not cleared by a background job — it is simply not honoured, so there is no
+    #: sweeper to fail silently.
+    review_locked_by = models.ForeignKey(
+        "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    review_locked_at = models.DateTimeField(null=True, blank=True)
 
     first_seen_run = models.ForeignKey(
         "runs.Run", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"

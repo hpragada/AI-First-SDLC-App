@@ -207,7 +207,17 @@ def unanswered_checks(*, tenant_id, project_id, work_item_id) -> list:
                 tenant_id=tenant_id, project_id=project_id,
                 status=A11yFinding.Status.OPEN, verdict=A11Y_UNCERTAIN,
                 last_seen_run__work_item_id=work_item_id,
-            ).exclude(checker__in=sorted(ADVISORY_CHECKERS))
+            )
+            .exclude(checker__in=sorted(ADVISORY_CHECKERS))
+            # **A finding a person has ruled on has been answered** (QA-23). This function is
+            # only ever about "nobody answered", and once a reviewer has looked at the element
+            # and said yes or no, that sentence is no longer true — leaving it here would have
+            # the gate quoting an unanswered check forever, at the exact people who answered
+            # it. What the answer WAS still counts, through the ordinary path: a confirmed
+            # finding becomes a `failure` and blocks as an open a11y defect if its severity
+            # clears the project's bar. Only the "we never got an answer" claim is dropped.
+            .exclude(adjudication__in=[A11yFinding.Adjudication.CONFIRMED,
+                                       A11yFinding.Adjudication.REJECTED])
         )
 
 
