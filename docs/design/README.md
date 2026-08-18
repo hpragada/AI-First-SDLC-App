@@ -162,7 +162,7 @@ you" (`.needs--clar/--gate`); `.status-dot`; `.avatar` (+ `--sm/--lg`, `.avatar-
 - **Batch 4 — Auth (unauth)** ✅ S-01, S-02, S-03, S-04.
 - **Decision-gated** ✅ S-33 transcript (DECISION-7), S-34 export/publish (DECISION-8) —
   decisions locked, now **fully built**.
-- **Batch 5 — Accessibility (QA-23a)** ✅ S-36 review queue, S-37 conformance/VPAT. Adds the `.shot` component. These are the UI half of QA-23 and QA-24.
+- **Batch 5 — Accessibility (QA-23a)** ✅ S-36 review queue, S-37 conformance/VPAT. Adds the `.shot` component and the `.grid--console` layout (rail + workspace). These are the UI half of QA-23 and QA-24.
 
 **Gallery:** S-00 + S-01…S-37 (plus S-23b) = **39 files**. The "35/35 complete" line here was written before S-23b, S-35, S-36 and S-37 arrived and is corrected as of 2026-08-18.
 

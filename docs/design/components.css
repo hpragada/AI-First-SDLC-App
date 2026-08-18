@@ -230,6 +230,12 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .grid--2 { grid-template-columns: 1fr 1fr; }
 .grid--3 { grid-template-columns: repeat(3, 1fr); }
 .grid--detail { grid-template-columns: minmax(0,1fr) 320px; align-items: start; }
+/* Review console: a narrow pick-list rail on the LEFT, the item being worked on filling the
+   rest. The mirror of `--detail`, and a different job: there the 320px column is a sidebar
+   ABOUT the main content, here it is the list you pick FROM and the wide half is where the
+   work happens. Using `--detail` for this puts the working panel in the 320px slot (S-36,
+   D-A11Y-99). */
+.grid--console { grid-template-columns: 320px minmax(0,1fr); align-items: start; }
 
 /* ============================================================================
    7. App shell  (emitted by shell.js — sidebar + top bar)
@@ -395,7 +401,10 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
    ========================================================================== */
 .gate-panel .card__body { display: flex; flex-direction: column; gap: var(--space-3); }
 .gate-panel__role { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--brand-orange-600); }
-.gate-panel__actions { display: flex; gap: var(--space-3); margin-top: var(--space-2); }
+/* Wraps. A decision row is the one place a clipped control is unacceptable — the button that
+   falls off the edge is the one someone needed to press. `.meta-row` already wraps for the
+   same reason; this did not, so S-36 lost "No - this is fine" past the panel edge. */
+.gate-panel__actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-2); }
 .gate-reassure { font-size: var(--fs-xs); color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; }
 
 .criteria-list { display: flex; flex-direction: column; gap: var(--space-1); }

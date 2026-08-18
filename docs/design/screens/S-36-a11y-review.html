@@ -33,46 +33,65 @@
         <span class="u-spacer"></span>
         <span class="t-sm u-muted">Sorted worst first</span>
       </div>
-      <div class="grid grid--detail">
+      <!-- Rail LEFT, item under review RIGHT (`grid--console`), NOT `grid--detail`.
+           `grid--detail` is 1fr + a 320px sidebar, and the panels were the wrong way round:
+           the queue took the wide slot and the panel a person actually WORKS in was squeezed
+           into 320px, which clipped its own decision buttons off the edge (D-A11Y-99). -->
+      <div class="grid grid--console">
 
         <div class="panel">
           <div class="panel__header"><h2 class="panel__title">Waiting on you</h2></div>
           <div class="panel__body--flush">
-            <table class="table table--in-panel">
-              <thead><tr><th>Criterion</th><th>Screen</th><th>Element</th><th>AI said</th></tr></thead>
-              <tbody>
-                <tr style="background:var(--brand-orange-50)">
-                  <td class="table__primary">1.1.1 <span class="badge badge--outline">A</span></td>
-                  <td class="table__id">/checkout</td>
-                  <td class="t-mono">img.hero</td>
-                  <td><span class="badge badge--waiting"><span class="status-dot"></span>Not sure · 41%</span></td>
-                </tr>
-                <tr>
-                  <td class="table__primary">4.1.2 <span class="badge badge--outline">A</span></td>
-                  <td class="table__id">/checkout</td>
-                  <td class="t-mono">div.pay-btn</td>
-                  <td><span class="badge badge--waiting"><span class="status-dot"></span>Not sure · 63%</span></td>
-                </tr>
-                <tr>
-                  <td class="table__primary">2.4.3 <span class="badge badge--outline">A</span></td>
-                  <td class="table__id">/checkout</td>
-                  <td class="t-mono">whole screen</td>
-                  <td><span class="badge badge--waiting"><span class="status-dot"></span>No verdict</span></td>
-                </tr>
-                <tr>
-                  <td class="table__primary">1.4.1 <span class="badge badge--outline">AA</span></td>
-                  <td class="table__id">/dashboard</td>
-                  <td class="t-mono">span.delta-up</td>
-                  <td><span class="badge badge--waiting"><span class="status-dot"></span>Not sure · 58%</span></td>
-                </tr>
-                <tr>
-                  <td class="table__primary">2.5.3 <span class="badge badge--outline">AA</span></td>
-                  <td class="table__id">/expenses/new</td>
-                  <td class="t-mono">button.save</td>
-                  <td><span class="badge badge--waiting"><span class="status-dot"></span>Not sure · 72%</span></td>
-                </tr>
-              </tbody>
-            </table>
+            <div class="artifact-row" style="background:var(--brand-orange-50)">
+              <div class="artifact-row__main">
+                <div class="artifact-row__title">1.1.1 Non-text Content</div>
+                <div class="artifact-row__meta">/checkout · <span class="t-mono">img.hero</span></div>
+                <div class="u-row" style="margin-top:6px">
+                  <span class="badge badge--outline">Level A</span>
+                  <span class="badge badge--waiting"><span class="status-dot"></span>Not sure · 41%</span>
+                </div>
+              </div>
+            </div>
+            <div class="artifact-row">
+              <div class="artifact-row__main">
+                <div class="artifact-row__title">4.1.2 Name, Role, Value</div>
+                <div class="artifact-row__meta">/checkout · <span class="t-mono">div.pay-btn</span></div>
+                <div class="u-row" style="margin-top:6px">
+                  <span class="badge badge--outline">Level A</span>
+                  <span class="badge badge--waiting"><span class="status-dot"></span>Not sure · 63%</span>
+                </div>
+              </div>
+            </div>
+            <div class="artifact-row">
+              <div class="artifact-row__main">
+                <div class="artifact-row__title">2.4.3 Focus Order</div>
+                <div class="artifact-row__meta">/checkout · <span class="t-mono">whole screen</span></div>
+                <div class="u-row" style="margin-top:6px">
+                  <span class="badge badge--outline">Level A</span>
+                  <span class="badge badge--waiting"><span class="status-dot"></span>No verdict</span>
+                </div>
+              </div>
+            </div>
+            <div class="artifact-row">
+              <div class="artifact-row__main">
+                <div class="artifact-row__title">1.4.1 Use of Color</div>
+                <div class="artifact-row__meta">/dashboard · <span class="t-mono">span.delta-up</span></div>
+                <div class="u-row" style="margin-top:6px">
+                  <span class="badge badge--outline">Level AA</span>
+                  <span class="badge badge--waiting"><span class="status-dot"></span>Not sure · 58%</span>
+                </div>
+              </div>
+            </div>
+            <div class="artifact-row">
+              <div class="artifact-row__main">
+                <div class="artifact-row__title">2.5.3 Label in Name</div>
+                <div class="artifact-row__meta">/expenses/new · <span class="t-mono">button.save</span></div>
+                <div class="u-row" style="margin-top:6px">
+                  <span class="badge badge--outline">Level AA</span>
+                  <span class="badge badge--waiting"><span class="status-dot"></span>Not sure · 72%</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
