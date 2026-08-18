@@ -62,6 +62,13 @@ MAX_SELECTOR_CHARS = 512
 MAX_AXE_VIOLATIONS = 400
 MAX_AXE_NODES = 500
 
+#: How many node-less rule results one screen may report per channel — `passes` and
+#: `inapplicable` (QA-24). axe ships on the order of a hundred rules and our six WCAG tags
+#: select a subset of them, which the four channels then partition, so a real page lands well
+#: under this. Anything near it means the scan was run without the tag filter, and that is worth
+#: refusing out loud rather than storing a document nobody meant to produce.
+MAX_AXE_RULES = 400
+
 
 class CaptureError(ValueError):
     """A capture document could not be read. Carries what was wrong, for a human."""
@@ -158,6 +165,61 @@ def _violation(raw, route: str) -> dict:
     }
 
 
+def _bounded(data, key: str, route: str, limit: int) -> list:
+    """A node-carrying channel, bounded. Same refusal discipline as `axe_violations`."""
+    rows = data.get(key)
+    if rows is None:
+        return []
+    if not isinstance(rows, list):
+        raise CaptureError(f"screen {route!r} has an `{key}` that is not a list")
+    if len(rows) > limit:
+        raise CaptureError(
+            f"screen {route!r} reports {len(rows)} entries in `{key}`, over the limit of "
+            f"{limit}. Nothing was stored for it."
+        )
+    return rows
+
+
+def _rule_outcome(raw) -> dict:
+    """One rule axe **did not** fail on: a pass, or a rule with nothing to apply to (QA-24).
+
+    Deliberately node-less. "Every element that passed" is thousands of selectors nobody reads,
+    and the question these answer — *was this criterion actually checked on this page?* — is
+    answered by the rule and its WCAG tags alone. The two channels that DO carry nodes are
+    `violations` and `incomplete`, because those are the ones a person has to go and look at.
+    """
+    data = _mapping(raw)
+    return {
+        "rule": _text(data.get("rule") or data.get("id"), 128),
+        "criteria": [_text(c, 16).strip() for c in (data.get("criteria") or [])
+                     if _text(c, 16).strip()],
+        "help": _text(data.get("help"), 1_000),
+    }
+
+
+def _rule_list(data, key: str, route: str) -> list:
+    """One node-less channel, bounded. Absent is an empty list, and that is honest.
+
+    **Absent means "this capture carries no positive evidence", NOT "nothing passed".** An older
+    companion sends only `axe_violations`, so its screens produce no coverage and every criterion
+    it touched reads as *not evaluated* — which is exactly what we know about them. Inventing a
+    pass from silence here is the one mistake that would make a signed conformance statement
+    untrue, and it is the mistake this whole channel exists to prevent.
+    """
+    rows = data.get(key)
+    if rows is None:
+        return []
+    if not isinstance(rows, list):
+        raise CaptureError(f"screen {route!r} has an `{key}` that is not a list")
+    if len(rows) > MAX_AXE_RULES:
+        raise CaptureError(
+            f"screen {route!r} reports {len(rows)} entries in `{key}`, over the limit of "
+            f"{MAX_AXE_RULES}. Nothing was stored for it — run the scan with the WCAG tag "
+            f"filter rather than every rule axe ships."
+        )
+    return [_rule_outcome(row) for row in rows]
+
+
 def _screen(raw) -> dict:
     data = _mapping(raw)
     route = _text(data.get("route") or data.get("url"), 512)
@@ -203,6 +265,20 @@ def _screen(raw) -> dict:
         "route": route,
         "url": _text(data.get("url"), 1_000),
         "axe_violations": [_violation(v, route) for v in violations],
+        # The other three channels axe returns, kept from QA-24 onward. Until then only
+        # `violations` survived, which made "checked and clean" and "nobody looked" identical —
+        # the one distinction a conformance statement is made of.
+        #
+        # `incomplete` is the sharpest of them: axe saying *I looked at this and cannot decide,
+        # a human must*. It carries its nodes for the same reason a violation does.
+        "axe_passes": _rule_list(data, "axe_passes", route),
+        "axe_inapplicable": _rule_list(data, "axe_inapplicable", route),
+        "axe_incomplete": [_violation(v, route) for v in _bounded(
+            data, "axe_incomplete", route, MAX_AXE_VIOLATIONS)],
+        # Which scanner produced all of the above. axe-core is imported from the CLIENT'S
+        # project, so this differs per tenant and per run; a statement that cannot name it
+        # cannot be re-examined against what produced it (QA-24, D-A11Y-96).
+        "scanner_version": _text(data.get("scanner_version"), 64),
         # Why the rule scanner did not run here, in the capture's own words — blank when it
         # did (QA-16). The same shape and the same reasoning as `screenshot_error` below.
         "axe_error": _text(data.get("axe_error"), 1_000),
@@ -330,7 +406,14 @@ def fingerprint(screen: Mapping) -> str:
     digest.update(str(screen.get("route") or "").encode("utf-8"))
     image, reason = screenshot_bytes(screen)
     digest.update(sha256(image).digest() if image else reason.encode("utf-8"))
-    for part in ("elements", "axe_violations"):
+    # All four scanner channels, not just the failures (QA-24). A scanner upgrade that turns an
+    # `inapplicable` into a `pass`, or a `pass` into an `incomplete`, changes what the
+    # conformance statement may claim about this screen — so it has to change the screen's
+    # identity, exactly as a new violation does. Adding these costs one re-judgment per screen
+    # the first time a capture carries them, which is the safe direction this docstring argues
+    # for two paragraphs above.
+    for part in ("elements", "axe_violations", "axe_passes", "axe_inapplicable",
+                 "axe_incomplete"):
         digest.update(
             json.dumps(list(screen.get(part) or []), sort_keys=True,
                        separators=(",", ":"), default=str).encode("utf-8")

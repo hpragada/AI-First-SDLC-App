@@ -1,0 +1,612 @@
+"""The WCAG conformance statement: compile the evidence, draft it, sign it, export it (QA-24).
+
+A client who has to prove accessibility — to a buyer, a regulator, a procurement team — needs a
+document that walks all 55 Level A and AA criteria and says where the product stands. No
+automated tool may produce that on its own. It carries professional judgement and a name.
+
+So this module does the part the platform can honestly do: it reads what was actually observed
+(`coverage.py`), what is actually open (`findings.py`), and what a person actually ruled
+(`review.py`), and lays all 55 criteria out with the evidence beside each one. Then it stops.
+
+**Every one of the 55 is listed, including the ones nothing looked at.** A criterion quietly
+missing from a conformance table reads as a criterion that was fine. `NOT_EVALUATED` is printed
+as itself and never folded into anything else — the same discipline as the six silences, at the
+scale of a whole document.
+
+**The platform suggests a level; it never asserts one.** `suggest` returns what the evidence
+supports, and it returns `None` wherever the evidence cannot settle it. The reviewer's own
+verdict always wins, and what they did not change is stated at signing rather than hidden.
+
+**"Risk reduction, not certification."** That sentence is in the drafted body and in
+`DISCLAIMER`, and it is not decoration: automated and AI checks cover part of WCAG, this
+document says what was checked and what was found, and the conformance claim belongs to the
+person who signs it.
+"""
+from __future__ import annotations
+
+import hashlib
+
+from django.utils import timezone
+
+from apps.tenancy.context import tenant_context
+
+from . import coverage
+from .policy import ACCESSIBILITY_REVIEWER_ROLE
+
+#: The artifact this renders to. Distinct from `a11y_report` (one run's findings) and
+#: `a11y_baseline` (where the application stands): this is a signed external-facing claim, and
+#: collapsing it into either would give it their run-shaped or audit-shaped identity.
+CONFORMANCE_TYPE = "conformance"
+CONFORMANCE_FILENAME = "a11y-conformance.md"
+CONFORMANCE_TITLE = "Accessibility conformance statement"
+
+#: The VPAT vocabulary. Deliberately the standard's own words rather than ours — a client's
+#: procurement team is reading this against other vendors' documents.
+SUPPORTS = "supports"
+PARTIALLY = "partially_supports"
+DOES_NOT = "does_not_support"
+NOT_APPLICABLE = "not_applicable"
+NOT_EVALUATED = "not_evaluated"
+LEVELS = (SUPPORTS, PARTIALLY, DOES_NOT, NOT_APPLICABLE, NOT_EVALUATED)
+
+LEVEL_WORDS = {
+    SUPPORTS: "Supports",
+    PARTIALLY: "Partially supports",
+    DOES_NOT: "Does not support",
+    NOT_APPLICABLE: "Not applicable",
+    NOT_EVALUATED: "Not evaluated",
+}
+
+DISCLAIMER = (
+    "This is risk reduction, not certification. Automated and AI-assisted checks cover part of "
+    "WCAG 2.2. This statement says what was checked, by what, and what was found. It does not "
+    "certify conformance, and no part of it was claimed by the platform on its own."
+)
+
+
+class ConformanceError(Exception):
+    """A conformance action could not be taken. Carries what was wrong, for a human."""
+
+
+class ConformanceRoleError(ConformanceError):
+    """The user does not hold the accessibility reviewer role on this project."""
+
+
+# ---------------------------------------------------------------------------------------
+# Compiling the 55
+# ---------------------------------------------------------------------------------------
+
+def _criteria(version: str = "2.2") -> list:
+    """Every Level A and AA criterion in the standard, in numeric order — all 55 of them."""
+    from .models import WcagCriterion
+
+    rows = list(
+        WcagCriterion.objects.filter(version=version, level__in=["A", "AA"])
+        .values("number", "handle", "level")
+    )
+    return sorted(rows, key=lambda r: [int(p) for p in r["number"].split(".")])
+
+
+def _open_by_criterion(tenant_id, project_id) -> dict[str, list]:
+    from .models import A11yFinding
+
+    out: dict[str, list] = {}
+    with tenant_context(tenant_id):
+        for finding in A11yFinding.objects.filter(
+            tenant_id=tenant_id, project_id=project_id,
+            status=A11yFinding.Status.OPEN, outcome="failure",
+        ):
+            out.setdefault(finding.criterion, []).append(finding)
+    return out
+
+
+def _adjudicated_by_criterion(tenant_id, project_id) -> dict[str, int]:
+    """How many findings a person has personally ruled on, per criterion (QA-23).
+
+    This is the `human` provenance column AC1 asks for. It is a count of decisions, never a
+    conformance verdict — a reviewer confirming three failures has not said the criterion is
+    supported, and the two must not be confused.
+    """
+    from .models import A11yFinding
+
+    out: dict[str, int] = {}
+    with tenant_context(tenant_id):
+        for row in A11yFinding.objects.filter(
+            tenant_id=tenant_id, project_id=project_id,
+        ).exclude(adjudication=A11yFinding.Adjudication.PENDING).values("criterion"):
+            out[row["criterion"]] = out.get(row["criterion"], 0) + 1
+    return out
+
+
+def suggest(cover: dict | None, failures: int) -> str | None:
+    """What the evidence supports, or `None` when it cannot settle it.
+
+    `None` is a first-class answer here and the most important one: it is the platform declining
+    to put a word in a reviewer's mouth. It comes back whenever something looked and could not
+    decide, which is exactly the case a person exists for.
+
+    The rules, in the order they are applied:
+
+      * anything failed on every route it was checked on → **does not support**;
+      * anything failed somewhere but not everywhere → **partially supports**;
+      * something could not be decided → **no suggestion** (a human must);
+      * checked somewhere with nothing wrong → **supports**;
+      * the rule ran everywhere and had nothing to apply to → **not applicable**;
+      * nothing looked at all → **not evaluated**.
+
+    Note `failures` outranks the coverage map. An open failure is a fact about the product that
+    survives the run that found it, and coverage is a fact about one capture — a criterion with
+    an open Level A defect must never read as "supports" because the latest run happened not to
+    revisit that page.
+    """
+    routes = (cover or {}).get("routes") or {}
+    if failures:
+        failed_routes = sum(1 for outcome in routes.values() if outcome == "failed")
+        # Everything we looked at is broken, or we have failures and no coverage map at all.
+        if not routes or failed_routes >= len(routes):
+            return DOES_NOT
+        return PARTIALLY
+    if not routes:
+        return NOT_EVALUATED
+    outcomes = set(routes.values())
+    if "failed" in outcomes:
+        return DOES_NOT if outcomes == {"failed"} else PARTIALLY
+    if "needs_human" in outcomes:
+        return None
+    if "passed" in outcomes:
+        return SUPPORTS
+    return NOT_APPLICABLE
+
+
+def _evidence_sentence(cover: dict | None, failures: int, adjudicated: int) -> str:
+    """What actually happened, in words, with no verdict in it.
+
+    This is the column the team asked for: *whatever the platform tests and captures, shown as
+    it was*. It never says "supports" — it says what was checked, where, and what came back.
+    """
+    routes = (cover or {}).get("routes") or {}
+    if not routes and not failures:
+        return "Nothing checked this."
+    counts: dict[str, int] = {}
+    for outcome in routes.values():
+        counts[outcome] = counts.get(outcome, 0) + 1
+    parts = []
+    if failures:
+        parts.append(f"{failures} open failure{'s' if failures != 1 else ''}")
+    if counts.get("failed"):
+        parts.append(f"failed on {counts['failed']} of {len(routes)} pages checked")
+    if counts.get("needs_human"):
+        parts.append(
+            f"{counts['needs_human']} page{'s' if counts['needs_human'] != 1 else ''} a check "
+            f"looked at and could not decide"
+        )
+    if counts.get("passed"):
+        parts.append(f"checked on {counts['passed']} pages with nothing wrong")
+    if counts.get("not_applicable"):
+        parts.append(
+            f"{counts['not_applicable']} pages had nothing for this rule to apply to"
+        )
+    if adjudicated:
+        parts.append(f"{adjudicated} reviewed by a person")
+    if not parts:
+        return "Nothing checked this."
+    text = "; ".join(parts)
+    # Only the first character. `str.capitalize()` lower-cases everything after it, which
+    # would quietly mangle a rule id or a route name the moment one appears here.
+    return text[:1].upper() + text[1:] + "."
+
+
+def criterion_rows(tenant_id, project_id, *, verdicts: dict | None = None) -> list[dict]:
+    """All 55 Level A and AA criteria with their evidence, provenance and level.
+
+    `established_by` is AC1's rule/AI/human provenance, read from what actually produced the
+    evidence rather than from what we expect to produce it — a criterion the ownership table
+    says the AI owns still reports `rule` if that is what looked at it.
+    """
+    verdicts = verdicts or {}
+    with tenant_context(tenant_id):
+        cover = coverage.summary(tenant_id, project_id)
+    failures = _open_by_criterion(tenant_id, project_id)
+    adjudged = _adjudicated_by_criterion(tenant_id, project_id)
+
+    rows = []
+    for crit in _criteria():
+        number = crit["number"]
+        cov = cover.get(number)
+        open_count = len(failures.get(number, []))
+        ruled = adjudged.get(number, 0)
+        engines = sorted((cov or {}).get("engines") or set())
+        if ruled:
+            engines = [*engines, "human"]
+        suggested = suggest(cov, open_count)
+        chosen = (verdicts.get(number) or {}).get("level")
+        rows.append({
+            "criterion": number,
+            "handle": crit["handle"],
+            "level": crit["level"],
+            "evidence": _evidence_sentence(cov, open_count, ruled),
+            "established_by": engines,
+            "routes_checked": len((cov or {}).get("routes") or {}),
+            "open_failures": open_count,
+            "human_decisions": ruled,
+            "suggested": suggested,
+            "verdict": chosen if chosen in LEVELS else None,
+            # What the statement will actually say. The reviewer's word if they gave one, the
+            # evidence's word if it had one, and otherwise NOT EVALUATED — never a guess.
+            "effective": (chosen if chosen in LEVELS else None) or suggested or NOT_EVALUATED,
+            # True when the platform has no suggestion and the reviewer has not ruled: the row
+            # is unfinished, and the signing step counts these out loud.
+            "needs_a_person": chosen not in LEVELS and suggested is None,
+        })
+    return rows
+
+
+def totals(rows: list[dict]) -> dict:
+    """The headline counts S-37 shows, derived from the rows so they cannot disagree."""
+    out = {level: 0 for level in LEVELS}
+    for row in rows:
+        out[row["effective"]] = out.get(row["effective"], 0) + 1
+    out["total"] = len(rows)
+    out["evaluated"] = len(rows) - out[NOT_EVALUATED]
+    out["awaiting_a_person"] = sum(1 for row in rows if row["needs_a_person"])
+    out["platform_suggested"] = sum(
+        1 for row in rows if row["verdict"] is None and row["suggested"] is not None
+    )
+    return out
+
+
+# ---------------------------------------------------------------------------------------
+# Provenance — recorded, never displayed (D-A11Y-96)
+# ---------------------------------------------------------------------------------------
+
+def provenance(tenant_id, project_id) -> dict:
+    """Which engine, model, prompt version and scanner produced the evidence.
+
+    **Recorded on the export and never shown to the tenant** (team decision, D-A11Y-96). It is
+    our implementation detail, not a client's business — but without it a signed statement can
+    never be traced back to what produced it, which is what AC2 requires.
+
+    The scanner version is per-project and per-run because axe-core is imported from the
+    client's own repository; a statement covering two runs on two axe versions says both.
+    """
+    from .models import A11yFinding, A11yScreenScan
+
+    with tenant_context(tenant_id):
+        engines = sorted({
+            f"{row['engine']}/{row['model']}/{row['prompt_version']}"
+            for row in A11yFinding.objects
+            .filter(tenant_id=tenant_id, project_id=project_id)
+            .values("engine", "model", "prompt_version")
+            if row["engine"] or row["model"]
+        })
+        scanners = sorted({
+            row["scanner_version"] for row in A11yScreenScan.objects
+            .filter(tenant_id=tenant_id, project_id=project_id)
+            .values("scanner_version") if row["scanner_version"]
+        })
+    return {"judges": engines, "scanners": scanners}
+
+
+def evidence_fingerprint(tenant_id, project_id) -> str:
+    """A hash of everything the statement rests on (team decision C1).
+
+    Changes when a run finds something new, when a reviewer rules, or when a scanner reports
+    differently. That is how "the words are unchanged but the facts underneath moved" becomes a
+    fact the screen can state, rather than something nobody notices until a client does.
+
+    Built from the compiled rows rather than from raw tables on purpose: two different sets of
+    findings that produce an identical statement genuinely are the same statement, and re-asking
+    for a signature there would train reviewers to click through re-signing.
+    """
+    rows = criterion_rows(tenant_id, project_id)
+    payload = "\\n".join(
+        f"{r['criterion']}|{r['effective']}|{r['open_failures']}|{r['routes_checked']}|"
+        f"{','.join(r['established_by'])}"
+        for r in rows
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------------------
+# The document
+# ---------------------------------------------------------------------------------------
+
+def draft_body(*, scope: str, rows: list[dict], version: str = "2.2") -> str:
+    """The platform's draft of the statement. The reviewer edits this freely.
+
+    Written to be readable by the person it is *about* — a procurement reader, not us. Every
+    number in it is derived from `rows`, so the prose and the table can never disagree.
+    """
+    counts = totals(rows)
+    lines = [
+        f"# Accessibility conformance statement (WCAG {version} Level AA)",
+        "",
+        f"**Scope.** {scope.strip() or 'Not stated.'}",
+        "",
+        f"> {DISCLAIMER}",
+        "",
+        "## Summary",
+        "",
+        f"Of the {counts['total']} Level A and AA success criteria, **{counts['evaluated']} "
+        f"were evaluated** and **{counts[NOT_EVALUATED]} were not**. Criteria that were not "
+        f"evaluated are listed as such and are not counted as supported.",
+        "",
+    ]
+    if counts[DOES_NOT] or counts[PARTIALLY]:
+        lines += [
+            f"{counts[DOES_NOT]} criteria do not support and {counts[PARTIALLY]} partially "
+            f"support. Every underlying problem is tracked as a defect.",
+            "",
+        ]
+    if counts["awaiting_a_person"]:
+        lines += [
+            f"{counts['awaiting_a_person']} criteria were looked at by a check that could not "
+            f"decide, and are awaiting a person's assessment.",
+            "",
+        ]
+    lines += [
+        "## Per criterion",
+        "",
+        "| Criterion | Level | Conformance | Established by | What was checked |",
+        "|---|---|---|---|---|",
+    ]
+    for row in rows:
+        established = ", ".join(row["established_by"]) or "—"
+        lines.append(
+            f"| {row['criterion']} {row['handle']} | {row['level']} | "
+            f"{LEVEL_WORDS[row['effective']]} | {established} | {row['evidence']} |"
+        )
+    lines += [
+        "",
+        "## How to read this",
+        "",
+        "**Not evaluated** means nothing checked it. It is printed as itself and is never "
+        "rolled into a supporting result — a criterion nobody looked at is the single easiest "
+        "way for a document like this to become untrue.",
+        "",
+        "**Not applicable** means a check ran and there was nothing on the page for it to "
+        "apply to. That is not the same as supporting it.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _statement(tenant_id, project_id, *, create=True):
+    from apps.projects.models import Project
+
+    from .models import A11yConformanceStatement
+
+    with tenant_context(tenant_id):
+        row = A11yConformanceStatement.objects.filter(
+            tenant_id=tenant_id, project_id=project_id).first()
+        if row is None and create:
+            project = Project.objects.get(id=project_id, tenant_id=tenant_id)
+            row = A11yConformanceStatement.objects.create(
+                tenant_id=tenant_id, project=project,
+                scope=project.name, verdicts={},
+            )
+        return row
+
+
+def _body_hash(body: str) -> str:
+    return hashlib.sha256((body or "").encode("utf-8")).hexdigest()
+
+
+def is_stale(row, *, evidence_hash: str) -> bool:
+    """Signed, but the evidence has moved since (team decision C1)."""
+    return bool(row.signed_at) and row.signed_evidence_hash != evidence_hash
+
+
+def state(*, tenant_id, project_id) -> dict:
+    """Everything S-37 renders: the rows, the counts, the draft, and the signature's standing."""
+    row = _statement(tenant_id, project_id)
+    rows = criterion_rows(tenant_id, project_id, verdicts=row.verdicts or {})
+    body = row.body or draft_body(scope=row.scope, rows=rows)
+    fingerprint = evidence_fingerprint(tenant_id, project_id)
+    stale = is_stale(row, evidence_hash=fingerprint)
+    return {
+        "scope": row.scope,
+        "body": body,
+        "drafted": not row.body,
+        "rows": rows,
+        "totals": totals(rows),
+        "disclaimer": DISCLAIMER,
+        "signed": bool(row.signed_at),
+        "signed_name": row.signed_name,
+        "signed_role": row.signed_role,
+        "signed_at": row.signed_at,
+        "stale": stale,
+        "artifact_id": str(row.artifact_id) if row.artifact_id else None,
+        "required_role": ACCESSIBILITY_REVIEWER_ROLE,
+        "can_export": bool(row.signed_at) and not stale,
+        "export_refused_because": _refusal(row, stale),
+    }
+
+
+def _refusal(row, stale: bool) -> str:
+    if not row.signed_at:
+        return (
+            "This cannot be exported unsigned. A conformance statement carries someone's "
+            "professional judgement, and the platform has none to give."
+        )
+    if stale:
+        return (
+            "The evidence has changed since this was signed. The wording is still what "
+            f"{row.signed_name or 'the reviewer'} signed, but it no longer describes what the "
+            "platform holds — read it again and re-sign."
+        )
+    return ""
+
+
+def save_draft(*, tenant_id, project_id, user_id, scope=None, body=None, verdicts=None) -> dict:
+    """Edit the statement. **Any edit clears the signature.**
+
+    Not a courtesy — a signature on wording nobody signed is worse than no signature at all, and
+    it is the one way this document could carry a name against words that person never read.
+    """
+    if not can_sign(tenant_id=tenant_id, project_id=project_id, user_id=user_id):
+        raise ConformanceRoleError(
+            f"only the accessibility reviewer ({ACCESSIBILITY_REVIEWER_ROLE}) on this project "
+            f"can edit the conformance statement."
+        )
+    row = _statement(tenant_id, project_id)
+    changed = False
+    with tenant_context(tenant_id):
+        if scope is not None and scope != row.scope:
+            row.scope, changed = scope, True
+        if body is not None and body != row.body:
+            row.body, changed = body, True
+        if verdicts is not None:
+            merged = dict(row.verdicts or {})
+            for number, value in (verdicts or {}).items():
+                level = (value or {}).get("level")
+                if level is not None and level not in LEVELS:
+                    raise ConformanceError(
+                        f"{level!r} is not a conformance level. Use one of: "
+                        f"{', '.join(LEVELS)}."
+                    )
+                merged[str(number)] = {"level": level,
+                                       "note": str((value or {}).get("note") or "")}
+            if merged != (row.verdicts or {}):
+                row.verdicts, changed = merged, True
+        if changed and row.signed_at:
+            row.signed_by_id = None
+            row.signed_name = ""
+            row.signed_role = ""
+            row.signed_at = None
+            row.signed_body_hash = ""
+            row.signed_evidence_hash = ""
+            _event(tenant_id, "a11y.conformance.signature_cleared", row, user_id,
+                   {"why": "the statement was edited after it was signed"})
+        row.save()
+    return state(tenant_id=tenant_id, project_id=project_id)
+
+
+def can_sign(*, tenant_id, project_id, user_id) -> bool:
+    """The same role and the same two admin carve-outs the review console uses."""
+    from .review import can_review
+
+    return can_review(tenant_id=tenant_id, project_id=project_id, user_id=user_id)
+
+
+def sign(*, tenant_id, project_id, user_id, name: str, acknowledged: bool = False) -> dict:
+    """Put a person's name to the statement — which is also what unlocks export (B1).
+
+    `acknowledged` is the reviewer confirming they understand what they are signing, and it is
+    required rather than implied. Two things they must have seen: how many criteria were **not
+    evaluated**, and how many levels the **platform suggested and they did not change**. Both
+    are counted for them; neither is buried.
+    """
+    from apps.registry.models import Artifact
+
+    if not can_sign(tenant_id=tenant_id, project_id=project_id, user_id=user_id):
+        raise ConformanceRoleError(
+            f"only the accessibility reviewer ({ACCESSIBILITY_REVIEWER_ROLE}) on this project "
+            f"can sign a conformance statement."
+        )
+    if not (name or "").strip():
+        raise ConformanceError("sign with your name as it should appear on the statement.")
+    if not acknowledged:
+        raise ConformanceError(
+            "confirm you have read the statement and the evidence behind it, including how "
+            "many criteria were not evaluated. Signing is the whole point of this document."
+        )
+
+    row = _statement(tenant_id, project_id)
+    rows = criterion_rows(tenant_id, project_id, verdicts=row.verdicts or {})
+    body = row.body or draft_body(scope=row.scope, rows=rows)
+    counts = totals(rows)
+
+    with tenant_context(tenant_id):
+        row.body = body
+        row.signed_by_id = user_id
+        row.signed_name = name.strip()[:255]
+        row.signed_role = ACCESSIBILITY_REVIEWER_ROLE
+        row.signed_at = timezone.now()
+        row.signed_body_hash = _body_hash(body)
+        row.signed_evidence_hash = evidence_fingerprint(tenant_id, project_id)
+        row.save()
+
+        artifact = _publish_artifact(tenant_id, project_id, row, body)
+        row.artifact = artifact
+        row.save(update_fields=["artifact", "updated_at"])
+        # **The signature is the gate** (B1). This is the state the existing publish endpoint
+        # already requires, so nothing reaches a system of record without a named human
+        # approval — which is what non-negotiable #5 is actually for.
+        artifact.status = Artifact.Status.APPROVED
+        artifact.save(update_fields=["status", "updated_at"])
+
+    _event(tenant_id, "a11y.conformance.signed", row, user_id, {
+        "name": row.signed_name,
+        "role": row.signed_role,
+        "body_hash": row.signed_body_hash,
+        "evidence_hash": row.signed_evidence_hash,
+        "not_evaluated": counts[NOT_EVALUATED],
+        "platform_suggested_unchanged": counts["platform_suggested"],
+        # Recorded here and NEVER displayed (D-A11Y-96) — without it a signed statement can
+        # never be traced back to what produced it (AC2).
+        "provenance": provenance(tenant_id, project_id),
+    })
+    return state(tenant_id=tenant_id, project_id=project_id)
+
+
+def _publish_artifact(tenant_id, project_id, row, body: str):
+    """Register (or refresh) the `conformance` artifact holding the signed wording."""
+    from mcp_platform_state import tools
+
+    from apps.registry.models import Artifact
+
+    digest = _body_hash(body)
+    staged = None
+    try:
+        staged = tools.stage_artifact_body(
+            tenant_id, project_id, None, "testing", CONFORMANCE_FILENAME, body,
+            content_type="text/markdown",
+        )
+    except Exception:  # noqa: BLE001 — a pointer beats no document; same trade as publish_report
+        staged = None
+
+    existing = Artifact.objects.filter(
+        tenant_id=tenant_id, project_id=project_id, type=CONFORMANCE_TYPE).first()
+    if existing is not None:
+        tools.update_artifact(
+            tenant_id, str(existing.id),
+            content_hash=(staged or {}).get("content_hash") or digest,
+        )
+        existing.refresh_from_db()
+        return existing
+    created = tools.register_artifact(
+        tenant_id, project_id, None, "testing", CONFORMANCE_TYPE, "internal",
+        content_hash=(staged or {}).get("content_hash") or digest,
+        s3_key=(staged or {}).get("s3_key"),
+        title=CONFORMANCE_TITLE,
+    )
+    return Artifact.objects.get(id=created["id"], tenant_id=tenant_id)
+
+
+def check_export(*, tenant_id, project_id) -> None:
+    """Raise unless this statement may leave the building. AC3's no-auto-certify rule.
+
+    Enforced here as well as by the publish endpoint's gate check, deliberately: the endpoint
+    knows only that an artifact is approved, and the sentence a refused reviewer needs to read
+    is about a signature, not a status.
+    """
+    row = _statement(tenant_id, project_id, create=False)
+    if row is None or not row.signed_at:
+        raise ConformanceError(
+            "This cannot be exported unsigned. A conformance statement carries someone's "
+            "professional judgement, and the platform has none to give — sign it as the "
+            "accessibility reviewer, or ask someone who holds that role to."
+        )
+    if is_stale(row, evidence_hash=evidence_fingerprint(tenant_id, project_id)):
+        raise ConformanceError(_refusal(row, True))
+
+
+def _event(tenant_id, action: str, row, user_id, payload: dict) -> None:
+    from apps.ledger.models import Event
+
+    Event.objects.create(
+        tenant_id=tenant_id, actor=str(user_id or "system"), action=action,
+        target_type="a11y_conformance", target_id=row.id,
+        payload={"project_id": str(row.project_id), **payload},
+    )

@@ -1,4 +1,5 @@
-// Query/mutation hooks for the accessibility review console (S-36, QA-23).
+// Query/mutation hooks for the accessibility screens: the review console (S-36, QA-23) and
+// the conformance statement (S-37, QA-24).
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -88,4 +89,51 @@ export function useA11yCapture(
   }, [projectId, findingId, kind, available]);
 
   return { url, error };
+}
+
+// ── Conformance statement (S-37, QA-24) ──────────────────────────────────────────────────
+
+export function useA11yConformance(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  return useQuery({
+    queryKey: ["a11y-conformance", projectId],
+    queryFn: () => api.a11yConformance(tenantId, projectId as string),
+    enabled: Boolean(projectId && tenantId),
+  });
+}
+
+export function useSaveA11yConformance(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      scope?: string;
+      body?: string;
+      verdicts?: Record<string, { level: string; note?: string }>;
+    }) => api.a11yConformanceSave(tenantId, projectId as string, vars),
+    // The response IS the new state (signature cleared and all), so it is written straight into
+    // the cache rather than refetched — a refetch would briefly show the pre-edit signature.
+    onSuccess: (next) => qc.setQueryData(["a11y-conformance", projectId], next),
+  });
+}
+
+export function useSignA11yConformance(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { name: string; acknowledged: boolean }) =>
+      api.a11yConformanceSign(tenantId, projectId as string, vars),
+    onSuccess: (next) => {
+      qc.setQueryData(["a11y-conformance", projectId], next);
+      // Signing registers (and approves) the conformance artifact.
+      qc.invalidateQueries({ queryKey: ["artifacts", projectId] });
+    },
+  });
+}
+
+export function useExportA11yConformance(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  return useMutation({
+    mutationFn: () => api.a11yConformanceExport(tenantId, projectId as string),
+  });
 }

@@ -35,6 +35,7 @@ from hashlib import sha256
 from apps.tenancy.context import tenant_context
 from integrations.types import A11Y_JOURNEY_CRITERIA
 
+from . import coverage
 from .selectors import is_positional, normalise
 
 #: Conformance level → the severity a defect would inherit. The same mapping agent 09 states in
@@ -222,6 +223,26 @@ def record_run_findings(*, tenant_id, project_id, run_id, report) -> dict:
     opened, again = [], []
     with tenant_context(tenant_id):
         run = Run.objects.filter(id=run_id, tenant_id=tenant_id).first() if run_id else None
+
+        # **Every row, not just the recorded ones** (QA-24). `RECORDED_OUTCOMES` deliberately
+        # keeps passes out of the findings ledger — a pass is not a problem and has no
+        # fingerprint, no defect and no reviewer. But it IS evidence, and dropping it here was
+        # what made "checked and clean" indistinguishable from "nobody looked" for every
+        # criterion the AI owns.
+        #
+        # Written with the RESOLVED run, not the raw id. `run_id` here is a capture *key* and
+        # may name no run at all — a baseline audit partitions by its own id rather than
+        # manufacturing a `Run` nobody executed (QA-17) — so passing it to a foreign key is how
+        # a real audit dies on an integrity error. The key still travels, as `run_key`.
+        by_route: dict[str, list] = {}
+        for row in report.rows:
+            by_route.setdefault(row.route, []).extend(coverage.observations_for_row(row))
+        for route, observations in by_route.items():
+            coverage.record(
+                tenant_id=tenant_id, project_id=project_id, run_key=str(run_id or ""),
+                run_id=run.id if run is not None else None,
+                route=route, engine="AI", observations=observations,
+            )
         for row in recorded:
             criterion = row.criteria[0] if row.criteria else ""
             key = fingerprint(route=row.route, selector=row.selector,

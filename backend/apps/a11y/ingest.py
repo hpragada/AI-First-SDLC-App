@@ -30,6 +30,7 @@ from hashlib import sha256
 
 from apps.tenancy.context import tenant_context
 
+from . import coverage
 from .capture import fingerprint, screenshot_bytes
 
 #: Long edge a stored crop is reduced to. Element crops are small already; this only catches a
@@ -224,11 +225,23 @@ def _record_scan(tenant_id, project_id, run_key: str, run_id, screen: dict,
                 "url": str(screen.get("url") or "")[:200],
                 "screen_hash": screen_hash,
                 "violations": violations,
+                "axe_passes": list(screen.get("axe_passes") or []),
+                "axe_inapplicable": list(screen.get("axe_inapplicable") or []),
+                "axe_incomplete": list(screen.get("axe_incomplete") or []),
+                "scanner_version": str(screen.get("scanner_version") or "")[:64],
                 "scan_error": str(screen.get("axe_error") or "")[:1_000],
                 "load_error": str(screen.get("load_error") or "")[:1_000],
                 "page_image_ref": inherited,
             },
         )
+    # What the scan says about each CRITERION, not just what it failed (QA-24). Written on the
+    # same path and for the same reason the scan row is: it costs nothing, and coverage recorded
+    # only where the expensive work happens is coverage that silently disappears the second time
+    # a screen is captured.
+    coverage.record(
+        tenant_id=tenant_id, project_id=project_id, run_key=run_key, run_id=run_id,
+        route=route, engine="rule", observations=coverage.from_scan(screen),
+    )
     return len(violations)
 
 

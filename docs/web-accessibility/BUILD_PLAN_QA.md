@@ -38,7 +38,7 @@ Tasks: **QA‑23a**, QA‑23, QA‑24.
 > **Superseded 2026‑08‑17:** **QA‑09 is ⏸ parked** and now gates nothing. ~~**QA‑10a → QA‑10** run alongside and gate only **QA‑22** (Phase 2)~~
 > **Superseded again 2026‑08‑18 (D‑A11Y‑82):** the internal accuracy evaluation is **decoupled from the platform entirely** — it is our report card, and nothing in the product reads it. **QA‑10a and QA‑10 now gate NOTHING**, and QA‑22 depends only on QA‑20. The whole of E‑EVAL can be scheduled whenever it suits; it is no longer on anyone's critical path.
 
-**Status at 2026‑08‑18:** M0 complete except the E‑EVAL tasks · M1 complete · M2 complete · **M3 complete: QA‑20 and QA‑21 built (🟡), QA‑22 🟢 done** · **M4 in progress — QA‑23a 🟢 done, QA‑23 🟡 built** (console, decisions, lock, audit — 57 new tests green; one AC needs a real run). QA‑24 remains.
+**Status at 2026‑08‑18:** M0 complete except the E‑EVAL tasks · M1 complete · M2 complete · **M3 complete: QA‑20 and QA‑21 built (🟡), QA‑22 🟢 done** · **M4 complete — QA‑23a 🟢, QA‑23 🟡, QA‑24 🟡** (console + signed conformance statement; 115 new tests green). **All 24 QA tasks are now built.** Six of them (QA‑11a, QA‑12, QA‑20, QA‑21, QA‑23, QA‑24) are 🟡 waiting on one live session against a real application; the E‑EVAL tasks remain parked and gate nothing.
 
 > **2026‑08‑18 — E‑EVAL is off the critical path for good (D‑A11Y‑82).** The internal accuracy evaluation no longer feeds anything in the product, so QA‑10a and QA‑10 gate nothing and QA‑22 depends only on QA‑20.
 

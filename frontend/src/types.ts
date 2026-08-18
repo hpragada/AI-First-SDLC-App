@@ -928,6 +928,74 @@ export interface A11yReviewQueue {
   lock_minutes: number;
 }
 
+// ── QA-24 · conformance statement (S-37) ─────────────────────────────────────────────────
+
+// The VPAT vocabulary, deliberately the standard's own words — a procurement team reads this
+// against other vendors' documents.
+export type A11yConformanceLevel =
+  | "supports"
+  | "partially_supports"
+  | "does_not_support"
+  | "not_applicable"
+  | "not_evaluated";
+
+export interface A11yConformanceRow {
+  criterion: string;
+  handle: string;
+  level: string;
+  // What actually happened, with no verdict in it: "checked on 12 pages with nothing wrong",
+  // "nothing checked this". This is the column the evidence lives in.
+  evidence: string;
+  // Which engines produced that evidence — rule / AI / agentic / human. AC1's provenance.
+  established_by: string[];
+  routes_checked: number;
+  open_failures: number;
+  human_decisions: number;
+  // What the evidence supports. `null` means the platform declines to put a word in the
+  // reviewer's mouth, which is what happens whenever a check looked and could not decide.
+  suggested: A11yConformanceLevel | null;
+  // The reviewer's own word, when they gave one. Always wins.
+  verdict: A11yConformanceLevel | null;
+  // What the statement will actually say: their word, else the evidence's, else not evaluated.
+  effective: A11yConformanceLevel;
+  needs_a_person: boolean;
+}
+
+export interface A11yConformanceTotals {
+  supports: number;
+  partially_supports: number;
+  does_not_support: number;
+  not_applicable: number;
+  not_evaluated: number;
+  total: number;
+  evaluated: number;
+  awaiting_a_person: number;
+  // How many levels the platform suggested and the reviewer did not change. Counted out loud
+  // at signing rather than hidden — it is the thing they are taking responsibility for.
+  platform_suggested: number;
+}
+
+export interface A11yConformance {
+  scope: string;
+  body: string;
+  drafted: boolean;
+  rows: A11yConformanceRow[];
+  totals: A11yConformanceTotals;
+  disclaimer: string;
+  signed: boolean;
+  signed_name: string;
+  signed_role: string;
+  signed_at: string | null;
+  // Signed, but the evidence has moved since (team decision C1). The wording is still what they
+  // signed; it no longer describes what the platform holds, and export is refused until re-signed.
+  stale: boolean;
+  artifact_id: string | null;
+  required_role: string;
+  can_export: boolean;
+  export_refused_because: string;
+  can_sign: boolean;
+}
+
 export interface A11yReviewDecision {
   id: string;
   adjudication: string;

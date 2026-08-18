@@ -4,6 +4,7 @@
 import type {
   A11yReviewDecision,
   A11yReviewItem,
+  A11yConformance,
   A11yReviewQueue,
   AcceptInviteRequest,
   AdminUser,
@@ -487,6 +488,25 @@ export const api = {
   // fetches with credentials and hands back a blob URL — revoke it when the item changes.
   getA11yCaptureUrl: (projectId: string, findingId: string, kind: "page" | "element") =>
     fetchBlobUrl(`/projects/${projectId}/a11y-review/${findingId}/screenshot/?kind=${kind}`),
+  a11yConformance: (tenantId: string, projectId: string) =>
+    req<A11yConformance>("GET", `/projects/${projectId}/a11y-conformance/`, { tenantId }),
+  // Any edit clears the signature — a signature on wording nobody signed is worse than none.
+  a11yConformanceSave: (
+    tenantId: string,
+    projectId: string,
+    body: { scope?: string; body?: string; verdicts?: Record<string, { level: string; note?: string }> },
+  ) => req<A11yConformance>("PUT", `/projects/${projectId}/a11y-conformance/`, { tenantId, body }),
+  a11yConformanceSign: (
+    tenantId: string,
+    projectId: string,
+    body: { name: string; acknowledged: boolean },
+  ) => req<A11yConformance>("POST", `/projects/${projectId}/a11y-conformance/sign/`, {
+    tenantId,
+    body,
+  }),
+  a11yConformanceExport: (tenantId: string, projectId: string) =>
+    req<{ artifact_id: string | null; publish_via: string; signed_by: string; signed_at: string | null }>(
+      "POST", `/projects/${projectId}/a11y-conformance/export/`, { tenantId }),
   startCodeIntel: (projectId: string, repoId: string) =>
     // mode "agent" → the 00c agent runs on the companion; "mechanical" → the CodeIntelJob
     // fallback (no companion enrolled for this user).

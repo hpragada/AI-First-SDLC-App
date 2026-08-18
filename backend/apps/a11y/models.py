@@ -196,6 +196,30 @@ class A11yScreenScan(TenantScopedModel):
     # by absence — closing a screen's accessibility defects because nobody could reach it.
     load_error = models.TextField(blank=True, default="")
 
+    #: The other three channels axe returns, kept from QA-24 onward (`passes` and
+    #: `inapplicable` node-less, `incomplete` with its nodes).
+    #:
+    #: **This is what makes a conformance statement possible at all.** Until QA-24 only
+    #: `violations` was stored, so a criterion with nothing against it could equally be one the
+    #: scanner checked and found clean, one the scanner has no rule for, or one where nothing on
+    #: the page was applicable. Three different facts, one silence — and a VPAT is made almost
+    #: entirely of the positive ones.
+    #:
+    #: `incomplete` is axe saying *I looked and cannot decide, a human must*. Discarding it was
+    #: the same silence this build refuses everywhere else, sitting inside our own scanner.
+    #:
+    #: An empty list on an old capture means **no positive evidence**, never "nothing passed" —
+    #: see `capture._rule_list`.
+    axe_passes = models.JSONField(default=list, blank=True)
+    axe_inapplicable = models.JSONField(default=list, blank=True)
+    axe_incomplete = models.JSONField(default=list, blank=True)
+
+    #: Which scanner produced all of the above, e.g. "axe-core 4.13.0" (QA-24, D-A11Y-96).
+    #: axe is imported from the CLIENT'S own project, so this differs per tenant and per run.
+    #: Recorded on the export and never shown to the tenant — without it a signed statement
+    #: can never be traced back to what produced it.
+    scanner_version = models.CharField(max_length=64, blank=True, default="")
+
     #: Object-store key of the WHOLE page as it looked, never the image (#1/#3).
     #:
     #: The picture was always taken and always stored — what was missing until QA-23 is
@@ -222,6 +246,78 @@ class A11yScreenScan(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"a11y-scan {self.route} ({len(self.violations or [])} violation(s))"
+
+
+class A11yCriterionCoverage(TenantScopedModel):
+    """Was this criterion looked at on this page, by what, and what came back? (QA-24.)
+
+    **This is not the findings ledger, and the two must never be merged.** `A11yFinding` answers
+    *"what is wrong with this element?"* — one row per problem, keyed on a fingerprint, worked
+    through by a person and closed. This answers a different question at a different grain:
+    *"was 1.4.3 evaluated on /checkout, by which engine, and what was the result?"* One is the
+    fix list; this is the coverage map a conformance statement is compiled from.
+
+    **It exists because the platform recorded only what was WRONG.** All three engines threw
+    their positive result away, in three separate places: the scanner returned `violations` and
+    dropped axe's `passes`, `inapplicable` and `incomplete`; the ledger's `RECORDED_OUTCOMES`
+    dropped every AI verdict of "this is fine"; and the journey path returned early on anything
+    that was not a failure or a review. So a criterion with nothing against it was
+    indistinguishable from one nothing had ever looked at — and a VPAT is made almost entirely
+    of positive claims. Fixing only the scanner would have covered 14 of the 55 criteria and
+    left the other two engines just as silent.
+
+    **Per route, deliberately.** "Supports" is never a fact about a product, it is a fact about
+    the pages that were checked. A criterion clean on nine routes and failing on the tenth is
+    "partially supports", and a table that averaged that away would be worse than no table.
+
+    **`NOT_APPLICABLE` is a real answer and is not a pass.** It means the rule ran and there was
+    nothing on the page for it to apply to — no images, so nothing to have bad alt text. Rolling
+    that into "supports" would claim conformance for content that does not exist.
+    """
+
+    class Engine(models.TextChoices):
+        RULE = "rule", "Rule scanner"
+        AI = "AI", "AI judge"
+        AGENTIC = "agentic", "Agentic testing"
+        HUMAN = "human", "Human"
+
+    class Outcome(models.TextChoices):
+        FAILED = "failed", "Failed"
+        PASSED = "passed", "Checked, nothing wrong"
+        NOT_APPLICABLE = "not_applicable", "Rule ran; nothing on the page it applies to"
+        NEEDS_HUMAN = "needs_human", "Looked at it and cannot decide"
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="a11y_coverage"
+    )
+    run = models.ForeignKey(
+        "runs.Run", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    #: The capture partition, exactly as `A11yScreenScan` uses it — a baseline audit has a key
+    #: and no run (QA-17), so this is the field every reader groups by.
+    run_key = models.CharField(max_length=128, blank=True, db_index=True)
+
+    route = models.CharField(max_length=512)
+    criterion = models.CharField(max_length=16)
+    engine = models.CharField(max_length=8, choices=Engine.choices)
+    outcome = models.CharField(max_length=16, choices=Outcome.choices)
+
+    #: What produced this, in the engine's own words — an axe rule id, a checker name. Kept so
+    #: a reader can see WHY a criterion is claimed covered rather than taking the row on trust.
+    detail = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "project", "run_key", "route", "criterion", "engine"],
+                name="uniq_tenant_project_a11y_coverage",
+            )
+        ]
+        ordering = ["criterion", "route", "engine"]
+        indexes = [models.Index(fields=["tenant", "project", "criterion"])]
+
+    def __str__(self) -> str:
+        return f"a11y-coverage {self.criterion} {self.route} {self.engine}={self.outcome}"
 
 
 class A11yFinding(TenantScopedModel):
@@ -371,6 +467,83 @@ class A11yFinding(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"a11y-finding {self.criterion} {self.route} {self.selector[:40]} ({self.status})"
+
+
+class A11yConformanceStatement(TenantScopedModel):
+    """A WCAG conformance statement (a VPAT) and the signature that makes it mean anything.
+
+    **The platform never claims compliance.** It compiles the evidence, drafts the wording, and
+    stops. A conformance statement carries someone's professional judgement, and the platform
+    has none to give — so this row exists to record *whose* judgement it is, exactly what they
+    put their name to, and what the evidence looked like at that moment.
+
+    **State here, content in the object store** (#1/#3). The wording lives in the `conformance`
+    artifact's body like every other document; this row holds the pointer, the reviewer's
+    per-criterion levels, and the signature.
+
+    **The signature IS the gate (team decision B1, 2026-08-18).** The ordinary `Approval` model
+    cannot carry this: it requires a `Run` (non-nullable) and `gates.services.decide` signals
+    that run's Temporal workflow — and a statement compiled from the ledger across many runs has
+    neither. Rather than manufacture a run nobody executed or make a core control-plane table
+    nullable for one document, the signature does the job a gate does: a role-checked person,
+    named, timestamped, bound to the exact wording, and audit-logged. It flips the artifact to
+    `approved`, which is the state the existing publish endpoint already demands — so nothing
+    reaches a system of record without a named human approval (#5), which is what that rule is
+    actually for.
+
+    **A signature is bound to wording AND to evidence, and the two expire differently
+    (team decision C1).** Editing the wording clears the signature outright: a signature on text
+    nobody signed is worse than no signature. New evidence does not clear it — the reviewer did
+    sign those words — but it marks the statement **stale** and refuses export until it is
+    re-signed. A signed statement quietly describing last month's findings is the worst thing
+    this document can become, and it is the failure mode nobody would notice.
+    """
+
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="a11y_conformance"
+    )
+    #: The `conformance` artifact holding the wording. The document is an artifact like any
+    #: other so it inherits versioning, the preview read-through and the publish flow.
+    artifact = models.ForeignKey(
+        "registry.Artifact", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    #: What the statement covers, in the reviewer's words — "Payment Gateway v2, checkout and
+    #: expense journeys". Never inferred: a scope the platform guessed is a scope nobody agreed.
+    scope = models.TextField(blank=True)
+    #: The statement's prose. Drafted by the platform, edited freely by the reviewer.
+    body = models.TextField(blank=True)
+
+    #: The reviewer's own conformance level per criterion, where they set one:
+    #: `{"1.4.3": {"level": "partially_supports", "note": "..."}}`. Absent means they accepted
+    #: what the evidence suggests — which is recorded as such at signing rather than hidden.
+    verdicts = models.JSONField(default=dict, blank=True)
+
+    signed_by = models.ForeignKey(
+        "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    #: The name as it appears on the statement. Stored rather than read from the user row,
+    #: because the document must keep saying what it said even if an account is renamed.
+    signed_name = models.CharField(max_length=255, blank=True)
+    signed_role = models.CharField(max_length=32, blank=True)
+    signed_at = models.DateTimeField(null=True, blank=True)
+    #: sha256 of the exact wording signed, and of the evidence behind it. The pair is what makes
+    #: "this signature no longer describes the document" a fact rather than an opinion.
+    signed_body_hash = models.CharField(max_length=64, blank=True, default="")
+    signed_evidence_hash = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "project"],
+                name="uniq_tenant_project_a11y_conformance",
+            )
+        ]
+
+    def __str__(self) -> str:
+        state = "signed" if self.signed_at else "unsigned"
+        return f"a11y-conformance {self.project_id} ({state})"
 
 
 class A11yRoute(TenantScopedModel):

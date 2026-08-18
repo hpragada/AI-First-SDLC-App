@@ -232,7 +232,9 @@ class ProjectViewSet(
         # transparency this build is for. Only the accessibility reviewer may ANSWER, and that
         # is enforced per-project inside `review.adjudicate`, not here, because the role is a
         # project Membership and this class-level hook has no project in hand.
-        if self.action in {"a11y_review", "a11y_review_item", "a11y_review_screenshot"}:
+        if self.action in {"a11y_review", "a11y_review_item", "a11y_review_screenshot",
+                           "a11y_conformance", "a11y_conformance_sign",
+                           "a11y_conformance_export"}:
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
@@ -590,6 +592,101 @@ class ProjectViewSet(
         resp = HttpResponse(data, content_type=mime)
         resp["Content-Disposition"] = 'inline; filename="a11y-capture.png"'
         return resp
+
+    @action(detail=True, methods=["get", "put"], url_path="a11y-conformance")
+    def a11y_conformance(self, request, pk=None):
+        """The WCAG conformance statement: all 55 criteria, the draft, and the signature (QA-24).
+
+        `GET` compiles it. Every Level A and AA criterion is listed — including the ones nothing
+        looked at, printed as **not evaluated** and never folded into a supporting result, which
+        is the single easiest way for a document like this to become untrue.
+
+        `PUT` saves the reviewer's scope, wording and per-criterion levels. **Any edit clears the
+        signature**, because a signature on wording nobody signed is worse than none.
+
+        The engine, model, prompt and scanner versions are deliberately NOT in this payload
+        (D-A11Y-96). They are recorded on the signature's audit entry, where a statement can be
+        traced back to what produced it without putting our implementation detail on a client's
+        screen.
+        """
+        from apps.a11y.conformance import (
+            ConformanceError,
+            ConformanceRoleError,
+            can_sign,
+            save_draft,
+            state,
+        )
+
+        project = self.get_object()
+        user_id = getattr(request.user, "id", None)
+        if request.method == "PUT":
+            try:
+                payload = save_draft(
+                    tenant_id=self.tenant_id, project_id=str(project.id), user_id=user_id,
+                    scope=request.data.get("scope"), body=request.data.get("body"),
+                    verdicts=request.data.get("verdicts"),
+                )
+            except ConformanceRoleError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+            except ConformanceError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            payload = state(tenant_id=self.tenant_id, project_id=str(project.id))
+        payload["can_sign"] = can_sign(tenant_id=self.tenant_id, project_id=str(project.id),
+                                       user_id=user_id)
+        return Response(payload)
+
+    @action(detail=True, methods=["post"], url_path="a11y-conformance/sign")
+    def a11y_conformance_sign(self, request, pk=None):
+        """Sign the statement — which is also what unlocks export (team decision B1).
+
+        The ordinary `Approval` model cannot carry this document: it requires a `Run` and
+        `gates.services.decide` signals that run's Temporal workflow, and a statement compiled
+        from the ledger across many runs has neither. So the signature does a gate's job — a
+        role-checked person, named, timestamped, bound to the exact wording, audit-logged — and
+        flips the artifact to `approved`, which is the state the existing publish endpoint
+        already demands. Nothing reaches a system of record without a named human approval.
+        """
+        from apps.a11y.conformance import ConformanceError, ConformanceRoleError, sign
+
+        project = self.get_object()
+        try:
+            payload = sign(
+                tenant_id=self.tenant_id, project_id=str(project.id),
+                user_id=getattr(request.user, "id", None),
+                name=request.data.get("name", ""),
+                acknowledged=bool(request.data.get("acknowledged")),
+            )
+        except ConformanceRoleError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        except ConformanceError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(payload)
+
+    @action(detail=True, methods=["post"], url_path="a11y-conformance/export")
+    def a11y_conformance_export(self, request, pk=None):
+        """Export the signed statement. Refused unsigned, and refused stale (AC3, C1).
+
+        Checked here as well as by the publish endpoint's gate, deliberately: that endpoint
+        knows only that an artifact is approved, and the sentence a refused reviewer needs to
+        read is about a signature, not a status.
+        """
+        from apps.a11y.conformance import ConformanceError, check_export, state
+
+        project = self.get_object()
+        try:
+            check_export(tenant_id=self.tenant_id, project_id=str(project.id))
+        except ConformanceError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        payload = state(tenant_id=self.tenant_id, project_id=str(project.id))
+        return Response({
+            "artifact_id": payload["artifact_id"],
+            # The export itself goes through the ordinary artifact publish flow, which is where
+            # the project's export policy lives (#5/#9). This endpoint's job is the signature.
+            "publish_via": f"/api/artifacts/{payload['artifact_id']}/publish/",
+            "signed_by": payload["signed_name"],
+            "signed_at": payload["signed_at"],
+        })
 
     @action(detail=True, methods=["get"], url_path="a11y-backlog")
     def a11y_backlog(self, request, pk=None):

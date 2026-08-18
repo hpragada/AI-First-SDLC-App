@@ -46,6 +46,7 @@ from integrations.types import (
     A11yJudgment,
 )
 
+from . import coverage
 from .findings import fingerprint, levels_for, severity_for
 from .selectors import is_positional
 
@@ -327,8 +328,21 @@ def record_journey_finding(*, tenant_id, run_id, step, checker, verdict, confide
                      rule_failures=proven, thresholds=thresholds_for(tenant_id))
     _mark_walked(tenant_id, row, step)
 
+    # The agent walked this step and reached a verdict on this criterion — record that it was
+    # LOOKED AT, whatever the verdict (QA-24). This return used to be the third place the
+    # platform threw its positive evidence away: a keyboard agent proving there is no trap on
+    # /checkout is exactly the evidence a conformance statement needs for 2.1.2, and it went
+    # nowhere. Written before the early return below, so a pass is recorded too.
+    coverage.record(
+        tenant_id=tenant_id, project_id=str(row.project_id), run_key=str(row.run_id or ""),
+        run_id=row.run_id, route=route, engine="agentic",
+        observations=[(c, {TRIAGE_FAILURE: "failed", TRIAGE_REVIEW: "needs_human"}.get(
+            triaged.outcome, "passed"), checker) for c in judgment.criteria],
+    )
+
     if triaged.outcome not in (TRIAGE_FAILURE, TRIAGE_REVIEW):
         # A confident pass is not a finding — its absence next run is how a fix is recognised.
+        # It IS coverage, which is what the block above just recorded.
         return {"step": step, "checker": checker, "outcome": triaged.outcome,
                 "recorded": False, "reason": triaged.reason, "measured": False}
 

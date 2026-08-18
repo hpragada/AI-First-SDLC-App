@@ -71,19 +71,47 @@ async function loadAxe() {
   try {
     const mod = await import("axe-core");
     const axe = mod.default || mod;
-    if (axe && axe.source) return { source: axe.source, error: "" };
-    return { source: "", error: "axe-core is installed but exposes no injectable source" };
+    // The version travels with every scan. axe-core is imported from the CLIENT'S project, so
+    // it is whatever their repo pins and it changes under us without warning — a conformance
+    // statement that cannot name the scanner that produced it cannot be re-examined later
+    // (QA-24). It has always been on the module; it was simply never read.
+    if (axe && axe.source) return { source: axe.source, version: axe.version || "", error: "" };
+    return { source: "", version: "", error: "axe-core is installed but exposes no injectable source" };
   } catch (err) {
     return {
       source: "",
+      version: "",
       error: `axe-core is not installed in this project, so the measurable checks did not run (${err.message})`,
     };
   }
 }
 
-/** Run axe inside the page and return `{violations, error}` in the capture's own shape. */
+/** One rule's result with no nodes — the shape `passes` and `inapplicable` travel in.
+ *
+ *  Nodes are dropped on purpose for those two. "Every element that passed" is thousands of
+ *  selectors nobody will ever read, and the question they answer — *was this criterion checked
+ *  on this page?* — is answered by the rule id alone. `violations` and `incomplete` keep their
+ *  nodes, because those are the ones a person has to go and look at. */
+function ruleOutcome(r) {
+  return { rule: r.id, criteria: criteriaFromTags(r.tags), help: r.help || "" };
+}
+
+/** Run axe inside the page and return ALL FOUR of its channels (QA-24).
+ *
+ *  Until now only `violations` was kept, and the other three were dropped on the floor. That
+ *  made a criterion nothing failed indistinguishable from a criterion nothing looked at, which
+ *  is the one thing a conformance statement may not get wrong — and it is the same silence this
+ *  build refuses everywhere else, sitting unnoticed in our own scanner for four tasks.
+ *
+ *    violations   — it failed
+ *    passes       — it was checked and it was fine
+ *    inapplicable — the rule ran and there was nothing on the page for it to apply to
+ *    incomplete   — axe looked and CANNOT DECIDE; a human must (the sharpest of the four, and
+ *                   the one we were discarding while criticising exactly this silence)
+ */
 async function scanPage(page, axe) {
-  if (!axe.source) return { violations: [], error: axe.error };
+  const empty = { violations: [], passes: [], inapplicable: [], incomplete: [] };
+  if (!axe.source) return { ...empty, error: axe.error };
   try {
     await page.evaluate(axe.source);
     const raw = await page.evaluate(async () => {
@@ -95,16 +123,23 @@ async function scanPage(page, axe) {
         },
       });
     });
-    const violations = (raw.violations || []).map((v) => ({
-      rule: v.id,
-      impact: v.impact || "",
-      criteria: criteriaFromTags(v.tags),
-      help: v.help || "",
-      nodes: (v.nodes || []).map((n) => (n.target || []).join(" ")).filter(Boolean),
-    }));
-    return { violations, error: "" };
+    const withNodes = (list) =>
+      (list || []).map((v) => ({
+        rule: v.id,
+        impact: v.impact || "",
+        criteria: criteriaFromTags(v.tags),
+        help: v.help || "",
+        nodes: (v.nodes || []).map((n) => (n.target || []).join(" ")).filter(Boolean),
+      }));
+    return {
+      violations: withNodes(raw.violations),
+      incomplete: withNodes(raw.incomplete),
+      passes: (raw.passes || []).map(ruleOutcome),
+      inapplicable: (raw.inapplicable || []).map(ruleOutcome),
+      error: "",
+    };
   } catch (err) {
-    return { violations: [], error: `the scan could not be run on this page (${err.message})` };
+    return { ...empty, error: `the scan could not be run on this page (${err.message})` };
   }
 }
 
@@ -270,6 +305,10 @@ async function captureRoute(page, axe, baseUrl, route) {
   const scan = await scanPage(page, axe);
   if (scan.error) screen.axe_error = scan.error;
   screen.axe_violations = scan.violations;
+  screen.axe_passes = scan.passes;
+  screen.axe_inapplicable = scan.inapplicable;
+  screen.axe_incomplete = scan.incomplete;
+  if (axe.version) screen.scanner_version = `axe-core ${axe.version}`;
 
   const elements = await collectElements(page);
   await fillAccessibleNames(page, elements);

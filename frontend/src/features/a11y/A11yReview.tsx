@@ -23,6 +23,7 @@ import {
   cx,
 } from "../../components/ui";
 import type { A11yReviewItem } from "../../types";
+import { A11yTabs } from "./A11yTabs";
 import { useA11yCapture, useA11yReviewItem, useA11yReviewQueue, useDecideA11yFinding } from "./hooks";
 
 const SEVERITY_BADGE: Record<string, "failed" | "waiting" | "neutral"> = {
@@ -378,6 +379,7 @@ export function A11yReview() {
   if (queue.isLoading) {
     return (
       <main className="canvas-pad">
+        <A11yTabs active="queue" />
         <Panel title="Loading the review queue">
           <Skeleton kind="title" />
           <Skeleton />
@@ -389,6 +391,7 @@ export function A11yReview() {
 
   return (
     <main className="canvas-pad">
+      <A11yTabs active="queue" />
       <div className="page-head">
         <div className="page-head__titles">
           <h1 className="t-h1">Accessibility review</h1>
