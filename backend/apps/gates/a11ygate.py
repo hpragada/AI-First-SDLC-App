@@ -43,6 +43,16 @@ brownfield client with no warning. It is now a decision (`policy.block_on_baseli
 default), it is asserted, and — crucially — while it is off the gate **passes and says the debt
 is there**. A green gate on an application with 47 known problems must not look identical to a
 green gate on one with none.
+
+**And a fifth: findings that are tracked but may never block (QA-22).** The eight journey checks
+operate the application with a keyboard rather than reading a still page, and that agent has not
+yet been proven against a real one — so its findings are recorded, reported, ranked and ticketed
+like any other, and are barred from failing this gate. Two paths had to be closed for that to be
+true, and only one of them was obvious; the second is `unanswered_checks`, where the word
+`uncertain` meant two different things on either side of the seam (D-A11Y-84). As with debt, the
+gate **passes and says they are there** — the reviewer approving the story is the person who
+most needs to know, and nothing else puts it in front of them. There is no setting: see
+`policy.ADVISORY_CHECKERS` for why not.
 """
 from __future__ import annotations
 
@@ -89,8 +99,8 @@ def conditions_for_a11y_phase(phase: str) -> list[dict]:
     return [a11y_condition()] if phase in _A11Y_GATED_PHASES else []
 
 
-def open_a11y_defects(*, tenant_id, work_item_id) -> list[dict]:
-    """The `external_ref`s of this work item's still-open accessibility defects.
+def _a11y_refs(*, tenant_id, work_item_id) -> list[dict]:
+    """Every still-open accessibility defect on this work item, advisory ones included.
 
     Scoped on `a11y_finding`, which is QA-14's own key. Test defects carry `test_ref` and
     security defects carry `finding`; three families share this table and each reconciliation
@@ -111,6 +121,27 @@ def open_a11y_defects(*, tenant_id, work_item_id) -> list[dict]:
         ]
     return sorted(refs, key=lambda r: (r.get("route", ""), r.get("criterion", ""),
                                        r.get("selector", "")))
+
+
+def open_a11y_defects(*, tenant_id, work_item_id) -> list[dict]:
+    """The ones that may fail this gate — everything above except the advisory ones (QA-22).
+
+    Read from the ticket's own `advisory` stamp rather than recomputed here, so the gate and the
+    tracker cannot come to different conclusions about the same defect.
+    """
+    return [ref for ref in _a11y_refs(tenant_id=tenant_id, work_item_id=work_item_id)
+            if not ref.get("advisory")]
+
+
+def advisory_a11y_defects(*, tenant_id, work_item_id) -> list[dict]:
+    """The tracked-but-never-blocking ones, so the gate can say they are there.
+
+    A green gate on a story whose keyboard journey found a focus trap must not look identical
+    to a green gate on one that found nothing — the same rule QA-19 applies to inherited debt,
+    and the same rule D-A11Y-3 states for every other silence in this build.
+    """
+    return [ref for ref in _a11y_refs(tenant_id=tenant_id, work_item_id=work_item_id)
+            if ref.get("advisory")]
 
 
 def baseline_debt(*, tenant_id, project_id) -> list[dict]:
@@ -153,8 +184,20 @@ def unanswered_checks(*, tenant_id, project_id, work_item_id) -> list:
     verdict of `uncertain` is the other thing entirely — nobody answered, because the judge was
     unavailable or the run hit its cap — and treating that as "no problems found" is exactly how
     an incomplete check comes to read as a clean one.
+
+    **The journey checks are excluded, and this was a live bug (QA-22, D-A11Y-84).** For them
+    `uncertain` means the opposite of what this function reads it as. Their agent body is
+    explicit — *"If you could not tell, say `uncertain`: it routes to a person and is a
+    first-class answer here, not a failure to answer"* — because several of these criteria turn
+    on judgement calls specialists genuinely dispute. So one word carried two meanings across
+    the seam between QA-20 and this gate, and the consequence ran backwards: an agent that was
+    **sure** about a trap blocked through the defect above, and an agent that was **honest about
+    not being sure** blocked through here. This one defaulted to on, and the message it produced
+    — "no verdict was recorded" — was not even true. Silence and "I looked and cannot tell" are
+    different facts, and this function is only ever about the first.
     """
     from apps.a11y.models import A11yFinding
+    from apps.a11y.policy import ADVISORY_CHECKERS
     from apps.tenancy.context import tenant_context
     from integrations.types import A11Y_UNCERTAIN
 
@@ -164,7 +207,7 @@ def unanswered_checks(*, tenant_id, project_id, work_item_id) -> list:
                 tenant_id=tenant_id, project_id=project_id,
                 status=A11yFinding.Status.OPEN, verdict=A11Y_UNCERTAIN,
                 last_seen_run__work_item_id=work_item_id,
-            )
+            ).exclude(checker__in=sorted(ADVISORY_CHECKERS))
         )
 
 
@@ -295,6 +338,16 @@ def evaluate(condition: dict, context) -> dict:
     #    story with no UI, in a project carrying inherited debt), so they are joined rather than
     #    ranked: dropping either would leave a reviewer approving over something unsaid.
     notes = []
+    if advisory := advisory_a11y_defects(tenant_id=tenant_id, work_item_id=work_item_id):
+        # QA-22. The same rule as the debt note below, for the same reason: a green gate on a
+        # story whose keyboard journey found a focus trap must not read like a green gate on a
+        # story that found nothing. The reviewer approving this is the person who most needs to
+        # know, and the report they would otherwise have to go and read is not in front of them.
+        notes.append(
+            f"the keyboard journey found {len(advisory)} accessibility problem(s) on this "
+            f"story; they are tracked as defects and do not block, because findings from that "
+            f"agent never stop work: {_named([_describe(ref) for ref in advisory])}"
+        )
     if debt:
         notes.append(
             f"this project has {len(debt)} open accessibility problem(s) inherited from its "

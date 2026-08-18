@@ -56,7 +56,7 @@ from __future__ import annotations
 
 from apps.tenancy.context import tenant_context
 
-from .policy import blocks, default_policy, policy_or_default
+from .policy import blocks, default_policy, is_advisory, policy_or_default
 from .selectors import normalise
 
 #: The severities that open a defect **by default**. The same bar security uses. QA-12a derives
@@ -175,6 +175,18 @@ def _description(finding, also: list | None = None) -> str:
     return "\n".join(lines)
 
 
+def _advisory_group(members: list) -> bool:
+    """Whether this ticket is barred from failing a gate (QA-22).
+
+    **Only when EVERY member is advisory**, and the "every" is the whole point. When the page
+    scanner has also found this problem, the scanner's finding is a measurement of a still page
+    and blocks on its own merits — the keyboard agent happening to agree cannot take that away.
+    The one case that goes quiet is the one where the keyboard agent is the *only* thing that
+    saw it, which is exactly the case we are not yet willing to stop a team's work over.
+    """
+    return all(is_advisory(member.checker) for member in members)
+
+
 def _external_ref(finding, rank: dict | None = None, also: list | None = None) -> dict:
     rank = rank or {}
     return {
@@ -187,6 +199,11 @@ def _external_ref(finding, rank: dict | None = None, also: list | None = None) -
         # every one of them has resolved.
         "also_found_by": sorted(m.fingerprint for m in (also or [])),
         "found_by_sources": sorted({finding.source} | {m.source for m in (also or [])}),
+        # Tracked, but barred from failing a gate (QA-22). Written onto the ticket rather than
+        # re-derived at the gate for the same reason `priority` is: a defect leaves the platform
+        # for a client's tracker, where nothing of ours can work it out again. Recomputed on
+        # every reconciliation, so a ticket the scanner later confirms stops being advisory.
+        "advisory": _advisory_group([finding, *(also or [])]),
         "kind": DEFECT_KIND,
         "severity": finding.severity,
         "criterion": finding.criterion,

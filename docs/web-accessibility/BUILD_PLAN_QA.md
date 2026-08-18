@@ -38,11 +38,11 @@ Tasks: **QA‑23a**, QA‑23, QA‑24.
 > **Superseded 2026‑08‑17:** **QA‑09 is ⏸ parked** and now gates nothing. ~~**QA‑10a → QA‑10** run alongside and gate only **QA‑22** (Phase 2)~~
 > **Superseded again 2026‑08‑18 (D‑A11Y‑82):** the internal accuracy evaluation is **decoupled from the platform entirely** — it is our report card, and nothing in the product reads it. **QA‑10a and QA‑10 now gate NOTHING**, and QA‑22 depends only on QA‑20. The whole of E‑EVAL can be scheduled whenever it suits; it is no longer on anyone's critical path.
 
-**Status at 2026‑08‑18:** M0 complete except the E‑EVAL tasks · M1 complete · M2 complete · **M3: QA‑20 and QA‑21 built (🟡); QA‑22 is now unblocked and ready to build** · M4 not started.
+**Status at 2026‑08‑18:** M0 complete except the E‑EVAL tasks · M1 complete · M2 complete · **M3 complete: QA‑20 and QA‑21 built (🟡), QA‑22 🟢 done** · M4 not started.
 
 > **2026‑08‑18 — E‑EVAL is off the critical path for good (D‑A11Y‑82).** The internal accuracy evaluation no longer feeds anything in the product, so QA‑10a and QA‑10 gate nothing and QA‑22 depends only on QA‑20.
 
-> **Four tasks now share one live checkpoint: QA‑11a, QA‑12, QA‑20 and QA‑21.** All four are built and fully tested, and none has driven a real browser. One session against a running application closes all four.
+> **Four tasks share one live checkpoint: QA‑11a, QA‑12, QA‑20 and QA‑21.** All four are built and fully tested, and none has driven a real browser. One session against a running application closes all four. **QA‑22 is not among them** — it is proven against the gate itself, which needs no browser.
 
 ---
 

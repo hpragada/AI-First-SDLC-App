@@ -40,6 +40,7 @@ from __future__ import annotations
 from typing import NoReturn
 
 from apps.tenancy.context import tenant_context
+from integrations.types import A11Y_JOURNEY_CRITERIA
 
 from .findings import SEVERITY_BY_LEVEL
 
@@ -69,6 +70,34 @@ SEVERITIES: tuple[str, ...] = ("critical", "high", "medium")
 #: `A11yFinding.Source.RULE`. Spelled here rather than imported so this module stays free of
 #: model imports at import time (it is read while a gate is opening).
 RULE_SOURCE = "rule"
+
+#: The checks whose findings **never stop anyone's work** (QA-22, D-A11Y-83). The eight journey
+#: checks: an agent that operates the application with a keyboard, and that has not yet been
+#: proven against a real one.
+#:
+#: **Deliberately not configurable, and that is the decision rather than an omission.** It sits
+#: in this module because this is where "would this stop the pipeline?" is answered, but it is
+#: *not* part of the policy a project stores: there is no setting, no flag and nothing an admin
+#: can turn on. A setting is a question, and nobody has asked it — no client has said they want
+#: an unproven keyboard agent gating their merges. If one ever does, this is one line to change,
+#: with evidence behind it, which is the order this build insists on everywhere else.
+#:
+#: **Advisory means "does not stand in your way", never "hidden".** These findings are recorded
+#: in the ledger, shown in the report, ranked in the backlog, routed to the reviewer and raised
+#: as a tracked defect exactly like any other. The only thing they cannot do is fail a gate.
+ADVISORY_CHECKERS: frozenset[str] = frozenset(A11Y_JOURNEY_CRITERIA)
+
+
+def is_advisory(checker: str) -> bool:
+    """Whether a finding from this check is barred from blocking a gate.
+
+    Keyed on the **checker**, not the source, and that is load-bearing. A journey finding
+    settled by a measurement is stored as `source=rule` (D-A11Y-78) — the same source the page
+    scanner uses — so a source test would either let a journey measurement block or stop the
+    scanner blocking, and both are wrong. The checker is what says which half of the system
+    produced it: a page scan carries no checker at all.
+    """
+    return str(checker or "").strip() in ADVISORY_CHECKERS
 
 #: Who signs off accessibility (D7). The Accessibility SME maps onto the existing **QA Lead**
 #: for the POC rather than becoming a new value in `apps.base.Role`: that enum is shared by
@@ -330,6 +359,14 @@ def describe_policy(policy: dict) -> str:
         "A test run that could not complete blocks the gate."
         if gate["block_on_incomplete_run"]
         else "A test run that could not complete does NOT block the gate."
+    )
+    # Stated in the policy summary even though it is not part of the policy (QA-22). A rule that
+    # decides whether work stops has to be readable by the person whose work it is, and "why did
+    # this keyboard failure not block?" is otherwise unanswerable without reading the source.
+    lines.append(
+        "Problems found by the keyboard journey checks are reported, tracked and reviewed, but "
+        "never stop work — that agent operates the application rather than reading it, and it "
+        "has not yet been proven against a real one. This is not configurable."
     )
     lines.append(describe_baseline_enforcement(policy))
     if extra := extra_design_criteria(policy):

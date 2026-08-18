@@ -119,8 +119,14 @@ def prioritised(tenant_id, project_id, *, blocking_only: bool = False) -> list[d
     `blocking_only` narrows it to what the project's own policy would stop a release for —
     which is exactly the set QA-14 opens defects from, so the backlog a person reads and the
     tickets in their tracker are the same list in the same order.
+
+    **The advisory checks are excluded from it (QA-22).** They are still in the backlog — they
+    are real problems and belong in the fix order — but they cannot stop a release, so a list
+    whose whole promise is "this is what would stop you" must not name them. Filtered here as
+    well as at the gate deliberately: the promise in the paragraph above is that these two
+    agree, and a list that quietly disagreed with the gate would be worse than no list.
     """
-    from .policy import blocks, policy_or_default
+    from .policy import blocks, is_advisory, policy_or_default
 
     findings = open_findings(tenant_id, project_id)
     breadth = breadth_by_criterion(findings)
@@ -128,9 +134,10 @@ def prioritised(tenant_id, project_id, *, blocking_only: bool = False) -> list[d
         policy, _ = policy_or_default(tenant_id, project_id)
         findings = [
             finding for finding in findings
-            if finding.outcome == "failure" and blocks(
-                policy, severity=finding.severity, confidence=finding.confidence,
-                source=finding.source)
+            if finding.outcome == "failure"
+            and not is_advisory(finding.checker)
+            and blocks(policy, severity=finding.severity, confidence=finding.confidence,
+                       source=finding.source)
         ]
     return [
         {
