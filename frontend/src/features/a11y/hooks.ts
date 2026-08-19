@@ -91,6 +91,78 @@ export function useA11yCapture(
   return { url, error };
 }
 
+// ── Pages & audit (S-38, task 8a) ────────────────────────────────────────────────────────
+
+export function useA11yRoutes(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  return useQuery({
+    queryKey: ["a11y-routes", projectId],
+    queryFn: () => api.a11yRoutes(tenantId, projectId as string),
+    enabled: Boolean(projectId && tenantId),
+  });
+}
+
+// An audit is claimed and run by a machine, so the screen watches rather than waits. Polling
+// only while one is actually in flight: a page left open on a finished audit should not keep
+// asking, and `refetchIntervalInBackground` off means a forgotten tab stops by itself.
+const AUDIT_POLL_MS = 5000;
+const AUDIT_IN_FLIGHT = ["pending", "claimed", "capturing", "judging"];
+
+export function useA11yAudits(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  return useQuery({
+    queryKey: ["a11y-audits", projectId],
+    queryFn: () => api.a11yAudits(tenantId, projectId as string),
+    enabled: Boolean(projectId && tenantId),
+    refetchInterval: (query) =>
+      (query.state.data?.audits ?? []).some((a) => AUDIT_IN_FLIGHT.includes(a.status))
+        ? AUDIT_POLL_MS
+        : false,
+    refetchIntervalInBackground: false,
+  });
+}
+
+// Nothing is written. What this returns is what the person confirms against — see
+// `preview_registration` on the platform for why that step exists at all.
+export function usePreviewA11yRoutes(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  return useMutation({
+    mutationFn: (routesText: string) =>
+      api.a11yRoutesPreview(tenantId, projectId as string, routesText),
+  });
+}
+
+export function useRegisterA11yRoutes(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { routesText: string; replace: boolean }) =>
+      api.a11yRoutesRegister(tenantId, projectId as string, {
+        routes_text: vars.routesText,
+        replace: vars.replace,
+      }),
+    // The response IS the new list, so it is written straight into the cache. `a11y-audits` is
+    // invalidated too because the scope warning on the run strip is derived from both.
+    onSuccess: (next) => {
+      qc.setQueryData(["a11y-routes", projectId], next);
+      qc.invalidateQueries({ queryKey: ["a11y-audits", projectId] });
+    },
+  });
+}
+
+export function useStartA11yAudit(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { base_url?: string }) =>
+      api.a11yAuditStart(tenantId, projectId as string, vars),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["a11y-audits", projectId] });
+      qc.invalidateQueries({ queryKey: ["a11y-routes", projectId] });
+    },
+  });
+}
+
 // ── Conformance statement (S-37, QA-24) ──────────────────────────────────────────────────
 
 export function useA11yConformance(projectId: string | undefined) {

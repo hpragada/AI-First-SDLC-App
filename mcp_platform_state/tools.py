@@ -693,16 +693,34 @@ def ingest_a11y_audit_screen(tenant_id, audit_id, screen) -> dict:
                                 text=_json.dumps(screen))
 
 
-def finish_a11y_audit(tenant_id, audit_id) -> dict:
+def get_a11y_audit(tenant_id, audit_id) -> dict:
+    """The manifest for an audit this machine was handed (task 8a).
+
+    The claim already carries one, but a companion that reconnects mid-audit — or retries a
+    pass — must be able to ask again rather than start a second audit to get a manifest. The
+    frozen route list is the audit's own, so asking twice can never widen or narrow what it was
+    asked to visit.
+    """
+    from apps.a11y.baseline import audit_snapshot
+
+    return audit_snapshot(tenant_id=tenant_id, audit_id=audit_id)
+
+
+def finish_a11y_audit(tenant_id, audit_id, reason: str = "") -> dict:
     """Close a baseline audit: account for every route asked for, then ask the AI checks (QA-17).
 
     The reconciliation is the part that matters. A route that never reported is recorded as
     unreachable with that as its reason, so an audit that covered 38 of 50 screens says so
     instead of reading as a complete pass over an application with fewer problems than it has.
+
+    `reason` is the auditing machine's own account of why nothing came back — no browser
+    installed in the project folder, most often. It replaces the generic explanation, which
+    blames the application and would send someone to check a server nothing ever contacted.
+    Ignored when anything was captured: a stated reason cannot overrule a real result.
     """
     from apps.a11y.baseline import finish_baseline_audit
 
-    return finish_baseline_audit(tenant_id=tenant_id, audit_id=audit_id)
+    return finish_baseline_audit(tenant_id=tenant_id, audit_id=audit_id, reason=reason)
 
 
 def get_a11y_journey(tenant_id, run_id) -> dict:

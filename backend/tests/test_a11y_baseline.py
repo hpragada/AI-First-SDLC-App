@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,24 @@ def world(db):
     tenant = Tenant.objects.create(name="Acme")
     project = Project.objects.create(tenant=tenant, name="Imported App")
     return {"t": str(tenant.id), "p": str(project.id), "tenant": tenant, "project": project}
+
+
+@pytest.fixture
+def ready_folder(monkeypatch):
+    """Given a machine whose project folder has the browser and the scanner installed.
+
+    Requested by every test that drives a pass, because those tests are about the PASS and not
+    about what is installed on the machine. Whether a folder can run an audit at all is its own
+    question with its own tests (`preflight`, at the end of this file) — and without stating it
+    here, every one of them would stop at a temp directory with no `node_modules`, which is
+    exactly the honest thing `preflight` was added to do.
+    """
+    from runner.companion import a11yaudit
+
+    monkeypatch.setattr(a11yaudit, "preflight", lambda **kw: {
+        "ok": True, "cwd": "", "browser": {"ok": True, "error": ""},
+        "scanner": {"ok": True, "version": "4.13.0", "error": ""},
+    })
 
 
 def _register(world, *paths):
@@ -371,7 +390,7 @@ def test_the_resolver_says_where_the_address_came_from(world):
     assert found.source == "the default repository acme/web" and found.reason == ""
 
 
-def test_the_companion_may_leave_the_address_to_the_platform(tmp_path, monkeypatch):
+def test_the_companion_may_leave_the_address_to_the_platform(tmp_path, monkeypatch, ready_folder):
     """The half that makes B3 visible today: `--base-url` is optional, and the address the
     platform resolved comes back on the manifest, which is what the script visits."""
     from runner.companion import a11yaudit
@@ -892,7 +911,8 @@ def test_a_missing_node_is_reported_rather_than_crashing_the_pass(tmp_path):
     assert out["screens"] == []
 
 
-def test_the_audit_run_posts_what_it_captured_and_closes_the_audit(tmp_path, monkeypatch):
+def test_the_audit_run_posts_what_it_captured_and_closes_the_audit(
+        tmp_path, monkeypatch, ready_folder):
     from runner.companion import a11yaudit
 
     monkeypatch.setattr(a11yaudit, "run_audit_script", lambda manifest, **kw: {
@@ -959,7 +979,8 @@ def _script_stub(behaviour=None):
     return _run
 
 
-def test_a_big_audit_runs_in_passes_and_accounts_for_every_page(tmp_path, monkeypatch):
+def test_a_big_audit_runs_in_passes_and_accounts_for_every_page(
+        tmp_path, monkeypatch, ready_folder):
     from runner.companion import a11yaudit
 
     routes = [f"/p{i}" for i in range(130)]
@@ -976,7 +997,7 @@ def test_a_big_audit_runs_in_passes_and_accounts_for_every_page(tmp_path, monkey
     assert [c["tool"] for c in client.calls].count("finish_a11y_audit") == 1
 
 
-def test_each_pass_writes_its_own_file(tmp_path, monkeypatch):
+def test_each_pass_writes_its_own_file(tmp_path, monkeypatch, ready_folder):
     from runner.companion import a11yaudit
 
     script = _script_stub()
@@ -988,7 +1009,8 @@ def test_each_pass_writes_its_own_file(tmp_path, monkeypatch):
     assert outputs[1].endswith("a11y-candidates-pass-2.json")
 
 
-def test_a_pass_that_dies_never_reposts_the_previous_passs_screens(tmp_path, monkeypatch):
+def test_a_pass_that_dies_never_reposts_the_previous_passs_screens(
+        tmp_path, monkeypatch, ready_folder):
     """The trap this design exists to avoid. Share one filename and a pass that dies before
     writing leaves the previous pass's file in place — which would be read again and posted a
     second time, reporting pages as seen in a pass that never visited them."""
@@ -1014,7 +1036,7 @@ def test_a_pass_that_dies_never_reposts_the_previous_passs_screens(tmp_path, mon
                                 "script_returncode": 1}
 
 
-def test_a_failed_pass_does_not_abandon_the_audit(tmp_path, monkeypatch):
+def test_a_failed_pass_does_not_abandon_the_audit(tmp_path, monkeypatch, ready_folder):
     from runner.companion import a11yaudit
 
     script = _script_stub(lambda n, m: (
@@ -1031,7 +1053,7 @@ def test_a_failed_pass_does_not_abandon_the_audit(tmp_path, monkeypatch):
     assert out["script_returncode"] == 1, "one number, and it is not the last pass's"
 
 
-def test_an_audit_that_fits_in_one_pass_is_unchanged(tmp_path, monkeypatch):
+def test_an_audit_that_fits_in_one_pass_is_unchanged(tmp_path, monkeypatch, ready_folder):
     from runner.companion import a11yaudit
 
     script = _script_stub()
@@ -1130,3 +1152,615 @@ def test_routes_and_audits_are_reachable_from_the_api():
     assert hasattr(ProjectViewSet, "a11y_audits")
     assert ProjectViewSet.a11y_routes.mapping.keys() >= {"get", "put"}
     assert ProjectViewSet.a11y_audits.mapping.keys() >= {"get", "post"}
+
+
+# ══ can this machine run an audit at all? (task 8a) ══════════════════════════
+#
+# The audit script imports the browser and the scanner BY NAME. Node resolves a bare name from
+# the importing FILE's directory upward — `runner/companion/assets/` — and the companion ships
+# no `node_modules` and no `package.json`, so it found neither tool on any machine, ever.
+# Running from the project did not help (`cwd` is not consulted) and neither did `NODE_PATH`
+# (ignored for ES modules). Anchoring resolution at the working directory is what fixes it.
+#
+# Nothing caught this because nothing has ever executed the script: every test above stubs it,
+# and the one real invocation points at a missing `node` on purpose. So the tests below run it
+# for real. They skip where there is no Node — but they are never faked, because faking is
+# precisely what hid this.
+
+_NODE = shutil.which("node")
+needs_node = pytest.mark.skipif(_NODE is None, reason="no Node on this machine")
+
+
+def _project_with(tmp_path, *, browser=True, scanner=True) -> Path:
+    """A throwaway project carrying stand-ins for the two tools, installed where a real project
+    installs them. Stubs rather than the real packages: what is under test is whether Node can
+    SEE the project's `node_modules` from the script, which a two-line module proves as well as
+    a 200MB browser and in a fraction of the time."""
+    root = tmp_path / "client-project"
+    if browser:
+        pkg = root / "node_modules" / "playwright"
+        pkg.mkdir(parents=True)
+        (pkg / "package.json").write_text(
+            json.dumps({"name": "playwright", "version": "1.99.0", "main": "index.js"}),
+            encoding="utf-8")
+        (pkg / "index.js").write_text(
+            "module.exports = { chromium: { launch: async () => ({}) } };", encoding="utf-8")
+    if scanner:
+        pkg = root / "node_modules" / "axe-core"
+        pkg.mkdir(parents=True)
+        (pkg / "package.json").write_text(
+            json.dumps({"name": "axe-core", "version": "4.13.0", "main": "axe.js"}),
+            encoding="utf-8")
+        (pkg / "axe.js").write_text(
+            'module.exports = { source: "window.axe = {};", version: "4.13.0" };',
+            encoding="utf-8")
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+@needs_node
+def test_the_script_finds_the_tools_in_the_project_being_audited(tmp_path):
+    """The fix, proved by running the real script. Before it, this returned not-ok on every
+    machine — including one with both tools correctly installed."""
+    from runner.companion.a11yaudit import preflight
+
+    out = preflight(workdir=_project_with(tmp_path), node=_NODE)
+    assert out["ok"] is True, out
+    assert out["browser"]["ok"] is True
+    assert out["scanner"]["ok"] is True
+    assert out["scanner"]["version"] == "4.13.0", "the project's version, which the report names"
+
+
+@needs_node
+def test_a_folder_with_nothing_installed_names_the_folder_and_the_command(tmp_path):
+    """A refusal a person can act on. The folder is named because the usual cause is running
+    from the wrong one, and that is invisible from a message that only says 'not installed'."""
+    from runner.companion.a11yaudit import preflight
+
+    bare = tmp_path / "empty"
+    bare.mkdir()
+    out = preflight(workdir=bare, node=_NODE)
+    assert out["ok"] is False
+    assert str(bare) in out["browser"]["error"]
+    assert "npm install -D playwright axe-core" in out["browser"]["error"]
+
+
+@needs_node
+def test_the_scanner_alone_missing_is_a_warning_and_not_a_refusal(tmp_path):
+    """The two tools are not equally fatal. No browser means no page can be opened; no scanner
+    means the AI half still runs and every screen says the measurable half did not."""
+    from runner.companion.a11yaudit import preflight
+
+    out = preflight(workdir=_project_with(tmp_path, scanner=False), node=_NODE)
+    assert out["ok"] is True, "the audit still runs"
+    assert out["scanner"]["ok"] is False
+    assert "axe-core is not installed" in out["scanner"]["error"]
+
+
+def test_a_machine_with_no_node_is_reported_as_a_folder_that_cannot_run(tmp_path):
+    from runner.companion.a11yaudit import preflight
+
+    out = preflight(workdir=tmp_path, node="definitely-not-node-xyz")
+    assert out["ok"] is False and "not on PATH" in out["browser"]["error"]
+
+
+def test_an_audit_that_cannot_open_a_browser_visits_nothing_and_says_why(tmp_path, monkeypatch):
+    """It still opens and closes an audit — so every route is accounted for and the failure is
+    on the record — but it does not pretend to visit anything, and the reason it carries is the
+    real one rather than the generic 'the application did not respond'."""
+    from runner.companion import a11yaudit
+
+    monkeypatch.setattr(a11yaudit, "preflight", lambda **kw: {
+        "ok": False, "cwd": str(tmp_path),
+        "browser": {"ok": False, "error": f"Playwright is not installed in {tmp_path}"},
+        "scanner": {"ok": False, "version": "", "error": ""}})
+    ran = []
+    monkeypatch.setattr(a11yaudit, "run_audit_script",
+                        lambda *a, **kw: ran.append(1) or {"screens": [], "output": "",
+                                                           "returncode": 0, "stderr": ""})
+    client = _FakeClient()
+    out = a11yaudit.run_baseline_audit(client=client, project_id="p-1",
+                                       base_url="http://localhost:5173", workdir=tmp_path)
+
+    assert ran == [], "no pass is attempted when no page can be opened"
+    assert out["captured"] == 0 and out["script_returncode"] == 3
+    finish = [c for c in client.calls if c["tool"] == "finish_a11y_audit"]
+    assert len(finish) == 1
+    assert "Playwright is not installed" in finish[0]["reason"]
+
+
+def test_the_machines_own_reason_replaces_the_generic_one(world):
+    """The generic message blames the application and sends someone to check a server nothing
+    ever contacted. When the machine knows better, it says so."""
+    audit = _audit(world, "/", "/login")
+    out = finish_baseline_audit(tenant_id=world["t"], audit_id=str(audit.id),
+                                reason="Playwright is not installed in C:/work/meridian")
+
+    assert out["status"] == A11yBaselineAudit.Status.FAILED
+    assert out["reason"] == "Playwright is not installed in C:/work/meridian"
+    assert out["asked"] == 2 and out["opened"] == 0, "every route is still accounted for"
+
+
+def test_a_stated_reason_cannot_overrule_a_real_capture(world):
+    """A reason explains an empty audit. It must never be able to mark a working one failed."""
+    audit = _audit(world, "/login")
+    _post(world, audit, _screen("/login"))
+    out = finish_baseline_audit(tenant_id=world["t"], audit_id=str(audit.id),
+                                reason="Playwright is not installed")
+
+    assert out["status"] != A11yBaselineAudit.Status.FAILED
+    assert "reason" not in out
+
+
+# ══ an audit a machine can be handed (task 8a) ═══════════════════════════════
+#
+# Until now an audit only ever existed because somebody ran a command on the machine that would
+# visit it. The screen creates one instead, and a companion picks it up — the same shape code
+# intelligence took, for the same reason: mechanical work with no engine and no work item behind
+# it, so it rides its own channel rather than the plan/review/build one.
+
+
+def _enrol(world, label="dev-1"):
+    from apps.runs.models import RunnerEnrollment
+
+    return RunnerEnrollment.objects.create(
+        tenant=world["tenant"], project=world["project"], label=label,
+        enroll_token_hash=f"hash-{label}")
+
+
+def _claim(world, runner):
+    """What the companion's claim does, without the HTTP layer: the view's own body."""
+    from django.test import RequestFactory
+
+    from api.runner_views import RunnerA11yAuditClaimView, RunnerStateView
+
+    request = RequestFactory().get("/api/runner/a11y-audits/")
+    original = RunnerStateView._resolve_runner
+    RunnerStateView._resolve_runner = staticmethod(lambda _r: runner)
+    try:
+        return RunnerA11yAuditClaimView().get(request)
+    finally:
+        RunnerStateView._resolve_runner = original
+
+
+def test_an_audit_opened_from_the_app_waits_for_a_machine(world):
+    """The button cannot visit anything itself, so the audit it creates says so rather than
+    claiming to be capturing from the moment it is pressed."""
+    _repo(world)
+    _register(world, "/", "/login")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"], claimable=True)
+    assert audit.status == A11yBaselineAudit.Status.PENDING
+
+
+def test_an_audit_started_at_the_machine_does_not_wait_for_one(world):
+    """The command line opens an audit on the machine that is about to visit it. Making that
+    one wait for a claim would leave every terminal-run audit sitting forever."""
+    audit = _audit(world, "/", "/login")
+    assert audit.status == A11yBaselineAudit.Status.CAPTURING
+
+
+def test_the_first_screen_is_what_makes_an_audit_capturing(world):
+    """One rule for both ways in, and it is a fact rather than a declaration: a screen arrived,
+    so something is visiting."""
+    _repo(world)
+    _register(world, "/login")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"], claimable=True)
+    _post(world, audit, _screen("/login"))
+    audit.refresh_from_db()
+    assert audit.status == A11yBaselineAudit.Status.CAPTURING
+
+
+def test_a_companion_claims_the_waiting_audit_and_is_told_where_to_run_it(world):
+    _repo(world)
+    _register(world, "/", "/login")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"], claimable=True)
+
+    body = _claim(world, _enrol(world)).data
+    assert body["audit_id"] == str(audit.id)
+    assert body["repo"] == "acme/web", "the folder the browser and scanner come from"
+    assert body["manifest"]["routes"] == ["/", "/login"]
+    audit.refresh_from_db()
+    assert audit.status == A11yBaselineAudit.Status.CLAIMED
+    assert audit.claimed_at is not None
+
+
+def test_two_machines_never_take_the_same_audit(world):
+    """A broadcast audit binds to the machine that takes it, so the second one finds nothing."""
+    _repo(world)
+    _register(world, "/")
+    start_baseline_audit(tenant_id=world["t"], project_id=world["p"], claimable=True)
+
+    first = _claim(world, _enrol(world, "dev-1"))
+    second = _claim(world, _enrol(world, "dev-2"))
+    assert first.status_code == 200
+    assert second.status_code == 204, "there is one audit and one machine already has it"
+
+
+def test_a_machine_that_restarts_mid_audit_picks_its_own_audit_back_up(world):
+    """The common failure: the companion is restarted while an audit is in its hands. Without
+    this the audit sits `claimed` and the person waiting sees a machine that never got to it."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    _repo(world)
+    _register(world, "/")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"], claimable=True)
+    machine = _enrol(world, "dev-1")
+    _claim(world, machine)
+
+    audit.refresh_from_db()
+    audit.claimed_at = timezone.now() - timedelta(hours=2)
+    audit.save(update_fields=["claimed_at"])
+
+    again = _claim(world, machine)
+    assert again.status_code == 200 and again.data["audit_id"] == str(audit.id)
+
+
+def test_another_machine_does_not_take_over_an_audit_in_progress(world):
+    """Deliberate, and the same rule code intelligence has. An audit belongs to the machine
+    that can reach the running application; a colleague's machine may not have it up at all,
+    and handing the audit over would produce a report saying every page was unreachable —
+    which is far worse than an audit that visibly stalled. A stalled one is on the screen with
+    the time it was claimed, and running again opens a fresh one.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    _repo(world)
+    _register(world, "/")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"], claimable=True)
+    _claim(world, _enrol(world, "dev-1"))
+    audit.refresh_from_db()
+    audit.claimed_at = timezone.now() - timedelta(hours=2)
+    audit.save(update_fields=["claimed_at"])
+
+    assert _claim(world, _enrol(world, "dev-2")).status_code == 204
+
+
+def test_a_finished_audit_is_never_claimed(world):
+    """`complete`, `failed`, `capturing` — none of them is work waiting for a machine."""
+    _repo(world)
+    _register(world, "/")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"], claimable=True)
+    audit.status = A11yBaselineAudit.Status.COMPLETE
+    audit.save(update_fields=["status"])
+
+    assert _claim(world, _enrol(world)).status_code == 204
+
+
+def test_a_project_with_no_repository_is_handed_the_reason_not_a_guess(world):
+    """There is nowhere to run without a project folder, and the person needs to be told what
+    to register — an audit that is claimed and silently dropped looks like one nobody picked up.
+    """
+    _register(world, "/")
+    A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"], base_url="http://localhost:5173",
+        routes=["/"], status=A11yBaselineAudit.Status.PENDING)
+
+    body = _claim(world, _enrol(world)).data
+    assert body["repo"] == ""
+    assert "no repository registered" in body["repo_reason"]
+
+
+def test_a_handed_audit_is_run_not_opened_again(tmp_path, monkeypatch, ready_folder):
+    """The seam that would have doubled every audit: the screen creates one, the companion is
+    handed it, and the pass loop used to open its own as its first act."""
+    from runner.companion import a11yaudit
+
+    class _Handed(_FakeClient):
+        def call(self, tool, **kwargs):
+            out = super().call(tool, **kwargs)
+            if tool == "get_a11y_audit":
+                return {"audit_id": "handed-1", "status": "claimed",
+                        "manifest": {"version": 1, "audit_id": "handed-1",
+                                     "base_url": "http://127.0.0.1:5173", "routes": ["/"],
+                                     "output": "test-results/a11y-candidates.json"}}
+            return out
+
+    monkeypatch.setattr(a11yaudit, "run_audit_script", lambda manifest, **kw: {
+        "screens": [_screen("/")], "output": "x", "returncode": 0, "stderr": ""})
+    client = _Handed()
+    out = a11yaudit.run_baseline_audit(client=client, project_id="p-1", workdir=tmp_path,
+                                       audit_id="handed-1")
+
+    tools = [c["tool"] for c in client.calls]
+    assert "start_a11y_audit" not in tools, "a handed audit must never open a second one"
+    assert tools[0] == "get_a11y_audit"
+    assert out["audit_id"] == "handed-1" and out["posted"] == 1
+
+
+def test_reading_an_audit_back_cannot_widen_what_it_was_asked_to_visit(world):
+    """A companion that reconnects asks again. The frozen list is what it gets, even after
+    somebody registers more pages in the meantime."""
+    from apps.a11y.baseline import audit_snapshot
+
+    _register(world, "/", "/login")
+    audit = _audit(world, "/", "/login")
+    _register(world, "/", "/login", "/basket")
+
+    snap = audit_snapshot(tenant_id=world["t"], audit_id=str(audit.id))
+    assert snap["manifest"]["routes"] == ["/", "/login"]
+
+
+# ── a route that is a pattern ───────────────────────────────────────────────
+#
+# `/events/:id` is how a developer writes "any event". No browser can open it, so before this it
+# was asked for on every audit and reported as never opened on every audit — honest, and
+# permanently useless.
+
+
+def test_a_pattern_route_is_visited_by_example_and_recorded_as_the_pattern(world):
+    audit = _audit(world, "/", "/events/:id")
+    A11yRoute.objects.filter(tenant_id=world["t"], path="/events/:id").update(
+        example_path="/events/482")
+
+    manifest = audit_manifest(audit)
+    assert manifest["routes"] == ["/", "/events/:id"], "the pattern is what the audit asked for"
+    assert manifest["visit"] == {"/events/:id": "/events/482"}, "the page actually opened"
+
+
+def test_a_project_of_real_pages_carries_no_example_map_at_all(world):
+    audit = _audit(world, "/", "/login")
+    assert audit_manifest(audit)["visit"] == {}
+
+
+def test_the_example_is_where_the_browser_goes_and_the_pattern_is_what_is_filed(world):
+    """The whole point of keeping them apart: findings stay attached to the page of the
+    application, not to whichever example happened to be used this time."""
+    audit = _audit(world, "/events/:id")
+    A11yRoute.objects.filter(tenant_id=world["t"], path="/events/:id").update(
+        example_path="/events/482")
+    _post(world, audit, _screen("/events/:id", url="http://localhost:5173/events/482"))
+
+    scan = A11yScreenScan.objects.get(tenant_id=world["t"], run_key=str(audit.id))
+    assert scan.route == "/events/:id", "one row per page of the application"
+    assert scan.url.endswith("/events/482"), "and the evidence says what was really opened"
+
+
+# ══ registering pages from the app (task 8a) ═════════════════════════════════
+#
+# A page is identified BY ITS PATH — there is no hidden id, and the database's one rule is one
+# row per (project, path). So editing the text of a path does not edit a page, it names a
+# different one. Everything below exists because that is invisible from where the user sits.
+
+
+def _paste(world, text, **kw):
+    from apps.a11y.routes import parse_routes_text, register_routes
+
+    return register_routes(tenant_id=world["t"], project_id=world["p"],
+                           routes=parse_routes_text(text), **kw)
+
+
+def test_a_pasted_list_of_paths_is_registered(world):
+    out = _paste(world, '["/", "/catalogue"]')
+    assert out["added"] == ["/", "/catalogue"] and out["total"] == 2
+
+
+def test_a_pasted_list_of_entries_keeps_the_names_and_the_scope(world):
+    _paste(world, json.dumps([
+        {"path": "/", "title": "Home"},
+        {"path": "/admin/debug", "title": "Internal debug page", "enabled": False},
+    ]))
+    rows = {r.path: r for r in A11yRoute.objects.filter(tenant_id=world["t"])}
+    assert rows["/"].label == "Home"
+    assert rows["/admin/debug"].enabled is False
+
+
+def test_title_and_label_are_one_field_and_not_two(world):
+    """`title` is what an exported list calls the human name and `label` is what this table
+    calls it. Accepting both is an alias; storing both would be a second field to keep in step."""
+    _paste(world, json.dumps([{"path": "/a", "title": "A"}, {"path": "/b", "label": "B"}]))
+    rows = {r.path: r.label for r in A11yRoute.objects.filter(tenant_id=world["t"])}
+    assert rows == {"/a": "A", "/b": "B"}
+
+
+def test_an_entry_with_no_path_names_itself_and_registers_nothing(world):
+    """The failure this is really about: an export whose path column is called something else.
+    'A route has no path' is unactionable on a list of 69, so the entry and its keys are handed
+    back — and because nothing is written, there is no half-registered list to clean up."""
+    from apps.a11y.routes import RouteError
+
+    with pytest.raises(RouteError) as exc:
+        _paste(world, json.dumps([
+            {"path": "/", "title": "Home"},
+            {"url": "/catalogue", "name": "Browse", "inScope": True},
+        ]))
+    message = str(exc.value)
+    assert "entry 2 of 2" in message
+    assert "`url`" in message and "`name`" in message and "`inScope`" in message
+    assert A11yRoute.objects.filter(tenant_id=world["t"]).count() == 0, "all or nothing"
+
+
+def test_a_key_we_do_not_recognise_is_named_back_rather_than_dropped(world):
+    """The dangerous silence. If an export calls the in-scope flag `inScope`, every page comes
+    back in scope and we audit the ones the client excluded — with nothing anywhere saying a
+    flag was ignored. Naming it is what turns that into a ten-second fix."""
+    out = _paste(world, json.dumps([
+        {"path": "/", "inScope": True, "owner": "web"},
+        {"path": "/catalogue", "inScope": False},
+    ]))
+    assert out["ignored_keys"] == [{"key": "inScope", "entries": 2},
+                                   {"key": "owner", "entries": 1}]
+    assert out["total"] == 2, "the pages are still registered — throwing them away helps nobody"
+
+
+def test_every_column_is_named_back_and_not_only_the_scope_flag(world):
+    out = _paste(world, json.dumps([{"path": "/", "heading": "Home", "weight": 3}]))
+    assert [k["key"] for k in out["ignored_keys"]] == ["heading", "weight"]
+
+
+def test_something_that_is_not_a_list_of_pages_says_so_in_those_words(world):
+    from apps.a11y.routes import RouteError, parse_routes_text
+
+    with pytest.raises(RouteError) as exc:
+        parse_routes_text("/, /catalogue")
+    assert "could not be read as a list of pages" in str(exc.value)
+
+
+def test_a_single_entry_without_its_brackets_is_still_a_list_of_one(world):
+    from apps.a11y.routes import parse_routes_text
+
+    assert parse_routes_text('{"path": "/checkout"}') == [{"path": "/checkout"}]
+
+
+def test_an_example_is_checked_like_any_other_path(world):
+    """An example that is not a path would send the audit to an address nobody asked for."""
+    from apps.a11y.routes import RouteError
+
+    with pytest.raises(RouteError) as exc:
+        _paste(world, json.dumps([{"path": "/events/:id", "example": "events/482"}]))
+    assert "must start with `/`" in str(exc.value)
+
+
+def test_an_example_that_is_the_route_itself_is_not_an_example(world):
+    _paste(world, json.dumps([{"path": "/checkout", "example": "/checkout"}]))
+    assert A11yRoute.objects.get(tenant_id=world["t"], path="/checkout").example_path == ""
+
+
+# ── what a paste would do, before it does it ────────────────────────────────
+#
+# The confirm step. Renaming a path by re-pasting cannot be told from adding a page, because
+# from the database's point of view it IS adding a page. The only place that distinction can be
+# made is in front of the person who typed it, before anything is written.
+
+
+def _open_finding(world, route):
+    """One open problem recorded against a page, the way a real audit records one."""
+    from apps.a11y.report import SOURCE_AI, MergedReport, ReportRow
+
+    record_run_findings(
+        tenant_id=world["t"], project_id=world["p"],
+        run_id="c0ffee00-0000-4000-8000-000000000009",
+        report=MergedReport(rows=[ReportRow(
+            source=SOURCE_AI, outcome="failure", criteria=("1.1.1",), route=route,
+            selector="img.hero", evidence="alt reads like a filename", confidence=0.9,
+            checker="alt", verdict="fail", suggested_fix="describe it", screenshot_ref="",
+            content_hash="h-1", engine="claude", model="opus", prompt_version="v3",
+        )], routes=[route]))
+
+
+def _preview(world, text):
+    from apps.a11y.routes import parse_routes_text, preview_registration
+
+    return preview_registration(tenant_id=world["t"], project_id=world["p"],
+                                routes=parse_routes_text(text))
+
+
+def test_a_preview_writes_nothing(world):
+    _preview(world, '["/", "/catalogue"]')
+    assert A11yRoute.objects.filter(tenant_id=world["t"]).count() == 0
+
+
+def test_a_renamed_path_shows_up_as_one_new_page_and_one_left_behind(world):
+    """The team's own scenario. Five pages registered, the third edited, the list pasted again:
+    the platform sees five paths of which one is new, and one it already has that nobody
+    mentioned. Without this the sixth page stays in scope and is audited forever."""
+    _paste(world, json.dumps(["/", "/catalogue", "/catalogue/search", "/account/holds"]))
+
+    out = _preview(world, json.dumps(["/", "/catalogue", "/catalogue/results",
+                                      "/account/holds"]))
+    assert out["adding"] == ["/catalogue/results"]
+    assert [m["path"] for m in out["missing"]] == ["/catalogue/search"]
+    assert sorted(out["updating"]) == ["/", "/account/holds", "/catalogue"]
+
+
+def test_the_pages_left_out_carry_what_would_be_lost_by_excluding_them(world):
+    """'Did you mean to remove it?' is a question worth asking only with the facts attached."""
+    _paste(world, json.dumps([{"path": "/checkout", "title": "Checkout"}]))
+    _open_finding(world, "/checkout")
+
+    out = _preview(world, '["/"]')
+    left = next(m for m in out["missing"] if m["path"] == "/checkout")
+    assert left["label"] == "Checkout"
+    assert left["open_findings"] == 1
+
+
+def test_a_page_already_out_of_scope_is_not_offered_for_removal_again(world):
+    _paste(world, json.dumps([{"path": "/admin/debug", "enabled": False}, {"path": "/"}]))
+    out = _preview(world, '["/"]')
+    assert out["missing"] == []
+
+
+def test_the_preview_refuses_exactly_what_the_write_refuses(world):
+    """One reader for both, so a confirmation screen can never describe something the write
+    would then reject."""
+    from apps.a11y.routes import RouteError
+
+    with pytest.raises(RouteError):
+        _preview(world, json.dumps([{"url": "/catalogue"}]))
+
+
+# ── what changed, and when (decision 3) ─────────────────────────────────────
+#
+# An audit finds 47 problems across 68 pages. Twelve are quietly taken out of scope and it is
+# re-run: 9 problems across 56, and the report's Movement section reads as an improvement.
+# Every part of that is doing its job. The gap is between them.
+
+
+def test_changing_the_page_list_is_written_to_the_ledger(world):
+    from apps.ledger.models import Event
+
+    _paste(world, '["/", "/catalogue"]', actor="user-7")
+    entry = Event.objects.get(tenant_id=world["t"], action="a11y.routes.registered")
+    assert entry.actor == "user-7"
+    assert entry.payload["added"] == ["/", "/catalogue"]
+    assert entry.payload["source"] == "manual"
+
+
+def test_taking_a_page_out_of_scope_is_recorded_with_the_page_named(world):
+    from apps.ledger.models import Event
+
+    _paste(world, '["/", "/catalogue"]')
+    _paste(world, '["/"]', replace=True)
+
+    latest = Event.objects.filter(tenant_id=world["t"],
+                                  action="a11y.routes.registered").order_by("ts").last()
+    assert latest.payload["disabled"] == ["/catalogue"]
+
+
+def test_pasting_the_same_list_again_is_still_recorded(world):
+    """'Somebody pasted the same list again' is a different fact from 'nobody touched it', and
+    only one of them explains a report that did not change."""
+    from apps.ledger.models import Event
+
+    _paste(world, '["/"]')
+    _paste(world, '["/"]')
+    assert Event.objects.filter(tenant_id=world["t"],
+                                action="a11y.routes.registered").count() == 2
+
+
+def test_nothing_to_compare_against_says_nothing(world):
+    from apps.a11y.routes import scope_change_since
+
+    _paste(world, '["/", "/catalogue"]')
+    assert scope_change_since(world["t"], world["p"]) == {}
+
+
+def test_a_page_list_that_has_not_moved_says_nothing(world):
+    from apps.a11y.routes import scope_change_since
+
+    _paste(world, '["/", "/login"]')
+    audit = _audit(world, "/", "/login")
+    audit.status = A11yBaselineAudit.Status.COMPLETE
+    audit.save(update_fields=["status"])
+    assert scope_change_since(world["t"], world["p"]) == {}
+
+
+def test_a_shrunken_scope_is_reported_against_the_audit_it_shrank_from(world):
+    """The one that matters: the numbers are about to improve for a reason that has nothing to
+    do with accessibility, and this is what says so."""
+    from apps.a11y.routes import scope_change_since
+
+    _paste(world, json.dumps(["/", "/login", "/basket"]))
+    audit = _audit(world, "/", "/login", "/basket")
+    audit.status = A11yBaselineAudit.Status.COMPLETE
+    audit.save(update_fields=["status"])
+
+    _paste(world, json.dumps(["/", "/checkout"]), replace=True)
+    moved = scope_change_since(world["t"], world["p"])
+    assert moved["added"] == ["/checkout"]
+    assert moved["removed"] == ["/basket", "/login"]
+    assert moved["before"] == 3 and moved["now"] == 2
+    assert moved["audit_id"] == str(audit.id)

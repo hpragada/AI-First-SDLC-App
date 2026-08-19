@@ -293,3 +293,90 @@ describe("S-34 Export / publish — policy-driven live modal", () => {
     expect(queryByText("Target capability")).toBeNull();
   });
 });
+
+
+// ── B4 · the way anyone finds the accessibility work (task 8a) ───────────────
+//
+// The audit screen lived behind a tab nothing pointed at, which is found only by someone who
+// already knew it was there. These assert the step exists, says the right thing in each of its
+// three states, and — the one that would silently break the hub — that a payload without the
+// field still renders.
+
+const HUB_PROJECT = "11111111-1111-1111-1111-111111111111";
+
+function stubHub(a11y: unknown) {
+  const hub: Record<string, unknown> = {
+    upload: [], adopt: [], adopt_types: [],
+    register: { docstore_connected: false, tasktracker_connected: false,
+                designsource_connected: false, pages_registered: 0, issues_registered: 0 },
+    index: { status: "not_started", artifact_id: null, repos: [] },
+    gap: { ready: false },
+  };
+  if (a11y !== undefined) hub.a11y = a11y;
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    const body =
+      /auth\/me\//.test(url)
+        ? {
+            user: { id: "u1", email: "a@acme.test", name: "A", is_tenant_admin: false },
+            tenant: { id: "t1", name: "Acme" },
+            memberships: [{ project_id: HUB_PROJECT, project_name: "Meridian", role: "engineer" }],
+          }
+        : /onboarding\//.test(url) ? hub
+        : /runners\//.test(url) ? []
+        : /repositories\//.test(url) ? []
+        : {};
+    return { ok: true, status: 200, statusText: "stub",
+             text: async () => JSON.stringify(body) } as Response;
+  });
+}
+
+describe("S-24 onboarding — the accessibility step (B4)", () => {
+  beforeEach(() => localStorage.setItem("selectedProjectId", HUB_PROJECT));
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  it("not started · offers to set the audit up, and says what it is for", async () => {
+    vi.stubGlobal("fetch", stubHub({ routes_registered: 0, audits_run: 0, status: "not_started" }));
+    renderWithProviders(<OnboardingHub />);
+
+    expect(await screen.findByText("Check accessibility")).toBeTruthy();
+    expect(screen.getByText(/where the application stands before you change anything/)).toBeTruthy();
+    const link = screen.getByRole("link", { name: "Set up the audit" });
+    expect(link.getAttribute("href")).toBe("/a11y/pages");
+  });
+
+  it("ready · pages are registered and no audit has run yet", async () => {
+    vi.stubGlobal("fetch", stubHub({ routes_registered: 69, audits_run: 0, status: "ready" }));
+    renderWithProviders(<OnboardingHub />);
+
+    expect(await screen.findByText(/69 page\(s\) registered/)).toBeTruthy();
+  });
+
+  it("done · an audit has run, and it points at where the report is", async () => {
+    vi.stubGlobal("fetch", stubHub({ routes_registered: 69, audits_run: 2, status: "done" }));
+    renderWithProviders(<OnboardingHub />);
+
+    expect(await screen.findByText(/2 audits run/)).toBeTruthy();
+  });
+
+  it("a payload with no accessibility block still renders the hub", async () => {
+    // A backend that predates this field must not blank the screen a brownfield user lands on.
+    vi.stubGlobal("fetch", stubHub(undefined));
+    renderWithProviders(<OnboardingHub />);
+
+    expect(await screen.findByText("Check accessibility")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Set up the audit" })).toBeTruthy();
+  });
+
+  it("Resume moved to 7, so the numbering still reads in order", async () => {
+    vi.stubGlobal("fetch", stubHub({ routes_registered: 0, audits_run: 0, status: "not_started" }));
+    renderWithProviders(<OnboardingHub />);
+
+    await screen.findByText("Check accessibility");
+    const resume = screen.getByText("Resume").closest(".vstep");
+    expect(resume?.querySelector(".vstep__num")?.textContent).toBe("7");
+  });
+});

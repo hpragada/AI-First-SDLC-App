@@ -15,6 +15,7 @@ from .auth_views import (
 )
 from .ci_views import CIA11yCandidatesView, CITestResultsView
 from .runner_views import (
+    RunnerA11yAuditClaimView,
     RunnerBuildFetchView,
     RunnerBuildReportView,
     RunnerClarificationCreateView,
@@ -113,6 +114,7 @@ urlpatterns = [
     path("runner/reviews/<uuid:run_id>/report/", RunnerReviewReportView.as_view(),
          name="runner-review-report"),
     # Code-intelligence dispatch (B4): claim a job + report the analysis (companion-token auth).
+    path("runner/a11y-audits/", RunnerA11yAuditClaimView.as_view(), name="runner-a11y-claim"),
     path("runner/code-intel/", RunnerCodeIntelClaimView.as_view(), name="runner-codeintel-claim"),
     path("runner/code-intel/<uuid:job_id>/report/", RunnerCodeIntelReportView.as_view(),
          name="runner-codeintel-report"),

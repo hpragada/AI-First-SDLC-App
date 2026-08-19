@@ -1786,6 +1786,18 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
             for cap in ("docstore", "tasktracker", "designsource")
         }
 
+    with tenant_context(tenant_id):
+        from apps.a11y.models import A11yBaselineAudit, A11yRoute
+
+        a11y_routes = A11yRoute.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, enabled=True).count()
+        # `complete` and `judging` both mean the pages were visited and something came back;
+        # judging is the AI half still finishing, which is not the user's step to wait on.
+        a11y_audits = A11yBaselineAudit.objects.filter(
+            tenant_id=tenant_id, project_id=project_id,
+            status__in=(A11yBaselineAudit.Status.COMPLETE,
+                        A11yBaselineAudit.Status.JUDGING)).count()
+
     gap = read_gap_report(tenant_id=tenant_id, project_id=project_id)
     # Live state of the two headless steps. Outside the block above because each opens its own
     # tenant_context; cheap (one indexed lookup per repo) and only this screen asks for it.
@@ -1818,6 +1830,17 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
             "pages_registered": pages_registered, "issues_registered": issues_registered,
         },
         "adopt_types": adoptable_type_choices(),
+        # Where the accessibility step stands (task 8a). A brownfield project's pages are the
+        # one thing the platform cannot discover for itself — it has no access to the running
+        # application, deliberately — so the step is "have they told us, and has an audit run".
+        # Both are counts rather than a stored flag: a flag would be a third thing to keep in
+        # step with two facts that already exist.
+        "a11y": {
+            "routes_registered": a11y_routes,
+            "audits_run": a11y_audits,
+            "status": ("done" if a11y_audits else
+                       "ready" if a11y_routes else "not_started"),
+        },
         "index": {
             "status": "indexed" if intel_artifact else "not_started",
             "artifact_id": str(intel_artifact.id) if intel_artifact else None,

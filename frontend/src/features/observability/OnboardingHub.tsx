@@ -507,6 +507,9 @@ function OnboardingHubLive() {
   // The backend serves the human label beside the key (S5-7). The hub used to interpolate the raw
   // key, so a user read "Resume at: task_breakdown". Fall back to prettifying the slug rather than
   // to a lookup table, which is what drifted in the first place.
+  // Defaulted rather than optional-chained at every use: a backend that predates this field
+  // must still render the step, showing it as not started, which is what it is.
+  const a11y = data.a11y ?? { routes_registered: 0, audits_run: 0, status: "not_started" as const };
   const gapResumeLabel =
     data.gap.resume_label ||
     (data.gap.resume_phase ?? "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -665,8 +668,34 @@ function OnboardingHubLive() {
             </div>
           </Vstep>
 
+          {/* B4 — the way anyone finds the accessibility work at all. The audit screen existed
+              behind a tab nothing pointed at, which is found only by someone who already knew.
+              It sits before Resume on purpose: the point of a baseline is to know where the
+              application stands BEFORE anything is changed. */}
           <Vstep
             num="6"
+            title="Check accessibility"
+            desc={
+              a11y.status === "done"
+                ? `${a11y.audits_run} audit${a11y.audits_run === 1 ? "" : "s"} run — open the report from Artifacts.`
+                : a11y.status === "ready"
+                  ? `${a11y.routes_registered} page(s) registered. Run a first audit against WCAG 2.2 AA.`
+                  : "Register the pages of the application and run a first audit against WCAG 2.2 AA. This tells you where the application stands before you change anything."
+            }
+            state={a11y.status === "done" ? "done" : a11y.status === "ready" ? "active" : undefined}
+          >
+            <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
+              <Link
+                to="/a11y/pages"
+                className={a11y.status === "done" ? "btn btn--secondary" : "btn btn--primary"}
+              >
+                {a11y.status === "not_started" ? "Set up the audit" : "Pages & audit"}
+              </Link>
+            </div>
+          </Vstep>
+
+          <Vstep
+            num="7"
             title="Resume"
             desc={data.gap.ready ? `Trigger ${gapResumeLabel} on a work item to enter the pipeline.` : "Available after the gap report."}
             state={data.gap.ready ? "active" : undefined}

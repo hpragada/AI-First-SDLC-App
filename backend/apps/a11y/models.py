@@ -582,6 +582,12 @@ class A11yRoute(TenantScopedModel):
     source = models.CharField(max_length=16, choices=Source.choices, default=Source.MANUAL)
     enabled = models.BooleanField(default=True)
     notes = models.TextField(blank=True)                      # "needs a signed-in session"
+    # A concrete address for a route that is a PATTERN — `/events/:id` is how a developer writes
+    # "any event", and no browser can open it. Without this the page is asked for on every audit
+    # and reported as never opened on every audit, forever: honest, and permanently useless.
+    # With it the audit visits `/events/482` and the finding is still recorded against the
+    # pattern, so one row keeps meaning one page of the application rather than one visit to it.
+    example_path = models.CharField(max_length=512, blank=True)
 
     class Meta:
         constraints = [
@@ -590,6 +596,11 @@ class A11yRoute(TenantScopedModel):
             )
         ]
         ordering = ["path"]
+
+    @property
+    def visit_path(self) -> str:
+        """What a browser is actually pointed at — the example where there is one."""
+        return (self.example_path or "").strip() or self.path
 
     def __str__(self) -> str:
         return f"a11y-route {self.path}{'' if self.enabled else ' (disabled)'}"
@@ -612,6 +623,13 @@ class A11yBaselineAudit(TenantScopedModel):
     has that id — the two places that looked one up (`findings.record_run_findings`,
     `report.publish_report`) resolve it and carry on without one.
 
+    **Two ways in, one set of states.** Opened from the app the audit is `pending` until a
+    machine claims it; started from the companion's own command line it goes straight to
+    `capturing`, because the machine that opened it is already standing there. Neither path
+    knows the other exists: the status simply says what is true, and `capturing` is reached the
+    moment a screen arrives whoever sent it (`ingest_audit_capture`). There is no mode flag,
+    because a mode flag would be a second thing to keep in step with reality.
+
     **`routes` is frozen at the start.** The audit has to be able to say "this route was
     asked for and never came back", which cannot be answered from the captures alone — that
     is precisely the silence it would be reading. Re-reading the registry at the end would
@@ -619,6 +637,8 @@ class A11yBaselineAudit(TenantScopedModel):
     """
 
     class Status(models.TextChoices):
+        PENDING = "pending", "Pending"            # opened from the app; no machine has it yet
+        CLAIMED = "claimed", "Claimed"            # a companion took it and is about to visit
         CAPTURING = "capturing", "Capturing"      # waiting for screens from the companion
         JUDGING = "judging", "Judging"            # captures in, AI pass dispatched
         COMPLETE = "complete", "Complete"
@@ -637,6 +657,16 @@ class A11yBaselineAudit(TenantScopedModel):
     started_by = models.ForeignKey(
         "tenancy.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
+    # The companion this audit was routed to. NULL is a broadcast any active companion for the
+    # project may take, and it is bound to the machine that takes it — the same self-healing
+    # `CodeIntelJob` has, so an audit opened before a companion is up still runs when one
+    # appears. `claimed_at` is what makes a dead companion's claim recoverable rather than a
+    # dead end: past the lease, the audit is claimable again.
+    enrollment = models.ForeignKey(
+        "runs.RunnerEnrollment", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    claimed_at = models.DateTimeField(null=True, blank=True)
     #: What happened, in numbers a person can check — see `baseline.finish_baseline_audit`.
     summary = models.JSONField(default=dict, blank=True)
 

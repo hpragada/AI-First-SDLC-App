@@ -1,0 +1,336 @@
+// @vitest-environment jsdom
+//
+// S-38 — Pages & audit (task 8a).
+//
+// The brownfield way in: register the pages of an application the platform cannot see, and run
+// an audit on a machine that can. These assert the sentences, because every state here is a
+// place where a screen that rendered "successfully" could still mislead — an empty page list
+// that reads as an application with no pages, an audit that failed for a reason nobody is told,
+// a corrected path that quietly becomes a second page, or a scope that shrank between two
+// audits whose numbers are then compared as though they measured the same thing.
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+
+import { renderWithProviders } from "../../test/utils";
+import { A11yAudit } from "./A11yAudit";
+
+const PROJECT = "11111111-1111-1111-1111-111111111111";
+
+const ME = {
+  user: { id: "u1", email: "aisha@acme.test", name: "Aisha Khan", is_tenant_admin: false },
+  tenant: { id: "t1", name: "Acme" },
+  memberships: [{ project_id: PROJECT, project_name: "Meridian", role: "qa_lead" }],
+};
+
+function stubRoutes(routes: Array<[RegExp, unknown, number?]>) {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    void init;
+    for (const [pattern, body, status = 200] of routes) {
+      if (pattern.test(url)) {
+        return {
+          ok: status < 400,
+          status,
+          statusText: "stub",
+          text: async () => JSON.stringify(body),
+        } as Response;
+      }
+    }
+    return { ok: false, status: 404, statusText: "stub", text: async () => "{}" } as Response;
+  });
+}
+
+const CONNECTED = [{ id: "r1", machine: "dev-1", last_seen: "2026-08-18T14:00:00Z", online: true, projects: [] }];
+
+function authed(runners: unknown = CONNECTED): Array<[RegExp, unknown, number?]> {
+  return [
+    [/\/auth\/me\//, ME],
+    [/\/runners\//, runners],
+    [/\/dashboard\//, { needs_me: { gates: [], clarifications: [] } }],
+    [/a11y-review\/$/, { queue: [], can_review: true, lock_minutes: 15 }],
+  ];
+}
+
+function route(over: Record<string, unknown> = {}) {
+  return {
+    id: "route-1",
+    path: "/catalogue",
+    label: "Browse the catalogue",
+    source: "manual",
+    enabled: true,
+    notes: "",
+    example_path: "",
+    last_visited: "2026-08-18T14:02:00Z",
+    ...over,
+  };
+}
+
+function routesBody(over: Record<string, unknown> = {}) {
+  return {
+    routes: [route()],
+    summary: "1 route(s) registered for audit",
+    scope_change: {},
+    ...over,
+  };
+}
+
+beforeEach(() => {
+  localStorage.setItem("selectedProjectId", PROJECT);
+});
+afterEach(() => {
+  // vitest runs without `globals: true` here, so RTL's automatic cleanup is not wired up and
+  // every render would otherwise stack in one document.
+  cleanup();
+  vi.unstubAllGlobals();
+  localStorage.clear();
+});
+
+describe("S-38 pages and audit", () => {
+  it("empty · says the platform cannot discover the pages, rather than showing none", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({ routes: [], summary: "no routes are registered" })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    // The distinction this screen exists to make. "No pages" could mean an application with no
+    // pages; it means nobody has said what they are, and the reason is deliberate.
+    expect(await screen.findByText("No pages are registered yet")).toBeTruthy();
+    expect(screen.getByText(/cannot discover its pages/)).toBeTruthy();
+    // No run strip at all — running an audit over nothing would report no problems, which
+    // reads exactly like an application with none.
+    expect(screen.queryByRole("button", { name: "Run audit" })).toBeNull();
+  });
+
+  it("default · shows the pages, the passes, and what will be visited", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({
+        routes: [route(), route({ id: "r2", path: "/admin/debug", label: "Internal debug page", enabled: false, last_visited: null })],
+      })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("/catalogue")).toBeTruthy();
+    expect(screen.getByText("Excluded")).toBeTruthy();
+    expect(screen.getByText("Machine connected")).toBeTruthy();
+    // One in scope of two registered — the arithmetic is the platform's, not a number the
+    // reader has to take on trust.
+    expect(screen.getByText("Pages in scope").nextElementSibling?.textContent).toBe("1 of 2");
+    // 60 pages per pass, so one pass. Shown so nobody has to guess how a 68-page audit runs.
+    expect(screen.getByText("Passes").nextElementSibling?.textContent).toContain("1");
+    expect(screen.getByRole("button", { name: "Run audit" })).toBeTruthy();
+  });
+
+  it("a page that has never been opened says so instead of showing a blank", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({ routes: [route({ last_visited: null })] })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Never visited")).toBeTruthy();
+  });
+
+  it("a pattern route says which real page stood in for it", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({
+        routes: [route({ path: "/events/:id", label: "Event detail", example_path: "/events/482" })],
+      })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    // Without this the report would claim a page that cannot be opened had been checked.
+    expect(await screen.findByText("checked using /events/482")).toBeTruthy();
+  });
+
+  it("blocked · no machine of yours is connected, and it says 'yours'", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed([]),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("You have no machine connected")).toBeTruthy();
+    // The app can only see the caller's own enrollments, so it must not claim nobody has one.
+    expect(screen.getByText(/only knows about yours/)).toBeTruthy();
+  });
+
+  it("the page list moving since the last audit is said before the button, not after", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({
+        scope_change: { added: ["/checkout"], removed: ["/basket", "/login"], before: 3, now: 2 },
+      })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    // Otherwise the next report's Movement section reads as an improvement that is really a
+    // smaller measurement.
+    expect(await screen.findByText("The page list has changed since the last audit")).toBeTruthy();
+    expect(screen.getByText(/1 added · 2 taken out of scope/)).toBeTruthy();
+  });
+
+  it("complete · a past audit accounts for the pages that never opened", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "complete", base_url: "http://localhost:4180",
+        routes: ["/", "/login"], created_at: "2026-08-18T14:02:00Z",
+        summary: { asked: 68, opened: 66, never_reported: ["/x", "/y"] },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("68 asked for · 66 reported")).toBeTruthy();
+    expect(screen.getByText("2 never opened")).toBeTruthy();
+  });
+
+  it("failed · the audit says why in the machine's own words", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "failed", base_url: "", routes: ["/"],
+        created_at: "2026-08-18T14:02:00Z",
+        summary: { asked: 1, opened: 0, reason: "Playwright is not installed in C:/work/meridian" },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    // The generic message blames the application and would send someone to check a server that
+    // was never contacted.
+    expect(await screen.findByText(/Playwright is not installed/)).toBeTruthy();
+    expect(screen.getByText("Could not run")).toBeTruthy();
+  });
+
+  it("a waiting audit says it is waiting for a machine, not that it is running", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "pending", base_url: "", routes: ["/"],
+        created_at: "2026-08-18T14:02:00Z", summary: {},
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Waiting for a machine")).toBeTruthy();
+  });
+});
+
+describe("S-38 adding pages", () => {
+  it("shows what a paste would do before writing any of it", async () => {
+    const fetchStub = stubRoutes([
+      ...authed(),
+      [/a11y-routes\/\?preview=1/, {
+        preview: {
+          adding: ["/catalogue/results"],
+          updating: ["/", "/account/holds"],
+          missing: [{ path: "/catalogue/search", label: "Search", enabled: true, open_findings: 3 }],
+          ignored_keys: [],
+          total_now: 4,
+        },
+      }],
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]);
+    vi.stubGlobal("fetch", fetchStub);
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add pages" }));
+    await userEvent.click(screen.getByLabelText("Your pages"));
+    await userEvent.paste('["/", "/account/holds", "/catalogue/results"]');
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    // The team's own scenario: one path edited, and the platform sees a new page plus one it
+    // already has that nobody mentioned. Nothing is written until this is answered.
+    expect(await screen.findByText("/catalogue/search")).toBeTruthy();
+    expect(screen.getByText(/already have/)).toBeTruthy();
+    expect(screen.getByText("3")).toBeTruthy();   // the problems that would be left behind
+    const writes = fetchStub.mock.calls.filter(
+      (c) => /a11y-routes/.test(String(c[0])) && !/preview=1/.test(String(c[0]))
+        && (c[1] as RequestInit | undefined)?.method === "PUT",
+    );
+    expect(writes).toHaveLength(0);
+  });
+
+  it("warns when a page being dropped would take its recorded problems with it", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes\/\?preview=1/, {
+        preview: {
+          adding: [], updating: ["/"],
+          missing: [{ path: "/checkout", label: "Checkout", enabled: true, open_findings: 3 }],
+          ignored_keys: [], total_now: 2,
+        },
+      }],
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add pages" }));
+    await userEvent.click(screen.getByLabelText("Your pages"));
+    await userEvent.paste('["/"]');
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await userEvent.click(await screen.findByLabelText(/Take them out of scope/));
+
+    expect(screen.getByText("If you renamed a page")).toBeTruthy();
+    expect(screen.getByText(/stay with the old address/)).toBeTruthy();
+  });
+
+  it("names a column it could not use rather than ignoring it in silence", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes\/\?preview=1/, {
+        preview: {
+          adding: ["/"], updating: [], missing: [],
+          ignored_keys: [{ key: "inScope", entries: 69 }],
+          total_now: 0,
+        },
+      }],
+      [/a11y-routes/, routesBody({ routes: [] })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add pages" }));
+    await userEvent.click(screen.getByLabelText("Your pages"));
+    await userEvent.paste('["/"]');
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    // If the ignored key is the in-scope flag, we would audit pages the client excluded and
+    // nothing anywhere would say a flag had been dropped.
+    expect(await screen.findByText("Some columns were not recognised")).toBeTruthy();
+    expect(screen.getByText(/inScope \(69 entries\)/)).toBeTruthy();
+  });
+
+  it("a list that cannot be read is refused in the platform's words, not the browser's", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes\/\?preview=1/, { detail: "this could not be read as a list of pages" }, 400],
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add pages" }));
+    await userEvent.click(screen.getByLabelText("Your pages"));
+    await userEvent.paste("/, /catalogue");
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => expect(screen.getByText("This could not be read")).toBeTruthy());
+    // Still on the paste step, with the text intact — a refusal must not cost what was typed.
+    expect((screen.getByLabelText("Your pages") as HTMLTextAreaElement).value).toBe("/, /catalogue");
+  });
+});

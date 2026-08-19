@@ -15,10 +15,10 @@
       <div class="page-head__titles">
         <h1 class="t-h1">Accessibility</h1>
         <p class="page-head__sub">
-          Proposed third tab on the existing Accessibility destination (gaps B1, B2, B4, B5).
-          Today there is no screen at all for this — the pages have to be registered over raw HTTP
-          and the scan run from a terminal. Everything below is a proposal for the team to confirm
-          before anything is built.
+          The third tab on the Accessibility destination (gaps B1, B2, B4, B5). Before it, there
+          was no screen at all: the pages had to be registered over raw HTTP and the scan run from
+          a terminal. <strong>Built in task 8a</strong> — the states below are as built, except the
+          three keyboard-journey panels, which are G6c and still a proposal.
         </p>
       </div>
     </div>
@@ -64,9 +64,22 @@
               </div>
             </div>
           </div>
+          <!-- Said BEFORE the button, not after the report. The baseline's Movement section
+               compares this audit's findings with the last one's and reads as progress — which
+               is only true if both looked at the same application. Twelve failing pages taken
+               out of scope improve the numbers on their own. The document says it too, so a
+               reader who never sees this screen is not misled either. -->
+          <div class="banner banner--warning" style="margin-top:var(--space-4)">
+            <span class="banner__icon">!</span>
+            <div class="banner__body">
+              <div class="banner__title">The page list has changed since the last audit</div>
+              1 added · 2 taken out of scope. This audit will cover 68 pages where the last one
+              covered 69, so the two are not directly comparable.
+            </div>
+          </div>
+
           <div class="gate-panel__actions">
             <button class="btn btn--primary">Run audit</button>
-            <button class="btn btn--ghost">Choose which pages to visit…</button>
           </div>
         </div>
       </div>
@@ -116,11 +129,16 @@
                   <td><span class="badge badge--neutral">Excluded</span></td>
                   <td class="t-sm u-muted">—</td>
                 </tr>
+                <!-- `/events/:id` is how a developer writes "any event"; no browser can open
+                     it. Before task 8a it was asked for on every audit and reported as never
+                     opened on every audit — honest, and permanently useless. An example makes
+                     it auditable, and naming the example keeps the report from claiming a page
+                     that does not exist was checked. -->
                 <tr>
                   <td class="table__primary"><span class="t-mono">/events/:id</span></td>
-                  <td>Event detail</td>
+                  <td>Event detail<div class="t-sm u-muted">checked using /events/482</div></td>
                   <td><span class="switch"><span class="switch__track"><span class="switch__thumb"></span></span></span></td>
-                  <td class="t-sm u-muted"><span class="badge badge--outline">Never visited</span></td>
+                  <td class="t-sm u-muted">18 Aug, 14:03</td>
                 </tr>
               </tbody>
             </table>
@@ -349,35 +367,100 @@
             </div>
           </div>
 
+          <!-- ONE box, not two. The dropped one took a path per line with the name after TWO
+               spaces, and nothing could validate that: the path checker refuses empty paths,
+               full URLs, paths not starting with `/` and line breaks — but not spaces. So a
+               single space instead of two would register `/events/:id Event detail` as a real
+               path, and it would be asked for and reported unreachable on every audit, forever.
+               A typo nobody can see is the worst kind, so the format that cannot carry one is
+               the only one offered. Team decision, 2026-08-19. -->
           <div class="field" style="margin-top:var(--space-5)">
-            <span class="field__label">One path per line</span>
-            <textarea class="textarea" rows="7">/
-/catalogue
-/catalogue/search
-/account/holds
-/events/:id  Event detail</textarea>
+            <span class="field__label">Your pages</span>
+            <textarea class="textarea" rows="8">[
+  { "path": "/",            "title": "Home" },
+  { "path": "/catalogue",   "title": "Browse the catalogue" },
+  { "path": "/admin/debug", "title": "Internal debug page", "enabled": false },
+  { "path": "/events/:id",  "title": "Event detail", "example": "/events/482" }
+]</textarea>
             <span class="field__help">
-              A path on its own is enough. Add a name after two spaces if you want one — it is only
-              used to make the report readable. Start a line with <span class="t-mono">#</span> to
-              register a page but leave it out of scope.
-            </span>
-          </div>
-
-          <div class="sep"></div>
-
-          <div class="field">
-            <span class="field__label">Or paste a list your project already has</span>
-            <textarea class="textarea" rows="4">[{ "path": "/", "title": "Home", "enabled": true }, …]</textarea>
-            <span class="field__help">
-              Accepts a plain list of paths, or a list of objects carrying <span class="t-mono">path</span>
-              with optional <span class="t-mono">title</span> and <span class="t-mono">enabled</span>.
-              Anything else is rejected with the line that could not be read — never silently dropped.
+              A list of paths — <span class="t-mono">["/", "/catalogue"]</span> — or a list of
+              entries carrying <span class="t-mono">path</span>, with optional
+              <span class="t-mono">title</span>, <span class="t-mono">enabled</span> and
+              <span class="t-mono">example</span>. Anything we cannot read is named back to you,
+              never silently dropped.
             </span>
           </div>
 
           <div class="gate-panel__actions">
-            <button class="btn btn--primary">Register 5 pages</button>
+            <button class="btn btn--primary">Continue</button>
             <button class="btn btn--ghost">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Confirm · what this paste would do, before it does it ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Confirm · the step that stops a corrected path becoming a second page</span>
+
+      <!-- WHY THIS EXISTS. A page is identified BY ITS PATH — there is no hidden id, and the
+           database's one rule is one row per (project, path). So editing the text of a path does
+           not edit a page, it names a different one: paste a corrected list and the old page is
+           still registered, still in scope, and still audited. Equally, pasting three pages
+           meaning "add these three" would, read as a whole list, take every other page out of
+           scope. Neither can be guessed, and both are obvious the moment somebody is shown the
+           difference. So the write happens after this, never before. -->
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Ready to register</h2></div>
+        <div class="panel__body">
+          <p class="t-sm">
+            <strong>1</strong> new · <strong>3</strong> already registered, names will be updated.
+          </p>
+
+          <div class="banner banner--warning" style="margin-top:var(--space-4)">
+            <span class="banner__icon">!</span>
+            <div class="banner__body">
+              <div class="banner__title">Some columns were not recognised</div>
+              <span class="t-mono">inScope</span> (69 entries). They will be ignored. If one of
+              them says whether a page is in scope, those pages will be audited.
+            </div>
+          </div>
+
+          <h3 class="t-h3" style="margin-top:var(--space-5)">1 page you already have is not in this list</h3>
+          <table class="table table--in-panel">
+            <thead><tr><th>Path</th><th>Name</th><th>Recorded problems</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="table__primary"><span class="t-mono">/catalogue/search</span></td>
+                <td>Search the catalogue</td>
+                <td>3</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="field" style="margin-top:var(--space-4)">
+            <label class="u-row" style="align-items:flex-start;gap:8px">
+              <input type="radio" name="missing" checked>
+              <span class="t-sm"><strong>Keep it in scope</strong> — I am adding pages, not replacing the list.</span>
+            </label>
+            <label class="u-row" style="align-items:flex-start;gap:8px;margin-top:8px">
+              <input type="radio" name="missing">
+              <span class="t-sm"><strong>Take it out of scope</strong> — it is gone, or I renamed it.</span>
+            </label>
+          </div>
+
+          <div class="banner banner--info" style="margin-top:var(--space-4)">
+            <span class="banner__icon">i</span>
+            <div class="banner__body">
+              <div class="banner__title">If you renamed a page</div>
+              Its recorded problems stay with the old address — a finding is identified by the
+              page it is on. The new one starts with no history and will need reviewing again.
+            </div>
+          </div>
+
+          <div class="gate-panel__actions">
+            <button class="btn btn--primary">Register 4 pages</button>
+            <button class="btn btn--ghost">Back</button>
           </div>
         </div>
       </div>
@@ -486,11 +569,17 @@
         <div class="panel__body">
           <div class="empty">
             <div class="empty__icon">◍</div>
-            <div class="empty__title">Connect a machine before auditing</div>
+            <div class="empty__title">You have no machine connected</div>
             <div class="empty__text">
               The scan has to run somewhere that can reach your application. Our servers cannot —
               that is the point. Connect the machine the application runs on and this becomes a
               one-click job.
+              <!-- "You", not "nobody". The app can only see the CALLER's own enrollments
+                   (`list_developer_enrollments` filters by developer), so a colleague may well
+                   have one connected and this screen would not know. Claiming otherwise would
+                   be a sentence the platform cannot support. -->
+              <br><span class="t-sm u-muted">A colleague's machine may be connected — this only
+              knows about yours.</span>
             </div>
             <div class="gate-panel__actions" style="justify-content:center">
               <button class="btn btn--primary" onclick="location.href='S-06-connect-machine.html'">Connect a machine</button>

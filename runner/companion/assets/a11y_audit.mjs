@@ -24,7 +24,38 @@
  * anything resembling one.
  */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+/** Import a package FROM THE PROJECT BEING AUDITED, not from beside this file.
+ *
+ *  **This is not a preference, it is the only thing that works.** A bare `import("playwright")`
+ *  is resolved by Node from THIS FILE's directory upward — `runner/companion/assets/` — and the
+ *  companion ships no `node_modules` and no `package.json`, so it never found either tool on any
+ *  machine. `cwd` does not enter into it, and `NODE_PATH` is ignored for ES modules, so neither
+ *  running from the project nor setting the environment fixed it. Resolving through
+ *  `createRequire` anchored at the working directory is what makes the project's own
+ *  `node_modules` visible.
+ *
+ *  Anchoring on the project is also the right answer on its own terms: the report names the
+ *  scanner version that produced it, and that has to be the version the client's own build uses,
+ *  not one we carry. See `loadAxe`.
+ *
+ *  The bare import is kept as a fallback for a machine that installed the tools beside the
+ *  companion rather than in the project. It is tried second so the project always wins. */
+async function importFromProject(name) {
+  const from = pathToFileURL(join(process.cwd(), "a11y-audit-resolver.cjs"));
+  try {
+    return await import(pathToFileURL(createRequire(from).resolve(name)).href);
+  } catch (projectErr) {
+    try {
+      return await import(name);
+    } catch {
+      throw projectErr;   // report where we actually looked, not the fallback's failure
+    }
+  }
+}
 
 /** Bounds mirrored from `apps.a11y.capture`. Exceeding them makes the platform refuse the whole
  *  screen, so they are enforced here where a truncation can still be reported honestly. */
@@ -69,7 +100,7 @@ function criteriaFromTags(tags) {
  *  here is reported per screen as `axe_error` and the capture continues. */
 async function loadAxe() {
   try {
-    const mod = await import("axe-core");
+    const mod = await importFromProject("axe-core");
     const axe = mod.default || mod;
     // The version travels with every scan. axe-core is imported from the CLIENT'S project, so
     // it is whatever their repo pins and it changes under us without warning — a conformance
@@ -81,7 +112,8 @@ async function loadAxe() {
     return {
       source: "",
       version: "",
-      error: `axe-core is not installed in this project, so the measurable checks did not run (${err.message})`,
+      error: `axe-core is not installed in ${process.cwd()}, so the measurable checks did not `
+        + `run. Install it there (npm install -D axe-core) and run the audit again. (${err.message})`,
     };
   }
 }
@@ -278,8 +310,16 @@ function attachElementFindings(elements, violations) {
   }
 }
 
-async function captureRoute(page, axe, baseUrl, route) {
-  const url = new URL(route, baseUrl).toString();
+/** Capture one route.
+ *
+ *  `visitPath` is where the browser actually goes and `route` is what the screen is recorded
+ *  as. They differ for a PATTERN — `/events/:id` is a developer's way of writing "any event"
+ *  and no browser can open it, so the audit visits a real example and files the result against
+ *  the pattern. Recording the example instead would give the application a page it does not
+ *  have and would lose every finding's history the next time a different example was used.
+ *  `url` still carries what was really opened, so the evidence never overstates itself. */
+async function captureRoute(page, axe, baseUrl, route, visitPath) {
+  const url = new URL(visitPath || route, baseUrl).toString();
   const screen = { route, url };
   try {
     const response = await page.goto(url, { waitUntil: "load", timeout: NAV_TIMEOUT_MS });
@@ -326,15 +366,56 @@ async function captureRoute(page, axe, baseUrl, route) {
   return screen;
 }
 
+/** Why no page can be opened, naming the folder we looked in and what to type.
+ *
+ *  The platform NEVER installs anything into a client's project — their source is theirs, and
+ *  writing to their dependency file would be the first thing we ever did to it. So the whole
+ *  answer to a missing tool is to say precisely what is missing, where we looked for it, and
+ *  the one command that fixes it. */
+function browserMissingMessage(err) {
+  return (
+    `Playwright is not installed in ${process.cwd()}, so no page can be opened. ` +
+    `Install it there and run the audit again:  ` +
+    `npm install -D playwright axe-core && npx playwright install chromium  ` +
+    `(${err && err.message ? err.message : err})`
+  );
+}
+
+/** `--check` — can this folder run an audit at all? Prints one JSON object and exits 0.
+ *
+ *  Answered BEFORE an audit starts rather than discovered from an audit that captured nothing.
+ *  The two tools are not equally fatal and the answer says so: without the browser nothing can
+ *  be visited, while without the scanner the pass still runs and only the measurable half is
+ *  missing (every screen carries its own `axe_error` saying so). */
+async function check() {
+  const out = { cwd: process.cwd(), browser: { ok: false, error: "" }, scanner: { ok: false, version: "", error: "" } };
+  try {
+    const pw = await importFromProject("playwright");
+    out.browser.ok = Boolean(pw && (pw.chromium || (pw.default && pw.default.chromium)));
+    if (!out.browser.ok) out.browser.error = "playwright is installed but exposes no chromium";
+  } catch (err) {
+    out.browser.error = browserMissingMessage(err);
+  }
+  const axe = await loadAxe();
+  out.scanner.ok = Boolean(axe.source);
+  out.scanner.version = axe.version || "";
+  out.scanner.error = axe.error || "";
+  process.stdout.write(JSON.stringify(out));
+}
+
 async function main() {
   const [, , manifestPath, outArg] = process.argv;
+  if (manifestPath === "--check") return check();
   if (!manifestPath) {
-    console.error("usage: node a11y_audit.mjs <manifest.json> [output.json]");
+    console.error("usage: node a11y_audit.mjs <manifest.json> [output.json] | --check");
     process.exit(2);
   }
   const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
   const output = resolve(outArg || manifest.output || "test-results/a11y-candidates.json");
   const routes = (manifest.routes || []).slice(0, MAX_SCREENS);
+  // {pattern: a real page standing for it}. Absent for every route that is already a real page,
+  // which is nearly all of them, so the common case carries nothing extra.
+  const visit = manifest.visit || {};
   if (routes.length < (manifest.routes || []).length) {
     console.error(
       `[a11y-audit] ${manifest.routes.length} routes were asked for and this file carries at ` +
@@ -349,12 +430,9 @@ async function main() {
 
   let chromium;
   try {
-    ({ chromium } = await import("playwright"));
+    ({ chromium } = await importFromProject("playwright"));
   } catch (err) {
-    console.error(
-      `[a11y-audit] Playwright is not installed in this project, so no page can be opened ` +
-      `(${err.message}). Nothing was written.`,
-    );
+    console.error(`[a11y-audit] ${browserMissingMessage(err)} Nothing was written.`);
     process.exit(3);
   }
 
@@ -367,7 +445,7 @@ async function main() {
     const context = await browser.newContext();
     const page = await context.newPage();
     for (const route of routes) {
-      const screen = await captureRoute(page, axe, manifest.base_url, route);
+      const screen = await captureRoute(page, axe, manifest.base_url, route, visit[route]);
       screens.push(screen);
       console.error(
         `[a11y-audit] ${route}: ` +

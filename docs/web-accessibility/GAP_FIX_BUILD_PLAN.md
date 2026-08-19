@@ -63,12 +63,16 @@ Small and safe first, so the team gets working ground under them before the big 
 | 5 | **B5** — audit any number of pages, in passes | Meridian's 68 pages, and anything bigger | M |
 | 6 | **G2 + G2b** — the platform learns which test cases are WCAG | You can see and filter them | M |
 | 7 | **G3** — a finding says which test case found it | The review console makes sense on greenfield | M |
-| 8 | **B1 + B4 + B2** — the audit screen, and the way in | Brownfield audit with no terminal at all | L |
-| 9 | **G6** — the keyboard journey, working on both journeys | Eight criteria nothing else can reach | M |
+| 8a | **B1 + B4 + B2** — the audit screen, and the way in | Brownfield audit with no terminal at all | L |
+| 8b | **The page editor** — edit one page, not the whole list | A path can be corrected without creating a second page | M |
+| 9 | **G3b** — the review list stops fetching evidence nobody reads | A queue that does the work it is read for | S |
+| 10 | **G6** — the keyboard journey, working on both journeys | Eight criteria nothing else can reach | M |
 
 Tasks 1–4 are independent of each other. 6 should land before 7. 8 has the wireframe already
-approved (`docs/design/screens/S-38-a11y-audit.html`). 9 is broken into three slices of its own and
-shares that screen, so it is cheaper to build after 8 than before it.
+approved (`docs/design/screens/S-38-a11y-audit.html`) and was **split by team decision on
+2026-08-19**: 8a delivers the promise end to end (register pages, run an audit, no terminal), 8b
+makes the page list editable a row at a time. 10 is broken into three slices of its own and shares
+the 8a screen, so it is cheaper to build after it than before.
 
 ---
 
@@ -623,13 +627,19 @@ task. The docstring describes an intention the code never implemented.
 
 ---
 
-### B1 + B4 + B2 · The audit screen, and the way in
+### 8a · B1 + B4 + B2 · The audit screen, and the way in
+
+🟢 **Built 2026-08-19.** A brownfield user finishes onboarding, sees *"6 · Check
+accessibility"*, pastes their page list, presses **Run audit**, and reads the result — no terminal
+at any point. 131 backend tests and 36 on the screens. **One acceptance criterion still needs a
+real run** — see *What only a live run can prove* at the end of this entry.
 
 **In plain words.** Today, auditing an existing application means two things a user cannot do in
 the product: registering the list of pages by raw HTTP, and running a command in a terminal. This
 task replaces both with a screen, and puts a step in onboarding so people find it.
 
-The wireframe is approved: **`docs/design/screens/S-38-a11y-audit.html`** — seven labelled states.
+The wireframe is approved: **`docs/design/screens/S-38-a11y-audit.html`** — seven labelled states
+for this task, plus three for the keyboard journeys (task 10) on the same tab.
 
 **Why it happens.** QA-17 built the REST endpoints and the companion command; no screen was ever
 built. `frontend/src/api.ts` has clients for review and conformance only. Four backend endpoints —
@@ -637,7 +647,25 @@ built. `frontend/src/api.ts` has clients for review and conformance only. Four b
 `A11yRoute.Source.ONBOARDING` exists as a value in the code that nothing has ever written: the hook
 for this was planned and never finished.
 
-**What we change.** Three pieces, built in this order.
+**Found before building, and it changes everything else in this task.** The audit program could
+not run on ANY machine, and never had. It imports the browser (Playwright) and the scanner
+(axe-core) by name, and Node resolves a bare name from the IMPORTING FILE's directory upward —
+`runner/companion/assets/`, where the companion ships no `node_modules` and no `package.json`.
+`cwd` is not consulted and `NODE_PATH` is ignored for ES modules, so neither running from the
+project nor setting the environment helped. Verified three ways rather than reasoned about: bare
+import → `ERR_MODULE_NOT_FOUND`; with `NODE_PATH` → still `ERR_MODULE_NOT_FOUND`;
+`createRequire(cwd)` + `import(pathToFileURL(req.resolve(…)))` → resolves.
+
+*Why nothing caught it:* **no test had ever executed the script.** Every test stubs it, and the one
+real invocation points at a missing `node` on purpose to check an error message. A green suite
+proving "it behaves as designed" while nobody could reach it — exactly the pattern this whole plan
+was written against.
+
+Anchoring on the audited project is also right on its own terms (team decision ①): the report names
+the scanner version that produced it, and that has to be the version the client's own build uses,
+not one we carry.
+
+**What we change.** Four pieces.
 
 **(a) The audit becomes work a machine can claim.** Today `POST /a11y-audits/` opens an audit that
 visits nothing — its own docstring says so — and without someone running the CLI it sits in
@@ -681,13 +709,119 @@ anyone ever finds it. A tab nothing points at is found only by someone who alrea
 accessibility"*, clicks through, pastes their page list, presses **Run audit**, and reads the
 result — without opening a terminal once.
 
-**How we prove it.** An end-to-end test: an audit created through the API is claimed by a stubbed
-companion, runs, and completes. Parser tests for all input forms including a malformed one. Frontend
-tests for every state in the wireframe, including read-only and no-machine-connected.
+**Decisions the team took on 2026-08-19, recorded so they can be revisited:**
 
-**Size L · Risk medium — it adds a claim path and a migration · Needs first: B3 (so the address
-pre-fills) and B5 (so a real application's page count is not silently truncated on the first run
-anyone does from the UI).**
+| | Decision |
+|---|---|
+| D-8a-1 | The audit resolves its tools **from the customer's project**, never from beside the companion, and the platform **never installs anything** into a client's project — it says what is missing, where it looked, and the one command that fixes it |
+| D-8a-2 | The audit runs from **the registered repository clone** — the same repository the address comes from, so two rules can never point at different applications. No clone, no guess: the audit is closed with a stated reason |
+| D-8a-3 | **One status rule, no mode flag.** An audit is *pending* when opened from the app and *capturing* the moment the first screen arrives, whoever sent it. The terminal command keeps working as a consequence, not as a second code path |
+| D-8a-4 | **One box, the structured format.** The line-per-path form is dropped: its name separator was two spaces, and `normalise_path` cannot reject a space — a single space would register `/events/:id Event detail` as a real path, unreachable on every audit forever |
+| D-8a-5 | **Every unrecognised key is named back**, on every column. An unreadable `path` refuses the whole paste, naming the entry and the keys it does have |
+| D-8a-6 | **A confirm step before every registration.** A page is identified by its path, so a corrected path is indistinguishable from a new page — the difference is shown to the person before anything is written |
+| D-8a-7 | **A pattern route is visited by example.** `/events/:id` keeps its identity; `/events/482` is what the browser opens |
+| D-8a-8 | **Every change to the page list is recorded** — in the ledger, on the run strip, and in the report |
+
+**As built.**
+
+- **The tools are found where they live.** `importFromProject` in `a11y_audit.mjs`, plus a
+  `--check` mode and `a11yaudit.preflight` so a folder that cannot run an audit says so BEFORE one
+  starts rather than after one reports nothing. No browser is fatal; no scanner is a warning and
+  the pass still runs. `finish_a11y_audit` gained a `reason` that replaces the generic "the
+  application did not respond", which would send someone to check a server nothing ever contacted.
+- **The audit is claimable.** `A11yBaselineAudit` gains `pending`/`claimed`, `enrollment` and
+  `claimed_at` (**migration 0026**, which also adds `A11yRoute.example_path`). New
+  `GET /api/runner/a11y-audits/` mirroring `RunnerCodeIntelClaimView`; a daemon branch beside
+  `claim_code_intel`. **A seam the plan missed:** `run_baseline_audit` opened its own audit as its
+  first act, so every claimed audit would have created a second one — it now accepts the audit it
+  was handed, and reads the manifest back with `get_a11y_audit` so a companion that reconnects
+  never opens another.
+- **Recovery is same-machine only, deliberately.** A companion that restarts picks its own audit
+  back up past the lease; another machine never takes it over, because an audit belongs to the
+  machine that can reach the running application and a colleague's may not have it up — handing it
+  across would produce a report saying every page was unreachable, which is worse than a visibly
+  stalled audit.
+- **Registration.** `parse_routes_text` (the platform parses, so one refusal is worded once),
+  `_read_entries` (one reader for the preview and the write, so a confirmation can never describe
+  something the write would reject), `preview_registration`, and `_record_change` writing
+  `a11y.routes.registered` to the ledger — the app already writes it for review decisions and
+  conformance signatures, and scope was the one change of that weight leaving no trace.
+- **`scope_change_since`** compares today's list against the one the last finished audit froze —
+  both already existed and neither is invented. Surfaced above the Run button and in the baseline
+  document, so a reader who never opens the screen is not misled either.
+- **The screen.** `frontend/src/features/a11y/A11yAudit.tsx`, a third tab (first), clients for the
+  four endpoints that had none, and **"6 · Check accessibility"** on the onboarding hub with Resume
+  moving to 7.
+
+**Found while building, and fixed:** the screen rendered *"No pages are registered yet"* before
+authentication resolved — the query is disabled until the project is known, so `isLoading` is false
+and the data is undefined. On this screen of all screens that sentence has to be an answer rather
+than a stage of loading. Caught by a test, not by reading.
+
+**How it is proven.** 131 tests in `test_a11y_baseline.py` (+52 in `test_a11y_baseline_report.py`),
+36 across `a11y.test.tsx`, `audit.test.tsx` and `conformance.test.tsx`, 21 in
+`observability.test.tsx`. Includes **three tests that execute the audit script for real** — the
+first in this codebase — skipped where there is no Node but never faked, because faking is what hid
+the resolution bug. `tsc -b` clean; ruff clean; eslint clean apart from the pre-existing
+`Gates.tsx` rule-not-found.
+
+**What only a live run can prove.** That a full audit of a real application completes from the
+screen. It cannot be checked here: the running app points at the **shared** database, where
+migrations 0021–0026 are unapplied and applying them is the team's call, never a build's. So the
+first real run is still ahead of us, and this entry does not claim otherwise.
+
+**Size L · Risk medium — a claim path, a migration, and a fix to code no test had ever executed ·
+Needed first: B3 (the address) and B5 (the passes) — both landed.**
+
+---
+
+### 8b · The page editor
+
+Everything above registers pages in bulk. Editing one still means re-pasting the list, and the
+confirm step exists precisely because a re-paste cannot express "rename this". A row editor can:
+the platform edits a row it already knows, so the ghost page becomes impossible rather than merely
+visible.
+
+**What changes.** The Pages table becomes the editor — add one page inline, edit a row in place,
+the in-scope toggle already in the design. Import moves behind its own button, becoming how you
+start rather than how you manage. Renaming a path that has history warns first
+(*"its recorded problems stay with the old address"*) and the rename goes to the ledger.
+
+**What it does NOT fix, and cannot.** A finding is identified by (route + element + rule), so a
+rename leaves the page's history behind whatever the input form is. The editor makes that
+*knowable* — the platform is certain it is a rename — which is the prerequisite for warning at all.
+Team decision: **warn and proceed**, never rewrite recorded findings.
+
+**Size M · Risk low — it is a change to a table 8a already built.**
+
+---
+
+### 9 · G3b · The review list fetches evidence nobody reads
+
+**In plain words.** Opening the accessibility review console asks the server for the waiting list.
+For every item in it the server digs out the screenshot information — which picture exists, where
+the marker goes, why there is none. **The list does not show any of that.** It shows the rule, the
+page, the element, the level and the verdict. The picture belongs to the detail panel, which
+fetches its one item separately.
+
+**Measured, not estimated.** Counted with `CaptureQueriesContext` on local Postgres: 8 findings
+cost **40** database round trips where about 4 would do (2 per row when the evidence exists, 4 when
+it does not, because each lookup misses and then falls back). The endpoint passes no limit, so a
+project with 200 open uncertain findings loads all of them.
+
+**Why it is like this.** `_item()`'s docstring says `evidence` is *"passed in for the list (one
+query pass)"* — an optimisation for a design where the list carried its own evidence. The screen
+was built the other way, and the work the old plan required was never removed.
+
+**What we change (team decision, option b).** `queue()` stops computing evidence. Three assertions
+move from the queue to `open_item`, which is where the screen actually reads them
+(`test_a11y_review.py:159`, `:184`, `test_a11y_review_rest.py:94`). Query cost becomes flat.
+
+**The one risk, stated.** It is a REST response shape change — five fields leave the list payload.
+Nothing in this repository reads them; anything outside it would stop seeing them.
+
+**Size S · Risk low · Deliberately its own commit**, so a contract change is not hidden inside a
+feature.
 
 ---
 

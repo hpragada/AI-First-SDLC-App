@@ -75,6 +75,52 @@ def run_audit_script(manifest: dict, *, workdir, node: str = "node",
             "returncode": returncode, "stderr": stderr}
 
 
+def preflight(*, workdir, node: str = "node", timeout: float = 120.0) -> dict:
+    """Can this folder run an audit at all? Asked BEFORE one starts.
+
+    Without this the answer arrives the expensive way round: the audit is opened, every route
+    is asked for, nothing can be visited, and the platform reports an application that failed
+    to respond — when in truth no browser was ever installed. Two very different problems that
+    looked identical from the outside.
+
+    **The two tools are not equally fatal and the answer says so.** No browser means no page can
+    be opened and there is nothing to do. No scanner means the pass still runs and only the
+    measurable half is missing — every screen already carries its own `axe_error` saying that,
+    and an audit with the AI checks alone is worth having.
+
+    Never raises. A check that cannot run is reported as a browser we could not confirm, which
+    is the same conclusion by a different road.
+    """
+    try:
+        completed = subprocess.run(  # noqa: S603 — fixed script, arguments are ours
+            [node, str(AUDIT_SCRIPT), "--check"],
+            cwd=str(workdir), capture_output=True, text=True, timeout=timeout,
+            stdin=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "cwd": str(workdir),
+                "browser": {"ok": False,
+                            "error": f"{node!r} is not on PATH, so nothing can be run here"},
+                "scanner": {"ok": False, "version": "", "error": ""}}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "cwd": str(workdir),
+                "browser": {"ok": False,
+                            "error": f"checking this folder did not finish within {timeout:.0f}s"},
+                "scanner": {"ok": False, "version": "", "error": ""}}
+    try:
+        out = json.loads(completed.stdout or "{}")
+    except ValueError:
+        out = {}
+    if not isinstance(out, dict) or "browser" not in out:
+        return {"ok": False, "cwd": str(workdir),
+                "browser": {"ok": False,
+                            "error": "the audit script could not report what this folder has "
+                                     f"({(completed.stderr or '').strip()[:200]})"},
+                "scanner": {"ok": False, "version": "", "error": ""}}
+    out["ok"] = bool((out.get("browser") or {}).get("ok"))
+    return out
+
+
 def read_capture(path) -> list[dict]:
     """The screens the script left behind, through the platform's one parser.
 
@@ -136,9 +182,15 @@ def pass_output(output: str, index: int, total: int) -> str:
 
 
 def run_baseline_audit(*, client, project_id: str, workdir, base_url: str = "",
-                       routes=None, node: str = "node",
+                       routes=None, node: str = "node", audit_id: str = "",
                        timeout: float = DEFAULT_TIMEOUT_S) -> dict:
     """Open an audit, visit its routes in passes, post what was seen, and close it.
+
+    `audit_id` is an audit this machine was HANDED rather than one it opens. The screen creates
+    the audit and a companion claims it, so opening another here would leave two audits for one
+    press of a button — one being visited and one waiting forever for a machine. Given an id,
+    the manifest is fetched for that audit instead of a new one being started; everything after
+    that point is identical, which is the point.
 
     Returns everything a person needs to judge the audit without opening a database: which
     routes were asked for, how it was divided, how many screens came back from each pass, what
@@ -158,12 +210,32 @@ def run_baseline_audit(*, client, project_id: str, workdir, base_url: str = "",
     # the platform refuses a document for, so the companion must not drift from it.
     from apps.a11y.capture import MAX_SCREENS  # lazy: backend on path by now
 
-    opened = client.call("start_a11y_audit", project_id=project_id, base_url=base_url,
-                         routes=routes)
+    ready = preflight(workdir=workdir, node=node)
+    if (ready.get("scanner") or {}).get("error"):
+        print(f"[companion] {ready['scanner']['error']}", file=sys.stderr)
+
+    if audit_id:
+        opened = client.call("get_a11y_audit", audit_id=audit_id)
+    else:
+        opened = client.call("start_a11y_audit", project_id=project_id, base_url=base_url,
+                             routes=routes)
     audit_id = opened["audit_id"]
     manifest = opened["manifest"]
     asked = list(manifest.get("routes") or [])
     output = manifest.get("output") or "test-results/a11y-candidates.json"
+
+    if not ready["ok"]:
+        # Opened and closed without visiting anything, ON PURPOSE. The audit still exists and
+        # still accounts for every route it was asked for — the platform records them as never
+        # reported — but it carries the REAL reason instead of the generic "the application did
+        # not respond", which would send someone to check a server that was never contacted.
+        reason = (ready.get("browser") or {}).get("error") or "this folder cannot run an audit"
+        print(f"[companion] {reason}", file=sys.stderr)
+        finished = client.call("finish_a11y_audit", audit_id=audit_id, reason=reason)
+        return {"audit_id": audit_id, "routes": asked, "passes": [], "captured": 0,
+                "posted": 0, "post_failures": [], "script_returncode": 3,
+                "preflight": ready, "finished": finished}
+
     batches = [asked[i:i + MAX_SCREENS] for i in range(0, len(asked), MAX_SCREENS)]
     print(f"[companion] {len(asked)} page(s) · {len(batches)} pass(es)")
 
@@ -191,6 +263,7 @@ def run_baseline_audit(*, client, project_id: str, workdir, base_url: str = "",
     return {
         "audit_id": audit_id,
         "routes": asked,
+        "preflight": ready,
         "passes": passes,
         "captured": captured,
         "posted": posted,

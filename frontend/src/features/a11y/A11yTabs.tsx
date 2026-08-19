@@ -11,7 +11,7 @@ import { Tabs } from "../../components/ui";
 import { useA11yReviewQueue } from "./hooks";
 import { useAuth } from "../../auth/AuthContext";
 
-export function A11yTabs({ active }: { active: "queue" | "conformance" }) {
+export function A11yTabs({ active }: { active: "audit" | "queue" | "conformance" }) {
   const navigate = useNavigate();
   const { selectedProject } = useAuth();
   const queue = useA11yReviewQueue(selectedProject?.project_id);
@@ -22,10 +22,17 @@ export function A11yTabs({ active }: { active: "queue" | "conformance" }) {
       <Tabs
         active={active}
         tabs={[
+          // First on purpose: on a brownfield project this is where the work starts, and the
+          // other two have nothing to show until an audit has run.
+          { id: "audit", label: "Pages & audit" },
           { id: "queue", label: waiting ? `Review queue (${waiting})` : "Review queue" },
           { id: "conformance", label: "Conformance statement" },
         ]}
-        onSelect={(id) => navigate(id === "queue" ? "/a11y" : "/a11y/conformance")}
+        onSelect={(id) =>
+          navigate(
+            id === "audit" ? "/a11y/pages" : id === "queue" ? "/a11y" : "/a11y/conformance",
+          )
+        }
       />
     </div>
   );

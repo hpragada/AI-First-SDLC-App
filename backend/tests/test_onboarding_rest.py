@@ -346,7 +346,13 @@ def test_onboarding_hub_shape_before_anything(client, project, member):
     _login(client, "dev@acme.com", "dev-pass!")
     resp = client.get(_hub_url(project))
     assert resp.status_code == 200
-    assert set(resp.data.keys()) == {"upload", "adopt", "register", "index", "gap", "adopt_types"}
+    assert set(resp.data.keys()) == {"upload", "adopt", "register", "index", "gap",
+                                     "adopt_types", "a11y"}
+    # A brownfield project has pages the platform cannot discover — it has no access to the
+    # running application, deliberately — so the accessibility step starts at "nobody has told
+    # us yet" rather than at "nothing found" (task 8a).
+    assert resp.data["a11y"] == {"routes_registered": 0, "audits_run": 0,
+                                 "status": "not_started"}
     assert resp.data["upload"] == [] and resp.data["adopt"] == []
     # Assert the MEANING, not the exact dict (S5-18): both steps grew keys after this test was
     # written — `index.repos` for the per-repo cards, and `running`/`run_id`/`question` so the hub

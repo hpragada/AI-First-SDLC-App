@@ -71,8 +71,15 @@ def _audit(tenant_id, audit_id):
 
 
 def start_baseline_audit(*, tenant_id, project_id, base_url: str = "", routes=None,
-                         started_by=None):
+                         started_by=None, claimable: bool = False):
     """Freeze what this audit will visit and open it for capture. Returns the audit.
+
+    `claimable` says nobody is standing at the machine yet: opened from the app, the audit waits
+    as `pending` until a companion picks it up. Started from the companion's own command line it
+    is left `capturing`, because the machine that opened it is already about to visit. This is
+    not a mode the rest of the code has to know about — it only sets where the status starts,
+    and `ingest_audit_capture` moves any audit to `capturing` the moment a screen arrives,
+    whoever sent it.
 
     `routes` overrides the registry for a one-off pass; left out, the project's enabled routes
     are used. Either way the list is **stored on the audit**, not re-read at the end: the audit
@@ -126,7 +133,9 @@ def start_baseline_audit(*, tenant_id, project_id, base_url: str = "", routes=No
         return A11yBaselineAudit.objects.create(
             tenant_id=tenant_id, project_id=project_id,
             base_url=address[:512], routes=ordered,
-            status=A11yBaselineAudit.Status.CAPTURING, started_by_id=started_by or None,
+            status=(A11yBaselineAudit.Status.PENDING if claimable
+                    else A11yBaselineAudit.Status.CAPTURING),
+            started_by_id=started_by or None,
         )
 
 
@@ -139,15 +148,44 @@ def audit_manifest(audit) -> dict:
     that ships with the companion (`runner/companion/assets/a11y_audit.mjs`). Only the inputs
     differ, and only the inputs are produced here. Synthesising JavaScript per audit would put
     a program nobody can test in the middle of a compliance chain.
+
+    `visit` names a real page to open for a route that is a PATTERN (`/events/:id` → the
+    example someone gave for it). Only the routes that have one appear, so a project whose
+    pages are all real addresses — nearly every project — gets an empty map and nothing to
+    think about. The screen still comes back recorded against the pattern; see `captureRoute`.
     """
+    from .models import A11yRoute
+
+    routes = list(audit.routes or [])
+    with tenant_context(audit.tenant_id):
+        examples = {
+            row.path: row.example_path.strip()
+            for row in A11yRoute.objects.filter(
+                tenant_id=audit.tenant_id, project_id=audit.project_id, path__in=routes,
+            ).exclude(example_path="")
+            if row.example_path.strip()
+        }
     return {
         "version": MANIFEST_VERSION,
         "audit_id": str(audit.id),
         "project_id": str(audit.project_id),
         "base_url": audit.base_url,
-        "routes": list(audit.routes or []),
+        "routes": routes,
+        "visit": examples,
         "output": CAPTURE_FILENAME,
     }
+
+
+def audit_snapshot(*, tenant_id, audit_id) -> dict:
+    """One audit as the machine running it needs to see it: its state and its manifest.
+
+    Exists so a companion that reconnects mid-audit can ask what it was given instead of
+    starting a second audit to find out. Reading it can never change what it was asked to
+    visit — `routes` was frozen when it opened.
+    """
+    audit = _audit(tenant_id, audit_id)
+    return {"audit_id": str(audit.id), "status": audit.status,
+            "manifest": audit_manifest(audit)}
 
 
 def ingest_audit_capture(*, tenant_id, audit_id, text: str, object_store=None) -> dict:
@@ -158,12 +196,21 @@ def ingest_audit_capture(*, tenant_id, audit_id, text: str, object_store=None) -
     see `models.A11yBaselineAudit` for why there is no `Run` behind it.
     """
     from .ingest import ingest_capture
+    from .models import A11yBaselineAudit
 
     audit = _audit(tenant_id, audit_id)
-    return ingest_capture(
+    out = ingest_capture(
         tenant_id=tenant_id, project_id=str(audit.project_id), text=text,
         run_key=str(audit.id), object_store=object_store,
     )
+    # The one place an audit becomes `capturing`, and it is a fact rather than a declaration:
+    # a screen arrived, so something is visiting. Whichever way the audit was opened, and
+    # whoever posted it. Nothing else has to know how it started.
+    if audit.status in (A11yBaselineAudit.Status.PENDING, A11yBaselineAudit.Status.CLAIMED):
+        with tenant_context(tenant_id):
+            audit.status = A11yBaselineAudit.Status.CAPTURING
+            audit.save(update_fields=["status", "updated_at"])
+    return out
 
 
 def reconcile_routes(*, tenant_id, audit) -> list[dict]:
@@ -198,7 +245,7 @@ def reconcile_routes(*, tenant_id, audit) -> list[dict]:
     return [{"route": route, "reason": NEVER_REPORTED} for route in missing]
 
 
-def finish_baseline_audit(*, tenant_id, audit_id, trigger=None) -> dict:
+def finish_baseline_audit(*, tenant_id, audit_id, trigger=None, reason: str = "") -> dict:
     """Close the capture window, account for every route, and ask the AI checks.
 
     Returns what happened in numbers a person can check — how many routes were asked for, how
@@ -210,6 +257,12 @@ def finish_baseline_audit(*, tenant_id, audit_id, trigger=None) -> dict:
     the reconciliation: a route recorded as unreachable is a result, not an error. What *is*
     refused is finishing an audit that captured nothing at all, because there is no honest
     report to publish from an empty pass — the status goes to `failed` and says why.
+
+    `reason` lets the machine that ran the audit say why nothing came back, and it is used in
+    place of the generic explanation below. The generic one assumes the application was the
+    problem; when the truth is that the auditing machine had no browser installed, sending
+    someone to check a server that was never contacted wastes the one thing a failure report
+    exists to save. Only used when nothing opened — a reason cannot overrule a real capture.
     """
     from .aipass import start_ai_pass
     from .models import A11yBaselineAudit, A11yScreenScan
@@ -234,7 +287,7 @@ def finish_baseline_audit(*, tenant_id, audit_id, trigger=None) -> dict:
         "never_reported": sorted(item["route"] for item in unreachable),
     }
     if not opened:
-        summary["reason"] = (
+        summary["reason"] = str(reason or "").strip() or (
             "not one of this audit's routes could be opened, so there is nothing to report on. "
             "Check that the application was running and reachable from the machine that ran the "
             "audit, and that the routes registered are the ones it actually serves."

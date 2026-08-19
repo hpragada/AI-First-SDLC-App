@@ -5,7 +5,11 @@ import type {
   A11yReviewDecision,
   A11yReviewItem,
   A11yConformance,
+  A11yAudit,
+  A11yPolicy,
+  A11yRegistrationPreview,
   A11yReviewQueue,
+  A11yRoutesResponse,
   AcceptInviteRequest,
   AdminUser,
   AdoptResult,
@@ -468,6 +472,34 @@ export const api = {
     fetchBlobUrl(`/source-documents/${sourceDocumentId}/page/?name=${encodeURIComponent(name)}`),
 
   // ── Accessibility review console (QA-23, S-36) ──────────────────────────
+  // Pages & audit (S-38, task 8a). These four endpoints have existed since QA-17/18 and had no
+  // client at all — the only way to reach them was a hand-written HTTP request, which is what
+  // this task exists to replace.
+  a11yRoutes: (tenantId: string, projectId: string) =>
+    req<A11yRoutesResponse>("GET", `/projects/${projectId}/a11y-routes/`, { tenantId }),
+  // `routes_text` is the box's contents, parsed server-side so one refusal is worded once and
+  // reads the same however the list arrived.
+  a11yRoutesPreview: (tenantId: string, projectId: string, routesText: string) =>
+    req<{ preview: A11yRegistrationPreview }>(
+      "PUT", `/projects/${projectId}/a11y-routes/?preview=1`,
+      { tenantId, body: { routes_text: routesText } }),
+  a11yRoutesRegister: (
+    tenantId: string,
+    projectId: string,
+    body: { routes_text?: string; routes?: unknown[]; replace?: boolean },
+  ) => req<A11yRoutesResponse>("PUT", `/projects/${projectId}/a11y-routes/`, { tenantId, body }),
+  a11yAudits: (tenantId: string, projectId: string) =>
+    req<{ audits: A11yAudit[] }>("GET", `/projects/${projectId}/a11y-audits/`, { tenantId }),
+  a11yAuditStart: (
+    tenantId: string,
+    projectId: string,
+    body: { base_url?: string; routes?: string[] },
+  ) => req<{ audit_id: string; status: string }>(
+    "POST", `/projects/${projectId}/a11y-audits/`, { tenantId, body }),
+  a11yPolicy: (tenantId: string, projectId: string) =>
+    req<A11yPolicy>("GET", `/projects/${projectId}/a11y-policy/`, { tenantId }),
+  a11yBacklog: (tenantId: string, projectId: string) =>
+    req<Record<string, unknown>>("GET", `/projects/${projectId}/a11y-backlog/`, { tenantId }),
   a11yReviewQueue: (tenantId: string, projectId: string) =>
     req<A11yReviewQueue>("GET", `/projects/${projectId}/a11y-review/`, { tenantId }),
   // GET is also what claims the item (and renews the claim), so the lock follows what the

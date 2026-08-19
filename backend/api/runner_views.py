@@ -95,6 +95,9 @@ _BUILD_STATE_TOOLS = {
     # the platform decides what to visit and accounts for what came back. Companion-only for
     # the reason above — a capture is machine truth or it is nothing.
     "start_a11y_audit": tools.start_a11y_audit,
+    # Read back the manifest for an audit the companion was handed, so a machine that
+    # reconnects mid-audit never opens a second one to find out what to visit (task 8a).
+    "get_a11y_audit": tools.get_a11y_audit,
     "ingest_a11y_audit_screen": tools.ingest_a11y_audit_screen,
     "finish_a11y_audit": tools.finish_a11y_audit,
     # Accessibility journeys (09d_a11y_journey, QA-20): read the frozen steps, report what
@@ -629,6 +632,88 @@ class RunnerCodeIntelClaimView(APIView):
                 "job_id": str(job.id),
                 "repo": job.repo.name,
                 "base": job.repo.default_base or "main",
+            })
+
+
+class RunnerA11yAuditClaimView(APIView):
+    """GET /api/runner/a11y-audits/ — the companion claims the next audit waiting for a machine
+    (task 8a). Separate from the Run claim path (/work/) and from code intelligence, for the same
+    reason each of those is separate: a baseline audit needs no engine and no work item, it needs
+    a browser and an address only this machine can reach.
+
+    Skip-locked so two companions never take the same audit. A companion that RESTARTS picks
+    its own audit back up once the lease has passed — the common failure — but another machine
+    never takes it over: an audit belongs to the machine that can reach the running application,
+    and a colleague's machine may not have it up at all, so handing it across would produce a
+    report saying every page was unreachable. A stalled audit is visible with the time it was
+    claimed, and running again opens a fresh one.
+
+    Returns `{audit_id, project_id, repo, repo_reason, manifest}` or 204 when idle.
+
+    `repo` is the repository the audit must run FROM — the browser and the scanner are resolved
+    out of that project's own `node_modules`, so without a local clone of it there is nowhere to
+    run. It is the same repository the address came from, deliberately: two rules for "which
+    project is this" could point at different ones and audit an application from inside another's
+    folder.
+    """
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def get(self, request):
+        from django.db import transaction
+        from django.db.models import Q
+        from django.utils import timezone
+
+        from apps.a11y.baseline import audit_manifest
+        from apps.a11y.models import A11yBaselineAudit
+        from apps.projects.preview_config import resolve_audit_repo
+
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        tid = str(runner.tenant_id)
+        now = timezone.now()
+        stale_before = now - CLAIM_LEASE
+        with tenant_context(tid), transaction.atomic():
+            owned = Q(enrollment_id=runner.id)
+            broadcast = Q(project_id=runner.project_id) & Q(enrollment__isnull=True)
+            candidates = (
+                A11yBaselineAudit.objects.select_for_update(skip_locked=True)
+                .filter(tenant_id=tid)
+                .filter(owned | broadcast)
+                .filter(Q(status=A11yBaselineAudit.Status.PENDING)
+                        | Q(status=A11yBaselineAudit.Status.CLAIMED))
+                .order_by("created_at")
+            )
+            audit = None
+            for cand in candidates:
+                if cand.status == A11yBaselineAudit.Status.PENDING:
+                    audit = cand
+                    break
+                if (cand.status == A11yBaselineAudit.Status.CLAIMED
+                        and cand.claimed_at is not None and cand.claimed_at < stale_before):
+                    audit = cand   # a dead companion's stale claim -> re-claim
+                    break
+            if audit is None:
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            if audit.enrollment_id is None:
+                audit.enrollment_id = runner.id        # bind broadcast -> owned on claim
+            audit.status = A11yBaselineAudit.Status.CLAIMED
+            audit.claimed_at = now
+            audit.save(update_fields=["enrollment", "status", "claimed_at", "updated_at"])
+            repo = resolve_audit_repo(tenant_id=tid, project_id=str(audit.project_id))
+            return Response({
+                "audit_id": str(audit.id),
+                "project_id": str(audit.project_id),
+                # Handed over WITH its problem rather than withheld. The companion closes the
+                # audit with this as the stated reason, so the failure is on the record and the
+                # screen says what to set — an audit silently never claimed would just sit
+                # there looking like a machine that had not got to it yet.
+                "repo": repo.name,
+                "repo_reason": repo.reason,
+                "manifest": audit_manifest(audit),
             })
 
 

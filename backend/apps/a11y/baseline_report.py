@@ -182,7 +182,7 @@ def baseline_body(*, tenant_id, project_id, audit=None) -> str:
     """The baseline as a document a person reads. Markdown, like every other report here."""
     from .findings import describe_criteria
     from .policy import describe_policy, enforces_baseline, policy_or_default
-    from .routes import describe_routes
+    from .routes import describe_routes, scope_change_since
 
     rows = criterion_rows(tenant_id, project_id)
     items = prioritised(tenant_id, project_id, blocking_only=True)
@@ -223,6 +223,25 @@ def baseline_body(*, tenant_id, project_id, audit=None) -> str:
     # Coverage, and it comes before the findings on purpose (D-A11Y-3): a reader has to know
     # how much of the application this standing is actually about before they read it.
     lines.extend(["## What has been looked at", "", describe_routes(tenant_id, project_id)])
+    # What MOVED in the scope, next to what moved in the findings. The Movement section below
+    # compares this audit's findings with the last one's and calls the difference progress —
+    # which is only true if both audits looked at the same application. Take twelve failing
+    # pages out of scope and the numbers improve on their own, and a reader of the document
+    # alone would have no way to know. So the document says it, not only the screen.
+    if moved := scope_change_since(tenant_id, project_id):
+        parts = []
+        if moved["added"]:
+            parts.append(f"{len(moved['added'])} page(s) added")
+        if moved["removed"]:
+            parts.append(f"{len(moved['removed'])} page(s) taken out of scope")
+        lines.extend([
+            "",
+            f"> **The page list changed since the previous audit** — {' and '.join(parts)}. "
+            f"This standing covers {moved['now']} page(s) where the previous one covered "
+            f"{moved['before']}, so the two are not directly comparable.",
+        ])
+        if moved["removed"]:
+            lines.append(f"> Taken out of scope: {_cell(', '.join(moved['removed']), 300)}.")
     if audit is not None:
         summary = audit.summary or {}
         lines.append("")

@@ -262,6 +262,65 @@ class CompanionDaemon:
             return None
         return data
 
+    def claim_a11y_audit(self) -> dict | None:
+        """Claim the next accessibility audit waiting for a machine (task 8a), or None (204).
+
+        Its own endpoint, like code intelligence: an audit needs no engine and no work item —
+        it needs a browser and an address that only this machine can reach. The proven
+        plan/review/build claim path is untouched.
+        """
+        status, data = self._transport(
+            "GET", f"{self._base}/api/runner/a11y-audits/", self._headers(), None)
+        if status == 204 or not data:
+            return None
+        if status >= 500:
+            raise TransientBackendError(f"claim a11y audit -> {status}: {data}")
+        if status >= 400:
+            raise DaemonError(f"claim a11y audit -> {status}: {data}")
+        if not isinstance(data, dict) or "audit_id" not in data:
+            return None
+        return data
+
+    def _run_a11y_audit(self, claimed: dict) -> None:
+        """Visit the claimed audit's pages from the project's own folder, and close it.
+
+        **Every refusal closes the audit with its reason rather than dropping it.** An audit
+        that is claimed and then quietly abandoned looks, from the screen, exactly like one no
+        machine has got to yet — and the person waiting would keep waiting. Whatever goes wrong,
+        the audit ends in a state that says what happened.
+        """
+        from runner.companion.a11yaudit import run_baseline_audit
+        from runner.companion.state_client import RemoteStateClient
+
+        audit_id = claimed["audit_id"]
+        client = RemoteStateClient(api_url=self._base, tenant_id=self._tenant,
+                                   token=self._token)
+
+        reason = str(claimed.get("repo_reason") or "").strip()
+        workdir = ""
+        if not reason:
+            try:
+                workdir = self._resolve_repo_path(str(claimed.get("repo") or ""))
+            except DaemonError as exc:
+                # The platform named the repository; this machine has no clone of it. The
+                # browser and the scanner are resolved out of that project's own node_modules,
+                # so there is nowhere to run — and the person needs the repo name, not a
+                # stack trace.
+                reason = (
+                    f"this machine has no local clone of the repository the audit must run "
+                    f"from, so there is no project folder to open a browser in. {exc}"
+                )
+        if reason:
+            print(f"[companion] a11y audit {audit_id} cannot run: {reason}", file=sys.stderr,
+                  flush=True)
+            client.call("finish_a11y_audit", audit_id=audit_id, reason=reason)
+            return
+
+        out = run_baseline_audit(client=client, project_id=claimed["project_id"],
+                                 workdir=workdir, audit_id=audit_id)
+        print(f"[companion] a11y audit {audit_id}: {out['posted']} screen(s) posted "
+              f"from {workdir}", flush=True)
+
     # Transient-outage policy (Bugs S.No 105): a backend/worker restart drops the HTTP
     # connection mid-poll; that surfaces as an OSError (URLError / ConnectionError / timeout),
     # NOT as an HTTP status. Those must be retried with backoff, never treated as fatal —
@@ -615,6 +674,21 @@ class CompanionDaemon:
                             processed += 1
                         except DaemonError as exc:
                             print(f"[companion] code-intel job {job.get('job_id')} failed, "
+                                  f"continuing: {exc}", file=sys.stderr, flush=True)
+                        continue
+                    # ...then for an accessibility audit (task 8a). Same place, same rules: a
+                    # failed audit must never take the companion down, because every later
+                    # dispatch would then sit unclaimed.
+                    try:
+                        audit = self.claim_a11y_audit()
+                    except (OSError, TransientBackendError):
+                        audit = None
+                    if audit is not None:
+                        try:
+                            self._run_a11y_audit(audit)
+                            processed += 1
+                        except DaemonError as exc:
+                            print(f"[companion] a11y audit {audit.get('audit_id')} failed, "
                                   f"continuing: {exc}", file=sys.stderr, flush=True)
                         continue
                     self._sleep(self._poll_interval)

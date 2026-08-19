@@ -694,6 +694,13 @@ export interface OnboardingHub {
     resume_label?: string;
     report_artifact_id?: string;
   } & OnboardingStepState;
+  // Where the accessibility step stands (task 8a). Optional so an older cached payload — or a
+  // backend that predates this — still renders the hub rather than blanking it.
+  a11y?: {
+    routes_registered: number;
+    audits_run: number;
+    status: "not_started" | "ready" | "done";
+  };
   adopt_types: AdoptType[];
 }
 
@@ -892,6 +899,93 @@ export interface A11yReviewLock {
   held_by: string | null;
   held_by_name: string;
   expires_at: string | null;
+}
+
+// ── Pages & audit (S-38, task 8a) ────────────────────────────────────────────────────────
+// The brownfield way in: the platform cannot reach a client's application and cannot discover
+// its pages, so somebody says what they are and a machine that CAN reach it does the visiting.
+
+export interface A11yRoute {
+  id: string;
+  path: string;
+  label: string;
+  source: string;
+  enabled: boolean;
+  notes: string;
+  // A real page standing for a pattern route — `/events/:id` is visited as `/events/482`.
+  example_path: string;
+  // When an audit last actually opened it. Null means never — a fact about the page, not a
+  // gap in the screen.
+  last_visited: string | null;
+}
+
+// A key in a pasted list that we could not use, named rather than dropped. The one that
+// matters is the in-scope flag: ignore it silently and we audit pages the client excluded.
+export interface A11yIgnoredKey {
+  key: string;
+  entries: number;
+}
+
+// How today's page list differs from the one the last finished audit used. Empty when there is
+// nothing to say, so the screen hides the whole warning behind one check.
+export interface A11yScopeChange {
+  audit_id?: string;
+  audit_at?: string;
+  added?: string[];
+  removed?: string[];
+  before?: number;
+  now?: number;
+}
+
+export interface A11yRoutesResponse {
+  routes: A11yRoute[];
+  summary: string;
+  scope_change: A11yScopeChange;
+  changed?: {
+    added: string[];
+    updated: string[];
+    disabled: string[];
+    ignored_keys: A11yIgnoredKey[];
+    total: number;
+  };
+}
+
+// What a paste WOULD do, before any of it is written. `missing` is the load-bearing half:
+// pages already registered that this list does not mention, with what excluding them costs.
+export interface A11yRegistrationPreview {
+  adding: string[];
+  updating: string[];
+  missing: {
+    path: string;
+    label: string;
+    enabled: boolean;
+    open_findings: number;
+  }[];
+  ignored_keys: A11yIgnoredKey[];
+  total_now: number;
+}
+
+export interface A11yAudit {
+  id: string;
+  status: string;
+  base_url: string;
+  routes: string[];
+  summary: {
+    asked?: number;
+    opened?: number;
+    unreachable?: string[];
+    never_reported?: string[];
+    reason?: string;
+  };
+  created_at: string;
+}
+
+export interface A11yPolicy {
+  defaults: Record<string, unknown>;
+  overrides: Record<string, unknown>;
+  effective: Record<string, unknown>;
+  summary: string;
+  error: string;
 }
 
 export interface A11yReviewItem {

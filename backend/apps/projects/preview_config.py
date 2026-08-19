@@ -80,6 +80,62 @@ NO_APP_URL = (
 )
 
 
+@dataclass(frozen=True)
+class ResolvedRepo:
+    """Which repository an audit runs FROM. Exactly one of `name` / `reason` is non-empty."""
+
+    name: str = ""
+    reason: str = ""
+
+
+def resolve_audit_repo(*, tenant_id, project_id) -> ResolvedRepo:
+    """The repository whose local clone a baseline audit is run from (task 8a).
+
+    **Why an audit needs a folder at all**, when it only visits URLs: the browser and the page
+    scanner are resolved out of the audited project's own `node_modules`, so that the version
+    stamped on every scan is the version that project actually uses. No folder, nowhere to
+    resolve them from, and the platform never installs anything into a client's project.
+
+    **The same repository the address comes from, by construction.** This walks the identical
+    order as `resolve_app_base_url` — default repo, else the only one claiming to serve the
+    application — because two separate rules for "which project is this" could disagree and
+    audit one application from inside another's folder. A single repo with no preview URL is
+    still the answer: it cannot be the wrong one.
+
+    Never raises. When no single repository can be named, `reason` says what to go and set, and
+    the machine that asked reports it against the audit rather than guessing a folder.
+    """
+    with tenant_context(tenant_id):
+        repos = list(
+            Repository.objects
+            .filter(tenant_id=tenant_id, project_id=project_id)
+            .order_by("-is_default", "name")
+        )
+
+    if not repos:
+        return ResolvedRepo(reason=(
+            "this project has no repository registered, so there is no project folder to run "
+            "the audit from. Register the repository that serves the application first."
+        ))
+
+    default = next((r for r in repos if r.is_default), None)
+    if default is not None:
+        return ResolvedRepo(name=default.name or "")
+
+    serving = [r for r in repos if r.preview_url]
+    if len(serving) == 1:
+        return ResolvedRepo(name=serving[0].name or "")
+    if len(repos) == 1:
+        return ResolvedRepo(name=repos[0].name or "")
+
+    named = ", ".join(r.name or "(unnamed)" for r in repos)
+    return ResolvedRepo(reason=(
+        f"this project has several repositories — {named} — and none is marked as the default, "
+        f"so the platform cannot tell which one serves the application. Mark the default "
+        f"repository, or set a Preview URL on the one that does."
+    ))
+
+
 def resolve_app_base_url(*, tenant_id, project_id) -> ResolvedAppUrl:
     """Where this project's application is reachable, without anyone typing it again (B3).
 

@@ -22,7 +22,7 @@ import {
   Repositories,
   TestReporting,
 } from "./features/setup";
-import { A11yConformanceScreen, A11yReview } from "./features/a11y";
+import { A11yAudit, A11yConformanceScreen, A11yReview } from "./features/a11y";
 import {
   Clarifications,
   CriteriaGate,
@@ -147,6 +147,7 @@ export function AppRoutes() {
               run having happened — the empty state is what tells "nothing is waiting" apart
               from "nothing was ever checked". */}
           <Route path="/a11y" element={<A11yReview />} />
+          <Route path="/a11y/pages" element={<A11yAudit />} />
           <Route path="/a11y/conformance" element={<A11yConformanceScreen />} />
           <Route path="/profile" element={<ProjectProfileEditor />} />
           <Route path="/projects/new" element={<CreateProject />} />

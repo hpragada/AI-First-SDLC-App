@@ -628,3 +628,31 @@ def test_the_backlog_endpoint_exists():
 
     assert hasattr(ProjectViewSet, "a11y_backlog")
     assert ProjectViewSet.a11y_backlog.mapping.keys() >= {"get"}
+
+
+# ══ a scope that moved is stated in the document, not only on the screen ═════
+#
+# The Movement section below compares this audit's findings with the last one's and calls the
+# difference progress. That is only true if both audits looked at the same application. Twelve
+# failing pages taken out of scope improve the numbers on their own, and a reader holding the
+# document alone would have no way to know.
+
+
+def test_the_report_says_when_the_page_list_moved_since_the_last_audit(world):
+    _run_audit(world, [_screen("/"), _screen("/login")], routes=["/", "/login"])
+    register_routes(tenant_id=world["t"], project_id=world["p"],
+                    routes=["/", "/checkout"], replace=True)
+
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"])
+    assert "The page list changed since the previous audit" in body
+    assert "1 page(s) added" in body and "1 page(s) taken out of scope" in body
+    assert "Taken out of scope: /login" in body
+
+
+def test_a_report_whose_scope_did_not_move_says_nothing_about_it(world):
+    """Every audit would otherwise carry a paragraph saying nothing changed, which is how a
+    warning stops being read."""
+    _run_audit(world, [_screen("/"), _screen("/login")], routes=["/", "/login"])
+
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"])
+    assert "The page list changed" not in body

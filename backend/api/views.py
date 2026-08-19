@@ -420,31 +420,58 @@ class ProjectViewSet(
         Onboarding (OP-06) will write the same table with `source: onboarding`. Everything here
         is `manual`, because a person is the one typing it.
         """
-        from apps.a11y.routes import RouteError, describe_routes, register_routes
+        from apps.a11y.routes import (
+            RouteError,
+            describe_routes,
+            last_visited,
+            parse_routes_text,
+            preview_registration,
+            register_routes,
+            scope_change_since,
+        )
 
         project = self.get_object()
+        result = None
         if request.method == "PUT":
+            # `routes_text` is what the screen sends: the box's contents, read by the platform
+            # so one refusal is worded once and reads the same however the list arrived.
+            # `routes` stays for a caller that already has a list.
+            given = (request.data.get("routes_text")
+                     if request.data.get("routes_text") is not None
+                     else request.data.get("routes", []))
             try:
+                parsed = parse_routes_text(given)
+                if request.query_params.get("preview") or request.data.get("preview"):
+                    # Nothing is written. What WOULD happen is what a person confirms against
+                    # — see `preview_registration` for why that step exists at all.
+                    return Response({"preview": preview_registration(
+                        tenant_id=self.tenant_id, project_id=str(project.id), routes=parsed)})
                 result = register_routes(
-                    tenant_id=self.tenant_id, project_id=str(project.id),
-                    routes=request.data.get("routes", []),
+                    tenant_id=self.tenant_id, project_id=str(project.id), routes=parsed,
                     replace=bool(request.data.get("replace")),
+                    actor=getattr(request.user, "id", None),
                 )
             except RouteError as exc:
                 return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            result = None
 
         from apps.a11y.models import A11yRoute
 
         rows = list(A11yRoute.objects.filter(tenant_id=self.tenant_id, project_id=project.id))
+        visited = last_visited(self.tenant_id, str(project.id))
         payload = {
             "routes": [
                 {"id": str(row.id), "path": row.path, "label": row.label,
-                 "source": row.source, "enabled": row.enabled, "notes": row.notes}
+                 "source": row.source, "enabled": row.enabled, "notes": row.notes,
+                 "example_path": row.example_path,
+                 # None means never opened, which is a fact about the page and not a gap in
+                 # the screen — a pattern route with no example never can be.
+                 "last_visited": visited.get(row.path)}
                 for row in rows
             ],
             "summary": describe_routes(self.tenant_id, str(project.id)),
+            # Empty when there is nothing to say, so the screen can hide the whole warning
+            # behind one check rather than deciding for itself what counts as a change.
+            "scope_change": scope_change_since(self.tenant_id, str(project.id)),
         }
         if result is not None:
             payload["changed"] = result
