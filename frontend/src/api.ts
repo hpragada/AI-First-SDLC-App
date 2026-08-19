@@ -488,6 +488,18 @@ export const api = {
     projectId: string,
     body: { routes_text?: string; routes?: unknown[]; replace?: boolean },
   ) => req<A11yRoutesResponse>("PUT", `/projects/${projectId}/a11y-routes/`, { tenantId, body }),
+  // One page at a time (task 8b). Registering works by path and cannot tell a corrected path
+  // from a new page; editing a named row can.
+  a11yRouteUpdate: (
+    tenantId: string,
+    projectId: string,
+    routeId: string,
+    body: Record<string, unknown>,
+  ) => req<{ changed: Record<string, { from: unknown; to: unknown }> }>(
+    "PATCH", `/projects/${projectId}/a11y-routes/${routeId}/`, { tenantId, body }),
+  a11yRouteDelete: (tenantId: string, projectId: string, routeId: string) =>
+    req<{ removed: boolean; excluded: boolean; path: string; reason: string }>(
+      "DELETE", `/projects/${projectId}/a11y-routes/${routeId}/`, { tenantId }),
   a11yAudits: (tenantId: string, projectId: string) =>
     req<{ audits: A11yAudit[] }>("GET", `/projects/${projectId}/a11y-audits/`, { tenantId }),
   a11yAuditStart: (

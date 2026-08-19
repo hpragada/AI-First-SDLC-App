@@ -423,6 +423,7 @@ class ProjectViewSet(
         from apps.a11y.routes import (
             RouteError,
             describe_routes,
+            history_for,
             last_visited,
             parse_routes_text,
             preview_registration,
@@ -458,6 +459,10 @@ class ProjectViewSet(
 
         rows = list(A11yRoute.objects.filter(tenant_id=self.tenant_id, project_id=project.id))
         visited = last_visited(self.tenant_id, str(project.id))
+        # What each page has accumulated. On the row rather than fetched when someone starts
+        # editing, because the warning it powers — "renaming leaves this page's problems at the
+        # old address" — has to be there the moment the path field is touched.
+        history = history_for(self.tenant_id, str(project.id))
         payload = {
             "routes": [
                 {"id": str(row.id), "path": row.path, "label": row.label,
@@ -465,7 +470,9 @@ class ProjectViewSet(
                  "example_path": row.example_path,
                  # None means never opened, which is a fact about the page and not a gap in
                  # the screen — a pattern route with no example never can be.
-                 "last_visited": visited.get(row.path)}
+                 "last_visited": visited.get(row.path),
+                 "open_findings": (history.get(row.path) or {}).get("open_findings", 0),
+                 "visits": (history.get(row.path) or {}).get("visits", 0)}
                 for row in rows
             ],
             "summary": describe_routes(self.tenant_id, str(project.id)),
@@ -476,6 +483,41 @@ class ProjectViewSet(
         if result is not None:
             payload["changed"] = result
         return Response(payload)
+
+    @action(detail=True, methods=["patch", "delete"],
+            url_path=r"a11y-routes/(?P<route_id>[^/]+)")
+    def a11y_route_item(self, request, pk=None, route_id=None):
+        """Edit or remove ONE registered page (task 8b).
+
+        `PUT …/a11y-routes/` registers by path, because a pasted list carries no identities —
+        which is exactly why correcting a path there adds a page and leaves the old one in scope.
+        Here the row is named, so an edit is an edit. The ghost page is absent rather than warned
+        about.
+
+        `DELETE` removes a page that was never real — never opened, nothing recorded — and takes
+        any other page out of scope instead, keeping it visible. A page that stopped existing is
+        a fact about the application; a path typed by mistake never was one.
+
+        What neither can do is move a page's history. A finding is keyed on the route it was found
+        at, so a rename leaves the problems at the old address and starts the new one empty. The
+        row carries `open_findings` and `visits` so the screen can say that before it happens.
+        """
+        from apps.a11y.routes import RouteError, delete_route, update_route
+
+        project = self.get_object()
+        try:
+            if request.method == "DELETE":
+                out = delete_route(
+                    tenant_id=self.tenant_id, project_id=str(project.id), route_id=route_id,
+                    actor=getattr(request.user, "id", None))
+            else:
+                out = {"changed": update_route(
+                    tenant_id=self.tenant_id, project_id=str(project.id), route_id=route_id,
+                    fields={k: v for k, v in (request.data or {}).items()},
+                    actor=getattr(request.user, "id", None))}
+        except RouteError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(out)
 
     @action(detail=True, methods=["get", "post"], url_path="a11y-audits")
     def a11y_audits(self, request, pk=None):

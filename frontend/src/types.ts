@@ -917,6 +917,12 @@ export interface A11yRoute {
   // When an audit last actually opened it. Null means never — a fact about the page, not a
   // gap in the screen.
   last_visited: string | null;
+  // What a rename would leave behind. A finding is identified by the page it was found on, so
+  // changing a path starts that page's history over — these two are what let the screen say so
+  // while the path is still being typed, and what decides whether removing a page deletes the
+  // row or takes it out of scope.
+  open_findings: number;
+  visits: number;
 }
 
 // A key in a pasted list that we could not use, named rather than dropped. The one that

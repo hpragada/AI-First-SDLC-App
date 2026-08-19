@@ -34,9 +34,11 @@ import { A11yTabs } from "./A11yTabs";
 import {
   useA11yAudits,
   useA11yRoutes,
+  useDeleteA11yRoute,
   usePreviewA11yRoutes,
   useRegisterA11yRoutes,
   useStartA11yAudit,
+  useUpdateA11yRoute,
 } from "./hooks";
 
 // Mirrors `apps.a11y.capture.MAX_SCREENS`. It bounds ONE capture document, not an application:
@@ -248,6 +250,139 @@ function AddPages({
   );
 }
 
+// ── one page at a time (task 8b) ────────────────────────────────────────────
+//
+// Registering works by path, because a pasted list carries no identities — which is why
+// correcting a path THERE adds a page and leaves the old one in scope, and why the paste has a
+// confirm step. Here the row is named, so an edit is an edit and the ghost page cannot happen.
+//
+// What this still cannot do is move a page's history: a finding is identified by the page it was
+// found on, so renaming leaves the problems at the old address. That is correct and it is not
+// obvious, so it is said before it happens rather than discovered afterwards.
+
+function PageEditor({
+  projectId,
+  page,
+  onClose,
+}: {
+  projectId: string;
+  page?: A11yRoute;          // absent = adding a new page
+  onClose: () => void;
+}) {
+  const [path, setPath] = useState(page?.path ?? "");
+  const [label, setLabel] = useState(page?.label ?? "");
+  const [example, setExample] = useState(page?.example_path ?? "");
+  const [enabled, setEnabled] = useState(page?.enabled ?? true);
+  const update = useUpdateA11yRoute(projectId);
+  const register = useRegisterA11yRoutes(projectId);
+  const busy = update.isPending || register.isPending;
+  const error = (update.error ?? register.error) as Error | undefined;
+
+  const history = (page?.open_findings ?? 0) + (page?.visits ?? 0);
+  const renaming = Boolean(page && path.trim() && path.trim() !== page.path && history > 0);
+
+  const save = () => {
+    const fields = { path: path.trim(), label, example_path: example.trim(), enabled };
+    const done = page
+      ? update.mutateAsync({ routeId: page.id, fields })
+      : register.mutateAsync({
+          routesText: JSON.stringify([{
+            path: fields.path,
+            title: label,
+            enabled,
+            ...(fields.example_path ? { example: fields.example_path } : {}),
+          }]),
+          replace: false,
+        });
+    done.then(onClose).catch(() => undefined);
+  };
+
+  return (
+    <Modal
+      title={page ? "Edit page" : "Add a page"}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="primary" disabled={!path.trim() || busy} onClick={save}>
+            {page ? "Save" : "Add page"}
+          </Button>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+        </>
+      }
+    >
+      <label className="field">
+        <span className="field__label" id="page-path">Path</span>
+        <input
+          className="input"
+          aria-labelledby="page-path"
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          placeholder="/checkout"
+        />
+        <span className="field__help">
+          The path only. Where the application is running belongs to the machine auditing it and
+          changes between runs; the page does not.
+        </span>
+      </label>
+
+      {/* The warning that makes a rename a decision rather than a surprise. */}
+      {renaming && (
+        <Banner variant="warning" title="This page has a history">
+          {page!.open_findings > 0 && (
+            <>
+              {page!.open_findings} recorded problem
+              {page!.open_findings === 1 ? "" : "s"} stay with <strong>{page!.path}</strong>.{" "}
+            </>
+          )}
+          A problem is identified by the page it was found on, so <strong>{path.trim()}</strong>{" "}
+          starts with no history and will need reviewing again.
+        </Banner>
+      )}
+
+      <label className="field" style={{ marginTop: "var(--space-4)" }}>
+        <span className="field__label" id="page-name">Name</span>
+        <input
+          className="input"
+          aria-labelledby="page-name"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="Browse the catalogue"
+        />
+        <span className="field__help">Only used to make the report readable.</span>
+      </label>
+
+      <label className="field" style={{ marginTop: "var(--space-4)" }}>
+        <span className="field__label" id="page-example">Example page</span>
+        <input
+          className="input"
+          aria-labelledby="page-example"
+          value={example}
+          onChange={(e) => setExample(e.target.value)}
+          placeholder="/events/482"
+        />
+        <span className="field__help">
+          Only for a pattern like <span className="t-mono">/events/:id</span>, which no browser
+          can open. The audit visits the example and still records the finding against the
+          pattern.
+        </span>
+      </label>
+
+      <label className="u-row" style={{ alignItems: "center", gap: 8, marginTop: "var(--space-4)" }}>
+        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        <span className="t-sm u-body">Audit this page</span>
+      </label>
+
+      {error && (
+        <Banner variant="danger" title="Nothing was changed">
+          {error.message}
+        </Banner>
+      )}
+    </Modal>
+  );
+}
+
 // ── the run strip ───────────────────────────────────────────────────────────
 
 function RunStrip({
@@ -419,8 +554,13 @@ export function A11yAudit() {
   const routes = useA11yRoutes(projectId);
   const audits = useA11yAudits(projectId);
   const runners = useRunners();
-  const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
+  // `undefined` = closed, `null` = adding a new page, a route = editing that one.
+  const [editing, setEditing] = useState<A11yRoute | null | undefined>(undefined);
+  const [removed, setRemoved] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const update = useUpdateA11yRoute(projectId);
+  const remove = useDeleteA11yRoute(projectId);
 
   // `!projectId` counts as loading, and that is not defensive tidying. The query is disabled
   // until the project resolves, so `isLoading` is false and `routes.data` is undefined — which
@@ -459,8 +599,23 @@ export function A11yAudit() {
         </div>
       </div>
 
-      {adding && projectId && (
-        <AddPages projectId={projectId} onClose={() => setAdding(false)} />
+      {importing && projectId && (
+        <AddPages projectId={projectId} onClose={() => setImporting(false)} />
+      )}
+      {editing !== undefined && projectId && (
+        <PageEditor
+          projectId={projectId}
+          page={editing ?? undefined}
+          onClose={() => setEditing(undefined)}
+        />
+      )}
+
+      {/* Removing a page usually does not remove it. Said afterwards, because the answer depends
+          on what the page has accumulated and the person asking cannot be expected to know. */}
+      {removed && (
+        <Banner variant="info" title="Kept, and taken out of scope">
+          {removed}
+        </Banner>
       )}
 
       {rows.length === 0 ? (
@@ -469,9 +624,14 @@ export function A11yAudit() {
             title="No pages are registered yet"
             text="The platform has no access to your application, so it cannot discover its pages — somebody has to say what they are. Nothing is audited until you do."
             action={
-              <Button variant="primary" onClick={() => setAdding(true)}>
-                Add pages
-              </Button>
+              <div className="gate-panel__actions" style={{ justifyContent: "center" }}>
+                <Button variant="primary" onClick={() => setImporting(true)}>
+                  Import a list
+                </Button>
+                <Button variant="secondary" onClick={() => setEditing(null)}>
+                  Add a page
+                </Button>
+              </div>
             }
           />
         </Panel>
@@ -507,13 +667,18 @@ export function A11yAudit() {
                   </button>
                 ))}
                 <span className="u-spacer" />
-                <Button variant="secondary" onClick={() => setAdding(true)}>
-                  Add pages
+                {/* Adding one page is the everyday action, so it leads. Importing is how a
+                    project starts, not how it is kept. */}
+                <Button variant="secondary" onClick={() => setEditing(null)}>
+                  Add a page
+                </Button>
+                <Button variant="ghost" onClick={() => setImporting(true)}>
+                  Import a list
                 </Button>
               </div>
 
               <Table
-                headers={["Path", "Name", "In scope", "Last visited"]}
+                headers={["Path", "Name", "In scope", "Last visited", ""]}
                 rows={shown.map((row) => [
                   <span className="t-mono">{row.path}</span>,
                   <>
@@ -524,13 +689,26 @@ export function A11yAudit() {
                       <div className="t-sm u-muted">checked using {row.example_path}</div>
                     )}
                   </>,
-                  row.enabled ? (
-                    <Switch label={`${row.path} in scope`} checked readOnly />
-                  ) : (
-                    <Badge variant="neutral" dot={false}>
-                      Excluded
-                    </Badge>
-                  ),
+                  // The toggle AND the word. A toggle that is off reads as "not set yet"; the
+                  // design said "Excluded", and that is a decision somebody took about this
+                  // page, not a default. Now it is both editable and legible.
+                  <div className="u-row" style={{ alignItems: "center", gap: 8 }}>
+                    <Switch
+                      label={`Audit ${row.path}`}
+                      checked={row.enabled}
+                      disabled={update.isPending}
+                      onChange={(e) =>
+                        update
+                          .mutateAsync({ routeId: row.id, fields: { enabled: e.target.checked } })
+                          .catch(() => undefined)
+                      }
+                    />
+                    {!row.enabled && (
+                      <Badge variant="neutral" dot={false}>
+                        Excluded
+                      </Badge>
+                    )}
+                  </div>,
                   row.last_visited ? (
                     <span className="t-sm u-muted">{when(row.last_visited)}</span>
                   ) : row.enabled ? (
@@ -540,8 +718,33 @@ export function A11yAudit() {
                   ) : (
                     <span className="t-sm u-muted">—</span>
                   ),
+                  <div className="u-row">
+                    <Button variant="ghost" size="sm" onClick={() => setEditing(row)}>
+                      Edit
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={remove.isPending}
+                      onClick={() =>
+                        remove
+                          .mutateAsync(row.id)
+                          .then((r: { removed: boolean; reason: string }) =>
+                            setRemoved(r.removed ? "" : r.reason))
+                          .catch(() => undefined)
+                      }
+                    >
+                      Remove
+                    </Button>
+                  </div>,
                 ])}
               />
+
+              {(update.isError || remove.isError) && (
+                <Banner variant="danger" title="That change was not saved">
+                  {((update.error ?? remove.error) as Error).message}
+                </Banner>
+              )}
 
               {shown.length === 0 && (
                 <p className="t-sm u-muted" style={{ marginTop: "var(--space-3)" }}>

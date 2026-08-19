@@ -17,8 +17,8 @@
         <p class="page-head__sub">
           The third tab on the Accessibility destination (gaps B1, B2, B4, B5). Before it, there
           was no screen at all: the pages had to be registered over raw HTTP and the scan run from
-          a terminal. <strong>Built in task 8a</strong> — the states below are as built, except the
-          three keyboard-journey panels, which are G6c and still a proposal.
+          a terminal. <strong>Built in tasks 8a and 8b</strong> — the states below are as built,
+          except the three keyboard-journey panels, which are G6c and still a proposal.
         </p>
       </div>
     </div>
@@ -98,11 +98,15 @@
               <span class="chip chip--filter">In scope (68)</span>
               <span class="chip chip--filter">Excluded (1)</span>
               <span class="u-spacer"></span>
-              <button class="btn btn--secondary btn--sm">Add pages</button>
+              <!-- Adding ONE page leads: that is the everyday action. Importing is how a project
+                   starts, not how it is kept — and a list is the only thing that cannot express
+                   "rename this one", which is why 8b exists. -->
+              <button class="btn btn--secondary btn--sm">Add a page</button>
+              <button class="btn btn--ghost btn--sm">Import a list</button>
             </div>
             <table class="table table--in-panel">
               <thead>
-                <tr><th>Path</th><th>Name</th><th>In scope</th><th>Last visited</th></tr>
+                <tr><th>Path</th><th>Name</th><th>In scope</th><th>Last visited</th><th></th></tr>
               </thead>
               <tbody>
                 <tr>
@@ -110,24 +114,30 @@
                   <td>Home</td>
                   <td><span class="switch"><span class="switch__track"><span class="switch__thumb"></span></span></span></td>
                   <td class="t-sm u-muted">18 Aug, 14:02</td>
+                  <td><button class="btn btn--ghost btn--sm">Edit</button><button class="btn btn--ghost btn--sm">Remove</button></td>
                 </tr>
                 <tr>
                   <td class="table__primary"><span class="t-mono">/catalogue</span></td>
                   <td>Browse the catalogue</td>
                   <td><span class="switch"><span class="switch__track"><span class="switch__thumb"></span></span></span></td>
                   <td class="t-sm u-muted">18 Aug, 14:02</td>
+                  <td><button class="btn btn--ghost btn--sm">Edit</button><button class="btn btn--ghost btn--sm">Remove</button></td>
                 </tr>
                 <tr>
                   <td class="table__primary"><span class="t-mono">/account/holds</span></td>
                   <td>My holds</td>
                   <td><span class="switch"><span class="switch__track"><span class="switch__thumb"></span></span></span></td>
                   <td class="t-sm u-muted">18 Aug, 14:03</td>
+                  <td><button class="btn btn--ghost btn--sm">Edit</button><button class="btn btn--ghost btn--sm">Remove</button></td>
                 </tr>
+                <!-- The toggle AND the word. A toggle that is off reads as "not set yet";
+                     Excluded is a decision somebody took about this page. -->
                 <tr>
                   <td class="table__primary"><span class="t-mono">/admin/debug</span></td>
                   <td>Internal debug page</td>
-                  <td><span class="badge badge--neutral">Excluded</span></td>
+                  <td><span class="switch"><span class="switch__track"><span class="switch__thumb"></span></span></span> <span class="badge badge--neutral">Excluded</span></td>
                   <td class="t-sm u-muted">—</td>
+                  <td><button class="btn btn--ghost btn--sm">Edit</button><button class="btn btn--ghost btn--sm">Remove</button></td>
                 </tr>
                 <!-- `/events/:id` is how a developer writes "any event"; no browser can open
                      it. Before task 8a it was asked for on every audit and reported as never
@@ -139,6 +149,7 @@
                   <td>Event detail<div class="t-sm u-muted">checked using /events/482</div></td>
                   <td><span class="switch"><span class="switch__track"><span class="switch__thumb"></span></span></span></td>
                   <td class="t-sm u-muted">18 Aug, 14:03</td>
+                  <td><button class="btn btn--ghost btn--sm">Edit</button><button class="btn btn--ghost btn--sm">Remove</button></td>
                 </tr>
               </tbody>
             </table>
@@ -395,6 +406,11 @@
             <button class="btn btn--primary">Continue</button>
             <button class="btn btn--ghost">Cancel</button>
           </div>
+
+          <p class="t-sm u-muted" style="margin-top:var(--space-4)">
+            Importing is how a project starts. Adding or correcting one page afterwards is a row
+            in the table, not a re-paste — see <em>Edit one page</em> below.
+          </p>
         </div>
       </div>
     </div>
@@ -461,6 +477,93 @@
           <div class="gate-panel__actions">
             <button class="btn btn--primary">Register 4 pages</button>
             <button class="btn btn--ghost">Back</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Edit one page · what a list cannot express (8b) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Edit one page · renaming a path that has been audited</span>
+
+      <!-- WHY A ROW EDITOR AT ALL, when the paste box already registers pages. Registering works
+           BY PATH, because a pasted list carries no identities — so a corrected path adds a page
+           and leaves the old one in scope, which is what the confirm step exists to catch. Here
+           the row is named, so an edit is an edit and the ghost page cannot happen at all.
+
+           What it still cannot do is move the page's history: a finding is identified by the page
+           it was found on, so renaming leaves the problems at the old address. Rewriting those
+           keys would edit records the ledger treats as permanent. Team decision: warn and
+           proceed. -->
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Edit page</h2></div>
+        <div class="panel__body">
+          <div class="field">
+            <span class="field__label">Path</span>
+            <input class="input" type="text" value="/catalogue/results">
+            <span class="field__help">
+              The path only. Where the application is running belongs to the machine auditing it
+              and changes between runs; the page does not.
+            </span>
+          </div>
+
+          <div class="banner banner--warning" style="margin-top:var(--space-4)">
+            <span class="banner__icon">!</span>
+            <div class="banner__body">
+              <div class="banner__title">This page has a history</div>
+              3 recorded problems stay with <strong>/catalogue/search</strong>. A problem is
+              identified by the page it was found on, so <strong>/catalogue/results</strong>
+              starts with no history and will need reviewing again.
+            </div>
+          </div>
+
+          <div class="field" style="margin-top:var(--space-4)">
+            <span class="field__label">Name</span>
+            <input class="input" type="text" value="Search the catalogue">
+            <span class="field__help">Only used to make the report readable.</span>
+          </div>
+
+          <div class="field" style="margin-top:var(--space-4)">
+            <span class="field__label">Example page</span>
+            <input class="input" type="text" placeholder="/events/482">
+            <span class="field__help">
+              Only for a pattern like <span class="t-mono">/events/:id</span>, which no browser
+              can open. The audit visits the example and still records the finding against the
+              pattern.
+            </span>
+          </div>
+
+          <label class="u-row" style="align-items:center;gap:8px;margin-top:var(--space-4)">
+            <input type="checkbox" checked>
+            <span class="t-sm">Audit this page</span>
+          </label>
+
+          <div class="gate-panel__actions">
+            <button class="btn btn--primary">Save</button>
+            <button class="btn btn--ghost">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Removing a page · usually does not remove it ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Remove · a page that has been audited is kept, and taken out of scope</span>
+
+      <!-- The rule this table has always had is disabled, never deleted: a page that stopped
+           existing is a fact about the application, and a deleted row invites someone to add it
+           back next month with no record of why it went. That protects pages that were REAL. A
+           path typed by mistake was never a page — never opened, nothing recorded against it —
+           so it simply goes, and the row does not sit on a screen people have to read forever. -->
+      <div class="panel">
+        <div class="panel__body">
+          <div class="banner banner--info">
+            <span class="banner__icon">i</span>
+            <div class="banner__body">
+              <div class="banner__title">Kept, and taken out of scope</div>
+              <span class="t-mono">/catalogue</span> has been audited, so it is kept and taken out
+              of scope rather than deleted. What was found there stays on the record.
+            </div>
           </div>
         </div>
       </div>

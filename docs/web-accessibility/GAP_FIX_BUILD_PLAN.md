@@ -777,22 +777,55 @@ Needed first: B3 (the address) and B5 (the passes) — both landed.**
 
 ### 8b · The page editor
 
-Everything above registers pages in bulk. Editing one still means re-pasting the list, and the
+🟢 **Built 2026-08-19.** A page can be corrected, renamed, taken out of scope or removed
+one row at a time. The ghost page is now impossible rather than warned about. 12 backend tests and
+7 on the screen.
+
+Everything in 8a registers pages in bulk. Editing one still meant re-pasting the list, and the
 confirm step exists precisely because a re-paste cannot express "rename this". A row editor can:
 the platform edits a row it already knows, so the ghost page becomes impossible rather than merely
 visible.
 
-**What changes.** The Pages table becomes the editor — add one page inline, edit a row in place,
-the in-scope toggle already in the design. Import moves behind its own button, becoming how you
-start rather than how you manage. Renaming a path that has history warns first
-(*"its recorded problems stay with the old address"*) and the rename goes to the ledger.
+**What changed.**
 
-**What it does NOT fix, and cannot.** A finding is identified by (route + element + rule), so a
+- `routes.update_route` edits ONE named row. `EDITABLE` is `path`, `label`, `enabled`, `notes`,
+  `example_path` — `source` and `id` are deliberately absent, because who put a page here is a
+  fact about how it arrived and a row's identity is not something a person edits. Anything else is
+  refused **by name**.
+- **Renaming onto a page that already exists is refused, not merged.** Merging two rows would
+  silently discard whichever page's name and scope lost, and the audit would then visit a page
+  under a description nobody wrote for it. The refusal names the page it collided with.
+- `routes.delete_route` removes a page **that was never real** — never opened, nothing recorded
+  against it — and takes any other page out of scope instead, keeping it visible as excluded. The
+  disabled-never-deleted rule protects pages that existed; a path typed by mistake never was one,
+  and keeping the row forever is noise on a screen people have to read. The screen says which
+  happened, afterwards, because the answer depends on what the page accumulated and the person
+  asking cannot be expected to know.
+- `routes.history_for` gives every row its `open_findings` and `visits` in one query pair, so the
+  rename warning is there the moment the path field is touched rather than after a round trip.
+- `PATCH`/`DELETE /api/projects/<id>/a11y-routes/<route_id>/`.
+- The Pages table is the editor: **Add a page** leads (the everyday action), **Import a list**
+  follows (how a project starts, not how it is kept), the in-scope toggle writes, and every row
+  has Edit and Remove.
+
+**What it does NOT fix, and cannot.** A finding is identified by *(route + element + rule)*, so a
 rename leaves the page's history behind whatever the input form is. The editor makes that
 *knowable* — the platform is certain it is a rename — which is the prerequisite for warning at all.
-Team decision: **warn and proceed**, never rewrite recorded findings.
+Team decision: **warn and proceed**, never rewrite recorded findings. A test asserts the findings
+stay at the old address, so nobody can quietly "improve" this later.
 
-**Size M · Risk low — it is a change to a table 8a already built.**
+**Found while building:** replacing the Excluded badge with an editable toggle lost a word. A
+toggle that is off reads as *"not set yet"*; **Excluded** is a decision somebody took about that
+page. The cell now carries both, and a test holds it there.
+
+**How it is proven.** 12 tests in `test_a11y_baseline.py` — the rename creates nothing, a refused
+edit changes nothing, a collision is refused naming the other page, an edit that changes nothing
+writes nothing, every edit is recorded with its before-value, a typo can be deleted, an audited
+page cannot, a clean-but-visited page cannot either (being clean is a result, not an absence). 7 on
+the screen, including the rename warning appearing for a page with history and **not** appearing
+for one without — a warning on every rename is a warning nobody reads by the third one.
+
+**Size M · Risk low — a change to a table 8a already built.**
 
 ---
 

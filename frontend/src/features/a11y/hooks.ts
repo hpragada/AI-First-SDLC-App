@@ -150,6 +150,28 @@ export function useRegisterA11yRoutes(projectId: string | undefined) {
   });
 }
 
+export function useUpdateA11yRoute(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { routeId: string; fields: Record<string, unknown> }) =>
+      api.a11yRouteUpdate(tenantId, projectId as string, vars.routeId, vars.fields),
+    // Refetched rather than patched into the cache: an edit can change what a page's history
+    // means for the scope warning, and that is computed server-side from both lists.
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["a11y-routes", projectId] }),
+  });
+}
+
+export function useDeleteA11yRoute(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (routeId: string) =>
+      api.a11yRouteDelete(tenantId, projectId as string, routeId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["a11y-routes", projectId] }),
+  });
+}
+
 export function useStartA11yAudit(projectId: string | undefined) {
   const tenantId = useTenantId();
   const qc = useQueryClient();

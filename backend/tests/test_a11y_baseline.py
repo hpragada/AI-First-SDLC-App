@@ -1764,3 +1764,166 @@ def test_a_shrunken_scope_is_reported_against_the_audit_it_shrank_from(world):
     assert moved["removed"] == ["/basket", "/login"]
     assert moved["before"] == 3 and moved["now"] == 2
     assert moved["audit_id"] == str(audit.id)
+
+
+# ══ editing one page (task 8b) ═══════════════════════════════════════════════
+#
+# Registering works by path, because a pasted list carries no identities. That is the whole
+# reason a corrected path adds a page and leaves the old one in scope, and the whole reason 8a
+# needed a confirm step. Editing a NAMED ROW removes the ambiguity instead of warning about it.
+
+
+def _row(world, path="/catalogue", **over):
+    _paste(world, json.dumps([{"path": path, **over}]))
+    return A11yRoute.objects.get(tenant_id=world["t"], path=path)
+
+
+def _edit(world, row, **fields):
+    from apps.a11y.routes import update_route
+
+    return update_route(tenant_id=world["t"], project_id=world["p"], route_id=str(row.id),
+                        fields=fields, actor="user-7")
+
+
+def test_editing_a_row_changes_that_page_and_creates_nothing(world):
+    """The point of the whole task. Re-pasting a corrected path leaves a ghost; editing the row
+    the platform already knows cannot."""
+    row = _row(world, "/catalogue/search", title="Search")
+    _edit(world, row, path="/catalogue/results")
+
+    paths = sorted(r.path for r in A11yRoute.objects.filter(tenant_id=world["t"]))
+    assert paths == ["/catalogue/results"], "one page, renamed — not two"
+
+
+def test_a_rename_is_checked_like_any_other_path(world):
+    from apps.a11y.routes import RouteError
+
+    row = _row(world)
+    with pytest.raises(RouteError) as exc:
+        _edit(world, row, path="catalogue")
+    assert "must start with `/`" in str(exc.value)
+    row.refresh_from_db()
+    assert row.path == "/catalogue", "a refused edit changes nothing"
+
+
+def test_renaming_onto_a_page_that_already_exists_is_refused_not_merged(world):
+    """Merging two rows would silently discard whichever page's name and scope lost, and the
+    audit would then visit a page under a description nobody wrote for it."""
+    from apps.a11y.routes import RouteError
+
+    _paste(world, json.dumps([{"path": "/a", "title": "First"},
+                              {"path": "/b", "title": "Second"}]))
+    row = A11yRoute.objects.get(tenant_id=world["t"], path="/b")
+
+    with pytest.raises(RouteError) as exc:
+        _edit(world, row, path="/a")
+    assert "already registered" in str(exc.value) and "First" in str(exc.value)
+    assert A11yRoute.objects.filter(tenant_id=world["t"]).count() == 2
+
+
+def test_a_field_that_is_not_a_page_property_is_refused_by_name(world):
+    from apps.a11y.routes import RouteError
+
+    row = _row(world)
+    with pytest.raises(RouteError) as exc:
+        _edit(world, row, source="onboarding")
+    # Who put a page here is a fact about how it arrived, not something a person edits.
+    assert "'source' cannot be edited" in str(exc.value)
+
+
+def test_an_edit_that_changes_nothing_says_so_rather_than_writing(world):
+    row = _row(world, "/catalogue", title="Browse")
+    assert _edit(world, row, label="Browse", enabled=True) == {}
+
+
+def test_every_edit_is_recorded_with_what_it_was_before(world):
+    """A page's scope decides what every later number is a number ABOUT, so the change has to be
+    reconstructable and not merely visible."""
+    from apps.ledger.models import Event
+
+    row = _row(world, "/catalogue")
+    _edit(world, row, path="/browse", enabled=False)
+
+    entry = Event.objects.filter(tenant_id=world["t"],
+                                 action="a11y.routes.registered").order_by("ts").last()
+    assert entry.actor == "user-7"
+    assert entry.payload["fields"]["path"] == {"from": "/catalogue", "to": "/browse"}
+    assert entry.payload["fields"]["enabled"] == {"from": True, "to": False}
+
+
+def test_what_a_rename_would_leave_behind_is_readable_before_it_happens(world):
+    """A finding is keyed on the route it was found at, so a rename cannot take the page's
+    problems with it. The screen has to be able to say that while the path field is being typed,
+    which means the count travels on the row."""
+    from apps.a11y.routes import history_for
+
+    _row(world, "/checkout")
+    _open_finding(world, "/checkout")
+
+    assert history_for(world["t"], world["p"])["/checkout"]["open_findings"] == 1
+
+
+def test_a_rename_does_not_move_the_pages_recorded_problems(world):
+    """Team decision: warn and proceed. Rewriting a finding's key would edit records the ledger
+    treats as permanent, so the honest outcome is that history stays where it was found."""
+    _row(world, "/checkout")
+    _open_finding(world, "/checkout")
+    row = A11yRoute.objects.get(tenant_id=world["t"], path="/checkout")
+    _edit(world, row, path="/pay")
+
+    assert A11yFinding.objects.filter(tenant_id=world["t"], route="/checkout").count() == 1
+    assert A11yFinding.objects.filter(tenant_id=world["t"], route="/pay").count() == 0
+
+
+# ── removing a page ─────────────────────────────────────────────────────────
+
+
+def _remove(world, row):
+    from apps.a11y.routes import delete_route
+
+    return delete_route(tenant_id=world["t"], project_id=world["p"], route_id=str(row.id),
+                        actor="user-7")
+
+
+def test_a_page_typed_by_mistake_can_simply_go(world):
+    """The disabled-never-deleted rule protects pages that were REAL. A path that was never
+    opened and has nothing recorded against it was never a page, and keeping the row forever is
+    noise on a screen people have to read."""
+    row = _row(world, "/catalouge")     # a typo, never audited
+    out = _remove(world, row)
+
+    assert out["removed"] is True
+    assert not A11yRoute.objects.filter(tenant_id=world["t"], path="/catalouge").exists()
+
+
+def test_a_page_that_has_been_audited_is_excluded_and_kept(world):
+    """A page that stopped existing is a fact about the application worth keeping, and its past
+    findings would otherwise point at a page nothing explains."""
+    _row(world, "/checkout")
+    _open_finding(world, "/checkout")
+    row = A11yRoute.objects.get(tenant_id=world["t"], path="/checkout")
+
+    out = _remove(world, row)
+    assert out["removed"] is False and out["excluded"] is True
+    assert "kept and taken out of scope" in out["reason"]
+    row.refresh_from_db()
+    assert row.enabled is False
+
+
+def test_a_page_that_was_visited_and_found_clean_is_also_kept(world):
+    """Being clean is a result, not an absence — the row is what says the page was looked at."""
+    _row(world, "/login")
+    audit = _audit(world, "/login")
+    _post(world, audit, _screen("/login"))
+    row = A11yRoute.objects.get(tenant_id=world["t"], path="/login")
+
+    assert _remove(world, row)["removed"] is False
+
+
+def test_removing_a_page_is_recorded(world):
+    from apps.ledger.models import Event
+
+    _remove(world, _row(world, "/typo"))
+    entry = Event.objects.filter(tenant_id=world["t"],
+                                 action="a11y.routes.registered").order_by("ts").last()
+    assert entry.payload["deleted"] == "/typo"

@@ -400,3 +400,150 @@ def last_visited(tenant_id, project_id) -> dict:
         for route, when in rows:
             seen[route] = when       # ordered ascending, so the last write is the latest
     return seen
+
+
+def history_for(tenant_id, project_id) -> dict:
+    """{path: {"open_findings": n, "visits": n}} — what each page has accumulated.
+
+    What a rename would leave behind, in one query pair rather than one per row. A finding is
+    identified by *(route + element + rule)*, so the page's path is part of the identity of every
+    problem recorded on it: change the path and the problems stay with the old address while the
+    new one starts empty. That is correct — the platform cannot tell a rename from a new page —
+    but it is not obvious from where a person sits, so the screen has to be able to say it before
+    they commit.
+    """
+    from .models import A11yFinding, A11yScreenScan
+
+    out: dict[str, dict] = {}
+    with tenant_context(tenant_id):
+        for route in (
+            A11yFinding.objects
+            .filter(tenant_id=tenant_id, project_id=project_id,
+                    status=A11yFinding.Status.OPEN)
+            .values_list("route", flat=True)
+        ):
+            out.setdefault(route, {"open_findings": 0, "visits": 0})["open_findings"] += 1
+        for route in (
+            A11yScreenScan.objects
+            .filter(tenant_id=tenant_id, project_id=project_id, load_error="")
+            .values_list("route", flat=True)
+        ):
+            out.setdefault(route, {"open_findings": 0, "visits": 0})["visits"] += 1
+    return out
+
+
+#: What one row may be edited to. `source` and `id` are deliberately absent: who put a page here
+#: is a fact about how it arrived, and a row's identity is not a thing a person edits.
+EDITABLE = ("path", "label", "enabled", "notes", "example_path")
+
+
+def update_route(*, tenant_id, project_id, route_id, fields: dict, actor=None) -> dict:
+    """Edit ONE registered page, on a row the platform already knows.
+
+    **This is what makes a correction a correction.** Registering works by path, because a pasted
+    list carries no identities — so re-pasting a corrected path adds a page and leaves the old one
+    in scope. Here the row is named, so changing its path changes that page and nothing else. The
+    entire ghost-page problem is absent rather than warned about.
+
+    What it still cannot do is move the page's history: a finding is keyed on the route it was
+    found at, and rewriting those keys would edit records the ledger treats as permanent. So a
+    rename is allowed, recorded, and the caller is expected to have said what it costs — which is
+    what `history_for` is for.
+
+    Returns what changed, `{}` when nothing did — the same shape and the same reason as
+    `register_routes`.
+    """
+    from .models import A11yRoute
+
+    unknown = sorted(set(fields) - set(EDITABLE))
+    if unknown:
+        _reject(
+            f"{', '.join(repr(k) for k in unknown)} cannot be edited on a page. "
+            f"You can change: {', '.join(EDITABLE)}."
+        )
+
+    with tenant_context(tenant_id):
+        row = A11yRoute.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, id=route_id).first()
+        if row is None:
+            _reject("that page is not registered on this project")
+
+        before = {key: getattr(row, key) for key in EDITABLE}
+        after = dict(before)
+        if "path" in fields:
+            after["path"] = normalise_path(fields["path"])
+        if "example_path" in fields:
+            after["example_path"] = _example(
+                {"example": fields["example_path"]}, after["path"])
+        if "label" in fields:
+            after["label"] = str(fields["label"] or "")[:200]
+        if "notes" in fields:
+            after["notes"] = str(fields["notes"] or "")
+        if "enabled" in fields:
+            after["enabled"] = bool(fields["enabled"])
+
+        if after["path"] != before["path"]:
+            clash = A11yRoute.objects.filter(
+                tenant_id=tenant_id, project_id=project_id, path=after["path"],
+            ).exclude(id=row.id).first()
+            if clash is not None:
+                # Refused rather than merged. Two rows becoming one would silently discard
+                # whichever page's name and scope lost, and the audit would then be visiting a
+                # page under a description nobody wrote for it.
+                _reject(
+                    f"{after['path']} is already registered on this project"
+                    f"{f' as {clash.label!r}' if clash.label else ''}. Edit that page instead, "
+                    f"or take this one out of scope."
+                )
+
+        changed = {k: {"from": before[k], "to": after[k]} for k in EDITABLE
+                   if before[k] != after[k]}
+        if not changed:
+            return {}
+        for key, value in after.items():
+            setattr(row, key, value)
+        row.save(update_fields=[*EDITABLE, "updated_at"])
+
+    _record_change(tenant_id=tenant_id, project_id=project_id, actor=actor,
+                   source=row.source, changed={"edited": row.path, "fields": changed})
+    return changed
+
+
+def delete_route(*, tenant_id, project_id, route_id, actor=None) -> dict:
+    """Remove a page that has no history. Anything else is taken out of scope instead.
+
+    **The rule this module has always had is that a page is disabled, never deleted** — a page
+    that stopped existing is a fact about the application worth keeping, and a deleted row invites
+    someone to add it back next month with no record of why it went. Its past findings would then
+    point at a page nothing explains.
+
+    That rule is about pages that were REAL. A path typed by mistake was never a page: it has
+    never been opened and nothing has ever been recorded against it, so there is no history to
+    protect and keeping the row forever is noise on a screen people have to read. So a row with no
+    visits and no findings can go, and every other row is excluded and stays visible as excluded.
+    """
+    from .models import A11yRoute
+
+    with tenant_context(tenant_id):
+        row = A11yRoute.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, id=route_id).first()
+        if row is None:
+            _reject("that page is not registered on this project")
+        path, source = row.path, row.source
+
+    history = history_for(tenant_id, project_id).get(path) or {}
+    if history.get("open_findings") or history.get("visits"):
+        update_route(tenant_id=tenant_id, project_id=project_id, route_id=route_id,
+                     fields={"enabled": False}, actor=actor)
+        return {"removed": False, "excluded": True, "path": path,
+                "reason": (
+                    f"{path} has been audited, so it is kept and taken out of scope rather than "
+                    f"deleted. What was found there stays on the record."
+                )}
+
+    with tenant_context(tenant_id):
+        A11yRoute.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, id=route_id).delete()
+    _record_change(tenant_id=tenant_id, project_id=project_id, actor=actor, source=source,
+                   changed={"deleted": path})
+    return {"removed": True, "excluded": False, "path": path, "reason": ""}

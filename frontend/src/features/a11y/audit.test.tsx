@@ -62,6 +62,8 @@ function route(over: Record<string, unknown> = {}) {
     notes: "",
     example_path: "",
     last_visited: "2026-08-18T14:02:00Z",
+    open_findings: 0,
+    visits: 1,
     ...over,
   };
 }
@@ -102,6 +104,9 @@ describe("S-38 pages and audit", () => {
     // No run strip at all — running an audit over nothing would report no problems, which
     // reads exactly like an application with none.
     expect(screen.queryByRole("button", { name: "Run audit" })).toBeNull();
+    // Both ways in are offered from empty: import a list, or add one page (task 8b).
+    expect(screen.getByRole("button", { name: "Import a list" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add a page" })).toBeTruthy();
   });
 
   it("default · shows the pages, the passes, and what will be visited", async () => {
@@ -247,7 +252,7 @@ describe("S-38 adding pages", () => {
     vi.stubGlobal("fetch", fetchStub);
     renderWithProviders(<A11yAudit />);
 
-    await userEvent.click(await screen.findByRole("button", { name: "Add pages" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Import a list" }));
     await userEvent.click(screen.getByLabelText("Your pages"));
     await userEvent.paste('["/", "/account/holds", "/catalogue/results"]');
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -279,7 +284,7 @@ describe("S-38 adding pages", () => {
     ]));
     renderWithProviders(<A11yAudit />);
 
-    await userEvent.click(await screen.findByRole("button", { name: "Add pages" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Import a list" }));
     await userEvent.click(screen.getByLabelText("Your pages"));
     await userEvent.paste('["/"]');
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -304,7 +309,7 @@ describe("S-38 adding pages", () => {
     ]));
     renderWithProviders(<A11yAudit />);
 
-    await userEvent.click(await screen.findByRole("button", { name: "Add pages" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Import a list" }));
     await userEvent.click(screen.getByLabelText("Your pages"));
     await userEvent.paste('["/"]');
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -324,7 +329,7 @@ describe("S-38 adding pages", () => {
     ]));
     renderWithProviders(<A11yAudit />);
 
-    await userEvent.click(await screen.findByRole("button", { name: "Add pages" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Import a list" }));
     await userEvent.click(screen.getByLabelText("Your pages"));
     await userEvent.paste("/, /catalogue");
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -332,5 +337,136 @@ describe("S-38 adding pages", () => {
     await waitFor(() => expect(screen.getByText("This could not be read")).toBeTruthy());
     // Still on the paste step, with the text intact — a refusal must not cost what was typed.
     expect((screen.getByLabelText("Your pages") as HTMLTextAreaElement).value).toBe("/, /catalogue");
+  });
+});
+
+
+// ── editing one page (task 8b) ──────────────────────────────────────────────
+//
+// Registering works by path and cannot tell a corrected path from a new page. Editing a named
+// row can — so these are about what the row editor makes possible, and about the one thing it
+// still cannot do.
+
+describe("S-38 editing one page", () => {
+  it("editing a row opens it with its own values, not an empty form", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({
+        routes: [route({ label: "Browse the catalogue", example_path: "" })],
+      })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    expect((screen.getByLabelText("Path") as HTMLInputElement).value).toBe("/catalogue");
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Browse the catalogue");
+  });
+
+  it("renaming a page that has recorded problems says what stays behind", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({
+        routes: [route({ path: "/catalogue/search", open_findings: 3, visits: 2 })],
+      })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const path = screen.getByLabelText("Path");
+    await userEvent.clear(path);
+    await userEvent.paste("/catalogue/results");
+
+    // A problem is identified by the page it was found on, so the history cannot follow. That
+    // is correct and it is not obvious, which is exactly why it is said before it happens.
+    expect(screen.getByText("This page has a history")).toBeTruthy();
+    expect(screen.getByText(/3 recorded problems stay with/)).toBeTruthy();
+    expect(screen.getByText(/starts with no history/)).toBeTruthy();
+  });
+
+  it("a page with no history is renamed without a warning nobody needs", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({
+        routes: [route({ path: "/catalouge", open_findings: 0, visits: 0, last_visited: null })],
+      })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    await userEvent.clear(screen.getByLabelText("Path"));
+    await userEvent.paste("/catalogue");
+
+    // A warning on every rename is a warning nobody reads by the third one.
+    expect(screen.queryByText("This page has a history")).toBeNull();
+  });
+
+  it("adding one page does not make anyone write a list", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add a page" }));
+    // By heading, because the button that opened it says the same thing.
+    expect(screen.getByRole("heading", { name: "Add a page" })).toBeTruthy();
+    expect((screen.getByLabelText("Path") as HTMLInputElement).value).toBe("");
+    // The example field is here rather than hidden behind an advanced panel: a pattern route is
+    // the one case where a page cannot be audited at all without it.
+    expect(screen.getByLabelText("Example page")).toBeTruthy();
+  });
+
+  it("removing a page that was audited says it was kept, not removed", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes\/[0-9a-z-]+\/$/, {
+        removed: false, excluded: true, path: "/catalogue",
+        reason: "/catalogue has been audited, so it is kept and taken out of scope rather than deleted. What was found there stays on the record.",
+      }],
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Remove" }));
+
+    // The answer depends on what the page has accumulated, which the person asking cannot be
+    // expected to know — so it is said afterwards rather than guessed at beforehand.
+    await waitFor(() => expect(screen.getByText("Kept, and taken out of scope")).toBeTruthy());
+    expect(screen.getByText(/stays on the record/)).toBeTruthy();
+  });
+
+  it("an excluded page still says Excluded, not just an off switch", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({ routes: [route({ enabled: false })] })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    // A toggle that is off reads as "not set yet". Excluded is a decision somebody took.
+    expect(await screen.findByText("Excluded")).toBeTruthy();
+  });
+
+  it("a change the platform refuses leaves the page as it was, and says why", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes\/[0-9a-z-]+\/$/, { detail: "/a is already registered on this project" }, 400],
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    await userEvent.clear(screen.getByLabelText("Path"));
+    await userEvent.paste("/a");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.getByText("Nothing was changed")).toBeTruthy());
+    expect(screen.getByText(/already registered/)).toBeTruthy();
   });
 });
