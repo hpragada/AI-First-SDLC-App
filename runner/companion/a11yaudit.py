@@ -107,7 +107,7 @@ def post_audit_screens(screens: list[dict], *, client, audit_id: str) -> dict:
     return {"posted": posted, "failed": failed}
 
 
-def run_baseline_audit(*, client, project_id: str, base_url: str, workdir,
+def run_baseline_audit(*, client, project_id: str, workdir, base_url: str = "",
                        routes=None, node: str = "node",
                        timeout: float = DEFAULT_TIMEOUT_S) -> dict:
     """Open an audit, visit its routes, post what was seen, and close it.
@@ -115,6 +115,12 @@ def run_baseline_audit(*, client, project_id: str, base_url: str, workdir,
     Returns everything a person needs to judge the pass without opening a database: which
     routes were asked for, how many screens came back, what the script said on the way, and
     what the platform made of it.
+
+    `base_url` is optional (B3). Left empty, the platform resolves the address it already holds
+    for the project and sends it back on the manifest — which is what the script visits, so the
+    address is never typed twice and never diverges from the one a build uses. The platform
+    refuses the audit outright when it holds none, rather than handing back a manifest that
+    cannot be visited.
     """
     opened = client.call("start_a11y_audit", project_id=project_id, base_url=base_url,
                          routes=routes)

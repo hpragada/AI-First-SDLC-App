@@ -7,7 +7,7 @@
         --repo acme/api=~/repos/api --repo acme/web=~/repos/web             # multi-repo
     python -m runner.companion run    --task task.json --repo-path ~/repos/api --worktrees ~/sdlc
     python -m runner.companion audit  --api-url URL --tenant T --token TOK --project P \
-                                      --base-url http://localhost:5173
+                                      [--base-url http://localhost:5173]
 
 `enroll` returns the one-time token. `serve` is the headless background process: it claims
 phases dispatched to this enrollment and runs them on the **local logged-in Claude Code**
@@ -213,9 +213,12 @@ def main(argv=None) -> int:
     a.add_argument("--tenant", required=True)
     a.add_argument("--token", required=True)
     a.add_argument("--project", required=True)
-    a.add_argument("--base-url", required=True,
+    a.add_argument("--base-url", default="",
                    help="where the running app is reachable FROM THIS MACHINE, e.g. "
-                        "http://localhost:5173 — the platform never connects to it")
+                        "http://localhost:5173 — the platform never connects to it. Optional: "
+                        "left out, the platform uses the address it already holds for this "
+                        "project (the repository's Preview URL, or the port it builds with) "
+                        "and refuses with a readable reason if it holds none")
     a.add_argument("--route", action="append", default=[], metavar="PATH",
                    help="audit these paths instead of the project's registered routes; "
                         "repeat once per path")

@@ -8,6 +8,8 @@ silent no-locator run.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from apps.tenancy.context import tenant_context
 
 from .models import ProjectProfile, Repository
@@ -54,3 +56,92 @@ def resolve_preview_url(*, tenant_id, project_id, repo_name: str | None) -> str:
             .first()
         )
         return (repo.preview_url or "") if repo else ""
+
+
+@dataclass(frozen=True)
+class ResolvedAppUrl:
+    """Where a project's application answers, and how the platform came to think so.
+
+    `source` exists so a screen can say *"from the repository acme/web"* next to a pre-filled
+    field rather than presenting an address out of nowhere, and `reason` so a refusal can name
+    the thing to go and set. Exactly one of `url` / `reason` is ever non-empty.
+    """
+
+    url: str = ""
+    source: str = ""
+    reason: str = ""
+
+
+#: What to tell someone when the platform holds no address for this project at all.
+NO_APP_URL = (
+    "this project has no application address on record, so there is nothing to check. Set the "
+    "repository's Preview URL to where the running application answers (e.g. "
+    "http://127.0.0.1:5173), or give an address for this pass."
+)
+
+
+def resolve_app_base_url(*, tenant_id, project_id) -> ResolvedAppUrl:
+    """Where this project's application is reachable, without anyone typing it again (B3).
+
+    **This is an application address, never a repository address.** A repo's git identity is its
+    `name`/`code_host_ref`; `preview_url` is the separate fact "the application this repo serves
+    answers here". It lives on the repo because the served thing IS a repo — the frontend repo
+    runs the UI and a backend-only repo has no UI to preview.
+
+    The order, and why each step is reading data rather than guessing:
+
+      1. the **default** repo's `preview_url` — the project's own answer to "which repo serves
+         the app", already maintained by `apps.projects.repos`;
+      2. else the `preview_url` of the **only** repo that has one. A `preview_url` is a claim
+         that this repo serves the application, and normally exactly one repo makes it. Two or
+         more is a project with two applications, and only a person knows which to check — so
+         that is refused **naming them**, never resolved by picking the first (the same rule
+         `orchestration.trigger` applies to an unpinned work item on a multi-repo project);
+      3. else the port from `preview_start`, as `http://127.0.0.1:{port}`. That is the address
+         the companion itself uses when a build brings the app up (`runner.py`), so it is
+         derived from the platform's own behaviour rather than invented. Nothing is started
+         here: if the app is not up, whoever is checking gets "nothing answered at that
+         address", which is the honest outcome and never a pass.
+
+    Never raises, matching this module: emptiness is an answer, and the caller decides whether
+    it is fatal. When there is no address, `reason` says what to go and set.
+    """
+    with tenant_context(tenant_id):
+        repos = list(
+            Repository.objects
+            .filter(tenant_id=tenant_id, project_id=project_id)
+            .order_by("-is_default", "name")
+        )
+
+    default = next((r for r in repos if r.is_default), None)
+    if default is not None and default.preview_url:
+        return ResolvedAppUrl(
+            url=default.preview_url.rstrip("/"),
+            source=f"the default repository {default.name or '(unnamed)'}",
+        )
+
+    serving = [r for r in repos if r.preview_url]
+    if len(serving) == 1:
+        repo = serving[0]
+        return ResolvedAppUrl(
+            url=repo.preview_url.rstrip("/"),
+            source=f"the repository {repo.name or '(unnamed)'}",
+        )
+    if len(serving) > 1:
+        named = ", ".join(r.name or "(unnamed)" for r in serving)
+        return ResolvedAppUrl(reason=(
+            f"this project has more than one application address — {named} each carry a Preview "
+            f"URL, and only you know which application to check. Give the address for this pass."
+        ))
+
+    # `resolve_preview_start` is repo-first then ProjectProfile, so passing the repo that would
+    # serve the app gets the profile-level fallback for free.
+    chosen = default.name if default is not None else (repos[0].name if len(repos) == 1 else None)
+    port = (resolve_preview_start(
+        tenant_id=tenant_id, project_id=project_id, repo_name=chosen) or {}).get("port")
+    if port:
+        return ResolvedAppUrl(
+            url=f"http://127.0.0.1:{port}",
+            source=f"the preview-start port ({port}) this project builds with",
+        )
+    return ResolvedAppUrl(reason=NO_APP_URL)

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from typing import NoReturn
 
+from apps.projects.preview_config import resolve_app_base_url
 from apps.tenancy.context import tenant_context
 
 from .routes import RouteError, normalise_path, route_paths
@@ -81,6 +82,14 @@ def start_baseline_audit(*, tenant_id, project_id, base_url: str = "", routes=No
     Refuses an empty list rather than starting a pass that can only report nothing. An audit
     that finishes having checked no pages is the exact shape of a clean result, and producing
     one because nobody registered a route would be the worst kind of quiet success.
+
+    `base_url` left out is resolved from what the platform already knows (B3) — see
+    `apps.projects.preview_config.resolve_app_base_url`. **An address given here always wins**:
+    somebody deliberately checking a staging site must never be overridden by a stored
+    development URL. With no address from either, the audit is refused rather than opened,
+    because a manifest with an empty address cannot be visited — the script builds each page's
+    URL relative to it — and an audit that reports nothing looks exactly like an application
+    with nothing wrong.
     """
     from .models import A11yBaselineAudit
 
@@ -103,10 +112,20 @@ def start_baseline_audit(*, tenant_id, project_id, base_url: str = "", routes=No
             "which reads exactly like an application with none."
         )
 
+    # After the route checks on purpose: a person with neither routes nor an address is told
+    # about the routes first, which is the earlier thing to go and fix, and every existing
+    # refusal keeps its own wording.
+    address = str(base_url or "").strip()
+    if not address:
+        resolved = resolve_app_base_url(tenant_id=tenant_id, project_id=project_id)
+        if not resolved.url:
+            _reject(resolved.reason)
+        address = resolved.url
+
     with tenant_context(tenant_id):
         return A11yBaselineAudit.objects.create(
             tenant_id=tenant_id, project_id=project_id,
-            base_url=str(base_url or "")[:512], routes=ordered,
+            base_url=address[:512], routes=ordered,
             status=A11yBaselineAudit.Status.CAPTURING, started_by_id=started_by or None,
         )
 

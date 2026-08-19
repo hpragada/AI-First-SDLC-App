@@ -232,7 +232,11 @@ def test_an_audit_of_a_project_with_no_routes_is_refused(world):
 
 
 def test_an_audit_can_be_given_routes_directly(world):
+    # An address is given because since B3 an audit without one is refused: the manifest this
+    # used to produce carried `base_url: ""`, which the audit script cannot visit. What this
+    # test is about — dedupe and order — is unchanged.
     audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"],
+                                 base_url="http://localhost:5173",
                                  routes=["/one", "/two", "/one"])
     assert audit.routes == ["/one", "/two"], "deduped, order preserved"
 
@@ -256,6 +260,141 @@ def test_the_manifest_says_where_to_go_and_what_to_visit(world):
     assert manifest["routes"] == ["/", "/login"]
     assert manifest["output"].endswith("a11y-candidates.json")
     assert manifest["audit_id"] == str(audit.id)
+
+
+# == where the address comes from (B3) ================================================
+#
+# The audit needs one fact: where the running application answers. The platform already holds
+# it - `Repository.preview_url` is an APPLICATION address (not a repo URL; that is `name` /
+# `code_host_ref`), stored per repo because the served thing is a repo. Until B3 nothing in
+# `apps.a11y` read it, so a person typed it again on a command line. The resolution order and
+# its reasoning live in `apps.projects.preview_config.resolve_app_base_url`.
+
+
+def _repo(world, **over):
+    from apps.projects.models import Repository
+
+    fields = {"tenant": world["tenant"], "project": world["project"], "name": "acme/web",
+              "is_default": True, "preview_url": "http://127.0.0.1:5173"}
+    fields.update(over)
+    return Repository.objects.create(**fields)
+
+
+def test_the_address_comes_from_the_default_repository_when_none_is_given(world):
+    _repo(world)
+    _register(world, "/login")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"])
+    assert audit.base_url == "http://127.0.0.1:5173"
+    assert audit_manifest(audit)["base_url"] == "http://127.0.0.1:5173"
+
+
+def test_an_address_given_for_this_pass_always_wins(world):
+    """Someone deliberately checking a staging site must never be overridden by a stored
+    development URL."""
+    _repo(world)
+    _register(world, "/login")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"],
+                                 base_url="https://staging.example.com")
+    assert audit.base_url == "https://staging.example.com"
+
+
+def test_the_only_repository_that_serves_an_app_is_used_when_it_is_not_the_default(world):
+    """A `preview_url` is a claim that this repo serves the application. On a multi-repo project
+    the default is often the API, which has no UI to check - reading the one repo that does make
+    the claim is reading the data, not guessing."""
+    _repo(world, name="acme/api", preview_url="", is_default=True)
+    _repo(world, name="acme/web", preview_url="http://127.0.0.1:4000", is_default=False)
+    _register(world, "/login")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"])
+    assert audit.base_url == "http://127.0.0.1:4000"
+
+
+def test_the_default_repositorys_own_address_wins_over_another_repos(world):
+    _repo(world, name="acme/web", preview_url="http://127.0.0.1:5173", is_default=True)
+    _repo(world, name="acme/admin", preview_url="http://127.0.0.1:5174", is_default=False)
+    _register(world, "/login")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"])
+    assert audit.base_url == "http://127.0.0.1:5173"
+
+
+def test_two_applications_and_no_default_is_refused_naming_both(world):
+    _repo(world, name="acme/web", preview_url="http://127.0.0.1:5173", is_default=False)
+    _repo(world, name="acme/admin", preview_url="http://127.0.0.1:5174", is_default=False)
+    _register(world, "/login")
+    with pytest.raises(BaselineError) as err:
+        start_baseline_audit(tenant_id=world["t"], project_id=world["p"])
+    assert "acme/web" in str(err.value) and "acme/admin" in str(err.value)
+    assert "only you know which application to check" in str(err.value)
+
+
+def test_the_port_the_project_builds_with_is_used_when_no_url_is_stored(world):
+    """The address the companion itself uses when a build brings the app up - derived from the
+    platform's own behaviour, not invented. Nothing is started here: if the app is not up, the
+    audit reports pages nothing answered on, which is honest and never a pass."""
+    _repo(world, preview_url="", preview_start={"command": "npm run dev", "port": 5173})
+    _register(world, "/login")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"])
+    assert audit.base_url == "http://127.0.0.1:5173"
+
+
+def test_an_audit_with_no_address_anywhere_is_refused_and_says_what_to_set(world):
+    from apps.a11y.models import A11yBaselineAudit
+
+    _register(world, "/login")
+    with pytest.raises(BaselineError) as err:
+        start_baseline_audit(tenant_id=world["t"], project_id=world["p"])
+    assert "no application address on record" in str(err.value)
+    assert "Preview URL" in str(err.value)
+    assert not A11yBaselineAudit.objects.filter(tenant_id=world["t"]).exists(), \
+        "refused before anything was written"
+
+
+def test_a_project_with_no_routes_is_still_told_about_the_routes_first(world):
+    """Refusal order: the routes are the earlier thing to go and fix, and every existing refusal
+    keeps its own wording."""
+    with pytest.raises(BaselineError) as err:
+        start_baseline_audit(tenant_id=world["t"], project_id=world["p"])
+    assert "reads exactly like an application with none" in str(err.value)
+
+
+def test_the_resolver_says_where_the_address_came_from(world):
+    """A screen pre-filling this field has to be able to say why (B1). Exactly one of `url` /
+    `reason` is ever set."""
+    from apps.projects.preview_config import resolve_app_base_url
+
+    empty = resolve_app_base_url(tenant_id=world["t"], project_id=world["p"])
+    assert empty.url == "" and empty.source == "" and "Preview URL" in empty.reason
+
+    _repo(world)
+    found = resolve_app_base_url(tenant_id=world["t"], project_id=world["p"])
+    assert found.url == "http://127.0.0.1:5173"
+    assert found.source == "the default repository acme/web" and found.reason == ""
+
+
+def test_the_companion_may_leave_the_address_to_the_platform(tmp_path, monkeypatch):
+    """The half that makes B3 visible today: `--base-url` is optional, and the address the
+    platform resolved comes back on the manifest, which is what the script visits."""
+    from runner.companion import a11yaudit
+
+    seen = {}
+
+    def _fake_script(manifest, **kw):
+        seen["manifest"] = manifest
+        return {"screens": [_screen("/")], "output": "x", "returncode": 0, "stderr": ""}
+
+    monkeypatch.setattr(a11yaudit, "run_audit_script", _fake_script)
+
+    class _Resolving(_FakeClient):
+        def call(self, tool, **kwargs):
+            out = super().call(tool, **kwargs)
+            if tool == "start_a11y_audit" and not kwargs.get("base_url"):
+                out["manifest"]["base_url"] = "http://127.0.0.1:5173"   # what the platform held
+            return out
+
+    client = _Resolving()
+    a11yaudit.run_baseline_audit(client=client, project_id="p-1", workdir=tmp_path)
+    assert client.calls[0]["base_url"] == "", "nothing typed, nothing invented"
+    assert seen["manifest"]["base_url"] == "http://127.0.0.1:5173"
 
 
 def test_an_audit_is_not_a_run(world):

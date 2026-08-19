@@ -294,6 +294,11 @@ on a project with wireframes shows it. The instruction now at least points at th
 
 ### B3 · The application address has to be typed again
 
+🟢 **Built 2026-08-19.** The platform now resolves the application's address from what it
+already holds, in four steps, and refuses the audit with a readable reason when it holds none.
+`--base-url` on the companion is optional as a result, so this is visible from the terminal today
+rather than only once B1's screen exists. Twelve tests.
+
 **In plain words.** You add a Preview URL to your repository. Then, to audit the application, you
 type the same address again on a command line. The platform already knew it.
 
@@ -302,11 +307,49 @@ type the same address again on a command line. The platform already knew it.
 `start_baseline_audit` (`backend/apps/a11y/baseline.py:72`) takes `base_url` as a parameter and
 stores whatever it was given. Nothing in `backend/apps/a11y/` reads `preview_url` at all.
 
-**What we change.** `backend/apps/a11y/baseline.py` — when the caller passes no `base_url`, fall
-back to `resolve_preview_url` on the project's **default** repository. An explicit address still
-wins, always: a person deliberately auditing a staging site must not be overridden by a stored dev
-URL. When neither exists, the audit is refused with a sentence saying so, rather than opened with
-an empty address that fails later on the companion.
+**What we change.** An explicit address still wins, always: a person deliberately auditing a
+staging site must not be overridden by a stored dev URL. When nothing can be resolved, the audit is
+refused with a sentence saying so, rather than opened with an empty address that fails later on the
+companion.
+
+**What `preview_url` is, since the team asked (2026-08-19).** It is an **application address** —
+where the running app answers, e.g. `http://127.0.0.1:5173` — and never a repository URL; a repo's
+git identity is its `name` / `code_host_ref`. It lives on the repository row because the served
+thing *is* a repo: the frontend repo runs the UI and a backend-only repo has no UI to preview. It
+is optional (`blank=True`). The platform holds the same fact a second way: `preview_start` carries
+a **command and a port**, and when a build brings the app up the companion reaches it at
+`http://127.0.0.1:{port}` (`runner/companion/runner.py:371`).
+
+**The resolution, as built** — `resolve_app_base_url` in `backend/apps/projects/preview_config.py`,
+placed there because that module is already the platform's single answer to *"how do we reach this
+app?"*, and a second answer inside `apps/a11y` would be a second answer:
+
+1. an address given for this pass;
+2. the **default** repository's `preview_url` — the project's own record of which repo serves the app;
+3. else the `preview_url` of the **only** repo that has one. A `preview_url` is a claim that this
+   repo serves the application, and normally exactly one repo makes it. Two or more with no default
+   is a project with two applications, and that is refused **naming them** rather than resolved by
+   picking the first — the same rule `orchestration/trigger.py:154` applies to an unpinned work item;
+4. else `http://127.0.0.1:{port}` from `preview_start` (team decision 2026-08-19). That is the
+   address the companion itself uses during a build, so it is derived from the platform's own
+   behaviour rather than invented. Nothing is started: if the app is not up, the audit reports pages
+   nothing answered on, which is honest and never a pass.
+
+It returns **where the address came from** as well as the address, so B1's field can say *"from the
+default repository acme/web"* instead of pre-filling out of nowhere, and returns a **reason** naming
+what to set when there is nothing.
+
+**Two more edits than the plan named:**
+
+- `runner/companion/__main__.py:216` — **`--base-url` is no longer required.** Without this the
+  fix changes nothing anybody can see: the CLI is the only way to start an audit until B1 exists,
+  so the platform would resolve an address the user was still forced to type. The resolved address
+  comes back on the manifest, which is what the script visits.
+- `backend/tests/test_a11y_baseline.py` — `test_an_audit_can_be_given_routes_directly` started an
+  audit with no address at all and expected success. The manifest it produced carried
+  `base_url: ""`, which the audit script cannot visit; it now passes an address. What it tests —
+  dedupe and order — is unchanged. The new refusal sits **after** the route checks, so every other
+  existing refusal keeps its wording and its order.
 
 **What you see afterwards.** On the audit screen (B1), the address field is pre-filled from your
 repository, with a note saying where it came from. You can change it, and changing it does not
@@ -315,6 +358,20 @@ write back to the repository.
 **How we prove it.** Three tests in `backend/tests/test_a11y_baseline.py`: the fallback fires, an
 explicit address wins over the stored one, and an audit with neither is refused with a readable
 reason.
+
+*As built:* twelve tests in that file. Each step of the resolution, in isolation: the default repo's
+URL; an explicit address beating it; the one repo that serves an app when the default does not; the
+default winning over a second repo that also serves one; two applications and no default refused by
+name; the `preview_start` port; and nothing anywhere refused with `Preview URL` named in the
+sentence and **no audit row written**. Plus: a project with no routes is still told about the routes
+first, the resolver reports its own provenance for B1 to display, and the companion path leaves the
+address empty and visits the one the platform resolved. `test_a11y_baseline.py` (83),
+`test_a11y_baseline_report.py`, `test_a11y_baseline_enforcement.py`, `test_preview_config.py` (88),
+`test_build_preview.py`, `test_a11y_capture.py` (107) — all green.
+
+**Fully provable by test** — platform code and a CLI argument, not an instruction to a model. What
+no test can prove is that the stored address is *correct*: a dead URL in a repository produces an
+audit that honestly finds nothing there and says so.
 
 **Size S · Risk low · Needs first: nothing (but it is only visible once B1 lands).**
 
