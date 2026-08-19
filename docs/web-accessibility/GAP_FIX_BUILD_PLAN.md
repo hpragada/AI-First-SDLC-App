@@ -547,6 +547,10 @@ runs in that describe because this file predates auto-cleanup being off.
 
 ### G3 · A finding does not say which test case found it
 
+🟢 **Built 2026-08-19.** A greenfield finding now names the test case that found it and links
+to it and to its run, in the review console's own provenance row. A brownfield finding shows
+nothing extra — the nulls are correct data, not a gap. Six backend tests, two on the screen.
+
 **In plain words.** In the review console a QA Lead sees *"1.4.3 · /checkout · button.pay"* and has
 no way to reach the story, the test case or the run that found it. On brownfield that is correct —
 an audit of an existing application has no story. On greenfield it is a hole.
@@ -556,24 +560,64 @@ an audit of an existing application has no story. On greenfield it is a hole.
 finding that run's work item **is** the test-case work item. The projection the screen receives —
 `_item()` in `backend/apps/a11y/review.py` — never includes them.
 
+*Traced rather than assumed, because it is the load-bearing claim:* findings are recorded against
+the **capture** run, not the judge's — `aipass.finish_ai_pass` publishes for `source_run`
+(`aipass.py:192`) — and Test Automation runs one test case per run. Worth checking twice after G4:
+the **judge's** work item is the carrier that task hid, and it is not the one a finding points at.
+And on brownfield, `record_run_findings` resolves the audit's key to `None` on purpose
+(`findings.py:225`), so an audit finding carries no run at all.
+
 It was invisible until now because the console was designed against the brownfield case, where
 there genuinely is nothing to link to.
 
 **What we change.**
 
-- `backend/apps/a11y/review.py` — `_item()` gains `source_run`, `work_item_key` and
-  `work_item_title`, read from `last_seen_run` (falling back to `first_seen_run`). All three are
-  `null` when the run does not exist or has no work item — which is the honest answer for a
-  baseline audit, not a bug. One `select_related` so the queue does not fire a query per row.
-- `frontend/src/features/a11y/A11yReview.tsx` — a line under the route: *"Found by TC-031 —
-  Checkout with valid card"*, linking to the work item, and a link to the run. Absent entirely
-  when the values are null — no empty link, no "—".
+- `backend/apps/a11y/review.py` — `_provenance()` gives `_item()` four fields: `source_run`,
+  `work_item_id`, `work_item_label` and `work_item_title`, read from `last_seen_run` (falling back
+  to `first_seen_run`). All four are `null` when the run does not exist or has no work item —
+  which is the honest answer for a baseline audit, not a bug. `select_related` on the queue **and**
+  on the single-item read, so neither fires a query per row.
+- **`work_item_label` is the case's own `TC-031`, not the platform's `WI-84`** — that is what a QA
+  Lead recognises and what the document calls itself (G2 is what makes it reliably present). It
+  falls back to the work-item key, because the source is not always a test case: a capture posted
+  from CI is keyed to the project, and a finding can hang off a story.
+- `frontend/src/features/a11y/A11yReview.tsx` — **a fifth item in the detail panel's `meta-row`**,
+  not a new line under the route. That row is already where this screen puts provenance: its
+  decided state shows *"Decided by Aisha Khan"* in exactly the same place, beside Screen, Element
+  and Check. Putting "Found by" anywhere else would invent a second pattern next to an existing
+  one. It sits directly above the capture image, which is where a reviewer is reading when the
+  question "what was this test even doing?" arises.
+- **Not on the queue rows.** That list is scan-and-pick: route, selector, level, verdict. Adding a
+  third line to forty rows makes it harder to do the one job it has.
+- **Both links open in a new tab** (`target="_blank" rel="noreferrer"`, this app's convention for
+  leaving a task in hand). The reviewer holds a 15-minute claim on the item (`LOCK_MINUTES`) and a
+  place in a long queue; neither should be spent to glance at a test case.
 
 **What you see afterwards.** A greenfield finding names the test case that found it and links to
 it. A brownfield finding shows nothing extra, exactly as today.
 
 **How we prove it.** Two tests, one per shape: a greenfield finding names its test case; a baseline
 finding returns nulls and the screen renders no link at all.
+
+*As built:* six backend tests in `test_a11y_review.py` and two in `a11y.test.tsx`. Backend: a
+greenfield finding built the real way round (a Test Automation run on a test-case work item) names
+`TC-031`; a baseline finding returns four nulls; the label falls back to the work-item key when the
+source is a story; a finding whose run has since been deleted (`SET_NULL`) returns nulls rather
+than raising on the queue everyone opens; the provenance costs **zero** extra queries across eight
+rows, asserted with `django_assert_num_queries(0)` so the `select_related` cannot be dropped
+silently; and the single-item read carries the fields too — the panel the reviewer judges in reads
+`open_item`, not the queue. Frontend: the greenfield state renders both links with the right hrefs
+and `target="_blank"`, and the brownfield state renders **neither**, checked after the panel is up
+so the absence is the screen's answer rather than a slow render. `test_a11y_review.py`,
+`test_a11y_findings.py`, `test_a11y_review_rest.py` — 100 passed. `a11y.test.tsx` — 13 passed.
+`tsc -b` clean. `docs/design/screens/S-36-a11y-review.html` updated in the same change and rendered
+in the gallery: the second panel keeps **no** "Found by", with a comment saying why, so the file
+shows both shapes.
+
+**Found while building, not fixed (out of scope):** `_item()`'s docstring says `evidence` is
+"passed in for the list (one query pass)", but `queue()` does not pass it — so `evidence_for` runs
+per row, two queries each. Eight findings cost about forty queries, and that was true before this
+task. The docstring describes an intention the code never implemented.
 
 **Size M · Risk low · Needs first: G2 (so the test case's own type is available to show alongside).**
 

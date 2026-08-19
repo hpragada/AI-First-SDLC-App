@@ -700,3 +700,107 @@ def test_an_empty_queue_is_not_a_clean_bill_of_health(world):
     assert A11yFinding.objects.filter(status=A11yFinding.Status.OPEN,
                                       outcome="failure").count() == 1, \
         "an empty queue with an open failure sitting right there"
+
+
+# == where a finding came from (G3) ==================================================
+#
+# The console was designed against the brownfield case, where an audit has no story and no test
+# case and there is genuinely nothing to link to. On greenfield there is: findings are recorded
+# against the CAPTURE run (`aipass` publishes for `source_run`, never the judge's run), and Test
+# Automation runs one test case per run — so that run's work item is the test case that found
+# this. The data was on the finding all along and the projection dropped it.
+
+
+def _test_case_wi(world, *, tc_id="TC-031", title="Checkout with valid card"):
+    return WorkItem.objects.create(
+        tenant=world["tenant"], project=world["project"], parent=world["story"],
+        type=WorkItem.Type.TEST_CASE, title=title,
+        external_ref={"tc_id": tc_id, "type": "accessibility"},
+    )
+
+
+def test_a_greenfield_finding_names_the_test_case_that_found_it(world):
+    """Built the way a real run builds it: a Test Automation run on a test-case work item, its
+    findings recorded against that run."""
+    case = _test_case_wi(world)
+    run = Run.objects.create(tenant=world["tenant"], work_item=case, agent_spec=world["spec"],
+                             temporal_workflow_id="w-tc31")
+    _record(world, run, _row())
+
+    row = queue(tenant_id=world["t"], project_id=world["p"], user_id=str(world["aisha"].id))[0]
+    assert row["work_item_id"] == str(case.id)
+    assert row["work_item_label"] == "TC-031", "the case's own id, not the platform's WI-n"
+    assert row["work_item_title"] == "Checkout with valid card"
+    assert row["source_run"] == str(run.id)
+
+
+def test_a_baseline_finding_has_nothing_to_link_to_and_says_so_with_nulls(world):
+    """A baseline audit keys its captures by its own id and manufactures no `Run`. All four are
+    null, and that is the honest answer rather than a gap."""
+    report = MergedReport(rows=[_row()], routes=["/checkout"])
+    record_run_findings(tenant_id=world["t"], project_id=world["p"],
+                        run_id="c0ffee00-0000-4000-8000-000000000001", report=report)
+
+    row = queue(tenant_id=world["t"], project_id=world["p"], user_id=str(world["aisha"].id))[0]
+    assert row["source_run"] is None
+    assert row["work_item_id"] is None
+    assert row["work_item_label"] is None and row["work_item_title"] is None
+
+
+def test_the_label_falls_back_to_the_work_item_key_when_it_is_not_a_test_case(world):
+    """A capture posted from CI is keyed to the project and a finding can hang off a story, so
+    the label is not always a TC id."""
+    run = _run(world)                              # the story, not a test case
+    _record(world, run, _row())
+
+    row = queue(tenant_id=world["t"], project_id=world["p"], user_id=str(world["aisha"].id))[0]
+    assert row["work_item_label"] == world["story"].key
+    assert row["work_item_title"] == "Checkout"
+
+
+def test_a_finding_whose_run_has_gone_returns_nulls_rather_than_raising(world):
+    """`first_seen_run`/`last_seen_run` are SET_NULL: a deleted run must leave the console
+    readable, not throw on the queue everyone opens."""
+    case = _test_case_wi(world)
+    run = Run.objects.create(tenant=world["tenant"], work_item=case, agent_spec=world["spec"],
+                             temporal_workflow_id="w-gone")
+    _record(world, run, _row())
+    run.delete()
+
+    row = queue(tenant_id=world["t"], project_id=world["p"], user_id=str(world["aisha"].id))[0]
+    assert row["source_run"] is None and row["work_item_id"] is None
+
+
+def test_the_queue_does_not_fire_a_query_per_row(world, django_assert_num_queries):
+    """The provenance is two relations deep on a list that is deliberately long. Without the
+    `select_related` this is two extra queries per finding — asserted here so it cannot be
+    dropped later without a test going red."""
+    case = _test_case_wi(world)
+    run = Run.objects.create(tenant=world["tenant"], work_item=case, agent_spec=world["spec"],
+                             temporal_workflow_id="w-many")
+    _record(world, run, *[
+        _row(selector=f"img.n{i}", content_hash=f"h{i}") for i in range(8)
+    ])
+
+    rows = review_queue(world["t"], world["p"])
+    assert len(rows) == 8
+    # Zero: the run and its work item are already loaded, so reading the provenance off every
+    # row costs nothing. Without the `select_related` this is 16 queries — two per finding.
+    with django_assert_num_queries(0):
+        for finding in rows:
+            assert finding.last_seen_run.work_item.external_ref["tc_id"] == "TC-031"
+
+
+def test_the_single_item_read_carries_it_too(world):
+    """The console reads the queue for the list and `open_item` for the panel the reviewer
+    actually judges in — the fields have to be on both or the panel shows nothing."""
+    case = _test_case_wi(world)
+    run = Run.objects.create(tenant=world["tenant"], work_item=case, agent_spec=world["spec"],
+                             temporal_workflow_id="w-open")
+    _record(world, run, _row())
+    finding = A11yFinding.objects.get(tenant_id=world["t"])
+
+    item = open_item(tenant_id=world["t"], project_id=world["p"], finding_id=str(finding.id),
+                     user_id=str(world["aisha"].id))
+    assert item["work_item_label"] == "TC-031"
+    assert item["source_run"] == str(run.id)

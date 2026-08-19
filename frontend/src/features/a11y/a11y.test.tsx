@@ -44,6 +44,13 @@ function item(over: Record<string, unknown> = {}) {
     box: null,
     url: "http://localhost:3000/checkout",
     capture_reason: "",
+    // A baseline audit's finding: no story, no test case, no run. The default here is that
+    // shape deliberately, so every other test in this file proves the console still renders
+    // when there is nothing to link to.
+    source_run: null,
+    work_item_id: null,
+    work_item_label: null,
+    work_item_title: null,
     lock: { held: false, by_me: false, held_by: null, held_by_name: "", expires_at: null },
     ...over,
   };
@@ -135,6 +142,45 @@ describe("S-36 accessibility review console", () => {
     await screen.findByText("There is no picture of this one");
     expect(screen.getByText(/no on-screen rectangle/)).toBeDefined();
     expect(screen.getByText(/You can still judge it/)).toBeDefined();
+  });
+
+  it("greenfield · names the test case that found it, and links to it and its run", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/22222222/, item({
+        can_review: true,
+        source_run: "33333333-3333-3333-3333-333333333333",
+        work_item_id: "44444444-4444-4444-4444-444444444444",
+        work_item_label: "TC-031",
+        work_item_title: "Checkout with valid card",
+      })],
+    ]));
+    renderWithProviders(<A11yReview />);
+
+    const link = await screen.findByRole("link", { name: /TC-031/ });
+    expect(link.getAttribute("href")).toBe("/work-items/44444444-4444-4444-4444-444444444444");
+    expect(link.textContent).toContain("Checkout with valid card");
+    // A new tab on purpose: the reviewer holds a 15-minute claim on this item and a place in a
+    // long queue, and neither should be spent to glance at a test case.
+    expect(link.getAttribute("target")).toBe("_blank");
+
+    const run = screen.getByRole("link", { name: "View run" });
+    expect(run.getAttribute("href")).toBe("/runs/33333333-3333-3333-3333-333333333333");
+  });
+
+  it("brownfield · shows nothing at all rather than an empty link", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/22222222/, item({ can_review: true })],   // the audit shape: all null
+    ]));
+    renderWithProviders(<A11yReview />);
+
+    // The panel is up — so the absence below is the screen's answer, not a slow render.
+    await screen.findByText("img.hero");
+    expect(screen.queryByText(/Found by/)).toBeNull();
+    expect(screen.queryByRole("link", { name: "View run" })).toBeNull();
   });
 
   it("read-only · someone who is not the reviewer gets no controls, and is told why", async () => {

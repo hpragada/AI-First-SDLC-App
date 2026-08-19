@@ -241,10 +241,40 @@ def _handles(criteria) -> dict[str, str]:
     )
 
 
+def _provenance(finding) -> dict:
+    """Where this finding came from — the run that saw it, and what that run was working on.
+
+    **Null is the right answer on brownfield and must stay one.** A baseline audit partitions
+    its captures by its own id and manufactures no `Run` (`findings.record_run_findings` resolves
+    the key to `None` on purpose), so an audit finding has no run and no work item. There is
+    genuinely nothing to link to, and the screen shows nothing rather than an empty link.
+
+    On greenfield there is: findings are recorded against the **capture** run, not the judge's
+    (`aipass.finish_ai_pass` publishes for `source_run`), and Test Automation runs one test case
+    per run — so that run's work item is the test case that found this.
+
+    `label` prefers the case's own `TC-031` over the platform's `WI-84`, because that is what a
+    QA Lead recognises and what the test case document calls itself. It falls back to the work
+    item key, since the source is not always a test case: a capture posted from CI is keyed to
+    the project, and a finding can hang off a story.
+    """
+    run = finding.last_seen_run or finding.first_seen_run
+    work_item = run.work_item if run is not None else None
+    ref = (work_item.external_ref or {}) if work_item is not None else {}
+    return {
+        "source_run": str(run.id) if run is not None else None,
+        "work_item_id": str(work_item.id) if work_item is not None else None,
+        "work_item_label": (str(ref.get("tc_id") or "") or work_item.key
+                            if work_item is not None else None),
+        "work_item_title": work_item.title if work_item is not None else None,
+    }
+
+
 def _item(finding, *, handles, user_id, evidence=None, now=None) -> dict:
     """One queue row. `evidence` is passed in for the list (one query pass) or computed here."""
     ev = evidence if evidence is not None else evidence_for(finding)
     return {
+        **_provenance(finding),
         "id": str(finding.id),
         "criterion": finding.criterion,
         "criterion_handle": handles.get(finding.criterion, ""),
@@ -294,7 +324,9 @@ def open_item(*, tenant_id, project_id, finding_id, user_id, take_lock=True) -> 
     with tenant_context(tenant_id):
         finding = A11yFinding.objects.filter(
             tenant_id=tenant_id, project_id=project_id, id=finding_id,
-        ).first()
+            # The item read renders the finding's provenance (G3); the other two fetches in this
+            # module write a decision and never project it, so only this one needs the relations.
+        ).select_related("last_seen_run__work_item", "first_seen_run__work_item").first()
         if finding is None:
             raise ReviewError("no such finding on this project")
 

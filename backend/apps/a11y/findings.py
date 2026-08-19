@@ -327,6 +327,9 @@ def review_queue(tenant_id, project_id=None, *, limit=None) -> list:
         )
         if project_id is not None:
             rows = rows.filter(project_id=project_id)
-        found = list(rows)
+        # The console shows each finding's source run and the work item it was for (G3). Without
+        # this the queue fires two extra queries PER ROW, on a list that is deliberately long.
+        found = list(rows.select_related(
+            "last_seen_run__work_item", "first_seen_run__work_item"))
     found.sort(key=lambda f: (order.get(f.severity, 9), f.route, f.criterion, f.selector))
     return found[:limit] if limit else found

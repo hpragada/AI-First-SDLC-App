@@ -917,6 +917,14 @@ export interface A11yReviewItem {
   url: string;
   // Why there is no picture. Blank when there is one. Never left unsaid.
   capture_reason: string;
+  // Where the finding came from (G3). All null on a baseline audit — an audit of an existing
+  // application has no story, no test case and no run, so there is genuinely nothing to link
+  // to and the screen shows nothing rather than an empty link.
+  source_run: string | null;
+  work_item_id: string | null;
+  // The test case's own `TC-031` where it has one, else the work item key.
+  work_item_label: string | null;
+  work_item_title: string | null;
   lock: A11yReviewLock;
   // Present on the single-item read only.
   can_review?: boolean;

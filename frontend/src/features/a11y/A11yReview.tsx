@@ -258,6 +258,31 @@ function ItemPanel({
             Check <strong>{item.checker}</strong>
           </span>
         )}
+        {/* Where this finding came from. This row is already where the screen puts provenance —
+            the decided state shows "Decided by …" here — so it belongs beside the other facts a
+            reviewer reads before judging, not as a new line of its own.
+
+            Absent entirely on a baseline audit, where there is no story, no test case and no
+            run: an empty link or a dash would be a question a brownfield reviewer has to answer
+            for themselves. Both links open in a new tab, matching how this app links out of a
+            task in hand — the reviewer holds a 15-minute claim on this item and a place in a
+            long queue, and neither should be spent to glance at a test case. */}
+        {item.work_item_id && (
+          <span className="meta-item">
+            Found by{" "}
+            <a href={`/work-items/${item.work_item_id}`} target="_blank" rel="noreferrer">
+              <strong>{item.work_item_label}</strong>
+              {item.work_item_title ? ` — ${item.work_item_title}` : ""}
+            </a>
+          </span>
+        )}
+        {item.source_run && (
+          <span className="meta-item">
+            <a href={`/runs/${item.source_run}`} target="_blank" rel="noreferrer">
+              View run
+            </a>
+          </span>
+        )}
         <span className="meta-item">
           If confirmed{" "}
           <Badge variant={SEVERITY_BADGE[item.severity_if_confirmed] ?? "neutral"}>
