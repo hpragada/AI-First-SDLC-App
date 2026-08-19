@@ -32,9 +32,11 @@ from hashlib import sha256
 #: it does not read, on purpose, so the capture can grow without a lockstep release.
 CAPTURE_VERSION = 1
 
-#: What one document may carry. Sized from the header's ~10 screens/run and ~50 screens/app
-#: assumption, with room above it: a run that captures 60 screens has gone wrong in a way that
-#: should be said out loud, not absorbed.
+#: What one DOCUMENT may carry, and deliberately not what an application may have (B5). A screen
+#: carries a full-page screenshot, so a file with hundreds of them is refused here rather than
+#: absorbed. An audit bigger than this runs in several passes against the same audit
+#: (`runner.companion.a11yaudit.run_baseline_audit`) and posts screens one per call, so this
+#: bound has never limited how many pages a project may check — it limits how big one file gets.
 MAX_SCREENS = 60
 MAX_ELEMENTS_PER_SCREEN = 600
 

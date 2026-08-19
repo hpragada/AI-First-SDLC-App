@@ -28,10 +28,13 @@ from typing import NoReturn
 
 from apps.tenancy.context import tenant_context
 
-#: What one project may register. Sized against `capture.MAX_SCREENS` (60 per document) and the
-#: research header's ~50-screen assumption for a whole application, with room above it. A list
-#: past this is a sitemap dump rather than a considered audit scope, and the honest answer is to
-#: say so rather than to start a pass that will hit the judgment cap on its first screen.
+#: What one project may register. **Not** derived from `capture.MAX_SCREENS`: that bounds one
+#: capture document, and since B5 an audit larger than it simply runs in more passes. This is a
+#: scope judgement instead — a list past this is a sitemap dump rather than a considered audit
+#: scope, and the honest answer is to say so rather than to start a pass whose judging will
+#: defer most of itself (`dispatch.DEFAULT_MAX_JUDGMENTS_PER_RUN`). Team decision 2026-08-19:
+#: left at 200 while the pass loop landed, so "any number of pages" honestly means "any number
+#: up to the 200 a project may register".
 MAX_ROUTES = 200
 
 #: `A11yRoute.path` is a 512-char column and it sits in a unique index.

@@ -908,6 +908,177 @@ def test_the_audit_run_posts_what_it_captured_and_closes_the_audit(tmp_path, mon
     assert [c["tool"] for c in client.calls][-1] == "finish_a11y_audit"
 
 
+# ══ one audit, as many passes as it takes (B5) ══════════════════
+#
+# `capture.MAX_SCREENS` bounds ONE capture document - a screen carries a full-page screenshot,
+# and a file with hundreds of them is refused. It never bounded an application: screens are
+# posted one per HTTP call and the audit is reconciled against its stored route list, whatever
+# produced the rows. Until B5 the script simply took the first 60 routes and wrote a line about
+# the rest to a console nobody was watching.
+
+
+class _PassRecorder(_FakeClient):
+    """A fake platform that hands back the routes it was asked to open, and remembers the
+    screens posted to it."""
+
+    def __init__(self, routes, audit_id="a-1"):
+        super().__init__(audit_id=audit_id)
+        self.routes = list(routes)
+        self.posted_routes: list[str] = []
+
+    def call(self, tool, **kwargs):
+        out = super().call(tool, **kwargs)
+        if tool == "start_a11y_audit":
+            out["manifest"]["routes"] = list(self.routes)
+            out["manifest"]["base_url"] = "http://127.0.0.1:5173"
+        if tool == "ingest_a11y_audit_screen":
+            self.posted_routes.append(kwargs["screen"]["route"])
+        return out
+
+
+def _script_stub(behaviour=None):
+    """Stand in for the audit script: writes what a real pass would have written, honouring the
+    per-pass output path so the isolation between passes is exercised rather than assumed."""
+    seen: list[dict] = []
+
+    def _run(manifest, *, workdir, **kw):
+        seen.append({"routes": list(manifest["routes"]), "output": manifest["output"]})
+        if behaviour is not None:
+            result = behaviour(len(seen), manifest)
+            if result is not None:
+                return result
+        path = Path(workdir) / manifest["output"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        screens = [_screen(route) for route in manifest["routes"]]
+        path.write_text(json.dumps({"version": 1, "screens": screens}), encoding="utf-8")
+        from runner.companion.a11yaudit import read_capture
+        return {"screens": read_capture(path), "output": str(path),
+                "returncode": 0, "stderr": ""}
+
+    _run.seen = seen
+    return _run
+
+
+def test_a_big_audit_runs_in_passes_and_accounts_for_every_page(tmp_path, monkeypatch):
+    from runner.companion import a11yaudit
+
+    routes = [f"/p{i}" for i in range(130)]
+    script = _script_stub()
+    monkeypatch.setattr(a11yaudit, "run_audit_script", script)
+    client = _PassRecorder(routes)
+
+    out = a11yaudit.run_baseline_audit(client=client, project_id="p-1", workdir=tmp_path)
+
+    assert [p["routes"] for p in out["passes"]] == [60, 60, 10], "three passes, none over 60"
+    assert out["captured"] == 130 and out["posted"] == 130
+    assert client.posted_routes == routes, "every page, once, in order, to the SAME audit"
+    assert [c["tool"] for c in client.calls].count("start_a11y_audit") == 1
+    assert [c["tool"] for c in client.calls].count("finish_a11y_audit") == 1
+
+
+def test_each_pass_writes_its_own_file(tmp_path, monkeypatch):
+    from runner.companion import a11yaudit
+
+    script = _script_stub()
+    monkeypatch.setattr(a11yaudit, "run_audit_script", script)
+    a11yaudit.run_baseline_audit(client=_PassRecorder([f"/p{i}" for i in range(130)]),
+                                 project_id="p-1", workdir=tmp_path)
+    outputs = [call["output"] for call in script.seen]
+    assert len(set(outputs)) == 3, outputs
+    assert outputs[1].endswith("a11y-candidates-pass-2.json")
+
+
+def test_a_pass_that_dies_never_reposts_the_previous_passs_screens(tmp_path, monkeypatch):
+    """The trap this design exists to avoid. Share one filename and a pass that dies before
+    writing leaves the previous pass's file in place — which would be read again and posted a
+    second time, reporting pages as seen in a pass that never visited them."""
+    from runner.companion import a11yaudit
+
+    def _die_on_second(number, manifest):
+        if number == 2:
+            return {"screens": [], "output": manifest["output"], "returncode": 1,
+                    "stderr": "the audit stopped"}
+        return None
+
+    script = _script_stub(_die_on_second)
+    monkeypatch.setattr(a11yaudit, "run_audit_script", script)
+    routes = [f"/p{i}" for i in range(130)]
+    client = _PassRecorder(routes)
+
+    out = a11yaudit.run_baseline_audit(client=client, project_id="p-1", workdir=tmp_path)
+
+    assert client.posted_routes == routes[:60] + routes[120:], \
+        "the dead pass's pages are absent — not duplicated from pass 1"
+    assert len(client.posted_routes) == len(set(client.posted_routes)), "no page posted twice"
+    assert out["passes"][1] == {"pass": 2, "routes": 60, "captured": 0, "posted": 0,
+                                "script_returncode": 1}
+
+
+def test_a_failed_pass_does_not_abandon_the_audit(tmp_path, monkeypatch):
+    from runner.companion import a11yaudit
+
+    script = _script_stub(lambda n, m: (
+        {"screens": [], "output": m["output"], "returncode": 1, "stderr": "boom"}
+        if n == 1 else None))
+    monkeypatch.setattr(a11yaudit, "run_audit_script", script)
+    client = _PassRecorder([f"/p{i}" for i in range(130)])
+
+    out = a11yaudit.run_baseline_audit(client=client, project_id="p-1", workdir=tmp_path)
+
+    assert len(script.seen) == 3, "the later passes still ran"
+    assert [c["tool"] for c in client.calls][-1] == "finish_a11y_audit", "still closed"
+    assert out["captured"] == 70
+    assert out["script_returncode"] == 1, "one number, and it is not the last pass's"
+
+
+def test_an_audit_that_fits_in_one_pass_is_unchanged(tmp_path, monkeypatch):
+    from runner.companion import a11yaudit
+
+    script = _script_stub()
+    monkeypatch.setattr(a11yaudit, "run_audit_script", script)
+    out = a11yaudit.run_baseline_audit(client=_PassRecorder(["/", "/login"]),
+                                       project_id="p-1", workdir=tmp_path)
+    assert len(out["passes"]) == 1
+    assert script.seen[0]["output"] == "test-results/a11y-candidates.json", \
+        "the plain name — nothing changes for a project that always fitted"
+
+
+def test_a_page_that_will_not_open_is_reported_in_whichever_pass_it_fell_in(world, tmp_path):
+    """The platform half, over two capture documents rather than one: the reconciliation accounts
+    for all 70 routes, and a page that would not open in the SECOND pass is recorded as itself
+    rather than as one nobody asked about. (The pass loop itself is covered above; this is the
+    end it posts into.)"""
+    routes = [f"/p{i}" for i in range(70)]
+    _register(world, *routes)
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"],
+                                 base_url="http://127.0.0.1:5173")
+
+    def _run(manifest, *, workdir, **kw):
+        screens = []
+        for route in manifest["routes"]:
+            if route == "/p65":                       # in the SECOND pass
+                screens.append({"route": route, "url": route, "elements": [],
+                                "load_error": "the page returned HTTP 404"})
+            else:
+                screens.append(_screen(route))
+        from apps.a11y.capture import parse_capture
+        return {"screens": parse_capture(json.dumps({"version": 1, "screens": screens})),
+                "output": manifest["output"], "returncode": 0, "stderr": ""}
+
+    for pass_routes in (routes[:60], routes[60:]):
+        ran = _run({"routes": pass_routes, "output": "x"}, workdir=tmp_path)
+        for screen in ran["screens"]:
+            ingest_audit_capture(tenant_id=world["t"], audit_id=str(audit.id),
+                                 text=json.dumps({"version": 1, "screens": [screen]}),
+                                 object_store=InMemoryObjectStore())
+
+    out = finish_baseline_audit(tenant_id=world["t"], audit_id=str(audit.id),
+                                trigger=lambda **kw: None)
+    assert out["asked"] == 70
+    assert out["unreachable"] == ["/p65"]
+    assert out["never_reported"] == []
+
+
 # ══ the platform-state tools ═════════════════════════════════════════════════════════
 
 def test_the_audit_tools_are_companion_only_never_the_engines():

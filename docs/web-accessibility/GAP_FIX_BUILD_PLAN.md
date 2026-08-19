@@ -379,6 +379,10 @@ audit that honestly finds nothing there and says so.
 
 ### B5 · An audit stops at 60 pages
 
+🟢 **Built 2026-08-19.** An audit now runs in as many passes as it needs, all posting to the
+same audit. `MAX_SCREENS` stays at 60 as a bound on one capture document. Six tests, including the
+one that matters most: a pass that dies never re-posts the previous pass's pages.
+
 **In plain words.** The platform visits at most 60 pages in one go. Meridian has 68 in scope, so
 eight are left out with only a line on a console that nobody is watching. The next application
 might have 400.
@@ -398,7 +402,35 @@ audit**. The route reconciliation at the end already accounts for every route th
 for, so nothing about honesty changes.
 
 `MAX_SCREENS` stays exactly where it is, as what it always should have been: a safety bound on how
-big one file may be, not a limit on how big an application may be.
+big one file may be, not a limit on how big an application may be. It is now **imported** from
+`apps.a11y.capture` rather than retyped, so the companion cannot drift from the number the platform
+refuses a document for. The script's own truncation warning stays as a backstop: someone running it
+by hand with a hand-written manifest still deserves the honest message.
+
+**The sharp edge, designed out rather than guarded against.** `run_audit_script` reads the file the
+script was told to write. If every pass wrote to the same filename, a pass that died before writing
+would leave the previous pass's file in place — which would be read again and posted a second time,
+reporting pages as seen in a pass that never visited them. That is the exact failure this feature
+exists to prevent, reintroduced by its own fix. So **each pass writes its own file**
+(`a11y-candidates-pass-2.json`, via `pass_output`), a single-pass audit keeps the plain name, and a
+pass that dies produces nothing. Asserted directly by `test_a_pass_that_dies_never_reposts...`.
+
+**Two ceilings this does NOT remove, named so nobody meets them by surprise:**
+
+- **`MAX_ROUTES = 200` per project** (`routes.py`). A 400-page application cannot *register* 400
+  pages, so "any number of pages" honestly means "any number up to the 200 a project may register".
+  **Team decision 2026-08-19: left at 200** — it is a scope judgement, not a technical bound, and
+  raising it is its own decision. Its comment used to derive the number from `MAX_SCREENS`; that
+  relationship is exactly what this task severs, so the comment now says what it really is.
+- **The AI judging cap — 200 items per run** (`dispatch.DEFAULT_MAX_JUDGMENTS_PER_RUN`). Everything
+  over it is **deferred and reported** — *"Stopped at this run's limit of 200 — N item(s) still need
+  judging. Run the check again to continue from here; nothing was skipped."* Unchanged, and already
+  honest. A 68-page audit captures all 68; whether all 68 are *judged* in one go depends on how many
+  elements they carry.
+
+`capture.MAX_SCREENS`'s own comment said *"a run that captures 60 screens has gone wrong in a way
+that should be said out loud"*. After this, 60 screens is a full first pass of a large audit, so the
+comment now says it bounds one document and points at the pass loop.
 
 **What you see afterwards.** Before you start: *"68 pages · 2 passes"*. While it runs: a pass
 counter. Afterwards: 68 pages reported, or an honest account of the ones that would not open.
@@ -406,6 +438,21 @@ counter. Afterwards: 68 pages reported, or an honest account of the ones that wo
 **How we prove it.** A test that a 130-route manifest produces three passes and one audit
 accounting for all 130; and that a single route that would not open is still reported as never
 seen, in whichever pass it fell in.
+
+*As built:* six tests in `backend/tests/test_a11y_baseline.py`. 130 routes → passes of 60/60/10,
+one `start`, one `finish`, and every page posted once and in order to the same audit; each pass
+writes its own file; **a pass that dies posts nothing and duplicates nothing** (the sharp edge); a
+failed pass does not abandon the audit — the later passes still run, it is still closed, and the one
+returncode reported is not just the last pass's; an audit that fits in one pass is byte-for-byte
+unchanged, plain filename included; and, on the platform side, 70 routes across two capture
+documents reconcile to 70 asked with the unopenable page in the second pass reported as itself.
+`test_a11y_baseline.py` (89), `test_a11y_baseline_report.py`, `test_a11y_baseline_enforcement.py`,
+`test_a11y_capture.py` — 272 passed.
+
+**What the tests do not prove.** They drive a stubbed script. That a **real** browser survives 60
+routes twice over on a real application is not something a test here can establish — that is the
+live run still ahead of us, and the first audit of a 68-page application is the first time we
+learn it.
 
 **Size M · Risk low-medium (the loop must not lose a pass's screens if one pass fails — a failed
 pass reports its routes as unreported, it does not abandon the audit) · Needs first: nothing.**

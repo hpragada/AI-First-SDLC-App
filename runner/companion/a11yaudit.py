@@ -8,9 +8,17 @@ capture format belongs to `apps.a11y.capture`, the route list and the reconcilia
 The shape of a pass:
 
     platform  →  open the audit, hand back the routes to visit  (start_a11y_audit)
-    here      →  run `assets/a11y_audit.mjs` against the running app
+    here      →  run `assets/a11y_audit.mjs` against the running app, once per PASS
     here      →  post each captured screen, one per call        (ingest_a11y_audit_screen)
     platform  →  account for every route asked for, then judge  (finish_a11y_audit)
+
+**One audit, as many passes as it takes (B5).** `capture.MAX_SCREENS` bounds ONE capture
+document, not an application: a screen carries a full-page screenshot, and a file with hundreds
+of them is refused by the platform. Screens are posted one per HTTP call, so nothing downstream
+knows or cares how many files there were — the audit is reconciled against its stored route
+list, whatever produced the rows. So an audit larger than that bound runs in several passes
+against the same audit, rather than visiting the first 60 pages and leaving the rest to a line
+on a console nobody is watching.
 
 **Every step reports rather than assumes.** A route that would not open is written into the
 capture by the script; a route that never appears at all is caught by the platform's
@@ -22,7 +30,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 #: The audit script, shipped with the companion rather than generated per audit. See the file's
 #: own header: driving a browser over a list of URLs is the same for every project, and a
@@ -107,35 +115,88 @@ def post_audit_screens(screens: list[dict], *, client, audit_id: str) -> dict:
     return {"posted": posted, "failed": failed}
 
 
+def pass_output(output: str, index: int, total: int) -> str:
+    """Where pass `index` writes, given the manifest's output path.
+
+    **Every pass writes its own file, and that is load-bearing.** `run_audit_script` reads the
+    file the script was told to write. Share one filename between passes and a pass that dies
+    before writing leaves the PREVIOUS pass's file in place — which would be read again and
+    posted a second time, reporting pages as seen in a pass that never visited them. That is
+    precisely the failure this whole feature exists to prevent, so it is designed out rather
+    than guarded against: a pass that dies produces no screens, and its routes come back from
+    the platform's reconciliation as never reported, which is what happened.
+
+    A single-pass audit keeps the plain name, so nothing changes for a project that has always
+    fitted in one.
+    """
+    if total <= 1:
+        return output
+    path = PurePosixPath(output)
+    return str(path.with_name(f"{path.stem}-pass-{index}{path.suffix}"))
+
+
 def run_baseline_audit(*, client, project_id: str, workdir, base_url: str = "",
                        routes=None, node: str = "node",
                        timeout: float = DEFAULT_TIMEOUT_S) -> dict:
-    """Open an audit, visit its routes, post what was seen, and close it.
+    """Open an audit, visit its routes in passes, post what was seen, and close it.
 
-    Returns everything a person needs to judge the pass without opening a database: which
-    routes were asked for, how many screens came back, what the script said on the way, and
-    what the platform made of it.
+    Returns everything a person needs to judge the audit without opening a database: which
+    routes were asked for, how it was divided, how many screens came back from each pass, what
+    the script said on the way, and what the platform made of it.
 
     `base_url` is optional (B3). Left empty, the platform resolves the address it already holds
     for the project and sends it back on the manifest — which is what the script visits, so the
     address is never typed twice and never diverges from the one a build uses. The platform
     refuses the audit outright when it holds none, rather than handing back a manifest that
     cannot be visited.
+
+    **A failed pass never abandons the audit.** The remaining passes still run and the audit is
+    still closed: a pass that dies costs its own routes, which the reconciliation records as
+    never reported, and throwing away the pages that DID come back would be the worse trade.
     """
+    # One definition of the bound, imported rather than retyped: `capture.MAX_SCREENS` is what
+    # the platform refuses a document for, so the companion must not drift from it.
+    from apps.a11y.capture import MAX_SCREENS  # lazy: backend on path by now
+
     opened = client.call("start_a11y_audit", project_id=project_id, base_url=base_url,
                          routes=routes)
+    audit_id = opened["audit_id"]
     manifest = opened["manifest"]
-    ran = run_audit_script(manifest, workdir=workdir, node=node, timeout=timeout)
-    if ran["stderr"]:
-        print(ran["stderr"], file=sys.stderr)
-    post = post_audit_screens(ran["screens"], client=client, audit_id=opened["audit_id"])
-    finished = client.call("finish_a11y_audit", audit_id=opened["audit_id"])
+    asked = list(manifest.get("routes") or [])
+    output = manifest.get("output") or "test-results/a11y-candidates.json"
+    batches = [asked[i:i + MAX_SCREENS] for i in range(0, len(asked), MAX_SCREENS)]
+    print(f"[companion] {len(asked)} page(s) · {len(batches)} pass(es)")
+
+    passes: list[dict] = []
+    captured, posted, failures = 0, 0, []
+    for index, batch in enumerate(batches, start=1):
+        print(f"[companion] pass {index}/{len(batches)} — {len(batch)} page(s)")
+        ran = run_audit_script(
+            {**manifest, "routes": batch,
+             "output": pass_output(output, index, len(batches))},
+            workdir=workdir, node=node, timeout=timeout,
+        )
+        if ran["stderr"]:
+            print(ran["stderr"], file=sys.stderr)
+        post = post_audit_screens(ran["screens"], client=client, audit_id=audit_id)
+        captured += len(ran["screens"])
+        posted += post["posted"]
+        failures += post["failed"]
+        passes.append({
+            "pass": index, "routes": len(batch), "captured": len(ran["screens"]),
+            "posted": post["posted"], "script_returncode": ran["returncode"],
+        })
+
+    finished = client.call("finish_a11y_audit", audit_id=audit_id)
     return {
-        "audit_id": opened["audit_id"],
-        "routes": manifest["routes"],
-        "captured": len(ran["screens"]),
-        "posted": post["posted"],
-        "post_failures": post["failed"],
-        "script_returncode": ran["returncode"],
+        "audit_id": audit_id,
+        "routes": asked,
+        "passes": passes,
+        "captured": captured,
+        "posted": posted,
+        "post_failures": failures,
+        # Non-zero when ANY pass failed — a person reading one number must not be told the audit
+        # was clean because the last pass happened to be.
+        "script_returncode": max((p["script_returncode"] for p in passes), default=0),
         "result": finished,
     }
