@@ -4,6 +4,30 @@
 
 ---
 
+> ⚠️ **Correction notice — 19 August 2026. Parts of this guide are wrong. Read this before the rest.**
+>
+> A source-level trace of the greenfield and brownfield journeys (18–19 August) contradicted this
+> document in five places. It is kept as the record of **what the team was told**, not as an account
+> of how the system works.
+>
+> | Where | What this guide says | What is actually true |
+> |---|---|---|
+> | §3 and §4 headings | "Journey A" and "Journey B" | Both cover the accessibility slice **only**. A real user's journey begins at create-project and runs through upload, adopt, connect Jira/Confluence, register repositories, index code and the gap report. None of that is here. |
+> | Step A1 | Routes may be registered "through Onboarding if that path is wired" | It is **not** wired. `A11yRoute.Source.ONBOARDING` exists in the code and nothing has ever written it. Registering pages is a raw `PUT` with no screen. |
+> | Step A3 | `POST /a11y-audits/` as a separate step before the scan | Redundant. The companion's `audit` command opens the audit, runs it, posts every screen and closes it by itself. |
+> | Step B1 | The generated greenfield suite writes "the four scanner answers" | It does **not**. The Test Automation agent's capture contract still names violations only — gap **G1**. Until that is fixed, a greenfield conformance report reads "not evaluated" against nearly every criterion. |
+> | Step B4 | The keyboard journey is "optional" | It **cannot be started at all**. It has no caller, no browser grant and no address — gap **G6**. |
+>
+> One thing this guide never says and should: registering pages and running an audit are **terminal-only
+> today**. There is no screen for either.
+>
+> **This document will be rewritten once the gaps in `GAP_FIX_BUILD_PLAN.md` are resolved** — at that
+> point most of the rows above become true rather than corrections, and the journey sections can finally
+> cover the whole journey. Until then, **`GAP_FIX_BUILD_PLAN.md` is the accurate account**, and the code
+> is the source of truth over both.
+
+---
+
 ## 0. How to read this document
 
 This is written for someone who has not read the code. Where a technical name is unavoidable it

@@ -577,3 +577,27 @@ that, and the first one is still ahead of us.
 
 Where a task below can only be half-proven by tests, it says so in its own words rather than
 leaving the team to assume otherwise.
+
+---
+
+## 8. Two documents to rewrite when this work is done
+
+Both currently carry a correction notice rather than a rewrite, because most of what is wrong in
+them stops being wrong the moment these gaps close. **Neither notice is the fix; both documents are
+to be rewritten, and their notices removed, as the last task of this plan.**
+
+- **`TESTING_GUIDE.md`** — written before the journey recon. Its two "journeys" are the accessibility
+  slice only, and five specific statements in it are untrue today (its notice lists them). When this
+  plan lands it needs rewriting to cover the **whole** journey a user walks — create project, upload,
+  adopt, connect Jira and Confluence, register repositories, index code, gap report, resume — with
+  the accessibility work shown in its real place inside it, and with the terminal steps gone because
+  they no longer exist.
+- **`TASK_BACKLOG_QA.md`** — its 31 tasks are correctly ticked against their own acceptance criteria.
+  Its notice explains that those criteria tested units rather than reachability. Remove the notice
+  when the eleven gaps are closed.
+
+**And the lesson that produced this plan, recorded so it is not learned twice:** every one of the 24
+tasks passed its tests and the backlog read as complete, while a user could not register a page list,
+start an audit, or start a keyboard journey. The acceptance criteria never asked *"can a person get
+to this?"* Every task in this plan carries a **"What you see afterwards"** section for that reason —
+it is the question the last round did not ask.
