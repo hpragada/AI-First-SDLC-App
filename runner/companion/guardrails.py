@@ -362,11 +362,21 @@ def check_command_egress(command, policy: EgressPolicy) -> None:
 _FORBIDDEN_TOOL_HINTS = ("codehost", "web", "fetch", "http", "curl", "network")
 
 # The Playwright MCP browser tools 09b needs for Live Application Exploration (real-locator
-# discovery, spec §4). Permitted ONLY for the test-automation phase and bounded to the preview
-# host by EgressPolicy — a deliberate, phase-gated exception to the build phase's network-forbid
-# (D2): every other build phase (07/11) still gets FS/Bash + Platform-State only. Deliberately
-# the locator-discovery surface only — navigation + snapshot + interaction, NOT network/console/
-# evaluate inspection (not needed to find selectors, and keeps the exposed surface tight).
+# discovery, spec §4). Deliberately the locator-discovery surface only — navigation + snapshot +
+# interaction, NOT network/console/evaluate inspection (not needed to find selectors, and keeps
+# the exposed surface tight).
+#
+# Granted to two phases and no others (see `playwright_tools_for`): the test-automation BUILD,
+# and the accessibility keyboard journey, which is a planning-shaped run. Every other build phase
+# (07/11) and every other planning phase still gets FS/Bash + Platform-State only.
+#
+# **What actually bounds the browser is `--allowed-origins`, not the tool name and not
+# EgressPolicy.** That is worth stating plainly because the note here used to credit EgressPolicy:
+# that class gates SHELL COMMANDS on the build path (`check_command_egress`) and has no bearing
+# on what a browser may open, and the planning path does not construct one at all. The origin
+# list handed to the Playwright server is the whole of the bound — so a launch with no address is
+# an UNBOUNDED browser, and both call sites refuse to start one (`runner.build_mcp_servers` has
+# a preview URL by construction; `daemon._playwright_servers` refuses without one).
 PLAYWRIGHT_MCP_TOOLS = frozenset(
     f"mcp__playwright__{name}" for name in (
         "browser_navigate", "browser_navigate_back", "browser_snapshot",
@@ -377,12 +387,27 @@ PLAYWRIGHT_MCP_TOOLS = frozenset(
 )
 
 
+#: The two phases that operate a live application, and therefore the only two that get a browser.
+#:
+#: `a11y_journey` (09d) is the reason this is a set rather than one string. Eight WCAG criteria
+#: cannot be answered by reading a page standing still — whether tabbing ever traps you, whether
+#: focus stays visible, whether a status message is announced — and the only way to answer them
+#: is to operate the application. That agent runs on the planning path, so this grant is what
+#: gives it the one tool its whole existence depends on.
+#:
+#: Repeated here rather than imported from `apps.a11y.journey.JOURNEY_PHASE`: the companion runs
+#: on a developer's machine with no Django and no database, so it cannot import the backend.
+#: `test_automation` is duplicated from the agent catalog the same way, and both are held honest
+#: by a test that reads the catalog and asserts these are the phases it names.
+BROWSER_PHASES = frozenset({"test_automation", "a11y_journey"})
+
+
 def playwright_tools_for(phase: str) -> frozenset:
-    """The Playwright MCP tools permitted for `phase`: the 09b locator-discovery surface for the
-    test-automation phase, empty for every other build phase. Single source of truth so the driver
-    allowlist and the MCP-server wiring (runner.build_mcp_servers) can never disagree on which
-    phase gets a browser."""
-    return PLAYWRIGHT_MCP_TOOLS if phase == "test_automation" else frozenset()
+    """The Playwright MCP tools permitted for `phase`, empty for every phase that does not
+    operate a live application. Single source of truth so the driver allowlist and the
+    MCP-server wiring (`runner.build_mcp_servers`, `daemon._playwright_servers`) can never
+    disagree on which phase gets a browser."""
+    return PLAYWRIGHT_MCP_TOOLS if phase in BROWSER_PHASES else frozenset()
 
 
 def assert_phase_allowlist(tools, *, allowed, phase: str = "") -> None:
@@ -390,15 +415,16 @@ def assert_phase_allowlist(tools, *, allowed, phase: str = "") -> None:
     a CodeHost/network hint, or that is not on the canonical allowlist, is a violation.
 
     For the test-automation phase (09b) the curated Playwright browser tools are additionally
-    permitted (`playwright_tools_for`) — an egress-bounded exception for Live Application
-    Exploration. They bypass the network-hint check because they ARE the curated exception; the
-    real network bound is EgressPolicy scoping the browser to the preview host, not the tool name.
+    permitted (`playwright_tools_for`) — the origin-bounded exception for Live Application
+    Exploration. They bypass the network-hint check because they ARE the curated exception; what
+    bounds them is the `--allowed-origins` list the browser is launched with, not the tool name
+    and not EgressPolicy (which gates shell commands, and says nothing about a browser).
     """
     phase_extra = playwright_tools_for(phase)
     allowed_set = set(allowed) | phase_extra
     for tool in tools:
         if tool in phase_extra:
-            continue        # curated phase-scoped browser tool — egress-bounded, not name-bounded
+            continue        # curated phase-scoped browser tool — origin-bounded, not name-bounded
         low = tool.lower()
         if any(hint in low for hint in _FORBIDDEN_TOOL_HINTS):
             raise AllowlistViolation(f"tool {tool!r} is forbidden in the build phase (PG12)")

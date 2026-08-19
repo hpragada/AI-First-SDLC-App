@@ -28,6 +28,7 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
+from .guardrails import playwright_tools_for
 from .runner import BUILD_STATE_TOOLS, BuildTask, _SpecShim, _WorkItemShim, run_build
 
 # Planning/review expose the platform-state tools (incl. ask_human) over the remote MCP; no
@@ -146,6 +147,45 @@ def codeintel_mcp_servers(*, workspace: str, repo: str, repo_root: str | None = 
             "env": env,
         }
     }
+class NoAddressError(DaemonError):
+    """A phase that needs a browser was dispatched without an address to bound it to (G6a)."""
+
+
+def playwright_servers(*, phase: str, base_url: str) -> dict:
+    """MCP config for a browser on the PLANNING path, scoped to one origin — or `{}`.
+
+    The keyboard journey (09d) is the one planning phase that operates a live application: eight
+    WCAG criteria cannot be answered by reading a page standing still, and the only way to answer
+    them is to tab through the thing. This is where it gets the browser to do that, wired exactly
+    the way `codeintel_mcp_servers` wires the code-intelligence server in below it.
+
+    **`--allowed-origins` is the whole of the bound, so a missing address raises rather than
+    launching.** The build path has the same launch and writes it as `if preview_url:` — which
+    means an unresolved preview URL there quietly starts a browser that may open anything. That
+    is not repeated here. A journey with no address is refused twice over: `start_journey_check`
+    will not dispatch one, and if a payload somehow arrives without it the run fails with a
+    sentence a person can act on instead of silently getting an unbounded browser.
+    """
+    from .runner import _headed_enabled
+
+    if not playwright_tools_for(phase):
+        return {}
+    base_url = str(base_url or "").strip().rstrip("/")
+    if not base_url:
+        raise NoAddressError(
+            f"the {phase} phase needs a browser and was dispatched without an address for the "
+            "application, so there is nothing to scope the browser to and nowhere to go. "
+            "Nothing was run."
+        )
+    # `--headless` unless the operator asked to watch (SDLC_COMPANION_HEADED=1) — the same switch
+    # the build path uses, so a journey can be watched live on an attended local run.
+    args = ["-y", "@playwright/mcp@latest"]
+    if not _headed_enabled():
+        args.append("--headless")
+    args += ["--allowed-origins", base_url]
+    return {"playwright": {"type": "stdio", "command": "npx", "args": args}}
+
+
 def write_mcp_config(servers: dict, *, run_id: str = "") -> str:
     """Write an MCP server config to a temp FILE and return its path, for `mcp_servers`.
 
@@ -385,6 +425,22 @@ class CompanionDaemon:
             manifest=payload.get("manifest", ""), agent_spec=spec,
             allowed_tools=PLAN_ALLOWED_TOOLS, work_item=work_item,
         )
+        # A browser, for the one planning phase that operates a live application (09d, G6a).
+        # Scoped to the address the platform sent with the task and to nothing else; a task that
+        # needs a browser and carries no address is reported failed rather than run, because the
+        # origin list IS the bound (see `playwright_servers`). Every other planning phase gets an
+        # empty dict here and is byte-identical to before.
+        if not review:
+            try:
+                browser = playwright_servers(
+                    phase=phase, base_url=payload.get("app_base_url", ""))
+            except NoAddressError as exc:
+                self._report(report_path, {"status": "failed", "message": str(exc)})
+                return
+            if browser:
+                servers.update(browser)
+                run_kwargs["allowed_tools"] = (
+                    PLAN_ALLOWED_TOOLS + sorted(playwright_tools_for(phase)))
         # Repo-scoped planning (catalog `reads_code`, e.g. 10_security): provision a THROWAWAY
         # git worktree of the target repo so the agent can scan real source (and run scanners).
         # `kind` stays "plan" (this is NOT the build path) — the discriminator is `repo` +
@@ -407,7 +463,10 @@ class CompanionDaemon:
                 from .codeintel_mcp import CODEINTEL_TOOL_NAMES
                 servers.update(codeintel_mcp_servers(
                     workspace=str(scan_worktree), repo=payload["repo"]))
-                run_kwargs["allowed_tools"] = PLAN_ALLOWED_TOOLS + [
+                # Added to whatever this run already has, not set over it: no phase is both
+                # repo-scoped and browser-scoped today, and a future one that was would
+                # otherwise silently lose its browser here.
+                run_kwargs["allowed_tools"] = list(run_kwargs["allowed_tools"]) + [
                     f"mcp__codeintel__{n}" for n in CODEINTEL_TOOL_NAMES]
         # Now that the server set is final, hand it over as a FILE path — never as inline
         # command-line JSON (see `write_mcp_config` for the size ceiling and the token exposure).

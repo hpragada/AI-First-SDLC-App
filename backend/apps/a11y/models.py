@@ -712,6 +712,17 @@ class A11yJourneyRun(TenantScopedModel):
     title = models.CharField(max_length=512, blank=True)
     #: Pointer to the `test_case` artifact the steps were read from (#1/#3 — never the body).
     artifact_id = models.CharField(max_length=64, blank=True)
+    #: Where the application answered for this walk — "http://127.0.0.1:5173" (G6a).
+    #:
+    #: Stored rather than resolved at read time for the same reason `steps` is frozen: a journey
+    #: result is a claim about *the thing that was walked*, and the address a project resolves to
+    #: moves (a repository's Preview URL is edited, a port changes). A result whose address was
+    #: looked up afterwards would quietly re-attribute itself to whatever is running now.
+    #:
+    #: It is also what scopes the browser. The companion passes it to the browser as the only
+    #: origin that may be opened, so a blank one is not a default — it is a run that must not
+    #: start, and `start_journey_check` refuses before it gets this far.
+    base_url = models.CharField(max_length=512, blank=True)
     #: The steps as parsed at start: [{"number": 1, "text": "...", "route": "/login"}, …].
     steps = models.JSONField(default=list, blank=True)
     preconditions = models.JSONField(default=list, blank=True)

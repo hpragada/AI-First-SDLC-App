@@ -54,6 +54,16 @@ from .selectors import is_positional
 #: interaction testing of any kind, so there is no v6 body to migrate.
 JOURNEY_AGENT_KEY = "09d_a11y_journey"
 
+#: The phase label the catalog gives that agent. Named here, next to the key it belongs to, so
+#: the orchestrator can recognise a journey run without importing the catalog — exactly as
+#: `judge.JUDGE_PHASE` is named for the judging pass.
+#:
+#: **The companion repeats this string rather than importing it** (`guardrails.playwright_tools_
+#: _for`). It runs on a developer's machine with no Django and no database, so it cannot import
+#: this module; `test_automation` is already duplicated the same way, and the two are kept
+#: honest by a test that asserts the catalog's phase for `09d` is this value.
+JOURNEY_PHASE = "a11y_journey"
+
 #: Every reason this check can be unavailable, said in words a person can act on. Same
 #: discipline as `dispatch.NO_JUDGE_AGENT` (D-A11Y-3): an unavailable check is reported, never
 #: quietly skipped, because a skipped check and a passed check look identical in a report.
@@ -71,6 +81,21 @@ NO_JOURNEY = (
     "have a Test Steps section."
 )
 DISPATCH_FAILED = "the journey run could not be started ({detail}), so nothing was walked."
+NO_ADDRESS = (
+    "no address was given for the application, so there is nowhere to walk. A journey is a real "
+    "browser operating a running application: start the application and give the address it "
+    "answers on (e.g. http://127.0.0.1:5173)."
+)
+
+#: What the platform writes on a walk the agent never closed (G6a). The agent is the only caller
+#: of `finish_journey`, and an agent that died is not still running to call it — so without this
+#: the walk would read `walking` for ever and a screen would show a journey permanently in
+#: progress. Said in the pass's own words rather than as a status, because "it stopped" and "it
+#: found nothing" must never look the same.
+RUN_ENDED_UNFINISHED = (
+    "the run that was walking this journey ended without closing it, so this is what had been "
+    "recorded when it stopped. Steps nothing was reported about were never walked."
+)
 
 #: A blocked step must say what blocked it. Recorded rather than rejected when the agent leaves
 #: it out — refusing the call would lose the fact that the step was blocked at all, which is the
@@ -119,17 +144,29 @@ def journey_available(tenant_id, project_id, triggered_by=None) -> str:
     return ""
 
 
-def start_journey_check(*, tenant_id, project_id, work_item_id, test_ref=None,
+def start_journey_check(*, tenant_id, project_id, base_url, work_item_id, test_ref=None,
                         triggered_by=None, trigger=None, object_store=None) -> dict:
-    """Freeze a journey's steps and dispatch one agent run to walk it.
+    """Freeze a journey's steps and dispatch one agent run to walk a running application.
 
-    Never raises at the caller. Every way this can fail — no journey, no agent, no companion,
-    a refused trigger — comes back as `{"started": False, "reason": ...}`, because the caller
-    is a run that has other work to finish and an accessibility check that could not start is
-    a thing to report, not an exception to throw.
+    Never raises at the caller. Every way this can fail — no address, no journey, no agent, no
+    companion, a refused trigger — comes back as `{"started": False, "reason": ...}`, because
+    the caller is a run that has other work to finish and an accessibility check that could not
+    start is a thing to report, not an exception to throw.
+
+    **`base_url` is required and is checked before anything else** (G6a). Every other refusal
+    below costs a database read or two; this one costs nothing, and it is also the one that
+    matters most. The address is not a convenience — it is what the companion hands the browser
+    as the only origin it may open, so a journey without one is both a walk with nowhere to go
+    and a browser with no bound. The platform never starts the application and never guesses
+    where it is: a person says where it is answering, and if nothing answers there the walk
+    fails immediately and records no steps rather than reporting on steps it never walked.
     """
     from .journeys import JourneyError, journey_for, journeys_for_project
     from .models import A11yJourneyRun
+
+    base_url = str(base_url or "").strip().rstrip("/")
+    if not base_url:
+        return {"started": False, "reason": NO_ADDRESS, "skipped": [], "over_cap": []}
 
     try:
         if test_ref:
@@ -167,13 +204,13 @@ def start_journey_check(*, tenant_id, project_id, work_item_id, test_ref=None,
         row = A11yJourneyRun.objects.create(
             tenant_id=tenant_id, project_id=project_id, run_id=outcome.run_id,
             test_ref=journey.test_ref, title=journey.title[:512],
-            artifact_id=journey.artifact_id, steps=steps,
+            artifact_id=journey.artifact_id, steps=steps, base_url=base_url[:512],
             preconditions=list(journey.preconditions),
             started_by_id=triggered_by or None,
             status=A11yJourneyRun.Status.WALKING,
         )
     return {"started": True, "run_id": outcome.run_id, "journey_run_id": str(row.id),
-            "test_ref": journey.test_ref, "steps": len(steps),
+            "test_ref": journey.test_ref, "steps": len(steps), "base_url": base_url,
             "skipped": found.get("skipped", []), "over_cap": found.get("over_cap", [])}
 
 
@@ -184,6 +221,12 @@ def journey_for_run(tenant_id, run_id) -> dict:
     `total_elements`: it is the number the agent checks itself against before finishing, and
     an agent that cannot see the size of its own job will stop when the answers start looking
     similar.
+
+    `base_url` is where to go (G6a). Without it the agent had its steps, its preconditions and
+    the eight checks, and no application — so it would have started, found nothing to open, and
+    honestly reported every step blocked. A step's `route` is a path and is joined to this; the
+    agent is never asked to guess a host, and the browser it has been given cannot open any
+    other one.
     """
     row = _journey_run(tenant_id, run_id)
     return {
@@ -191,6 +234,7 @@ def journey_for_run(tenant_id, run_id) -> dict:
         "test_ref": row.test_ref,
         "title": row.title,
         "artifact_id": row.artifact_id,
+        "base_url": row.base_url,
         "preconditions": list(row.preconditions or []),
         "steps": list(row.steps or []),
         "total_steps": len(row.steps or []),
@@ -528,6 +572,43 @@ def finish_journey(*, tenant_id, run_id) -> dict:
         row.save(update_fields=["status", "summary", "updated_at"])
     return {"journey_run_id": str(row.id), "test_ref": row.test_ref,
             "status": row.status, **summary}
+
+
+def close_unfinished_journey(*, tenant_id, run_id, reason: str = "") -> dict:
+    """Close a walk whose run has ended, if the agent did not close it itself (G6a).
+
+    **Why the platform has to do this at all.** `finish_journey` has exactly one caller — the
+    agent — and an agent that died is by definition not still running to call it. Left alone,
+    a journey whose engine crashed, ran out of turns or was abandoned reads `walking` for ever,
+    and a screen listing journeys would show one permanently in progress with no way to tell it
+    from one that is genuinely still going. That is the same silence the whole step-accounting
+    design exists against, one level up.
+
+    **It finishes the pass rather than marking it failed**, and that is deliberate. Everything
+    the agent DID record — every step it walked, every finding it reported — is real, was
+    produced by a real browser operating a real application, and is the expensive half. Throwing
+    it away because the closing call never came would lose evidence to tidy up a status.
+    `finish_journey` already accounts for the rest honestly: every step nothing was reported
+    about becomes `not_reached`, and a pass that walked nothing is recorded as failed with its
+    own reason.
+
+    Idempotent, and a no-op for a run that has no journey — it is called from the orchestrator's
+    generic success and failure paths, which see every phase, not only this one.
+    """
+    from .models import A11yJourneyRun
+
+    with tenant_context(tenant_id):
+        row = A11yJourneyRun.objects.filter(tenant_id=tenant_id, run_id=run_id).first()
+        if row is None or row.status != A11yJourneyRun.Status.WALKING:
+            # Not this phase, or the agent closed it properly. Both are the normal case.
+            return {"closed": False}
+    out = finish_journey(tenant_id=tenant_id, run_id=run_id)
+    with tenant_context(tenant_id):
+        row.refresh_from_db()
+        row.summary = {**(row.summary or {}),
+                       "closed_by_platform": str(reason or RUN_ENDED_UNFINISHED)}
+        row.save(update_fields=["summary", "updated_at"])
+    return {"closed": True, **out}
 
 
 def verify_journey_completeness(*, tenant_id, run_id) -> dict:

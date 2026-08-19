@@ -19,6 +19,7 @@ from django.conf import settings
 from mcp_platform_state import tools
 from temporalio import activity
 
+from apps.a11y.journey import JOURNEY_PHASE as A11Y_JOURNEY_PHASE
 from apps.a11y.judge import JUDGE_PHASE as A11Y_JUDGE_PHASE
 from apps.gates.models import Approval
 from apps.registry.models import AgentSpec, Artifact
@@ -701,6 +702,29 @@ def verify_write_completeness_core(
         return {"present": [f"{counts['judged']} judged"],
                 "expected": [f"{counts['dispatched']} dispatched"]}
 
+    # The keyboard journey (09d, QA-20/G6a) writes step outcomes and verdicts, not artifacts —
+    # the same shape as the judge above, and it needs its own branch for the same reason: without
+    # one, a journey that walked a whole application perfectly would reach this check, be asked
+    # for an `a11y_journey` document it was never meant to write, and park the run.
+    #
+    # **An incomplete journey is not a failed one, and this branch must never make it look like
+    # one.** A walk blocked at step 3 of 6 has three steps nothing was reported about, and that
+    # is the honest, expected, valuable outcome — the whole point of freezing the step list is
+    # to be able to say it. So the counts are reported and nothing is raised. What the platform
+    # does insist on is that the pass is CLOSED, which is the line below.
+    if inp.phase == A11Y_JOURNEY_PHASE:
+        from apps.a11y.journey import close_unfinished_journey, verify_journey_completeness
+
+        try:
+            counts = verify_journey_completeness(
+                tenant_id=inp.tenant_id, run_id=inp.run_id)
+        finally:
+            # `finally` for the same reason as the judge's: the run whose accounting matters
+            # most is the one that did not finish cleanly.
+            close_unfinished_journey(tenant_id=inp.tenant_id, run_id=inp.run_id)
+        return {"present": [f"{counts['reported']} steps reported"],
+                "expected": [f"{counts['asked']} steps asked"]}
+
     # Auto-apply runs (00e document vision, Part B) don't register a phase-typed artifact — they
     # re-register the TARGET document as a new version carrying its own type, then publish without
     # a gate. So the bar here is "the run actually produced content", not a phase-type match:
@@ -1123,6 +1147,12 @@ def fail_run_core(inp: AgentRunInput, reason: str) -> dict:
         tools.log_event(inp.tenant_id, "orchestrator", "run.failed", "run", inp.run_id,
                         {"error": reason})
     recover_unread_document_core(inp)   # a failed vision pass must not leave a document empty
+    # …and a failed journey pass must not leave a walk saying it is still walking (G6a). This is
+    # the path a crashed agent takes, and it never reaches the write-completeness check above,
+    # so the closure has to be on both. A no-op for every phase that has no journey.
+    from apps.a11y.journey import close_unfinished_journey
+
+    close_unfinished_journey(tenant_id=inp.tenant_id, run_id=inp.run_id, reason=reason)
     return {"status": "failed"}
 
 

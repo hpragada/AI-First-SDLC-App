@@ -123,7 +123,8 @@ def _start(world, monkeypatch, run_id=RUN_ID):
                         lambda *a, **k: {"journeys": [parsed], "skipped": [], "over_cap": []})
     monkeypatch.setattr(journey_mod, "journey_available", lambda *a, **k: "")
     start_journey_check(tenant_id=world["t"], project_id=world["p"],
-                        work_item_id=world["w"], trigger=_trigger(world, run_id))
+                        work_item_id=world["w"], base_url="http://127.0.0.1:5173",
+                        trigger=_trigger(world, run_id))
 
 
 def _report(world, **over):

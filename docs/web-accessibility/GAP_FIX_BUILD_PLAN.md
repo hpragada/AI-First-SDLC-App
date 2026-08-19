@@ -66,7 +66,7 @@ Small and safe first, so the team gets working ground under them before the big 
 | 8a | **B1 + B4 + B2** — the audit screen, and the way in | Brownfield audit with no terminal at all | L |
 | 8b | **The page editor** — edit one page, not the whole list | A path can be corrected without creating a second page | M |
 | 9 | **G3b** — the review list stops fetching evidence nobody reads ✅ | A queue that does the work it is read for | S |
-| 10 | **G6** — the keyboard journey, working on both journeys | Eight criteria nothing else can reach | M |
+| 10 | **G6** — the keyboard journey, working on both journeys *(G6a ✅ · G6b, G6c to go)* | Eight criteria nothing else can reach | M |
 
 Tasks 1–4 are independent of each other. 6 should land before 7. 8 has the wireframe already
 approved (`docs/design/screens/S-38-a11y-audit.html`) and was **split by team decision on
@@ -952,15 +952,80 @@ rather than showing an empty list that looks like a fault.
 
 *Size M · Risk medium — it widens a tool grant, so the egress scoping must be asserted, not assumed.*
 
-**G6b · Make a journey claimable work** *(the seam both journeys use)*
+---
 
-- `A11yJourneyRun` gains `PENDING` / `CLAIMED` and an `enrollment`, like the audit in B1.
-- `GET /api/runner/a11y-journeys/` to claim, and a `journey` branch in the companion daemon that
-  runs the 09d agent against the claimed journey's address.
-- The journey's own carrier work item is marked a **carrier** from the start (see G4), so this
-  never repeats that mistake.
+#### G6a — BUILT, 2026-08-19, and three things the plan above had wrong
 
-*Size M · Risk medium · Needs G6a.*
+**① The safety argument for the browser did not hold.** The line above says the grant is safe
+because "the real bound is the egress policy". Checked: **`EgressPolicy` does not exist on the
+planning path at all**, and on the build path it gates *shell commands* (`check_command_egress`),
+never a browser. The browser's only bound, on both paths, is the `--allowed-origins` argument
+handed to the Playwright server.
+
+That matters, because the build path writes it as `if preview_url:` — so an unresolved preview URL
+there **silently launches an unbounded browser**. Not repeated here. A journey is refused twice
+over: `start_journey_check` will not dispatch without an address, and the companion raises rather
+than launching if a payload somehow arrives without one. Asserted, not assumed.
+
+**② G6b's claim endpoint is dropped — team decision, 2026-08-19.** It would have built a second
+delivery route beside one that already works. The audit (B1) needed its own because an audit is
+*not an agent run* — no run, no engine, nothing to report through. A journey **is** an agent run,
+so it already travels the planning dispatch channel every companion phase uses, which has already
+learned five things a new route would have to learn again: routing to the right machine, handing
+work to any available machine when the intended one is not running, re-handing work a dead machine
+abandoned, never letting two machines take one job, and surviving a dropped database connection.
+Every one of those was originally found by a user. What is left of G6b — a carrier work item per
+journey, queueing several at once — moves into the next slice.
+
+**③ Two end-to-end blockers the plan did not list, both now closed.**
+
+- **A journey would never have completed, even walking perfectly.** The write-completeness gate
+  asks every phase for the document it registered, and 09d registers none. Without an
+  `a11y_journey` branch — the one the judging pass already has, for the identical reason — a
+  flawless walk would have parked its run asking for a file it was never meant to write.
+- **A walk whose run died read `walking` for ever.** `finish_journey` has exactly one caller, the
+  agent, and an agent that died is not still running to call it. The platform now closes it on
+  both the success and the failure path, keeping everything the agent did record and accounting
+  for the rest — the steps nobody spoke about become `not_reached`, never "passed".
+
+And one race closed: `start_journey_check` triggers the run and writes the journey row afterwards,
+because the row is keyed by the run id the trigger returns. A companion claiming inside that window
+would have started an agent whose first call failed with *"no accessibility journey is attached to
+this run"*. The claim now defers one poll — about a second — rather than handing out a task that
+cannot work.
+
+**How the address travels.** Read at claim time for the one phase that needs it, not added to the
+generic dispatch payload — that payload's shape belongs to every phase in the platform, and the
+Temporal input behind it more so. Every other phase's payload is byte-identical to before, and
+there is a test that asserts exactly that.
+
+*Proven by: a journey refused before anything is read when it has no address, and nothing
+dispatched; the agent's contract carrying the address; the address stored as walked rather than
+looked up later; a browser locked to that address and to nothing else; a journey with no address
+reported failed with the engine never started; every other planning phase still having no browser
+at all; the phase string the companion hardcodes checked against the agent catalog; the claim
+carrying the address, deferring when the row is not written yet, and leaving every other phase's
+payload untouched; a walk closed by the platform on both the success and the failure path, keeping
+its findings; closing being idempotent and a no-op on a run that has no journey; and a journey
+blocked half way reported rather than failed.*
+
+**Not yet proven, and only a live run can:** that a real browser, driven by 09d, walks a real
+application and comes back with findings.
+
+---
+
+**G6b · One carrier per journey, and starting several** *(what the screen's Run button needs)*
+
+- A carrier work item **per journey**, keyed by test ref and marked a carrier from the start
+  (see G4), mirroring `aipass.judging_work_item`. Needed because the platform refuses a second run
+  on a work item that already has a live one — so without this, "Walk 2 selected journeys" would
+  start one and refuse the other.
+- Queue N journeys, capped by the existing `MAX_JOURNEYS = 10`, with the excess **reported**.
+  `start_journey_check` walks `journeys[0]` and stops today.
+- `POST /api/projects/<id>/a11y-journeys/` to queue, `GET` to list. Same QA Lead gate as the rest
+  of the destination; a reader sees everything and starts nothing.
+
+*Size M · Risk low · Needs G6a.*
 
 **G6c · The way a person starts one** *(the same on both journeys)*
 
@@ -1016,7 +1081,7 @@ data-only and adds a single key to rows that already exist.
 |---|---|---|
 | `workitems/0006_a11y_judging_carrier_marker` | Marks the judging work items already on people's boards as carriers. Data only — no schema change | G4 · **built** |
 | `a11y/0026_audit_claimable` | `A11yBaselineAudit`: `PENDING`/`CLAIMED` statuses, `enrollment`, `claimed_at` | B1 |
-| `a11y/0027_journey_address` | `A11yJourneyRun`: `base_url`, `PENDING`/`CLAIMED`, `enrollment` | G6a, G6b |
+| `a11y/0027_journey_address` | `A11yJourneyRun`: `base_url`. One column, additive | G6a · **built** |
 
 The two schema ones are RLS-aware from the first migration, like every table in this platform. The
 data one runs as the privileged migration role for the same reason `a11y/0005` does: work items are

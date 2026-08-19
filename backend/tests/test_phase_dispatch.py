@@ -787,3 +787,78 @@ async def test_workflow_companion_recovers_after_takeover(monkeypatch):
     assert result["status"] == "completed"
     assert calls == ["compose", "dispatch", "takeover", "register", "verify", "open",
                      "publish", "transition"]
+
+
+# ── G6a: the address a keyboard journey walks reaches the machine walking it ──
+#
+# The companion needs it BEFORE the agent starts — it is what the browser is locked to — and the
+# generic dispatch payload cannot carry it, because that payload's shape belongs to every phase
+# in the platform. So it is read at claim time, for the one phase that needs it.
+
+def _journey_world(world):
+    """Re-point this run at the journey phase and give it a walk to do."""
+    from apps.a11y.models import A11yJourneyRun
+
+    spec = AgentSpec.objects.get(tenant_id=world["tenant_id"], key="03_prd")
+    spec.phase_label = "a11y_journey"
+    spec.save(update_fields=["phase_label"])
+    inp = world["inp"]
+    journey_inp = AgentRunInput(**{**inp.__dict__, "phase": "a11y_journey"})
+    activities.dispatch_phase_core(journey_inp, manifest="# Project\nm")
+    return A11yJourneyRun.objects.create(
+        tenant_id=world["tenant_id"], project_id=world["project_id"], run_id=world["run_id"],
+        test_ref="TC-031", title="Checkout", base_url="http://127.0.0.1:5173",
+        steps=[{"number": 1, "text": "Open the basket", "route": "/basket"}],
+    )
+
+
+def test_a_claimed_journey_carries_the_address_it_must_walk(world):
+    _journey_world(world)
+    body = APIClient().get("/api/runner/work/", **_auth(world)).json()
+    assert body["payload"]["phase"] == "a11y_journey"
+    assert body["payload"]["app_base_url"] == "http://127.0.0.1:5173"
+
+
+def test_every_other_phase_is_handed_exactly_what_it_was_before(world):
+    """The seam every phase crosses must be byte-identical for the ones this does not concern."""
+    activities.dispatch_phase_core(world["inp"], manifest="# Project\nm")
+    payload = APIClient().get("/api/runner/work/", **_auth(world)).json()["payload"]
+    assert payload == Run.objects.get(id=world["run_id"]).inputs["phase_task"]
+    assert "app_base_url" not in payload
+
+
+def test_a_journey_dispatched_before_its_row_exists_waits_instead_of_being_claimed(world):
+    """The race `start_journey_check` cannot avoid: it triggers the run and writes the journey
+    row afterwards, because the row is keyed by the run id the trigger returns. A companion that
+    claimed inside that window would start an agent whose first call fails with 'no accessibility
+    journey is attached to this run'. Deferring one poll turns that into about a second's wait.
+    """
+    from apps.a11y.models import A11yJourneyRun
+
+    row = _journey_world(world)
+    A11yJourneyRun.objects.filter(id=row.id).delete()      # the window, exactly
+
+    client = APIClient()
+    assert client.get("/api/runner/work/", **_auth(world)).status_code == 204
+    # And crucially it is NOT marked claimed — it is still there for the next poll.
+    assert Run.objects.get(id=world["run_id"]).inputs["dispatch"]["status"] == "pending"
+
+    A11yJourneyRun.objects.create(
+        tenant_id=world["tenant_id"], project_id=world["project_id"], run_id=world["run_id"],
+        test_ref="TC-031", base_url="http://127.0.0.1:5173", steps=[])
+    got = client.get("/api/runner/work/", **_auth(world))
+    assert got.status_code == 200
+    assert got.json()["payload"]["app_base_url"] == "http://127.0.0.1:5173"
+
+
+def test_the_refetch_path_gives_the_address_too_and_the_same_wait(world):
+    from apps.a11y.models import A11yJourneyRun
+
+    row = _journey_world(world)
+    client = APIClient()
+    url = f"/api/runner/phases/{world['run_id']}/"
+    assert client.get(url, **_auth(world)).json()["app_base_url"] == "http://127.0.0.1:5173"
+
+    A11yJourneyRun.objects.filter(id=row.id).delete()
+    late = client.get(url, **_auth(world))
+    assert late.status_code == 409 and "not ready" in late.json()["detail"]

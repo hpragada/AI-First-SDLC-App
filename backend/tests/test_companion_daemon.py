@@ -782,3 +782,78 @@ def test_both_mcp_servers_inherit_the_environment():
     assert ci["env"]["RUNNER_WORKSPACE"] == "/wt"
     assert ci["env"]["RUNNER_REPO"] == "acme/api"
     assert ci["env"]["PYTHONPATH"] == "/repo"
+
+
+# ── G6a: the keyboard journey is the one planning phase with a browser ───────
+#
+# Eight WCAG criteria cannot be answered by reading a page standing still — whether tabbing ever
+# traps you, whether focus stays visible, whether a status message is announced. The only way to
+# answer them is to operate the application, and this is where 09d gets the browser to do it.
+
+_JOURNEY_TASK = {"kind": "plan", "run_id": "r9", "payload": {
+    "phase": "a11y_journey", "work_item_id": "w9", "project_id": "proj-9",
+    "agent_body": "BODY", "manifest": "# Project\nm",
+    "app_base_url": "http://127.0.0.1:5173"}}
+
+
+def test_a_journey_gets_a_browser_locked_to_the_address_it_was_given():
+    transport = _Transport([(200, _JOURNEY_TASK), (204, None)])
+    driver = _FakeDriver()
+    _daemon(transport, driver, sleep=lambda _s: None).serve(max_iterations=2)
+
+    servers = driver.mcp_config["mcpServers"]
+    assert "platform-state" in servers, "the state tools it reports through are still there"
+    args = servers["playwright"]["args"]
+    assert "@playwright/mcp@latest" in args and "--headless" in args
+    # The origin list IS the bound — not the tool name, and not EgressPolicy, which gates shell
+    # commands on the build path and says nothing at all about a browser.
+    assert args[args.index("--allowed-origins") + 1] == "http://127.0.0.1:5173"
+    # And the tools to drive it, on top of everything a planning run already had.
+    tools = driver.calls[0][3]
+    assert "mcp__playwright__browser_press_key" in tools
+    assert "mcp__platform-state__get_a11y_journey" in tools
+
+
+def test_every_other_planning_phase_still_has_no_browser():
+    transport = _Transport([(200, _PLAN_TASK), (204, None)])
+    driver = _FakeDriver()
+    _daemon(transport, driver, sleep=lambda _s: None).serve(max_iterations=2)
+
+    assert "playwright" not in driver.mcp_config["mcpServers"]
+    assert not any(t.startswith("mcp__playwright__") for t in driver.calls[0][3])
+
+
+def test_a_journey_with_no_address_is_reported_failed_and_never_run():
+    """The bound on the browser is the origin list, so a launch with no address is an UNBOUNDED
+    browser. The build path writes this as `if preview_url:` and quietly launches one anyway;
+    that is not repeated here. Refused, with a sentence a person can act on."""
+    task = {**_JOURNEY_TASK, "payload": {**_JOURNEY_TASK["payload"], "app_base_url": ""}}
+    transport = _Transport([(200, task), (204, None)])
+    driver = _FakeDriver()
+    _daemon(transport, driver, sleep=lambda _s: None).serve(max_iterations=2)
+
+    assert driver.calls == [], "the engine was never started"
+    (url, body), = transport.reports()
+    assert url.endswith("/api/runner/phases/r9/report/")
+    assert body["status"] == "failed"
+    assert "without an address" in body["message"]
+
+
+def test_playwright_servers_is_empty_for_a_phase_that_does_not_operate_an_app():
+    from runner.companion.daemon import NoAddressError, playwright_servers
+
+    assert playwright_servers(phase="prd", base_url="http://x") == {}
+    assert playwright_servers(phase="onboarding", base_url="") == {}
+    with pytest.raises(NoAddressError):
+        playwright_servers(phase="a11y_journey", base_url="   ")
+
+
+def test_a_watched_journey_drops_headless_like_a_watched_build(monkeypatch):
+    from runner.companion.daemon import playwright_servers
+
+    monkeypatch.delenv("SDLC_COMPANION_HEADED", raising=False)
+    assert "--headless" in playwright_servers(
+        phase="a11y_journey", base_url="http://x")["playwright"]["args"]
+    monkeypatch.setenv("SDLC_COMPANION_HEADED", "1")
+    assert "--headless" not in playwright_servers(
+        phase="a11y_journey", base_url="http://x")["playwright"]["args"]

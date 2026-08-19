@@ -28,9 +28,12 @@ import pytest
 
 from apps.a11y.journey import (
     JOURNEY_AGENT_KEY,
+    JOURNEY_PHASE,
+    NO_ADDRESS,
     NO_COMPANION,
     NO_JOURNEY,
     JourneyRunError,
+    close_unfinished_journey,
     finish_journey,
     journey_for_run,
     record_journey_finding,
@@ -62,6 +65,10 @@ from integrations.types import (
 )
 
 # ── a realistic journey, in agent 09's own test-case format ──────────────────
+
+#: Where the application under test is answering for these walks. A journey now refuses to start
+#: without one (G6a), so it is part of the fixture rather than an argument each test invents.
+APP_URL = "http://127.0.0.1:5173"
 
 JOURNEY_BODY = """## TC-031: Complete Registration to First Expense
 **User Story:** US-004
@@ -161,7 +168,7 @@ def _start(world, body=JOURNEY_BODY, *, trigger=None, monkeypatch=None, availabl
     trigger = trigger or _trigger(world)
     result = start_journey_check(
         tenant_id=world["t"], project_id=world["p"], work_item_id=world["w"],
-        trigger=trigger,
+        base_url=APP_URL, trigger=trigger,
     )
     return result, trigger
 
@@ -271,7 +278,7 @@ def test_a_project_with_no_journey_is_told_so_rather_than_dispatched(world, monk
                         lambda *a, **k: {"journeys": [], "skipped": [], "over_cap": []})
     trigger = _trigger(world)
     out = start_journey_check(tenant_id=world["t"], project_id=world["p"],
-                              work_item_id=world["w"], trigger=trigger)
+                              work_item_id=world["w"], base_url=APP_URL, trigger=trigger)
     assert out["started"] is False and out["reason"] == NO_JOURNEY
     assert trigger.calls == []          # nothing dispatched to walk nothing
 
@@ -879,7 +886,7 @@ def test_starting_a_named_journey_uses_it(world, monkeypatch):
     monkeypatch.setattr(journey_mod, "journey_available", lambda *a, **k: "")
     out = start_journey_check(
         tenant_id=world["t"], project_id=world["p"], work_item_id=world["w"],
-        test_ref="TC-077", trigger=_trigger(world))
+        base_url=APP_URL, test_ref="TC-077", trigger=_trigger(world))
     assert out["started"] is True and out["test_ref"] == "TC-077"
 
 
@@ -892,7 +899,7 @@ def test_asking_for_a_journey_that_is_not_there_is_a_reason_not_a_crash(world, m
     monkeypatch.setattr(journeys_mod, "journey_for", _raise)
     out = start_journey_check(
         tenant_id=world["t"], project_id=world["p"], work_item_id=world["w"],
-        test_ref="TC-999", trigger=_trigger(world))
+        base_url=APP_URL, test_ref="TC-999", trigger=_trigger(world))
     assert out["started"] is False and "TC-999" in out["reason"]
 
 
@@ -913,6 +920,202 @@ def test_a_malformed_verdict_is_refused_with_a_message_the_agent_can_act_on(worl
         record_journey_finding(
             tenant_id=world["t"], run_id=result["run_id"], step=1, checker="trap",
             verdict="broken", confidence=0.9, evidence="x")
+
+
+# ── G6a: the address, and the pass that closes itself ────────────────────────
+
+@pytest.mark.django_db
+def test_a_journey_with_nowhere_to_go_is_refused_before_anything_is_read(world, monkeypatch):
+    """The check that costs nothing and matters most.
+
+    A journey is a real browser operating a running application. Without an address there is
+    nowhere to walk AND nothing to bound the browser to, so this is refused first — before the
+    registry is read, before a companion is looked for, and above all before an agent run is
+    dispatched to discover the problem for itself.
+    """
+    from apps.a11y import journeys as journeys_mod
+
+    def _never(*a, **k):
+        raise AssertionError("the address is checked before anything is read")
+
+    monkeypatch.setattr(journeys_mod, "journeys_for_project", _never)
+    trigger = _trigger(world)
+    for nothing in ("", "   ", None):
+        out = start_journey_check(tenant_id=world["t"], project_id=world["p"],
+                                  work_item_id=world["w"], base_url=nothing, trigger=trigger)
+        assert out["started"] is False
+        assert out["reason"] == NO_ADDRESS
+        assert "start the application" in out["reason"], "it says what to do, not just no"
+    assert trigger.calls == [], "nothing was dispatched to walk nowhere"
+
+
+@pytest.mark.django_db
+def test_the_agents_contract_says_where_to_go(world, monkeypatch):
+    """G6a's core. Before this the agent got its steps, its preconditions and the eight checks —
+    and no application, so it would have started and honestly reported every step blocked."""
+    result, _ = _start(world, monkeypatch=monkeypatch)
+    contract = journey_for_run(world["t"], result["run_id"])
+    assert contract["base_url"] == APP_URL
+    assert contract["total_steps"] == len(contract["steps"])
+
+
+@pytest.mark.django_db
+def test_the_address_is_stored_as_walked_not_looked_up_later(world, monkeypatch):
+    """A journey result is a claim about the thing that was walked, so the address is recorded
+    on the pass. A trailing slash is trimmed because it is joined to a step's path."""
+    from apps.a11y import journey as journey_mod
+    from apps.a11y import journeys as journeys_mod
+    from integrations.types import A11yJourney
+
+    parsed = A11yJourney(test_ref="TC-031", title="Checkout",
+                         steps=tuple(parse_steps(JOURNEY_BODY)))
+    monkeypatch.setattr(journeys_mod, "journeys_for_project",
+                        lambda *a, **k: {"journeys": [parsed], "skipped": [], "over_cap": []})
+    monkeypatch.setattr(journey_mod, "journey_available", lambda *a, **k: "")
+    out = start_journey_check(
+        tenant_id=world["t"], project_id=world["p"], work_item_id=world["w"],
+        base_url="http://127.0.0.1:5173/", trigger=_trigger(world))
+
+    assert out["base_url"] == "http://127.0.0.1:5173"
+    row = A11yJourneyRun.objects.get(id=out["journey_run_id"])
+    assert row.base_url == "http://127.0.0.1:5173"
+
+
+@pytest.mark.django_db
+def test_a_walk_whose_run_died_is_closed_by_the_platform(world, monkeypatch):
+    """`finish_journey` has exactly one caller — the agent — and an agent that died is not
+    still running to call it. Without this the walk reads `walking` for ever."""
+    result, _ = _start(world, monkeypatch=monkeypatch)
+    run_id = result["run_id"]
+    record_step(tenant_id=world["t"], run_id=run_id, number=1, outcome=A11Y_STEP_WALKED)
+    assert A11yJourneyRun.objects.get(run_id=run_id).status == A11yJourneyRun.Status.WALKING
+
+    out = close_unfinished_journey(tenant_id=world["t"], run_id=run_id,
+                                   reason="the engine ended abnormally")
+    assert out["closed"] is True
+    row = A11yJourneyRun.objects.get(run_id=run_id)
+    assert row.status == A11yJourneyRun.Status.COMPLETE, "one step WAS walked, so it is a result"
+    assert "the engine ended abnormally" in row.summary["closed_by_platform"]
+    # And the honesty that makes closing it safe: the steps nobody spoke about are accounted for.
+    assert row.summary["not_reached"], "the unreported steps are recorded as never walked"
+    never = A11yJourneyStepResult.objects.filter(journey_run=row, outcome=A11Y_STEP_NOT_REACHED)
+    assert never.exists()
+
+
+@pytest.mark.django_db
+def test_closing_a_walk_keeps_what_the_agent_already_recorded(world, monkeypatch):
+    """The expensive half is the browser having really walked the application. A run that died
+    at the end must not cost the steps and findings it produced on the way."""
+    result, _ = _start(world, monkeypatch=monkeypatch)
+    run_id = result["run_id"]
+    record_journey_finding(
+        tenant_id=world["t"], run_id=run_id, step=1, checker="trap", verdict="fail",
+        confidence=0.95, evidence="tab never leaves the date picker", route="/checkout")
+
+    close_unfinished_journey(tenant_id=world["t"], run_id=run_id)
+    assert A11yFinding.objects.filter(tenant_id=world["t"], checker="trap").count() == 1
+
+
+@pytest.mark.django_db
+def test_closing_is_idempotent_and_never_touches_a_pass_the_agent_finished(world, monkeypatch):
+    """It is called from the orchestrator's generic success AND failure paths, which see every
+    phase, so it has to be safe to call on a finished pass and on a run with no journey at all."""
+    result, _ = _start(world, monkeypatch=monkeypatch)
+    run_id = result["run_id"]
+    record_step(tenant_id=world["t"], run_id=run_id, number=1, outcome=A11Y_STEP_WALKED)
+    finish_journey(tenant_id=world["t"], run_id=run_id)
+    before = A11yJourneyRun.objects.get(run_id=run_id).summary
+
+    assert close_unfinished_journey(tenant_id=world["t"], run_id=run_id) == {"closed": False}
+    after = A11yJourneyRun.objects.get(run_id=run_id).summary
+    assert after == before, "the agent's own accounting is untouched"
+    assert "closed_by_platform" not in after
+
+    # A run that is not a journey at all — every other phase in the platform takes this path.
+    assert close_unfinished_journey(
+        tenant_id=world["t"], run_id="22222222-2222-4222-8222-222222222222") == {"closed": False}
+
+
+@pytest.mark.django_db
+def test_the_journey_phase_is_never_asked_for_a_document_it_does_not_write(world, monkeypatch):
+    """Without this branch a journey that walked a whole application perfectly would reach the
+    write-completeness gate, be asked for an `a11y_journey` document it was never meant to
+    write, and park the run. The same branch the judging pass needed, for the same reason."""
+    from orchestration.activities import A11Y_JOURNEY_PHASE, verify_write_completeness_core
+    from orchestration.types import AgentRunInput
+
+    assert A11Y_JOURNEY_PHASE == JOURNEY_PHASE == "a11y_journey"
+    result, _ = _start(world, monkeypatch=monkeypatch)
+    run_id = result["run_id"]
+    record_step(tenant_id=world["t"], run_id=run_id, number=1, outcome=A11Y_STEP_WALKED)
+
+    out = verify_write_completeness_core(
+        AgentRunInput(run_id=run_id, tenant_id=world["t"], project_id=world["p"],
+                      work_item_id=world["w"], agent_spec_id="", phase=JOURNEY_PHASE),
+        expected_types=[],
+    )
+    assert out["expected"] == [f"{result['steps']} steps asked"]
+    assert out["present"] == ["1 steps reported"]
+    # …and the pass is closed on the way past, so it never reads `walking` for ever.
+    assert A11yJourneyRun.objects.get(run_id=run_id).status == A11yJourneyRun.Status.COMPLETE
+
+
+@pytest.mark.django_db
+def test_a_journey_blocked_half_way_is_reported_not_failed(world, monkeypatch):
+    """The whole point of freezing the step list is to be able to say "three of these were never
+    reached". That is an honest, valuable outcome — this check must never turn it into an error.
+    """
+    from orchestration.activities import verify_write_completeness_core
+    from orchestration.types import AgentRunInput
+
+    result, _ = _start(world, monkeypatch=monkeypatch)
+    run_id = result["run_id"]
+    record_step(tenant_id=world["t"], run_id=run_id, number=1, outcome=A11Y_STEP_WALKED)
+    record_step(tenant_id=world["t"], run_id=run_id, number=2, outcome=A11Y_STEP_BLOCKED,
+                reason="the Continue button cannot be reached with the keyboard")
+
+    out = verify_write_completeness_core(     # no raise — that is the assertion
+        AgentRunInput(run_id=run_id, tenant_id=world["t"], project_id=world["p"],
+                      work_item_id=world["w"], agent_spec_id="", phase=JOURNEY_PHASE),
+        expected_types=[],
+    )
+    assert out["present"] == ["2 steps reported"]
+    summary = A11yJourneyRun.objects.get(run_id=run_id).summary
+    assert summary["blocked"][0]["reason"].startswith("the Continue button")
+    assert summary["not_reached"], "the steps after the block are never-reached, not passed"
+
+
+@pytest.mark.django_db
+def test_a_failed_run_closes_its_walk_on_the_way_out(world, monkeypatch):
+    """The path a crashed agent takes. It never reaches the completeness check above, so the
+    closure has to be on both — otherwise exactly the runs that died stay `walking` for ever."""
+    from orchestration.activities import fail_run_core
+    from orchestration.types import AgentRunInput
+
+    result, _ = _start(world, monkeypatch=monkeypatch)
+    run_id = result["run_id"]
+    record_step(tenant_id=world["t"], run_id=run_id, number=1, outcome=A11Y_STEP_WALKED)
+
+    fail_run_core(
+        AgentRunInput(run_id=run_id, tenant_id=world["t"], project_id=world["p"],
+                      work_item_id=world["w"], agent_spec_id="", phase=JOURNEY_PHASE),
+        "engine ended abnormally (error_during_execution)")
+
+    row = A11yJourneyRun.objects.get(run_id=run_id)
+    assert row.status != A11yJourneyRun.Status.WALKING
+    assert "error_during_execution" in row.summary["closed_by_platform"]
+
+
+def test_the_phase_the_companion_hardcodes_is_the_phase_the_catalog_gives_09d():
+    """The companion runs on a developer's machine with no Django, so `guardrails` repeats this
+    string rather than importing it. This is what keeps the two honest."""
+    from runner.companion.guardrails import BROWSER_PHASES
+
+    from apps.registry.catalog import ACTIVE_AGENT_CATALOG
+
+    agent = next(a for a in ACTIVE_AGENT_CATALOG if a.key == JOURNEY_AGENT_KEY)
+    assert agent.phase_label == JOURNEY_PHASE
+    assert JOURNEY_PHASE in BROWSER_PHASES, "…and that phase is the one granted a browser"
 
 
 # ── tenant isolation, at the database ────────────────────────────────────────

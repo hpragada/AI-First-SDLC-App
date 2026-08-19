@@ -361,6 +361,46 @@ class RunnerClarificationPollView(APIView):
         return Response(result)
 
 
+def _phase_extras(run, payload: dict):
+    """The dispatched task, plus what its phase needs and the generic dispatch could not carry.
+
+    Returns the payload, or **`None` meaning "not ready — do not hand this out yet"**.
+
+    **Why this exists rather than a wider dispatch payload.** `dispatch_phase_core` builds one
+    payload shape for every phase in the platform, from `AgentRunInput`. Growing either of them
+    an accessibility-shaped field would put one feature's vocabulary into the seam every phase
+    crosses — the same objection `aipass._remember_source_run` records for the judging pass, and
+    it applies with more force to a Temporal input, where a signature change is a versioning
+    problem as well as a design one. So the phase-specific fact is read here, once, for the one
+    phase that needs it, and every other phase's payload is byte-identical to before.
+
+    **The keyboard journey (G6a) needs the address of the application it is walking**, and it
+    needs it before the agent starts, not after: the companion passes it to the browser as the
+    only origin that may be opened, which happens while the MCP servers are being wired.
+
+    **`None` closes a real race.** `start_journey_check` triggers the run and writes the journey
+    row immediately afterwards — it cannot write it first, because the row is keyed by the run id
+    the trigger returns. The window is tiny (the run only becomes claimable once a Temporal
+    activity has composed the manifest and dispatched it, which is far slower than one INSERT),
+    but "tiny" is not "closed": a companion that claimed inside it would start an agent whose
+    first tool call fails with "no accessibility journey is attached to this run". Deferring for
+    one poll turns a rare, confusing failure into about a second of waiting.
+    """
+    from apps.a11y.journey import JOURNEY_PHASE
+
+    if payload.get("phase") != JOURNEY_PHASE:
+        return payload
+
+    from apps.a11y.models import A11yJourneyRun
+
+    row = (A11yJourneyRun.objects
+           .filter(tenant_id=run.tenant_id, run_id=run.id)
+           .only("base_url").first())
+    if row is None:
+        return None
+    return {**payload, "app_base_url": row.base_url}
+
+
 class RunnerWorkClaimView(APIView):
     """GET /api/runner/work/ — the companion daemon claims the next phase/build task dispatched
     to its enrollment. Atomically flips the run's dispatch to `claimed` (skip-locked so two
@@ -436,6 +476,17 @@ class RunnerWorkClaimView(APIView):
                 return Response(status=status.HTTP_204_NO_CONTENT)
             inputs = dict(run.inputs or {})
             dispatch = dict(inputs.get("dispatch") or {})
+            kind = dispatch.get("kind", "plan")
+            key = {"plan": "phase_task", "review": "review_task",
+                   "build": "build_task"}.get(kind, "phase_task")
+            payload = _phase_extras(run, inputs.get(key) or {})
+            # Resolved BEFORE the claim is written, so a task that is not ready to run is not
+            # marked claimed. See `_phase_extras`: today the only "not ready" case is a journey
+            # dispatched microseconds before its row was written, and one more poll — about a
+            # second — is all it needs. Nothing has been saved yet, so the run simply stays
+            # pending and the next poll picks it up.
+            if payload is None:
+                return Response(status=status.HTTP_204_NO_CONTENT)
             # Bind a BROADCAST (null-enrollment) dispatch to the claiming runner so it is now
             # OWNED — subsequent polls, heartbeat claim-renewal and lease-reclaim all key off
             # enrollment_id, and only this companion should carry it from here.
@@ -454,10 +505,6 @@ class RunnerWorkClaimView(APIView):
             if reclaimed:
                 tools.log_event(tid, "companion", "phase.reclaimed", "run", str(run.id),
                                 {"claim_count": dispatch["claim_count"]})
-            kind = dispatch.get("kind", "plan")
-            key = {"plan": "phase_task", "review": "review_task",
-                   "build": "build_task"}.get(kind, "phase_task")
-            payload = inputs.get(key) or {}
             return Response({"kind": kind, "run_id": str(run.id), "payload": payload})
 
 
@@ -501,6 +548,15 @@ class RunnerPhaseFetchView(APIView):
         payload = (run.inputs or {}).get("phase_task")
         if not payload:
             return Response({"detail": "no phase task dispatched"},
+                            status=status.HTTP_409_CONFLICT)
+        with tenant_context(str(runner.tenant_id)):
+            payload = _phase_extras(run, payload)
+        # The re-fetch path, so the same phase extras and the same not-ready answer as the claim
+        # (see `_phase_extras`). 409 rather than a payload missing its address: this endpoint is
+        # asked for one named run, so "come back in a moment" is the honest answer and the
+        # companion's existing retry already handles it.
+        if payload is None:
+            return Response({"detail": "the phase task is not ready yet; retry"},
                             status=status.HTTP_409_CONFLICT)
         return Response(payload)
 
