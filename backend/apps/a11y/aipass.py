@@ -61,7 +61,14 @@ def judging_work_item(*, tenant_id, project_id, run_id, parent_work_item_id=None
                 ),
                 "state": WorkItem.State.IN_PROGRESS,
                 "parent_id": parent_work_item_id,
-                "external_ref": {"kind": "a11y_judging", "run": str(run_id)},
+                # `source` is what marks this a CARRIER — internal plumbing that exists only to
+                # host a run, hidden from the backlog, from Phases & Runs and from what an agent
+                # is shown as this project's backlog (`integrations.onboarding.CARRIER_SOURCES`).
+                # It was written as `kind` alone, which no filter in the platform reads, so every
+                # test run left an "Accessibility judging" task on the user's board. `kind` is
+                # kept beside it: it is what this object IS, and something may read it.
+                "external_ref": {"kind": "a11y_judging", "source": "a11y_judging_carrier",
+                                 "run": str(run_id)},
             },
         )
     return item

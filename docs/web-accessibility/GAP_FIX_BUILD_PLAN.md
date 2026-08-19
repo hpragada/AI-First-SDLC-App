@@ -140,6 +140,12 @@ instruction is right and present, never that it was followed. Only a live greenf
 
 ### G4 · Every test run leaves a plumbing task on the board
 
+🟢 **Built 2026-08-19.** The judging work item is marked a carrier and disappears from the board,
+from Phases & Runs, and from what an agent is shown as the project's backlog. A migration marks
+the ones already on a board. The dashboard's **Work items** and **Phases in progress** counts now
+exclude carriers too, which also fixes the onboarding and vision carriers that were inflating
+them. Nine tests, all at REST level. Proven end to end by test — no live run needed.
+
 **In plain words.** Automate 30 test cases and you get 30 extra tasks on the work-items board
 called *"Accessibility judging — …"*, plus 30 extra runs in Phases & Runs. Nothing is broken, but
 it looks like the platform is generating junk work, and on a real project it buries the backlog.
@@ -150,15 +156,39 @@ throwaway WorkItem to host the run (`backend/apps/a11y/aipass.py:46`), one per t
 
 The platform already knows this kind of object should be hidden. `carrier_q()` in
 `backend/integrations/onboarding.py:1093` is the filter, and the work-item list
-(`backend/api/views.py:1360`), the runs list (`:1697`) and the gates list (`:942`) all use it.
-It matches on `external_ref.source` against `CARRIER_SOURCES`. The judging item writes
-`external_ref.kind` instead, so the filter never fires.
+(`backend/api/views.py:1360`), the runs list (`:1697`) and the dashboard's *my runs* panel
+(`:942`) all use it. It matches on `external_ref.source` against `CARRIER_SOURCES`. The judging
+item writes `external_ref.kind` instead, so the filter never fires.
+
+*(Corrected while building: this document originally called `views.py:942` "the gates list". It
+is not — it is the dashboard's **my runs** panel. Gates are carrier-filtered **nowhere**, and
+that turns out not to matter: the judge is dispatched with `auto_approve=True`
+(`backend/apps/a11y/dispatch.py:366`), so it never creates a gate anyone must act on.)*
 
 **What we change.**
 
 - `backend/apps/a11y/aipass.py:64` — add `"source": "a11y_judging_carrier"` alongside the existing
   `kind` (keep `kind`; something may read it).
 - `backend/integrations/onboarding.py:1091` — add that marker to `CARRIER_SOURCES`.
+- `backend/apps/workitems/migrations/0006_a11y_judging_carrier_marker.py` — a data migration that
+  marks the judging items already sitting on people's boards. `get_or_create` writes the marker on
+  new items only, so without this the fix is invisible on exactly the projects that have the
+  problem. Follows `a11y/0005_load_wcag_for_existing_tenants`: the tables are FORCE ROW LEVEL
+  SECURITY, so it sets `app.tenant_id` per tenant and resets it afterwards. Adds one key and
+  preserves the rest of the `external_ref`; the reverse takes only that key back off.
+- `backend/api/views.py:984` — the dashboard's **Work items** and **Phases in progress** counts
+  exclude carriers, which they never did. Already wrong before this task for the onboarding and
+  vision carriers: the board showed 30 items while the health panel said 62. **`awaiting_gate`
+  deliberately does not exclude them** — gates are not carrier-filtered anywhere, and the gap
+  report has been gated since 2026-08-03, so its approval sits on a carrier and is real work a
+  person must do. Excluding it there would hide a pending gate the Gates screen still lists.
+
+**Four consumers of this filter the first draft of this plan did not name, all checked:** the MCP
+`list_work_items` (agents stop counting platform scaffolding as the project's backlog — right, and
+the same reason it already excludes onboarding carriers); the gap-report evidence builder
+(`onboarding.py:1400`, same); `_phase_artifact_title` (`orchestration/activities.py:845` — the
+judge's artifact loses its phase prefix, becoming *"Accessibility judging — Add login"*, which is
+what that function says carriers should read like); and the dashboard counts above.
 
 **Load-bearing detail:** read `carrier_q`'s docstring before touching it. The `has_key` half of
 that query is what stops Postgres dropping every work item whose `external_ref` has no `source`
@@ -174,6 +204,20 @@ no "Accessibility judging" tasks. The Accessibility backlog epic is still there.
 
 **How we prove it.** One test: after an AI pass, the judging work item is absent from the work-item
 list and the runs list, and the backlog epic is still present in both.
+
+*As built:* nine tests in `backend/tests/test_a11y_judging_carrier.py`, all **over HTTP** — "hidden
+from a queryset" is not the claim this task makes; "a person does not see it on the board" is. They
+cover: the task is off the board and its run out of Phases & Runs; the story, a Jira-imported item
+with no `source` key (the S3-13 guard, re-proven because this change edits the tuple that query
+reads) and the Accessibility backlog epic all stay; the item still resolves by direct id so a link
+from a run detail opens; `kind` survives beside the new `source`; the migration marks a
+legacy-shaped row and its reverse puts it back; and the dashboard counts equal the lists beside
+them. One more asserts the mechanism itself — put `CARRIER_SOURCES` back the way it was and the
+task returns to the board, so the file is testing the fix rather than something already true.
+Regression: `test_a11y_report.py`, `test_onboarding.py`, `test_a11y_baseline_report.py`,
+`test_a11y_baseline_enforcement.py`, `test_api.py`, `test_frontend_integration.py` — all green.
+`test_document_vision.py` has two failures that predate this work (`triggered_by="user-1"` is not
+a valid UUID); they fail identically on the commit before it and are not part of this change.
 
 **Size S · Risk low, with one sharp edge named above · Needs first: nothing.**
 
@@ -550,18 +594,22 @@ proven against a real application. The gate passes and says they are there.
 
 ## 5. Database changes
 
-Two migrations, both additive, neither touching an existing column.
+Three migrations. Two are additive schema changes, neither touching an existing column; one is
+data-only and adds a single key to rows that already exist.
 
-| Migration | What it adds | For |
+| Migration | What it does | For |
 |---|---|---|
-| `0026_audit_claimable` | `A11yBaselineAudit`: `PENDING`/`CLAIMED` statuses, `enrollment`, `claimed_at` | B1 |
-| `0027_journey_address` | `A11yJourneyRun`: `base_url`, `PENDING`/`CLAIMED`, `enrollment` | G6a, G6b |
+| `workitems/0006_a11y_judging_carrier_marker` | Marks the judging work items already on people's boards as carriers. Data only — no schema change | G4 · **built** |
+| `a11y/0026_audit_claimable` | `A11yBaselineAudit`: `PENDING`/`CLAIMED` statuses, `enrollment`, `claimed_at` | B1 |
+| `a11y/0027_journey_address` | `A11yJourneyRun`: `base_url`, `PENDING`/`CLAIMED`, `enrollment` | G6a, G6b |
 
-Both are RLS-aware from the first migration, like every table in this platform.
+The two schema ones are RLS-aware from the first migration, like every table in this platform. The
+data one runs as the privileged migration role for the same reason `a11y/0005` does: work items are
+FORCE ROW LEVEL SECURITY, so a merely-owner role would read zero rows and quietly do nothing.
 
 ⚠️ **Five migrations from the last round — `0021` to `0025` — are still unapplied on the shared
-server.** These two land on top of them. Applying any of them to the shared database is the team's
-call, never mine.
+server**, and `workitems/0006` now makes six. These land on top of them. Applying any of them to
+the shared database is the team's call, never mine.
 
 ---
 

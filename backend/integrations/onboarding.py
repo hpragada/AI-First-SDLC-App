@@ -1088,7 +1088,12 @@ def ensure_onboarding_work_item(*, tenant_id, project_id, repo_id=None):
 # item that only exists to host an onboarding/vision agent run, never a backlog item a human
 # authored. The user-facing work-item list hides these (api WorkItemViewSet) so they never clutter
 # the backlog; the trigger/run machinery still resolves them by their external_ref markers.
-CARRIER_SOURCES = ("onboarding_carrier", "vision_carrier")
+#
+# `a11y_judging_carrier` is not an onboarding object and lives in `apps.a11y.aipass`; it is
+# listed here because this is where the platform keeps the one definition of "carrier", and two
+# lists would be two answers. It hosts the accessibility judge, which cannot run on the story:
+# the story's own run is live for the whole build and `_guard_no_active_run` would refuse it.
+CARRIER_SOURCES = ("onboarding_carrier", "vision_carrier", "a11y_judging_carrier")
 
 
 def carrier_q(prefix: str = ""):

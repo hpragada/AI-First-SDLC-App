@@ -914,6 +914,8 @@ class ProjectViewSet(
     def dashboard(self, request, pk=None):
         """S-31 dashboard rollup: needs-me items (pending gates, clarifications, my runs)
         + health counters + recent publishes — all scoped to this project and current user."""
+        from integrations.onboarding import carrier_q
+
         project = self.get_object()
         user = current_user(request)
         tid = self.tenant_id
@@ -929,8 +931,6 @@ class ProjectViewSet(
         )
         my_runs = []
         if user:
-            from integrations.onboarding import carrier_q
-
             my_runs = list(
                 Run.objects.filter(
                     tenant_id=tid, work_item__project=project,
@@ -981,10 +981,21 @@ class ProjectViewSet(
                 ],
             },
             "health": {
-                "work_items": WorkItem.objects.filter(tenant_id=tid, project=project).count(),
+                # Carriers are excluded from BOTH of these, because both have a list beside them
+                # that already excludes carriers and a number that disagrees with the list it
+                # summarises is worse than no number: the board shows 30 items and "Work items"
+                # said 62, Phases & Runs shows nothing running and "Phases in progress" said 1.
+                #
+                # `awaiting_gate` deliberately does NOT exclude them. Gates are not carrier-
+                # filtered anywhere, and the gap report has been gated since 2026-08-03 — its
+                # approval sits on a carrier and is real work a person must do. Excluding it here
+                # would hide a pending gate the Gates screen still lists, which is the same
+                # disagreement pointing the other way.
+                "work_items": WorkItem.objects.filter(tenant_id=tid, project=project)
+                .exclude(carrier_q()).count(),
                 "phases_in_progress": Run.objects.filter(
                     tenant_id=tid, work_item__project=project, status="running"
-                ).count(),
+                ).exclude(carrier_q("work_item__")).count(),
                 "awaiting_gate": Approval.objects.filter(
                     tenant_id=tid, work_item__project=project, decision="pending"
                 ).count(),
