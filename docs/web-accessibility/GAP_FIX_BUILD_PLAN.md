@@ -461,22 +461,38 @@ pass reports its routes as unreported, it does not abandon the audit) · Needs f
 
 ### G2 + G2b · The platform cannot tell a WCAG test case from any other
 
+🟢 **Built 2026-08-19.** The platform reads what a case says about itself, carries it onto the
+work item, and the Test cases screen shows a Type column with a filter. One parser for that line,
+not two. The approved screen was updated in the same change. Fourteen tests.
+
 **In plain words.** The Testing agent writes accessibility test cases marked `Type: Accessibility`.
 The platform never reads that. On the Test cases screen you cannot tell which of your forty cases
 are the WCAG ones, and the Priority column is blank for all of them.
 
 **Why it happens.** Two halves of one root cause.
 
-The type is written as prose in the test case document. Nothing in the platform parses it — the
-only `Type:` reader anywhere is `backend/apps/a11y/journeys.py:101`, which looks for `e2e` and
-nothing else. The Test Automation agent behaves correctly because *it* reads the document; the
-platform never learns anything.
+The type is written as prose in the test case document. Nothing in the platform stored it. The
+Test Automation agent behaves correctly because *it* reads the document; the platform never
+learned anything.
+
+*Corrected while building:* there **was** already a general reader — `declared_type` in
+`backend/apps/a11y/journeys.py`, which returns the value and already handled the trap that a body
+still carrying the template's `[Functional / Integration / …]` placeholder has declared **nothing**.
+Adding a second parser would have given the platform two readers of one line, which is this plan's
+own rule against two formats. **Team decision 2026-08-19: one parser.** `declared_type` and a new
+`declared_priority` now live in `backend/apps/workitems/test_cases.py` — the module that owns test
+cases — and `apps/a11y/journeys.py` asks it rather than parsing. The dependency direction is right:
+a11y and quality both sit above workitems, never the reverse.
 
 Priority is the same shape of problem seen from the other end. When test cases become work items
 (`backend/apps/workitems/test_cases.py:63`), only `{test_case_artifact_id, tc_id}` are copied. The
 Test cases screen then reads `priority` from the **work item** (`backend/api/views.py:1409`), where
 it was never written — while defect severity reads it from the **artifact**
 (`backend/apps/quality/services.py:367`), where it lives.
+
+*Corrected while building:* the Priority column was **not** blank for every case. A **manually
+added** case stores its priority in `external_ref` (`views.py:1394`), so it showed. It was blank
+for exactly the **agent-generated** ones — which on a real project is all of them.
 
 **Worth stating plainly:** accessibility coverage does **not** depend on this. Every generated
 script captures accessibility evidence, not only the accessibility cases — deliberately, because a
@@ -485,9 +501,11 @@ This gap is about what a person can *see*, not about what gets checked.
 
 **What we change.**
 
-- `backend/apps/quality/services.py` — add a `_test_case_type` reader beside the existing
-  `_test_case_severity`, using the same two-step it already uses: structured `external_ref` first,
-  then a regex over the document body. No new pattern is invented.
+- `backend/apps/workitems/test_cases.py` — the platform's one reader of both lines
+  (`declared_type` / `declared_priority` / `declared_fields`), using the same two-step
+  `_test_case_severity` already used: structured `external_ref` first (free), the document body
+  only when it is absent. `_test_case_severity` **stays** in `apps/quality` — it adds a fail-safe
+  "unknown means Critical" which is right for a defect and would be a lie on a screen.
 - `backend/apps/workitems/test_cases.py:63` — copy `type` **and** `priority` onto the work item's
   `external_ref` when materialising. Absent stays absent; nothing is guessed.
 - `backend/api/views.py:1409` — return `type` alongside `priority`.
@@ -500,6 +518,28 @@ priority. One click filters to the accessibility cases.
 **How we prove it.** A case with `Type: Accessibility` materialises carrying its type and priority;
 a case whose document says neither materialises with both blank rather than a default; the screen
 renders the column and the filter narrows the list.
+
+*As built:* eleven backend tests and three frontend ones. Backend: a case materialises carrying
+what it declared; a case that declared neither carries **no keys at all** rather than blanks; the
+template's own placeholder declares nothing (the trap the move must not lose); structured
+`external_ref` beats the body; a later run that could not read the document does **not** blank what
+an earlier one recovered; the readers themselves; and `journeys.declared_type is declared_type` —
+literally asserting one parser, not two. REST: the endpoint returns the type, and a case that never
+said comes back blank. Frontend: the Type column and filter narrow the list; a filter that matches
+nothing says *"No integration test cases"* rather than looking like a story with none; `cleanup()`
+runs in that describe because this file predates auto-cleanup being off.
+`test_materialize_test_cases.py`, `test_test_cases_rest.py`, `test_a11y_journey.py`,
+`test_quality.py` — 87 passed. `lifecycle.test.tsx` — 25 passed. `tsc -b` clean.
+
+**Two decisions taken with this task (2026-08-19):**
+
+- **The approved screen was updated in the same change.** `docs/design/screens/S-35-test-cases.html`
+  had four columns and no filter; the DoD requires the app and the screen to agree, so the wireframe
+  now carries the Type column, the filter chips, and a row showing "—" for a case that declared
+  nothing. Rendered and checked in the design gallery.
+- **No backfill.** Test-case work items that already exist stay blank until the Testing phase runs
+  again on that story. A backfill would mean reading every test-case artifact's body out of the
+  object store inside a migration, which does not belong in one. Said plainly rather than implied.
 
 **Size M · Risk low · Needs first: nothing.**
 

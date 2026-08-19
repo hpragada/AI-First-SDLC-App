@@ -25,18 +25,28 @@
       </div>
 
       <div class="u-row" style="justify-content:space-between;align-items:center;margin-bottom:var(--space-3)">
-        <span class="t-body"><strong>1 of 4</strong> automated</span>
+        <span class="u-row">
+          <span class="t-body"><strong>1 of 4</strong> automated</span>
+          <span class="u-row-tight">
+            <button class="chip chip--filter" aria-pressed="true">All types</button>
+            <button class="chip chip--filter">Accessibility</button>
+            <button class="chip chip--filter">Functional</button>
+            <button class="chip chip--filter">E2E</button>
+            <button class="chip chip--filter">Integration</button>
+          </span>
+        </span>
         <button class="btn btn--primary btn--sm">+ Add test case</button>
       </div>
 
       <div class="panel">
         <div class="panel__body--flush">
           <table class="table table--in-panel">
-            <thead><tr><th>TC-ID</th><th>Title</th><th>Priority</th><th>Automation</th><th></th></tr></thead>
+            <thead><tr><th>TC-ID</th><th>Title</th><th>Type</th><th>Priority</th><th>Automation</th><th></th></tr></thead>
             <tbody>
               <tr>
                 <td class="table__id">TC-014</td>
                 <td class="table__primary">Checkout with expired card</td>
+                <td><span class="chip">Functional</span></td>
                 <td>High</td>
                 <td><span class="badge badge--neutral"><span class="status-dot"></span>Not automated</span></td>
                 <td><a href="S-18-phases-runs.html" class="btn btn--ghost btn--sm">Generate script</a></td>
@@ -44,6 +54,7 @@
               <tr>
                 <td class="table__id">TC-015</td>
                 <td class="table__primary">Checkout with valid card</td>
+                <td><span class="chip">E2E</span></td>
                 <td>High</td>
                 <td><span class="badge badge--running"><span class="status-dot"></span>Generating…</span></td>
                 <td><a href="S-19-run-console.html" class="btn btn--ghost btn--sm">View run</a></td>
@@ -51,6 +62,7 @@
               <tr>
                 <td class="table__id">TC-016</td>
                 <td class="table__primary">Empty cart checkout blocked</td>
+                <td><span class="chip">Accessibility</span></td>
                 <td>Medium</td>
                 <td><span class="badge badge--done"><span class="status-dot"></span>Script ready</span></td>
                 <td><a href="S-29-artifact-preview.html" class="btn btn--ghost btn--sm">View PR</a></td>
@@ -58,6 +70,7 @@
               <tr>
                 <td class="table__id">TC-017</td>
                 <td class="table__primary">Guest checkout</td>
+                <td>—</td>
                 <td>Low</td>
                 <td><span class="badge badge--neutral"><span class="status-dot"></span>Not automated</span></td>
                 <td><a href="S-18-phases-runs.html" class="btn btn--ghost btn--sm">Generate script</a></td>
@@ -66,7 +79,7 @@
           </table>
         </div>
       </div>
-      <p class="field__help" style="margin-top:var(--space-2)">These 4 were created automatically when the Testing phase (09) finished. “Generate script” triggers the 09b phase on that test case — the same action as selecting it in Phases &amp; Runs.</p>
+      <p class="field__help" style="margin-top:var(--space-2)">Type and Priority are what each case says about itself, read off its own document when it was created; a case that declared neither shows “—” rather than a guess. The chips filter by type — one click for the WCAG cases. These 4 were created automatically when the Testing phase (09) finished. “Generate script” triggers the 09b phase on that test case — the same action as selecting it in Phases &amp; Runs.</p>
     </div>
 
     <!-- ============ Add test case (manual) — scoped to the story ============ -->

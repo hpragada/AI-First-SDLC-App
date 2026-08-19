@@ -459,7 +459,10 @@ export interface TestCase {
   key: string;
   title: string;
   tc_id: string;
+  // What the case says about itself, read off its own document when it was materialised (G2).
+  // Empty means the case never said — the platform does not guess one.
   priority: string;
+  type: string;
   state: string;
   automation_status: AutomationStatus;
 }

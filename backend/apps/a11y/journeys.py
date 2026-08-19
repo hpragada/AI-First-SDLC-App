@@ -41,6 +41,7 @@ from __future__ import annotations
 import re
 
 from apps.tenancy.context import tenant_context
+from apps.workitems.test_cases import declared_type
 from integrations.types import A11yJourney, A11yJourneyStep
 
 #: The `**Type:**` value that marks a test case as a journey. Agent 09's own vocabulary — see
@@ -58,7 +59,6 @@ TEST_CASE_TYPE = "test_case"
 #: excess is *reported*, never silently dropped.
 MAX_JOURNEYS = 10
 
-_TYPE_LINE = re.compile(r"^\s*\*{0,2}Type:?\*{0,2}\s*:?\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 #: `{{1,6}}` is doubled because this template goes through `str.format` — a single `{1,6}` is
 #: read as a field name and raises rather than matching a heading.
 _SECTION = r"^#{{1,6}}\s*{name}\s*$"
@@ -97,26 +97,16 @@ def _section(body: str, name: str) -> str:
     return rest[:nxt.start()] if nxt else rest
 
 
-def declared_type(body: str) -> str:
-    """The test case's own `**Type:**` value, lowercased, or `""` when it does not say.
-
-    A case that declares no type is **not** treated as a journey. The vocabulary is agent 09's
-    and every case it writes carries one; a body without it is either hand-written or from
-    another producer, and assuming "journey" about an unknown document is how a login-only
-    smoke test ends up being walked as a critical path.
-    """
-    match = _TYPE_LINE.search(body or "")
-    if match is None:
-        return ""
-    value = match.group(1).strip().strip("*").strip()
-    # "[Functional / Integration / E2E / ...]" is the template's own placeholder — a case that
-    # still carries the placeholder has not declared anything.
-    if value.startswith("[") and "/" in value:
-        return ""
-    return value.lower()
-
-
 def is_journey(body: str) -> bool:
+    """Whether this test case is a walkable journey, from its own `**Type:**` line.
+
+    A case that declares no type is **not** treated as one. The vocabulary is agent 09's and
+    every case it writes carries a type; a body without one is either hand-written or from
+    another producer, and assuming "journey" about an unknown document is how a login-only
+    smoke test ends up being walked as a critical path. `declared_type` is the platform's one
+    reader of that line and lives in `apps.workitems.test_cases` (G2), which is where test
+    cases are owned — this module asks it a question, it does not parse the line itself.
+    """
     return JOURNEY_TYPE in declared_type(body).split()
 
 

@@ -6,7 +6,13 @@ from apps.registry.models import AgentSpec, Artifact
 from apps.runs.models import Run
 from apps.tenancy.models import Tenant
 from apps.workitems.models import WorkItem
-from apps.workitems.test_cases import automation_status_for, materialize_test_cases
+from apps.workitems.test_cases import (
+    automation_status_for,
+    declared_fields,
+    declared_priority,
+    declared_type,
+    materialize_test_cases,
+)
 
 
 @pytest.fixture
@@ -117,3 +123,113 @@ def test_automation_status_ignores_non_09b_runs(world):
     Run.objects.create(tenant=world["t"], work_item=tc, agent_spec=other,
                        status=Run.Status.COMPLETED)
     assert automation_status_for(tc) == "not_automated"     # a non-09b run doesn't count
+
+
+# == what a case says about itself (G2) ==============================================
+#
+# The Testing agent writes `**Type:** Accessibility` / `**Priority:** High` into every case it
+# writes, and until now nothing in the platform read either. The Test cases screen showed a
+# Priority column that was blank for every agent-written case, because it read `priority` off
+# the WORK ITEM while defect severity read the same fact off the ARTIFACT, where it lives.
+#
+# `apps.workitems.test_cases` is now the platform's ONE reader of those two lines;
+# `apps.a11y.journeys` asks it whether a case is an E2E journey rather than parsing the line a
+# second time.
+
+
+def _bodied(world, run, *, tc_id, body, **ref):
+    from apps.registry.models import Artifact
+
+    return Artifact.objects.create(
+        tenant=world["t"], project=world["p"], run=run, phase="testing", type="test_case",
+        title=f"{tc_id} — a case", external_ref={"tc_id": tc_id, "body": body, **ref},
+    )
+
+
+_CASE = """## TC-031: Checkout is operable by keyboard
+**User Story:** US-004
+**Type:** Accessibility
+**Priority:** High
+"""
+
+
+def test_a_case_materialises_carrying_what_it_says_about_itself(world):
+    run = _run(world)
+    _bodied(world, run, tc_id="TC-031", body=_CASE)
+    materialize_test_cases(tenant_id=str(world["t"].id), project_id=str(world["p"].id),
+                           run_id=str(run.id), story_id=str(world["story"].id))
+    ref = _children(world).get().external_ref
+    assert ref["type"] == "accessibility" and ref["priority"] == "high"
+
+
+def test_a_case_that_says_neither_materialises_blank_not_defaulted(world):
+    run = _run(world)
+    _bodied(world, run, tc_id="TC-040", body="## TC-040: Something\nNo declarations here.\n")
+    materialize_test_cases(tenant_id=str(world["t"].id), project_id=str(world["p"].id),
+                           run_id=str(run.id), story_id=str(world["story"].id))
+    ref = _children(world).get().external_ref
+    assert "type" not in ref and "priority" not in ref, "absent, never guessed"
+
+
+def test_the_templates_own_placeholder_declares_nothing(world):
+    """The trap `apps.a11y.journeys` already guarded and this move must not lose: a body still
+    carrying `[Functional / Integration / E2E / ...]` has classified nothing."""
+    run = _run(world)
+    _bodied(world, run, tc_id="TC-041", body=(
+        "## TC-041: Draft\n"
+        "**Type:** [Functional / Integration / E2E / Performance / Security / Accessibility]\n"
+        "**Priority:** [Critical / High / Medium / Low]\n"))
+    materialize_test_cases(tenant_id=str(world["t"].id), project_id=str(world["p"].id),
+                           run_id=str(run.id), story_id=str(world["story"].id))
+    ref = _children(world).get().external_ref
+    assert "type" not in ref and "priority" not in ref
+
+
+def test_the_structured_value_is_preferred_over_the_body(world):
+    """The same two-step `_test_case_severity` uses: `external_ref` is free and authoritative
+    where the producer filled it in; the body costs an object-store read."""
+    run = _run(world)
+    _bodied(world, run, tc_id="TC-042", body=_CASE, type="Functional", priority="Low")
+    materialize_test_cases(tenant_id=str(world["t"].id), project_id=str(world["p"].id),
+                           run_id=str(run.id), story_id=str(world["story"].id))
+    ref = _children(world).get().external_ref
+    assert ref["type"] == "functional" and ref["priority"] == "low"
+
+
+def test_a_rerun_that_cannot_read_the_body_does_not_blank_what_is_there(world):
+    """Absent keys are omitted rather than written empty, so a later run that could not read the
+    document leaves the classification a previous run recovered."""
+    run1 = _run(world)
+    _bodied(world, run1, tc_id="TC-043", body=_CASE)
+    materialize_test_cases(tenant_id=str(world["t"].id), project_id=str(world["p"].id),
+                           run_id=str(run1.id), story_id=str(world["story"].id))
+
+    run2 = _run(world)
+    _tc_artifact(world, run2, tc_id="TC-043", title="TC-043 — a case")   # no body at all
+    materialize_test_cases(tenant_id=str(world["t"].id), project_id=str(world["p"].id),
+                           run_id=str(run2.id), story_id=str(world["story"].id))
+
+    ref = _children(world).get().external_ref
+    assert ref["type"] == "accessibility" and ref["priority"] == "high"
+
+
+def test_the_readers_themselves(world):
+    assert declared_type("**Type:** E2E") == "e2e"
+    assert declared_priority("**Priority:** Critical") == "critical"
+    assert declared_type("") == "" and declared_priority("nothing here") == ""
+
+
+def test_one_reader_not_two(world):
+    """`apps.a11y.journeys` asks this module rather than parsing the line itself. Two parsers
+    for one line is two formats, and the second is the one nobody remembers to update."""
+    from apps.a11y import journeys
+
+    assert journeys.declared_type is declared_type
+    assert journeys.is_journey("**Type:** E2E") is True
+    assert journeys.is_journey("**Type:** Accessibility") is False
+
+
+def test_declared_fields_reads_nothing_it_does_not_need(world):
+    run = _run(world)
+    art = _bodied(world, run, tc_id="TC-044", body=_CASE, type="Security", priority="Medium")
+    assert declared_fields(art) == {"type": "security", "priority": "medium"}

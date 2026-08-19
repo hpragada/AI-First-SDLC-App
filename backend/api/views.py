@@ -1406,7 +1406,10 @@ class WorkItemViewSet(
     @action(detail=True, methods=["get"], url_path="test-cases")
     def test_cases(self, request, pk=None):
         """The story's child `test_case` work items + each one's automation status (P3-09b) —
-        backs the Test cases coverage screen. `tc_id`/`priority` come from `external_ref`."""
+        backs the Test cases coverage screen. `tc_id`/`priority`/`type` come from `external_ref`,
+        written there when the case was materialised from its artifact (G2) or typed in by hand.
+        Blank means the case never said — never a default, because a guessed type on a screen a
+        QA Lead filters by is worse than an empty cell."""
         from apps.workitems.test_cases import automation_status_for
 
         story = self.get_object()
@@ -1418,6 +1421,7 @@ class WorkItemViewSet(
                 "id": str(w.id), "key": w.key, "title": w.title, "state": w.state,
                 "tc_id": (w.external_ref or {}).get("tc_id", ""),
                 "priority": (w.external_ref or {}).get("priority", ""),
+                "type": (w.external_ref or {}).get("type", ""),
                 "automation_status": automation_status_for(w),
             }
             for w in kids
