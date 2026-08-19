@@ -24,7 +24,11 @@ const ME = {
   memberships: [{ project_id: PROJECT, project_name: "Payments", role: "qa_lead" }],
 };
 
-function item(over: Record<string, unknown> = {}) {
+// One row of the QUEUE, and deliberately not the same shape as `item()`. The server sends the
+// list WITHOUT any capture (G3b) — the rail draws no picture, so it does not go and find one.
+// Kept apart so a component that reached for a picture in the list fails here, in a test, and
+// not in front of a reviewer.
+function row(over: Record<string, unknown> = {}) {
   return {
     id: FINDING,
     criterion: "1.1.1",
@@ -39,11 +43,6 @@ function item(over: Record<string, unknown> = {}) {
     severity_if_confirmed: "critical",
     evidence: "The alt reads like a filename rather than a description.",
     suggested_fix: "Describe it, or mark it decorative.",
-    page_image: false,
-    element_image: false,
-    box: null,
-    url: "http://localhost:3000/checkout",
-    capture_reason: "",
     // A baseline audit's finding: no story, no test case, no run. The default here is that
     // shape deliberately, so every other test in this file proves the console still renders
     // when there is nothing to link to.
@@ -52,6 +51,20 @@ function item(over: Record<string, unknown> = {}) {
     work_item_label: null,
     work_item_title: null,
     lock: { held: false, by_me: false, held_by: null, held_by_name: "", expires_at: null },
+    ...over,
+  };
+}
+
+// The single-item read: the row, plus the capture the reviewer judges it by. Only this call
+// carries it, and only this call pays for it.
+function item(over: Record<string, unknown> = {}) {
+  return {
+    ...row(),
+    page_image: false,
+    element_image: false,
+    box: null,
+    url: "http://localhost:3000/checkout",
+    capture_reason: "",
     ...over,
   };
 }
@@ -112,7 +125,7 @@ describe("S-36 accessibility review console", () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...AUTHED,
       [/a11y-review\/$/, {
-        queue: [item(), item({ id: "other", criterion: "1.4.3", criterion_handle: "Contrast (Minimum)", wcag_level: "AA", confidence: 0.58, verdict: "fail" })],
+        queue: [row(), row({ id: "other", criterion: "1.4.3", criterion_handle: "Contrast (Minimum)", wcag_level: "AA", confidence: 0.58, verdict: "fail" })],
         can_review: true,
         lock_minutes: 15,
       }],
@@ -131,7 +144,7 @@ describe("S-36 accessibility review console", () => {
   it("no capture · says why, instead of showing an empty frame", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...AUTHED,
-      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/$/, { queue: [row()], can_review: true, lock_minutes: 15 }],
       [/a11y-review\/22222222/, item({
         can_review: true,
         capture_reason: "the capture recorded no on-screen rectangle for this element",
@@ -147,7 +160,7 @@ describe("S-36 accessibility review console", () => {
   it("greenfield · names the test case that found it, and links to it and its run", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...AUTHED,
-      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/$/, { queue: [row()], can_review: true, lock_minutes: 15 }],
       [/a11y-review\/22222222/, item({
         can_review: true,
         source_run: "33333333-3333-3333-3333-333333333333",
@@ -172,7 +185,7 @@ describe("S-36 accessibility review console", () => {
   it("brownfield · shows nothing at all rather than an empty link", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...AUTHED,
-      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/$/, { queue: [row()], can_review: true, lock_minutes: 15 }],
       [/a11y-review\/22222222/, item({ can_review: true })],   // the audit shape: all null
     ]));
     renderWithProviders(<A11yReview />);
@@ -186,7 +199,7 @@ describe("S-36 accessibility review console", () => {
   it("read-only · someone who is not the reviewer gets no controls, and is told why", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...AUTHED,
-      [/a11y-review\/$/, { queue: [item()], can_review: false, lock_minutes: 15 }],
+      [/a11y-review\/$/, { queue: [row()], can_review: false, lock_minutes: 15 }],
       [/a11y-review\/22222222/, item({ can_review: false })],
     ]));
     renderWithProviders(<A11yReview />);
@@ -200,7 +213,7 @@ describe("S-36 accessibility review console", () => {
   it("locked · the second reviewer is told who has it, and cannot answer", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...AUTHED,
-      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/$/, { queue: [row()], can_review: true, lock_minutes: 15 }],
       [/a11y-review\/22222222/, item({
         can_review: true,
         locked_out: "Tom Reyes is reviewing this one. It returns to the queue on its own if they stop.",
@@ -218,7 +231,7 @@ describe("S-36 accessibility review console", () => {
     // The POST shares the item's GET url, so this stub branches on the METHOD.
     const base = stubRoutes([
       ...AUTHED,
-      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/$/, { queue: [row()], can_review: true, lock_minutes: 15 }],
       [/a11y-review\/22222222/, item({ can_review: true })],
     ]);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -245,7 +258,7 @@ describe("S-36 accessibility review console", () => {
   it("confirmed · promises nothing when the project's policy raises no ticket", async () => {
     const base = stubRoutes([
       ...AUTHED,
-      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/$/, { queue: [row()], can_review: true, lock_minutes: 15 }],
       [/a11y-review\/22222222/, item({ can_review: true })],
     ]);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -272,7 +285,7 @@ describe("S-36 accessibility review console", () => {
   it("error · a refused decision says nothing was changed and keeps the note", async () => {
     const base = stubRoutes([
       ...AUTHED,
-      [/a11y-review\/$/, { queue: [item()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/$/, { queue: [row()], can_review: true, lock_minutes: 15 }],
       [/a11y-review\/22222222/, item({ can_review: true })],
     ]);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -317,7 +330,7 @@ describe("the Accessibility destination", () => {
     // The item shipped as a plain link with no count — this is the regression test for that.
     vi.stubGlobal("fetch", stubRoutes([
       ...AUTHED,
-      [/a11y-review\/$/, { queue: [item(), item({ id: "b" }), item({ id: "c" })],
+      [/a11y-review\/$/, { queue: [row(), row({ id: "b" }), row({ id: "c" })],
                            can_review: true, lock_minutes: 15 }],
     ]));
     renderWithProviders(<AppShell />);
@@ -333,7 +346,7 @@ describe("the Accessibility destination", () => {
     // finding; an alert for work they cannot do would just be noise on their sidebar.
     vi.stubGlobal("fetch", stubRoutes([
       ...AUTHED,
-      [/a11y-review\/$/, { queue: [item(), item({ id: "b" })], can_review: false,
+      [/a11y-review\/$/, { queue: [row(), row({ id: "b" })], can_review: false,
                            lock_minutes: 15 }],
     ]));
     renderWithProviders(<AppShell />);

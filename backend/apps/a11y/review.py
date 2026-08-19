@@ -271,8 +271,34 @@ def _provenance(finding) -> dict:
 
 
 def _item(finding, *, handles, user_id, evidence=None, now=None) -> dict:
-    """One queue row. `evidence` is passed in for the list (one query pass) or computed here."""
-    ev = evidence if evidence is not None else evidence_for(finding)
+    """One finding as the console reads it — and, with `evidence`, the picture that goes with it.
+
+    **The five evidence keys are present only when a caller asks for them**, and the only caller
+    that does is `open_item` (G3b). The list does not draw a picture: the rail prints the rule,
+    the page, the element, the level and the verdict, and the capture belongs to the detail
+    panel, which fetches its one item separately.
+
+    That split is the whole change. Working out the evidence costs two lookups per finding when
+    the capture exists and four when it does not — the bundle and the scan each miss on the
+    exact run and then fall back — so the queue was paying it for every row of every page load
+    and throwing all of it away. Measured on local Postgres: **8 findings, 40 round trips**,
+    where about 4 will do. The endpoint passes no limit either, so a project with two hundred
+    findings waiting paid it two hundred times over.
+    """
+    row = _row(finding, handles=handles, user_id=user_id, now=now)
+    if evidence is None:
+        return row
+    return row | {
+        "page_image": bool(evidence["page_ref"]),
+        "element_image": bool(evidence["element_ref"]),
+        "box": evidence["box"],
+        "url": evidence["url"],
+        "capture_reason": evidence["reason"],
+    }
+
+
+def _row(finding, *, handles, user_id, now=None) -> dict:
+    """What is true of a finding without going and looking for its capture."""
     return {
         **_provenance(finding),
         "id": str(finding.id),
@@ -291,17 +317,16 @@ def _item(finding, *, handles, user_id, evidence=None, now=None) -> dict:
         "severity_if_confirmed": finding.severity,
         "evidence": finding.evidence,
         "suggested_fix": finding.suggested_fix,
-        "page_image": bool(ev["page_ref"]),
-        "element_image": bool(ev["element_ref"]),
-        "box": ev["box"],
-        "url": ev["url"],
-        "capture_reason": ev["reason"],
         "lock": lock_state(finding, user_id=user_id, now=now),
     }
 
 
 def queue(*, tenant_id, project_id, user_id=None, limit=None) -> list[dict]:
-    """The review queue as the console renders it — worst first, evidence attached."""
+    """The review queue as the console renders it — worst first.
+
+    No evidence: see `_item`. What a row costs is now flat in the number of findings, so the
+    queue stays the same size of job whether a project has eight waiting or two hundred.
+    """
     from .findings import review_queue
 
     rows = review_queue(tenant_id, project_id, limit=limit)
@@ -340,7 +365,9 @@ def open_item(*, tenant_id, project_id, finding_id, user_id, take_lock=True) -> 
                 locked_out = str(exc)
 
         handles = _handles([finding.criterion])
-        payload = _item(finding, handles=handles, user_id=user_id)
+        # The one read that draws a picture, so the one read that pays for it (G3b).
+        payload = _item(finding, handles=handles, user_id=user_id,
+                        evidence=evidence_for(finding))
         payload |= {
             "can_review": may,
             "locked_out": locked_out,

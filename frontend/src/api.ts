@@ -3,7 +3,7 @@
 // call that doesn't. No business logic lives here — it mirrors the server surface.
 import type {
   A11yReviewDecision,
-  A11yReviewItem,
+  A11yReviewFinding,
   A11yConformance,
   A11yAudit,
   A11yPolicy,
@@ -517,7 +517,9 @@ export const api = {
   // GET is also what claims the item (and renews the claim), so the lock follows what the
   // reviewer is doing rather than needing a button nobody remembers to press.
   a11yReviewItem: (tenantId: string, projectId: string, findingId: string) =>
-    req<A11yReviewItem>("GET", `/projects/${projectId}/a11y-review/${findingId}/`, { tenantId }),
+    req<A11yReviewFinding>("GET", `/projects/${projectId}/a11y-review/${findingId}/`, {
+      tenantId,
+    }),
   a11yReviewDecide: (
     tenantId: string,
     projectId: string,

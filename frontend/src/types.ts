@@ -994,6 +994,13 @@ export interface A11yPolicy {
   error: string;
 }
 
+// One row of the review queue: what the rail on the left draws, and nothing else.
+//
+// The capture is deliberately absent (G3b). Working it out costs the server two lookups per
+// finding when the picture exists and four when it does not, and the rail draws no picture —
+// so the list used to pay for evidence it threw away, once per row, on every load. It belongs
+// to `A11yReviewFinding` below, which is the read the detail panel makes for the one item a
+// reviewer actually opened.
 export interface A11yReviewItem {
   id: string;
   criterion: string;
@@ -1011,12 +1018,6 @@ export interface A11yReviewItem {
   severity_if_confirmed: string;
   evidence: string;
   suggested_fix: string;
-  page_image: boolean;
-  element_image: boolean;
-  box: { x: number; y: number; width: number; height: number } | null;
-  url: string;
-  // Why there is no picture. Blank when there is one. Never left unsaid.
-  capture_reason: string;
   // Where the finding came from (G3). All null on a baseline audit — an audit of an existing
   // application has no story, no test case and no run, so there is genuinely nothing to link
   // to and the screen shows nothing rather than an empty link.
@@ -1026,11 +1027,21 @@ export interface A11yReviewItem {
   work_item_label: string | null;
   work_item_title: string | null;
   lock: A11yReviewLock;
-  // Present on the single-item read only.
-  can_review?: boolean;
-  locked_out?: string;
-  adjudication?: string;
-  note?: string;
+}
+
+// The single-item read: the row, plus the capture the reviewer judges it by and the state of
+// their own permission to answer. Only this call carries them, and only this call pays for them.
+export interface A11yReviewFinding extends A11yReviewItem {
+  page_image: boolean;
+  element_image: boolean;
+  box: { x: number; y: number; width: number; height: number } | null;
+  url: string;
+  // Why there is no picture. Blank when there is one. Never left unsaid.
+  capture_reason: string;
+  can_review: boolean;
+  locked_out: string;
+  adjudication: string;
+  note: string;
 }
 
 export interface A11yReviewQueue {

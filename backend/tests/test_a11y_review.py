@@ -136,8 +136,8 @@ def _finding(world) -> A11yFinding:
 # AC1 — the reviewer sees what they need to judge it
 # ===========================================================================================
 
-def test_the_queue_carries_the_element_criterion_verdict_and_picture(world):
-    """AC1. Everything the console draws comes from one call, and it is all really there."""
+def test_the_queue_carries_the_element_criterion_and_verdict(world):
+    """AC1, the list half. Everything the RAIL draws comes from one call and is really there."""
     run = _run(world)
     _record(world, run, _row())
     _capture(world, run, box={"x": 40, "y": 92, "width": 210, "height": 88},
@@ -156,8 +156,67 @@ def test_the_queue_carries_the_element_criterion_verdict_and_picture(world):
     assert item["evidence"] == "alt reads like a filename"
     assert item["suggested_fix"]
     assert item["severity_if_confirmed"] == "critical", "Level A, from the standard"
+
+
+def test_the_queue_does_not_go_and_find_a_picture_nobody_is_drawing(world):
+    """G3b. The rail prints no capture, so the list must not pay for one.
+
+    Not a tidy-up: working the evidence out costs two lookups per finding when the capture
+    exists and four when it does not, and the list threw every one of them away.
+    """
+    run = _run(world)
+    _record(world, run, _row())
+    _capture(world, run, box={"x": 40, "y": 92, "width": 210, "height": 88},
+             page_ref=f"a11y/{world['t']}/{world['p']}/pages/abc.png")
+
+    item = queue(tenant_id=world["t"], project_id=world["p"], user_id=world["aisha"].id)[0]
+    absent = {"page_image", "element_image", "box", "url", "capture_reason"}
+    assert absent.isdisjoint(item), "the list carries no evidence — the panel fetches it"
+
+
+def test_opening_an_item_carries_the_picture_the_reviewer_judges_it_by(world):
+    """AC1, the panel half — where the capture always belonged."""
+    run = _run(world)
+    _record(world, run, _row())
+    _capture(world, run, box={"x": 40, "y": 92, "width": 210, "height": 88},
+             page_ref=f"a11y/{world['t']}/{world['p']}/pages/abc.png",
+             element_ref=f"a11y/{world['t']}/{world['p']}/elements/def.png")
+
+    item = open_item(tenant_id=world["t"], project_id=world["p"],
+                     finding_id=str(_finding(world).id), user_id=world["aisha"].id)
     assert item["page_image"] is True and item["element_image"] is True
     assert item["box"] == {"x": 40.0, "y": 92.0, "width": 210.0, "height": 88.0}
+    assert item["url"] == "http://localhost:3000/checkout"
+
+
+def test_the_queue_costs_the_same_per_finding_however_many_there_are(world):
+    """G3b's point, measured rather than asserted about.
+
+    The number, not a number: what matters is that doubling the findings does not multiply the
+    round trips, and a hard-coded count would break on any unrelated query change and tell the
+    next reader nothing about why it was that number.
+    """
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    run = _run(world)
+    first = [_row(criterion="1.1.1", selector="img.a", content_hash="h-a"),
+             _row(criterion="1.4.3", selector="span.b", content_hash="h-b")]
+    _record(world, run, *first)
+    with CaptureQueriesContext(connection) as two:
+        queue(tenant_id=world["t"], project_id=world["p"], user_id=world["aisha"].id)
+
+    # All four in ONE report: `record_run_findings` closes by absence across the routes a run
+    # covered, so re-reporting only the new pair would resolve the first pair and leave the
+    # queue the same length it started.
+    _record(world, run, *first,
+            _row(criterion="1.1.1", selector="img.c", content_hash="h-c"),
+            _row(criterion="1.4.3", selector="span.d", content_hash="h-d"))
+    with CaptureQueriesContext(connection) as four:
+        items = queue(tenant_id=world["t"], project_id=world["p"], user_id=world["aisha"].id)
+
+    assert len(items) == 4, "the second pair really is in the queue"
+    assert len(four) == len(two), "twice the findings, the same number of round trips"
 
 
 def test_the_queue_is_worst_first_and_only_holds_undecided_items(world):
@@ -180,7 +239,8 @@ def test_a_finding_with_no_picture_says_why_rather_than_showing_an_empty_frame(w
     _record(world, run, _row())
     _capture(world, run, reason="the capture recorded no on-screen rectangle for this element")
 
-    item = queue(tenant_id=world["t"], project_id=world["p"])[0]
+    item = open_item(tenant_id=world["t"], project_id=world["p"],
+                     finding_id=str(_finding(world).id), user_id=world["aisha"].id)
     assert item["page_image"] is False and item["element_image"] is False
     assert item["box"] is None
     assert "no on-screen rectangle" in item["capture_reason"]

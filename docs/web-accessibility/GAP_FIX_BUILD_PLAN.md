@@ -65,7 +65,7 @@ Small and safe first, so the team gets working ground under them before the big 
 | 7 | **G3** — a finding says which test case found it | The review console makes sense on greenfield | M |
 | 8a | **B1 + B4 + B2** — the audit screen, and the way in | Brownfield audit with no terminal at all | L |
 | 8b | **The page editor** — edit one page, not the whole list | A path can be corrected without creating a second page | M |
-| 9 | **G3b** — the review list stops fetching evidence nobody reads | A queue that does the work it is read for | S |
+| 9 | **G3b** — the review list stops fetching evidence nobody reads ✅ | A queue that does the work it is read for | S |
 | 10 | **G6** — the keyboard journey, working on both journeys | Eight criteria nothing else can reach | M |
 
 Tasks 1–4 are independent of each other. 6 should land before 7. 8 has the wireframe already
@@ -855,6 +855,24 @@ Nothing in this repository reads them; anything outside it would stop seeing the
 
 **Size S · Risk low · Deliberately its own commit**, so a contract change is not hidden inside a
 feature.
+
+**BUILT — 2026-08-19.** `_item` splits: `_row` is what is true of a finding without going and
+looking for its capture, and the five evidence keys are added only when a caller passes
+`evidence=`. The only caller that does is `open_item`.
+
+*Measured after, the same way as before:* **8 findings → 8 round trips, and 60 findings → 8**, of
+which six are the tenant-scoping statements Django issues around any query. **Two real queries,
+and two is what it stays at.** Before: 40 for 8.
+
+On the frontend the type splits with it, which is what makes the mistake impossible rather than
+merely absent: `A11yReviewItem` is the queue row, `A11yReviewFinding` extends it with the capture,
+and `Capture` takes the second — so a component reaching for a picture in the list no longer
+compiles. The test fixtures split the same way (`row()` / `item()`).
+
+Proven by: a queue row asserted to carry none of the five keys; the same five asserted present on
+the item read, in the module and over REST; and a query-count test that doubles the findings and
+asserts the round trips do not move — the *shape*, not a hard-coded number that would break on any
+unrelated change and teach the next reader nothing.
 
 ---
 

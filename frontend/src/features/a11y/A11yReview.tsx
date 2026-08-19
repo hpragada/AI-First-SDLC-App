@@ -22,7 +22,7 @@ import {
   Textarea,
   cx,
 } from "../../components/ui";
-import type { A11yReviewItem } from "../../types";
+import type { A11yReviewFinding, A11yReviewItem } from "../../types";
 import { A11yTabs } from "./A11yTabs";
 import { useA11yCapture, useA11yReviewItem, useA11yReviewQueue, useDecideA11yFinding } from "./hooks";
 
@@ -87,7 +87,7 @@ function QueueRow({
 // The capture, with the failing element ringed. Two modes because a reviewer needs both: FIT to
 // judge the layout, ACTUAL to judge the pixels — contrast and focus rings are not decidable on
 // a scaled-down image, and those are most of what this reviewer is deciding.
-function Capture({ projectId, item }: { projectId: string; item: A11yReviewItem }) {
+function Capture({ projectId, item }: { projectId: string; item: A11yReviewFinding }) {
   const [fit, setFit] = useState(true);
   const [natural, setNatural] = useState<{ w: number; h: number } | undefined>();
   const kind: "page" | "element" = item.page_image ? "page" : "element";

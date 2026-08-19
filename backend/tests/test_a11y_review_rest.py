@@ -91,8 +91,15 @@ def test_the_queue_endpoint_returns_the_work_and_who_may_do_it(world):
     assert item["criterion"] == "1.1.1" and item["criterion_handle"] == "Non-text Content"
     assert item["route"] == "/checkout" and item["selector"] == "img.hero"
     assert item["verdict"] == A11Y_UNCERTAIN
-    assert item["page_image"] is True
-    assert item["box"] == {"x": 8.0, "y": 92.0, "width": 210.0, "height": 88.0}
+    # The capture is NOT here (G3b) — the rail draws no picture, so the list does not go and
+    # find one. It arrives with the item, which is the next test.
+    assert "page_image" not in item and "box" not in item
+
+
+def test_opening_an_item_over_rest_brings_the_capture_with_it(world):
+    body = _client("aisha@acme.test").get(f"{world['base']}/{world['finding'].id}/").json()
+    assert body["page_image"] is True
+    assert body["box"] == {"x": 8.0, "y": 92.0, "width": 210.0, "height": 88.0}
 
 
 def test_a_member_without_the_role_sees_the_queue_read_only(world):
