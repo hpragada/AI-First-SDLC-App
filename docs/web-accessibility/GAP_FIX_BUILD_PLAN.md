@@ -225,6 +225,10 @@ a valid UUID); they fail identically on the commit before it and are not part of
 
 ### G5 · The Testing agent may never see the screen list
 
+🟢 **Built 2026-08-19.** `09_testing` now declares every artifact type its body reads — ten,
+not four — so the screen inventory is guaranteed to reach it. Step 9 was also pointed at the
+document the inventory actually lives in. Four tests; no migration, no reseed.
+
 **In plain words.** The Testing agent is told to write one accessibility test case per screen. It
 gets the list of screens from the UX Design phase's wireframe document. On a project with a lot of
 documents that wireframe can drop out of what the agent is given — and then it writes no
@@ -236,8 +240,31 @@ those reach it. `09_testing` declares `("prd", "requirements", "architecture", "
 depends on an input it never asked for. It can still pull the wireframe on demand, but nothing
 guarantees it.
 
-**What we change.** One line: add `"wireframe"` and `"ux_design"` to `09_testing`'s
-`needs_artifacts` in `backend/apps/registry/catalog.py:99`.
+**What we change.** Add `"wireframe"` and `"ux_design"` to `09_testing`'s `needs_artifacts` in
+`backend/apps/registry/catalog.py:99`.
+
+**Corrected while building — the plan's fix was half right.** The required tier pins **the latest
+artifact of each declared type**, and `05_ux_design` registers `wireframe` **one per screen**. So
+declaring `wireframe` guarantees the agent one wireframe, not the list. What carries the screen
+list is the **`ux_design`** artifact, where 05 registers the Screen Inventory; `wireframe` is still
+worth declaring, as a concrete pointer proving the type exists on this project. Two changes follow
+from that:
+
+- **Step 9 of `agents/09_testing/agent.md` said the inventory lives in "the `wireframe` artifacts'
+  screen inventory".** Two agent bodies disagreeing, and it is the disagreement that produces the
+  gap: an agent handed a single wireframe pointer could reasonably write one case and stop. Step 9
+  now names the `ux_design` Screen Inventory, says to enumerate the screens with
+  `list_artifacts(type="wireframe")`, and says to report any screen it could not reach rather than
+  quietly writing fewer cases.
+- **Four more declared inputs, folded in by team decision (2026-08-19).** The same body names
+  `user_stories`, `backlog`, `definition_of_done` and `security_architecture` as things it reads,
+  and each was subject to the identical eviction. Every one has a producing agent (02, 06, 06, 04),
+  checked before declaring it — a declared type nothing produces would render a permanent gap. The
+  declared list is now the ten types the body actually reads. The required tier carries **pointers,
+  not bodies**, so ten costs ten lines of manifest.
+
+No migration and no reseed: `needs_artifacts` lives in the catalog and is read at call time —
+`AgentSpec` has no such column.
 
 **What you see afterwards.** Run the Testing phase on a project that has a wireframe, and the
 screen inventory is in the agent's context every time, not sometimes. Accessibility cases get
@@ -245,6 +272,21 @@ written for every screen.
 
 **How we prove it.** The manifest composer's required-tier test — a wireframe registered long ago,
 with a dozen newer artifacts on top, still reaches the Testing agent's context.
+
+*As built:* four tests in `backend/tests/test_mcp_platform_state.py`, mirroring the existing
+`test_get_context_pins_required_input_past_the_recency_tail`. A `ux_design` and a `wireframe`
+buried under 20 newer artifacts both come back flagged `required` while the tail stays capped at
+12; the declared list is asserted whole; a project with no UX phase reports both as a **named gap**
+and raises nothing (`composer.py:336` — a missing declared input is reported, never fatal); and
+Step 9 is asserted to name the right document. Regression: `test_manifest_composer.py`,
+`test_a11y_axe_execution.py`, `test_a11y_policy.py`, `test_agents_migration.py`,
+`test_design_test_agents_migration.py` — 186 passed. Five failures across those files and
+`test_mcp_platform_state.py` predate this work and fail identically on the commit before it.
+
+**What this proves, and what it does not.** It proves the platform *guarantees* the screen list
+reaches the agent — at the exact boundary that was dropping it. It does not prove the agent then
+writes one case per screen: that is a model following an instruction, and only a real Testing run
+on a project with wireframes shows it. The instruction now at least points at the right document.
 
 **Size S · Risk low · Needs first: nothing.**
 

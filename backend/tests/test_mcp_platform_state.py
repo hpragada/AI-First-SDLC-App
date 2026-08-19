@@ -6,6 +6,7 @@ server wiring (all tools registered).
 """
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 from mcp_platform_state import tools
@@ -632,6 +633,76 @@ def test_get_context_pins_required_input_past_the_recency_tail(world):
     # the situational tail is capped — the required input is never one of the capped-away items
     tail = [a for a in ctx["relevant_artifacts"] if not a["required"]]
     assert len(tail) <= 12
+
+
+# ── G5: the Testing phase's declared inputs ─────────────────────────
+
+def test_the_testing_phase_is_guaranteed_the_screen_inventory(world):
+    """G5. Step 9 of the Testing agent writes one accessibility case PER SCREEN, and it reads the
+    screen list from the UX phase. Neither `ux_design` nor `wireframe` was declared, so on a
+    project with more than a dozen newer documents the list fell out of the recency tail and the
+    agent wrote no accessibility cases at all — and a screen with no accessibility case is a
+    screen nobody scans, for the rest of the lifecycle, silently.
+
+    `ux_design` is the load-bearing one: 05 registers the Screen Inventory there, and registers
+    `wireframe` one per SCREEN — so the required tier (latest of each type) pins exactly one
+    wireframe. That is a pointer to enumerate from, never the list itself, which is why the
+    agent body now says to enumerate with `list_artifacts(type="wireframe")`."""
+    t, project, run = world["t"], world["project"], world["run"]
+    ux = tools.register_artifact(
+        t.id, project.id, run.id, phase="ux_design", type="ux_design",
+        sor="internal", content_hash="h-ux", s3_key="k/ux",
+    )
+    wire = tools.register_artifact(
+        t.id, project.id, run.id, phase="ux_design", type="wireframe",
+        sor="internal", content_hash="h-w", s3_key="k/w",
+    )
+    for i in range(20):  # well past the situational-tail cap (12)
+        tools.register_artifact(
+            t.id, project.id, run.id, phase="implementation", type="code",
+            sor="git", content_hash=f"h{i}", s3_key=f"k/c{i}",
+        )
+    ctx = tools.get_context(t.id, project.id, phase="testing")
+    arts = {a["id"]: a for a in ctx["relevant_artifacts"]}
+    assert arts[ux["id"]]["required"] is True
+    assert arts[wire["id"]]["required"] is True
+    tail = [a for a in ctx["relevant_artifacts"] if not a["required"]]
+    assert len(tail) <= 12
+
+
+def test_the_testing_phase_declares_every_input_its_body_reads(world):
+    """The four that were also missing, folded in with G5 (team decision 2026-08-19): the body's
+    own "Relevant Artifacts" header names user stories, the backlog, the definition of done and
+    the security architecture, and each was subject to exactly the same eviction. Every type
+    here has a producing agent — 02 registers `user_stories`, 04 `security_architecture`, 05
+    `ux_design`/`wireframe`, 06 `backlog`/`definition_of_done`."""
+    from apps.registry.catalog import needs_artifacts_for
+
+    assert set(needs_artifacts_for("testing")) == {
+        "prd", "requirements", "user_stories", "architecture", "security_architecture",
+        "api_spec", "ux_design", "wireframe", "backlog", "definition_of_done"}
+
+
+def test_a_project_with_no_ux_phase_names_the_gap_and_does_not_fail(world):
+    """A backend service, or a brownfield project that has not run UX, has neither artifact. A
+    declared type with no artifact is reported as a gap — never an error, never silence."""
+    t, project = world["t"], world["project"]
+    ctx = tools.get_context(t.id, project.id, phase="testing")
+    assert {"ux_design", "wireframe"} <= set(ctx["missing_required_artifacts"])
+    assert ctx["relevant_artifacts"] == []
+
+
+def test_the_testing_body_says_where_the_screen_inventory_is(world):
+    """Change 2. Two agent bodies disagreed: 05 puts the Screen Inventory in `ux_design` and
+    registers wireframes one per screen, while 09's Step 9 called it "the `wireframe` artifacts'
+    screen inventory" — so an agent handed a single wireframe pointer could reasonably write one
+    case and stop."""
+    body = (Path(__file__).resolve().parents[2] / "agents" / "09_testing" / "agent.md").read_text(
+        encoding="utf-8")
+    step9 = body.split("### Step 9: Accessibility Testing")[1].split("### Step 10")[0]
+    assert "The **Screen Inventory** lives in the `ux_design` artifact" in step9
+    assert 'list_artifacts(type="wireframe")' in step9
+    assert "wireframe` artifacts' screen inventory" not in step9
 
 
 def test_list_artifacts_filters_by_type(world):

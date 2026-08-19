@@ -383,7 +383,7 @@ Record any finding in the `test_report` with severity per the defect severity de
 
 > **Standard:** WCAG 2.2 AA — defined as the compliance target in the UX design phase. Phase 9 is where compliance is verified against the implemented product, not the wireframes.
 
-**Automated scan (run against every screen in the `wireframe` artifacts' screen inventory):**
+**Automated scan (run against every screen in the Screen Inventory — see below for where it is):**
 
 ```bash
 # Using axe-core via Playwright — adapt to project test runner
@@ -400,7 +400,9 @@ npx axe https://staging.[domain]/[route] --exit
 
 **Write one Accessibility test case per screen — this is what makes the scan run.**
 
-The scan above does not execute by itself: the Test Automation agent (09b) automates **test cases**, one per run, so a screen with no accessibility test case is a screen nobody scans. For every screen in the `wireframe` artifacts' screen inventory, write a case in the Step 5 format with:
+**Where the screen list is, and how to be sure you have all of it.** The **Screen Inventory** lives in the `ux_design` artifact — that is the authoritative list. The `wireframe` artifacts are registered **one per screen**, so the manifest pins you the latest one and no more; it is a pointer, never the list. Enumerate them with `list_artifacts(type="wireframe")` and reconcile against the inventory. If the count you write cases for is smaller than the number of screens, say so and name the screens you could not reach — a screen missing from this step is a screen nobody scans for the rest of the lifecycle, and it fails silently. If neither artifact is there at all, that is a gap to report, not a reason to write nothing.
+
+The scan above does not execute by itself: the Test Automation agent (09b) automates **test cases**, one per run, so a screen with no accessibility test case is a screen nobody scans. For every screen in the Screen Inventory, write a case in the Step 5 format with:
 
 - **Type:** `Accessibility`, and **Automation Candidate:** `Yes` — 09b turns it into a real axe assertion against that route.
 - **A plain `TC-XXX` number from the same sequence as every other case.** Never a decorated id such as `TC-ACC-001`: the platform recovers a test case's identity from the test's name, and a decorated id does not resolve to a case — the defect that opens for it then loses its priority and lands as Critical whatever the finding was.

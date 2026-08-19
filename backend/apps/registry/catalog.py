@@ -96,8 +96,18 @@ AGENT_CATALOG: list[AgentDefinition] = [
                     needs_artifacts=("architecture", "adr", "api_spec", "data_model", "wireframe")),
     AgentDefinition("08_code_review", "code-review", "code_review", "08_code_review_agent.md", "P2", "reviewer",
                     needs_artifacts=("architecture", "adr", "api_spec")),
+    # `needs_artifacts` names every type this body actually reads (its "Relevant Artifacts"
+    # header), not a subset. Four of them were missing and the required tier is the only thing
+    # standing between a declared input and the 12-artifact recency tail: on a project with a
+    # dozen documents registered after the UX phase, the screen inventory simply fell out, and
+    # Step 9 writes one accessibility case PER SCREEN — no inventory, no cases, no scan, and
+    # nothing said why. `ux_design` is the load-bearing one: 05 registers the Screen Inventory
+    # there and registers `wireframe` one-per-SCREEN, so the required tier (latest of each type)
+    # pins exactly one wireframe — a pointer to enumerate from, never the list itself.
     AgentDefinition("09_testing", "test", "testing", "09_testing_agent.md", "P3", "qa_lead",
-                    needs_artifacts=("prd", "requirements", "architecture", "api_spec")),
+                    needs_artifacts=("prd", "requirements", "user_stories", "architecture",
+                                     "security_architecture", "api_spec", "ux_design",
+                                     "wireframe", "backlog", "definition_of_done")),
     AgentDefinition("09b_test_automation", "test-automation", "test_automation", "09b_test_automation_agent.md", "P3", "qa_lead", rides_build=True, imports_test_results=True,
                     needs_artifacts=("architecture", "api_spec", "test_case")),
     # 09c Accessibility Judge — PLATFORM-NATIVE (QA-02a): the legacy suite had no accessibility
