@@ -24,6 +24,13 @@ anyio==4.14.2
 # broken anyio 4.4.0; mcp 1.27.0 requires anyio>=4.5 (already the running version). Bumped to the
 # known-good set so the three resolve together (Bugs S.No 135).
 mcp==1.27.0
+# mcp 1.27.0 requires pydantic>=2.11, and pydantic was never pinned — so an environment
+# installed before the mcp bump kept pydantic 2.7 and `mcp_platform_state.server` stopped
+# IMPORTING at all: FastMCP builds an output model per tool, and pydantic 2.7's `create_model`
+# reads a bare `list[dict]` return annotation as a non-annotated attribute and raises. Nothing
+# in this repository imports pydantic itself; it is here so the version mcp needs is stated
+# rather than left to whatever a machine happens to already have.
+pydantic==2.13.4
 
 # Object store (artifact bodies in S3/MinIO)
 boto3==1.35.81

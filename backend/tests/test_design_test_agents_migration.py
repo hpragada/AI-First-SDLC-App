@@ -27,6 +27,20 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENTS = _REPO_ROOT / "agents"
 _KEYS = ["05_ux_design", "09_testing", "09b_test_automation", "10_security"]
 
+
+def _read_system_prompt(options) -> str:
+    """The system prompt the driver actually handed the engine.
+
+    It is delivered as `--system-prompt-file <path>`, never on `options.system_prompt`, so read
+    the file. Asserting on `options.system_prompt` silently reads `None` and every `in` check
+    becomes a TypeError instead of a failed assertion about the body.
+    """
+    from drivers.claude_driver import _SYSTEM_PROMPT_FLAG
+
+    path = (getattr(options, "extra_args", None) or {}).get(_SYSTEM_PROMPT_FLAG)
+    assert path, "the driver passed no --system-prompt-file"
+    return Path(path).read_text(encoding="utf-8")
+
 # §8 forbidden tokens — any hit is a failed migration (same gate as every other agent).
 _FORBIDDEN = [
     ".md", "docs/", "claude.md", "tasks.md", "reply approved",
@@ -242,7 +256,8 @@ def test_ux_run_reads_inputs_from_platform():
     captured: dict = {}
 
     async def fake_query(*, prompt, options, transport=None):
-        captured["system_prompt"] = options.system_prompt
+        # Delivered as a file, not on `options.system_prompt` — see `_read_system_prompt`.
+        captured["system_prompt"] = _read_system_prompt(options)
         yield ResultMessage(
             subtype="success", duration_ms=1, duration_api_ms=1, is_error=False,
             num_turns=1, session_id="s", total_cost_usd=0.01, usage={},

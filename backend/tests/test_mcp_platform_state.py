@@ -761,9 +761,11 @@ def test_tools_are_tenant_scoped(world):
     a = tools.register_artifact(t_a.id, project_a.id, run_a.id, "prd", "prd", "internal", "h1")
 
     t_b = Tenant.objects.create(name="Beta")
-    # B cannot read A's artifact
-    with pytest.raises(Artifact.DoesNotExist):
-        tools.get_artifact(t_b.id, a["id"])
+    # B cannot read A's artifact. `get_artifact` answers a miss with a readable error rather
+    # than raising — an agent that passed a shortened id needs telling, not a stack trace — so
+    # what is asserted here is that B gets the ERROR and none of A's fields, not that it throws.
+    denied = tools.get_artifact(t_b.id, a["id"])
+    assert set(denied) == {"error"}          # the refusal, and none of A's artifact with it
     # B sees none of A's work items / artifacts
     assert tools.list_work_items(t_b.id, project_a.id) == []
     assert tools.list_artifacts(t_b.id, project_a.id) == []
@@ -778,9 +780,16 @@ def test_server_registers_all_tools():
 
     registered = {t.name for t in asyncio.run(server.server.list_tools())}
     expected = {
+        # State: context, artifacts, work items, trace, events.
         "get_context", "register_artifact", "stage_artifact_body", "get_artifact_body",
         "update_artifact", "add_trace_edge",
         "log_event", "list_work_items", "create_work_item", "transition_work_item",
         "get_artifact", "list_artifacts", "detect_drift",
+        # Document vision (Part B): 00e reads a document's stored page images and the text
+        # already extracted from it.
+        "get_source_extraction", "get_page_images",
+        # Accessibility judging (QA-02a / QA-11b): 09c reads its dispatched elements, the exact
+        # WCAG wording and the captured crops, and answers one verdict per element.
+        "get_a11y_batch", "get_a11y_screenshots", "get_wcag_grounding", "record_a11y_finding",
     }
     assert registered == expected

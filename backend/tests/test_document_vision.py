@@ -123,10 +123,14 @@ def test_carriers_excluded_by_hide_filter():
 def test_trigger_vision_without_companion_raises():
     t, p = _tenant_project()
     seed_agent_specs(t)
+    # A real user id: `RunnerEnrollment.developer` is a foreign key, so the enrollment lookup
+    # `trigger_vision` does is a UUID comparison. A placeholder string never reaches "no
+    # companion" — it fails in the query first, which tests the wrong thing.
+    dev = User.objects.create(tenant=t, email="dev@example.com")
     with pytest.raises(NoCompanionError):
         trigger_vision(
             tenant_id=str(t.id), project_id=str(p.id), source_document_id="d",
-            artifact_id="a", filename="f.pdf", triggered_by="user-1",
+            artifact_id="a", filename="f.pdf", triggered_by=str(dev.id),
             workflow_starter=lambda *a: None,
         )
 
@@ -135,12 +139,13 @@ def test_trigger_vision_without_companion_raises():
 def test_trigger_vision_creates_auto_approve_companion_run():
     t, p = _tenant_project()
     seed_agent_specs(t)
+    dev = User.objects.create(tenant=t, email="dev@example.com")
     RunnerEnrollment.objects.create(
-        tenant=t, project=p, developer_id="user-1", status=RunnerEnrollment.Status.ACTIVE)
+        tenant=t, project=p, developer=dev, status=RunnerEnrollment.Status.ACTIVE)
     calls = []
     result = trigger_vision(
         tenant_id=str(t.id), project_id=str(p.id), source_document_id="doc-9",
-        artifact_id="art-9", filename="11_UX_Wireframes.pdf", triggered_by="user-1",
+        artifact_id="art-9", filename="11_UX_Wireframes.pdf", triggered_by=str(dev.id),
         workflow_starter=lambda wf, inp: calls.append(inp),
     )
     run = Run.objects.get(id=result.run_id)
