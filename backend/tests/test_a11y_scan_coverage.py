@@ -259,6 +259,81 @@ def test_09b_keeps_its_accessibility_case_behaviour():
     assert "impact `critical` or `serious` fails it" in body
 
 
+# ══ G1 — the greenfield producer records what PASSED, not only what failed ═══════
+#
+# QA-24 taught the platform to keep all four of axe's channels and updated the BROWNFIELD
+# scanner (`runner/companion/assets/a11y_audit.mjs`) to write them. It never updated the
+# greenfield producer — this agent — so a greenfield capture carried violations only, and
+# `_rule_list` correctly read that as "no positive evidence": every criterion the scan touched
+# reported as *not evaluated* and the conformance statement said "Nothing checked this."
+#
+# These tests hold BOTH sides of that seam together. The first one is the load-bearing one: it
+# takes the example document out of the agent body and runs it through the platform's own
+# parser, so the instruction cannot drift from the format the platform accepts without a test
+# going red.
+
+
+def _capture_example(key: str) -> dict:
+    """The Step 5b capture example, lifted verbatim out of the agent body."""
+    body = _body(key).split("## Step 5b")[1]
+    return json.loads(body.split("```json")[1].split("```")[0])
+
+
+def test_09b_capture_example_is_a_document_the_platform_actually_parses():
+    """The seam itself: the shape the agent is shown is the shape `capture.py` reads."""
+    screen = parse_capture(json.dumps(_capture_example("09b_test_automation")))[0]
+    assert screen["route"] == "/checkout"
+    assert screen["scanner_version"] == "axe-core 4.9.1"
+    for channel in ("axe_violations", "axe_passes", "axe_inapplicable", "axe_incomplete"):
+        assert screen[channel], f"{channel} did not survive the parser"
+
+
+def test_09b_capture_example_produces_coverage_and_not_only_failures():
+    """What G1 is for: a criterion the scan found clean is recorded as examined."""
+    from apps.a11y import coverage
+
+    screen = parse_capture(json.dumps(_capture_example("09b_test_automation")))[0]
+    outcomes = {outcome for _criterion, outcome, _rule in coverage.from_scan(screen)}
+    assert outcomes == {"failed", "passed", "not_applicable", "needs_human"}
+
+
+def test_09b_says_inapplicable_is_not_a_pass():
+    """The two facts a merged channel would destroy: 'there was no video here' and 'the
+    captions were checked and were fine' are different things to tell a client."""
+    body = _body("09b_test_automation")
+    assert "Keep them apart: inapplicable is not a pass" in body
+    assert "never move one between them" in body
+
+
+def test_09b_says_an_absent_channel_is_not_a_claim_that_nothing_passed():
+    """`_rule_list`'s rule, stated where the producer can act on it."""
+    body = _body("09b_test_automation")
+    assert 'An absent array means "this capture carries no positive evidence"' in body
+    assert 'it never means "nothing passed"' in body
+
+
+def test_09b_scopes_the_capture_scan_to_the_standard():
+    """An unscoped scan fills the channels with best-practice rules that map to no criterion —
+    and `_rule_list`'s own refusal message tells the author to use the tag filter."""
+    step = _body("09b_test_automation").split("## Step 5b")[1].split("## Step 6")[0]
+    assert "Scope the capture's scan to the standard" in step
+    assert "'wcag22a', 'wcag22aa'" in step
+
+
+def test_09b_quality_gate_asks_for_all_four_channels():
+    gate = _body("09b_test_automation").split("## Quality Gate")[1]
+    for channel in ("axe_passes", "axe_inapplicable", "axe_incomplete", "scanner_version"):
+        assert channel in gate, channel
+
+
+def test_09b_omits_every_scan_field_when_no_scan_ran():
+    """`axe_error` means the screen was seen and not measured — so nothing from the scan may
+    be written, not just the violations."""
+    body = _body("09b_test_automation")
+    assert ("omit every field the scan would have produced — `axe`, `axe_violations`, "
+            "`axe_passes`, `axe_inapplicable`, `axe_incomplete` and `scanner_version`") in body
+
+
 def test_the_edited_body_still_passes_the_platform_reference_sweep():
     """AGENT_MIGRATION_SPEC §8 — a migrated body naming a local file is a failed migration."""
     body = _body("09b_test_automation")

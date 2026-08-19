@@ -454,6 +454,10 @@ So every script writes **`test-results/a11y-candidates.json`** — the same dire
 
 **A functional test never fails because of what the capture found.** Run axe on each route you capture, so the per-element `axe` field and the screen-level `axe_violations` below are filled in — but the result of that scan does not pass or fail a functional test. Its findings still reach the platform, still become tracked defects, and still block the accessibility gate. Failing the login test because of a contrast ratio would put the accessibility problem on the wrong test case, and a screen that alternates between a functional failure and an accessibility failure reads to the platform as one flaky test — which gets quarantined, and a quarantined test blocks nothing.
 
+**Scope the capture's scan to the standard, the same way Step 5a does** — `new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa'])`. This applies to every script, not only an `Accessibility` case. Unscoped, the scan also runs axe's best-practice rules, which map to no WCAG criterion: they cannot become findings and they cannot become coverage, so all they do is fill the four channels below with results that answer no question the report asks. Scoping it is also what keeps each channel under the platform's limit of **400 entries** — over that, the screen is refused whole rather than trimmed, because a scan that quietly lost half its results reads as a page with half as much on it.
+
+**Record all four answers the scan gives, not only the failures.** axe returns four channels and each is a different fact: `violations` (it failed), `passes` (it was checked and it was fine), `inapplicable` (the rule ran and there was nothing on this page for it to apply to) and `incomplete` (axe looked and *cannot decide* — a person must). Write all four onto the screen, in the fields below. Keeping only the failures is what makes a criterion nothing failed indistinguishable from a criterion nothing looked at, and that distinction is the whole of what a conformance statement says.
+
 **One screenshot per screen, not one per element.** Take a single full-page screenshot and record each element's rectangle within it. The platform decides which elements are worth judging and cuts their pictures from that image — so a per-element screenshot would be work spent on elements nobody will ever ask about.
 
 ```json
@@ -468,6 +472,20 @@ So every script writes **`test-results/a11y-candidates.json`** — the same dire
       "help": "Elements must meet minimum colour contrast ratio thresholds",
       "nodes": [".btn-secondary", "footer a"]
     }],
+    "axe_passes": [{
+      "rule": "label", "criteria": ["4.1.2"],
+      "help": "Form elements must have labels"
+    }],
+    "axe_inapplicable": [{
+      "rule": "video-caption", "criteria": ["1.2.2"],
+      "help": "<video> elements must have captions"
+    }],
+    "axe_incomplete": [{
+      "rule": "color-contrast", "impact": "serious", "criteria": ["1.4.3"],
+      "help": "Elements must meet minimum colour contrast ratio thresholds",
+      "nodes": ["header h1"]
+    }],
+    "scanner_version": "axe-core 4.9.1",
     "elements": [{
       "selector": "main > form > button.pay",
       "tag": "button", "role": "",
@@ -498,11 +516,21 @@ So every script writes **`test-results/a11y-candidates.json`** — the same dire
 
 **`axe` is what the scan you just ran said about that element**, if anything: its rule id, impact, and the WCAG criteria from the rule's own `wcag…` tags. Take it from the violation's `nodes[].target` — matching by selector — so the rule finding and the AI finding can later be shown side by side without running axe twice. Leave it out for an element axe said nothing about; an empty object is not a claim that it passed.
 
-**When the scanner cannot run on this stack, say so on the screen — never leave it blank.** Set **`axe_error`** to the reason (for example, `"no axe integration is installed for Playwright Python"`) and omit `axe` and `axe_violations`. This matters more than it looks: an empty violation list is the same shape as a clean page, so a screen captured without a scan would otherwise be reported as one the rules found nothing wrong on. Write `axe_error` and the platform states plainly that only the AI checks covered that screen. Capture the elements either way — the AI half works on every stack that can drive a browser, and half a check honestly labelled beats no check at all.
+**When the scanner cannot run on this stack, say so on the screen — never leave it blank.** Set **`axe_error`** to the reason (for example, `"no axe integration is installed for Playwright Python"`) and omit every field the scan would have produced — `axe`, `axe_violations`, `axe_passes`, `axe_inapplicable`, `axe_incomplete` and `scanner_version`. This matters more than it looks: an empty violation list is the same shape as a clean page, so a screen captured without a scan would otherwise be reported as one the rules found nothing wrong on. Write `axe_error` and the platform states plainly that only the AI checks covered that screen. Capture the elements either way — the AI half works on every stack that can drive a browser, and half a check honestly labelled beats no check at all.
 
 **`axe_violations` is the same scan reported for the screen as a whole** — every violation, whether or not it landed on an element you captured. Write one entry per violation: the `rule` id, its `impact`, the WCAG `criteria` from its `wcag…` tags (an empty list for a best-practice rule that maps to none — say so rather than omitting the violation), the rule's own `help` text, and `nodes` as every `nodes[].target` selector it failed on.
 
 This is not a duplicate of the per-element `axe` field and you must write both. The per-element one is what makes a rule finding and an AI finding comparable on the same element. This one is what makes the report *complete*: the platform only keeps elements one of the four AI checks applies to, so a violation on anything else — a missing `lang`, a duplicate id, a landmark problem — would exist nowhere in the platform if you did not write it here. Report it exactly as the scan gave it to you; never re-word a rule and never leave a violation out because it looks minor.
+
+**`axe_passes` is every rule that was checked and was fine**, and **`axe_inapplicable` is every rule that ran and found nothing on this page for it to apply to.** These two are what let the platform say a criterion was *examined*. Both are **node-less** on purpose — write only the rule id, the WCAG `criteria` from its `wcag…` tags, and the rule's `help` text. "Every element that passed" is thousands of selectors nobody will ever read, and the question these two answer — *was this criterion actually checked on this page?* — is answered by the rule alone.
+
+**Keep them apart: inapplicable is not a pass.** "There was no video on this page, so the caption rule had nothing to check" and "the captions were checked and they were fine" are different facts about the application, and a report that merges them claims a check that never happened. Write each rule into the channel the scan put it in and never move one between them.
+
+**`axe_incomplete` is the scan saying it looked and cannot decide** — a contrast it could not compute over an image background, a control it could not resolve. It is the sharpest of the four, because a person has to go and settle it. It carries `nodes` and `impact`, exactly like a violation, for that reason. Never fold it into `axe_violations` and never fold it into `axe_passes`: it is neither, and the platform reports it as itself so a reviewer is sent to look.
+
+**`scanner_version` is which scanner produced all of the above** — `"axe-core 4.9.1"`, read from the module you imported, not typed from memory. axe-core comes from the project's own dependencies, so it is whatever that repo pins and it changes without warning; a conformance statement that cannot name the scanner behind it cannot be re-examined later against what produced it. Leave it out if the version genuinely cannot be read — blank is honest, a guessed number is not.
+
+**An absent array means "this capture carries no positive evidence" — it never means "nothing passed".** The platform reads a missing `axe_passes` as *we know nothing about what passed here*, and every criterion the scan touched then reads as **not evaluated** on the report, which is the truthful answer to a capture that did not say. So leaving these arrays out is not a tidy omission: it throws away the only evidence that a criterion was ever examined, and the report will correctly say nobody looked. Write all four channels every time a scan ran, even when three of them are empty — an empty array from a scan that ran is itself a fact, and it is a different one from silence.
 
 **If the screenshot fails**, still write the screen: set `"screenshot_error"` to the reason instead of `screenshot_base64`. The elements are still worth judging from their markup, and the questions that needed to be seen will correctly come back "could not be seen" rather than guessed.
 
@@ -618,6 +646,7 @@ The platform commits the generated scripts in the worktree, pushes the branch, a
 - [ ] For an `Accessibility` case: the scan is scoped to WCAG 2.2 AA, fails on critical/serious, and its message leads with the violation totals
 - [ ] For **every** script: `test-results/a11y-candidates.json` was written — one entry per distinct screen the test visited, one full-page screenshot per screen, each element carrying its box, the browser's **computed** accessible name, and all six `styles` / `parent_styles` keys
 - [ ] For **every** script: that same file carries `axe_violations` for each screen — **every** violation the scan reported, not only the ones that landed on a captured element — or `axe_error` saying why no scan ran there
+- [ ] For **every** script: each scanned screen also carries the scan's other three answers — `axe_passes`, `axe_inapplicable` and `axe_incomplete` — plus `scanner_version`; the capture scan was scoped to the WCAG 2.2 tags, and no rule was moved between channels
 - [ ] No functional test was failed by an accessibility finding; the scan enriches the capture and the platform's gate does the blocking
 - [ ] A `test_report` artifact registered with status, script path, and dry-run result
 

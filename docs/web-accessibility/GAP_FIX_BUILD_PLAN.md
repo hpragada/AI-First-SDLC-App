@@ -76,6 +76,11 @@ shares that screen, so it is cheaper to build after 8 than before it.
 
 ### G1 · Greenfield records only what failed
 
+🟢 **Built 2026-08-19.** The agent body now carries all four scanner channels, `scanner_version`,
+and the WCAG tag filter on the capture's own scan. Seven tests added — the load-bearing one runs
+the agent's example document through the platform's real parser, so the instruction cannot drift
+from the format the platform accepts without a test going red. Still unproven by a live run.
+
 **In plain words.** On a greenfield project the conformance statement will say *"not evaluated"*
 against almost every WCAG criterion — even the ones the scanner checked and found nothing wrong
 with. The report is not lying, but it is useless: it looks like nobody checked anything.
@@ -102,6 +107,11 @@ conformance table has nothing to say.
   "it passed", and that an **absent** array means no positive evidence rather than "nothing passed".
 - The `axe_error` paragraph at `:501` says all four are omitted when no scan ran, not just two.
 - The finish checklist at `:620` checks for all four.
+- **Added while building, agreed 2026-08-19:** Step 5b told the script to run axe and never said
+  to scope it — the tag filter was written only into Step 5a, which covers dedicated accessibility
+  cases. An unscoped scan fills the three new channels with axe's best-practice rules, which map
+  to no WCAG criterion and so become neither a finding nor coverage. `_rule_list`'s own refusal
+  message already tells the author to use the tag filter; now the instruction does too.
 
 No platform code moves. The ingest path (`backend/apps/a11y/ingest.py:228-231`) already reads all
 four and already writes the coverage rows.
@@ -113,6 +123,16 @@ pages with nothing wrong"* instead of *"Nothing checked this."*
 **How we prove it.** `backend/tests/test_a11y_capture.py` and `test_a11y_scan_coverage.py` already
 assert the platform half; they stay green. The agent-body half is proven by reading it against the
 scanner file, and truly proven only by a real greenfield run.
+
+*As built:* seven tests in `test_a11y_scan_coverage.py`. The first two lift the agent's example
+document out of the body and run it through `parse_capture` and `coverage.from_scan` — proving the
+shape the agent is shown is a document the platform accepts, and that it yields all four outcomes
+(`failed`, `passed`, `not_applicable`, `needs_human`) rather than failures alone. The other five
+hold the prose that stops the two known mistakes: folding *inapplicable* into a pass, and reading
+an absent channel as "nothing passed". `test_a11y_scan_coverage.py`, `test_a11y_capture.py` and
+`test_a11y_conformance.py` — 171 passed. **What this does not prove:** that a generated suite
+actually writes the four channels. This is an instruction to a model; the tests prove the
+instruction is right and present, never that it was followed. Only a live greenfield run does that.
 
 **Size S · Risk low · Needs first: nothing.**
 
