@@ -44,18 +44,14 @@ finding there ambiguous, which is as damaging as a missing defect.
 ```json
 {
   "name": "meridian-library",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "routes": "node tools/gen-routes.js",
-    "verify": "node tools/verify.js",
-    "verify:counts": "node tools/count-candidates.js",
-    "verify:journeys": "node tools/verify-journeys.js"
+    "routes": "node tools/gen-routes.js"
   },
-  "dependencies": { "express": "^4.19.2", "ejs": "^3.1.10" },
-  "devDependencies": { "@axe-core/playwright": "^4.10.0", "playwright": "^1.47.0" }
+  "dependencies": { "express": "^4.19.2", "ejs": "^3.1.10" }
 }
 ```
 
@@ -147,7 +143,7 @@ every label.
 ### `public/styles.css` — the palette
 
 These values are computed, not estimated. Do not change them without re-running
-`npm run verify:contrast`.
+the harness's `npm run contrast`.
 
 ```css
 :root {
@@ -181,7 +177,7 @@ These values are computed, not estimated. Do not change them without re-running
 > surface it sits on and the planted failure moves, possibly out of failing range. Keep the warmth
 > in the ground around the content card, never under the content.
 
-### `tools/check-contrast.js` — compute the palette, do not choose it
+### `harness/check-contrast.js` — compute the palette, do not choose it
 
 Sixteen pairs pass and one has to fail. Write a checker that asserts both, so the failing pair is
 guarded as carefully as the passing ones:
@@ -339,7 +335,7 @@ and breaks every label on the page.
 
 Nothing else in this guide is trustworthy until you can prove what axe actually reports.
 
-### `tools/verify.js`
+### `harness/verify.js`
 
 Run axe over every route in `routes.json` and write a report. Use exactly this configuration:
 
@@ -417,7 +413,7 @@ the canary that catches that.
 Each page below states the axe rule it is **expected** to trigger. Those expectations are my best
 reading of axe's behaviour; they are not gospel.
 
-**Run `verify.js` and record what axe actually reports for every route.** Then:
+**Run the harness's `verify` and record what axe actually reports for every route.** Then:
 
 - axe reports the expected rule and nothing else → good.
 - axe reports **extra** violations on a page → **fix the page.** You have introduced a defect this
@@ -652,7 +648,7 @@ Exact counts, no labels needed, deterministic. These test that no candidate is s
 - The expected counts live in the golden dataset's `manifest.json`, **not** on the page. Nothing may
   advertise how many candidates it holds.
 
-### `tools/count-candidates.js` — count them, do not assume them
+### `harness/count-candidates.js` — count them, do not assume them
 
 These pages are worthless if their own counts are taken on trust. A checker returning eleven results
 for a page holding twelve images has dropped one silently — but only if the page really holds twelve.
@@ -941,7 +937,7 @@ Round the corners on the header and the last row individually instead.
 > across the whole walk rather than sampling one step: the browser only scrolls on the steps where
 > the next row is off screen, so most steps show nothing.
 
-### `tools/verify-journeys.js`
+### `harness/verify-journeys.js`
 
 Every page in this batch reports clean under axe, so nothing else in the repo can tell whether the
 planted behaviour is there. A focus trap that does not trap, or a dialog that happens to restore
@@ -986,7 +982,7 @@ Everything described so far proves axe reports the right thing. For roughly two 
 the right thing is **nothing** — and nothing is also what you get from a page that has quietly lost
 the markup it was built around. Two more checks close that gap. Build both.
 
-### `tools/verify-plants.js` — assert the defect is still there
+### `harness/verify-plants.js` — assert the defect is still there
 
 One entry per planted case, stating the DOM fact its label depends on, asserted **in both
 directions**: the broken page must be broken *and* the twin must be correct. A check that only
@@ -1013,7 +1009,7 @@ It should also compare **twin page heights**. The demo turns on two pages being 
 to a sighted person; a structural divergence shows up as a height difference long before anyone
 notices it by eye.
 
-### `tools/audit.js` — the invariants no single page owns
+### `harness/audit.js` — the invariants no single page owns
 
 - no comment in any **served** file names a defect (see §2)
 - no page references an external origin — `xmlns` declarations are not fetches, allow those
@@ -1062,7 +1058,7 @@ before labelling, not after.
 - [ ] There are enough candidates per checker for the dataset version you intend to label
 - [ ] The site looks like something you would show a client
 - [ ] Every element named in §8 has a stable, neutral `id`, and each twin reuses its counterpart's
-- [ ] `verify.js` output is committed as the fixture's baseline
+- [ ] the harness's axe baseline is committed as the fixture's baseline
 - [ ] `routes.json` is generated, not hand-edited, and regenerated after adding a route
 - [ ] No route, class, comment, id or data attribute names a defect
 - [ ] No external origins are referenced anywhere
