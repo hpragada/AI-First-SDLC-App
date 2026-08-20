@@ -1,7 +1,7 @@
 # Web Accessibility — What Was Built, Where It Sits In The Journey, and How To Test It
 
 **For the Edvensoft team · 20 August 2026 · branch `web-accessibility-build`**
-**Covers QA‑01 … QA‑24 (31 tasks), the ten gap-fix tasks G1 … G6c, and the fourteen
+**Covers QA‑01 … QA‑24 (31 tasks), the ten gap-fix tasks G1 … G6c, and the eighteen
 user-experience fixes of 20 August (§9)**
 
 ---
@@ -20,7 +20,8 @@ the source won and the plan was corrected in the same change.
 
 **The walk itself changed the product.** Reading each screen as the person using it turned up
 fifteen things that worked but would not have served them; the team approved fourteen and they
-are built. Every one of them is recorded in §9, and every place in this guide where the behaviour
+are built. **Three more came from the team's own first live run, the same day** — two dialogs they
+read and described back to us wrongly, which is the most reliable signal a screen can give. Every one of them is recorded in §9, and every place in this guide where the behaviour
 changed says what it used to do — so a reader who saw the old screen is not left wondering
 whether they misremembered.
 
@@ -41,8 +42,9 @@ says **what would mean it is broken.**
 **§9 is the section to read if you only read one.** Walking this guide turned up fifteen places
 where what was built worked but would not, on reading it as the person using it, have satisfied
 them. **The team reviewed all fifteen on 20 August: fourteen were approved and are now built, and
-the fifteenth — the migrations — the team ran themselves.** §9 is the record: what was wrong, what
-was done, and how it is proven.
+the fifteenth — the migrations — the team ran themselves.** Three more (#16–#18) came from the
+team's first live run later the same day, all of them wording on the two page-registration dialogs. §9
+is the record: what was wrong, what was done, and how it is proven.
 
 ---
 
@@ -276,8 +278,13 @@ to add npm dev-dependencies to the client's own repository in order to look at i
 cd ../meridian-library-web-accessibility && npm install && npm start
 ```
 
-Serves at `http://localhost:4180`. 69 routes in `routes.json`; one (`/health`) is marked out of
-scope, so 68 pages to audit.
+Serves at `http://localhost:4180`. **79 routes** in `routes.json`; one (`/health`) is marked
+out of scope, so **78 pages to audit** — two capture passes.
+
+⚠️ It was 69 until 20 August. The developer's `main` added ten pages (subject index, shelf audit,
+card services, problem report, branch finder and their near-duplicate partners) and moved the
+fixture-checking tools out of the app into `docs/web-accessibility/evaluation/harness/`. If you
+see 69, you are on the old history — see §1.
 
 ⚠️ Its README claims *"Meridian Library conforms to WCAG 2.1 Level AA. Last audited March
 2024."* Treat that as a claim to be tested, not a fact.
@@ -455,7 +462,7 @@ The same three screens as brownfield. They are described once, in §6.
 You point the platform at it and ask *"where does this stand?"*
 
 Meridian Library is a community library site: Node and Express, server-rendered, no JavaScript
-framework, 69 routes.
+framework, 79 routes.
 
 ### B1 — Create the project and reach the hub ✅
 
@@ -491,19 +498,39 @@ the **Pages & audit** tab.
 so it cannot discover its pages. Somebody has to say what they are. Nothing is audited until you
 do, and the empty state says exactly that.
 
-**What you do:** press **Import a list** and paste a list of pages.
+**Which of the two buttons.** **Import a list** if you already have the pages written down
+somewhere — a routes file, a sitemap, a page inventory. **Add a page** if you are building the
+list up by hand. The empty state says this; until 20 August it did not, and the two buttons were
+a choice with nothing to make it on.
+
+**What you do:** press **Import a list** and paste a list of pages. The dialog is titled
+*Import a list* — ⚠️ until 20 August it was titled **"Add pages"**, which is nearly the name of
+the other button, so people believed they had opened the wrong one. Item #16 in §9.
 
 ✅ **One path per line is enough.**
 
 ```
 /
 /catalogue
-/catalogue/:id
+/about/history
 ```
 
 Blank lines are skipped and so are `#` comments. Paste a **JSON** list instead when you also want
 to give each page a name or say whether it is in scope: entries carrying `path`, with optional
 `title`, `enabled` (or `in_scope`), `notes` and `example`.
+
+```json
+[{"path": "/catalogue", "title": "Browse the catalogue"},
+ {"path": "/events/:id", "example": "/events/482"}]
+```
+
+⚠️ **A pattern must go in the JSON form, and only there.** Line mode returns bare paths, so there
+is nowhere to say what `/events/:id` should open; the audit would then request that address
+literally, fail, and report the page unreachable on every run. The placeholder in the box used to
+demonstrate a pattern in the **line** half — teaching the one combination that cannot work — and
+that was fixed on 20 August along with showing both formats side by side. Item #17 in §9.
+
+✅ Meridian has **no** pattern routes, so this does not affect the walkthrough below.
 
 ⚠️ **A line containing a space is refused, by line number**, and that refusal is deliberate. The
 path checker rejects an empty path, a full URL, a path not starting with `/` and a line break —
@@ -521,7 +548,7 @@ clear list of pages. Item #8 in §9.
    `routes`. Paste the value of `routes`.
 2. ✅ **`in_scope` is honoured**, so `/health` — the one route Meridian's author marked out of
    scope — arrives out of scope, and nothing is named back to you as unrecognised. Until 20 August
-   `in_scope` was not a recognised column, all 69 pages were registered in scope, and the confirm
+   `in_scope` was not a recognised column, all of its pages were registered in scope, and the confirm
    screen warned about it (honestly, but as a chore for the reader). Item #14 in §9.
    ⚠️ A *genuinely* unknown column — `inScope` in camelCase, say — is still named back, with the
    sentence that matters: *"If one of them says whether a page is in scope, those pages will be
@@ -533,7 +560,29 @@ clear list of pages. Item #8 in §9.
    platform cannot tell "I removed this page" from "I just fixed a typo" apart, and nobody has to:
    you are shown both and asked which, before anything is written.
 
-**Then, day to day:** **Add a page** adds one, and **Edit** on a row edits that row. Editing a row
+**Then, day to day:** **Add a page** adds one, and **Edit** on a row edits that row.
+
+**What Add a page asks for.** Four controls, and only the first is required:
+
+| Field | Required | What it is for |
+|---|---|---|
+| **Path** | **yes** | any page — `/catalogue`, `/about/history`. A pattern is allowed too. |
+| **Name** | no | makes the report readable; nothing depends on it |
+| **Example page** | no | **only** when the path cannot be opened in a browser as written |
+| **Audit this page** | on by default | whether it is in scope |
+
+⚠️ **This dialog is not "for patterns".** Two people on the team read it that way on 20 August,
+because the Example page help began *"Only for a pattern like `/events/:id`"* — which, read
+scanning down the form, describes the dialog rather than the field. It now begins *"Leave this
+empty for a normal page."* Item #18 in §9.
+
+✅ **Any pattern shape works**, not just `:id`. The platform never parses patterns: `normalise_path`
+wants a leading `/` and nothing else, so `/events/:id`, `/books/[isbn]` and `/users/{id}/loans` are
+all stored exactly as written. The rule is not "must look like `:id`" — it is *"if the path as
+written cannot be opened, give one that can"*, and the field now names three shapes so no single
+framework's syntax reads as the only one allowed.
+
+Editing a row
 is an edit — the ghost-page problem only exists in the pasted list, where there are no
 identities. ⚠️ **Renaming a page does not move its history**: findings are identified by the page
 they were found on, so the problems stay at the old address. The editor says so before it happens.
@@ -817,12 +866,18 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The fifteen findings, and what was done about each
+## 9. The eighteen findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
 20 August. Fourteen were approved and all fourteen are built; the fifteenth was the migrations,
-which the team ran the same day.** All fifteen are closed.
+which the team ran the same day.**
+
+**Three more arrived the same day, and they arrived the best possible way: the team read the two
+page-registration dialogs during a live run and told us what they thought each one did.** Both
+readings were wrong, and nothing was broken — the words were. A screen understood backwards by the
+people who commissioned it is not a screen that works, so #16–#18 are wording, and the wording is
+now pinned by tests like any other behaviour. All eighteen are closed.
 
 | # | What was wrong | Status |
 |---|---|---|
@@ -841,6 +896,9 @@ which the team ran the same day.** All fifteen are closed.
 | 13 | `.diagram-frame` was 2.29:1 contrast in our own design system | ✅ fixed |
 | 14 | `in_scope` was not an accepted column, and our own demo app uses it | ✅ fixed |
 | 15 | A role key was shown to the user as a role name | ✅ fixed |
+| 16 | **Import a list** opened a dialog titled "Add pages" — nearly the other button's name | ✅ fixed |
+| 17 | The paste box demonstrated a URL pattern in the one format that cannot carry its example | ✅ fixed |
+| 18 | **Add a page** read as though it accepted patterns only | ✅ fixed |
 
 ---
 
@@ -1023,7 +1081,7 @@ enforce. Flagged three times. Now `--text-body`, which is 8.86:1 — the value t
 
 ### #14 — `in_scope` was not an accepted column ✅
 
-Our own reference brownfield application writes `in_scope` for all 69 of its routes. Every one
+Our own reference brownfield application writes `in_scope` for all 79 of its routes. Every one
 came back as an unrecognised column and every page was registered in scope, including the one its
 author had deliberately excluded.
 
@@ -1038,6 +1096,68 @@ something actually reads.
 
 *"Editing and signing need the qa_lead role"* → *"…the QA Lead role"*, through the `roleLabel`
 helper that exists for exactly this and was written after an earlier bug of the same kind.
+
+### #16 — The button and the dialog it opens had different names ✅
+
+**Was:** the **Import a list** button opened a modal titled **"Add pages"** — which is nearly the
+name of the *other* button on the same screen. A person who pressed Import a list arrived somewhere
+that read like the single-page form and could reasonably think they had misclicked.
+
+**Now:** the dialog is titled **Import a list**, after the button that opens it. A test asserts the
+heading matches, and that "Add pages" is gone.
+
+**Also fixed alongside it:** the empty state now names *which* button to press — *"If you already
+have the list — a routes file, a sitemap, a page inventory — import it. Otherwise add them one page
+at a time."* Two buttons that both add pages, with nothing anywhere saying what separated them, was
+the reason the question was asked at all.
+
+### #17 — The paste box taught the one combination that cannot work ✅
+
+**Was:** the placeholder read `/` · `/catalogue` · `/catalogue/:id` — a **pattern**, demonstrated in
+**line** mode. Line mode returns bare paths (`_read_lines`), so there is nowhere to say what
+`/catalogue/:id` should open. Following the example registers a page no browser can open, and every
+audit afterwards reports it unreachable. The placeholder demonstrated the single combination the
+platform cannot honour.
+
+**Now:** the placeholder shows **both accepted formats**, and the pattern appears only in the JSON
+half — the half that can carry `example`:
+
+```
+/
+/catalogue
+/about/history
+
+— or a JSON list —
+
+[{"path": "/catalogue", "title": "Browse the catalogue"},
+ {"path": "/events/:id", "example": "/events/482"}]
+```
+
+Showing both was the team's own requirement, and it is what makes the placement meaningful: the two
+formats sit side by side, and the pattern is visibly in the one that works. The help now says so in
+words — *"A path no browser can open needs the JSON form, because only it can carry the example page
+to visit."* A test splits the placeholder on the separator and asserts nothing pattern-shaped is in
+the line half and `example` is in the JSON half.
+
+⚠️ **Both formats were always accepted.** The team's recollection that the box was JSON-only was the
+opposite of the truth: JSON-only was the *bug*, fixed as #8 on 20 August. Nothing about acceptance
+changed here — only what the box shows you.
+
+### #18 — "Add a page" read as though it were for patterns only ✅
+
+**Was:** the Example page help began *"Only for a pattern like `/events/:id`, which no browser can
+open."* Read on its own — which is how anyone scanning down a form reads it — that describes the
+**dialog**, not the field. Two people concluded the form accepted patterns only, and asked how they
+were meant to add an ordinary page.
+
+**Now:** it begins **"Leave this empty for a normal page."** — the case that applies to nearly
+everyone, said first — and only then explains what the field is for.
+
+**And it names three pattern shapes, not one**, because the platform never parses patterns at all:
+`normalise_path` requires a leading `/` and checks nothing else, so `/events/:id`, `/books/[isbn]`
+and `/users/{id}/loans` are stored exactly as written. Naming one framework's syntax made it read as
+the only syntax allowed. The real rule is *"if the path as written cannot be opened, give one that
+can"*, and that is now what it says.
 
 ---
 
@@ -1068,8 +1188,8 @@ with — in the order I would watch them.
    working scan.
 
 **What is proven, and how much:** 1,244 backend test functions across 29 accessibility test
-files, and 70 frontend tests across five. Verified on this branch on 20 August, after the fifteen
-findings were fixed:
+files, and 76 frontend tests across five. Verified on this branch on 20 August, after all
+eighteen findings were fixed:
 
 | Ran | Result |
 |---|---|
@@ -1155,7 +1275,8 @@ platform (`apps/a11y/data/wcag22.json`) and is loaded by migration.
 | **G6a/b/c** | The keyboard journey had no address, no browser, no way to run several, and no caller |
 
 And on **20 August**, the fourteen findings in §9 — the ones that separated *"a person can reach
-it"* from *"a person is well served by it"*.
+it"* from *"a person is well served by it"* — followed, the same day, by three more (#16–#18)
+that the team found by reading the page-registration dialogs aloud during their first live run.
 
 Plus one found by cross-checking rather than by a failing test: **two journeys from test cases
 with no `TC-…` id shared one work item**, so the second was refused as "already being walked" and

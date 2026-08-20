@@ -329,6 +329,15 @@ class CompanionDaemon:
         machine has got to yet — and the person waiting would keep waiting. Whatever goes wrong,
         the audit ends in a state that says what happened.
         """
+        # `backend/` on the path BEFORE anything downstream reaches for it. `run_baseline_audit`
+        # imports `apps.a11y.capture.MAX_SCREENS` lazily — one definition of the batch bound
+        # rather than a second copy here — and on this path nothing had put it there. The three
+        # existing callers are the two `__main__` subcommands and the engine driver factory, and
+        # a companion that only ever runs audits reaches none of them: it died on the import with
+        # `No module named 'apps'`. Invisible until now, because `serve` could not claim an audit
+        # at all until the audit it is handed started life as `pending`.
+        ensure_backend_importable()
+
         from runner.companion.a11yaudit import run_baseline_audit
         from runner.companion.state_client import RemoteStateClient
 
@@ -369,6 +378,33 @@ class CompanionDaemon:
                                  workdir=workdir, audit_id=audit_id)
         print(f"[companion] a11y audit {audit_id}: {out['posted']} screen(s) posted "
               f"from {workdir} ({where})", flush=True)
+
+    def _close_failed_a11y_audit(self, claimed: dict, exc: BaseException) -> None:
+        """Close an audit whose run raised, so the screen says what happened to it.
+
+        Without this the audit stays `claimed` until its 15-minute lease ages out, and for those
+        fifteen minutes the screen is indistinguishable from an audit no machine has reached yet
+        — the person waiting has no way to tell "still starting" from "this is never coming".
+
+        **The reason is written for the person reading the screen, not for whoever fixes it.**
+        The exception is already on this machine's log, in full, one line above the call to this.
+        Putting `ModuleNotFoundError("No module named 'apps'")` on an accessibility report tells
+        its reader nothing they can act on and nothing they can understand.
+
+        Best-effort by design: if the platform cannot be reached either, the lease is the
+        backstop and this must not be what takes the companion down.
+        """
+        from runner.companion.state_client import RemoteStateClient
+
+        reason = ("The machine running this audit stopped before it could visit any pages. "
+                  "Nothing here tells you anything about your application. Start a new audit.")
+        try:
+            RemoteStateClient(api_url=self._base, tenant_id=self._tenant, token=self._token).call(
+                "finish_a11y_audit", audit_id=claimed["audit_id"], reason=reason)
+        except Exception as close_exc:  # noqa: BLE001 — the lease is the backstop
+            print(f"[companion] a11y audit {claimed.get('audit_id')} could not be closed "
+                  f"({close_exc!r}); its claim will age out instead. Original: {exc!r}",
+                  file=sys.stderr, flush=True)
 
     def _a11y_scratch(self, project_id: str) -> str:
         """A folder to run an audit from when this machine has no clone of the project.
@@ -770,9 +806,18 @@ class CompanionDaemon:
                         try:
                             self._run_a11y_audit(audit)
                             processed += 1
-                        except DaemonError as exc:
+                        # `Exception`, not `DaemonError`. The comment above has always said a
+                        # failed audit must never take the companion down, but only the tidy
+                        # failure was caught — and the one that actually happened was a
+                        # ModuleNotFoundError, which walked straight past this and killed the
+                        # process. The two costs are not comparable: an audit that dies is one
+                        # audit, said on the screen with its reason; a companion that dies is
+                        # every later dispatch sitting unclaimed, and from the app it looks
+                        # identical to a machine nobody has got to yet.
+                        except Exception as exc:  # noqa: BLE001 — see above
                             print(f"[companion] a11y audit {audit.get('audit_id')} failed, "
-                                  f"continuing: {exc}", file=sys.stderr, flush=True)
+                                  f"continuing: {exc!r}", file=sys.stderr, flush=True)
+                            self._close_failed_a11y_audit(audit, exc)
                         continue
                     self._sleep(self._poll_interval)
                     continue

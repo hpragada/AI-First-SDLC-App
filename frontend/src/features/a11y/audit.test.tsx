@@ -573,3 +573,111 @@ describe("S-38 what your machine needs", () => {
     expect(screen.getByText(/falls back to the companion's own/)).toBeTruthy();
   });
 });
+
+// ── Saying which of the two ways in you want, and what each one takes ───────
+//
+// Every assertion here comes from two people on the team reading these dialogs and coming away
+// with the wrong idea — one that the paste box took JSON only, the other that the single-page
+// form was for URL patterns only. Neither was true, and nothing on either screen was broken:
+// the words were. A screen that is understood backwards by the people who asked for it is not
+// a screen that works, so the wording is pinned here like any other behaviour.
+
+describe("S-38 registering pages — the two ways in", () => {
+  it("the import dialog is named after the button that opens it", async () => {
+    // It was titled "Add pages", which is nearly the name of the OTHER button on this screen.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({ routes: [], summary: "no routes are registered" })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Import a list" }));
+    expect(screen.getByRole("heading", { name: "Import a list" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Add pages" })).toBeNull();
+  });
+
+  it("the paste box shows BOTH formats, because both are accepted", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Import a list" }));
+    const box = screen.getByLabelText("Your pages") as HTMLTextAreaElement;
+
+    // One path per line, and a JSON list, in one placeholder — a reader holding either kind of
+    // list can see theirs.
+    expect(box.placeholder).toContain("/catalogue");
+    expect(box.placeholder).toContain('"path"');
+    expect(screen.getByText(/Either format works/)).toBeTruthy();
+  });
+
+  it("a pattern is shown only in the format that can carry its example", async () => {
+    // The trap this closes: line mode returns bare paths, so there is nowhere to say what
+    // `/events/:id` should open. The placeholder used to demonstrate a pattern in the LINE
+    // half, which registers a page no browser can open and reports it unreachable forever.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Import a list" }));
+    const box = screen.getByLabelText("Your pages") as HTMLTextAreaElement;
+    const [lines, json] = box.placeholder.split("— or a JSON list —");
+
+    expect(lines).not.toContain(":id");            // nothing pattern-shaped in the line half
+    expect(json).toContain('"example"');           // and the JSON half carries the way to visit it
+    expect(screen.getByText(/needs the JSON form/)).toBeTruthy();
+  });
+
+  it("the single-page form says what to do when the page is a normal one", async () => {
+    // Read scanning downward, "Only for a pattern like /events/:id" described the DIALOG, and
+    // two readers concluded the form accepted nothing else.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add a page" }));
+    expect(screen.getByRole("heading", { name: "Add a page" })).toBeTruthy();
+    expect(screen.getByText(/Leave this empty for a normal page/)).toBeTruthy();
+    expect(screen.queryByText(/^Only for a pattern like/)).toBeNull();
+  });
+
+  it("more than one pattern shape, because the platform does not parse any of them", async () => {
+    // `normalise_path` wants a leading `/` and nothing else — `:id`, `[isbn]` and `{id}` are all
+    // stored as written. Naming one framework's syntax made it read as the only one allowed.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add a page" }));
+    for (const shape of ["/events/:id", "/books/[isbn]", "/users/{id}/loans"]) {
+      expect(screen.getByText(shape)).toBeTruthy();
+    }
+  });
+
+  it("with nothing registered, the empty state says which button to press", async () => {
+    // Two buttons that both add pages, and nothing anywhere saying what separates them.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({ routes: [], summary: "no routes are registered" })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("No pages are registered yet");
+    expect(screen.getByText(/If you already have the list/)).toBeTruthy();
+    expect(screen.getByText(/Otherwise add them one page at a time/)).toBeTruthy();
+  });
+});

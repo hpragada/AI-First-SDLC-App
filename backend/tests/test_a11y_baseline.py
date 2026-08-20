@@ -2125,3 +2125,87 @@ def test_the_companion_pins_its_own_browser_and_scanner():
     assert set(deps) == {"axe-core", "playwright"}
     for name, version in deps.items():
         assert version[0].isdigit(), f"{name} is pinned exactly, not floated: {version}"
+
+
+# ── The audit path has to stand on its own, and must never take the machine down ──
+#
+# Both of these come from the team's first live run. The moment an audit could actually be
+# claimed — which needed `claimable=True` on the REST caller — the companion claimed one, and
+# died on `ModuleNotFoundError: No module named 'apps'`. Neither half had ever been reachable
+# before, so neither had ever been exercised.
+
+
+def test_the_audit_path_puts_backend_on_the_path_itself(monkeypatch, tmp_path):
+    """`run_baseline_audit` imports `apps.a11y.capture` lazily, and on this path nobody had put
+    `backend/` on `sys.path`. Its three callers are the two `__main__` subcommands and the engine
+    driver factory — a companion that only ever runs audits reaches none of them.
+    """
+    from runner.companion import daemon as daemon_mod
+
+    called = []
+    monkeypatch.setattr(daemon_mod, "ensure_backend_importable",
+                        lambda: called.append(True))
+    monkeypatch.setattr(daemon_mod, "RemoteStateClient", lambda **kw: object(), raising=False)
+
+    import runner.companion.a11yaudit as a11yaudit_mod
+    monkeypatch.setattr(a11yaudit_mod, "run_baseline_audit",
+                        lambda **kw: {"posted": 0})
+
+    daemon = _FakeDaemon(tmp_path, has_clone=True)
+    daemon_mod.CompanionDaemon._run_a11y_audit(daemon, {
+        "audit_id": "a-1", "project_id": "p-1", "repo": "acme/web", "manifest": {}})
+
+    assert called, "the audit path never made `apps.*` importable, so it died on the import"
+
+
+def test_an_audit_that_raises_closes_the_audit_and_says_so_plainly(monkeypatch, tmp_path):
+    """A raising audit must close with a reason rather than being dropped.
+
+    Left `claimed`, it is indistinguishable on screen from an audit no machine has reached yet,
+    for the whole fifteen minutes its lease takes to age out. And the reason is written for the
+    person reading the report: the exception goes to this machine's log, never to the screen.
+    """
+    from runner.companion import daemon as daemon_mod
+
+    posted = {}
+
+    class _Client:
+        def call(self, tool, **kw):
+            posted["tool"] = tool
+            posted.update(kw)
+            return {}
+
+    # Patched where it LIVES, not on the daemon module: `_close_failed_a11y_audit` imports it
+    # inside the function, so a name bound on `daemon_mod` is never the one looked up.
+    import runner.companion.state_client as state_client_mod
+    monkeypatch.setattr(state_client_mod, "RemoteStateClient", lambda **kw: _Client())
+
+    daemon = _FakeDaemon(tmp_path, has_clone=True)
+    daemon_mod.CompanionDaemon._close_failed_a11y_audit(
+        daemon, {"audit_id": "a-9"}, ModuleNotFoundError("No module named 'apps'"))
+
+    assert posted["tool"] == "finish_a11y_audit"
+    assert posted["audit_id"] == "a-9"
+    reason = posted["reason"]
+    assert "stopped before it could visit any pages" in reason
+    assert "Start a new audit" in reason
+    # The two things a reader must never be shown, and the one they must be told.
+    assert "ModuleNotFound" not in reason and "apps" not in reason
+    assert "tells you anything about your application" in reason
+
+
+def test_a_failure_the_platform_cannot_be_told_about_does_not_raise(monkeypatch, tmp_path):
+    """Best-effort: the 15-minute lease is the backstop, and this must not be what kills the
+    companion after the thing it exists to survive already went wrong."""
+    from runner.companion import daemon as daemon_mod
+
+    class _DeadClient:
+        def call(self, tool, **kw):
+            raise OSError("the platform is unreachable")
+
+    import runner.companion.state_client as state_client_mod
+    monkeypatch.setattr(state_client_mod, "RemoteStateClient", lambda **kw: _DeadClient())
+
+    daemon = _FakeDaemon(tmp_path, has_clone=True)
+    daemon_mod.CompanionDaemon._close_failed_a11y_audit(
+        daemon, {"audit_id": "a-9"}, RuntimeError("original"))   # must not raise

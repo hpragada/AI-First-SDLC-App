@@ -585,6 +585,16 @@ class ProjectViewSet(
                     base_url=request.data.get("base_url", ""),
                     routes=request.data.get("routes"),
                     started_by=getattr(request.user, "id", None),
+                    # Opened from the app, so NOBODY is standing at the machine yet: it has to
+                    # wait as `pending` until a companion claims it. Without this it defaulted
+                    # to `capturing` — "a machine is already visiting" — and the claim endpoint
+                    # only offers `pending` (or a stale `claimed`), so no companion could ever
+                    # see it. The audit sat forever while the screen showed "Visiting pages",
+                    # which is this capability's own worst failure: a confident report of work
+                    # that was not happening. The companion's own `audit` subcommand is the
+                    # other caller and correctly leaves the default, because there the machine
+                    # that opened the audit is already about to visit.
+                    claimable=True,
                 )
             except BaselineError as exc:
                 return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)

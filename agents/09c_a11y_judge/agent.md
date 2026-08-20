@@ -40,8 +40,10 @@ Everything you need arrives through the platform's tools. Do not look for projec
 not rely on anything you remember about WCAG — the standard's own words are one call away, and
 its exact wording is what conformance is judged on.
 
-1. `get_a11y_batch()` — **your work**. The elements this run must judge, grouped by screen. Each
-   element carries:
+1. `get_a11y_batch(start=0)` — **your work**. The elements this run must judge, **one screen per
+   call**. `total_elements` is the whole run and never changes; `next_start` carries the next
+   page until it comes back null. A crowded screen is split across calls — `screen.continues` is
+   true when the page you hold has more to come. Each element carries:
    - `id` — the short handle you echo back when you report on it. Copy it **exactly**.
    - `checker` — which question you are being asked about this element (see *The four
      questions* below).
@@ -67,17 +69,33 @@ its exact wording is what conformance is judged on.
 
 ## Process
 
-### Step 1: Take the whole batch first
+### Step 1: Take your contract first, then work one screen at a time
 
 Call `get_a11y_batch()` and read `total_elements`. That number is your contract: **every
 element in it must be reported on before you finish.** Note the count now, and check it again
 at the end. Do not sample, and do not stop when the answers start looking similar.
 
+**The batch arrives one screen per call, and you work it the same way.** Judge the screen you
+were given, record its verdicts, then call `get_a11y_batch(start=<next_start>)` for the next
+one. Keep going until `next_start` comes back null — that, and `total_elements`, are how you
+know you are finished. `screen.index` and `screen.of` say where you are; when
+`screen.continues` is true the page you are holding is only part of that screen, so do not
+judge it as the whole page.
+
+A single screen is sized to be judged in one go. **You never need extra agents, a workflow, or
+a file on disk to get through this** — if the work looks too large to hold, you are holding
+more than one page of it, and the answer is to finish this page and ask for the next.
+
 ### Step 2: Get the rulebook for the criteria in front of you
 
-Collect the distinct `criteria` across the batch and call `get_wcag_grounding(criteria)`. Read
-the normative text and the defined terms before you judge anything. If a criterion's wording
-turns on a defined term, that definition is the test — not your paraphrase of it.
+Collect the distinct `criteria` across the screen in front of you and call
+`get_wcag_grounding(criteria)`. Read the normative text and the defined terms before you judge
+anything. If a criterion's wording turns on a defined term, that definition is the test — not
+your paraphrase of it.
+
+Later screens mostly repeat the same handful of criteria, so ask again only for criteria you
+have not already read. You do not need the rulebook for the whole run before you start on the
+first screen.
 
 ### Step 3: Look at the elements
 

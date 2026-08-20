@@ -107,7 +107,8 @@ def build_server(
         gives a `next_start`, so call get_a11y_screenshots(start=<next_start>) until it says
         this is the last batch. Elements with no captured picture are named in the summary —
         for those, judge from the markup or record `uncertain` saying it could not be seen."""
-        res = client.call("get_a11y_screenshots", start=start) or {}
+        res = client.call("get_a11y_screenshots",
+                          run_id=run_id_bound or None, start=start) or {}
         images = res.get("images") or []
         unseen = res.get("unseen") or []
         nxt = res.get("next_start")
@@ -130,6 +131,100 @@ def build_server(
                 fmt = (im.get("mime") or "image/png").split("/")[-1]
                 blocks.append(McpImage(data=raw, format=fmt))
         return blocks
+
+    # ── Accessibility judging (09c, QA-02a) and journeys (09d, QA-20) ──────────────
+    #
+    # These seven were granted in `runner.BUILD_STATE_TOOLS` and routed in the platform's
+    # `_BUILD_STATE_TOOLS`, but never DEFINED here — and this file is the only thing that puts a
+    # tool in front of an agent. A name in `allowed_tools` is a permission, not a tool: it cannot
+    # conjure one the server never exposed. So both phases were unrunnable from the day they were
+    # written. The judge said so in its own words on its first real run — "the three tools this
+    # phase depends on are not registered in this session's tool set at all" — and it was right.
+    #
+    # `run_id` is bound at launch and never asked of the agent, exactly as `register_artifact`
+    # and `submit_gap_report` bind it: the agent is told which elements to judge by the platform,
+    # so letting it name the run would let it answer for a different one.
+
+    @server.tool()
+    def get_a11y_batch(start: int = 0) -> dict:
+        """YOUR WORK: the elements this run must judge, ONE SCREEN per call (QA-02a).
+
+        Read `total_elements` on the first call — that is your contract for the WHOLE run, and
+        every element in it needs one `record_a11y_finding`. It stays the same on every page;
+        it is never the size of the page you are holding.
+
+        Paged so a large audit cannot exceed what you can hold: judge this screen, record its
+        verdicts, then call `get_a11y_batch(start=<next_start>)` for the next. Stop when
+        `next_start` comes back null. A crowded screen is split across calls —
+        `screen.continues` is true when the page you were given has more to come, so do not read
+        a partial screen as the whole of it. `screen.index` / `screen.of` say where you are.
+
+        Each element carries the short `id` you echo back; the run is bound at launch, so you
+        never name it."""
+        return client.call("get_a11y_batch", run_id=run_id_bound or None, start=start)
+
+    @server.tool()
+    def get_wcag_grounding(criteria: list[str]) -> dict:
+        """THE RULEBOOK: the exact WCAG 2.2 wording for these criteria, plus the glossary terms
+        they hinge on. Judge against the standard's own words rather than your recollection of
+        them. Collect the distinct `criteria` across your batch and ask once."""
+        return client.call("get_wcag_grounding", criteria=criteria)
+
+    @server.tool()
+    def record_a11y_finding(element_id: str, criteria: list[str], verdict: str,
+                            confidence: float, evidence: str,
+                            suggested_fix: str = "") -> dict:
+        """YOUR ANSWER: one verdict for one element. Call it per element as you go, never in a
+        batch at the end.
+
+        `verdict` is "pass" | "fail" | "uncertain"; `confidence` is 0.0-1.0; `evidence` is what
+        you saw. A `fail` must carry `suggested_fix`. The platform validates and rejects with a
+        reason you can act on — a rejection is yours to correct, not a reason to stop."""
+        return client.call("record_a11y_finding",
+                           run_id=run_id_bound or None,
+                           project_id=project_id_bound or None,
+                           element_id=element_id, criteria=criteria, verdict=verdict,
+                           confidence=confidence, evidence=evidence,
+                           suggested_fix=suggested_fix)
+
+    @server.tool()
+    def get_a11y_journey() -> dict:
+        """YOUR CONTRACT: the journey to operate with a keyboard, read once at the start (QA-20).
+
+        `steps` are frozen and their numbering here is what you report against — never the
+        numbering printed in the test case body. Check yourself against `total_steps`."""
+        return client.call("get_a11y_journey", run_id=run_id_bound or None)
+
+    @server.tool()
+    def record_a11y_journey_step(step: int, outcome: str, reason: str = "") -> dict:
+        """What became of ONE step: `walked` or `blocked`. Call it for EVERY step, including the
+        ones that went fine — the platform cannot tell "I walked it and it was clean" from "I
+        never got there" unless you say which. `reason` is what stopped you, on a block."""
+        return client.call("record_a11y_journey_step", run_id=run_id_bound or None,
+                           step=step, outcome=outcome, reason=reason)
+
+    @server.tool()
+    def record_a11y_journey_finding(step: int, checker: str, verdict: str, confidence: float,
+                                    evidence: str, criteria: list[str] | None = None,
+                                    suggested_fix: str = "", route: str = "",
+                                    selector: str = "",
+                                    measurement: dict | None = None) -> dict:
+        """One check's answer about one step. `checker` is one of the eight from
+        `get_a11y_journey().checks`; leave `criteria` unset to use that check's own criterion.
+
+        Leave `selector` out when the finding is about the screen rather than one element —
+        focus order is a property of the page, and pinning it to an arbitrary element files the
+        problem against something that is not what is wrong."""
+        return client.call("record_a11y_journey_finding", run_id=run_id_bound or None,
+                           step=step, checker=checker, verdict=verdict, confidence=confidence,
+                           evidence=evidence, criteria=criteria, suggested_fix=suggested_fix,
+                           route=route, selector=selector, measurement=measurement)
+
+    @server.tool()
+    def finish_a11y_journey() -> dict:
+        """Close the pass: every frozen step you never reported on is recorded as *not reached*,
+        so a journey that walked two of six says so instead of reading as keyboard-clean."""
+        return client.call("finish_a11y_journey", run_id=run_id_bound or None)
 
     @server.tool()
     def list_artifacts(project_id: str, phase: str | None = None,

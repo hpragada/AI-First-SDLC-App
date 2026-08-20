@@ -255,3 +255,57 @@ def test_in_scope_survives_the_round_trip_over_rest(world):
     assert resp.status_code == 200, resp.content
     scope = {r["path"]: r["enabled"] for r in resp.json()["routes"]}
     assert scope["/health"] is False, "the flag our own reference app writes is honoured"
+
+
+# ── An audit opened from the app has to be one a machine can pick up ────────
+
+
+def test_an_audit_started_from_the_app_waits_for_a_machine(world):
+    """The audit the button opens must be CLAIMABLE, and nothing else asserted this.
+
+    `start_baseline_audit(claimable=...)` decides the opening status: `pending` — waiting for a
+    machine — or `capturing`, which means "a machine is already visiting". The REST caller did
+    not pass it, so every audit opened from the app was born `capturing`, and
+    `RunnerA11yAuditClaimView` only ever offers `pending` (or a `claimed` one past its lease).
+    No companion could see it. The audit sat still while the screen read "Visiting pages".
+
+    Every existing claim test passes `claimable=True` by hand, which is exactly why they all
+    passed while the only caller that ships was wired the other way. This asserts the wiring.
+    """
+    resp = _client("lead@acme.test").post(world["audits"], {}, format="json")
+    assert resp.status_code == 201, resp.content
+    assert resp.json()["status"] == A11yBaselineAudit.Status.PENDING
+
+    audit = A11yBaselineAudit.objects.get(id=resp.json()["audit_id"])
+    assert audit.status == A11yBaselineAudit.Status.PENDING
+    assert audit.enrollment_id is None, "opened for whichever machine claims it, not a named one"
+
+
+def test_a_waiting_audit_is_what_the_companion_is_offered(world):
+    """The other half of the same fact, from the machine's side.
+
+    The bug lived in the seam between two halves that were each tested alone: the app opened an
+    audit, the companion asked for one, and nothing joined them up. So this opens one the way the
+    button does — over REST — and then claims it the way the companion does.
+    """
+    from django.test import RequestFactory
+
+    from api.runner_views import RunnerA11yAuditClaimView, RunnerStateView
+    from apps.runs.models import RunnerEnrollment
+
+    started = _client("lead@acme.test").post(world["audits"], {}, format="json").json()
+
+    runner = RunnerEnrollment.objects.create(
+        tenant=world["tenant"], project=world["project"], label="laptop",
+        enroll_token_hash="hash-laptop")
+    original = RunnerStateView._resolve_runner
+    RunnerStateView._resolve_runner = staticmethod(lambda _r: runner)
+    try:
+        claimed = RunnerA11yAuditClaimView().get(
+            RequestFactory().get("/api/runner/a11y-audits/"))
+    finally:
+        RunnerStateView._resolve_runner = original
+
+    assert claimed.status_code == 200, claimed.data
+    assert str(claimed.data["audit_id"]) == started["audit_id"]
+    assert claimed.data["manifest"]["routes"] == ["/"], "and it carries what to visit"

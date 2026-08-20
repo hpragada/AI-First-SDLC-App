@@ -206,7 +206,10 @@ function AddPages({
 
   return (
     <Modal
-      title="Add pages"
+      // Named for the button that opens it. It used to be titled "Add pages", which is nearly
+      // the name of the OTHER button on that screen — so clicking `Import a list` landed you on
+      // something that read like the single-page form, and the two were told apart by guessing.
+      title="Import a list"
       onClose={onClose}
       footer={
         <>
@@ -235,20 +238,33 @@ function AddPages({
         <span className="field__label" id="pages-box">
           Your pages
         </span>
+        {/* BOTH formats are shown because both are accepted, and which one you need depends on
+            what you have. The pattern appears only in the JSON half, and that placement is the
+            point: line mode returns bare paths, so there is nowhere to say what `/events/:id`
+            should open. Demonstrating a pattern in the line half — which is what this
+            placeholder used to do — teaches the one combination that cannot work, and every
+            audit afterwards reports that page unreachable. */}
         <Textarea
           aria-labelledby="pages-box"
-          rows={10}
-          placeholder={"/\n/catalogue\n/catalogue/:id"}
+          rows={12}
+          placeholder={
+            "/\n/catalogue\n/about/history\n" +
+            "\n— or a JSON list —\n\n" +
+            '[{"path": "/catalogue", "title": "Browse the catalogue"},\n' +
+            ' {"path": "/events/:id", "example": "/events/482"}]'
+          }
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
         <span className="field__help">
-          <strong>One path per line</strong> is enough — <span className="t-mono">/checkout</span>.
-          Paste a JSON list instead when you also want to give each page a name or say whether it
-          is in scope: entries carrying <span className="t-mono">path</span>, with optional{" "}
-          <span className="t-mono">title</span>, <span className="t-mono">enabled</span> (or{" "}
-          <span className="t-mono">in_scope</span>) and <span className="t-mono">example</span>.
-          Anything we cannot read is named back to you, never silently dropped.
+          <strong>Either format works.</strong> One path per line is enough. Paste a JSON list
+          when you also want to give each page a name, say whether it is in scope, or point a
+          pattern at a real page: entries carrying <span className="t-mono">path</span>, with
+          optional <span className="t-mono">title</span>, <span className="t-mono">enabled</span>{" "}
+          (or <span className="t-mono">in_scope</span>) and <span className="t-mono">example</span>.
+          A path no browser can open — <span className="t-mono">/events/:id</span> — needs the
+          JSON form, because only it can carry the example page to visit. Anything we cannot read
+          is named back to you, never silently dropped.
         </span>
       </label>
 
@@ -373,10 +389,24 @@ function PageEditor({
           onChange={(e) => setExample(e.target.value)}
           placeholder="/events/482"
         />
+        {/* Read on its own — which is how a person scanning down the form reads it — the old
+            wording ("Only for a pattern like /events/:id") described the DIALOG rather than the
+            field, and people came away believing this form only accepted patterns. It says what
+            to do with it when you have a normal page first, because that is nearly everyone.
+
+            Several shapes, because the platform does not parse patterns at all: `normalise_path`
+            wants a leading `/` and nothing else, so `:id`, `[isbn]` and `{id}` are stored as
+            written. The rule is not "must look like :id" — it is "if the path as written cannot
+            be opened, give one that can", and naming one framework's syntax made it look like
+            the only one allowed. */}
         <span className="field__help">
-          Only for a pattern like <span className="t-mono">/events/:id</span>, which no browser
-          can open. The audit visits the example and still records the finding against the
-          pattern.
+          <strong>Leave this empty for a normal page.</strong> It is only needed when the path
+          above cannot be opened in a browser as written — whatever your framework writes them
+          as: <span className="t-mono">/events/:id</span>,{" "}
+          <span className="t-mono">/books/[isbn]</span>,{" "}
+          <span className="t-mono">/users/{"{id}"}/loans</span>. Give one real page that matches —{" "}
+          <span className="t-mono">/events/482</span> — and the audit visits that, while still
+          recording what it finds against the pattern above.
         </span>
       </label>
 
@@ -946,7 +976,10 @@ export function A11yAudit() {
         <Panel>
           <EmptyState
             title="No pages are registered yet"
-            text="The platform has no access to your application, so it cannot discover its pages — somebody has to say what they are. Nothing is audited until you do."
+            // The last sentence names which button to press. Without it the two buttons are a
+            // choice with nothing to make it on: both add pages, and the difference — do you
+            // already have the list, or are you building it up — was never stated anywhere.
+            text="The platform has no access to your application, so it cannot discover its pages — somebody has to say what they are. Nothing is audited until you do. If you already have the list — a routes file, a sitemap, a page inventory — import it. Otherwise add them one page at a time."
             action={
               canManage ? (
                 <div className="gate-panel__actions" style={{ justifyContent: "center" }}>
