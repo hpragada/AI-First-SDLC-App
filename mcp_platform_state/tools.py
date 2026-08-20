@@ -490,6 +490,7 @@ def _log_artifact_registered(tenant_id, run, artifact) -> None:
 def update_artifact(
     tenant_id, artifact_id, status=None, sor=None,
     external_ref=None, content_hash=None, version=None, title=None, type=None,
+    s3_key=None,
 ) -> dict:
     with tenant_context(tenant_id):
         artifact = Artifact.objects.get(id=artifact_id, tenant_id=tenant_id)
@@ -513,6 +514,13 @@ def update_artifact(
             artifact.external_ref = external_ref
         if content_hash is not None:
             artifact.content_hash = content_hash
+        # Re-point an artifact at a newly staged body. `register_artifact` has always accepted
+        # `s3_key`; update had no way to set it, so a caller that re-staged on a later cycle could
+        # only ever create a second row or leave the first pointing at the old snapshot — and a
+        # caller that staged nothing at registration time (the code_review path) had no way to
+        # attach a body at all afterwards.
+        if s3_key is not None:
+            artifact.s3_key = s3_key
         if version is not None:
             artifact.version = version
         artifact.save()

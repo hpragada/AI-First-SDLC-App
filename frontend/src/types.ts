@@ -99,6 +99,11 @@ export interface Artifact {
   content_hash: string;
   version: number;
   created_at: string;
+  // Whether Preview can show anything at all — a body, or a link to the system of record.
+  // Computed server-side beside `read_artifact_preview` so the rule cannot drift; do NOT
+  // re-derive it from `s3_key`/`sor` here (a wireframe previews from `external_ref.states`
+  // with no `s3_key` of its own). Optional so an older API response degrades to "offer it".
+  previewable?: boolean;
   // Pointer + provenance. `source: "phase_report"` marks the platform's own copy of the
   // engine's closing message — see `isPhaseReport`.
   external_ref?: {

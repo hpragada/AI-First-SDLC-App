@@ -5,8 +5,6 @@ touches Git — the platform opens/merges the PR (D2).
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -202,6 +200,43 @@ def teardown_preview_core(inp: BuildInput) -> dict:
         work_item_id=inp.work_item_id, run_id=inp.run_id)
 
 
+def _link_stray_code_pointers(inp: BuildInput, pr_ref: dict | None) -> int:
+    """Give every OTHER `code` pointer on this run the PR's url, so none of them previews blank.
+
+    Each remediation cycle makes the implementation agent register a fresh pre-PR pointer. The
+    first build's pointer gets reconciled (below), but by the second cycle a real PR row already
+    exists, `open_build_pr_core` returns early as idempotent, and the new pointer is orphaned at
+    birth — 21 such rows across 14 runs on the QA tenant. They are honest provenance of what that
+    cycle changed, so they are kept, but with no `url` the preview page renders empty.
+
+    Attaches **`url` only** — deliberately NOT `repo`/`number`. `_is_pr_ref` requires both, so
+    these rows stay non-PR-refs and `_code_artifact`'s "prefer the row with a real PR ref"
+    selection is completely unaffected. Adding the full ref would make several rows look like the
+    opened PR and let the wrong one drive review/merge.
+
+    Returns how many rows were linked (0 on the common path). Never raises: this is a cosmetic
+    repair and must not fail a build that has a working PR.
+    """
+    url = (pr_ref or {}).get("url")
+    if not url:
+        return 0
+    linked = 0
+    try:
+        with tenant_context(inp.tenant_id):
+            strays = list(Artifact.objects.filter(
+                run_id=inp.run_id, tenant_id=inp.tenant_id, type="code"))
+        for art in strays:
+            ref = art.external_ref or {}
+            if _is_pr_ref(ref) or ref.get("url"):
+                continue
+            tools.update_artifact(inp.tenant_id, str(art.id),
+                                  external_ref={**ref, "sor": "git", "url": url})
+            linked += 1
+    except Exception:      # noqa: BLE001 — provenance polish, never a build failure
+        return linked
+    return linked
+
+
 def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
     """Open the draft PR for the companion-pushed branch and register/reconcile the `code`
     pointer. Idempotent — only an artifact that already carries a real PR ref (repo+number) is
@@ -211,6 +246,7 @@ def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
 
     existing = _code_artifact(inp)
     if existing is not None and _is_pr_ref(existing.external_ref):
+        _link_stray_code_pointers(inp, existing.external_ref)
         return {"pr": existing.external_ref, "artifact_id": str(existing.id), "idempotent": True}
 
     # Bugs S.No 139: an empty build — the agent produced no changes, so nothing was committed or
@@ -800,6 +836,40 @@ def set_review_provider(provider) -> None:
 
 
 _BLOCKING = {"critical", "warning"}
+#: The phase a code_review artifact belongs to — its OWN phase, not the build phase that produced
+#: the code under review. `BuildInput.phase` is "implementation", which is why the platform's
+#: registrations filed 11 reviews under the wrong phase while every reviewer-registered one used
+#: this value.
+_REVIEW_PHASE = "code_review"
+
+
+def _review_body_for_artifact(inp: BuildInput, findings: list) -> str:
+    """The document the `code_review` artifact points at.
+
+    Prefer the reviewer's own prose — the platform already receives and stores it on
+    `run.outputs["review_body"]` (24,702 characters on the run that surfaced this bug), and it is
+    what a human actually wants to read. Fall back to rendering the structured findings when a
+    reviewer returned findings without prose, so the artifact is never left pointing at nothing —
+    which is the whole defect being fixed here. Never returns empty: an empty body would 404 in
+    `read_artifact_preview` exactly as before."""
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.filter(id=inp.run_id, tenant_id=inp.tenant_id).only("outputs").first()
+    prose = ((run.outputs if run else None) or {}).get("review_body") or ""
+    if prose.strip():
+        return prose
+    header = f"# Code Review — {display_name(inp)}\n"
+    if not findings:
+        return header + "\nNo findings were raised in this review cycle.\n"
+    lines = [header]
+    for f in findings:
+        loc = f"{f.file or '?'}:{f.line or 0}"
+        lines.append(f"\n## {f.rem} — {f.severity}\n\n**{f.title}**  \n`{loc}`\n")
+        # Same prose the remediation WorkItem gets (S.No 147), so the artifact and the board
+        # say the same thing rather than each rendering findings their own way.
+        detail = _remediation_description(f).strip()
+        if detail:
+            lines.append(f"\n{detail}\n")
+    return "".join(lines)
 
 
 def run_code_review_core(inp: BuildInput) -> dict:
@@ -813,21 +883,40 @@ def run_code_review_core(inp: BuildInput) -> dict:
 
     findings = list(get_review_provider().review(inp, pr_ref))
     blocking = {f.rem: f for f in findings if f.severity in _BLOCKING}
-    digest = hashlib.sha256(
-        json.dumps([asdict(f) for f in findings], sort_keys=True).encode()
-    ).hexdigest()
 
+    # STAGE THE BODY. This artifact is `sor="internal"` — "Platform only" — so unlike a `code`
+    # pointer (sor="git", whose content lives in the PR and must never be copied here, #1/#3),
+    # there is no system of record to read it back from. If the body is not written to the object
+    # store it exists NOWHERE reachable, and Preview 404s: "artifact has no body to preview".
+    # That is exactly what happened — every code_review artifact this function ever registered was
+    # a pointer to nothing, while the review text sat unused on `run.outputs["review_body"]`.
+    # Re-staged every cycle (the key is run/phase-scoped, so a cycle overwrites its own snapshot)
+    # so the artifact always resolves to the latest review rather than a stale first pass.
+    body = _review_body_for_artifact(inp, findings)
+    staged = tools.stage_artifact_body(
+        inp.tenant_id, inp.project_id, inp.run_id, _REVIEW_PHASE,
+        filename="code-review.md", body=body, content_type="text/markdown",
+        # Through the module's injectable factory (same seam publish/merge use), so this is
+        # unit-testable without a live object store.
+        object_store=get_object_store(),
+    )
     with tenant_context(inp.tenant_id):
         review_art = Artifact.objects.filter(
             run_id=inp.run_id, tenant_id=inp.tenant_id, type="code_review").first()
     if review_art is None:
         created = tools.register_artifact(
-            inp.tenant_id, inp.project_id, inp.run_id, inp.phase, "code_review", "internal",
-            content_hash=digest, title=f"Code Review — {display_name(inp)}")
+            # `_REVIEW_PHASE`, not `inp.phase`: inp is the BUILD input, so its phase is
+            # "implementation" and the review filed under the phase that produced the code
+            # rather than its own. Every review registered by the reviewer itself already uses
+            # "code_review"; this makes the platform's own registration agree with it.
+            inp.tenant_id, inp.project_id, inp.run_id, _REVIEW_PHASE, "code_review", "internal",
+            content_hash=staged["content_hash"], s3_key=staged["s3_key"],
+            title=f"Code Review — {display_name(inp)}")
         review_art_id = created["id"]
         tools.add_trace_edge(inp.tenant_id, review_art_id, str(code.id), "tests")
     else:
-        tools.update_artifact(inp.tenant_id, str(review_art.id), content_hash=digest)
+        tools.update_artifact(inp.tenant_id, str(review_art.id),
+                              content_hash=staged["content_hash"], s3_key=staged["s3_key"])
         review_art_id = str(review_art.id)
 
     with tenant_context(inp.tenant_id):

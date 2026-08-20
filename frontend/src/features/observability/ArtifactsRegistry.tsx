@@ -188,12 +188,28 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
                         </span>
                       ),
                       <span className="u-row-tight" key="a">
-                        <Link to={`/artifacts/${artifact.id}`} className="btn btn--ghost btn--sm">
-                          Preview
-                        </Link>
-                        {(artifact.status === "approved" || artifact.status === "published") && (
-                          // Mirrors the backend export eligibility (gate passed) so the
-                          // button never lands on a status 400.
+                        {/* Only offer Preview when there is something to show — a body, or a
+                            link to the system of record. `previewable` is computed server-side
+                            beside `read_artifact_preview`; a row with neither used to open a
+                            blank page, or a 404 worded as "doesn't exist … or you don't have
+                            access to it", which reads like a permissions problem. Undefined
+                            (older API response) still offers it. */}
+                        {artifact.previewable !== false ? (
+                          <Link to={`/artifacts/${artifact.id}`} className="btn btn--ghost btn--sm">
+                            Preview
+                          </Link>
+                        ) : (
+                          <span className="t-xs u-muted" title="This row is a pointer with no body and no link to open.">
+                            Nothing to preview
+                          </span>
+                        )}
+                        {(artifact.status === "approved" || artifact.status === "published") &&
+                          // Mirrors the backend export eligibility: the gate must have passed AND
+                          // there must be something to export. Gate alone was not enough — a
+                          // published internal artifact with no body offers Export and then fails
+                          // with "Artifact has no body to export." Git rows are unaffected: their
+                          // content lives in the PR, and `previewable` is true via their url.
+                          artifact.previewable !== false && (
                           <Link to={`/artifacts/${artifact.id}/publish`} className="btn btn--ghost btn--sm">
                             Export
                           </Link>

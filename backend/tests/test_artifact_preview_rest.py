@@ -398,3 +398,66 @@ def test_preview_is_tenant_isolated(client, db):
     _login(c, "dev@globex.com", "pw!")
     resp = c.get(_preview_url(artifact.id))
     assert resp.status_code == 404  # cross-tenant artifact is invisible under this session
+
+
+# ── the list must say whether Preview can show anything (Artifacts preview bug) ──────────────
+# A row with neither a body nor a link opened a blank page, or — for an internal one — a 404 the
+# UI words as "this artifact doesn't exist, has no body, or you don't have access to it", which
+# reads like a permissions problem when it is nothing of the kind. `previewable` lets the UI stop
+# offering the button, and is computed beside `read_artifact_preview` so the two cannot drift.
+def _artifact(project, **over):
+    base = dict(tenant=project.tenant, project=project, phase="implementation", type="code",
+                sor="internal", status="draft", version=1)
+    base.update(over)
+    return Artifact.objects.create(**base)
+
+
+def test_previewable_is_false_only_when_there_is_nothing_to_show(client, project, member):
+    from integrations.preview import artifact_has_preview
+
+    # the TASK-019 shape: internal, registered with a hash and no body — unpreviewable
+    assert artifact_has_preview(
+        _artifact(project, type="code_review", content_hash="d1")) is False
+    # ...and the same row once its body is staged
+    assert artifact_has_preview(
+        _artifact(project, type="code_review", s3_key="drafts/x/review.md")) is True
+    # a `code` pointer at a PR carries no body BY DESIGN (#1/#3) — the preview is the link
+    assert artifact_has_preview(_artifact(
+        project, sor="git", external_ref={"sor": "git", "repo": "a/b", "number": 7,
+                                          "url": "https://github.com/a/b/pull/7"})) is True
+    # ...but a pre-PR pointer with no link has nothing to open
+    assert artifact_has_preview(_artifact(
+        project, sor="git", external_ref={"sor": "git", "branch": "feature/x"})) is False
+    # a wireframe keeps its bodies per state, with no s3_key of its own — still previewable
+    assert artifact_has_preview(_artifact(
+        project, type="wireframe",
+        external_ref={"states": [{"name": "default", "s3_key": "drafts/x/s1.html"}]})) is True
+    # Confluence/Jira read through their connector, so there is always something to show
+    assert artifact_has_preview(_artifact(
+        project, sor="confluence", external_ref={"page_ref": "123"})) is True
+
+
+def test_the_artifact_list_carries_previewable(client, project, member):
+    _artifact(project, type="code_review", content_hash="d1")
+    _artifact(project, type="code_review", s3_key="drafts/x/review.md")
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    payload = client.get(_list_url()).json()
+    rows = payload["results"] if isinstance(payload, dict) else payload
+
+    flags = sorted(r["previewable"] for r in rows)
+    assert flags == [False, True], "the UI cannot hide the button without this"
+
+
+def test_a_row_the_list_calls_previewable_actually_previews(client, project, member):
+    """Guard the guard: the flag has to agree with the endpoint, or we have simply moved the
+    confusion from one screen to another."""
+    store = s3_from_settings()
+    key = f"test-previewable/{project.tenant_id}/{project.id}/review.md"
+    store.put(key, "# Review")
+    good = _artifact(project, type="code_review", s3_key=key)
+    bad = _artifact(project, type="code_review", content_hash="d1")
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    assert client.get(_preview_url(good.id)).status_code == 200
+    assert client.get(_preview_url(bad.id)).status_code == 404
