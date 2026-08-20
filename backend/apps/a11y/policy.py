@@ -108,6 +108,21 @@ def is_advisory(checker: str) -> bool:
 #: separation gets a real role then, and this constant is the one place that changes.
 ACCESSIBILITY_REVIEWER_ROLE = "qa_lead"
 
+#: Who may change the audit SCOPE — register, edit or remove pages, and start an audit.
+#:
+#: **Wider than the reviewer role, and narrower than everybody.** Deciding a finding and signing
+#: a conformance statement are the accessibility reviewer's alone; saying which pages an
+#: application has is ordinary project work a tech lead does as readily as a QA lead. So the two
+#: are separate lists rather than one.
+#:
+#: **Why the list exists at all.** These endpoints had no role check of any kind: they fell
+#: through `ProjectViewSet.get_permissions` to the viewset default and were open to any
+#: authenticated session in the tenant — while starting a keyboard journey on the very same
+#: screen was refused for anyone but the reviewer. Nothing escaped the tenant, so this was never
+#: a cross-customer hole; it was an inconsistency on top of the input every later number depends
+#: on. A page quietly taken out of scope makes the next baseline read as an improvement.
+PAGE_MANAGE_ROLES = (ACCESSIBILITY_REVIEWER_ROLE, "tech_lead", "admin")
+
 _GATE_KEYS = ("block_severities", "min_confidence", "block_on_incomplete_run",
               "block_on_baseline_debt", "design_checks")
 

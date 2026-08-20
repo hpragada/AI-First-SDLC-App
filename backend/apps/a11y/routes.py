@@ -53,6 +53,12 @@ ENTRY_KEYS = {
     "title": "label",
     "label": "label",
     "enabled": "enabled",
+    # `in_scope` is the same fact under the name most route exports actually use — our own
+    # reference brownfield app writes it for all 69 of its routes. Without the alias every one
+    # of them came back as an unrecognised column and every page was registered in scope,
+    # including the one its author had deliberately excluded. The warning that named the column
+    # was honest and still fired; it was the alias that was missing.
+    "in_scope": "enabled",
     "notes": "notes",
     "example": "example_path",
     "example_path": "example_path",
@@ -125,14 +131,35 @@ def _read_entries(routes) -> dict:
         # Last one wins rather than raising: a list naming the same page twice is a
         # duplicate, not a contradiction, and the unique constraint would refuse the write
         # with a database error nobody can read.
+        # `enabled` / `in_scope` read through ENTRY_KEYS' own aliases rather than a second list
+        # of names kept in step by hand. That is exactly how the alias nearly shipped as a
+        # silence: `ENTRY_KEYS` fed the ignored-keys warning and nothing else, so a recognised
+        # key that no field read would have been dropped without even a warning.
         seen[path] = {
-            "label": str(entry.get("title") or entry.get("label") or "")[:200],
-            "notes": str(entry.get("notes") or ""),
-            "enabled": bool(entry.get("enabled", True)),
+            "label": str(_field(entry, "label") or "")[:200],
+            "notes": str(_field(entry, "notes") or ""),
+            "enabled": bool(_field(entry, "enabled", default=True)),
             "example_path": _example(entry, path),
         }
     return {"seen": seen,
             "ignored": [{"key": k, "entries": n} for k, n in sorted(ignored.items())]}
+
+
+def _field(entry: dict, name: str, *, default=None):
+    """One page property, read through every alias `ENTRY_KEYS` accepts for it.
+
+    Aliases are declared once, in `ENTRY_KEYS`, and read here — so a key the ignored-keys
+    warning treats as recognised is a key something actually reads. The two used to be separate
+    lists, which is a silence waiting to happen: `in_scope` was accepted by the warning and read
+    by nothing, so a page marked out of scope would have been audited with nothing said.
+
+    First alias present wins, in the order the caller's data has them; absent everywhere gives
+    `default`.
+    """
+    for key, target in ENTRY_KEYS.items():
+        if target == name and key in entry and entry[key] is not None:
+            return entry[key]
+    return default
 
 
 def _example(entry: dict, path: str) -> str:
@@ -143,7 +170,7 @@ def _example(entry: dict, path: str) -> str:
     route itself — an example that is not a path would send the audit somewhere nobody asked
     for, which is the failure this module exists to refuse.
     """
-    raw = str(entry.get("example") or entry.get("example_path") or "").strip()
+    raw = str(_field(entry, "example_path") or "").strip()
     if not raw:
         return ""
     example = normalise_path(raw)
@@ -292,6 +319,31 @@ def scope_change_since(tenant_id, project_id) -> dict:
             "before": len(before), "now": len(now)}
 
 
+def _read_lines(raw: str) -> list:
+    """One path per line. Blank lines ignored; `#` comments ignored; spaces refused."""
+    paths = []
+    for number, line in enumerate(raw.splitlines(), start=1):
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        # Trailing commas and quotes are what a half-converted JSON list looks like. Stripping
+        # them is not "repairing a bad path" — the path itself is untouched and still checked
+        # by `normalise_path`; this only removes punctuation that belongs to the other format.
+        entry = entry.rstrip(",").strip().strip('"').strip("'").strip()
+        if not entry:
+            continue
+        if any(ch.isspace() for ch in entry):
+            _reject(
+                f"line {number} ({entry!r}) contains a space, so it is not a single path. One "
+                f"path per line — `/checkout` — or paste a JSON list if you also want to give "
+                f"each page a name."
+            )
+        paths.append(entry)
+    if not paths:
+        _reject("nothing was pasted, so there are no pages to register")
+    return paths
+
+
 def parse_routes_text(text) -> list:
     """One pasted list, read here rather than in the browser.
 
@@ -300,15 +352,29 @@ def parse_routes_text(text) -> list:
     twice is a message that will differ. The browser would also report a syntax error in its own
     words, which are about JSON rather than about pages.
 
-    Accepts what the screen advertises and nothing else: a list of paths, or a list of objects
-    carrying `path`. A bare object is accepted as a list of one, because pasting a single entry
-    without its brackets is an easy thing to do and an unambiguous thing to mean.
+    Accepts a list of paths, or a list of objects carrying `path`. A bare object is accepted as
+    a list of one, because pasting a single entry without its brackets is an easy thing to do
+    and an unambiguous thing to mean.
+
+    **And one path per line**, which is what most people paste first. It used to be refused,
+    with a message that explained JSON to somebody who had just pasted a perfectly clear list of
+    pages. Line mode is entered only when the text does not open with `[` or `{`, so nothing
+    about the JSON path changes — a malformed JSON list still gets the JSON error rather than
+    being silently re-read as one long path.
+
+    **Line mode refuses a line containing a space, and that is the point of having it here.**
+    `normalise_path` rejects an empty path, a full URL, a path not starting with `/` and a line
+    break — but not a space. A line like `Home /catalogue` would otherwise register a page that
+    cannot exist and be reported unreachable on every audit forever. That exact hole is why the
+    earlier line-per-path form was dropped; it is closed here rather than reopened.
     """
     if isinstance(text, list):
         return text
     raw = str(text or "").strip()
     if not raw:
         _reject("nothing was pasted, so there are no pages to register")
+    if raw[0] not in "[{":
+        return _read_lines(raw)
     try:
         parsed = json.loads(raw)
     except ValueError as exc:

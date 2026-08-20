@@ -42,16 +42,32 @@ import { pathToFileURL } from "node:url";
  *  scanner version that produced it, and that has to be the version the client's own build uses,
  *  not one we carry. See `loadAxe`.
  *
- *  The bare import is kept as a fallback for a machine that installed the tools beside the
- *  companion rather than in the project. It is tried second so the project always wins. */
+ *  The bare import is the COMPANION'S OWN copy, resolved by Node from this file's directory
+ *  upward — `runner/node_modules`, which `runner/package.json` pins. It is tried second so the
+ *  project always wins, and that order is the whole design: an application that ships its own
+ *  axe is scanned with the version it ships, and one that has none (every application that is
+ *  not a Node project) is scanned with ours rather than not scanned at all.
+ *
+ *  **Which one was used is never left implicit.** `lastResolvedFrom` is read by `loadAxe`, and
+ *  the answer reaches the stored `scanner_version` — so a conformance statement produced with
+ *  our copy says so, instead of quietly implying the client's. The fallback existed here from
+ *  the first version and nothing was ever installed for it to find; giving the companion a
+ *  pinned toolchain is what turns it from dead code into the answer for a non-Node stack. */
+let lastResolvedFrom = "";
+
 async function importFromProject(name) {
   const from = pathToFileURL(join(process.cwd(), "a11y-audit-resolver.cjs"));
   try {
-    return await import(pathToFileURL(createRequire(from).resolve(name)).href);
+    const mod = await import(pathToFileURL(createRequire(from).resolve(name)).href);
+    lastResolvedFrom = "project";
+    return mod;
   } catch (projectErr) {
     try {
-      return await import(name);
+      const mod = await import(name);
+      lastResolvedFrom = "companion";
+      return mod;
     } catch {
+      lastResolvedFrom = "";
       throw projectErr;   // report where we actually looked, not the fallback's failure
     }
   }
@@ -106,14 +122,19 @@ async function loadAxe() {
     // it is whatever their repo pins and it changes under us without warning — a conformance
     // statement that cannot name the scanner that produced it cannot be re-examined later
     // (QA-24). It has always been on the module; it was simply never read.
-    if (axe && axe.source) return { source: axe.source, version: axe.version || "", error: "" };
-    return { source: "", version: "", error: "axe-core is installed but exposes no injectable source" };
+    if (axe && axe.source) {
+      return { source: axe.source, version: axe.version || "", from: lastResolvedFrom, error: "" };
+    }
+    return { source: "", version: "", from: "", error: "axe-core is installed but exposes no injectable source" };
   } catch (err) {
     return {
       source: "",
       version: "",
-      error: `axe-core is not installed in ${process.cwd()}, so the measurable checks did not `
-        + `run. Install it there (npm install -D axe-core) and run the audit again. (${err.message})`,
+      from: "",
+      error: `axe-core could not be loaded from this project (${process.cwd()}) or from the `
+        + `companion's own toolchain, so the measurable checks did not run. Install it in the `
+        + `companion (npm install in runner/) or in the project (npm install -D axe-core), and `
+        + `run the audit again. (${err.message})`,
     };
   }
 }
@@ -348,7 +369,15 @@ async function captureRoute(page, axe, baseUrl, route, visitPath) {
   screen.axe_passes = scan.passes;
   screen.axe_inapplicable = scan.inapplicable;
   screen.axe_incomplete = scan.incomplete;
-  if (axe.version) screen.scanner_version = `axe-core ${axe.version}`;
+  // `(companion)` when the scan used OUR pinned axe rather than the application's own. The
+  // suffix rides on the version string that already travels everywhere a version is shown —
+  // per-screen, in the report, and onto the signed conformance statement — so no new field, no
+  // migration, and no display that can forget to mention it. Without it the platform would
+  // silently name a version the client's application does not actually ship.
+  if (axe.version) {
+    screen.scanner_version =
+      `axe-core ${axe.version}` + (axe.from === "companion" ? " (companion)" : "");
+  }
 
   const elements = await collectElements(page);
   await fillAccessibleNames(page, elements);
@@ -374,9 +403,10 @@ async function captureRoute(page, axe, baseUrl, route, visitPath) {
  *  the one command that fixes it. */
 function browserMissingMessage(err) {
   return (
-    `Playwright is not installed in ${process.cwd()}, so no page can be opened. ` +
-    `Install it there and run the audit again:  ` +
-    `npm install -D playwright axe-core && npx playwright install chromium  ` +
+    `Playwright could not be loaded from this project (${process.cwd()}) or from the companion's ` +
+    `own toolchain, so no page can be opened. Install it in the companion — ` +
+    `npm install && npx playwright install chromium, from runner/ — which covers every project ` +
+    `on this machine; or in the project itself with npm install -D playwright axe-core.  ` +
     `(${err && err.message ? err.message : err})`
   );
 }
@@ -397,6 +427,7 @@ async function check() {
     out.browser.error = browserMissingMessage(err);
   }
   const axe = await loadAxe();
+  out.scanner.from = axe.from || "";
   out.scanner.ok = Boolean(axe.source);
   out.scanner.version = axe.version || "";
   out.scanner.error = axe.error || "";

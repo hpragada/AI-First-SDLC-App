@@ -73,6 +73,9 @@ function routesBody(over: Record<string, unknown> = {}) {
     routes: [route()],
     summary: "1 route(s) registered for audit",
     scope_change: {},
+    // The QA Lead's view by default. The read-only view is asserted on its own below, because
+    // it is a state in its own right rather than the absence of one.
+    can_manage: true,
     ...over,
   };
 }
@@ -468,5 +471,105 @@ describe("S-38 editing one page", () => {
 
     await waitFor(() => expect(screen.getByText("Nothing was changed")).toBeTruthy());
     expect(screen.getByText(/already registered/)).toBeTruthy();
+  });
+});
+
+// ── Who may operate this screen, and who may only read it ───────────────────
+//
+// These four endpoints had no role check of any kind: they fell through the viewset default and
+// were open to any session in the tenant, while starting a keyboard journey on the very same
+// screen was refused for anyone but the accessibility reviewer. The screen matched the code —
+// every control rendered live for everybody, with none of the "you can see these; the QA Lead
+// starts them" wording the journeys panel below has always carried.
+//
+// Page scope is the input every later number depends on. A page quietly taken out of scope
+// makes the next baseline read as an improvement.
+
+describe("S-38 read-only", () => {
+  it("a reader is told whose call it is, before any button", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({ can_manage: false })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("You can see this; the QA Lead or Tech Lead runs it");
+    expect(screen.getByText(/readable by anyone on the project/)).toBeTruthy();
+  });
+
+  it("a reader gets disabled controls, not controls that fail on click", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({ can_manage: false })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    for (const name of ["Run audit", "Add a page", "Import a list", "Edit", "Remove"]) {
+      const button = await screen.findByRole("button", { name });
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+    }
+    // Including the in-scope switch, which is the quietest way to change what an audit covers.
+    // `Switch` puts the label on the wrapping <label>, so reach the control it wraps.
+    const toggle = screen.getByLabelText("Audit /catalogue").querySelector("input");
+    expect((toggle as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it("a reader still sees every page — read-only, never hidden", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({ can_manage: false })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("/catalogue")).toBeTruthy();
+    expect(screen.getByText("Browse the catalogue")).toBeTruthy();
+  });
+
+  it("with no pages at all, a reader is told who registers them", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({ routes: [], can_manage: false })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("No pages are registered yet");
+    expect(screen.getByText(/QA Lead or Tech Lead on this project registers the pages/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Import a list" })).toBeNull();
+  });
+
+  it("an operator keeps every control", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    const run = await screen.findByRole("button", { name: "Run audit" });
+    expect((run as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText("You can see this; the QA Lead or Tech Lead runs it")).toBeNull();
+  });
+});
+
+// ── What this machine needs, said before the audit rather than after it ─────
+
+describe("S-38 what your machine needs", () => {
+  it("says the audit prefers the application's own scanner and names the fallback", async () => {
+    // The audit and the keyboard journey below it need genuinely different setups, and the
+    // difference used to be invisible — discovered from an audit that failed minutes later.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("Run an audit");
+    expect(screen.getByText(/Your machine needs a browser and the/)).toBeTruthy();
+    expect(screen.getByText(/falls back to the companion's own/)).toBeTruthy();
   });
 });

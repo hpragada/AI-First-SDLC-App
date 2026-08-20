@@ -947,6 +947,9 @@ export interface A11yRoutesResponse {
   routes: A11yRoute[];
   summary: string;
   scope_change: A11yScopeChange;
+  // Whether THIS reader may change the page list or start an audit (QA Lead / Tech Lead /
+  // Admin). Everyone on the project reads the same screen; only these three operate it.
+  can_manage: boolean;
   changed?: {
     added: string[];
     updated: string[];
@@ -1048,6 +1051,10 @@ export interface A11yReviewQueue {
   queue: A11yReviewItem[];
   can_review: boolean;
   lock_minutes: number;
+  // Which empty state to show when `queue` is empty. `false` means nothing on this project has
+  // ever been checked — a completely different sentence from "every check was sure enough to
+  // answer on its own", and the two used to be told to the reader as the same thing.
+  ever_checked: boolean;
 }
 
 // ── G6 · keyboard journeys (S-38) ────────────────────────────────────────────────────────
@@ -1056,6 +1063,8 @@ export interface A11yReviewQueue {
 // traps you, whether focus stays visible, whether a status message is announced. They are only
 // answerable by OPERATING the application, which is what a journey does.
 
+// `status` is the last walk's status, with one value the platform derives rather than stores:
+// `"queued"` means dispatched and not yet claimed by a machine. See `journey.QUEUED`.
 export interface A11yJourneyRow {
   // What the screen sends back to start this one. Always present, unlike `test_ref`: a test case
   // is only usually stamped with a TC id, and two unstamped ones must not become one row.

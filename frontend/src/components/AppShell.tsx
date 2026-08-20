@@ -57,7 +57,11 @@ const NAV: Array<{
       // named job a named role does repeatedly, and the count is how the reviewer learns there is
       // work without going to look. ALWAYS present, never revealed by a run — "no menu" and
       // "nothing was ever checked" must not look the same (D-A11Y-94).
-      { id: "a11y", label: "Accessibility", icon: "a11y", href: "/a11y" },
+      // `/a11y/pages`, NOT `/a11y`. The tab strip puts Pages & audit first because that is
+      // where the work starts — and the sidebar used to disagree with it, landing every first
+      // visit on the review queue, the one tab with nothing on it until an audit has run. The
+      // queue's count still rides on this item, so a reviewer loses nothing.
+      { id: "a11y", label: "Accessibility", icon: "a11y", href: "/a11y/pages" },
     ],
   },
   {

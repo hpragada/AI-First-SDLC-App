@@ -266,6 +266,39 @@ describe("Keyboard journeys (G6c)", () => {
     expect(screen.getAllByText("No machine connected").length).toBeGreaterThan(0);
   });
 
+  it("a dispatched journey no machine has taken says so, not \"Walking now\"", async () => {
+    // The row is marked walking the moment the run is triggered, which is right — the platform
+    // has handed the work over. But rendering that as "Walking now" meant a journey dispatched
+    // with no companion online read as a browser stepping through the application, for ever.
+    // The audit strip directly above has told those two states apart since task 8a.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...base(),
+      [/a11y-journeys\/$/, list({
+        journeys: [journey({ status: "queued", last_walked: "2026-08-20T09:00:00Z" })],
+      })],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("Waiting for a machine");
+    expect(screen.queryByText("Walking now")).toBeNull();
+  });
+
+  it("a journey waiting for a machine cannot be ticked again either", async () => {
+    // It is already spoken for, so ticking it would only earn an "already being walked"
+    // refusal — the same reason a walking one is locked.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...base(),
+      [/a11y-journeys\/$/, list({
+        journeys: [journey({ status: "queued", last_walked: "2026-08-20T09:00:00Z" })],
+      })],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("Waiting for a machine");
+    expect((screen.getByLabelText("Walk TC-031") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "Select all walkable (0)" })).toBeDefined();
+  });
+
   it("the panel is there even when no pages are registered", async () => {
     // A journey follows a TEST CASE, not the page list. This is the state a greenfield project
     // is in after the Testing phase and before anybody registers a page.

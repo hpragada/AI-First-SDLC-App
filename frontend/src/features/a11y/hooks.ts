@@ -246,7 +246,9 @@ export function useA11yJourneys(projectId: string | undefined) {
     queryFn: () => api.a11yJourneys(tenantId, projectId as string),
     enabled: Boolean(projectId && tenantId),
     refetchInterval: (query) =>
-      query.state.data?.journeys.some((j) => j.status === "walking")
+      // `queued` too — a journey waiting for a machine is exactly the one a person is watching,
+      // and a list that stopped polling there would never show it start.
+      query.state.data?.journeys.some((j) => j.status === "walking" || j.status === "queued")
         ? WALKING_POLL_MS
         : false,
     refetchIntervalInBackground: false,

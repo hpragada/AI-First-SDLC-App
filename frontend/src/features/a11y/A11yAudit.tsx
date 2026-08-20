@@ -38,6 +38,7 @@ import type {
   A11yRoute,
 } from "../../types";
 import { A11yTabs } from "./A11yTabs";
+import { LoadFailed } from "./LoadFailed";
 import {
   useA11yAudits,
   useA11yJourneys,
@@ -237,16 +238,17 @@ function AddPages({
         <Textarea
           aria-labelledby="pages-box"
           rows={10}
-          placeholder={'[{ "path": "/", "title": "Home", "enabled": true }, …]'}
+          placeholder={"/\n/catalogue\n/catalogue/:id"}
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
         <span className="field__help">
-          A list of paths — <span className="t-mono">["/", "/catalogue"]</span> — or a list of
-          entries carrying <span className="t-mono">path</span>, with optional{" "}
-          <span className="t-mono">title</span>, <span className="t-mono">enabled</span> and{" "}
-          <span className="t-mono">example</span>. Anything we cannot read is named back to you,
-          never silently dropped.
+          <strong>One path per line</strong> is enough — <span className="t-mono">/checkout</span>.
+          Paste a JSON list instead when you also want to give each page a name or say whether it
+          is in scope: entries carrying <span className="t-mono">path</span>, with optional{" "}
+          <span className="t-mono">title</span>, <span className="t-mono">enabled</span> (or{" "}
+          <span className="t-mono">in_scope</span>) and <span className="t-mono">example</span>.
+          Anything we cannot read is named back to you, never silently dropped.
         </span>
       </label>
 
@@ -399,11 +401,13 @@ function RunStrip({
   routes,
   scopeChange,
   hasMachine,
+  canManage,
 }: {
   projectId: string;
   routes: A11yRoute[];
   scopeChange: { added?: string[]; removed?: string[]; before?: number; now?: number };
   hasMachine: boolean;
+  canManage: boolean;
 }) {
   const [address, setAddress] = useState("");
   const start = useStartA11yAudit(projectId);
@@ -426,6 +430,18 @@ function RunStrip({
         The scan runs on your connected machine, not on our servers — your application is at an
         address only your machine can reach. Nothing about it is ever sent to us except what the
         scan writes down.
+      </p>
+      {/* Said here rather than discovered from a failed audit several minutes later. The two
+          things on this screen genuinely need different setups, and the difference used to be
+          invisible: an audit resolves its browser and scanner out of the audited project, a
+          keyboard journey below fetches its own. */}
+      <p className="t-sm u-muted" style={{ marginTop: "var(--space-2)" }}>
+        Your machine needs a browser and the <span className="t-mono">axe</span> scanner. If the
+        application's own repository is checked out there and ships them, the audit uses that
+        copy — and the report names the version your application actually uses. Otherwise it
+        falls back to the companion's own, and every scan says{" "}
+        <span className="t-mono">(companion)</span> beside the version so the two are never
+        confused.
       </p>
 
       {/* Scope moved since the last audit. The report's own Movement section compares findings
@@ -450,6 +466,16 @@ function RunStrip({
         <Banner variant="warning" title="You have no machine connected">
           Nothing can reach your application without one. Connect your machine, then run the
           audit. (A colleague's machine may be connected — this only knows about yours.)
+        </Banner>
+      )}
+
+      {/* Read-only, said before the button rather than discovered by a 403 on click — the same
+          shape the keyboard-journeys panel below has always had. */}
+      {!canManage && (
+        <Banner variant="info" title="You can see this; the QA Lead or Tech Lead runs it">
+          An audit spends a real browser on a real application for several minutes, so starting
+          one — and deciding which pages it covers — belongs to them. Everything here is
+          readable by anyone on the project.
         </Banner>
       )}
 
@@ -497,7 +523,7 @@ function RunStrip({
       <div className="gate-panel__actions" style={{ marginTop: "var(--space-4)" }}>
         <Button
           variant="primary"
-          disabled={inScope.length === 0 || start.isPending}
+          disabled={!canManage || inScope.length === 0 || start.isPending}
           onClick={() =>
             start.mutateAsync({ base_url: address.trim() || undefined }).catch(() => undefined)
           }
@@ -522,6 +548,11 @@ function RunStrip({
 // pages must still be able to walk them.
 
 function journeyResult(row: A11yJourneyRow): { label: string; variant: BadgeVariant } {
+  // "queued" is derived by the platform, not stored: dispatched, and no machine has taken it.
+  // Without this the row said "Walking now" for ever when no companion was running — while the
+  // audit strip directly above told the same two states apart. Same words as the audit, on
+  // purpose: one screen, one vocabulary.
+  if (row.status === "queued") return { label: "Waiting for a machine", variant: "outline" };
   if (row.status === "walking") return { label: "Walking now", variant: "waiting" };
   if (!row.last_walked) return { label: "Never walked", variant: "outline" };
   if (row.status === "failed") return { label: "Nothing was walked", variant: "failed" };
@@ -548,8 +579,11 @@ function KeyboardJourneys({ projectId, hasMachine }: { projectId: string; hasMac
   // without overwriting what they typed on the next poll.
   const value = address ?? data?.base_url ?? "";
   const rows = data?.journeys ?? [];
-  const walkable = rows.filter((r) => r.status !== "walking");
-  const chosen = rows.filter((r) => picked.has(r.id) && r.status !== "walking");
+  // In flight means dispatched OR being walked. A queued journey is already spoken for, so
+  // ticking it again would only earn an "already being walked" refusal.
+  const inFlight = (r: A11yJourneyRow) => r.status === "walking" || r.status === "queued";
+  const walkable = rows.filter((r) => !inFlight(r));
+  const chosen = rows.filter((r) => picked.has(r.id) && !inFlight(r));
 
   if (journeys.isLoading) {
     return (
@@ -557,6 +591,18 @@ function KeyboardJourneys({ projectId, hasMachine }: { projectId: string; hasMac
         <Skeleton kind="title" />
         <Skeleton kind="block" />
       </Panel>
+    );
+  }
+
+  // Same rule as the page list above: a failure here used to read "No journeys to walk yet",
+  // which is a statement about the project rather than about the request that failed.
+  if (journeys.isError) {
+    return (
+      <LoadFailed
+        what="The keyboard journeys"
+        error={journeys.error}
+        onRetry={() => void journeys.refetch()}
+      />
     );
   }
 
@@ -640,7 +686,7 @@ function KeyboardJourneys({ projectId, hasMachine }: { projectId: string; hasMac
                   type="checkbox"
                   aria-label={`Walk ${row.test_ref || row.title}`}
                   checked={picked.has(row.id)}
-                  disabled={row.status === "walking"}
+                  disabled={inFlight(row)}
                   onChange={() => toggle(row.id)}
                 />,
                 <>
@@ -840,12 +886,30 @@ export function A11yAudit() {
     );
   }
 
+  // A FAILED load, said as one. Falling through here rendered "No pages are registered yet"
+  // over a broken platform — a system that is down looking like a project nobody has started.
+  if (routes.isError) {
+    return (
+      <main className="canvas-pad">
+        <A11yTabs active="audit" />
+        <LoadFailed
+          what="The page list"
+          error={routes.error}
+          onRetry={() => void routes.refetch()}
+        />
+      </main>
+    );
+  }
+
   const rows = routes.data?.routes ?? [];
   const inScope = rows.filter((r) => r.enabled);
   const excluded = rows.filter((r) => !r.enabled);
   const shown = filter === "scope" ? inScope : filter === "excluded" ? excluded : rows;
   // Only this user's machines are visible to the app, so the wording says "you", never "nobody".
   const hasMachine = Boolean(runners.data?.some((r) => r.online || r.last_seen));
+  // Absent on an older payload reads as "no" — the safe direction: a reader shown a disabled
+  // button loses nothing, while an operator shown one for a moment simply reloads.
+  const canManage = Boolean(routes.data?.can_manage);
 
   return (
     <main className="canvas-pad">
@@ -884,14 +948,20 @@ export function A11yAudit() {
             title="No pages are registered yet"
             text="The platform has no access to your application, so it cannot discover its pages — somebody has to say what they are. Nothing is audited until you do."
             action={
-              <div className="gate-panel__actions" style={{ justifyContent: "center" }}>
-                <Button variant="primary" onClick={() => setImporting(true)}>
-                  Import a list
-                </Button>
-                <Button variant="secondary" onClick={() => setEditing(null)}>
-                  Add a page
-                </Button>
-              </div>
+              canManage ? (
+                <div className="gate-panel__actions" style={{ justifyContent: "center" }}>
+                  <Button variant="primary" onClick={() => setImporting(true)}>
+                    Import a list
+                  </Button>
+                  <Button variant="secondary" onClick={() => setEditing(null)}>
+                    Add a page
+                  </Button>
+                </div>
+              ) : (
+                <p className="t-sm u-muted">
+                  The QA Lead or Tech Lead on this project registers the pages.
+                </p>
+              )
             }
           />
         </Panel>
@@ -903,6 +973,7 @@ export function A11yAudit() {
               routes={rows}
               scopeChange={routes.data?.scope_change ?? {}}
               hasMachine={hasMachine}
+              canManage={canManage}
             />
           </div>
 
@@ -929,10 +1000,14 @@ export function A11yAudit() {
                 <span className="u-spacer" />
                 {/* Adding one page is the everyday action, so it leads. Importing is how a
                     project starts, not how it is kept. */}
-                <Button variant="secondary" onClick={() => setEditing(null)}>
+                <Button
+                  variant="secondary"
+                  disabled={!canManage}
+                  onClick={() => setEditing(null)}
+                >
                   Add a page
                 </Button>
-                <Button variant="ghost" onClick={() => setImporting(true)}>
+                <Button variant="ghost" disabled={!canManage} onClick={() => setImporting(true)}>
                   Import a list
                 </Button>
               </div>
@@ -956,7 +1031,7 @@ export function A11yAudit() {
                     <Switch
                       label={`Audit ${row.path}`}
                       checked={row.enabled}
-                      disabled={update.isPending}
+                      disabled={!canManage || update.isPending}
                       onChange={(e) =>
                         update
                           .mutateAsync({ routeId: row.id, fields: { enabled: e.target.checked } })
@@ -979,13 +1054,18 @@ export function A11yAudit() {
                     <span className="t-sm u-muted">—</span>
                   ),
                   <div className="u-row">
-                    <Button variant="ghost" size="sm" onClick={() => setEditing(row)}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={!canManage}
+                      onClick={() => setEditing(row)}
+                    >
                       Edit
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
-                      disabled={remove.isPending}
+                      disabled={!canManage || remove.isPending}
                       onClick={() =>
                         remove
                           .mutateAsync(row.id)
