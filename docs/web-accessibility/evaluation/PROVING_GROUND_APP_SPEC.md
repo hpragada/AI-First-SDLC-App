@@ -330,9 +330,15 @@ every 2.2 result is a false pass.
 > running the fixture, and both produce a report that looks complete while being silently narrower
 > than intended.
 >
-> **`target-size` (2.5.8) and `label-content-name-mismatch` (2.5.3) ship disabled.** Selecting rules
-> by WCAG tag does not run them. A scan configured with tags alone reports every page clean on those
-> two criteria — no warning, no gap in the output. They must be named individually in `rules`.
+> **`label-content-name-mismatch` (2.5.3) does not run under a tag filter.** It is not disabled — it
+> carries axe's `experimental` tag, and axe leaves experimental rules out of a tag-selected run. A
+> scan configured with tags alone reports every page clean on 2.5.3, with no warning and no gap in
+> the output. Name it in `rules` to include it, or add `experimental` to the tag list and accept the
+> seven other experimental rules that come with it.
+>
+> **`target-size` (2.5.8) looks like the same case and is not.** It ships `enabled: false`, but a
+> tag-based `runOnly` runs it anyway: the `enabled` flag governs only what axe does when given no
+> instructions. Select `wcag22aa` and the rule fires. Measured on axe-core 4.13.0, not reasoned.
 >
 > **`AxeBuilder.options()` overwrites the builder's options rather than merging.** So
 > `.withTags(tags).options({ rules })` silently discards the tag filter and runs every rule axe has,

@@ -17,9 +17,12 @@ const path = require("path");
 const crypto = require("crypto");
 const { chromium } = require("playwright");
 
-const { APP_DIR: ROOT, appPath } = require("./config");
+const { APP_DIR: ROOT, appPath, BASE_URL } = require("./config");
 const manifest = JSON.parse(fs.readFileSync(appPath("routes.json"), "utf8"));
-const BASE = manifest.base_url;
+// Config first, manifest second. `routes.json` bakes in the usual port; MERIDIAN_URL is how
+// you point the harness at a second copy on another port. Reading only the manifest here
+// meant every newly added route 404ed against a stale server while the old ones answered.
+const BASE = (BASE_URL || manifest.base_url).replace(/\/$/, "");
 const routes = manifest.routes.filter((r) => r.in_scope).map((r) => r.path);
 
 const problems = [];

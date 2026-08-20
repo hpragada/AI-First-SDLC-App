@@ -241,6 +241,33 @@ const CHECKS = [
         "the list also uses strong or dt, which settles the question";
     },
   },
+  {
+    route: "/catalogue/subject-index", criterion: "1.3.1", verdict: "fail",
+    what: "a table whose five header cells are ordinary data cells",
+    test: () => {
+      const t = document.getElementById("subject-table");
+      if (!t) return "#subject-table is missing";
+      if (document.querySelector("main th")) return "the page has a th somewhere";
+      const head = t.querySelectorAll("thead tr td");
+      if (head.length !== 5) return `${head.length} header cells, expected 5`;
+      const ids = [...head].map((c) => c.id).join(",");
+      if (ids !== "sub-h1,sub-h2,sub-h3,sub-h4,sub-h5") return `header ids are ${ids}`;
+      return t.querySelectorAll("tbody tr").length === 7 || "expected 7 body rows";
+    },
+  },
+  {
+    route: "/catalogue/subject-list", criterion: "1.3.1", verdict: "pass",
+    what: "the same table with real column headers",
+    test: () => {
+      const t = document.getElementById("subject-table");
+      if (!t) return "#subject-table is missing";
+      const head = t.querySelectorAll('thead tr th[scope="col"]');
+      if (head.length !== 5) return `${head.length} column headers, expected 5`;
+      const ids = [...head].map((c) => c.id).join(",");
+      if (ids !== "sub-h1,sub-h2,sub-h3,sub-h4,sub-h5") return `header ids are ${ids}`;
+      return t.querySelectorAll("tbody tr").length === 7 || "expected 7 body rows";
+    },
+  },
 
   // ── 4.1.2 · name, role, value ─────────────────────────────────────
   {
@@ -335,6 +362,39 @@ const CHECKS = [
       if (!el.classList.contains("btn")) return "it is not styled as a button";
       if (el.hasAttribute("role")) return `it has role="${el.getAttribute("role")}"`;
       return (el.getAttribute("href") || "").length > 1 || "it does not actually go anywhere";
+    },
+  },
+  {
+    route: "/staff/shelf-audit", criterion: "4.1.2", verdict: "fail",
+    what: "four section switches with no role, no name and no state",
+    test: () => {
+      const ids = ["shelf-fiction", "shelf-reference", "shelf-childrens", "shelf-local"];
+      const els = ids.map((id) => document.getElementById(id));
+      const gone = ids.filter((id, i) => !els[i]);
+      if (gone.length) return `missing: ${gone.join(", ")}`;
+      const notDiv = els.filter((e) => e.tagName !== "DIV");
+      if (notDiv.length) return `${notDiv.length} of 4 are not divs`;
+      const exposed = els.filter((e) => e.hasAttribute("role") || e.hasAttribute("aria-checked") ||
+        e.hasAttribute("aria-labelledby") || e.hasAttribute("tabindex"));
+      if (exposed.length) return `${exposed.length} expose a role, a state or a name`;
+      return els.filter((e) => e.hasAttribute("onclick")).length === 4 ||
+        "they do not all handle a click, so they are not controls at all";
+    },
+  },
+  {
+    route: "/staff/shelf-settings", criterion: "4.1.2", verdict: "pass",
+    what: "the same four built as real switches",
+    test: () => {
+      const ids = ["shelf-fiction", "shelf-reference", "shelf-childrens", "shelf-local"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a switch is missing";
+      if (els.some((e) => e.tagName !== "BUTTON")) return "not all four are buttons";
+      if (els.some((e) => e.getAttribute("role") !== "switch")) return "not all carry role=switch";
+      if (els.some((e) => !["true", "false"].includes(e.getAttribute("aria-checked")))) {
+        return "aria-checked is missing on at least one";
+      }
+      const orphan = els.filter((e) => !document.getElementById(e.getAttribute("aria-labelledby") || ""));
+      return orphan.length === 0 || `${orphan.length} have no accessible name`;
     },
   },
 
@@ -444,6 +504,36 @@ const CHECKS = [
       return text.length === 0 || `${text.length} indicators carry text, which settles it`;
     },
   },
+  {
+    route: "/help/report-a-problem", criterion: "1.4.1", verdict: "fail",
+    what: "a rejected field marked by a red border and nothing else",
+    test: () => {
+      const wrap = document.querySelector("main .field-invalid");
+      if (!wrap) return "no field is in its error state";
+      const control = document.getElementById("problem-detail");
+      if (!control) return "#problem-detail is missing";
+      if (control.hasAttribute("aria-invalid")) return "it exposes aria-invalid";
+      if (control.hasAttribute("aria-describedby")) return "it points at a description";
+      if (document.querySelector("main .field-note")) return "an error note is present";
+      if (document.querySelector('main [role="alert"]')) return "a live region is present";
+      const plain = document.getElementById("problem-item");
+      if (!plain) return "#problem-item is missing";
+      return getComputedStyle(control).borderTopColor !== getComputedStyle(plain).borderTopColor ||
+        "the rejected field looks no different from the others";
+    },
+  },
+  {
+    route: "/help/problem-report", criterion: "1.4.1", verdict: "pass",
+    what: "the same field with the reason written out and pointed at",
+    test: () => {
+      const control = document.getElementById("problem-detail");
+      if (!control) return "#problem-detail is missing";
+      if (control.getAttribute("aria-invalid") !== "true") return "aria-invalid is not set";
+      const note = document.getElementById(control.getAttribute("aria-describedby") || "");
+      if (!note) return "aria-describedby points at nothing";
+      return note.textContent.trim().length > 0 || "the note is empty";
+    },
+  },
 
   // ── 2.5.3 · label in name ─────────────────────────────────────────
   {
@@ -522,6 +612,37 @@ const CHECKS = [
       return name.length > visible.length || "the name adds nothing, so there is nothing to judge";
     },
   },
+  {
+    route: "/account/card-services", criterion: "2.5.3", verdict: "fail",
+    what: "seven buttons whose spoken name drops the word printed on them",
+    test: () => {
+      const ids = ["card-renew", "card-pay", "card-report", "card-freeze", "card-replace", "card-upgrade", "card-close"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a button is missing";
+      const unnamed = els.filter((e) => !e.getAttribute("aria-label"));
+      if (unnamed.length) return `${unnamed.length} have no aria-label, so there is no mismatch`;
+      const bad = els.filter((e) => {
+        const visible = e.textContent.trim().toLowerCase();
+        return !(e.getAttribute("aria-label") || "").toLowerCase().includes(visible);
+      });
+      return bad.length === 7 || `${bad.length} of 7 drop their visible word`;
+    },
+  },
+  {
+    route: "/account/card-options", criterion: "2.5.3", verdict: "pass",
+    what: "the same seven, each spoken name keeping its visible word",
+    test: () => {
+      const ids = ["card-renew", "card-pay", "card-report", "card-freeze", "card-replace", "card-upgrade", "card-close"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a button is missing";
+      const bad = els.filter((e) => {
+        const visible = e.textContent.trim().toLowerCase();
+        const name = (e.getAttribute("aria-label") || visible).toLowerCase();
+        return !name.includes(visible);
+      });
+      return bad.length === 0 || `${bad.length} of 7 do not contain their visible word`;
+    },
+  },
 ];
 
 // Pages that must be visually near-identical to their twin, because the demo turns on a
@@ -532,6 +653,10 @@ const LOOKALIKES = [
   ["/account/loan-history", "/account/statements"],
   ["/staff/reports", "/staff/overview"],
   ["/reports/branch-comparison", "/reports/monthly-issues"],
+  ["/catalogue/subject-index", "/catalogue/subject-list"],
+  ["/staff/shelf-audit", "/staff/shelf-settings"],
+  ["/account/card-services", "/account/card-options"],
+  ["/help/report-a-problem", "/help/problem-report"],
 ];
 
 (async () => {

@@ -342,7 +342,8 @@ Run axe over every route in `routes.json` and write a report. Use exactly this c
 ```js
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
-// Two WCAG rules ship DISABLED. A tag filter alone will not run them.
+// `label-content-name-mismatch` is experimental upstream, so a tag filter leaves it out.
+// `target-size` runs under `wcag22aa` on its own; naming it here is belt-and-braces.
 const OPT_IN_RULES = {
   "target-size": { enabled: true },                 // WCAG 2.5.8
   "label-content-name-mismatch": { enabled: true }, // WCAG 2.5.3, "experimental" upstream
@@ -378,17 +379,37 @@ throws the tag filter away and silently runs **every rule axe has**, best-practi
 errors. The scan looks like it worked; it just answered a different question. Put both settings in
 one `options()` call, as above.
 
-**2 · Two WCAG rules are disabled by default.** In axe-core 4.13, `target-size` (2.5.8) and
-`label-content-name-mismatch` (2.5.3) both carry `enabled: false` in their definitions. Selecting
-them by tag is not enough — a scan configured with WCAG tags alone reports every page clean on
-those two criteria, and the report looks complete. They have to be named in `rules`.
+**2 · One rule needs naming, and not for the reason it looks like.** Corrected 2026-08-20 after
+measuring it; the earlier version of this section said both rules ship disabled, and that is wrong.
 
-Naming a rule in `rules` beats the tag filter in both directions: axe checks
-`options.rules[id].enabled` **before** it checks `runOnly` tags. That is what makes the opt-in work
-even though `label-content-name-mismatch` would otherwise be off.
+`target-size` (2.5.8) does carry `enabled: false` — but a tag-based `runOnly` runs it anyway. The
+`enabled` flag governs only what axe does when you give it **no** instructions. Select `wcag22aa`
+and the rule fires.
 
-**3 · `wcag22aa` is one rule.** In axe-core 4.13 the tag matches exactly `target-size` and nothing
-else. Everything else WCAG 2.2 added is either not statically decidable or has no axe rule. Do not
+`label-content-name-mismatch` (2.5.3) is the opposite case: it carries `enabled: true` and it does
+**not** run under a tag filter. What holds it back is its `experimental` tag — axe leaves
+experimental rules out of a tag-selected run. Two ways in: add `"experimental"` to the tag list,
+which also pulls in seven unrelated experimental rules, or name it in `rules`.
+
+Measured on axe-core 4.13.0 against a page carrying both defects:
+
+```
+tags only                           | 64 rules | target-size RAN | label-in-name no
+tags + "experimental"               | 71 rules | target-size RAN | label-in-name RAN
+tags + rules opt-in (this guide)    | 65 rules | target-size RAN | label-in-name RAN
+no runOnly at all (axe defaults)    | 89 rules | target-size no  | label-in-name no
+```
+
+So `OPT_IN_RULES` is load-bearing for `label-content-name-mismatch` only. Keeping `target-size` in
+it changes nothing and makes the intent explicit.
+
+**This applies to the platform, not just this harness.** `runner/companion/assets/a11y_audit.mjs`
+sends the tag list with no `rules` override, so it gets `target-size` and does not get
+`label-content-name-mismatch`. That is defensible — 2.5.3 is owned by the AI `label` checker — but
+it should be a decision rather than an accident.
+
+**3 · `wcag22aa` is one rule, and `wcag22a` is none.** In axe-core 4.13 `wcag22aa` matches exactly
+`target-size` and nothing else; `wcag22a` matches no rule at all. Everything else WCAG 2.2 added is either not statically decidable or has no axe rule. Do not
 read a clean 2.2 result as coverage.
 
 **Confirm the WCAG 2.2 rules are actually live.** `@axe-core/playwright` pulls `axe-core` in
@@ -558,15 +579,13 @@ below the 24×24 minimum in 2.5.8:
 
 Expect: **`target-size`**, under `wcag22aa`.
 
-> **Two things have to be right or this page reports clean, which is the one result it must never
-> give.**
->
-> **The rule must be opted in.** `target-size` ships `enabled: false`; the `wcag22aa` tag alone does
-> not run it. See §4.
+> **This has to be right or the page reports clean, which is the one result it must never give.**
 >
 > **A pager, not a link in a sentence.** 2.5.8 exempts a target that sits inline within a block of
 > text, so an undersized link inside a paragraph passes and passing is correct. Four adjacent
 > block-level links with `gap: 0` satisfy neither the size threshold nor the spacing exception.
+> This — not the `enabled` flag — is what the first build got wrong here; `target-size` runs under
+> the `wcag22aa` tag whether or not it is named in `rules`. See §4, item 2.
 
 **If this page comes back clean, your 2.2 rules are not running** — whatever `npm ls` reported. The
 rule is not opted in, or the tag is missing from your config, or your axe-core predates it. Stop and

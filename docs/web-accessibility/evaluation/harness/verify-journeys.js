@@ -150,6 +150,38 @@ async function tabTo(page, times) {
   check("/help/contact-us shows a ring of its own",
     ring.outline || ring.shadow, JSON.stringify(ring));
 
+  // ── 3.2.1 change of context on focus ────────────────────────
+  // Driven with the keyboard, because that is how the failure is met: a value is chosen, focus
+  // leaves, and focus comes back. Selecting a value is NOT expected to move on either page —
+  // that would be 3.2.2, which is checked below on a different pair.
+  async function focusJump(route) {
+    await page.goto(BASE + route);
+    await page.selectOption("#branch-jump", { index: 3 });
+    const afterChange = page.url();
+    await page.click("h2");
+    await page.focus("#branch-jump");
+    await page.waitForTimeout(600);
+    return { afterChange, afterFocus: page.url() };
+  }
+
+  const jumped = await focusJump("/about/find-a-branch");
+  check("/about/find-a-branch leaves the page as soon as the select takes focus",
+    jumped.afterChange === BASE + "/about/find-a-branch" &&
+      jumped.afterFocus !== BASE + "/about/find-a-branch",
+    `on change ${jumped.afterChange.replace(BASE, "")} · on focus ${jumped.afterFocus.replace(BASE, "")}`);
+
+  const stayed = await focusJump("/about/choose-a-branch");
+  check("/about/choose-a-branch stays put until Go is pressed",
+    stayed.afterFocus === BASE + "/about/choose-a-branch",
+    `on focus ${stayed.afterFocus.replace(BASE, "")}`);
+
+  await page.goto(BASE + "/about/choose-a-branch");
+  await page.selectOption("#branch-jump", { index: 3 });
+  await page.click("#branch-go");
+  await page.waitForTimeout(600);
+  check("/about/choose-a-branch does move when Go is pressed",
+    page.url() !== BASE + "/about/choose-a-branch", page.url().replace(BASE, ""));
+
   // ── 3.2.2 change of context on input ───────────────────────────────
   // Same wait on both pages: one is expected to have navigated by the end of it, one is not.
   await page.goto(BASE + "/catalogue/filter");

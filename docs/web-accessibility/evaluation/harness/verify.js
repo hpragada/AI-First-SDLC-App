@@ -13,7 +13,7 @@
 // Reality wins. The output of this script is the fixture's baseline; re-run it on every change.
 
 const fs = require("fs");
-const { appPath, baselinePath } = require("./config");
+const { appPath, baselinePath, BASE_URL } = require("./config");
 const { chromium } = require("playwright");
 const AxeBuilder = require("@axe-core/playwright").default;
 
@@ -21,16 +21,22 @@ const AxeBuilder = require("@axe-core/playwright").default;
 // page-has-heading-one) that are not WCAG A/AA, and pages that should be clean will report.
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
-// Some WCAG rules ship DISABLED and a tag filter alone will not run them. Measured on
-// axe-core 4.13: `target-size` (2.5.8) and `label-content-name-mismatch` (2.5.3) both have
-// `enabled: false`, so a scan configured only with the tags above silently skips them and
-// every page looks clean on those criteria.
+// One of these two genuinely needs naming, and it is not the one it looks like. Measured on
+// axe-core 4.13.0 against a page carrying both defects:
 //
-// This is not a fixture quirk — any scanner built on axe has the same hole unless it opts in.
+//   tags only                        64 rules   target-size RAN   label-in-name no
+//   tags + "experimental"            71 rules   target-size RAN   label-in-name RAN
+//   tags + this rules block          65 rules   target-size RAN   label-in-name RAN
+//   no runOnly at all                89 rules   target-size no    label-in-name no
 //
-// A rule named in `rules` beats the tag filter in both directions: axe checks
-// options.rules[id].enabled before it checks runOnly tags, so these two run even though
-// `label-content-name-mismatch` would otherwise be off.
+// `target-size` does carry `enabled: false`, but that flag governs only what axe runs when
+// given NO instructions — a tag-based runOnly runs it regardless. `label-content-name-mismatch`
+// is the opposite: `enabled: true`, yet held out of a tag-selected run by its `experimental`
+// tag. Naming it here is the narrow way in; adding "experimental" to TAGS would drag in seven
+// unrelated rules with it.
+//
+// Not a fixture quirk — `runner/companion/assets/a11y_audit.mjs` sends the tags with no rules
+// block, so the platform gets target-size and does not get label-content-name-mismatch.
 const OPT_IN_RULES = {
   "target-size": { enabled: true },                 // WCAG 2.5.8 — the only wcag22aa rule axe has
   "label-content-name-mismatch": { enabled: true }, // WCAG 2.5.3 — flagged "experimental" upstream
@@ -67,6 +73,9 @@ const EXPECTED = {
   "/account/register": [],
   "/newsletter": [],
   "/account/my-loans": [],
+  // Seven buttons on one page, so seven nodes under one rule.
+  "/account/card-services": ["label-content-name-mismatch"],
+  "/account/card-options": [],
 
   // ── the AI half: axe must stay silent on all of it ───────────────
   "/reports/lending-summary": [],
@@ -102,11 +111,17 @@ const EXPECTED = {
   "/account/update-details": [],
   "/reports/branch-comparison": [],
   "/reports/monthly-issues": [],
+  "/catalogue/subject-index": [],
+  "/catalogue/subject-list": [],
+  "/staff/shelf-audit": [],
+  "/staff/shelf-settings": [],
+  "/help/report-a-problem": [],
+  "/help/problem-report": [],
 
   // ── the journeys: nothing here is decidable from static markup ───
   // Focus order, focus return, keyboard traps, focus obscured by a sticky header, a control
   // that acts on change, a message injected with no live region. axe has no rule for any of
-  // it, so all twelve must come back clean — the agentic checker is what separates them.
+  // it, so all sixteen must come back clean — the agentic checker is what separates them.
   "/events/book-a-room": [],
   "/events/book-a-seat": [],
   "/catalogue/reserve-copy": [],
@@ -121,6 +136,8 @@ const EXPECTED = {
   "/catalogue/refine": [],
   "/catalogue/results": [],
   "/catalogue/quick-find": [],
+  "/about/find-a-branch": [],
+  "/about/choose-a-branch": [],
 
   // ── completeness pages: exact candidate counts, no planted rule ──
   "/catalogue/browse-all": [],
@@ -140,6 +157,13 @@ const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
   const manifest = JSON.parse(fs.readFileSync(appPath("routes.json"), "utf8"));
   const routes = manifest.routes.filter((r) => r.in_scope);
 
+  // The address comes from config, not from the manifest. `routes.json` bakes in the port the
+  // app is *usually* served on; MERIDIAN_URL is how you point the harness at a second copy on
+  // another port, and the other two checks already honour it. Reading the manifest here made
+  // the override work for two scripts out of three — which shows up as every new route 404ing
+  // against a stale server while the old ones answer, and reads like the pages are missing.
+  const base = (BASE_URL || manifest.base_url).replace(/\/$/, "");
+
   const browser = await chromium.launch();
   // An explicit context is required — @axe-core/playwright refuses a page created straight off
   // the browser. Fixed viewport so target-size and contrast are measured the same way each run.
@@ -157,7 +181,7 @@ const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
   let mismatches = 0;
 
   for (const route of routes) {
-    const url = manifest.base_url + route.path;
+    const url = base + route.path;
     const res = await page.goto(url, { waitUntil: "domcontentloaded" });
     if (!res || res.status() >= 400) {
       console.log(`  !! ${route.path} returned ${res ? res.status() : "no response"}`);
