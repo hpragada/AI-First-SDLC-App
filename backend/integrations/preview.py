@@ -189,6 +189,33 @@ def _states(artifact) -> list[dict]:
     return states if isinstance(states, list) else []
 
 
+#: Systems of record the preview READS THROUGH — the connector fetches the body live, so there is
+#: always something to show and no pointer on our side to test.
+_READ_THROUGH_SORS = ("confluence", "jira")
+
+
+def artifact_has_preview(artifact) -> bool:
+    """Whether `read_artifact_preview` can show this artifact anything at all.
+
+    The registry lists pointers, and some pointers legitimately have no body: an implementation
+    `code` row is a pointer at a PR (#1/#3), and its preview is the link. But a row with neither a
+    body nor a link renders a blank page — or, for an internal one, a 404 the UI words as "this
+    artifact doesn't exist, has no body, or you don't have access to it", which reads like a
+    permissions problem when it is nothing of the kind.
+
+    Offering a Preview button for those is the confusing part, so callers use this to decide
+    whether to offer it. Deliberately a POINTER-level test — no S3 reads — so a list endpoint stays
+    one query. It mirrors the branches of `read_artifact_preview` below; change them together.
+    """
+    if artifact.sor == "internal":
+        # A wireframe can carry its bodies per state instead of on the row itself.
+        return bool(artifact.s3_key) or any(
+            isinstance(st, dict) and st.get("s3_key") for st in _states(artifact))
+    if artifact.sor in _READ_THROUGH_SORS:
+        return True
+    return bool((artifact.external_ref or {}).get("url"))
+
+
 def render_states(artifact, object_store=None) -> list[dict]:
     """Read-through every state body of a multi-state artifact (a per-screen wireframe carries
     one self-contained HTML document per UI state). Returns [{name, body, content_type}] in

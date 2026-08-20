@@ -828,7 +828,10 @@ def test_the_audit_script_records_a_route_that_would_not_open():
 def test_the_audit_script_never_guesses_an_axe_package():
     """QA-11a's rule: a plausible-looking wrong import reads as a scan that ran."""
     script = _script()
-    assert "axe-core is not installed" in script
+    # The message now names BOTH places it looked — the project and the companion's own pinned
+    # toolchain — because a missing scanner is no longer only the project's problem to fix.
+    assert "axe-core could not be loaded from this project" in script
+    assert "companion" in script
     assert "never guesses a package name" in script.lower()
 
 
@@ -1234,7 +1237,7 @@ def test_the_scanner_alone_missing_is_a_warning_and_not_a_refusal(tmp_path):
     out = preflight(workdir=_project_with(tmp_path, scanner=False), node=_NODE)
     assert out["ok"] is True, "the audit still runs"
     assert out["scanner"]["ok"] is False
-    assert "axe-core is not installed" in out["scanner"]["error"]
+    assert "axe-core could not be loaded from this project" in out["scanner"]["error"]
 
 
 def test_a_machine_with_no_node_is_reported_as_a_folder_that_cannot_run(tmp_path):
@@ -1592,11 +1595,93 @@ def test_every_column_is_named_back_and_not_only_the_scope_flag(world):
 
 
 def test_something_that_is_not_a_list_of_pages_says_so_in_those_words(world):
+    """Still refused, and now with a sharper reason.
+
+    `"/, /catalogue"` does not open with `[` or `{`, so it is read as one path per line — and
+    the one line it has contains a space, which is the specific thing that cannot be a path.
+    Saying that beats "this could not be read as a list of pages", which is what it used to say
+    and which left the reader to work out which part was wrong.
+    """
     from apps.a11y.routes import RouteError, parse_routes_text
 
     with pytest.raises(RouteError) as exc:
         parse_routes_text("/, /catalogue")
+    assert "contains a space" in str(exc.value)
+    # A malformed JSON list still gets the JSON answer — line mode must not swallow it.
+    with pytest.raises(RouteError) as exc:
+        parse_routes_text('["/", "/catalogue"')
     assert "could not be read as a list of pages" in str(exc.value)
+
+
+# ── One path per line, which is what people actually paste ──────────────────
+#
+# It used to be refused outright, with a message that explained JSON to somebody who had just
+# pasted a perfectly clear list of pages. The first thing anyone does on this screen failed.
+
+
+def test_one_path_per_line_is_a_list_of_pages(world):
+    out = _paste(world, "/\n/catalogue\n/catalogue/:id")
+    assert out["added"] == ["/", "/catalogue", "/catalogue/:id"] and out["total"] == 3
+
+
+def test_blank_lines_and_comments_are_skipped_not_refused(world):
+    out = _paste(world, "\n/  \n\n# the members area\n/account\n")
+    assert out["added"] == ["/", "/account"]
+
+
+def test_a_line_with_a_space_is_refused_by_name_and_by_number(world):
+    """The hole that killed the earlier line-per-path form, closed rather than reopened.
+
+    `normalise_path` rejects an empty path, a full URL, a path not starting with `/` and a line
+    break — but NOT a space. `Home /catalogue` would register a page that cannot exist and be
+    reported unreachable on every audit, forever, from a typo nobody can see.
+    """
+    from apps.a11y.routes import RouteError, parse_routes_text
+
+    with pytest.raises(RouteError) as exc:
+        parse_routes_text("/\nHome /catalogue\n/account")
+    assert "line 2" in str(exc.value) and "contains a space" in str(exc.value)
+
+
+def test_a_half_converted_json_list_still_reads_as_paths(world):
+    """Quotes and trailing commas belong to the other format, not to the path."""
+    out = _paste(world, '"/",\n"/catalogue",')
+    assert out["added"] == ["/", "/catalogue"]
+
+
+def test_nothing_pasted_is_still_nothing_pasted(world):
+    from apps.a11y.routes import RouteError, parse_routes_text
+
+    with pytest.raises(RouteError, match="nothing was pasted"):
+        parse_routes_text("\n  \n# only a comment\n")
+
+
+# ── `in_scope` is the name most route lists actually use ────────────────────
+
+
+def test_in_scope_is_the_same_flag_as_enabled(world):
+    """Our own reference brownfield app writes `in_scope` for all 69 of its routes.
+
+    Without the alias every one came back as an unrecognised column and every page was
+    registered in scope — including the one its author had deliberately excluded. The warning
+    that named the column was honest and still fires for anything genuinely unknown; it was the
+    alias that was missing.
+    """
+    from apps.a11y.models import A11yRoute
+
+    out = _paste(world, json.dumps([
+        {"path": "/", "title": "Home", "in_scope": True},
+        {"path": "/health", "title": "Health", "in_scope": False},
+    ]))
+    assert out["ignored_keys"] == [], "`in_scope` is recognised, so nothing is named back"
+    rows = {r.path: r.enabled for r in A11yRoute.objects.filter(project_id=world["p"])}
+    assert rows == {"/": True, "/health": False}
+
+
+def test_a_genuinely_unknown_scope_flag_is_still_named_back(world):
+    """`inScope` (camelCase) is NOT the alias, and must keep being reported."""
+    out = _paste(world, json.dumps([{"path": "/", "inScope": False}]))
+    assert out["ignored_keys"] == [{"key": "inScope", "entries": 1}]
 
 
 def test_a_single_entry_without_its_brackets_is_still_a_list_of_one(world):
@@ -1927,3 +2012,116 @@ def test_removing_a_page_is_recorded(world):
     entry = Event.objects.filter(tenant_id=world["t"],
                                  action="a11y.routes.registered").order_by("ts").last()
     assert entry.payload["deleted"] == "/typo"
+
+
+# ── The audit no longer needs a clone of the application (#9) ───────────────
+#
+# The folder exists so the browser and the scanner can be resolved out of the audited project's
+# own `node_modules` — worth having, because the version stamped on every scan is then the
+# version that application actually ships. But it was a REFUSAL, and that made a whole class of
+# application unauditable: a Django, Rails or .NET app has no `node_modules`, so the only way to
+# audit one was to add npm dev-dependencies to the client's own repository in order to look at
+# it. The clone is now preferred, not required.
+
+
+class _FakeDaemon:
+    """Just enough of the daemon to exercise `_run_a11y_audit`'s folder decision."""
+
+    _base = "http://localhost:8000"
+    _tenant = "t1"
+    _token = "tok"
+
+    def __init__(self, tmp_path, *, has_clone: bool):
+        self._worktrees_root = str(tmp_path / "worktrees")
+        self._has_clone = has_clone
+        self._clone = str(tmp_path / "clone")
+        self.ran_from = None
+
+    def _resolve_repo_path(self, repo):
+        from runner.companion.daemon import DaemonError
+
+        if not self._has_clone:
+            raise DaemonError(f"no local clone of {repo}")
+        return self._clone
+
+    # The real one, borrowed unbound — this stub stands in for the daemon's plumbing, never for
+    # the behaviour under test.
+    def _a11y_scratch(self, project_id):
+        from runner.companion.daemon import CompanionDaemon
+
+        return CompanionDaemon._a11y_scratch(self, project_id)
+
+
+def _audit_with(monkeypatch, daemon, claimed):
+    from runner.companion import daemon as daemon_mod
+
+    monkeypatch.setattr(daemon_mod, "RemoteStateClient", lambda **kw: object(), raising=False)
+
+    calls = {}
+
+    def _run(*, client, project_id, workdir, audit_id):
+        calls["workdir"] = workdir
+        return {"posted": 3}
+
+    import runner.companion.a11yaudit as a11yaudit_mod
+
+    monkeypatch.setattr(a11yaudit_mod, "run_baseline_audit", _run)
+    daemon_mod.CompanionDaemon._run_a11y_audit(daemon, claimed)
+    return calls
+
+
+def test_an_audit_runs_from_the_projects_own_clone_when_there_is_one(tmp_path, monkeypatch):
+    daemon = _FakeDaemon(tmp_path, has_clone=True)
+    calls = _audit_with(monkeypatch, daemon, {
+        "audit_id": "a1", "project_id": "p1", "repo": "acme/web", "repo_reason": ""})
+    assert calls["workdir"] == daemon._clone, "the application's own axe version still wins"
+
+
+def test_no_clone_falls_back_to_the_companions_own_folder_instead_of_refusing(tmp_path,
+                                                                             monkeypatch):
+    daemon = _FakeDaemon(tmp_path, has_clone=False)
+    calls = _audit_with(monkeypatch, daemon, {
+        "audit_id": "a1", "project_id": "p1", "repo": "acme/web", "repo_reason": ""})
+    assert "a11y-audit" in calls["workdir"] and "p1" in calls["workdir"]
+    assert Path(calls["workdir"]).is_dir()
+
+
+def test_a_project_with_no_repository_at_all_can_still_be_audited(tmp_path, monkeypatch):
+    """The case that mattered: point the platform at a running application and ask where it
+    stands, without registering a repository for it first."""
+    daemon = _FakeDaemon(tmp_path, has_clone=False)
+    calls = _audit_with(monkeypatch, daemon, {
+        "audit_id": "a1", "project_id": "p2", "repo": "",
+        "repo_reason": "this project has no repository registered"})
+    assert "p2" in calls["workdir"]
+
+
+def test_two_projects_do_not_share_one_scratch_folder(tmp_path, monkeypatch):
+    """Two audits of two applications must not fight over one candidates file."""
+    daemon = _FakeDaemon(tmp_path, has_clone=False)
+    one = _audit_with(monkeypatch, daemon, {"audit_id": "a", "project_id": "p1", "repo": "",
+                                            "repo_reason": "none"})
+    two = _audit_with(monkeypatch, daemon, {"audit_id": "b", "project_id": "p2", "repo": "",
+                                            "repo_reason": "none"})
+    assert one["workdir"] != two["workdir"]
+
+
+def test_the_capture_says_when_it_used_our_scanner_and_not_the_applications():
+    """`(companion)` rides on the version string that already travels everywhere a version is
+    shown — per screen, in the report, and onto the signed conformance statement. Without it the
+    platform would name a version the client's application does not actually ship."""
+    script = _script()
+    assert 'axe.from === "companion" ? " (companion)" : ""' in script
+    assert 'lastResolvedFrom = "project"' in script and 'lastResolvedFrom = "companion"' in script
+
+
+def test_the_companion_pins_its_own_browser_and_scanner():
+    """The fallback import has been in the audit script from the first version and nothing was
+    ever installed for it to find. This is what turns it from dead code into the answer for a
+    non-Node stack."""
+    manifest = json.loads(
+        (Path(__file__).resolve().parents[2] / "runner" / "package.json").read_text("utf-8"))
+    deps = manifest["dependencies"]
+    assert set(deps) == {"axe-core", "playwright"}
+    for name, version in deps.items():
+        assert version[0].isdigit(), f"{name} is pinned exactly, not floated: {version}"

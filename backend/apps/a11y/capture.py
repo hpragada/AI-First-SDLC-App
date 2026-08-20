@@ -277,9 +277,14 @@ def _screen(raw) -> dict:
         "axe_inapplicable": _rule_list(data, "axe_inapplicable", route),
         "axe_incomplete": [_violation(v, route) for v in _bounded(
             data, "axe_incomplete", route, MAX_AXE_VIOLATIONS)],
-        # Which scanner produced all of the above. axe-core is imported from the CLIENT'S
-        # project, so this differs per tenant and per run; a statement that cannot name it
-        # cannot be re-examined against what produced it (QA-24, D-A11Y-96).
+        # Which scanner produced all of the above, and WHOSE copy of it. axe-core is imported
+        # from the client's project when that project has one, so this differs per tenant and
+        # per run; a statement that cannot name it cannot be re-examined against what produced
+        # it (QA-24, D-A11Y-96). An application that is not a Node project has no copy to
+        # import, and is scanned with the companion's own pinned one — which arrives here as
+        # `axe-core 4.13.0 (companion)`. The suffix is carried on this string rather than in a
+        # field of its own precisely so that every existing display of the version shows it
+        # without being changed, and none of them can forget to.
         "scanner_version": _text(data.get("scanner_version"), 64),
         # Why the rule scanner did not run here, in the capture's own words — blank when it
         # did (QA-16). The same shape and the same reasoning as `screenshot_error` below.

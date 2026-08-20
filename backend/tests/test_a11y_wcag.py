@@ -1008,3 +1008,61 @@ def test_sections_handles_nesting_and_an_unclosed_tag():
     assert found["b"] == "B"
     # A truncated document must not hang or raise — it yields what it can.
     assert list(wcag_build.sections("<section id='a'>A")) != []
+
+
+# ── What the three checkers actually cover, pinned ──────────────────────────
+#
+# Not a behaviour test — a guard on a number people quote. The build was described for weeks as
+# "the AI half covers 11 of 55", which is what the ownership REGISTRY classifies as AI-owned.
+# Four checkers are built and they cover five criteria; the other six are Phase 2. The gap
+# between the two numbers reached a testing guide and could as easily have reached a proposal.
+#
+# So: change either list and this test fails, and whoever changes it has to restate the coverage
+# rather than leave a stale figure standing somewhere nobody is looking.
+
+def test_built_coverage_is_what_the_documents_claim():
+    from apps.a11y.checkers.rules import CHECKERS
+    from integrations.types import A11Y_CHECKER_CRITERIA, A11Y_JOURNEY_CRITERIA
+
+    assert set(CHECKERS) == set(A11Y_CHECKER_CRITERIA), (
+        "every built checker must appear in the criteria map, and vice versa"
+    )
+    ai = {c for pair in A11Y_CHECKER_CRITERIA.values() for c in pair}
+    journey = {c for pair in A11Y_JOURNEY_CRITERIA.values() for c in pair}
+    assert len(CHECKERS) == 4 and ai == {"1.1.1", "1.3.1", "1.4.1", "2.5.3", "4.1.2"}
+    assert journey == {"2.1.1", "2.1.2", "2.4.3", "2.4.7", "2.4.11", "3.2.1", "3.2.2", "4.1.3"}
+
+
+def test_ownership_registry_and_the_built_half_do_not_drift():
+    """The registry's classification, and how much of it is actually built.
+
+    `2.4.7` is the one that catches people out: the registry classifies it `ai`, no AI checker
+    covers it, and the keyboard journey does. Count it in both and the human-only remainder comes
+    out one too small — which is exactly how "22 criteria only a person can assess" was published
+    when the answer is 23.
+    """
+    import json
+    from pathlib import Path
+
+    from apps.a11y import wcag
+
+    data = json.loads(
+        (Path(wcag.__file__).parent / "data" / "ownership.json").read_text(encoding="utf-8"))
+    assert data["counts"]["by_owner"] == {"ai": 11, "human": 30, "rule": 14}
+    assert data["counts"]["criteria"] == 55
+
+    from integrations.types import A11Y_CHECKER_CRITERIA, A11Y_JOURNEY_CRITERIA
+
+    rows = data["criteria"]
+    owner = {n: rows[n]["owner"] for n in rows} if isinstance(rows, dict) else {
+        r["number"]: r["owner"] for r in rows}
+    journey = {c for pair in A11Y_JOURNEY_CRITERIA.values() for c in pair}
+    ai_built = {c for pair in A11Y_CHECKER_CRITERIA.values() for c in pair}
+
+    # Seven of the eight journey criteria are human-owned; 2.4.7 is the ai-owned one.
+    assert sum(1 for c in journey if owner[c] == "human") == 7
+    assert [c for c in sorted(journey) if owner[c] == "ai"] == ["2.4.7"]
+    # 30 human-owned, 7 of them now reachable by the journey ⇒ 23 only a person can assess.
+    assert sum(1 for c, o in owner.items() if o == "human" and c not in journey) == 23
+    # And the distinct automated total the guide states.
+    assert len({c for c, o in owner.items() if o == "rule"} | ai_built | journey) == 27

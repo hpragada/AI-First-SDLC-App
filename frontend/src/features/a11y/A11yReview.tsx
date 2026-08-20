@@ -11,6 +11,8 @@
 // edge — D-A11Y-99. The list is the narrow half; the item under review is the wide one.
 import { useState } from "react";
 
+import { Link } from "react-router-dom";
+
 import { useAuth } from "../../auth/AuthContext";
 import {
   Badge,
@@ -24,6 +26,7 @@ import {
 } from "../../components/ui";
 import type { A11yReviewFinding, A11yReviewItem } from "../../types";
 import { A11yTabs } from "./A11yTabs";
+import { LoadFailed } from "./LoadFailed";
 import { useA11yCapture, useA11yReviewItem, useA11yReviewQueue, useDecideA11yFinding } from "./hooks";
 
 const SEVERITY_BADGE: Record<string, "failed" | "waiting" | "neutral"> = {
@@ -414,6 +417,21 @@ export function A11yReview() {
     );
   }
 
+  // A failure is not an empty queue. "Nothing is waiting on you" over a 500 is the most
+  // reassuring sentence this product can say and the least true.
+  if (queue.isError) {
+    return (
+      <main className="canvas-pad">
+        <A11yTabs active="queue" />
+        <LoadFailed
+          what="The review queue"
+          error={queue.error}
+          onRetry={() => void queue.refetch()}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className="canvas-pad">
       <A11yTabs active="queue" />
@@ -429,13 +447,28 @@ export function A11yReview() {
 
       {items.length === 0 ? (
         <Panel>
-          <EmptyState
-            title="Nothing is waiting on you"
-            // D-A11Y-93. This screen shows only findings a check could not settle, so an empty
-            // queue says NOTHING about how accessible the application is. A screen that let
-            // someone believe otherwise would be the most expensive silence in the build.
-            text="An empty queue means every check so far was sure enough to answer on its own — not that no problems were found. The accessibility report is where the findings are."
-          />
+          {/* TWO empty states, not one. D-A11Y-93 says an empty queue tells you nothing about
+              how accessible the application is — and the original single sentence went further
+              than that, telling a project where NOTHING had ever run that "every check so far
+              was sure enough to answer on its own". Vacuously true, and read as reassurance by
+              the one reader who most needs pointing at the starting line: this is the screen
+              the sidebar used to land on. */}
+          {queue.data?.ever_checked === false ? (
+            <EmptyState
+              title="Nothing has been checked yet"
+              text="No accessibility check has ever run on this project, so there is nothing for anyone to answer — and nothing here says whether the application is accessible. Register the pages of the application and run a first audit to find out."
+              action={
+                <Link to="/a11y/pages" className="btn btn--primary">
+                  Go to Pages &amp; audit
+                </Link>
+              }
+            />
+          ) : (
+            <EmptyState
+              title="Nothing is waiting on you"
+              text="An empty queue means every check so far was sure enough to answer on its own — not that no problems were found. The accessibility report is where the findings are."
+            />
+          )}
         </Panel>
       ) : (
         <div className="grid grid--console">

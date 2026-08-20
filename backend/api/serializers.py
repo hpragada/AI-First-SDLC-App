@@ -421,12 +421,23 @@ class RunSerializer(serializers.ModelSerializer):
 
 # ── Artifact + TraceEdge ────────────────────────────────────────────
 class ArtifactSerializer(serializers.ModelSerializer):
+    # Whether Preview can show anything for this row. Computed server-side, next to
+    # `read_artifact_preview` itself, so the two cannot drift — the rule has real subtleties (a
+    # wireframe previews from `external_ref.states` with no `s3_key` of its own; Confluence/Jira
+    # read through their connector) that a re-implementation in TypeScript would get wrong.
+    previewable = serializers.SerializerMethodField()
+
+    def get_previewable(self, obj) -> bool:
+        from integrations.preview import artifact_has_preview
+
+        return artifact_has_preview(obj)
+
     class Meta:
         model = Artifact
         # Pointer + provenance only; never the body (#1/#3).
         fields = [
             "id", "project", "repo", "run", "phase", "type", "title", "status", "sor",
-            "external_ref", "s3_key", "content_hash", "version", "created_at",
+            "external_ref", "s3_key", "content_hash", "version", "created_at", "previewable",
         ]
         read_only_fields = fields
 

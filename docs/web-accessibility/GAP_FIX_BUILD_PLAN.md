@@ -1201,9 +1201,15 @@ The two schema ones are RLS-aware from the first migration, like every table in 
 data one runs as the privileged migration role for the same reason `a11y/0005` does: work items are
 FORCE ROW LEVEL SECURITY, so a merely-owner role would read zero rows and quietly do nothing.
 
-⚠️ **Five migrations from the last round — `0021` to `0025` — are still unapplied on the shared
-server**, and `workitems/0006` now makes six. These land on top of them. Applying any of them to
-the shared database is the team's call, never mine.
+⚠️ **Corrected on 2026-08-20 by reading the shared server directly: it was not six, it was 32,
+and it started at `a11y/0001`.** Nothing accessibility-related had ever been migrated there — the
+tables did not exist. The full list was `a11y/0001`–`0027` (all 27), `integrations/0010`,
+`projects/0011`, `registry/0006`, `registry/0007` and `workitems/0006`; the two `registry` ones
+seed the judge and journey agents, so without them nothing judged and nothing walked. Every
+pending migration in the whole platform was accessibility work.
+
+✅ **The team applied all 32 on 2026-08-20.** Re-read afterwards: nothing pending, in any app.
+`TESTING_GUIDE.md` §1 carries the list of what landed.
 
 ---
 
@@ -1242,21 +1248,46 @@ leaving the team to assume otherwise.
 
 ---
 
-## 8. Two documents to rewrite when this work is done
+## 8. Two documents to rewrite when this work is done — DONE, 2026-08-20
 
-Both currently carry a correction notice rather than a rewrite, because most of what is wrong in
-them stops being wrong the moment these gaps close. **Neither notice is the fix; both documents are
-to be rewritten, and their notices removed, as the last task of this plan.**
+Both carried a correction notice rather than a rewrite, because most of what was wrong in them
+stopped being wrong the moment these gaps closed. Both notices are now gone.
 
-- **`TESTING_GUIDE.md`** — written before the journey recon. Its two "journeys" are the accessibility
-  slice only, and five specific statements in it are untrue today (its notice lists them). When this
-  plan lands it needs rewriting to cover the **whole** journey a user walks — create project, upload,
-  adopt, connect Jira and Confluence, register repositories, index code, gap report, resume — with
-  the accessibility work shown in its real place inside it, and with the terminal steps gone because
-  they no longer exist.
-- **`TASK_BACKLOG_QA.md`** — its 31 tasks are correctly ticked against their own acceptance criteria.
-  Its notice explains that those criteria tested units rather than reachability. Remove the notice
-  when the eleven gaps are closed.
+- **`TESTING_GUIDE.md`** — **rewritten from the source, walked screen by screen.** It now covers the
+  whole journey a user walks on both tracks, with the accessibility work in its real place inside
+  it (greenfield: an evidence capture inside Test Automation; brownfield: step 6 of 7 on the
+  onboarding hub), and with the terminal steps gone because they no longer exist. The one remaining
+  terminal step is starting the companion, which is not an accessibility step and is stated as such.
+  Three of its own numbers were corrected against the code while rewriting: the AI half covers
+  **five** criteria today and not the eleven the registry classifies as AI-owned; the human-only
+  remainder is **23**, not 22, because 2.4.7 is registry-owned by `ai` and covered by the journey;
+  and the pending-migration count is **32**, not five (see §5).
+- **`TASK_BACKLOG_QA.md`** — its 31 tasks are correctly ticked against their own acceptance criteria,
+  and the reachability notice is replaced by a statement that all eleven gaps are closed, that a tick
+  now means both *behaves as specified* and *a person can reach it*, and that reachable still is not
+  the same as run.
+
+### The walkthrough that produced the rewrite produced fifteen more findings — BUILT, 2026-08-20
+
+Places where what was built worked but, read as the person using it, would not have served them.
+**The team reviewed all fifteen and approved fourteen; all fourteen are built.** The fifteenth is
+the 32 pending migrations, which are the team's to run. `TESTING_GUIDE.md` §9 carries every one
+with what was wrong, what was done and how it is proven; the four that changed how the platform
+behaves rather than how it reads are:
+
+| | What changed |
+|---|---|
+| **#1** | **A failed fetch is no longer rendered as an empty state.** All four accessibility screens fell through to *"No pages are registered yet"* / *"Nothing is waiting on you"* when the server did not answer — this plan's own principle broken at the outermost layer of the screens that argue for it, and precisely what the team would have met first with 32 migrations pending. One shared `LoadFailed` panel, four branches, and the sentence that does the work: *"Nothing shown here is a statement about your application."* |
+| **#2** | **Page scope and audits are role-gated.** They fell through `ProjectViewSet.get_permissions` to `AllowAny` — not even a session required — while starting a keyboard journey on the same screen was refused for anyone but the reviewer. Now **QA Lead, Tech Lead or Admin** (`policy.PAGE_MANAGE_ROLES`, team decision), checked in the view the way `repositories` does it, with `can_manage` on the payload so a reader gets the whole screen read-only. |
+| **#4** | **A keyboard journey can say *waiting for a machine*.** It was marked WALKING at dispatch and the panel rendered that as "Walking now", so one dispatched with no companion online read as a browser stepping through the application for ever — while the audit strip above it had told those two states apart since 8a. Derived from the run's `dispatch.status`, so no migration. |
+| **#9** | **A brownfield audit no longer needs a repository.** It resolved its browser and scanner out of the audited project's `node_modules` and refused without a local clone, which made every non-Node application unauditable unless someone added npm dev-dependencies to the client's own repository. The companion now has its own pinned toolchain (`runner/package.json`), the clone is preferred rather than required, and a fallback scan records `axe-core X.Y.Z (companion)` — because without that third piece the fix would have traded a visible limitation for an invisible lie. |
+
+**One of them is worth remembering as a lesson rather than a fix.** #14 — accepting `in_scope` as
+a synonym for `enabled` — looked like a one-line change to `ENTRY_KEYS`. It was not: that constant
+fed the *ignored-keys warning* and nothing else, while the field reads were a separate list of
+names. The one-line version silenced the warning and changed no behaviour, which is **worse than
+the bug** — a page marked out of scope would then have been audited with nothing said about it. A
+test caught it before it shipped. The two lists are now one.
 
 **And the lesson that produced this plan, recorded so it is not learned twice:** every one of the 24
 tasks passed its tests and the backlog read as complete, while a user could not register a page list,

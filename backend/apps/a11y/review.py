@@ -337,6 +337,50 @@ def queue(*, tenant_id, project_id, user_id=None, limit=None) -> list[dict]:
         return [_item(row, handles=handles, user_id=user_id) for row in rows]
 
 
+def can_manage_pages(*, tenant_id, project_id, user_id) -> bool:
+    """May this user change the audit scope — register, edit or remove pages, start an audit?
+
+    `policy.PAGE_MANAGE_ROLES` says who, and why it is a wider list than the reviewer's. The
+    tenant-admin carve-out is the same one `can_review` and `require_repo_manage_role` both
+    apply: a workspace admin is not locked out of their own workspace by a missing membership.
+    """
+    from apps.tenancy.models import Membership, User
+
+    from .policy import PAGE_MANAGE_ROLES
+
+    if not user_id:
+        return False
+    with tenant_context(tenant_id):
+        if Membership.objects.filter(
+            tenant_id=tenant_id, user_id=user_id, project_id=project_id,
+            role__in=list(PAGE_MANAGE_ROLES),
+        ).exists():
+            return True
+        return User.objects.filter(
+            id=user_id, tenant_id=tenant_id, is_tenant_admin=True).exists()
+
+
+def ever_checked(*, tenant_id, project_id) -> bool:
+    """Has anything on this project ever been checked for accessibility?
+
+    **An empty queue means two completely different things and the screen could not tell them
+    apart.** For a project that has run audits it means every check so far was sure enough to
+    answer on its own — genuinely reassuring. For a project where nothing has ever run it means
+    nobody has looked, and saying "every check so far was sure enough" to that reader is the
+    reassurance this whole build exists to refuse.
+
+    A screen scan OR a finding, because the two halves arrive by different roads: a captured
+    page writes a scan whether or not it produced anything, and a keyboard journey writes
+    findings without ever writing a scan. Either is evidence that something looked.
+    """
+    from .models import A11yFinding, A11yScreenScan
+
+    with tenant_context(tenant_id):
+        if A11yScreenScan.objects.filter(tenant_id=tenant_id, project_id=project_id).exists():
+            return True
+        return A11yFinding.objects.filter(tenant_id=tenant_id, project_id=project_id).exists()
+
+
 def open_item(*, tenant_id, project_id, finding_id, user_id, take_lock=True) -> dict:
     """One item, claiming it for this reviewer (which is also how the claim is renewed).
 

@@ -196,6 +196,15 @@ def _a11y_would_ticket(tenant_id, project_id, finding) -> bool:
 
 
 # ── Projects + Profile ──────────────────────────────────────────────
+#: Said the same way by all four page/audit endpoints, because a refusal worded three times is
+#: a refusal that will differ.
+PAGE_ROLE_DETAIL = (
+    "You need the QA Lead, Tech Lead or Admin role on this project to change which pages are "
+    "audited or to start an audit. Everything on this screen is readable by anyone on the "
+    "project."
+)
+
+
 class ProjectViewSet(
     TenantScopedMixin,
     mixins.CreateModelMixin,
@@ -234,7 +243,23 @@ class ProjectViewSet(
         # project Membership and this class-level hook has no project in hand.
         if self.action in {"a11y_review", "a11y_review_item", "a11y_review_screenshot",
                            "a11y_conformance", "a11y_conformance_sign",
-                           "a11y_conformance_export", "a11y_journeys"}:
+                           "a11y_conformance_export", "a11y_journeys",
+                           # The page list, the page editor and audits were missing from this
+                           # set, so they fell through to the viewset default — `AllowAny`,
+                           # which does not even require a session. Note what this class does
+                           # and does not do: it gates "is somebody logged in", and tenant
+                           # scoping + RLS do the rest; it is NOT a per-project membership
+                           # check despite the name, and every other project surface uses it
+                           # the same way. WRITING is gated properly, per project and per role,
+                           # inside the action itself (`review.can_manage_pages`) — the same
+                           # shape `repositories` uses.
+                           #
+                           # `a11y_policy` and `a11y_backlog` are deliberately NOT here. They
+                           # are pure reads that leak nothing past the tenant, and their tests
+                           # exercise tenant isolation through the header path with no session
+                           # — which is a property worth keeping testable. Tightening them was
+                           # not part of what the scope fix was asked to do.
+                           "a11y_routes", "a11y_route_item", "a11y_audits"}:
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
@@ -420,6 +445,7 @@ class ProjectViewSet(
         Onboarding (OP-06) will write the same table with `source: onboarding`. Everything here
         is `manual`, because a person is the one typing it.
         """
+        from apps.a11y.review import can_manage_pages
         from apps.a11y.routes import (
             RouteError,
             describe_routes,
@@ -432,8 +458,16 @@ class ProjectViewSet(
         )
 
         project = self.get_object()
+        user_id = getattr(request.user, "id", None)
+        # Checked HERE rather than inside `register_routes`, matching `repositories`: the same
+        # function is what onboarding (OP-06) will use to write a discovered list with no acting
+        # user at all, and a mandatory check inside it would have no honest answer for that.
+        may_manage = can_manage_pages(tenant_id=self.tenant_id, project_id=str(project.id),
+                                      user_id=user_id)
         result = None
         if request.method == "PUT":
+            if not may_manage:
+                return Response({"detail": PAGE_ROLE_DETAIL}, status=status.HTTP_403_FORBIDDEN)
             # `routes_text` is what the screen sends: the box's contents, read by the platform
             # so one refusal is worded once and reads the same however the list arrived.
             # `routes` stays for a caller that already has a list.
@@ -479,6 +513,9 @@ class ProjectViewSet(
             # Empty when there is nothing to say, so the screen can hide the whole warning
             # behind one check rather than deciding for itself what counts as a change.
             "scope_change": scope_change_since(self.tenant_id, str(project.id)),
+            # So the screen renders read-only rather than showing controls that 403 on click —
+            # the ninth state S-36 established and the one this tab did not have.
+            "can_manage": may_manage,
         }
         if result is not None:
             payload["changed"] = result
@@ -502,9 +539,13 @@ class ProjectViewSet(
         at, so a rename leaves the problems at the old address and starts the new one empty. The
         row carries `open_findings` and `visits` so the screen can say that before it happens.
         """
+        from apps.a11y.review import can_manage_pages
         from apps.a11y.routes import RouteError, delete_route, update_route
 
         project = self.get_object()
+        if not can_manage_pages(tenant_id=self.tenant_id, project_id=str(project.id),
+                                user_id=getattr(request.user, "id", None)):
+            return Response({"detail": PAGE_ROLE_DETAIL}, status=status.HTTP_403_FORBIDDEN)
         try:
             if request.method == "DELETE":
                 out = delete_route(
@@ -529,9 +570,15 @@ class ProjectViewSet(
         """
         from apps.a11y.baseline import BaselineError, audit_manifest, start_baseline_audit
         from apps.a11y.models import A11yBaselineAudit
+        from apps.a11y.review import can_manage_pages
 
         project = self.get_object()
         if request.method == "POST":
+            # An audit spends a real browser on a real application for minutes. Same list as the
+            # page scope it runs over, because they are one decision taken twice.
+            if not can_manage_pages(tenant_id=self.tenant_id, project_id=str(project.id),
+                                    user_id=getattr(request.user, "id", None)):
+                return Response({"detail": PAGE_ROLE_DETAIL}, status=status.HTTP_403_FORBIDDEN)
             try:
                 audit = start_baseline_audit(
                     tenant_id=self.tenant_id, project_id=str(project.id),
@@ -616,16 +663,21 @@ class ProjectViewSet(
         everything; the console renders read-only rather than showing controls that fail on
         click (S-36's ninth state).
         """
-        from apps.a11y.review import LOCK_MINUTES, can_review, queue
+        from apps.a11y.review import LOCK_MINUTES, can_review, ever_checked, queue
 
         project = self.get_object()
         user_id = getattr(request.user, "id", None)
+        rows = queue(tenant_id=self.tenant_id, project_id=str(project.id), user_id=user_id)
         return Response({
-            "queue": queue(tenant_id=self.tenant_id, project_id=str(project.id),
-                           user_id=user_id),
+            "queue": rows,
             "can_review": can_review(tenant_id=self.tenant_id, project_id=str(project.id),
                                      user_id=user_id),
             "lock_minutes": LOCK_MINUTES,
+            # Which of the two empty states the screen should show. Only asked when the queue is
+            # empty, because that is the only time the answer changes anything — and asking it
+            # unconditionally would put two more queries on the busiest accessibility screen.
+            "ever_checked": (True if rows else
+                             ever_checked(tenant_id=self.tenant_id, project_id=str(project.id))),
         })
 
     @action(detail=True, methods=["get", "post"], url_path=r"a11y-review/(?P<finding_id>[^/]+)")

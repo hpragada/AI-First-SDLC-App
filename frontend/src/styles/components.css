@@ -694,7 +694,11 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .md-body__table-wrap table { margin-bottom: 0; }
 
 /* diagram / image artifact placeholder */
-.diagram-frame { background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius-md); min-height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); color: var(--text-faint); }
+/* `--text-body`, NOT `--text-faint`: faint on subtle is 2.29:1, under the 4.5:1 this
+   product exists to enforce. Body on subtle is 8.86:1. Flagged three times before it
+   was fixed; `.shot--missing` below already carried the corrected value and a note
+   saying this component had not. */
+.diagram-frame { background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius-md); min-height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); color: var(--text-body); }
 .diagram-frame svg { width: 40px; height: 40px; }
 
 /* version-history row */
@@ -861,7 +865,7 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 /* Caption + mode switch. Text, never an icon alone — this bar states which mode is on. */
 .shot__bar { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-top: 1px solid var(--border); background: var(--bg-surface); font-size: var(--fs-xs); line-height: var(--lh-xs); color: var(--text-muted); }
 .shot__dims { font-family: var(--font-mono); }
-/* `--text-body`, not `--text-faint`. `.diagram-frame` uses faint on subtle, which is 2.29:1 —
-   deliberately not inherited here (flagged as a real defect in that component). This is 8.86:1. */
+/* `--text-body`, not `--text-faint`. Both this and `.diagram-frame` now use it; that component
+   was the 2.29:1 defect this note used to point at, and it is fixed. This is 8.86:1. */
 .shot--missing .shot__stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); min-height: 180px; color: var(--text-body); padding: var(--space-5); text-align: center; }
 .shot--missing svg { width: 32px; height: 32px; }

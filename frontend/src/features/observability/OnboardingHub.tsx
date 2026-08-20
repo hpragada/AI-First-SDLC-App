@@ -437,7 +437,10 @@ function ConnectMachineStep() {
   return (
     <Card>
       <CardBody className="u-row" style={{ gap: "var(--space-3)", alignItems: "center" }}>
-        <span className="vstep__num vstep__num--active">1</span>
+        {/* `!`, not `1`. This card is a PREREQUISITE, not the first step — and rendering a
+            `1` here put two steps numbered 1 in front of every first-time user, because
+            "Upload resources" below is also 1. */}
+        <span className="vstep__num vstep__num--active">!</span>
         <div style={{ flex: "1 1 auto" }}>
           <div className="t-body u-strong">
             {everConnected ? "Your machine isn't running right now" : "Connect your machine first"}
@@ -715,6 +718,37 @@ function OnboardingHubLive() {
 }
 
 // ── Gallery: fixed demo states for /dev/components + tests ─────────────────
+//
+// These MIRROR the live hub above, step for step. They drifted once — the gallery kept the
+// original five steps while the real screen grew to a prerequisite card plus seven — so every
+// design review and every journey test ran against a screen that no longer existed. If a step
+// is added above, add it here in the same pass.
+
+function GalleryConnect({ connected }: { connected: boolean }) {
+  return (
+    <Card>
+      <CardBody className="u-row" style={{ gap: "var(--space-3)", alignItems: "center" }}>
+        <span className={`vstep__num vstep__num--${connected ? "done" : "active"}`}>
+          {connected ? "✓" : "!"}
+        </span>
+        <div style={{ flex: "1 1 auto" }}>
+          <div className="t-body u-strong">
+            {connected ? "Your machine is connected" : "Connect your machine first"}
+          </div>
+          <div className="t-sm u-muted">
+            {connected
+              ? "Diagrams in your documents get read into text, and your code is analysed locally."
+              : "Some of this work runs on your own machine so nothing leaves it — reading the diagrams and screenshots inside your documents, and analysing your code."}
+          </div>
+        </div>
+        <Badge variant={connected ? "done" : undefined}>
+          {connected ? "Connected" : "Not connected"}
+        </Badge>
+      </CardBody>
+    </Card>
+  );
+}
+
 function OnboardingHubGallery({ view }: { view: OnboardingView }) {
   return (
     <div className="canvas-pad" style={{ maxWidth: "920px" }}>
@@ -731,11 +765,13 @@ function OnboardingHubGallery({ view }: { view: OnboardingView }) {
         </Badge>
       </div>
 
+      <GalleryConnect connected={view !== "nothing-done"} />
+
       <Card>
         <CardBody>
           {view === "nothing-done" && (
             <>
-              <Vstep num="1" title="Upload resources" desc="Drag in existing specs, PRDs, designs (.docx · .pdf · .xlsx)." state="active">
+              <Vstep num="1" title="Upload resources" desc="Drag in existing specs, PRDs, designs (.docx · .pdf · .xlsx · .txt · .html)." state="active">
                 <div className="dropzone" style={{ marginTop: "var(--space-3)" }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
                     <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
@@ -746,10 +782,12 @@ function OnboardingHubGallery({ view }: { view: OnboardingView }) {
                   </div>
                 </div>
               </Vstep>
-              <Vstep num="2" title="Register existing tools" desc="Link existing Confluence / Jira — register, don't recreate." />
-              <Vstep num="3" title="Index code" desc="Point at a repo; built-in code intelligence indexes it." />
-              <Vstep num="4" title="Gap report" desc="What exists, what's missing, and where to resume." />
-              <Vstep num="5" title="Resume" desc="Trigger the recommended phase and hand into the normal pipeline." />
+              <Vstep num="2" title="Register existing tools" desc="Bring your existing Jira backlog and Confluence docs in — register, don't recreate." />
+              <Vstep num="3" title="Register repositories" desc="Add the repositories the platform should analyse — code indexing and the gap report need at least one." />
+              <Vstep num="4" title="Index code" desc="Point at a repo; built-in code intelligence indexes it." />
+              <Vstep num="5" title="Gap report" desc="What exists, what's missing, and where to resume." />
+              <Vstep num="6" title="Check accessibility" desc="Register the pages of the application and run a first audit against WCAG 2.2 AA — where it stands before you change anything." />
+              <Vstep num="7" title="Resume" desc="Trigger the recommended phase and hand into the normal pipeline." />
             </>
           )}
 
@@ -768,13 +806,15 @@ function OnboardingHubGallery({ view }: { view: OnboardingView }) {
                 desc="Confluence space BILL and Jira project BILL linked — found 32 existing Jira issues, linked (no duplicates created)."
                 state="done"
               />
-              <Vstep num="3" title="Index code" desc="Indexing acme/legacy-billing…" state="running">
+              <Vstep num="3" title="Register repositories" desc="1 repository registered." state="done" />
+              <Vstep num="4" title="Index code" desc="Indexing acme/legacy-billing…" state="running">
                 <ConnStatus state="waiting">
                   <Spinner /> Indexing 1,284 files… 64%
                 </ConnStatus>
               </Vstep>
-              <Vstep num="4" title="Gap report" desc="Runs once indexing completes." />
-              <Vstep num="5" title="Resume" desc="Available after the gap report." />
+              <Vstep num="5" title="Gap report" desc="Runs once indexing completes." />
+              <Vstep num="6" title="Check accessibility" desc="Register the pages of the application and run a first audit against WCAG 2.2 AA." />
+              <Vstep num="7" title="Resume" desc="Available after the gap report." />
             </>
           )}
 
@@ -782,8 +822,9 @@ function OnboardingHubGallery({ view }: { view: OnboardingView }) {
             <>
               <Vstep num="1" title="Upload resources" desc="3 documents adopted as draft artifacts." state="done" />
               <Vstep num="2" title="Register existing tools" desc="32 Jira issues linked." state="done" />
-              <Vstep num="3" title="Index code" desc="1,284 files indexed." state="done" />
-              <Vstep num="4" title="Gap report" desc="Ideation ✓ · Requirements ✓ · PRD ~Partial · Architecture ✗ missing." state="done">
+              <Vstep num="3" title="Register repositories" desc="1 repository registered." state="done" />
+              <Vstep num="4" title="Index code" desc="1,284 files indexed." state="done" />
+              <Vstep num="5" title="Gap report" desc="Ideation ✓ · Requirements ✓ · PRD ~Partial · Architecture ✗ missing." state="done">
                 <Card attention>
                   <CardBody style={{ maxWidth: "520px" }}>
                     <span className="gate-panel__role">Recommended resume point</span>
@@ -800,7 +841,14 @@ function OnboardingHubGallery({ view }: { view: OnboardingView }) {
                   </CardBody>
                 </Card>
               </Vstep>
-              <Vstep num="5" title="Resume" desc="Trigger Architecture on a work item to enter the pipeline." state="active">
+              <Vstep num="6" title="Check accessibility" desc="2 audits run — open the report from Artifacts." state="done">
+                <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
+                  <Link to="/a11y/pages" className="btn btn--secondary">
+                    Pages &amp; audit
+                  </Link>
+                </div>
+              </Vstep>
+              <Vstep num="7" title="Resume" desc="Trigger Architecture on a work item to enter the pipeline." state="active">
                 <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
                   <Button variant="primary">Resume at Architecture</Button>
                   <Button variant="ghost">Re-run gap report</Button>

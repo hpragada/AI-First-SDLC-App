@@ -14,6 +14,8 @@
 //     says so in one line, so nobody later reads the absence as an omission.
 import { useState } from "react";
 
+import { Link } from "react-router-dom";
+
 import { useAuth } from "../../auth/AuthContext";
 import {
   Badge,
@@ -28,8 +30,10 @@ import {
   Table,
   Textarea,
 } from "../../components/ui";
+import { roleLabel } from "../identity/roles";
 import type { A11yConformance, A11yConformanceLevel, A11yConformanceRow } from "../../types";
 import { A11yTabs } from "./A11yTabs";
+import { LoadFailed } from "./LoadFailed";
 import {
   useA11yConformance,
   useExportA11yConformance,
@@ -334,14 +338,37 @@ export function A11yConformanceScreen() {
   }
 
   const data = query.data;
-  if (query.isError || !data) {
+  // The two were one branch, so a 500 rendered "There is nothing to compile yet" — a statement
+  // about the project, made by a screen that had not managed to ask about it.
+  if (query.isError) {
+    return (
+      <main className="canvas-pad">
+        <A11yTabs active="conformance" />
+        <LoadFailed
+          what="The conformance statement"
+          error={query.error}
+          onRetry={() => void query.refetch()}
+        />
+      </main>
+    );
+  }
+  if (!data) {
     return (
       <main className="canvas-pad">
         <A11yTabs active="conformance" />
         <Panel title="Accessibility conformance">
+          {/* The route to evidence is an AUDIT, and this used to say "run the testing phase" —
+              right for a project being built here, wrong for the brownfield reader who is the
+              one most likely to arrive with nothing compiled. Both roads start on the same
+              screen, so that is where this points. */}
           <EmptyState
             title="There is nothing to compile yet"
-            text="A conformance statement is built from accessibility runs. Run the testing phase on this project and the per-criterion evidence will appear here."
+            text="A conformance statement is built from accessibility evidence, and none has been recorded on this project. Register the pages of the application and run an audit — or, on a project built here, run the Testing phase and its suite captures the evidence as it goes."
+            action={
+              <Link to="/a11y/pages" className="btn btn--primary">
+                Go to Pages &amp; audit
+              </Link>
+            }
           />
         </Panel>
       </main>
@@ -397,7 +424,9 @@ export function A11yConformanceScreen() {
       {!data.can_sign && (
         <Banner variant="info" title="You are not the accessibility reviewer">
           You can read the statement and every piece of evidence behind it. Editing and signing
-          need the {data.required_role} role on this project.
+          {/* `roleLabel`, never the raw key: the platform has a standing rule against showing
+              one to a user, and this line was showing "qa_lead". */}
+          need the {roleLabel(data.required_role)} role on this project.
         </Banner>
       )}
 

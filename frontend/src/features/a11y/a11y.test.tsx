@@ -319,7 +319,10 @@ describe("the Accessibility destination", () => {
     vi.stubGlobal("fetch", stubRoutes([...AUTHED]));
     renderWithProviders(<AppShell />);
     const link = await screen.findByRole("link", { name: /Accessibility/ });
-    expect(link.getAttribute("href")).toBe("/a11y");
+    // `/a11y/pages`, not `/a11y`. The tab strip puts Pages & audit first because that is where
+    // the work starts, and the sidebar used to disagree — landing every first visit on the
+    // review queue, the one tab with nothing on it until an audit has run.
+    expect(link.getAttribute("href")).toBe("/a11y/pages");
     // Present, and with no badge, because nothing is waiting. The two facts are different and
     // the sidebar has to be able to say both.
     expect(link.querySelector(".nav-item__count")).toBeNull();

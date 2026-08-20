@@ -143,3 +143,54 @@ def test_a_malformed_selection_is_a_400_not_a_crash(world):
         world["url"], {"base_url": "http://x", "test_refs": "TC-031"}, format="json")
     assert resp.status_code == 400
     assert "list" in resp.json()["detail"]
+
+
+# ── Dispatched is not the same as walking (#4) ──────────────────────────────
+#
+# `_dispatch_journey` marks the row WALKING the moment the run is triggered, which is right: the
+# platform has handed the work over and will not hand it to anyone else. But the panel rendered
+# that as "Walking now", so a journey dispatched with no companion online read as a browser
+# stepping through the application — for ever. The audit strip directly above it has told those
+# two states apart since task 8a, and one screen should not hold itself to two standards.
+
+
+def _dispatch_state(run_id, state):
+    from apps.runs.models import Run
+
+    run = Run.objects.get(id=run_id)
+    inputs = dict(run.inputs or {})
+    inputs["dispatch"] = {**(inputs.get("dispatch") or {}), "status": state}
+    run.inputs = inputs
+    run.save(update_fields=["inputs"])
+
+
+def test_a_dispatched_journey_no_machine_has_taken_reads_as_waiting(world):
+    started = _client("lead@acme.test").post(
+        world["url"], {"base_url": "http://127.0.0.1:5173"}, format="json").json()
+    _dispatch_state(started["started"][0]["run_id"], "pending")
+
+    (row,) = _client("lead@acme.test").get(world["url"]).json()["journeys"]
+    assert row["status"] == "queued", "dispatched, and nothing has picked it up"
+    # The stored row is untouched — this is a reading of it, not a second state to keep in step.
+    assert A11yJourneyRun.objects.get().status == A11yJourneyRun.Status.WALKING
+
+
+def test_once_a_machine_claims_it_the_row_says_walking(world):
+    started = _client("lead@acme.test").post(
+        world["url"], {"base_url": "http://127.0.0.1:5173"}, format="json").json()
+    _dispatch_state(started["started"][0]["run_id"], "claimed")
+
+    (row,) = _client("lead@acme.test").get(world["url"]).json()["journeys"]
+    assert row["status"] == "walking"
+
+
+def test_a_finished_walk_is_finished_however_it_was_dispatched(world):
+    """Only the ones claiming to be in flight are worth asking about — a completed walk must not
+    be re-described by the state of the run that produced it."""
+    started = _client("lead@acme.test").post(
+        world["url"], {"base_url": "http://127.0.0.1:5173"}, format="json").json()
+    _dispatch_state(started["started"][0]["run_id"], "pending")
+    A11yJourneyRun.objects.update(status=A11yJourneyRun.Status.COMPLETE)
+
+    (row,) = _client("lead@acme.test").get(world["url"]).json()["journeys"]
+    assert row["status"] == A11yJourneyRun.Status.COMPLETE

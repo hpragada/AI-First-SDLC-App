@@ -353,6 +353,42 @@ def _last_walks(tenant_id, project_id) -> dict:
     return newest
 
 
+#: What the panel shows for a journey that was dispatched and has not been picked up. Not a
+#: stored status — see `_claimed`.
+QUEUED = "queued"
+
+
+def _claimed(tenant_id, rows) -> set:
+    """Which of these journey runs a machine has actually taken. Returns the claimed `run_id`s.
+
+    **Why this exists at all.** `_dispatch_journey` writes `status=WALKING` the moment the run is
+    triggered, which is right — the platform has handed the work over and will not hand it to
+    anyone else. But the panel rendered that as *"Walking now"*, so a journey dispatched with no
+    companion online read as a browser stepping through the application, for ever. The audit
+    strip directly above it has told these two states apart since task 8a (*"Waiting for a
+    machine"* before *"Visiting pages"*), and the two halves of one screen should not hold
+    themselves to different standards.
+
+    **Derived, not stored, so this needs no migration.** A dispatched run carries
+    `inputs.dispatch.status`, which the work-claim endpoint flips from `pending` to `claimed`
+    when a companion takes it. That is the same fact the audit reads off `A11yBaselineAudit`,
+    read from where the planning channel already keeps it.
+
+    One query for the whole list, never one per row.
+    """
+    from apps.runs.models import Run
+
+    ids = [row.run_id for row in rows if row.run_id]
+    if not ids:
+        return set()
+    with tenant_context(tenant_id):
+        runs = Run.objects.filter(tenant_id=tenant_id, id__in=ids).only("id", "inputs")
+        return {
+            str(run.id) for run in runs
+            if ((run.inputs or {}).get("dispatch") or {}).get("status") != "pending"
+        }
+
+
 def walkable_journeys(tenant_id, project_id, *, object_store=None) -> dict:
     """Everything the keyboard-journeys panel renders (G6b).
 
@@ -363,12 +399,23 @@ def walkable_journeys(tenant_id, project_id, *, object_store=None) -> dict:
     saying why — the same discipline `journeys_for_project` already applies to its own return.
     """
     from .journeys import MAX_JOURNEYS, journeys_for_project
+    from .models import A11yJourneyRun
 
     found = journeys_for_project(tenant_id, project_id, object_store=object_store)
     walks = _last_walks(tenant_id, project_id)
+    # Only the ones claiming to be walking are worth asking about; a finished walk is finished
+    # however it was dispatched.
+    in_flight = [r for r in walks.values() if r.status == A11yJourneyRun.Status.WALKING]
+    claimed = _claimed(tenant_id, in_flight)
     rows = []
     for journey in found["journeys"]:
         last = walks.get(journey_handle(journey))
+        status = last.status if last is not None else ""
+        # Dispatched, and no machine has taken it. Said as itself rather than as "Walking now",
+        # which is what a person with no companion running used to see indefinitely.
+        if (last is not None and status == A11yJourneyRun.Status.WALKING
+                and str(last.run_id) not in claimed):
+            status = QUEUED
         rows.append({
             # What the screen sends back to start this one. Always present, unlike `test_ref`.
             "id": journey_handle(journey),
@@ -377,7 +424,7 @@ def walkable_journeys(tenant_id, project_id, *, object_store=None) -> dict:
             "artifact_id": journey.artifact_id,
             "steps": len(journey.steps),
             "last_walked": last.created_at if last is not None else None,
-            "status": last.status if last is not None else "",
+            "status": status,
             "summary": (last.summary or {}) if last is not None else {},
         })
     address = suggested_address(tenant_id, project_id)

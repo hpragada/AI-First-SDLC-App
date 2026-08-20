@@ -1,0 +1,13 @@
+{
+  "name": "sdlc-companion-a11y-toolchain",
+  "private": true,
+  "version": "1.0.0",
+  "description": "The companion's OWN browser and accessibility scanner. Not a build of anything - these two packages exist so that `assets/a11y_audit.mjs` has something to fall back to when the application being audited is not a Node project. Node resolves a bare import from that file's directory upward, which reaches this folder's node_modules; the project's own copy is still tried first and still wins, so an application that ships its own axe is scanned with the version it ships. See the header of assets/a11y_audit.mjs.",
+  "scripts": {
+    "postinstall": "echo \"Now run: npx playwright install chromium\""
+  },
+  "dependencies": {
+    "axe-core": "4.13.0",
+    "playwright": "1.62.1"
+  }
+}

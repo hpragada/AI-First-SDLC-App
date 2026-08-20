@@ -336,30 +336,54 @@ class CompanionDaemon:
         client = RemoteStateClient(api_url=self._base, tenant_id=self._tenant,
                                    token=self._token)
 
-        reason = str(claimed.get("repo_reason") or "").strip()
-        workdir = ""
-        if not reason:
+        # PREFERRED, not required. The audit only ever visits URLs; the folder exists so the
+        # browser and the scanner can be resolved out of the audited project's own
+        # `node_modules` — which is worth having, because the version stamped on every scan is
+        # then the version that application actually ships.
+        #
+        # But it used to be a REFUSAL, and that made a whole class of application unauditable:
+        # a Django, Rails or .NET app has no `node_modules` for anything to be resolved from,
+        # so the only way to audit one was to add npm dev-dependencies to the client's own
+        # repository in order to look at it. Now a missing clone falls through to the
+        # companion's own pinned toolchain (`runner/package.json`) running from a scratch
+        # folder, and the capture records `axe-core X.Y.Z (companion)` so no report ever
+        # implies the client's version when it used ours.
+        workdir, where = "", ""
+        repo = str(claimed.get("repo") or "")
+        if not str(claimed.get("repo_reason") or "").strip() and repo:
             try:
-                workdir = self._resolve_repo_path(str(claimed.get("repo") or ""))
-            except DaemonError as exc:
-                # The platform named the repository; this machine has no clone of it. The
-                # browser and the scanner are resolved out of that project's own node_modules,
-                # so there is nowhere to run — and the person needs the repo name, not a
-                # stack trace.
-                reason = (
-                    f"this machine has no local clone of the repository the audit must run "
-                    f"from, so there is no project folder to open a browser in. {exc}"
-                )
-        if reason:
-            print(f"[companion] a11y audit {audit_id} cannot run: {reason}", file=sys.stderr,
+                workdir, where = self._resolve_repo_path(repo), f"the {repo} clone"
+            except DaemonError:
+                workdir = ""
+        if not workdir:
+            workdir = self._a11y_scratch(str(claimed.get("project_id") or ""))
+            where = "this companion's own toolchain"
+            print(f"[companion] a11y audit {audit_id}: no local clone of "
+                  f"{repo or 'any repository for this project'}, running from {workdir}",
                   flush=True)
-            client.call("finish_a11y_audit", audit_id=audit_id, reason=reason)
-            return
 
+        # Not pre-checked here: `run_baseline_audit` runs its own preflight and, when no browser
+        # can be resolved from either place, closes the audit carrying that exact reason rather
+        # than the generic "the application did not respond". One authority on that answer.
         out = run_baseline_audit(client=client, project_id=claimed["project_id"],
                                  workdir=workdir, audit_id=audit_id)
         print(f"[companion] a11y audit {audit_id}: {out['posted']} screen(s) posted "
-              f"from {workdir}", flush=True)
+              f"from {workdir} ({where})", flush=True)
+
+    def _a11y_scratch(self, project_id: str) -> str:
+        """A folder to run an audit from when this machine has no clone of the project.
+
+        Under the companion's worktree root when it has one — the operator already chose that
+        location and it is already on a disk they expect us to use — and beside the user's
+        profile otherwise. Per project, because two audits of two applications must not fight
+        over one `test-results/a11y-candidates.json`.
+        """
+        from pathlib import Path as _Path
+
+        root = _Path(self._worktrees_root) if getattr(self, "_worktrees_root", "") else _Path.home() / ".sdlc"
+        path = root / "a11y-audit" / (project_id or "unknown")
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
 
     # Transient-outage policy (Bugs S.No 105): a backend/worker restart drops the HTTP
     # connection mid-poll; that surfaces as an OSError (URLError / ConnectionError / timeout),
