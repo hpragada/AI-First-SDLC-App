@@ -1118,6 +1118,268 @@ def test_the_phase_the_companion_hardcodes_is_the_phase_the_catalog_gives_09d():
     assert JOURNEY_PHASE in BROWSER_PHASES, "…and that phase is the one granted a browser"
 
 
+# ── G6b: starting several journeys, each on a work item of its own ───────────
+
+def _journeys(*refs):
+    """N walkable journeys, differing only in the test case they came from."""
+    from integrations.types import A11yJourney
+
+    return [A11yJourney(test_ref=ref, title=f"Journey {ref}",
+                        steps=tuple(parse_steps(JOURNEY_BODY)), artifact_id=f"a-{ref}")
+            for ref in refs]
+
+
+def _queue_world(world, monkeypatch, journeys, *, skipped=None, over_cap=None, role="qa_lead"):
+    """Everything `queue_journeys` reaches, stubbed: the test-case scan, the availability check,
+    and a reviewer who is allowed to press the button."""
+    from apps.a11y import journey as journey_mod
+    from apps.a11y import journeys as journeys_mod
+    from apps.tenancy.models import Membership, User
+
+    monkeypatch.setattr(journeys_mod, "journeys_for_project",
+                        lambda *a, **k: {"journeys": list(journeys),
+                                         "skipped": list(skipped or []),
+                                         "over_cap": list(over_cap or [])})
+    monkeypatch.setattr(journey_mod, "journey_available", lambda *a, **k: "")
+    user = User.objects.create_user(email="aisha@acme.test", name="Aisha", tenant=world["tenant"])
+    if role:
+        Membership.objects.create(tenant=world["tenant"], project=world["project"],
+                                  user=user, role=role)
+    return user
+
+
+def _each_run(world):
+    """A trigger that behaves like the real one in the way this slice depends on: a fresh run
+    per call, and a REFUSAL when a work item already has one in flight."""
+    import uuid
+
+    from apps.runs.models import Run
+    from orchestration.trigger import ActiveRunError
+
+    live: set = set()
+
+    def _fn(**kwargs):
+        _fn.calls.append(kwargs)
+        item = kwargs["work_item_id"]
+        if item in live:
+            raise ActiveRunError("a run is already in progress for this work item")
+        live.add(item)
+        spec = AgentSpec.objects.get(tenant=world["tenant"], key=JOURNEY_AGENT_KEY)
+        run = Run.objects.create(
+            id=uuid.uuid4(), tenant=world["tenant"], agent_spec=spec,
+            work_item_id=item, status="running")
+        return _Outcome(str(run.id))
+    _fn.calls = []
+    return _fn
+
+
+@pytest.mark.django_db
+def test_three_journeys_start_three_runs_on_three_work_items(world, monkeypatch):
+    """The fix. Every agent run hangs off a work item, and the platform refuses a second run on
+    one that is already busy — so sharing a work item would start the first journey and have the
+    other two turned away by a rule that was never about them."""
+    from apps.a11y.journey import queue_journeys
+
+    user = _queue_world(world, monkeypatch, _journeys("TC-031", "TC-044", "TC-052"))
+    trigger = _each_run(world)
+    out = queue_journeys(tenant_id=world["t"], project_id=world["p"], base_url=APP_URL,
+                         user_id=user.id, trigger=trigger)
+
+    assert [j["name"] for j in out["started"]] == ["TC-031", "TC-044", "TC-052"]
+    assert out["refused"] == []
+    items = [c["work_item_id"] for c in trigger.calls]
+    assert len(set(items)) == 3, "one work item each, or the second and third are refused"
+    assert A11yJourneyRun.objects.count() == 3
+
+
+@pytest.mark.django_db
+def test_a_journeys_work_item_never_appears_on_anybodys_board(world, monkeypatch):
+    """The judging carrier shipped without this marking and left an 'Accessibility judging' task
+    on the user's board after every test run. Marked from the start here, and checked against the
+    platform's one definition of a carrier rather than against a copy of the string."""
+    from apps.a11y.journey import queue_journeys
+    from apps.workitems.models import WorkItem
+    from integrations.onboarding import CARRIER_SOURCES, carrier_q
+
+    user = _queue_world(world, monkeypatch, _journeys("TC-031"))
+    queue_journeys(tenant_id=world["t"], project_id=world["p"], base_url=APP_URL,
+                   user_id=user.id, trigger=_each_run(world))
+
+    carrier = WorkItem.objects.get(feature_stream="__a11y_journey__TC-031")
+    assert carrier.external_ref["source"] in CARRIER_SOURCES
+    visible = WorkItem.objects.filter(tenant_id=world["t"]).exclude(carrier_q())
+    assert carrier.id not in {w.id for w in visible}
+    assert world["item"].id in {w.id for w in visible}, "the real story is still there"
+
+
+@pytest.mark.django_db
+def test_starting_the_same_journey_twice_says_so_and_does_not_stop_the_others(
+        world, monkeypatch):
+    """Team decision: refused, in words, not a second browser walking the same path."""
+    from apps.a11y.journey import queue_journeys
+
+    user = _queue_world(world, monkeypatch, _journeys("TC-031", "TC-044"))
+    trigger = _each_run(world)
+    queue_journeys(tenant_id=world["t"], project_id=world["p"], base_url=APP_URL,
+                   user_id=user.id, trigger=trigger, test_refs=["TC-031"])
+    out = queue_journeys(tenant_id=world["t"], project_id=world["p"], base_url=APP_URL,
+                         user_id=user.id, trigger=trigger)
+
+    assert [j["name"] for j in out["started"]] == ["TC-044"], "the other one still starts"
+    (again,) = out["refused"]
+    assert again["name"] == "TC-031"
+    assert "already being walked" in again["reason"]
+
+
+@pytest.mark.django_db
+def test_what_the_cap_left_out_is_named_never_dropped(world, monkeypatch):
+    """`journeys_for_project` stops at ten and hands back what it left. That travels out of the
+    queue untouched, because a journey silently not run reads exactly like one that passed."""
+    from apps.a11y.journey import queue_journeys
+
+    user = _queue_world(world, monkeypatch, _journeys(*[f"TC-{n:03d}" for n in range(10)]),
+                        over_cap=["TC-999"])
+    out = queue_journeys(tenant_id=world["t"], project_id=world["p"], base_url=APP_URL,
+                         user_id=user.id, trigger=_each_run(world))
+
+    assert len(out["started"]) == 10
+    assert out["over_cap"] == ["TC-999"]
+
+
+@pytest.mark.django_db
+def test_a_reader_can_look_and_cannot_start(world, monkeypatch):
+    from apps.a11y.journey import JourneyRoleError, queue_journeys, walkable_journeys
+
+    user = _queue_world(world, monkeypatch, _journeys("TC-031"), role="engineer")
+    with pytest.raises(JourneyRoleError, match="accessibility reviewer"):
+        queue_journeys(tenant_id=world["t"], project_id=world["p"], base_url=APP_URL,
+                       user_id=user.id, trigger=_each_run(world))
+    # …and looking is unaffected: the list is not the thing being gated.
+    assert len(walkable_journeys(world["t"], world["p"])["journeys"]) == 1
+
+
+@pytest.mark.django_db
+def test_a_name_this_project_does_not_have_comes_back_named(world, monkeypatch):
+    """A stale row on a screen, or a person typing one. Not an error, and not a silence either."""
+    from apps.a11y.journey import queue_journeys
+
+    user = _queue_world(world, monkeypatch, _journeys("TC-031"))
+    out = queue_journeys(tenant_id=world["t"], project_id=world["p"], base_url=APP_URL,
+                         user_id=user.id, trigger=_each_run(world),
+                         test_refs=["TC-031", "TC-404"])
+
+    assert [j["name"] for j in out["started"]] == ["TC-031"]
+    assert [r["name"] for r in out["refused"]] == ["tc-404"]
+    assert "no walkable journey" in out["refused"][0]["reason"]
+
+
+@pytest.mark.django_db
+def test_queueing_with_no_address_starts_nothing_and_says_why(world, monkeypatch):
+    from apps.a11y.journey import NO_ADDRESS, queue_journeys
+
+    user = _queue_world(world, monkeypatch, _journeys("TC-031"))
+    trigger = _each_run(world)
+    out = queue_journeys(tenant_id=world["t"], project_id=world["p"], base_url="  ",
+                         user_id=user.id, trigger=trigger)
+    assert out["started"] == [] and out["reason"] == NO_ADDRESS
+    assert trigger.calls == []
+
+
+@pytest.mark.django_db
+def test_the_panel_shows_the_e2e_cases_it_could_not_walk_and_why(world, monkeypatch):
+    """A case marked E2E whose steps cannot be read is not the same fact as a project with no
+    journeys. Omitting it is how an application with no keyboard coverage comes to look like one
+    with no keyboard problems."""
+    from apps.a11y.journey import walkable_journeys
+
+    _queue_world(world, monkeypatch, _journeys("TC-031"), skipped=[
+        {"artifact_id": "a-9", "title": "TC-077 Checkout", "test_ref": "TC-077",
+         "reason": "the test case declares Type: E2E but no steps could be read from it"}])
+    out = walkable_journeys(world["t"], world["p"])
+
+    assert [j["test_ref"] for j in out["journeys"]] == ["TC-031"]
+    (blocked,) = out["unwalkable"]
+    assert blocked["test_ref"] == "TC-077" and "no steps could be read" in blocked["reason"]
+    assert out["max_journeys"] == 10
+
+
+@pytest.mark.django_db
+def test_the_list_says_when_each_journey_was_last_walked(world, monkeypatch):
+    from apps.a11y.journey import queue_journeys, walkable_journeys
+
+    user = _queue_world(world, monkeypatch, _journeys("TC-031", "TC-044"))
+    queue_journeys(tenant_id=world["t"], project_id=world["p"], base_url=APP_URL,
+                   user_id=user.id, trigger=_each_run(world), test_refs=["TC-031"])
+
+    rows = {j["test_ref"]: j for j in walkable_journeys(world["t"], world["p"])["journeys"]}
+    assert rows["TC-031"]["last_walked"] is not None
+    assert rows["TC-031"]["status"] == A11yJourneyRun.Status.WALKING
+    assert rows["TC-044"]["last_walked"] is None, "never walked reads as never walked"
+
+
+@pytest.mark.django_db
+def test_the_address_is_suggested_from_the_last_audit_then_the_repository(world):
+    """One answer to "where is this application", never two that can disagree."""
+    from apps.a11y.journey import suggested_address
+    from apps.a11y.models import A11yBaselineAudit
+    from apps.projects.models import Repository
+
+    # Nothing known at all: it says what to go and set rather than inventing an address.
+    empty = suggested_address(world["t"], world["p"])
+    assert empty.url == "" and "no application address on record" in empty.reason
+
+    Repository.objects.create(tenant=world["tenant"], project=world["project"], name="acme/web",
+                              is_default=True, preview_url="http://127.0.0.1:3000")
+    from_repo = suggested_address(world["t"], world["p"])
+    assert from_repo.url == "http://127.0.0.1:3000" and "acme/web" in from_repo.source
+
+    A11yBaselineAudit.objects.create(tenant=world["tenant"], project=world["project"],
+                                     base_url="http://localhost:4180/", routes=["/"])
+    from_audit = suggested_address(world["t"], world["p"])
+    assert from_audit.url == "http://localhost:4180", "the audit wins, and the slash is trimmed"
+    assert from_audit.source == "your last audit"
+
+
+@pytest.mark.django_db
+def test_a_test_case_stamped_as_something_else_is_never_opened(world):
+    """G6b's cost fix. A project with ninety test cases and three journeys used to read all
+    ninety out of the object store to find the three."""
+    from mcp_platform_state import tools
+
+    from apps.a11y.journeys import journeys_for_project
+    from apps.registry.models import Artifact
+
+    opened = []
+
+    def _spy(tenant_id, artifact_id, object_store=None):
+        opened.append(artifact_id)
+        return {"body": JOURNEY_BODY}
+
+    for i in range(3):
+        Artifact.objects.create(
+            tenant=world["tenant"], project=world["project"], phase="testing", type="test_case",
+            title=f"TC-{i:03d} Functional", sor="internal", content_hash=f"h{i}",
+            external_ref={"type": "Functional", "tc_id": f"TC-{i:03d}"})
+    journey = Artifact.objects.create(
+        tenant=world["tenant"], project=world["project"], phase="testing", type="test_case",
+        title="TC-031 Checkout", sor="internal", content_hash="h9",
+        external_ref={"type": "E2E", "tc_id": "TC-031"})
+    unstamped = Artifact.objects.create(
+        tenant=world["tenant"], project=world["project"], phase="testing", type="test_case",
+        title="TC-050 Unstamped", sor="internal", content_hash="h8", external_ref={})
+
+    original = tools.get_artifact_body
+    tools.get_artifact_body = _spy
+    try:
+        found = journeys_for_project(world["t"], world["p"])
+    finally:
+        tools.get_artifact_body = original
+
+    assert sorted(opened) == sorted([str(journey.id), str(unstamped.id)]), (
+        "the three stamped Functional cases were never read")
+    assert len(found["journeys"]) == 2, "the E2E one and the unstamped one that turned out to be"
+
+
 # ── tenant isolation, at the database ────────────────────────────────────────
 
 @pytest.mark.django_db(transaction=True)

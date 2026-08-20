@@ -1093,7 +1093,12 @@ def ensure_onboarding_work_item(*, tenant_id, project_id, repo_id=None):
 # listed here because this is where the platform keeps the one definition of "carrier", and two
 # lists would be two answers. It hosts the accessibility judge, which cannot run on the story:
 # the story's own run is live for the whole build and `_guard_no_active_run` would refuse it.
-CARRIER_SOURCES = ("onboarding_carrier", "vision_carrier", "a11y_judging_carrier")
+#
+# `a11y_journey_carrier` is the same shape one level along (G6b): one per keyboard journey,
+# because the same rule that stops the judge running on the story stops a second journey
+# running on the first journey's work item — so ticking three would have started one.
+CARRIER_SOURCES = ("onboarding_carrier", "vision_carrier", "a11y_judging_carrier",
+                   "a11y_journey_carrier")
 
 
 def carrier_q(prefix: str = ""):

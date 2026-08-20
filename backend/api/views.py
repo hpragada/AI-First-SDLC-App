@@ -234,7 +234,7 @@ class ProjectViewSet(
         # project Membership and this class-level hook has no project in hand.
         if self.action in {"a11y_review", "a11y_review_item", "a11y_review_screenshot",
                            "a11y_conformance", "a11y_conformance_sign",
-                           "a11y_conformance_export"}:
+                           "a11y_conformance_export", "a11y_journeys"}:
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
@@ -553,6 +553,55 @@ class ProjectViewSet(
              "created_at": a.created_at}
             for a in audits
         ]})
+
+    @action(detail=True, methods=["get", "post"], url_path="a11y-journeys")
+    def a11y_journeys(self, request, pk=None):
+        """Keyboard journeys for this project (G6b). `GET` lists, `POST` starts.
+
+        Eight WCAG criteria cannot be answered by reading a page standing still — whether tabbing
+        ever traps you, whether focus stays visible, whether a status message is announced. The
+        only way to answer them is to operate the application, which is what these start.
+
+        **`GET` carries the address to pre-fill**, from the last audit or the repository, so the
+        panel reads one payload rather than two. `POST` never starts more than the cap and never
+        drops the excess: what it did not start comes back named, with a reason for each.
+
+        **Anyone may look; only the accessibility reviewer may start one.** Enforced inside
+        `queue_journeys` rather than here, the same way `conformance.sign` does it, because the
+        role is a project Membership and this class-level hook has no project in hand.
+        """
+        from apps.a11y.journey import (
+            JourneyRoleError,
+            queue_journeys,
+            walkable_journeys,
+        )
+
+        project = self.get_object()
+        if request.method == "POST":
+            refs = request.data.get("test_refs")
+            if refs is not None and not isinstance(refs, list | tuple):
+                return Response({"detail": "test_refs must be a list of test case ids"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            try:
+                out = queue_journeys(
+                    tenant_id=self.tenant_id, project_id=str(project.id),
+                    base_url=request.data.get("base_url", ""), test_refs=refs,
+                    user_id=getattr(request.user, "id", None),
+                )
+            except JourneyRoleError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+            # 200, not 201: a queue call can legitimately start nothing (everything already
+            # walking, nothing walkable) and reporting that as "created" would be a lie the
+            # screen then has to unpick.
+            return Response(out)
+
+        from apps.a11y.review import can_review
+
+        return Response({
+            **walkable_journeys(self.tenant_id, str(project.id)),
+            "can_start": can_review(tenant_id=self.tenant_id, project_id=str(project.id),
+                                    user_id=getattr(request.user, "id", None)),
+        })
 
     @action(detail=True, methods=["get"], url_path="a11y-review")
     def a11y_review(self, request, pk=None):

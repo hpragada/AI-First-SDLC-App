@@ -207,6 +207,22 @@ def journey_from(artifact, body: str) -> A11yJourney:
     )
 
 
+def _stated_type(artifact) -> str:
+    """The `Type:` a producer stamped on the artifact itself, or `""` when it did not (G6b).
+
+    **Why not `test_cases.declared_fields`**, which is the platform's reader of this pair: it
+    falls back to the artifact's BODY when the stamp is missing, which is right for its callers
+    and wrong here — this module then reads the same body again for the steps. So the cheap half
+    is read directly and the fallback stays this module's own `is_journey(body)`.
+
+    What this buys: a project with ninety test cases and three journeys used to cost ninety
+    object-store reads to find the three. Where the Testing agent stamped the type — which it
+    does — the other eighty-seven are now skipped without being opened. Where it did not, the
+    body is read exactly as before, so this is never worse.
+    """
+    return str((artifact.external_ref or {}).get("type") or "").strip().lower()
+
+
 def _test_case_artifacts(tenant_id, project_id) -> list:
     """The newest version of every test-case artifact in the project."""
     from apps.registry.models import Artifact
@@ -239,6 +255,11 @@ def journeys_for_project(tenant_id, project_id, *, object_store=None) -> dict:
     skipped: list[dict] = []
     over_cap: list[str] = []
     for artifact in _test_case_artifacts(tenant_id, project_id):
+        # A case the producer stamped as something other than E2E is not a journey and its body
+        # is never opened. Only an unstamped case costs a read to find that out.
+        stated = _stated_type(artifact)
+        if stated and JOURNEY_TYPE not in stated.split():
+            continue
         read = tools.get_artifact_body(tenant_id, str(artifact.id), object_store=object_store)
         body = (read or {}).get("body") or ""
         if not body.strip():

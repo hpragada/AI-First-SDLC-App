@@ -66,7 +66,7 @@ Small and safe first, so the team gets working ground under them before the big 
 | 8a | **B1 + B4 + B2** — the audit screen, and the way in | Brownfield audit with no terminal at all | L |
 | 8b | **The page editor** — edit one page, not the whole list | A path can be corrected without creating a second page | M |
 | 9 | **G3b** — the review list stops fetching evidence nobody reads ✅ | A queue that does the work it is read for | S |
-| 10 | **G6** — the keyboard journey, working on both journeys *(G6a ✅ · G6b, G6c to go)* | Eight criteria nothing else can reach | M |
+| 10 | **G6** — the keyboard journey, working on both journeys *(G6a ✅ · G6b ✅ · G6c to go)* | Eight criteria nothing else can reach | M |
 
 Tasks 1–4 are independent of each other. 6 should land before 7. 8 has the wireframe already
 approved (`docs/design/screens/S-38-a11y-audit.html`) and was **split by team decision on
@@ -1026,6 +1026,47 @@ application and comes back with findings.
   of the destination; a reader sees everything and starts nothing.
 
 *Size M · Risk low · Needs G6a.*
+
+#### G6b — BUILT, 2026-08-20
+
+**One work item per journey.** Every agent run in this platform hangs off a work item, and the
+platform refuses a second run on one that already has a live one. Sharing a work item would have
+started the first ticked journey and had the rest turned away by a rule that was never about
+them. Each journey now gets its own, keyed by test ref, **marked a carrier from the start** so it
+never reaches anybody's board — the mistake the judging carrier made and G4 had to come back and
+fix. Asserted against `CARRIER_SOURCES` itself, not a copy of the string.
+
+**Nothing is dropped in silence.** What the cap left out, a journey already being walked, a
+dispatch that was refused, an E2E case with no readable steps, and a name asked for that this
+project does not have — every one comes back named, with its own reason. A journey quietly not
+run reads exactly like one that passed.
+
+**Two endpoints, one payload.** `GET/POST /api/projects/<id>/a11y-journeys/`. The `GET` carries
+the address to pre-fill — the last audit's, else the repository's Preview URL, with the reason to
+show when there is neither — so the panel reads one payload instead of making two calls. That is
+the plan's G6c item moved here, because otherwise the endpoint gets built twice.
+
+**Anyone may look; only the accessibility reviewer may start one.** `403` on the POST, `can_start`
+on the GET so the screen greys the button rather than failing on click. Enforced in the module,
+the way `conformance.sign` does it, because the role is a project Membership.
+
+**One cost fixed on the way past.** Listing journeys read every test case's body out of the object
+store — ninety reads on a project with ninety cases to find three journeys. It now checks the type
+the Testing agent already stamps on the artifact and only opens the ones that claim to be
+journeys. Free where the stamp is there, unchanged where it is not. The same mistake task 9 had
+just fixed in the review list.
+
+*Proven by: three ticked journeys starting three runs on three distinct work items; a journey's
+work item being invisible to `carrier_q` while the real story stays visible; the same journey
+started twice refused **by name** while the others still start; ten started and the eleventh
+named; a reader listing and being refused the button (`403`, nothing started); a name this
+project does not have coming back named; no address starting nothing and saying why; the panel
+showing E2E cases it could not walk with their reasons; "last walked" empty meaning never walked;
+the address preferring the last audit then the repository then saying what to go and set; and a
+spy proving three test cases stamped `Functional` are never opened.*
+
+**Not proven, and only a live run can:** that a queued journey is picked up by a real companion
+and walked by a real browser.
 
 **G6c · The way a person starts one** *(the same on both journeys)*
 

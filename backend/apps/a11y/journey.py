@@ -81,6 +81,14 @@ NO_JOURNEY = (
     "have a Test Steps section."
 )
 DISPATCH_FAILED = "the journey run could not be started ({detail}), so nothing was walked."
+ALREADY_WALKING = (
+    "{name} is already being walked. Wait for that run to finish before starting it again — "
+    "two browsers walking one journey at once would each see what the other did."
+)
+NOT_THE_REVIEWER = (
+    "only the accessibility reviewer (QA Lead) on this project can start a keyboard journey. "
+    "You can see everything here; starting one is a decision to spend a real browser on it."
+)
 NO_ADDRESS = (
     "no address was given for the application, so there is nowhere to walk. A journey is a real "
     "browser operating a running application: start the application and give the address it "
@@ -116,6 +124,10 @@ NOTHING_TO_REPORT = (
 
 class JourneyRunError(ValueError):
     """Asked to record against a journey run that does not exist, or with an invalid value."""
+
+
+class JourneyRoleError(Exception):
+    """The user does not hold the accessibility reviewer role on this project (G6b)."""
 
 
 def _journey_run(tenant_id, run_id):
@@ -162,7 +174,6 @@ def start_journey_check(*, tenant_id, project_id, base_url, work_item_id, test_r
     fails immediately and records no steps rather than reporting on steps it never walked.
     """
     from .journeys import JourneyError, journey_for, journeys_for_project
-    from .models import A11yJourneyRun
 
     base_url = str(base_url or "").strip().rstrip("/")
     if not base_url:
@@ -181,10 +192,26 @@ def start_journey_check(*, tenant_id, project_id, base_url, work_item_id, test_r
     except JourneyError as exc:
         return {"started": False, "reason": str(exc), "skipped": [], "over_cap": []}
 
+    outcome = _dispatch_journey(
+        tenant_id=tenant_id, project_id=project_id, base_url=base_url,
+        work_item_id=work_item_id, journey=journey, triggered_by=triggered_by, trigger=trigger)
+    extras = {"skipped": found.get("skipped", []), "over_cap": found.get("over_cap", [])}
+    return {**outcome, **extras}
+
+
+def _dispatch_journey(*, tenant_id, project_id, base_url, work_item_id, journey,
+                      triggered_by=None, trigger=None) -> dict:
+    """Dispatch ONE already-resolved journey. Never raises.
+
+    Split out of `start_journey_check` so that queueing several costs **one** scan of the
+    project's test cases rather than one per journey: resolving a journey by name re-reads every
+    test case, and the caller has already done that once.
+    """
+    from .models import A11yJourneyRun
+
     unavailable = journey_available(tenant_id, project_id, triggered_by)
     if unavailable:
-        return {"started": False, "reason": unavailable, "test_ref": journey.test_ref,
-                "skipped": found.get("skipped", []), "over_cap": found.get("over_cap", [])}
+        return {"started": False, "reason": unavailable, "test_ref": journey.test_ref}
 
     if trigger is None:
         from orchestration.trigger import trigger_phase as trigger
@@ -195,9 +222,16 @@ def start_journey_check(*, tenant_id, project_id, base_url, work_item_id, test_r
             execution_mode="companion", auto_approve=True,
         )
     except Exception as exc:  # noqa: BLE001 — a refusal to start is a reason, never a crash
-        return {"started": False, "reason": DISPATCH_FAILED.format(detail=exc),
-                "test_ref": journey.test_ref, "skipped": found.get("skipped", []),
-                "over_cap": found.get("over_cap", [])}
+        # The platform refuses a second run on a work item that already has a live one, and for
+        # a journey that refusal has a plain meaning worth saying in plain words. Recognised
+        # here rather than pre-checked, so the platform's own guard stays the one authority on
+        # what is running (a pre-check would be a second answer that can disagree with it).
+        from orchestration.trigger import ActiveRunError
+
+        reason = (ALREADY_WALKING.format(name=journey.test_ref or journey.title)
+                  if isinstance(exc, ActiveRunError)
+                  else DISPATCH_FAILED.format(detail=exc))
+        return {"started": False, "reason": reason, "test_ref": journey.test_ref}
 
     steps = [{"number": s.number, "text": s.text, "route": s.route} for s in journey.steps]
     with tenant_context(tenant_id):
@@ -210,8 +244,188 @@ def start_journey_check(*, tenant_id, project_id, base_url, work_item_id, test_r
             status=A11yJourneyRun.Status.WALKING,
         )
     return {"started": True, "run_id": outcome.run_id, "journey_run_id": str(row.id),
-            "test_ref": journey.test_ref, "steps": len(steps), "base_url": base_url,
-            "skipped": found.get("skipped", []), "over_cap": found.get("over_cap", [])}
+            "test_ref": journey.test_ref, "steps": len(steps), "base_url": base_url}
+
+
+#: The `feature_stream` a journey's own work item is keyed on, plus its test ref. Mirrors
+#: `aipass.JUDGING_STREAM` — a stable string get-or-create can key on, distinctive enough to be
+#: greppable and obviously not a human's feature name.
+JOURNEY_STREAM = "__a11y_journey__"
+
+
+def journey_work_item(*, tenant_id, project_id, test_ref: str, title: str = ""):
+    """The work item one journey runs on (get-or-create; idempotent) — G6b.
+
+    **Why a journey needs a work item of its own at all.** Every agent run in this platform hangs
+    off one, and the platform refuses a second run on a work item that already has a live one
+    (`orchestration.trigger._guard_no_active_run`). That rule is right, and it is why the judging
+    pass has a work item of its own too. Without one PER JOURNEY, ticking three journeys would
+    start the first and have the other two refused by a rule that was never about them.
+
+    **`source` is what marks this a CARRIER**, and it is not decoration: it is what hides the row
+    from the backlog, from Phases & Runs, and from what an agent is shown as this project's work
+    (`integrations.onboarding.CARRIER_SOURCES`). The judging carrier shipped with `kind` alone —
+    which no filter in the platform reads — and every test run left an "Accessibility judging"
+    task on somebody's board until it was fixed. Marked from the start here, and asserted.
+    """
+    from apps.workitems.models import WorkItem
+
+    ref = (test_ref or "").strip()
+    label = title or ref
+    with tenant_context(tenant_id):
+        item, _ = WorkItem.objects.get_or_create(
+            tenant_id=tenant_id, project_id=project_id,
+            feature_stream=f"{JOURNEY_STREAM}{ref}", type=WorkItem.Type.TASK,
+            defaults={
+                "title": f"Keyboard journey{f' — {label}' if label else ''}",
+                "description": (
+                    "One critical journey, walked with a keyboard. Created by the platform; it "
+                    "exists so the walk has a work item of its own to run on."
+                ),
+                "state": WorkItem.State.IN_PROGRESS,
+                "external_ref": {"kind": "a11y_journey", "source": "a11y_journey_carrier",
+                                 "test_ref": ref},
+            },
+        )
+    return item
+
+
+def suggested_address(tenant_id, project_id):
+    """Where to pre-fill the address from, and how the platform came to think so (G6b).
+
+    The last audit's address first, because somebody who has just audited this application has
+    already said where it answers and confirmed it was up. Otherwise the repository's Preview
+    URL, which is what `resolve_app_base_url` reads and what the audit itself falls back to — one
+    answer to "where is this application", never two that can disagree.
+
+    Editable on the screen either way. This is a suggestion, not a setting: the user starts the
+    application and confirms the address, which is the whole of decision D-G6b.
+    """
+    from apps.projects.preview_config import ResolvedAppUrl, resolve_app_base_url
+
+    from .models import A11yBaselineAudit
+
+    with tenant_context(tenant_id):
+        last = (A11yBaselineAudit.objects
+                .filter(tenant_id=tenant_id, project_id=project_id)
+                .exclude(base_url="").order_by("-created_at").only("base_url").first())
+    if last is not None:
+        return ResolvedAppUrl(url=last.base_url.rstrip("/"), source="your last audit")
+    return resolve_app_base_url(tenant_id=tenant_id, project_id=project_id)
+
+
+def _last_walks(tenant_id, project_id) -> dict:
+    """`{test_ref: the newest pass over it}` — what the list shows in its "Last walked" column."""
+    from .models import A11yJourneyRun
+
+    with tenant_context(tenant_id):
+        rows = list(A11yJourneyRun.objects
+                    .filter(tenant_id=tenant_id, project_id=project_id)
+                    .order_by("test_ref", "-created_at"))
+    newest: dict = {}
+    for row in rows:
+        newest.setdefault(row.test_ref, row)
+    return newest
+
+
+def walkable_journeys(tenant_id, project_id, *, object_store=None) -> dict:
+    """Everything the keyboard-journeys panel renders (G6b).
+
+    **What was found and could NOT be walked comes back too, with its reason.** A test case
+    marked `Type: E2E` whose steps cannot be read is not the same fact as a project with no
+    journeys, and a list that quietly omitted it is how an application with no keyboard coverage
+    comes to look like an application with no keyboard problems. The panel shows them, greyed,
+    saying why — the same discipline `journeys_for_project` already applies to its own return.
+    """
+    from .journeys import MAX_JOURNEYS, journeys_for_project
+
+    found = journeys_for_project(tenant_id, project_id, object_store=object_store)
+    walks = _last_walks(tenant_id, project_id)
+    rows = []
+    for journey in found["journeys"]:
+        last = walks.get(journey.test_ref)
+        rows.append({
+            "test_ref": journey.test_ref,
+            "title": journey.title,
+            "artifact_id": journey.artifact_id,
+            "steps": len(journey.steps),
+            "last_walked": last.created_at if last is not None else None,
+            "status": last.status if last is not None else "",
+            "summary": (last.summary or {}) if last is not None else {},
+        })
+    address = suggested_address(tenant_id, project_id)
+    return {
+        "journeys": rows,
+        # Named `unwalkable` rather than `skipped`: from the panel's side these are not things
+        # the platform passed over, they are things a person may want to go and fix.
+        "unwalkable": found["skipped"],
+        "over_cap": found["over_cap"],
+        "max_journeys": MAX_JOURNEYS,
+        "base_url": address.url,
+        "base_url_source": address.source,
+        "base_url_reason": address.reason,
+    }
+
+
+def queue_journeys(*, tenant_id, project_id, base_url, test_refs=None, user_id=None,
+                   trigger=None, object_store=None) -> dict:
+    """Start the selected journeys — one work item each, capped, and nothing dropped in silence.
+
+    `test_refs` selects; leaving it out starts every walkable journey. Each gets its own carrier
+    work item, so the platform's one-live-run-per-work-item rule stops being a rule about the
+    journeys collectively and goes back to being a rule about each journey.
+
+    **The cap is reported, never applied quietly.** `journeys_for_project` already stops at
+    `MAX_JOURNEYS` and hands back what it left; that travels out of here untouched. Same for a
+    journey already being walked, one whose agent cannot be dispatched, a test case that names
+    itself E2E but has no readable steps, and a name asked for that this project does not have.
+    Every one comes back named, with a reason.
+
+    Raises `JourneyRoleError` and nothing else — that is the one refusal which is a fact about
+    the caller rather than about a journey, so it cannot be reported per journey.
+    """
+    from .journeys import journeys_for_project
+    from .review import can_review
+
+    base_url = str(base_url or "").strip().rstrip("/")
+    if not base_url:
+        return {"started": [], "refused": [], "over_cap": [], "unwalkable": [],
+                "reason": NO_ADDRESS}
+    if not can_review(tenant_id=tenant_id, project_id=project_id, user_id=user_id):
+        raise JourneyRoleError(NOT_THE_REVIEWER)
+
+    # ONE scan of the project's test cases for the whole queue. Resolving each journey by name
+    # would re-read every test case once per journey — see `_dispatch_journey`.
+    found = journeys_for_project(tenant_id, project_id, object_store=object_store)
+    wanted = {str(r).strip().lower() for r in (test_refs or []) if str(r).strip()}
+    chosen = [j for j in found["journeys"]
+              if not wanted or j.test_ref.lower() in wanted or j.title.lower() in wanted]
+
+    started, refused = [], []
+    for journey in chosen:
+        item = journey_work_item(tenant_id=tenant_id, project_id=project_id,
+                                 test_ref=journey.test_ref, title=journey.title)
+        out = _dispatch_journey(
+            tenant_id=tenant_id, project_id=project_id, base_url=base_url,
+            work_item_id=str(item.id), journey=journey, triggered_by=user_id, trigger=trigger)
+        name = journey.test_ref or journey.title
+        if out.get("started"):
+            started.append({**out, "name": name})
+        else:
+            refused.append({"name": name, "test_ref": journey.test_ref,
+                            "reason": out.get("reason", "")})
+
+    # A name asked for that this project does not have — a stale row on a screen, or a person
+    # typing one. Not an error, and not something to let vanish either.
+    known = ({j.test_ref.lower() for j in found["journeys"]}
+             | {j.title.lower() for j in found["journeys"]})
+    for missing in sorted(wanted - known):
+        refused.append({"name": missing, "test_ref": missing,
+                        "reason": f"no walkable journey {missing!r} in this project"})
+
+    return {"started": started, "refused": refused,
+            "over_cap": found["over_cap"], "unwalkable": found["skipped"],
+            "reason": "" if (started or refused) else NO_JOURNEY}
 
 
 def journey_for_run(tenant_id, run_id) -> dict:
