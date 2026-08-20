@@ -28,16 +28,25 @@ import {
   Table,
   Textarea,
 } from "../../components/ui";
+import type { BadgeVariant } from "../../components/ui";
 import { useRunners } from "../identity/hooks";
-import type { A11yAudit as A11yAuditRow, A11yRegistrationPreview, A11yRoute } from "../../types";
+import type {
+  A11yAudit as A11yAuditRow,
+  A11yJourneyQueued,
+  A11yJourneyRow,
+  A11yRegistrationPreview,
+  A11yRoute,
+} from "../../types";
 import { A11yTabs } from "./A11yTabs";
 import {
   useA11yAudits,
+  useA11yJourneys,
   useA11yRoutes,
   useDeleteA11yRoute,
   usePreviewA11yRoutes,
   useRegisterA11yRoutes,
   useStartA11yAudit,
+  useStartA11yJourneys,
   useUpdateA11yRoute,
 } from "./hooks";
 
@@ -500,6 +509,257 @@ function RunStrip({
   );
 }
 
+// ── keyboard journeys (G6c) ─────────────────────────────────────────────────
+//
+// Eight WCAG criteria cannot be answered by reading a page standing still — whether tabbing ever
+// traps you, whether you can see where you are, whether anyone is told when something changed.
+// They are only answerable by OPERATING the application, and the industry scanner covers one of
+// the eight. That is the whole reason this panel exists.
+//
+// It sits on this tab and not a new one because it is the same subject, the same role and the
+// same address as the audit above it. And it renders whether or not any pages are registered: a
+// journey follows a test case, not the page list, so a project with journeys and no registered
+// pages must still be able to walk them.
+
+function journeyResult(row: A11yJourneyRow): { label: string; variant: BadgeVariant } {
+  if (row.status === "walking") return { label: "Walking now", variant: "waiting" };
+  if (!row.last_walked) return { label: "Never walked", variant: "outline" };
+  if (row.status === "failed") return { label: "Nothing was walked", variant: "failed" };
+  const blocked = row.summary.blocked?.length ?? 0;
+  const findings = row.summary.findings ?? 0;
+  if (!blocked && !findings) return { label: "Walked · nothing found", variant: "done" };
+  return {
+    label: [blocked ? `${blocked} blocked` : "", findings ? `${findings} finding(s)` : ""]
+      .filter(Boolean)
+      .join(" · "),
+    variant: blocked ? "failed" : "orange",
+  };
+}
+
+function KeyboardJourneys({ projectId, hasMachine }: { projectId: string; hasMachine: boolean }) {
+  const journeys = useA11yJourneys(projectId);
+  const start = useStartA11yJourneys(projectId);
+  const [address, setAddress] = useState<string | undefined>();
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [queued, setQueued] = useState<A11yJourneyQueued | undefined>();
+
+  const data = journeys.data;
+  // `undefined` until the user types, so the suggested address arrives without an effect and
+  // without overwriting what they typed on the next poll.
+  const value = address ?? data?.base_url ?? "";
+  const rows = data?.journeys ?? [];
+  const walkable = rows.filter((r) => r.status !== "walking");
+  const chosen = rows.filter((r) => picked.has(r.id) && r.status !== "walking");
+
+  if (journeys.isLoading) {
+    return (
+      <Panel title="Keyboard journeys">
+        <Skeleton kind="title" />
+        <Skeleton kind="block" />
+      </Panel>
+    );
+  }
+
+  const toggle = (id: string) =>
+    setPicked((was) => {
+      const next = new Set(was);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+
+  return (
+    <Panel
+      title="Keyboard journeys"
+      actions={
+        <>
+          <Badge variant="outline" dot={false}>Reported, never blocking</Badge>
+          {hasMachine ? (
+            <Badge variant="done">Machine connected</Badge>
+          ) : (
+            <Badge variant="failed">No machine connected</Badge>
+          )}
+        </>
+      }
+    >
+      <p className="t-sm u-muted">
+        Eight things cannot be judged from a page standing still — whether focus can get out of a
+        menu, whether you can see where you are, whether a screen reader is told when something
+        changes. They can only be answered by <em>operating</em> the application with a keyboard.
+        The industry scanner covers one of the eight.
+      </p>
+
+      {rows.length === 0 ? (
+        <EmptyState
+          title="No journeys to walk yet"
+          text="A keyboard journey follows a test case describing a complete path through the application. This project has none yet — run the Testing phase and they appear here as soon as it writes them."
+        />
+      ) : (
+        <>
+          {/* Said BEFORE the button, because it is the one thing the platform cannot do for
+              them: nothing here starts the application, and a walk against an address nothing
+              answers on stops immediately and records no steps. */}
+          {!hasMachine && (
+            <Banner variant="warning" title="You have no machine connected">
+              A journey runs a real browser on your machine, against an application only your
+              machine can reach. Connect it first. (A colleague's may be connected — this only
+              knows about yours.)
+            </Banner>
+          )}
+
+          <Banner variant="info" title="Start your application first">
+            A journey walks the live application, step by step. Make sure it is running at the
+            address below before you start — if nothing answers there the run stops immediately
+            and records no steps, rather than reporting on steps it never walked.
+          </Banner>
+
+          <label className="field" style={{ marginTop: "var(--space-5)", maxWidth: 520 }}>
+            <span className="field__label" id="journey-address">
+              Address to walk
+            </span>
+            <input
+              className="input"
+              type="text"
+              aria-labelledby="journey-address"
+              value={value}
+              placeholder="http://127.0.0.1:5173"
+              onChange={(e) => setAddress(e.target.value)}
+            />
+            <span className="field__help">
+              {data?.base_url_source
+                ? `Pre-filled from ${data.base_url_source}.`
+                : data?.base_url_reason || "Where the running application answers."}
+            </span>
+          </label>
+
+          <Table
+            headers={["", "Test case", "Steps", "Last walked", "Result"]}
+            rows={rows.map((row) => {
+              const result = journeyResult(row);
+              return [
+                <input
+                  type="checkbox"
+                  aria-label={`Walk ${row.test_ref || row.title}`}
+                  checked={picked.has(row.id)}
+                  disabled={row.status === "walking"}
+                  onChange={() => toggle(row.id)}
+                />,
+                <>
+                  {row.test_ref && <span className="t-mono">{row.test_ref}</span>}
+                  {row.test_ref ? " — " : ""}
+                  {row.title}
+                </>,
+                <span className="t-sm">{row.steps}</span>,
+                <span className="t-sm u-muted">{when(row.last_walked) || "—"}</span>,
+                <Badge variant={result.variant} dot={false}>
+                  {result.label}
+                </Badge>,
+              ];
+            })}
+          />
+
+          {/* What was found and CANNOT be walked. Never hidden: a list that quietly omitted these
+              is how an application with no keyboard coverage comes to look like one with no
+              keyboard problems. */}
+          {(data?.unwalkable?.length ?? 0) > 0 && (
+            <div style={{ marginTop: "var(--space-4)" }}>
+              <p className="t-sm u-muted">
+                Found and not walkable — each says why, so it can be fixed rather than guessed at:
+              </p>
+              <ul className="t-sm u-muted">
+                {data?.unwalkable.map((u) => (
+                  <li key={u.artifact_id}>
+                    <strong>{u.test_ref || u.title}</strong> — {u.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(data?.over_cap?.length ?? 0) > 0 && (
+            <Banner variant="warning" title="More journeys than one run can take">
+              {data?.over_cap.join(", ")} are past the limit of {data?.max_journeys} and were left
+              for the next run. They are named here rather than dropped.
+            </Banner>
+          )}
+
+          {!data?.can_start && (
+            <Banner variant="info" title="You can see these; the QA Lead starts them">
+              Starting a journey spends a real browser on a real application, so it is the
+              accessibility reviewer's call. Everything here is readable by anyone on the project.
+            </Banner>
+          )}
+
+          {start.isError && (
+            <Banner variant="danger" title="Nothing was started">
+              {(start.error as Error).message}
+            </Banner>
+          )}
+
+          {/* What actually happened, said in full: what started, and what did not and why. */}
+          {queued && (
+            <div style={{ marginTop: "var(--space-4)" }}>
+              {queued.started.length > 0 && (
+                <Banner variant="info" title={`Walking ${queued.started.length} journey(s)`}>
+                  {queued.started.map((j) => j.name).join(", ")}. This takes a few minutes in a
+                  real browser on your machine; the table above updates as each finishes.
+                </Banner>
+              )}
+              {queued.refused.length > 0 && (
+                <Banner variant="warning" title={`${queued.refused.length} was not started`}>
+                  <ul>
+                    {queued.refused.map((r) => (
+                      <li key={r.name}>
+                        <strong>{r.name}</strong> — {r.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </Banner>
+              )}
+              {queued.started.length === 0 && queued.refused.length === 0 && queued.reason && (
+                <Banner variant="warning" title="Nothing was started">
+                  {queued.reason}
+                </Banner>
+              )}
+            </div>
+          )}
+
+          <div className="gate-panel__actions" style={{ marginTop: "var(--space-4)" }}>
+            <Button
+              variant="primary"
+              disabled={!data?.can_start || chosen.length === 0 || start.isPending || !value.trim()}
+              onClick={() =>
+                start
+                  .mutateAsync({ base_url: value.trim(), test_refs: chosen.map((r) => r.id) })
+                  .then((out) => {
+                    setQueued(out);
+                    setPicked(new Set());
+                  })
+                  .catch(() => undefined)
+              }
+            >
+              {chosen.length === 1
+                ? "Walk 1 selected journey"
+                : `Walk ${chosen.length} selected journeys`}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={walkable.length === 0}
+              onClick={() => setPicked(new Set(walkable.map((r) => r.id)))}
+            >
+              Select all walkable ({walkable.length})
+            </Button>
+          </div>
+
+          <p className="t-sm u-muted" style={{ marginTop: "var(--space-3)" }}>
+            Up to {data?.max_journeys} at a time. What the keyboard journey finds is reported,
+            ticketed and reviewed like everything else — it never blocks a gate.
+          </p>
+        </>
+      )}
+    </Panel>
+  );
+}
+
 // ── past audits ─────────────────────────────────────────────────────────────
 
 function PastAudits({ audits }: { audits: A11yAuditRow[] }) {
@@ -763,6 +1023,14 @@ export function A11yAudit() {
           </div>
         </>
       )}
+
+      {/* OUTSIDE the "no pages registered" branch above, and that is deliberate: a keyboard
+          journey follows a test case, not the page list. A project with journeys and no
+          registered pages must still be able to walk them, and a panel that disappeared with
+          the page list would look like a feature that does not exist. */}
+      <div style={{ marginTop: "var(--space-5)" }}>
+        <KeyboardJourneys projectId={projectId as string} hasMachine={hasMachine} />
+      </div>
     </main>
   );
 }

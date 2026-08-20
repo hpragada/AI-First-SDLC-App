@@ -66,7 +66,7 @@ Small and safe first, so the team gets working ground under them before the big 
 | 8a | **B1 + B4 + B2** — the audit screen, and the way in | Brownfield audit with no terminal at all | L |
 | 8b | **The page editor** — edit one page, not the whole list | A path can be corrected without creating a second page | M |
 | 9 | **G3b** — the review list stops fetching evidence nobody reads ✅ | A queue that does the work it is read for | S |
-| 10 | **G6** — the keyboard journey, working on both journeys *(G6a ✅ · G6b ✅ · G6c to go)* | Eight criteria nothing else can reach | M |
+| 10 | **G6** — the keyboard journey, working on both journeys ✅ | Eight criteria nothing else can reach | M |
 
 Tasks 1–4 are independent of each other. 6 should land before 7. 8 has the wireframe already
 approved (`docs/design/screens/S-38-a11y-audit.html`) and was **split by team decision on
@@ -1087,6 +1087,79 @@ Frontend: `A11yAudit.tsx` gains the panel; `api.ts` and `hooks.ts` gain the two 
 
 *Size M · Risk low — it starts work, it does not change how anything is judged · Needs G6b, and
 shares a screen with B1 so it is cheaper built after it.*
+
+#### G6c — BUILT, 2026-08-20. **A person can now start a keyboard journey.**
+
+The panel sits on Pages & audit, under the audit strip, and **renders whether or not any pages
+are registered** — a journey follows a test case, not the page list, so a greenfield project that
+has run the Testing phase and registered nothing must still be able to walk one. A panel that
+vanished with the page list would look like a feature that does not exist.
+
+What it says, and why each sentence is there:
+
+- **No journeys yet** → *"run the Testing phase and they appear here"*. Not an empty table. A
+  project whose Testing phase has never run must not look like one with no keyboard problems.
+- **The address**, pre-filled and editable, with where it came from — your last audit, else the
+  repository — or what to go and set when the platform holds neither.
+- **Start your application first**, said *before* the button, because it is the one thing the
+  platform cannot do for anyone: nothing here starts an application, and a walk against an
+  address nothing answers on stops immediately and records no steps.
+- **No machine connected**, also before the button, matching the audit strip above it.
+- **What could not be walked**, with its reason. A test case that declares `Type: E2E` and has no
+  readable steps is a different fact from a project with no journeys.
+- **What the cap left out**, by name.
+- **After pressing**: what started, and what did not *and why*, each by name.
+- A reader sees all of it, is told the QA Lead starts them, and gets a disabled button rather
+  than one that fails on click.
+
+**Watching it happen.** A journey's work item is a hidden carrier, so Phases & Runs cannot show
+it — this panel is the only place a person can see a walk in progress, and it polls while one is
+running. A journey being walked cannot be ticked again.
+
+*Proven by eleven tests: the empty state saying why; the address and its source; unwalkable cases
+shown with reasons; two ticked, one started and one refused, both named on screen; a reader
+seeing the list with the button disabled; a walking journey un-tickable; a finished walk showing
+what it found and a blocked one not reading as clean; the cap named; no address meaning no start;
+no machine said before the button; and the panel present with no pages registered.*
+
+---
+
+### A loophole the cross-check found, and closed
+
+Not from a failing test — from tracing the path end to end before building the screen on top of
+it.
+
+**Two journeys from test cases nobody stamped with a `TC-…` would have collided.** `journey_from`
+reads the test ref off the artifact and leaves it blank when the producer wrote none, and G6b
+keyed each journey's work item on that ref. Two unstamped journeys therefore shared one work
+item — so the second was refused as *"already being walked"* by the first, and the panel showed
+each of them the other's last walk. Exactly the bug G6b existed to fix, one level down.
+
+Keyed on the **artifact** now, which is the document's identity and is always present. The test
+ref is what a person reads; the artifact is what the platform counts. Both directions are tested.
+
+**And one thing worth having found along the way:** the journey's work item now also carries
+`tc_id`, because that is the key the review console reads to say where a finding came from (G3).
+Without it a keyboard finding would have been attributed to *"WI-84"* — the internal number of a
+work item deliberately hidden from every board — instead of to *TC-031*.
+
+### What the cross-check confirmed was already sound
+
+| Seam | Verified |
+|---|---|
+| A journey finding never blocks a gate (D1) | `policy.ADVISORY_CHECKERS` is the eight journey checkers, keyed on **checker** not source, and the gate reports them in its own sentence |
+| Journey findings reach the review queue | recorded with `needs_review`, which is exactly what `findings.review_queue` selects |
+| Journey coverage reaches the conformance report | `coverage.record` is called for every verdict, pass included |
+| A confirmed journey finding raises a ticket | `finish_journey` calls the defect loopback |
+| Reachable from onboarding | hub step 6 links `/a11y/pages`, which is where the panel is |
+| Tenant isolation | `A11yJourneyRun` + step results proven under RLS on a non-superuser connection |
+
+### One cost, measured and accepted
+
+Listing journeys reads the E2E test cases out of the object store. With the type filter G6b added
+that is only the cases that claim to be journeys — for a project whose Testing agent stamped them,
+three reads rather than ninety. For older artifacts with no stamp it still reads all of them, and
+that is stated here rather than left to be discovered.
 
 ### What you see afterwards
 

@@ -253,7 +253,22 @@ def _dispatch_journey(*, tenant_id, project_id, base_url, work_item_id, journey,
 JOURNEY_STREAM = "__a11y_journey__"
 
 
-def journey_work_item(*, tenant_id, project_id, test_ref: str, title: str = ""):
+def journey_handle(journey) -> str:
+    """The one thing that identifies a journey for keying, and it is NOT the test ref.
+
+    A test case is only *usually* stamped with a `TC-031`. `journey_from` reads it from the
+    artifact and leaves it blank when the producer wrote none — and a blank one is not merely
+    unhelpful here, it collides: two untitled E2E cases would key the same carrier work item, so
+    the second would be refused as "already being walked" by the first. The artifact id is the
+    document's identity and is always there, so that is what keys; the test ref is what a person
+    reads, so that is what is shown.
+    """
+    return str(getattr(journey, "artifact_id", "") or "").strip() or str(
+        getattr(journey, "test_ref", "") or "").strip()
+
+
+def journey_work_item(*, tenant_id, project_id, handle: str, test_ref: str = "",
+                      title: str = ""):
     """The work item one journey runs on (get-or-create; idempotent) — G6b.
 
     **Why a journey needs a work item of its own at all.** Every agent run in this platform hangs
@@ -271,11 +286,11 @@ def journey_work_item(*, tenant_id, project_id, test_ref: str, title: str = ""):
     from apps.workitems.models import WorkItem
 
     ref = (test_ref or "").strip()
-    label = title or ref
+    label = ref or title
     with tenant_context(tenant_id):
         item, _ = WorkItem.objects.get_or_create(
             tenant_id=tenant_id, project_id=project_id,
-            feature_stream=f"{JOURNEY_STREAM}{ref}", type=WorkItem.Type.TASK,
+            feature_stream=f"{JOURNEY_STREAM}{handle}", type=WorkItem.Type.TASK,
             defaults={
                 "title": f"Keyboard journey{f' — {label}' if label else ''}",
                 "description": (
@@ -283,8 +298,13 @@ def journey_work_item(*, tenant_id, project_id, test_ref: str, title: str = ""):
                     "exists so the walk has a work item of its own to run on."
                 ),
                 "state": WorkItem.State.IN_PROGRESS,
+                # `tc_id` as well as `test_ref`, and not as a duplicate: `tc_id` is the key the
+                # review console reads to label where a finding came from (G3,
+                # `review._provenance`). Without it a keyboard finding would be attributed to
+                # "WI-84" — the internal number of a work item deliberately hidden from every
+                # board — instead of to TC-031, which is what a QA Lead recognises.
                 "external_ref": {"kind": "a11y_journey", "source": "a11y_journey_carrier",
-                                 "test_ref": ref},
+                                 "test_ref": ref, "tc_id": ref},
             },
         )
     return item
@@ -315,16 +335,21 @@ def suggested_address(tenant_id, project_id):
 
 
 def _last_walks(tenant_id, project_id) -> dict:
-    """`{test_ref: the newest pass over it}` — what the list shows in its "Last walked" column."""
+    """`{handle: the newest pass over it}` — what the list shows in its "Last walked" column.
+
+    Keyed by `journey_handle`, not by test ref, for the reason that function gives: two journeys
+    from test cases nobody stamped would otherwise share one row, and each would show the other's
+    last walk.
+    """
     from .models import A11yJourneyRun
 
     with tenant_context(tenant_id):
         rows = list(A11yJourneyRun.objects
                     .filter(tenant_id=tenant_id, project_id=project_id)
-                    .order_by("test_ref", "-created_at"))
+                    .order_by("-created_at"))
     newest: dict = {}
     for row in rows:
-        newest.setdefault(row.test_ref, row)
+        newest.setdefault(journey_handle(row), row)
     return newest
 
 
@@ -343,8 +368,10 @@ def walkable_journeys(tenant_id, project_id, *, object_store=None) -> dict:
     walks = _last_walks(tenant_id, project_id)
     rows = []
     for journey in found["journeys"]:
-        last = walks.get(journey.test_ref)
+        last = walks.get(journey_handle(journey))
         rows.append({
+            # What the screen sends back to start this one. Always present, unlike `test_ref`.
+            "id": journey_handle(journey),
             "test_ref": journey.test_ref,
             "title": journey.title,
             "artifact_id": journey.artifact_id,
@@ -398,13 +425,17 @@ def queue_journeys(*, tenant_id, project_id, base_url, test_refs=None, user_id=N
     # would re-read every test case once per journey — see `_dispatch_journey`.
     found = journeys_for_project(tenant_id, project_id, object_store=object_store)
     wanted = {str(r).strip().lower() for r in (test_refs or []) if str(r).strip()}
+    # Matched on the handle FIRST, because that is what the panel sends and the only one always
+    # present; the test ref and the title are accepted too, so a person can name one by hand.
     chosen = [j for j in found["journeys"]
-              if not wanted or j.test_ref.lower() in wanted or j.title.lower() in wanted]
+              if not wanted or {journey_handle(j).lower(), j.test_ref.lower(),
+                                j.title.lower()} & wanted]
 
     started, refused = [], []
     for journey in chosen:
         item = journey_work_item(tenant_id=tenant_id, project_id=project_id,
-                                 test_ref=journey.test_ref, title=journey.title)
+                                 handle=journey_handle(journey), test_ref=journey.test_ref,
+                                 title=journey.title)
         out = _dispatch_journey(
             tenant_id=tenant_id, project_id=project_id, base_url=base_url,
             work_item_id=str(item.id), journey=journey, triggered_by=user_id, trigger=trigger)
@@ -417,8 +448,8 @@ def queue_journeys(*, tenant_id, project_id, base_url, test_refs=None, user_id=N
 
     # A name asked for that this project does not have — a stale row on a screen, or a person
     # typing one. Not an error, and not something to let vanish either.
-    known = ({j.test_ref.lower() for j in found["journeys"]}
-             | {j.title.lower() for j in found["journeys"]})
+    known = {v for j in found["journeys"]
+             for v in (journey_handle(j).lower(), j.test_ref.lower(), j.title.lower())}
     for missing in sorted(wanted - known):
         refused.append({"name": missing, "test_ref": missing,
                         "reason": f"no walkable journey {missing!r} in this project"})

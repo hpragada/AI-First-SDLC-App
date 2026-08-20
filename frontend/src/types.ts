@@ -1050,6 +1050,75 @@ export interface A11yReviewQueue {
   lock_minutes: number;
 }
 
+// ── G6 · keyboard journeys (S-38) ────────────────────────────────────────────────────────
+//
+// Eight WCAG criteria cannot be answered by reading a page standing still — whether tabbing ever
+// traps you, whether focus stays visible, whether a status message is announced. They are only
+// answerable by OPERATING the application, which is what a journey does.
+
+export interface A11yJourneyRow {
+  // What the screen sends back to start this one. Always present, unlike `test_ref`: a test case
+  // is only usually stamped with a TC id, and two unstamped ones must not become one row.
+  id: string;
+  test_ref: string;
+  title: string;
+  artifact_id: string;
+  steps: number;
+  last_walked: string | null;
+  // "walking" | "complete" | "failed", or "" when it has never been walked.
+  status: string;
+  // The pass's own honesty check: asked / walked / blocked / never reached.
+  summary: {
+    asked?: number;
+    walked?: number;
+    blocked?: { step: number; reason: string }[];
+    not_reached?: number[];
+    findings?: number;
+    reason?: string;
+  };
+}
+
+// A test case that CALLS itself a journey and cannot be walked. Shown, never hidden: omitting it
+// is how an application with no keyboard coverage comes to look like one with no problems.
+export interface A11yUnwalkable {
+  artifact_id: string;
+  title: string;
+  test_ref?: string;
+  reason: string;
+}
+
+export interface A11yJourneyList {
+  journeys: A11yJourneyRow[];
+  unwalkable: A11yUnwalkable[];
+  over_cap: string[];
+  max_journeys: number;
+  // Pre-filled from the last audit, else the repository. Editable — the user starts the
+  // application and confirms where it is answering.
+  base_url: string;
+  base_url_source: string;
+  base_url_reason: string;
+  // Whether THIS user may start one. The list is readable by anyone on the project.
+  can_start: boolean;
+}
+
+export interface A11yJourneyStarted {
+  name: string;
+  test_ref: string;
+  run_id: string;
+  journey_run_id: string;
+  steps: number;
+}
+
+export interface A11yJourneyQueued {
+  started: A11yJourneyStarted[];
+  // Named, never dropped: already walking, no companion, over the cap, or a name this project
+  // does not have.
+  refused: { name: string; test_ref: string; reason: string }[];
+  over_cap: string[];
+  unwalkable: A11yUnwalkable[];
+  reason: string;
+}
+
 // ── QA-24 · conformance statement (S-37) ─────────────────────────────────────────────────
 
 // The VPAT vocabulary, deliberately the standard's own words — a procurement team reads this

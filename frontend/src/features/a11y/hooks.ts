@@ -231,3 +231,38 @@ export function useExportA11yConformance(projectId: string | undefined) {
     mutationFn: () => api.a11yConformanceExport(tenantId, projectId as string),
   });
 }
+
+// ── keyboard journeys (G6c) ─────────────────────────────────────────────────
+//
+// A walk takes minutes in a real browser, so the list refreshes on a slow interval while one is
+// in flight. The journey's own work item is a hidden carrier, so this panel is the ONLY place a
+// person can watch it happen — a list that went stale would look like a run that never finished.
+const WALKING_POLL_MS = 15 * 1000;
+
+export function useA11yJourneys(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  return useQuery({
+    queryKey: ["a11y-journeys", projectId],
+    queryFn: () => api.a11yJourneys(tenantId, projectId as string),
+    enabled: Boolean(projectId && tenantId),
+    refetchInterval: (query) =>
+      query.state.data?.journeys.some((j) => j.status === "walking")
+        ? WALKING_POLL_MS
+        : false,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useStartA11yJourneys(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { base_url: string; test_refs?: string[] }) =>
+      api.a11yJourneyStart(tenantId, projectId as string, vars),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["a11y-journeys", projectId] });
+      // A journey's findings land in the same queue as everything else.
+      qc.invalidateQueries({ queryKey: ["a11y-review", projectId] });
+    },
+  });
+}

@@ -6,6 +6,8 @@ import type {
   A11yReviewFinding,
   A11yConformance,
   A11yAudit,
+  A11yJourneyList,
+  A11yJourneyQueued,
   A11yPolicy,
   A11yRegistrationPreview,
   A11yReviewQueue,
@@ -508,6 +510,15 @@ export const api = {
     body: { base_url?: string; routes?: string[] },
   ) => req<{ audit_id: string; status: string }>(
     "POST", `/projects/${projectId}/a11y-audits/`, { tenantId, body }),
+  a11yJourneys: (tenantId: string, projectId: string) =>
+    req<A11yJourneyList>("GET", `/projects/${projectId}/a11y-journeys/`, { tenantId }),
+  // `test_refs` omitted starts every walkable journey; the ids come from the list above.
+  a11yJourneyStart: (
+    tenantId: string,
+    projectId: string,
+    body: { base_url: string; test_refs?: string[] },
+  ) =>
+    req<A11yJourneyQueued>("POST", `/projects/${projectId}/a11y-journeys/`, { tenantId, body }),
   a11yPolicy: (tenantId: string, projectId: string) =>
     req<A11yPolicy>("GET", `/projects/${projectId}/a11y-policy/`, { tenantId }),
   a11yBacklog: (tenantId: string, projectId: string) =>

@@ -1205,11 +1205,59 @@ def test_a_journeys_work_item_never_appears_on_anybodys_board(world, monkeypatch
     queue_journeys(tenant_id=world["t"], project_id=world["p"], base_url=APP_URL,
                    user_id=user.id, trigger=_each_run(world))
 
-    carrier = WorkItem.objects.get(feature_stream="__a11y_journey__TC-031")
+    carrier = WorkItem.objects.get(external_ref__test_ref="TC-031")
     assert carrier.external_ref["source"] in CARRIER_SOURCES
+    # `tc_id` too, and not as a duplicate: it is the key the review console reads to say WHERE a
+    # finding came from (G3). Without it a keyboard finding is attributed to "WI-84" — the number
+    # of a work item deliberately hidden from every board — instead of to TC-031.
+    assert carrier.external_ref["tc_id"] == "TC-031"
     visible = WorkItem.objects.filter(tenant_id=world["t"]).exclude(carrier_q())
     assert carrier.id not in {w.id for w in visible}
     assert world["item"].id in {w.id for w in visible}, "the real story is still there"
+
+
+@pytest.mark.django_db
+def test_two_journeys_from_unstamped_test_cases_do_not_collide(world, monkeypatch):
+    """Found by cross-checking the whole path, not by a test failing.
+
+    A test case is only USUALLY stamped with a `TC-031`; `journey_from` leaves the ref blank when
+    the producer wrote none. Keying the work item on that ref meant two unstamped journeys shared
+    one — so the second was refused as "already being walked" by the first, and the panel showed
+    each of them the other's last walk. Keyed on the artifact, which is always there.
+    """
+    from apps.a11y.journey import queue_journeys, walkable_journeys
+    from integrations.types import A11yJourney
+
+    unstamped = [A11yJourney(test_ref="", title=f"Journey {n}", artifact_id=f"art-{n}",
+                             steps=tuple(parse_steps(JOURNEY_BODY))) for n in (1, 2)]
+    user = _queue_world(world, monkeypatch, unstamped)
+    out = queue_journeys(tenant_id=world["t"], project_id=world["p"], base_url=APP_URL,
+                         user_id=user.id, trigger=_each_run(world))
+
+    assert len(out["started"]) == 2, "the second is not refused by the first"
+    assert out["refused"] == []
+    rows = walkable_journeys(world["t"], world["p"])["journeys"]
+    assert {r["id"] for r in rows} == {"art-1", "art-2"}
+    assert all(r["last_walked"] is not None for r in rows), "each shows its OWN walk"
+
+
+@pytest.mark.django_db
+def test_the_screen_selects_by_the_id_the_list_gave_it(world, monkeypatch):
+    """The panel sends the handle back, because it is the only identifier always present."""
+    from apps.a11y.journey import queue_journeys, walkable_journeys
+
+    _queue_world(world, monkeypatch, _journeys("TC-031", "TC-044"), role=None)
+    rows = walkable_journeys(world["t"], world["p"])["journeys"]
+    picked = next(r["id"] for r in rows if r["test_ref"] == "TC-044")
+
+    from apps.tenancy.models import Membership, User
+
+    lead = User.objects.create_user(email="lead@acme.test", name="Lead", tenant=world["tenant"])
+    Membership.objects.create(tenant=world["tenant"], project=world["project"],
+                              user=lead, role="qa_lead")
+    out = queue_journeys(tenant_id=world["t"], project_id=world["p"], base_url=APP_URL,
+                         user_id=lead.id, trigger=_each_run(world), test_refs=[picked])
+    assert [j["name"] for j in out["started"]] == ["TC-044"]
 
 
 @pytest.mark.django_db
