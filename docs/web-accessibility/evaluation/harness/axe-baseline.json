@@ -1,0 +1,156 @@
+{
+  "axe_version": "4.13.0",
+  "app_version": "1.2.0",
+  "tags": [
+    "wcag2a",
+    "wcag2aa",
+    "wcag21a",
+    "wcag21aa",
+    "wcag22aa"
+  ],
+  "report": {
+    "/": [],
+    "/about/history": [],
+    "/about/membership": [
+      {
+        "id": "html-has-lang",
+        "impact": "serious",
+        "nodes": [
+          "html"
+        ]
+      }
+    ],
+    "/about/opening-hours": [
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "nodes": [
+          "#hours-note"
+        ]
+      }
+    ],
+    "/about/team": [],
+    "/about/terms": [],
+    "/about/visit-us": [],
+    "/account/apply": [
+      {
+        "id": "label-content-name-mismatch",
+        "impact": "serious",
+        "nodes": [
+          "#apply-submit"
+        ]
+      }
+    ],
+    "/account/full-profile": [],
+    "/account/join": [],
+    "/account/loan-history": [],
+    "/account/my-loans": [],
+    "/account/notifications": [],
+    "/account/preferences": [],
+    "/account/register": [],
+    "/account/security": [],
+    "/account/settings": [],
+    "/account/statements": [],
+    "/account/update-details": [],
+    "/authors/featured": [],
+    "/authors/spotlight": [],
+    "/branches": [],
+    "/catalogue": [],
+    "/catalogue/advanced-search": [],
+    "/catalogue/all-titles": [],
+    "/catalogue/award-winners": [],
+    "/catalogue/browse-all": [],
+    "/catalogue/by-subject": [],
+    "/catalogue/filter": [],
+    "/catalogue/genres": [],
+    "/catalogue/new-arrivals": [],
+    "/catalogue/place-hold": [],
+    "/catalogue/quick-find": [],
+    "/catalogue/recommended": [
+      {
+        "id": "image-alt",
+        "impact": "critical",
+        "nodes": [
+          "#cover-nightjar"
+        ]
+      }
+    ],
+    "/catalogue/refine": [],
+    "/catalogue/reserve": [
+      {
+        "id": "button-name",
+        "impact": "critical",
+        "nodes": [
+          "#reserve-submit"
+        ]
+      }
+    ],
+    "/catalogue/reserve-copy": [],
+    "/catalogue/results": [],
+    "/catalogue/search": [
+      {
+        "id": "label-content-name-mismatch",
+        "impact": "serious",
+        "nodes": [
+          "#search-submit"
+        ]
+      }
+    ],
+    "/catalogue/staff-picks": [],
+    "/contact": [
+      {
+        "id": "label",
+        "impact": "critical",
+        "nodes": [
+          "#contact-email"
+        ]
+      }
+    ],
+    "/events/book-a-room": [],
+    "/events/book-a-seat": [],
+    "/events/book-club": [],
+    "/events/calendar": [
+      {
+        "id": "link-name",
+        "impact": "serious",
+        "nodes": [
+          "#calendar-download"
+        ]
+      }
+    ],
+    "/events/summer-reading": [],
+    "/events/tickets": [
+      {
+        "id": "target-size",
+        "impact": "serious",
+        "nodes": [
+          "#page-1",
+          "#page-2",
+          "#page-3",
+          "#page-4"
+        ]
+      }
+    ],
+    "/help/borrowing-guide": [],
+    "/help/contact-us": [],
+    "/help/faq": [],
+    "/help/getting-started": [],
+    "/loans/current": [],
+    "/loans/history": [],
+    "/loans/renewals": [],
+    "/newsletter": [],
+    "/reports/annual-review": [],
+    "/reports/borrowing-trends": [],
+    "/reports/branch-comparison": [],
+    "/reports/lending-summary": [],
+    "/reports/monthly-issues": [],
+    "/staff/branch-settings": [],
+    "/staff/bulk-actions": [],
+    "/staff/catalogue-entry": [],
+    "/staff/display-options": [],
+    "/staff/exports": [],
+    "/staff/overview": [],
+    "/staff/quick-edit": [],
+    "/staff/reports": []
+  }
+}

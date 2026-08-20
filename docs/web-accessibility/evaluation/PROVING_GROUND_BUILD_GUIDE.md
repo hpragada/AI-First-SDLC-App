@@ -253,6 +253,25 @@ The same URL must return **byte-identical HTML** on every request. No timestamps
 random ordering, no request counters, no "last updated" values, no `Math.random()`. The screenshot
 hash is part of the judgment cache key; drift means the label stops describing what was judged.
 
+### The checks do not live in the app repository
+
+**Every tool that knows what the answers are belongs outside the fixture**, in
+`evaluation/harness/`. The app repository holds only what a real library application would hold.
+
+This is not tidiness. The fixture gets onboarded as a brownfield project, and code intelligence
+indexes what it finds: `integrations/codeintel/builtin.py` treats `.js` as source and `.json` as
+context, and `runner/companion/codeintel_mcp.py` mines **commit messages** for "decision
+archaeology". A file listing every route, criterion and expected verdict — indexed next to the app
+— lets an agent find the planted defects by reading the tests instead of by examining the pages,
+and the whole measurement is then worth nothing.
+
+The same applies to the history. Commit messages naming what was planted are indexed as
+decisions. Write them as ordinary product work: *"Add the account, staff and report pages"*, not
+*"check the planted cases are actually planted"*.
+
+If the app is only ever scanned live (QA-17 visits rendered pages and never reads the repository)
+this costs nothing anyway — so there is no reason not to do it.
+
 ### Nothing may reveal the answer
 
 Not in a comment, a class name, a data attribute, a route, or an `id`. The judge sees the rendered
