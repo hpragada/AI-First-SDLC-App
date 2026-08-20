@@ -921,3 +921,116 @@ def test_the_empty_build_guard_still_holds_against_the_engine_markers():
     msg = "Empty build: the agent produced no changes to commit. (exit code: 0)"
     assert is_engine_exit(msg) is False
     assert is_empty_build(SimpleNamespace(cause=None, message=msg)) or "empty build" in msg.lower()
+
+
+# ── a code review must leave a body you can actually read (Artifacts preview bug) ────────────
+# The QA member opened TASK-019's code-review artifact and got "This artifact doesn't exist, has
+# no body, or you don't have access to it" — on a run that had completed successfully. The review
+# text was intact on `run.outputs["review_body"]` (24,702 chars); the artifact simply pointed at
+# nothing, because this function registered a `sor="internal"` row with a content_hash and no
+# body. 11 of 11 such artifacts in the QA tenant were unpreviewable. Unlike a `code` row — a
+# pointer at a PR, correctly bodyless (#1/#3) — an internal row has no system of record to read
+# back from, so an unstaged body exists nowhere at all.
+def _review_findings():
+    return [ba.Finding(rem="REM-C1", severity="critical", title="SQL injection",
+                       file="db.py", line=42, problem="User input is concatenated into SQL.",
+                       fix="Use a parameterised query.")]
+
+
+def test_a_completed_review_leaves_a_body_that_reads_back(world, monkeypatch):
+    store = InMemoryObjectStore()
+    monkeypatch.setattr(ba, "get_object_store", lambda: store)
+    monkeypatch.setattr(ba, "get_review_provider", lambda: _ScriptedReviewer([_review_findings()]))
+    _open_pr(world, monkeypatch)
+    world.run.outputs = {"review_body": "# Code Review\n\nThe reviewer's own prose."}
+    world.run.save(update_fields=["outputs"])
+
+    ba.run_code_review_core(_inp(world))
+
+    art = Artifact.objects.get(run_id=world.run.id, type="code_review")
+    assert art.s3_key, "registered a pointer to nothing — this is the defect"
+    assert store.get(art.s3_key).decode() == "# Code Review\n\nThe reviewer's own prose."
+    # ...and the row is genuinely previewable, by the same rule the UI uses.
+    from integrations.preview import artifact_has_preview
+    assert artifact_has_preview(art) is True
+
+
+def test_the_review_artifact_is_filed_under_its_own_phase(world, monkeypatch):
+    """`inp.phase` is the BUILD phase ("implementation"), so the platform filed reviews under the
+    phase that produced the code rather than their own — disagreeing with every review the
+    reviewer registers for itself."""
+    monkeypatch.setattr(ba, "get_object_store", lambda: InMemoryObjectStore())
+    monkeypatch.setattr(ba, "get_review_provider", lambda: _ScriptedReviewer([_review_findings()]))
+    _open_pr(world, monkeypatch)
+
+    ba.run_code_review_core(_inp(world, phase="implementation"))
+
+    assert Artifact.objects.get(run_id=world.run.id, type="code_review").phase == "code_review"
+
+
+def test_a_later_cycle_restages_rather_than_leaving_the_first_pass(world, monkeypatch):
+    """Cycle 2 used to update only the hash, so the artifact kept resolving to cycle 1's body."""
+    store = InMemoryObjectStore()
+    monkeypatch.setattr(ba, "get_object_store", lambda: store)
+    monkeypatch.setattr(ba, "get_review_provider", lambda: _ScriptedReviewer([_review_findings()]))
+    _open_pr(world, monkeypatch)
+    world.run.outputs = {"review_body": "cycle 1 review"}
+    world.run.save(update_fields=["outputs"])
+    ba.run_code_review_core(_inp(world))
+
+    world.run.outputs = {"review_body": "cycle 2 review"}
+    world.run.save(update_fields=["outputs"])
+    ba.run_code_review_core(_inp(world))
+
+    arts = Artifact.objects.filter(run_id=world.run.id, type="code_review")
+    assert arts.count() == 1, "a cycle must not spawn a second review row"
+    assert store.get(arts.first().s3_key).decode() == "cycle 2 review"
+
+
+def test_a_review_with_no_prose_still_gets_a_readable_body(world, monkeypatch):
+    """Never leave the artifact pointing at nothing — if the reviewer returned findings but no
+    prose, render the findings. An empty body would 404 exactly as before."""
+    store = InMemoryObjectStore()
+    monkeypatch.setattr(ba, "get_object_store", lambda: store)
+    monkeypatch.setattr(ba, "get_review_provider", lambda: _ScriptedReviewer([_review_findings()]))
+    _open_pr(world, monkeypatch)   # run.outputs has no review_body at all
+
+    ba.run_code_review_core(_inp(world))
+
+    body = store.get(Artifact.objects.get(run_id=world.run.id, type="code_review").s3_key).decode()
+    assert "REM-C1" in body and "SQL injection" in body and "db.py:42" in body
+
+
+# ── a leftover pre-PR pointer gets the PR's link, not a blank page ───────────────────────────
+def test_a_stray_code_pointer_is_given_the_pr_link(world, monkeypatch):
+    """Each remediation cycle registers a fresh pre-PR pointer. The first is reconciled; by cycle
+    2 a real PR row exists, open_build_pr returns early as idempotent, and the new pointer is
+    orphaned with no url — 21 such rows across 14 runs. It previews as a blank page."""
+    _open_pr(world, monkeypatch)
+    stray = Artifact.objects.create(
+        tenant=world.t, project=world.p, run=world.run, phase="implementation",
+        type="code", sor=Artifact.SoR.GIT, status=Artifact.Status.DRAFT,
+        external_ref={"sor": "git", "branch": "feature/ST-1", "files_changed": ["a.ts"]},
+        title="TASK-x remediation cycle 2", content_hash="",
+    )
+
+    out = ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+    assert out.get("idempotent") is True
+    stray.refresh_from_db()
+    assert stray.external_ref["url"], "stray pointer still previews blank"
+    # ...and it must NOT look like the opened PR, or _code_artifact could pick it for merge.
+    assert not ba._is_pr_ref(stray.external_ref)
+    assert stray.external_ref["files_changed"] == ["a.ts"]      # its own provenance is kept
+
+
+def test_linking_strays_never_touches_the_real_pr_row(world, monkeypatch):
+    _open_pr(world, monkeypatch)
+    pr_row = ba._code_artifact(_inp(world))
+    before = dict(pr_row.external_ref)
+
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+    pr_row.refresh_from_db()
+    assert pr_row.external_ref == before
+    assert ba._code_artifact(_inp(world)).id == pr_row.id       # merge still finds the same PR
