@@ -204,6 +204,36 @@ baseline, and prove the plumbing. **Do not publish these numbers or gate on them
 The near-50/50 fail/pass balance is deliberate. An unbalanced set lets a checker score well by
 leaning one way — and "flag everything" is the failure mode a compliance tool falls into naturally.
 
+### What the fixture supplies (measured 2026-08-20, app v1.3.0)
+
+The tables above say what each tier *wants*. This one says what there is to label. **The binding
+constraint is the fail side, not the total** — passing candidates are abundant (roughly 480 across
+the app), so a criterion is limited by how many distinct failing elements exist for it.
+
+| Criterion | Failing elements | v0.1 needs 10 | v1.0 needs 18 |
+|---|---|---|---|
+| 1.1.1 | 16 | ✓ | short 2 |
+| 1.3.1 | 10 | ✓ | short 8 |
+| 4.1.2 | 10 | ✓ | short 8 |
+| 1.4.1 | 10 | ✓ | short 8 |
+| 2.5.3 | 10 | ✓ | short 8 |
+| | **56** | | **short 34** |
+
+**v0.1 is fully supplied at a balanced 10 fail / 10 pass per criterion.** Seventeen failing
+elements were added on 2026-08-20 to reach it — five `<td>` header cells on `/catalogue/subject-index`,
+four switches on `/staff/shelf-audit`, seven buttons on `/account/card-services`, one rejected field
+on `/help/report-a-problem`. Each has a passing twin, and `verify-plants.js` asserts both directions.
+
+**v1.0 needs 34 more failing elements**, plus the 40 borderline and 30 ambiguous records against the
+6 `uncertain` cases the fixture plants today. That is a page-building job before it is a labelling
+job, and it has not been done.
+
+> **Do not close the gap by labelling every candidate in the app.** It would give recall an honest
+> denominator, but it also drags the set to roughly 56 fails against 480 passes — at which ratio any
+> headline accuracy figure is meaningless, because answering `pass` to everything scores about 90%.
+> Recall itself stays sound (it is computed over fails only), and precision gets harder and more
+> honest; it is the single-number summary that stops meaning anything. Plant more failures instead.
+
 ### Be honest about the cost
 
 At 3–5 minutes per record including a written rationale, 250 records is roughly **15–20 hours** of

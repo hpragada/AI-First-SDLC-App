@@ -756,6 +756,8 @@ Expected: **uncertain**. Decorative or informative depends on intent the page do
 | `/account/notifications` | Three radios visually grouped under a "Notify me by" heading, **no `<fieldset>`** | **fail** |
 | `/account/preferences` | Same three radios in `<fieldset><legend>Notify me by</legend>` | **pass** |
 | `/catalogue/genres` | A genre shown in `<b>` where it may or may not carry meaning | **uncertain** |
+| `/catalogue/subject-index` | Five-column subject table whose header row is `<td>`; no `<th>` on the page. Five failing cells | **fail** × 5 |
+| `/catalogue/subject-list` | Same table, header row as `<th scope="col">` | **pass** |
 
 ```html
 <!-- /account/notifications — FAIL. Each radio has its own label, so axe stays quiet;
@@ -780,6 +782,8 @@ Expected: **uncertain**. Decorative or informative depends on intent the page do
 | `/staff/branch-settings` | Custom switch, state shown only by CSS position | **fail** |
 | `/staff/display-options` | `<button type="button" role="switch" aria-checked="true">` | **pass** |
 | `/staff/reports` | Tab strip built from `<a href="#panel-1">`, no tab roles | **fail** |
+| `/staff/shelf-audit` | Four section switches as bare `<div>` — no role, no name, no state, not focusable. Four failing controls | **fail** × 4 |
+| `/staff/shelf-settings` | Same four as `<button role="switch" aria-checked aria-labelledby>` | **pass** |
 | `/staff/overview` | Same strip with `role="tablist"` / `role="tab"` / `role="tabpanel"` / `aria-selected` | **pass** |
 | `/staff/exports` | A real navigation link styled to look exactly like a button | **uncertain** |
 
@@ -831,6 +835,8 @@ which is exactly the mapping a colourblind user cannot make.
 | `/account/join` | Required fields marked **only** by a red `<label>` | **fail** |
 | `/account/update-details` | Same fields marked `(required)` in text, plus `aria-required="true"` | **pass** |
 | `/reports/branch-comparison` | Inline SVG chart, three series distinguished by colour only, legend maps colour to branch | **fail** |
+| `/help/report-a-problem` | A rejected field shown by a red border alone — no note, no `aria-invalid`, no `aria-describedby` | **fail** |
+| `/help/problem-report` | Same field, plus a `.field-note` in words and `aria-invalid` + `aria-describedby` | **pass** |
 | `/reports/monthly-issues` | Same chart with distinct hatch patterns **and** direct labels on each series | **pass** |
 | `/loans/renewals` | Colour **plus** an icon that is not self-explanatory — a filled dot vs a hollow ring | **uncertain** |
 
@@ -863,6 +869,8 @@ which is exactly the mapping a colourblind user cannot make.
 | `/account/apply` | Visible `Join`, `aria-label="Submit membership application"` | `label-content-name-mismatch` | **fail** |
 | `/account/register` | Visible `Join`, accessible name `Join the library` | clean | **pass** |
 | `/newsletter` | Field whose only label is `placeholder="Email"` | clean | **fail** |
+| `/account/card-services` | Seven action buttons — visible `Renew`/`Pay`/`Report`/`Freeze`/`Replace`/`Upgrade`/`Close`, each `aria-label` dropping that word entirely. Seven failing controls | `label-content-name-mismatch` × 7 nodes | **fail** × 7 |
+| `/account/card-options` | Same seven, each `aria-label` starting with the visible word | clean | **pass** |
 | `/account/my-loans` | Icon button, visible `Renew`, accessible name `Renew all loans` | clean | **uncertain** |
 
 > **`/newsletter` reports clean, and that is correct axe behaviour, not a missing defect.** axe's
@@ -898,6 +906,8 @@ Not needed until QA-20. Vanilla JS only, one file per page under `public/js/`.
 | `/account/security` | Natural DOM order, no positive `tabindex` | 2.4.3 |
 | `/help/faq` | `outline: none` with no replacement indicator | 2.4.7 |
 | `/help/contact-us` | Visible custom focus ring | 2.4.7 |
+| `/about/find-a-branch` | Branch `<select>` that navigates the moment it takes focus — choosing a value does nothing, arriving on it does | **3.2.1** |
+| `/about/choose-a-branch` | Same select; nothing happens on focus or on change, only when **Go** is pressed | 3.2.1 |
 | `/catalogue/filter` | `<select>` that submits the form on `change` | 3.2.2 |
 | `/catalogue/refine` | Same select plus an explicit Apply button | 3.2.2 |
 | `/catalogue/results` | "3 results found" injected with no live region | 4.1.3 |
