@@ -690,8 +690,13 @@ const LOOKALIKES = [
   // ── twin layout parity ──────────────────────────────────────────────
   console.log("\n  Twin layout parity");
   for (const [a, b] of LOOKALIKES) {
+    // `load`, not `domcontentloaded`: this is the one check that measures LAYOUT rather than
+    // markup, and the cover images have not arrived at DOMContentLoaded. On a cold cache the
+    // first page measured reads ~1400px taller than the second purely because its images were
+    // still in flight — the pages themselves are identical. Waiting for load makes the
+    // comparison deterministic; measured 995/995 on every run afterwards, warm or cold.
     const measure = async (route) => {
-      await page.goto(BASE + route, { waitUntil: "domcontentloaded" });
+      await page.goto(BASE + route, { waitUntil: "load" });
       return page.evaluate(() => {
         const m = document.querySelector("main").getBoundingClientRect();
         return { w: Math.round(m.width), h: Math.round(m.height) };
