@@ -67,9 +67,13 @@ DISPATCH_FAILED = (
     "The accessibility judge could not be started ({detail}). These items were sent for "
     "human review instead of being scored."
 )
+#: Said of the DISPATCHER, not of the audit. "Stopped at this run's limit" was read — correctly
+#: — as "the audit stopped", on a row for an audit that was still judging.
+#:
+#: `remaining` is **distinct elements**, never request slots. See `distinct_remainder`.
 OVER_CAP = (
-    "Stopped at this run's limit of {cap} — {remaining} item(s) still need judging. Run the "
-    "check again to continue from here; nothing was skipped."
+    "This run's limit of {cap} was reached, so {remaining} element(s) were left for a second "
+    "pass. Run the check again to continue from here; nothing was skipped."
 )
 
 
@@ -224,6 +228,23 @@ def stored_judgment(*, tenant_id, checker: str, candidate: A11yCandidate,
                        include_uncertain=True)
 
 
+def distinct_remainder(dispatched: list, deferred: list) -> int:
+    """How many ELEMENTS a stopped dispatch actually left unchecked.
+
+    **The one definition of that number**, used by the sentence the dispatcher records and by
+    the count `aipass` stores for the screen. They were computed in two places and one of them
+    was the raw slot count, so a single audit could say "12 items still need judging" beside a
+    button offering 6 — two numbers for one fact, on one card.
+
+    Duplicates are not collapsed before the cap, and the tail of a stopped pass is usually
+    markup already handed over earlier in the same run: one verdict answers every copy of it,
+    so those elements are not waiting on anything. Subtracting what was dispatched is what turns
+    request slots into work that genuinely remains — and it can be **zero** on a pass that
+    deferred a dozen requests, which is a pass with nothing left to do.
+    """
+    return len({r.content_hash for r in deferred} - {r.content_hash for r in dispatched})
+
+
 def _split_at_cap(
     requests: list[A11yRequest], max_judgments: int, max_screens: int | None
 ) -> tuple[list[A11yRequest], list[A11yRequest]]:
@@ -338,10 +359,12 @@ def dispatch_judgments(
     # 2) Stop at the cap rather than truncating silently — the remainder is handed back.
     max_judgments, max_screens = caps_for(tenant_id)
     pending, result.deferred = _split_at_cap(pending, max_judgments, max_screens)
-    if result.deferred:
-        result.unavailable_reason = OVER_CAP.format(
-            cap=max_judgments, remaining=len(result.deferred)
-        )
+    # Only when something is genuinely left. A pass whose whole deferred tail is markup already
+    # handed over has nothing outstanding, and a sentence claiming otherwise put work on a
+    # person's list that did not exist. `result.complete` still reads False — requests really
+    # were deferred, and a re-run really does continue from here — but nobody is told to act.
+    if remaining := distinct_remainder(pending, result.deferred):
+        result.unavailable_reason = OVER_CAP.format(cap=max_judgments, remaining=remaining)
     if not pending:
         return result
 

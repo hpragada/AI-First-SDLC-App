@@ -68,6 +68,42 @@ const STATUS_LABEL: Record<string, string> = {
   failed: "Could not run",
 };
 
+/** What a pass left unasked, said only when it is finished and only when it is true.
+ *
+ * **Built from the stored numbers, never from the stored sentence**, and that is the whole
+ * point of this function. The dispatcher records its reason the moment judging *starts*, so the
+ * sentence exists for the entire pass — and it is written in the past tense. Rendered without a
+ * guard it told a reader that a run still judging had "stopped". Worse, the sentence carried
+ * the raw count of deferred request *slots* while the Check-the-rest button beside it counted
+ * distinct *elements*, so one card could say 12 and offer 6.
+ *
+ * The numbers underneath were right all along. So the screen composes its own sentence from
+ * `deferred_distinct` — which also means an audit whose summary already has the wrong prose
+ * baked in displays correctly, rather than being wrong for ever.
+ *
+ * The judge-unavailable reasons ("no machine is connected") are a different thing and are still
+ * shown as written: those are not derivable from a count, and they are told apart by
+ * `filed_unjudged` rather than by matching on wording — which would break the moment someone
+ * improved a sentence.
+ */
+function unaskedNote(audit: A11yAuditRow): string {
+  if (AUDIT_IN_FLIGHT.includes(audit.status)) return "";
+  const pass = audit.summary?.ai_pass;
+  if (!pass) return "";
+  const left = pass.deferred_distinct ?? 0;
+  if (left > 0) {
+    return (
+      `This run reached its limit before every element was checked — ${left} ` +
+      `${left === 1 ? "element was" : "elements were"} left for a second pass. Run the check ` +
+      `again to continue from here; nothing was skipped.`
+    );
+  }
+  // Nothing was deferred that anything else did not already answer. An audit recorded before
+  // `deferred_distinct` existed reads as 0 here and says nothing, which is the same choice the
+  // button makes: silence beats a number known to mislead.
+  return (pass.filed_unjudged ?? 0) > 0 ? pass.reason ?? "" : "";
+}
+
 function auditBadge(status: string): "done" | "failed" | "waiting" {
   if (status === "complete") return "done";
   if (status === "failed") return "failed";
@@ -921,9 +957,9 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
                 nothing on any screen read it, so a pass that never asked about part of what it
                 captured closed as COMPLETE and said nothing. A quiet success is the worst
                 failure this capability has, and it was sitting in its own summary. */}
-            {audit.summary?.ai_pass?.reason && (
+            {unaskedNote(audit) && (
               <Banner variant="warning" title="Not everything captured was checked">
-                {audit.summary.ai_pass.reason}
+                {unaskedNote(audit)}
               </Banner>
             )}
 
@@ -1099,9 +1135,13 @@ function PastAudits({
               {/* And why part of it was never asked about, which is a different sentence from
                   the one above: that one is why the audit failed, this one is why a successful
                   audit is incomplete. */}
-              {audit.summary?.ai_pass?.reason && (
+              {/* Silent while the audit is still judging. The sentence is written when the
+                  pass STARTS, so rendering it unguarded described a running audit as stopped —
+                  the same rule the API already follows by refusing to count `unanswered` for an
+                  audit in flight, and the panel above by guarding on `!running`. */}
+              {unaskedNote(audit) && (
                 <p className="t-sm u-muted" style={{ marginTop: 6 }}>
-                  {audit.summary.ai_pass.reason}
+                  {unaskedNote(audit)}
                 </p>
               )}
 

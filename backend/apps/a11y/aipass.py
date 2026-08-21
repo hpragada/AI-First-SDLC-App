@@ -28,7 +28,7 @@ from __future__ import annotations
 from apps.tenancy.context import tenant_context
 
 from .defects import record_a11y_findings
-from .dispatch import dispatch_judgments, record_verdict
+from .dispatch import dispatch_judgments, distinct_remainder, record_verdict
 from .ingest import requests_for
 from .report import publish_report
 
@@ -157,10 +157,7 @@ def start_ai_pass(*, tenant_id, project_id, run_id, work_item_id=None, title: st
         # nothing is missing at all. The 21 August audit deferred 5 requests and lost NOTHING:
         # every one was chrome already judged. `deferred` alone drove a "check the rest" button
         # offering work that did not exist, so this is the number the button counts.
-        "deferred_distinct": len(
-            {r.content_hash for r in result.deferred}
-            - {r.content_hash for r in result.dispatched}
-        ),
+        "deferred_distinct": distinct_remainder(result.dispatched, result.deferred),
         "reason": result.unavailable_reason,
     }
     # Whatever could not be asked about is FILED, not just reported (QA-13). `dispatch` builds

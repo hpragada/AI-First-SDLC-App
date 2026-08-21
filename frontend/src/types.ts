@@ -1009,6 +1009,10 @@ export interface A11yAudit {
       deferred_distinct?: number;
       dispatched?: number;
       distinct?: number;
+      // How many elements nothing could be asked about at all — no judge registered, or no
+      // machine connected. Tells that case apart from the cap case WITHOUT matching on the
+      // wording of `reason`, which would break the moment somebody improved a sentence.
+      filed_unjudged?: number;
     };
     // Whether the browser answered when the capture asked what each element is called. A whole
     // capture with no names is a broken toolchain, and it hides: every element still arrives,

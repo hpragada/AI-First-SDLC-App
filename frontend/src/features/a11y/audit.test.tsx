@@ -312,8 +312,8 @@ describe("S-38 pages and audit", () => {
         summary: {
           asked: 2, opened: 2, unreachable: [], never_reported: [],
           ai_pass: {
-            deferred: 5, dispatched: 200, distinct: 125,
-            reason: "Stopped at this run's limit of 200 — 5 item(s) still need judging. Run the check again to continue from here; nothing was skipped.",
+            deferred: 9, deferred_distinct: 5, dispatched: 200, distinct: 125,
+            reason: "This run's limit of 200 was reached, so 5 element(s) were left for a second pass. Run the check again to continue from here; nothing was skipped.",
           },
         },
         outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
@@ -322,7 +322,11 @@ describe("S-38 pages and audit", () => {
     renderWithProviders(<A11yAudit />);
 
     expect(await screen.findByText("Not everything captured was checked")).toBeTruthy();
-    expect(screen.getAllByText(/5 item\(s\) still need judging/).length).toBeGreaterThan(0);
+    // FIVE, not the nine request slots that were deferred. The screen composes the sentence
+    // from the count, so the number here and the number on the button cannot disagree.
+    expect(screen.getAllByText(/5 elements were left for a second pass/).length)
+      .toBeGreaterThan(0);
+    expect(screen.queryByText(/9 /)).toBeNull();
   });
 
   // One of the four checks not running at all is a different, worse sentence than part of the
@@ -389,6 +393,127 @@ describe("S-38 pages and audit", () => {
 
     expect(await screen.findByText(/Audit complete/)).toBeTruthy();
     expect(screen.queryByText("Not everything captured was checked")).toBeNull();
+  });
+
+
+  // ── an audit that is STILL RUNNING is never described as stopped ────────────────────
+  //
+  // The dispatcher records its reason the moment judging STARTS, so the sentence sits in the
+  // summary for the whole pass — written in the past tense. The Past-audits row rendered it
+  // with no status check, so a live run showed "Stopped at this run's limit". Found by the team
+  // on the run of 21 August, watching the row while the judge was working through it.
+  //
+  // The API already refuses to compute the "check the rest" count for an in-flight audit for
+  // exactly this reason, and the panel above already guards on `!running`. The row was the one
+  // place that skipped it.
+
+  function judgingAudit(pass: Record<string, unknown>) {
+    return {
+      id: "a1", status: "judging", base_url: "http://localhost:4180",
+      routes: ["/", "/login"], created_at: "2026-08-21T14:28:00Z",
+      progress: { visited: 12, unreachable: 0, judged: 60, dispatched: 126 },
+      summary: { asked: 12, opened: 12, unreachable: [], never_reported: [], ai_pass: pass },
+    };
+  }
+
+  it("an audit that is still judging is never told it stopped", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [judgingAudit({
+        deferred: 12, deferred_distinct: 6, dispatched: 200, distinct: 126,
+        reason: "This run's limit of 200 was reached, so 6 element(s) were left for a second pass. Run the check again to continue from here; nothing was skipped.",
+      })] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    // The running panel is what it shows, and nothing anywhere claims the run has stopped.
+    await screen.findByText("Audit running");
+    expect(screen.queryByText(/left for a second pass/)).toBeNull();
+    expect(screen.queryByText(/still need judging/)).toBeNull();
+    expect(screen.queryByText("Not everything captured was checked")).toBeNull();
+  });
+
+  it("the same audit says it once it has finished", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        ...judgingAudit({
+          deferred: 12, deferred_distinct: 6, dispatched: 200, distinct: 126,
+          reason: "ignored — the screen builds its own sentence from the count",
+        }),
+        status: "complete",
+        outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Not everything captured was checked")).toBeTruthy();
+    expect(screen.getAllByText(/6 elements were left for a second pass/).length)
+      .toBeGreaterThan(0);
+  });
+
+  it("a finished pass whose whole remainder was already asked says nothing", async () => {
+    // Twelve slots deferred and none of them outstanding: every one repeated markup already
+    // judged in the same run. The button correctly offers nothing, and the sentence must not
+    // contradict it.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        ...judgingAudit({ deferred: 12, deferred_distinct: 0, dispatched: 200, distinct: 126 }),
+        status: "complete",
+        outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText(/Audit complete/)).toBeTruthy();
+    expect(screen.queryByText("Not everything captured was checked")).toBeNull();
+    expect(screen.queryByText(/second pass/)).toBeNull();
+  });
+
+  it("an audit recorded before the distinction existed says nothing rather than the old number", async () => {
+    // No `deferred_distinct` key at all. Silence beats a number known to mislead — the same
+    // choice the "check the rest" count already makes.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        ...judgingAudit({
+          deferred: 5, dispatched: 200, distinct: 125,
+          reason: "Stopped at this run's limit of 200 — 5 item(s) still need judging.",
+        }),
+        status: "complete",
+        outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText(/Audit complete/)).toBeTruthy();
+    expect(screen.queryByText(/still need judging/)).toBeNull();
+  });
+
+  it("a judge that could not be reached still says so in its own words", async () => {
+    // Not derivable from a count, and told apart from the cap case by `filed_unjudged` rather
+    // than by matching on the wording of the sentence.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        ...judgingAudit({
+          deferred: 0, deferred_distinct: 0, dispatched: 0, distinct: 0, filed_unjudged: 14,
+          reason: "The accessibility judge runs on your connected machine, and none is connected. These items were sent for human review instead of being scored.",
+        }),
+        status: "complete",
+        outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Not everything captured was checked")).toBeTruthy();
+    expect(screen.getAllByText(/none is connected/).length).toBeGreaterThan(0);
   });
 
   it("an abandoned audit that has been closed shows the machine's own reason", async () => {

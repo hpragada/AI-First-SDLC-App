@@ -1524,6 +1524,43 @@ and they may cut the section.
 
 ---
 
+### #32 — A running audit was described as stopped ✅
+
+Spotted by the team watching the Past-audits row while the fresh run of 21 August was still
+judging. The row said:
+
+> Stopped at this run's limit of 200 — 12 item(s) still need judging.
+
+The audit was `judging` at the time, 60 of 126 elements in, and nothing had stopped.
+
+**Why it was there.** The dispatcher writes that sentence *before* the judge is asked anything,
+so it sits in the audit's summary for the whole pass — in the past tense. The row printed it
+with no status check. The API already refuses to compute the "check the rest" count for an
+audit in flight for exactly this reason, and the panel above already hides everything until the
+run finishes. The row was the one place that skipped the rule.
+
+**And the number was the wrong one.** That pass deferred 12 request *slots* but only **6
+elements**; the other six repeated markup already judged in the same run. The count on the
+button had been fixed to use the element number back in #26 — the sentence beside it had not.
+One card was about to show 12 and offer 6.
+
+**Now:** there is a single definition of "how many elements are actually left", used by the
+sentence and the button; a pass with nothing genuinely outstanding records no sentence at all;
+and the screen composes the sentence **from the count rather than from the stored text** — which
+is what let the fix reach the audit that was already running with the wrong wording saved in it.
+
+**How to check it:** while an audit is judging, its Past-audits row should show the badge
+*Checking what was found* and nothing else. When it completes, if anything was left, the number
+in the sentence and the number on the **Check the rest** button must be the same.
+
+⚠️ **A wrong call I made twice during the run, recorded because it is the kind of mistake that
+matters.** I predicted the cap would be hit, then "corrected" myself mid-run to say it had not
+been, reading `dispatched: 126` as the whole story. That 126 is the de-duplicated count *inside*
+the 200 that were taken — 212 went in, 12 were deferred, the cap was hit. Both claims came from
+reading a progress number instead of the four-line function that applies the cap.
+
+---
+
 ## 10. What has run live, what has not, and what I am least sure about
 
 **This section used to open *"nothing has ever run live, not once"*. That is no longer true**, and

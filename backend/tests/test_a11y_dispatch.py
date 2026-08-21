@@ -335,8 +335,60 @@ def test_a_batch_over_the_cap_stops_and_hands_back_the_remainder(world):
     assert len(result.dispatched) == 2
     assert len(result.deferred) == 3
     assert result.deferred == requests[2:], "the remainder must resume where this stopped"
-    assert "3 item(s) still need judging" in result.unavailable_reason
+    # Five distinct images, so all three deferred really are outstanding.
+    assert "3 element(s) were left for a second pass" in result.unavailable_reason
     assert result.complete is False
+
+
+def test_the_stopped_pass_counts_elements_and_not_request_slots(world):
+    """The number a person is given has to be work that exists.
+
+    Duplicates are not collapsed before the cap, so the tail of a stopped pass is usually markup
+    already handed over earlier in the same run — one verdict answers every copy. Counting raw
+    slots told a reader "12 item(s) still need judging" next to a button offering 6.
+    """
+    _set_caps(world, judgments=2)
+    same = "<img src='chrome.png'>"
+    # Two distinct elements are dispatched; of the three deferred, two repeat what was already
+    # sent and one is genuinely new.
+    requests = [
+        _request(html=same), _request(html="<img src='a.png'>"),
+        _request(html=same), _request(html=same), _request(html="<img src='new.png'>"),
+    ]
+
+    result = _dispatch(world, requests, FakeTrigger(world))
+
+    assert len(result.deferred) == 3, "three slots really were deferred"
+    assert "1 element(s) were left for a second pass" in result.unavailable_reason
+
+
+def test_a_pass_whose_whole_remainder_was_already_asked_says_nothing(world):
+    """The case that put work on somebody's list that did not exist. Every deferred request
+    repeats markup already dispatched, so nothing is waiting on anything."""
+    _set_caps(world, judgments=2)
+    same = "<img src='chrome.png'>"
+    requests = [_request(html=same), _request(html="<img src='a.png'>"),
+                _request(html=same), _request(html=same)]
+
+    result = _dispatch(world, requests, FakeTrigger(world))
+
+    assert len(result.deferred) == 2
+    assert result.unavailable_reason == "", "nothing is outstanding, so nothing is claimed"
+    # Still not "complete": requests were deferred and a re-run does continue from here. What
+    # changed is that nobody is told to act on it.
+    assert result.complete is False
+
+
+def test_the_remainder_has_one_definition(world):
+    """The screen's count and the dispatcher's sentence read the same function. They were two
+    expressions of the same idea and one of them was the raw slot count."""
+    from apps.a11y.dispatch import distinct_remainder
+
+    same = _request(html="<img src='chrome.png'>")
+    other = _request(html="<img src='a.png'>")
+    assert distinct_remainder([same], [same, same]) == 0
+    assert distinct_remainder([same], [same, other]) == 1
+    assert distinct_remainder([], []) == 0
 
 
 def test_the_cap_can_be_expressed_in_screens_instead_of_elements(world):

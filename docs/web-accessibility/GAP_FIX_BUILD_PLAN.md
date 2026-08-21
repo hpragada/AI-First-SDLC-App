@@ -1822,3 +1822,55 @@ and 3 on the statement's provenance; `tsc` and `eslint` clean.
 from the shared database now prints every fix in full — the chart's alt text ends where the judge
 ended it — and puts 26 capture links on the report, each resolving to the same finding id the
 baseline links to.
+
+### 9.9 A running audit described as stopped — 21 August (BUILT)
+
+Found by the team watching the Past-audits row while the judge was working through the fresh
+run. The row read:
+
+> Stopped at this run's limit of 200 — 12 item(s) still need judging.
+
+The audit was at that moment `judging`, 60 of 126 elements in. Three defects in one sentence,
+all three introduced by earlier work in this section.
+
+**1 · It is written when the pass STARTS.** `dispatch` records its reason before the judge is
+asked anything, so `summary.ai_pass.reason` exists for the whole pass — in the past tense. The
+row rendered it with no status check. The API already refuses to compute the "check the rest"
+count for an in-flight audit for exactly this reason (`views.a11y_audits`), and `LatestAudit`
+already guards on `!running`. The row was the one place that skipped it — and it is the same
+running-thing-described-as-finished bug §9.6 fixed on the onboarding hub and did not carry
+across.
+
+**2 · The sentence counted request slots; the button counts elements.** The pass had
+`deferred 12, deferred_distinct 6`. §9.6 changed `unanswered_counts` to use the distinct number
+*precisely because the raw one misleads*, wrote up why, and left `OVER_CAP` formatting the raw
+one. So one card was about to say **12** beside a button offering **6**.
+
+**3 · With nothing genuinely left, it still claimed work.** All-repeat remainders give
+`deferred_distinct == 0`; the button correctly disappeared and the sentence stayed.
+
+#### The fix
+
+`dispatch.distinct_remainder(dispatched, deferred)` is now **the one definition** of that
+number, called by the dispatcher's own sentence and by `aipass`'s stored count — they were two
+expressions of one idea and one of them was wrong. The sentence is not recorded at all when the
+remainder is zero. `result.complete` is unchanged: requests really were deferred and a re-run
+really does continue from here; what changed is that nobody is told to act on it. `OVER_CAP` is
+reworded to describe the dispatcher rather than the audit.
+
+**The screen composes its own sentence from the count, and never renders the stored prose for
+this case** (`A11yAudit.unaskedNote`). That is deliberate and is what makes the fix reach the
+audit that was already running: its summary has `12` baked into the text, and fixing only the
+writer would have left that row wrong for ever. The judge-unavailable reasons are still shown
+as written — they are not derivable from a count — and are told apart by `filed_unjudged`
+rather than by matching on wording, which would break the moment somebody improved a sentence.
+
+**A wrong call on this page, twice, worth recording.** During the run I said the cap would be
+hit, then "corrected" myself to say it had not been, reading `dispatched: 126` as the whole
+story. 126 is the de-duplicated count *inside* the 200 that were taken; 212 went in and 12 were
+deferred. The cap was hit. Both statements were made from a progress number instead of from
+`_split_at_cap`, which is four lines long.
+
+**Verified:** 29 in `test_a11y_dispatch.py` (3 new: elements-not-slots, the silent all-repeat
+case, and one definition of the remainder), 291 across dispatch + report + baseline, 53 on the
+audit screen (5 new, including a `judging` row that must stay silent), `tsc` and `eslint` clean.
