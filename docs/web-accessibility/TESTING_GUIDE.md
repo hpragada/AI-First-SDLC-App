@@ -2,7 +2,7 @@
 
 **For the Edvensoft team · 21 August 2026 · branch `web-accessibility-build`**
 **Covers QA‑01 … QA‑24 (31 tasks), the ten gap-fix tasks G1 … G6c, the eighteen
-user-experience fixes of 20 August, and the six of 21 August that the first live run found (§9)**
+user-experience fixes of 20 August, and the sixteen that five live runs found on 20–21 August (§9)**
 
 ---
 
@@ -936,7 +936,7 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The twenty-four findings, and what was done about each
+## 9. The thirty-four findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
@@ -948,6 +948,11 @@ page-registration dialogs during a live run and told us what they thought each o
 readings were wrong, and nothing was broken — the words were. A screen understood backwards by the
 people who commissioned it is not a screen that works, so #16–#18 are wording, and the wording is
 now pinned by tests like any other behaviour. All eighteen are closed.
+
+**#19 onward came from running it.** Sixteen more, found across five live audits of Meridian
+Library on 20–21 August by people watching the product work. **Every one of them had a green test
+suite standing over it** — which is why they are written up at length rather than ticked off. The
+list is now longer than the walkthrough that started it.
 
 | # | What was wrong | Status |
 |---|---|---|
@@ -975,6 +980,16 @@ now pinned by tests like any other behaviour. All eighteen are closed.
 | 22 | A running audit had nothing to watch, and a dead judging run stranded its audit for ever | ✅ fixed |
 | 23 | A question from a headless run could be counted but never answered | ✅ fixed |
 | 24 | Two tests still asserted a world #9 had replaced, and a `·` the Windows console cannot print | ✅ fixed |
+| 25 | An audit whose machine went away could never end | ✅ fixed |
+| 26 | A pass that stopped at its limit said nothing, anywhere | ✅ fixed |
+| 27 | The onboarding step called a running audit a finished one | ✅ fixed |
+| 28 | **One of the four checks had never run** | ✅ fixed |
+| 29 | The reports printed part of the finding | ✅ fixed |
+| 30 | **"Screenshot shows…" pointed at nothing** — no screen drew the capture a report described | ✅ fixed |
+| 31 | The conformance statement could not say which run produced it | ✅ fixed |
+| 32 | A running audit was described as stopped | ✅ fixed |
+| 33 | **The second pass was described in the first pass's words** | ✅ fixed |
+| 34 | The baseline never said when a check was incomplete | ✅ fixed |
 
 **#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
 Those came from *reading* the screens. These came from *running* them, and five of the six are
@@ -1602,8 +1617,11 @@ warning banner, the "never looked at" line and the button should all be **gone**
 should carry both times: when the audit ran, and when it was rechecked. Press **Check the rest**
 on an audit with nothing left and the button must disappear rather than sit there.
 
-**Recorded, not fixed:** every one of the 25 findings is `critical` and none is `high`. That is
-what the judge actually decided — a calibration question, not a screen defect.
+⚠️ **A wrong call recorded here on 21 August and corrected the same day.** This paragraph used
+to say all 25 findings being `critical` was "what the judge actually decided — a calibration
+question". The judge does not decide severity. It is derived from the criterion's WCAG level —
+**A → critical, AA → high, AAA → medium** (§11.4, and `findings.SEVERITY_BY_LEVEL`) — and every
+criterion in that run is Level A. All-critical was the rule working, not a judgement to review.
 
 ### #34 — The baseline never said when a check was incomplete ✅
 
@@ -1636,82 +1654,104 @@ checked" matters most.
 ## 10. What has run live, what has not, and what I am least sure about
 
 **This section used to open *"nothing has ever run live, not once"*. That is no longer true**, and
-the correction is the most important one in this guide.
+the correction is the most important one in this guide. It has been rewritten on **21 August**
+against five real runs, because a section whose only job is to say what is proven is worthless
+the moment it lags.
 
 ### 10.1 What has now run live ✅
 
-Meridian Library, 20/21 August, a real browser on a real machine:
+**Meridian Library, 20–21 August, five runs**, a real browser on a real machine. The last one:
 
-| | Proven by watching it |
+| | |
 |---|---|
-| **Registering a page list** | 79 routes pasted from `routes.json`, `/health` honoured as out of scope, 10 put in scope |
-| **Opening an audit and having a machine claim it** | *Waiting for a machine* → *Starting* → *Visiting pages*, on a companion enrolled on that project |
-| **The capture** | 10 of 10 pages visited, twice, with elements, styles, accessible names and screenshots posted one screen at a time |
-| **The scanner resolving out of the audited project** | Meridian's own axe, not the companion's — the report says so by *not* saying `(companion)` |
-| **Real AI verdicts** | 80 pass, 1 fail — including `<img id="photo-interior" … alt="library">` against 1.1.1 at 0.92 confidence, with the replacement text proposed. **That is a defect no scanner on the market can find**, which is the entire argument for this build, demonstrated once against a real page. |
-| **An audit reaching `complete`** | with its baseline document in Artifacts |
+| Pages | **11 of 11** captured, none unreachable |
+| Dispatch | **196 element slots of a 200 limit** — 124 distinct elements |
+| Verdicts | **124 of 124**, nothing deferred, nothing filed unjudged |
+| Findings | **21** — 14 `alt` (1.1.1) and 7 `label` (2.5.3), every one a failure |
+| Waiting on a person | **0** |
+| Raised from nothing | **21 defects + 1 backlog epic** |
+| Documents | report (103,748 chars, 22 capture links) and baseline v1, both published |
+| Wall clock | 10:51 → 11:50 |
 
-✅ **A judging pass, start to finish.** On **21 August** the whole brownfield journey ran end to
-end: 10 of 10 pages visited, none that would not open, **every distinct element judged**, the
-report published and the audit `complete`. 80 pass, 1 fail — the `alt="library"` defect above.
+**What those five runs have proven, end to end:**
+
+| | |
+|---|---|
+| **Registering a page list** | 79 routes pasted from `routes.json`, `/health` honoured as out of scope |
+| **An audit claimed by a machine** | *Waiting for a machine* → *Starting* → *Visiting pages* → *Checking what was found* → *Complete* |
+| **The capture** | elements, computed styles, accessible names and screenshots, posted one screen at a time |
+| **The scanner resolving out of the audited project** | Meridian's own axe, not the companion's |
+| **Real AI verdicts** | including `<img id="photo-interior" … alt="library">` against 1.1.1 at 0.92, and four `<div>` switches against 1.3.1 at 0.97. **Defects no scanner on the market finds** — the entire argument for this build, demonstrated repeatedly |
+| **The ledger, the defects and the backlog** | 21 defects and an epic raised from findings, deduplicated by fingerprint |
+| **Both documents** | report and baseline published from real findings, with working links to the captures |
+| **The conformance statement rendered from real evidence** | it names the audit it was drawn from, and when |
+| **A pass stopping at its own limit, and saying so** | 212 slots against a limit of 200 — recorded, counted and offered back |
+| **A second pass over one capture** | "Check the rest" answered the 6 elements the cap left, found **four more real failures**, and republished both documents |
+| **A run that left nothing behind** | 196 of 200 — no deferral, no button, no incompleteness warning. The negative case is proven too |
 
 ⚠️ **And this corrects what was said about the 20 August run.** It was read as having died at
 "81 of 144" with 63 elements lost. It had not: an audit sends one request per (element, check)
 slot, and those ten pages are **144 slots but 81 distinct elements** — the header and footer are
-the same markup on every page and one verdict answers all ten. The judging had finished; the only
-thing broken that day was that the workflow never closed the audit, which is item #22. Nothing
-was ever lost, and no re-judge was needed.
+the same markup on every page and one verdict answers all ten. Nothing was ever lost.
 
 ### 10.2 What is still unproven 🔬
 
-**Ranked by how likely I think a live run is to surprise us:**
+Five runs have not touched **any** of these. Ranked by how likely a live run is to surprise us:
 
-1. **The greenfield capture.** It is generated by an agent from a written contract, not run from
-   a script we ship. The contract is right and enforced on ingest; whether every generated suite
-   honours it is unknown. The tell is a report where nearly everything reads *not evaluated*.
+1. **The greenfield capture.** Every run so far has been a **brownfield baseline audit**. The
+   greenfield capture is generated by an agent from a written contract, not run from a script we
+   ship. The contract is right and enforced on ingest; whether every generated suite honours it
+   is unknown. The tell is a report where nearly everything reads *not evaluated*.
 2. **The keyboard journey.** Eight criteria, one agent, a real browser, a live application. ⚠️ It
-   has never opened a page — and until #21 it **could not have**, because four of its tools were
-   never exposed to the agent at all. It is the least-proven part of this build by a distance.
-3. ~~**A judging pass that finishes.**~~ ✅ **Answered on 21 August** — see 10.1. About 27 minutes
-   end to end, all of it on one unbroken connection.
-4. **Two passes over 68 pages.** The pass loop is tested; a 68-page run against a live Express
-   app is not. Ten pages is the small case.
-5. **The conformance statement against real evidence.** All 55 criteria have been rendered from
-   test data; none from a real audit's findings.
+   has **never opened a page**, and until #21 it *could not have* — four of its tools were never
+   exposed to the agent. Still the least-proven part of this build, by a distance.
+3. **The review queue with something in it.** ⚠️ **New to this list on 21 August, and it earned
+   its place by being invisible.** Across five runs the queue has been **empty every single
+   time** — every check has been confident enough to answer on its own. That is a good result for
+   the judge and it means the console, the 15-minute lock, the claim-and-release, and the
+   confirm-raises-a-defect path have **never been exercised by a real reviewer on a real
+   finding**. A screen that is never reached is not a screen that works.
+4. **Signing a conformance statement.** It has been *rendered* from a real audit's findings —
+   that part is proven. Nobody has signed one against a live run, and signing is what registers
+   and approves the artifact.
+5. **Two passes over 68 pages.** The pass loop is tested; the largest live run is 12 pages
+   against a limit of 60. Ten pages is the small case and we have only ever run the small case.
 
-⚠️ **A real `passes` array is no longer on this list.** The scanner returned positive evidence
-into the platform on the live run — that one is answered.
+⚠️ **A real `passes` array is no longer on this list.** The scanner returns positive evidence into
+the platform on every live run — 175 passed on the last one. Answered.
 
 ### 10.3 What is proven by tests, and how much
 
-Verified on this branch on **21 August**, after all twenty-four findings were fixed:
+Measured on this branch on **21 August**, after §9.11:
 
 | Ran | Result |
 |---|---|
-| `test_a11y_baseline.py` + `test_a11y_judge.py` + `test_a11y_scope_rest.py` | **246 passed** |
-| `test_a11y_journey.py` + `test_a11y_review.py` | 129 passed |
-| `test_a11y_review_rest.py` + `test_a11y_conformance_rest.py` + `test_a11y_capture.py` | 123 passed |
-| `test_a11y_journeys_rest.py` | 9 passed |
-| `test_a11y_wcag.py` (the two pinning tests) | 2 passed |
-| `test_companion_runner.py` (includes the granted-minus-exposed guard) | 6 passed |
-| The whole frontend suite | **336 passed across 20 files**, `tsc -b` clean |
+| `test_a11y_report.py` · `test_a11y_baseline.py` · `test_a11y_baseline_report.py` · `test_a11y_dispatch.py` · `test_a11y_scope_rest.py` | **390 passed** (6 minutes) |
+| The whole frontend suite | **374 passed across 21 files**, `tsc -b` and `eslint` clean |
+| The a11y frontend suites alone | 114 across 6 files |
 
-⚠️ **Two tests in that set were failing until 21 August**, and for everyone: they asserted the
-pre-#9 world. Item #24. They are green now.
+Both numbers were **measured on the day this section was written**, not carried forward. The
+previous version of this table quoted 336 frontend tests across 20 files; it had been true once.
+
+⚠️ **The backend suite is never run whole** — it is killed by the machine. Only the files a change
+touches are run, which is why the table names files rather than claiming a total.
 
 ⚠️ **Failures elsewhere in the repository**, all pre-existing and none accessibility:
 `test_guardrails.py::test_run_build_clean_change_reports_ok` fails because this machine has no git
-remote to push to; there is Claude Agent SDK API drift in `test_drivers.py`; and `npm run lint`
-reports one unresolved rule reference in `Gates.tsx`. **No task has been raised for any of them.**
-
-⚠️ **The backend suite is never run whole** — it is killed by the machine. Only the files a
-change touches are run, which is what the table above lists.
+remote to push to; there is Claude Agent SDK API drift in `test_drivers.py`; and `ruff` reports
+four long-standing E501/E402 findings in `api/views.py`, none in accessibility code. **No task has
+been raised for any of them.**
 
 ⚠️ **And the lesson of 20 August, which this section exists to keep in front of everyone:** three
 of the six defects that run found had a **green test suite standing over them the whole time**. A
 passing test proves the thing it tests. It does not prove the product ever calls it — #19 — nor
 that the list it checks is the list that matters — #21 — nor that the fixture resembles the real
 case — the batch that was 144 elements where every test used three.
+
+**21 August added a fourth to that list.** Every fix in §9.8–§9.11 was green in tests and wrong on
+screen, because the tests asserted the renderer and the team was reading a **stored file rendered
+before the fix**, or a screen showing a **previous pass's numbers**. A test proves the function.
+It does not prove the artefact the person actually opens.
 
 ---
 

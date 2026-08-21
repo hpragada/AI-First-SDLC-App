@@ -46,6 +46,24 @@ Tasks: **QA‑23a**, QA‑23, QA‑24.
 
 ---
 
+## Live status — 2026‑08‑21
+
+**The live checkpoint has happened, and it did NOT close all six.** Five runs against Meridian Library (20–21 August) proved the **brownfield** chain end to end and left the rest exactly where it was. The single-session assumption above was wrong: the runs were all baseline audits, and a baseline audit does not exercise the greenfield capture, the keyboard journey, the review console, or signing.
+
+| Task | What five live runs actually did to it |
+|---|---|
+| **QA‑12** — the AI‑checks pass | **Ran live, repeatedly.** Real verdicts, real findings, real defects, report and baseline published. Proven through the *brownfield* entry point; the greenfield feature run in its AC5 has still not happened |
+| **QA‑11a** — generated axe assertions | **Untouched.** Greenfield only, and every live run was brownfield |
+| **QA‑20 / QA‑21** — the keyboard journey | **Untouched.** Zero journey runs exist. It has never opened a page |
+| **QA‑23** — the review console | **Untouched in the way that matters.** The queue has been **empty on all five runs** — every check answered on its own. No reviewer has opened a real finding, so the lock, the claim/release and confirm‑raises‑a‑defect are still unexercised |
+| **QA‑24** — conformance / VPAT | **Half.** The statement has been *rendered from a real audit's findings* and names the run it came from. **Nobody has signed one live**, and signing is what registers and approves the artifact |
+
+**Status markers are deliberately not changed here.** Which of these is now 🟢 is the team's call, not mine — this note records what the runs did so that call can be made on evidence. The per‑task blocks in `TASK_BACKLOG_QA.md` still read 🟡.
+
+**What is also true, and is not in the 24 tasks at all:** **sixteen further findings** came out of those five runs and are built. They live in `GAP_FIX_BUILD_PLAN.md` §9 (eleven sections) and are numbered #19–#34 in `TESTING_GUIDE.md` §9 — a section nobody planned for, now larger than the plan it was appended to.
+
+---
+
 ## Dependency map (what must be `🟢` before what)
 
 ```

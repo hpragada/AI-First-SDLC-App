@@ -12,8 +12,14 @@ asked how a real user reaches the accessibility work in the greenfield and brown
 Every gap here was found by reading the code, not the docs. Each one below says what is wrong in
 plain words, why it happens underneath, exactly what will change, and how we prove it worked.
 
-**Nothing in here is built yet.** We take one task at a time: I surface it in full, the team says
-go, I build it, we test it, and only then do we move on.
+We take one task at a time: I surface it in full, the team says go, I build it, we test it, and
+only then do we move on.
+
+> **Status, 2026-08-21.** This line used to read *"nothing in here is built yet"*. **All eleven
+> gaps in §3 and §4 are built**, and the document has since grown a second half nobody planned
+> for: **§9, the live-run findings** — **sixteen so far across eleven sections**, every one found
+> by a person watching the product work rather than by reading code. §3 is the plan as written; §9
+> is what reality added to it, and §9 is now the larger and the more useful of the two.
 
 ### How to read a task
 
@@ -56,17 +62,23 @@ Small and safe first, so the team gets working ground under them before the big 
 
 | # | Task | What it unblocks | Size |
 |---|---|---|---|
-| 1 | **G1** — greenfield records what passed, not only what failed | A truthful conformance report on greenfield | S |
-| 2 | **G4** — hide the "Accessibility judging" plumbing task | A clean work-items board | S |
-| 3 | **G5** — make sure the Testing agent sees the screen list | Accessibility test cases actually get written | S |
-| 4 | **B3** — take the address from the repository | One less thing typed by hand | S |
-| 5 | **B5** — audit any number of pages, in passes | Meridian's 68 pages, and anything bigger | M |
-| 6 | **G2 + G2b** — the platform learns which test cases are WCAG | You can see and filter them | M |
-| 7 | **G3** — a finding says which test case found it | The review console makes sense on greenfield | M |
-| 8a | **B1 + B4 + B2** — the audit screen, and the way in | Brownfield audit with no terminal at all | L |
-| 8b | **The page editor** — edit one page, not the whole list | A path can be corrected without creating a second page | M |
+| 1 | **G1** — greenfield records what passed, not only what failed ✅ | A truthful conformance report on greenfield | S |
+| 2 | **G4** — hide the "Accessibility judging" plumbing task ✅ | A clean work-items board | S |
+| 3 | **G5** — make sure the Testing agent sees the screen list ✅ | Accessibility test cases actually get written | S |
+| 4 | **B3** — take the address from the repository ✅ | One less thing typed by hand | S |
+| 5 | **B5** — audit any number of pages, in passes ✅ | Meridian's 68 pages, and anything bigger | M |
+| 6 | **G2 + G2b** — the platform learns which test cases are WCAG ✅ | You can see and filter them | M |
+| 7 | **G3** — a finding says which test case found it ✅ | The review console makes sense on greenfield | M |
+| 8a | **B1 + B4 + B2** — the audit screen, and the way in ✅ | Brownfield audit with no terminal at all | L |
+| 8b | **The page editor** — edit one page, not the whole list ✅ | A path can be corrected without creating a second page | M |
 | 9 | **G3b** — the review list stops fetching evidence nobody reads ✅ | A queue that does the work it is read for | S |
 | 10 | **G6** — the keyboard journey, working on both journeys ✅ | Eight criteria nothing else can reach | M |
+
+> **✅ here means built and tested, not proven live** — and the two are not the same thing, which
+> is the whole argument of §9. **10 (the keyboard journey) is the sharpest example**: every slice
+> is built and every acceptance criterion is green against a planted trap, and it **has still
+> never opened a page in a real browser.** Testing Guide §10.2 is the list that tracks that
+> difference; this column does not.
 
 Tasks 1–4 are independent of each other. 6 should land before 7. 8 has the wireframe already
 approved (`docs/design/screens/S-38-a11y-audit.html`) and was **split by team decision on
@@ -454,9 +466,12 @@ documents reconcile to 70 asked with the unopenable page in the second pass repo
 `test_a11y_capture.py` — 272 passed.
 
 **What the tests do not prove.** They drive a stubbed script. That a **real** browser survives 60
-routes twice over on a real application is not something a test here can establish — that is the
-live run still ahead of us, and the first audit of a 68-page application is the first time we
-learn it.
+routes twice over on a real application is not something a test here can establish.
+
+> **Still true on 21 August, after five live runs.** Every one of them was **11 or 12 pages** —
+> comfortably inside a single pass. The multi-pass loop has never run against a real browser, and
+> the first audit of a 68-page application is still the first time we learn it. This is item 5 in
+> Testing Guide §10.2.
 
 **Size M · Risk low-medium (the loop must not lose a pass's screens if one pass fails — a failed
 pass reports its routes as unreported, it does not abandon the audit) · Needs first: nothing.**
@@ -766,9 +781,12 @@ the resolution bug. `tsc -b` clean; ruff clean; eslint clean apart from the pre-
 `Gates.tsx` rule-not-found.
 
 **What only a live run can prove.** That a full audit of a real application completes from the
-screen. It cannot be checked here: the running app points at the **shared** database, where
-migrations 0021–0026 are unapplied and applying them is the team's call, never a build's. So the
-first real run is still ahead of us, and this entry does not claim otherwise.
+screen. It could not be checked when this was written: the running app points at the **shared**
+database, where migrations 0021–0026 were unapplied.
+
+> ✅ **Proven, 21 August.** The migrations were applied by the team and a full audit has now been
+> started, watched and completed **from the screen, with no terminal**, five times over. This
+> entry no longer needs its caveat.
 
 **Size L · Risk medium — a claim path, a migration, and a fix to code no test had ever executed ·
 Needed first: B3 (the address) and B5 (the passes) — both landed.**
@@ -1238,13 +1256,19 @@ pending migration in the whole platform was accessibility work.
 
 ## 7. What is still true about proof
 
-Six of the twenty-four built tasks have never run against a real browser, and every task in this
-plan adds to what a real run would prove. A green test suite here means *"it behaves as designed"*.
-It does not mean *"the scanner really returns what we think it returns"* — only a live run does
-that, and the first one is still ahead of us.
+A green test suite here means *"it behaves as designed"*. It does not mean *"the scanner really
+returns what we think it returns"* — only a live run does that.
 
 Where a task below can only be half-proven by tests, it says so in its own words rather than
 leaving the team to assume otherwise.
+
+> **Updated 2026-08-21.** This section used to end *"and the first one is still ahead of us"*.
+> **It is behind us.** The brownfield chain has now run against Meridian Library five times —
+> capture, judge, triage, ledger, defects, report, baseline, and a second pass over one capture —
+> and §9 exists because of what those runs found. What is still ahead is narrower and named in
+> the Testing Guide §10.2: the **greenfield** capture, the **keyboard journey**, a **review queue
+> with something actually in it**, a **signed** conformance statement, and a run big enough to
+> need **two capture passes**. Five live runs have not touched any of those five.
 
 ---
 
@@ -1297,11 +1321,17 @@ it is the question the last round did not ask.
 
 ---
 
-## 9. The first live run — 20/21 August
+## 9. The live runs — 20/21 August
 
-The first time any of this was executed against a real application. Meridian Library at
-`http://localhost:4180`, 79 routes registered, 10 in scope, on a brownfield project with no Jira
-and no Confluence.
+The first time any of this was executed against a real application, and then four more times.
+Meridian Library at `http://localhost:4180`, 79 routes registered, on a brownfield project with no
+Jira and no Confluence — 10 in scope on the first run, 12 on the third, 11 on the last after the
+team took `/staff/shelf-audit` out to stay under the judging cap.
+
+> **This section was appended as an afterthought and is now the larger half of the document.**
+> §3 is the plan as written; §9 is what running it added: **sixteen findings across eleven
+> sections** (§9.1–§9.11), every one produced by a person watching the product work, and **every
+> one with a green test suite standing over it.** They are numbered #19–#34 in the Testing Guide.
 
 **It worked, and it found four defects no test could have caught, each hidden behind the one
 before it.** That is the shape of a capability that has never run: the first defect stops you
@@ -1965,9 +1995,15 @@ list. **Team decision, 21 August: keep the row, fix the comment.** Dropping it w
 **Check the rest** — which lives on that row — off the only audit anyone presses it on, and a
 history that stops before today is the worse screen.
 
-**Every one of the 25 findings is `critical`, none `high`.** A truthful read of the data: the
-judge really did mark them all critical. Whether a missing `alt` deserves the same severity as a
-broken switch is judge calibration, not a screen defect. Recorded here, not folded into this fix.
+**Every one of the 25 findings is `critical`, none `high`** — and on 21 August this was written
+up here as a judge-calibration question. **That was wrong, and the doc recon of the same day
+caught it.** The judge does not set severity at all. `findings.SEVERITY_BY_LEVEL` derives it from
+the criterion's WCAG level — **A → critical, AA → high, AAA → medium** — and every criterion in
+that run (1.1.1, 1.3.1, 2.5.3) is Level A. All-critical was not a judgement anybody made; it was
+the documented rule applied correctly. Nothing to calibrate, and nothing to fix.
+
+The lesson is the one this section keeps re-learning: a number that looks like an opinion is
+worth tracing to the line that produces it before it is called an opinion.
 
 **Verified:** 2 new backend tests in `test_a11y_report.py` (a second pass inherits nothing; a
 re-judge that finds nothing left clears the button), **264 across report + baseline**, 5 new on
