@@ -1605,6 +1605,32 @@ on an audit with nothing left and the button must disappear rather than sit ther
 **Recorded, not fixed:** every one of the 25 findings is `critical` and none is `high`. That is
 what the judge actually decided — a calibration question, not a screen defect.
 
+### #34 — The baseline never said when a check was incomplete ✅
+
+The per-run **report** has always said so, in its own blockquote at the top. The **baseline** did
+not — it opened *"2 criteria breached across 6 pages"* over a check that had never looked at part
+of what it captured, and said nothing.
+
+**Why that is the wrong way round.** The report is a working document for whoever ran the pass.
+The baseline is what a client is shown, what the next audit is compared against, and what a
+**conformance statement is built on**. It is the one that must never read cleaner than the
+evidence behind it.
+
+**Now:** the baseline states both silences a page count cannot express — elements that were
+captured and never checked, and a whole check that could not run at all (the name check reports a
+clean-looking blank when the browser stops answering). The number is taken from the **same
+function the Check-the-rest button uses**, so the document and the screen cannot disagree about
+how much was looked at, and it clears itself when a re-judge finishes the job.
+
+**How to check it:** run an audit big enough to stop at its limit — the Meridian scope does this,
+212 element slots against a limit of 200. Open the **Accessibility baseline** from Artifacts:
+under *What has been looked at* it should say the check is incomplete and name the number. Press
+**Check the rest**, let it finish, and the next baseline should not say it.
+
+**The case worth checking deliberately:** a baseline with **no findings at all** must still carry
+the warning. "No accessibility problems are open" is exactly when "part of this was never
+checked" matters most.
+
 ---
 
 ## 10. What has run live, what has not, and what I am least sure about

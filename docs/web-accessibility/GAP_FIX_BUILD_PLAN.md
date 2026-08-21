@@ -1973,3 +1973,61 @@ broken switch is judge calibration, not a screen defect. Recorded here, not fold
 re-judge that finds nothing left clears the button), **264 across report + baseline**, 5 new on
 the audit screen for 58 total and **114 across the a11y frontend suite**, `tsc`, `eslint` and
 `ruff` clean.
+
+### 9.11 The baseline did not say when a check was incomplete — 21 August (BUILT)
+
+Surfaced during the §9.10 investigation and left open until the team called it. The per-run
+**report** has stated an incomplete check since D-A11Y-3:
+
+> **This check is incomplete.** 6 element(s) were selected for an AI check and no verdict was
+> recorded for them, so nothing here says whether they are accessible.
+
+The **baseline** said nothing. It opened *"2 criteria breached across 6 pages"* over a check that
+had never looked at part of what it captured, and no line anywhere in the document mentioned it.
+
+**The asymmetry is the dangerous way round.** The report is a working artefact for whoever ran
+the pass. The baseline is the document a client is shown, the one the Movement section compares
+against, and the one a **conformance statement is built on**. Of the two, it is the one that must
+never read cleaner than the evidence behind it.
+
+#### What it says now
+
+Two blockquotes in **What has been looked at**, beside the "page could not be opened" warning
+that was already there — coverage before findings, so a reader knows how much of the application
+this standing is about before reading it.
+
+> **This check is incomplete.** N element(s) on the pages that were opened were captured and
+> never checked, so nothing in this document says whether they are accessible — they are not
+> counted as passing and not counted as failing. Ask again from the audit screen to carry on
+> from where it stopped.
+
+> **One of the four checks could not run at all.** {the check's own reason} Nothing here says
+> anything about that check, so its silence is not a clean result.
+
+The second is a different failure from the first and worse: the name check needs the browser to
+answer what each element is called, and when that breaks it silently selects nothing — every
+element still arrives, three checks run perfectly, and the fourth reports a clean-looking blank.
+The audit screen has said this since §9.7. The document had not.
+
+#### One definition, deliberately
+
+The count is `baseline.unanswered_counts` — **the same function the "check the rest" button
+reads**. Not a second count computed from the same data: §9.10 was spent on a screen saying six
+elements were outstanding while the code that would ask about them said none were, and a
+*document* disagreeing with a *screen* about how much of an application was checked would be
+that failure in public and in writing. It therefore also honours `nothing_left`, so a re-judge
+that finishes the job clears the warning from the document exactly as it clears the button.
+
+#### The case that matters most
+
+**A baseline with no findings at all still carries the warning.** That branch opens *"No
+accessibility problems are open for this application"* — which is precisely when "part of this
+was never checked" has to be on the page. Pinned by its own test, because it is the one a future
+refactor would most easily drop.
+
+**Known and not built:** `publish_baseline(audit=None)` states nothing, because with no audit in
+hand there is no honest per-pass coverage to report. Every path the team uses passes the audit.
+
+**Verified:** 6 new tests in `test_a11y_baseline_report.py` for 64 total; rendered against the
+live WCAG-Audit project in all three states (complete, six unchecked, a check that never ran)
+before any test was written; `ruff` clean.

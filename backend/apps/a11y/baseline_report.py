@@ -232,6 +232,55 @@ def _backlog_table(items: list[dict]) -> list[str]:
     return lines
 
 
+def _incomplete_lines(tenant_id, audit) -> list[str]:
+    """The two silences a page count cannot express, stated in the baseline as well as the report.
+
+    A page that would not open is already said above, and it is the easy one: the reader can see
+    a page is missing. These two are invisible in every number on the page.
+
+      * **Elements that were captured and never checked.** A pass stops at its own limit, or a
+        judge is unavailable, and the elements it did not reach are simply absent — no finding,
+        no queue entry, nothing. So a baseline reading "2 criteria breached across 6 pages" can
+        be drawn from a check that never looked at part of what it captured, and nothing in the
+        document says so. The per-run report has stated this since D-A11Y-3; the baseline — the
+        document a client is actually shown, and the one a conformance statement is built on —
+        did not. That asymmetry is the more dangerous half, because the report is a working
+        artefact and the baseline is the answer.
+
+      * **A whole check that could not run.** The name check needs the browser to answer what
+        each element is called, and when the toolchain breaks it silently selects nothing: every
+        element still arrives, three checks run perfectly, and the fourth reports nothing at all.
+        An empty result from a check that never ran is indistinguishable from a clean one.
+
+    The count comes from `unanswered_counts` — deliberately the SAME function the "check the
+    rest" button reads. Two counts of one thing is how this capability spent 21 August telling
+    a team six elements were outstanding while the code that would ask about them said none
+    were; a document and a screen disagreeing about it would be that failure in public.
+    """
+    from .baseline import unanswered_counts
+
+    if audit is None:
+        return []
+    lines: list[str] = []
+    unchecked = unanswered_counts(tenant_id, [audit]).get(str(audit.id), 0)
+    if unchecked:
+        lines.extend([
+            "",
+            f"> **This check is incomplete.** {unchecked} element(s) on the pages that were "
+            "opened were captured and never checked, so nothing in this document says whether "
+            "they are accessible — they are not counted as passing and not counted as failing. "
+            "Ask again from the audit screen to carry on from where it stopped.",
+        ])
+    names = (audit.summary or {}).get("names") or {}
+    if reason := str(names.get("reason") or "").strip():
+        lines.extend([
+            "",
+            "> **One of the four checks could not run at all.** " + _prose(reason) + " Nothing "
+            "here says anything about that check, so its silence is not a clean result.",
+        ])
+    return lines
+
+
 def baseline_body(*, tenant_id, project_id, audit=None) -> str:
     """The baseline as a document a person reads. Markdown, like every other report here."""
     from .findings import describe_criteria
@@ -309,6 +358,7 @@ def baseline_body(*, tenant_id, project_id, audit=None) -> str:
                 f"> **{len(unreachable)} page(s) could not be opened**, so nothing here says "
                 f"anything about them: {_cell(', '.join(unreachable), 300)}.",
             ])
+        lines.extend(_incomplete_lines(tenant_id, audit))
     lines.append("")
 
     if change["first_baseline"]:

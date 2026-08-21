@@ -722,3 +722,83 @@ def test_a_backlog_item_with_no_words_gets_no_empty_detail(world):
     body = baseline_body(tenant_id=world["t"], project_id=world["p"])
     assert "| 1 | Critical |" in body
     assert "### The same list" not in body
+
+
+# ── the silences a page count cannot express (21 August) ──────────────────────────────────────
+#
+# The per-run report has stated an incomplete check since D-A11Y-3. The baseline — the document
+# a client is actually shown, and the one a conformance statement is built on — did not: it
+# opened "2 criteria breached across 6 pages" over a check that had never looked at part of what
+# it captured, and said nothing anywhere. The asymmetry was the dangerous half round.
+
+def _audit_with(world, ai_pass=None, names=None):
+    from apps.a11y.models import A11yBaselineAudit
+
+    return A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"], routes=["/login"],
+        status=A11yBaselineAudit.Status.COMPLETE,
+        summary={"asked": 1, "opened": 1, "unreachable": [], "never_reported": [],
+                 "ai_pass": ai_pass or {}, **({"names": names} if names else {})})
+
+
+def test_the_baseline_says_when_part_of_the_check_never_happened(world):
+    _finding(world, fingerprint="one")
+    audit = _audit_with(world, ai_pass={"filed_unjudged": 0, "deferred_distinct": 6})
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"], audit=audit)
+    assert "**This check is incomplete.**" in body
+    assert "6 element(s)" in body
+    assert "not counted as passing and not counted as failing" in body
+
+
+def test_a_complete_check_says_nothing_rather_than_reassuring_anybody(world):
+    _finding(world, fingerprint="one")
+    audit = _audit_with(world, ai_pass={"filed_unjudged": 0, "deferred_distinct": 0})
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"], audit=audit)
+    assert "incomplete" not in body
+
+
+def test_the_baseline_counts_the_same_elements_the_button_offers(world):
+    """One definition, not two. A document and a screen disagreeing about how much of the
+    application was checked is this capability's own worst failure, in public."""
+    from apps.a11y.baseline import unanswered_counts
+
+    _finding(world, fingerprint="one")
+    audit = _audit_with(world, ai_pass={"filed_unjudged": 3, "deferred_distinct": 4})
+    counted = unanswered_counts(world["t"], [audit])[str(audit.id)]
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"], audit=audit)
+    assert f"{counted} element(s) on the pages that were opened" in body
+
+
+def test_a_re_judge_that_finished_the_job_clears_the_documents_warning_too(world):
+    """`nothing_left` is the authoritative recount. The screen honours it; so must the document,
+    or asking again would fix the button and leave the baseline claiming an incomplete check."""
+    _finding(world, fingerprint="one")
+    audit = _audit_with(world, ai_pass={"filed_unjudged": 0, "deferred_distinct": 6,
+                                        "nothing_left": True})
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"], audit=audit)
+    assert "incomplete" not in body
+
+
+def test_the_baseline_says_when_a_whole_check_could_not_run(world):
+    """The name check needs the browser to answer what each element is called. When the
+    toolchain breaks it selects nothing — every element still arrives, three checks run
+    perfectly, and the fourth reports nothing. Silence from a check that never ran is
+    indistinguishable from a clean result unless the document says which it was."""
+    _finding(world, fingerprint="one")
+    audit = _audit_with(
+        world, ai_pass={"filed_unjudged": 0, "deferred_distinct": 0},
+        names={"named": 0, "nameable": 91,
+               "reason": "the browser did not answer when asked what each element is called."})
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"], audit=audit)
+    assert "**One of the four checks could not run at all.**" in body
+    assert "its silence is not a clean result" in body
+
+
+def test_a_clean_looking_baseline_still_states_an_incomplete_check(world):
+    """The case that matters most and is easiest to miss. With no findings at all the document
+    opens by saying nothing is open — which is exactly when "part of this was never checked"
+    has to be on the page."""
+    audit = _audit_with(world, ai_pass={"filed_unjudged": 0, "deferred_distinct": 6})
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"], audit=audit)
+    assert "No accessibility problems are open" in body
+    assert "**This check is incomplete.**" in body
