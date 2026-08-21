@@ -580,3 +580,113 @@ def test_the_judge_phase_gets_the_longer_verification_window():
     assert "LONG_VERIFY_PHASES else 1" in source, (
         "verify_writes must take its timeout from the phase, not a flat one minute"
     )
+
+
+# ── a judging run that DIED still has to account for itself ─────────────────
+#
+# The workflow returns at its `phase_failed` branch BEFORE `verify_writes`, which is where the
+# judge's accounting lives. So everything below is about the path a crashed engine takes: the
+# elements it never answered, the report nobody would otherwise see, and the audit that would
+# otherwise read "Checking what was found" for ever. Yesterday's live run ended exactly here.
+
+
+def _judging_audit(tenant, proj, judge_run, routes=("/home", "/checkout")):
+    """A baseline audit whose capture this judging run was dispatched about."""
+    from apps.a11y.aipass import _remember_source_run
+    from apps.a11y.models import A11yBaselineAudit
+
+    audit = A11yBaselineAudit.objects.create(
+        tenant=tenant, project=proj, base_url="http://localhost:4180",
+        routes=list(routes), status=A11yBaselineAudit.Status.JUDGING,
+    )
+    _remember_source_run(tenant.id, str(judge_run.id), str(audit.id))
+    return audit
+
+
+def test_a_judging_run_that_died_files_every_element_it_never_answered(run):
+    """Nothing dispatched may vanish. One of three was judged before the engine went; the other
+    two must reach a person as `uncertain`, not disappear from the record."""
+    from apps.a11y.aipass import close_unfinished_ai_pass
+
+    tenant, proj, row, _ = run
+    answered = ids_of(run)[0]
+    report(run, answered, verdict="pass", confidence=0.95)
+
+    out = close_unfinished_ai_pass(tenant_id=tenant.id, run_id=row.id)
+
+    assert out["accounted"] is False, "it did not finish, and must not claim it did"
+    assert "2 were never reported on" in out["reason"]
+    stored = {j.content_hash: j for j in A11yJudgmentCache.objects.filter(
+        tenant=tenant, project=proj, run_id=row.id)}
+    assert len(stored) == 3, "one judged, two filed — none lost"
+    assert sum(1 for j in stored.values() if j.verdict == "uncertain") == 2
+
+
+def test_a_judging_run_that_died_completes_the_audit_it_was_about(run):
+    """The audit is CLOSED, not left mid-sentence. `Checking what was found` for ever is the
+    same lie as a clean report: it states work that is not happening."""
+    from apps.a11y.aipass import close_unfinished_ai_pass
+    from apps.a11y.models import A11yBaselineAudit
+
+    tenant, proj, row, _ = run
+    audit = _judging_audit(tenant, proj, row)
+
+    close_unfinished_ai_pass(tenant_id=tenant.id, run_id=row.id)
+
+    audit.refresh_from_db()
+    assert audit.status == A11yBaselineAudit.Status.COMPLETE
+
+
+def test_the_failed_run_path_is_what_actually_calls_it(run):
+    """The wiring, not the function. `close_unfinished_ai_pass` existing changes nothing unless
+    the path a crashed run takes reaches it — and the journey's identical closure had sat one
+    line away on that path since G6a without the judge's ever being added beside it."""
+    from apps.a11y.models import A11yBaselineAudit
+    from orchestration.activities import fail_run_core
+    from orchestration.types import AgentRunInput
+
+    tenant, proj, row, _ = run
+    audit = _judging_audit(tenant, proj, row)
+
+    fail_run_core(
+        AgentRunInput(
+            run_id=str(row.id), tenant_id=str(tenant.id), project_id=str(proj.id),
+            work_item_id=str(row.work_item_id), agent_spec_id=str(row.agent_spec_id),
+            phase="a11y_judge", auto_approve=True,
+        ),
+        "the engine session ended before the judging finished",
+    )
+
+    audit.refresh_from_db()
+    assert audit.status == A11yBaselineAudit.Status.COMPLETE
+    assert A11yJudgmentCache.objects.filter(
+        tenant=tenant, run_id=row.id, verdict="uncertain").count() == 3, (
+        "every element it was given, filed for a person")
+
+
+def test_a_failed_run_that_judged_nothing_is_left_completely_alone(project):
+    """A no-op for every other phase in the platform — which is the price of putting it on the
+    shared failure path, and has to be paid rather than assumed."""
+    from apps.a11y.models import A11yBaselineAudit
+    from orchestration.activities import fail_run_core
+    from orchestration.types import AgentRunInput
+
+    tenant, proj = project
+    row = _run_for(tenant, proj, "02_requirements")
+    audit = A11yBaselineAudit.objects.create(
+        tenant=tenant, project=proj, routes=["/"],
+        status=A11yBaselineAudit.Status.JUDGING)
+
+    fail_run_core(
+        AgentRunInput(
+            run_id=str(row.id), tenant_id=str(tenant.id), project_id=str(proj.id),
+            work_item_id=str(row.work_item_id), agent_spec_id=str(row.agent_spec_id),
+            phase="02_requirements",
+        ),
+        "the branch would not build",
+    )
+
+    audit.refresh_from_db()
+    assert audit.status == A11yBaselineAudit.Status.JUDGING, (
+        "an unrelated phase failing must not close somebody's audit")
+    assert A11yJudgmentCache.objects.filter(tenant=tenant).count() == 0

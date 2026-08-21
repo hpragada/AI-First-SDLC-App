@@ -43,6 +43,7 @@ from apps.a11y.aipass import (
     judging_work_item,
     start_ai_pass,
 )
+from apps.a11y.baseline import unanswered_counts
 from apps.a11y.capture import (
     MAX_AXE_NODES,
     MAX_AXE_VIOLATIONS,
@@ -52,7 +53,7 @@ from apps.a11y.capture import (
 )
 from apps.a11y.dispatch import JUDGE_AGENT_KEY, record_verdict
 from apps.a11y.ingest import ingest_screen, requests_for
-from apps.a11y.models import A11yScreenScan
+from apps.a11y.models import A11yCandidateBundle, A11yScreenScan
 from apps.a11y.report import (
     REPORT_TYPE,
     SOURCE_AI,
@@ -71,6 +72,7 @@ from apps.runs.models import Run
 from apps.tenancy.models import Tenant, User
 from apps.workitems.models import WorkItem
 from integrations.types import A11Y_FAIL, A11Y_PASS, A11Y_UNCERTAIN, A11yJudgment
+from orchestration.activities import WriteCompletenessError
 from storage.object_store import InMemoryObjectStore
 
 # ── a page with an image, a fake button and a real button ──────────────────────────
@@ -877,3 +879,251 @@ def test_only_the_accessibility_gate_reads_these_findings():
     }
     early = {name: found for name, found in hits.items() if found}
     assert early == {}, f"accessibility findings reached another gate module: {early}"
+
+
+# ══ asking again about what nothing ever looked at (task R1) ═══════════════════════════
+#
+# A judging run that dies part-way files every element it never reached as `uncertain — not
+# judged`, so nothing dispatched vanishes. That is right, and it leaves those elements sitting
+# on a person for a reason that has nothing to do with them: not "a check looked and could not
+# decide", but "nothing looked". These are about telling those two apart and offering only the
+# second back to the machine — and about the fact that doing so visits no page at all.
+
+
+def _dispatched_run(world):
+    """A judging run over this capture, with the batches a judge would be handed."""
+    from apps.a11y.aipass import start_ai_pass
+
+    _ingest(world)
+    out = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"],
+                        trigger=FakeTrigger(world))
+    assert out["started"] is True
+    return out["judge_run_id"]
+
+
+def _element_ids(world, judge_run_id):
+    """Every dispatched element as (id, criteria) — paging through, the way the judge does."""
+    from apps.a11y import judge as judge_mod
+
+    out, start = [], 0
+    while start is not None:
+        batch = judge_mod.batch_for_run(world["t"], judge_run_id, start=start)
+        out += [(e["id"], list(e.get("criteria") or []))
+                for screen in batch["screens"] for e in screen["elements"]]
+        start = batch["next_start"]
+    return out
+
+
+def test_an_answered_uncertain_is_never_offered_back_to_the_machine(world):
+    """The one piece of real design in this task. *"A check looked at this and could not
+    decide"* is a verdict, it belongs to the person in the review queue, and re-asking about it
+    would quietly recycle the queue's own contents through the machine. *"Nothing looked at
+    this"* is work that did not happen."""
+    from apps.a11y import judge as judge_mod
+    from apps.a11y.aipass import unanswered_for_capture
+
+    judge_run_id = _dispatched_run(world)
+    ids = _element_ids(world, judge_run_id)
+    assert len(ids) > 1, "the fixture needs at least two elements for this to mean anything"
+
+    # The agent looks at the first and honestly cannot decide. Recorded the way its own tool
+    # records it — against the run, which is what separates it from a platform fallback.
+    judge_mod.record_finding(
+        tenant_id=world["t"], run_id=judge_run_id, project_id=world["p"],
+        element_id=ids[0][0], criteria=ids[0][1], verdict="uncertain", confidence=0.2,
+        evidence="the image may be decorative; the page does not say",
+    )
+    # …and then the run dies. Everything it never reached is filed, and remembered.
+    with pytest.raises(WriteCompletenessError):
+        judge_mod.verify_judgment_completeness(tenant_id=world["t"], run_id=judge_run_id)
+
+    offered = unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"])
+    assert len(offered) == len(ids) - 1, "everything except the one a check actually answered"
+
+
+def test_asking_again_dispatches_only_those_and_visits_no_page(world):
+    """No browser, no companion, no route re-opened: the markup, the styles and the screenshot
+    crop were all stored when the pages were captured."""
+    from apps.a11y import judge as judge_mod
+    from apps.a11y.aipass import rejudge_capture, unanswered_for_capture
+
+    judge_run_id = _dispatched_run(world)
+    ids = _element_ids(world, judge_run_id)
+    judge_mod.record_finding(
+        tenant_id=world["t"], run_id=judge_run_id, project_id=world["p"],
+        element_id=ids[0][0], criteria=ids[0][1], verdict="pass", confidence=0.95,
+        evidence="the alt text describes the image",
+    )
+    with pytest.raises(WriteCompletenessError):
+        judge_mod.verify_judgment_completeness(tenant_id=world["t"], run_id=judge_run_id)
+    expected = unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"])
+
+    again = FakeTrigger(world)
+    out = rejudge_capture(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"],
+                          triggered_by=str(world["user"].id), trigger=again)
+    # It goes through the ordinary dispatch, so the second run is a real judging run on the same
+    # carrier work item — not a path of its own.
+    assert out["asked"] == len(expected)
+    assert out["started"] is True
+    second = Run.objects.get(id=out["judge_run_id"])
+    assert second.id != judge_run_id
+    asked_now = {e["content_hash"]
+                 for batch in (second.inputs or {}).get("a11y_batches", [])
+                 for e in batch["elements"]}
+    assert asked_now == set(expected), "exactly the ones nothing looked at, and nothing else"
+    assert len(again.calls) == 1, "one more judging run, and nothing else started"
+
+
+def test_asking_again_when_everything_has_been_looked_at_starts_nothing(world):
+    """Said in words rather than starting an engine run that would judge nothing."""
+    from apps.a11y.aipass import rejudge_capture
+
+    _ingest(world)
+    out = rejudge_capture(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"],
+                          trigger=FakeTrigger(world))
+    assert out["started"] is False and out["asked"] == 0
+    assert "has been looked at" in out["reason"]
+
+
+def test_asking_again_puts_the_audit_back_to_checking_what_was_found(world):
+    """Because that is what is happening. The running panel and the audit's own row then say so
+    in the words they already use, and it completes through the ordinary closing step."""
+    from apps.a11y import judge as judge_mod
+    from apps.a11y.aipass import _remember_source_run, rejudge_capture
+    from apps.a11y.models import A11yBaselineAudit
+
+    audit = A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"], routes=["/checkout"],
+        status=A11yBaselineAudit.Status.COMPLETE)
+    _ingest(world)
+    # The capture belongs to the audit, exactly as a baseline audit's does.
+    A11yCandidateBundle.objects.filter(
+        tenant=world["tenant"], run_key=world["run_id"]).update(run_key=str(audit.id))
+
+    from apps.a11y.aipass import start_ai_pass
+
+    started = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id),
+                            trigger=FakeTrigger(world),
+                            # An audit has no Run to read the user off, so the caller says who —
+                            # exactly as `finish_baseline_audit` does.
+                            triggered_by=str(world["user"].id))
+    _remember_source_run(world["t"], started["judge_run_id"], str(audit.id))
+    audit.summary = {"ai_pass": {"judge_run_id": started["judge_run_id"],
+                                 "dispatched": started["dispatched"]}}
+    audit.save(update_fields=["summary"])
+    with pytest.raises(WriteCompletenessError):
+        judge_mod.verify_judgment_completeness(tenant_id=world["t"],
+                                               run_id=started["judge_run_id"])
+
+    out = rejudge_capture(tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id),
+                          trigger=FakeTrigger(world), triggered_by=str(world["user"].id))
+    assert out["started"] is True
+    audit.refresh_from_db()
+    assert audit.status == A11yBaselineAudit.Status.JUDGING
+
+
+def test_the_count_on_the_button_matches_what_asking_again_would_ask(world):
+    """The screen counts from what each pass recorded about itself; the re-judge recomputes the
+    real set. Two roads to one number, and a screen that offers to check twelve things and then
+    checks nine is a screen nobody trusts again."""
+    from apps.a11y import judge as judge_mod
+    from apps.a11y.aipass import _remember_source_run, start_ai_pass, unanswered_for_capture
+    from apps.a11y.models import A11yBaselineAudit
+
+    audit = A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"], routes=["/checkout"],
+        status=A11yBaselineAudit.Status.COMPLETE)
+    _ingest(world)
+    A11yCandidateBundle.objects.filter(
+        tenant=world["tenant"], run_key=world["run_id"]).update(run_key=str(audit.id))
+    started = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id),
+                            trigger=FakeTrigger(world),
+                            # An audit has no Run to read the user off, so the caller says who —
+                            # exactly as `finish_baseline_audit` does.
+                            triggered_by=str(world["user"].id))
+    _remember_source_run(world["t"], started["judge_run_id"], str(audit.id))
+    audit.summary = {"ai_pass": {"judge_run_id": started["judge_run_id"],
+                                 "dispatched": started["dispatched"],
+                                 "filed_unjudged": started["filed_unjudged"]}}
+    audit.save(update_fields=["summary"])
+    with pytest.raises(WriteCompletenessError):
+        judge_mod.verify_judgment_completeness(tenant_id=world["t"],
+                                               run_id=started["judge_run_id"])
+
+    counted = unanswered_counts(world["t"], [audit])[str(audit.id)]
+    actual = unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id))
+    assert counted == len(actual) > 0
+
+
+def test_a_verdict_with_no_run_against_it_is_only_ever_the_platforms_own(world):
+    """The marker this all rests on, asserted rather than assumed. `unanswered_for_capture`
+    reads a null run as *"nothing looked at this"*, which is only true while the agent's own
+    tool always records against its run. Three call sites write a verdict; this pins the one
+    that must never write a null."""
+    import inspect
+
+    from apps.a11y import judge as judge_mod
+
+    source = inspect.getsource(judge_mod.record_finding)
+    assert "run_id=run_id" in source, (
+        "record_finding must stamp the judge's run on every verdict — a null run is the "
+        "platform's way of saying nothing ever looked"
+    )
+    assert "run_id=None" not in source
+
+
+def test_a_second_asking_never_offers_up_what_the_first_one_answered(world):
+    """The failure mode a re-judge invites: the audit goes on pointing at the run that gave up,
+    its recorded list is read again, and the machine is asked to re-decide what it has already
+    decided — for ever. Guarded twice: the audit is re-pointed at the new run, and anything with
+    a real verdict against it drops out whoever answered it."""
+    from apps.a11y import judge as judge_mod
+    from apps.a11y.aipass import (
+        _remember_source_run,
+        rejudge_capture,
+        start_ai_pass,
+        unanswered_for_capture,
+    )
+    from apps.a11y.models import A11yBaselineAudit
+
+    audit = A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"], routes=["/checkout"],
+        status=A11yBaselineAudit.Status.COMPLETE)
+    _ingest(world)
+    A11yCandidateBundle.objects.filter(
+        tenant=world["tenant"], run_key=world["run_id"]).update(run_key=str(audit.id))
+    first = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id),
+                          trigger=FakeTrigger(world), triggered_by=str(world["user"].id))
+    _remember_source_run(world["t"], first["judge_run_id"], str(audit.id))
+    audit.summary = {"ai_pass": {"judge_run_id": first["judge_run_id"],
+                                 "dispatched": first["dispatched"],
+                                 "filed_unjudged": first["filed_unjudged"]}}
+    audit.save(update_fields=["summary"])
+    with pytest.raises(WriteCompletenessError):
+        judge_mod.verify_judgment_completeness(tenant_id=world["t"],
+                                               run_id=first["judge_run_id"])
+
+    out = rejudge_capture(tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id),
+                          trigger=FakeTrigger(world), triggered_by=str(world["user"].id))
+    assert out["started"] is True
+
+    # The audit now points at the SECOND run, not the one that gave up.
+    audit.refresh_from_db()
+    assert audit.summary["ai_pass"]["judge_run_id"] == out["judge_run_id"]
+
+    # This time the judge answers everything it was given.
+    for element_id, criteria in _element_ids(world, out["judge_run_id"]):
+        judge_mod.record_finding(
+            tenant_id=world["t"], run_id=out["judge_run_id"], project_id=world["p"],
+            element_id=element_id, criteria=criteria, verdict="pass", confidence=0.9,
+            evidence="the alt text describes the image")
+    judge_mod.verify_judgment_completeness(tenant_id=world["t"], run_id=out["judge_run_id"])
+
+    assert unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id)) == []
+    assert unanswered_counts(world["t"], [audit])[str(audit.id)] == 0, (
+        "and the button that offers it is gone too")
+

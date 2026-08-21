@@ -374,3 +374,135 @@ def complete_audit(tenant_id, capture_key) -> bool:
     # capture closed would have published a standing that was still changing.
     publish_baseline_for(tenant_id=tenant_id, audit=audit)
     return True
+
+
+#: The statuses an audit can be in while something is still happening to it. Progress is asked
+#: for these and nobody else: a finished audit's numbers are already frozen on its `summary`,
+#: and re-deriving them would be two sources for one answer.
+IN_FLIGHT_STATUSES = ("pending", "claimed", "capturing", "judging")
+
+
+def audit_progress(tenant_id, audit_ids: list[str]) -> dict:
+    """How far each of these audits has actually got, right now (S-38 running panel).
+
+    **Why this is derived and not stored.** `summary` is written once, when the audit closes —
+    so for the whole time an audit is running there is no count of anything anywhere, and the
+    only thing a screen could say was the status word. Yesterday's live run spent forty minutes
+    on `Checking what was found` with no way for the person who started it to see that the judge
+    was at 81 of 144, or that it had stopped. The rows this reads are being written the whole
+    time; nothing new has to be recorded to be able to say so.
+
+    Two counts per audit, from two grouped queries over the whole set rather than a query per
+    audit — the panel polls every 5 seconds:
+
+      * **visited / unreachable** — screen scans posted under this audit's key. `unreachable` is
+        a page the browser could not open, which is a RESULT and is counted as visited-and-known
+        rather than as progress not yet made.
+      * **judged / dispatched** — once the AI pass has started, how many of the elements it was
+        given have a verdict recorded. `dispatched` comes off the audit's own summary, written
+        when the pass was dispatched, so the denominator is the real one and not a guess.
+
+    Returns `{audit_id: {...}}`, missing nothing and inventing nothing: an audit that has had no
+    screen posted yet is `{"visited": 0, "unreachable": 0}` with no judging keys at all, which is
+    what lets a screen tell "none yet" from "not that stage".
+    """
+    from django.db.models import Count, Q
+
+    from .models import A11yBaselineAudit, A11yJudgmentCache, A11yScreenScan
+
+    keys = [str(a) for a in audit_ids if str(a or "").strip()]
+    if not keys:
+        return {}
+    out: dict[str, dict] = {key: {"visited": 0, "unreachable": 0} for key in keys}
+
+    with tenant_context(tenant_id):
+        scans = (
+            A11yScreenScan.objects
+            .filter(tenant_id=tenant_id, run_key__in=keys)
+            .values("run_key")
+            .annotate(
+                visited=Count("id"),
+                # A load error is stored as text, so "no error" is the empty string, not NULL.
+                unreachable=Count("id", filter=~Q(load_error="")),
+            )
+        )
+        for row in scans:
+            out[str(row["run_key"])].update(
+                visited=row["visited"], unreachable=row["unreachable"])
+
+        # The judging half. Only for audits that actually dispatched a pass — the judge run id
+        # and the element count are both on the summary written at dispatch.
+        judge_runs = {}
+        for audit in A11yBaselineAudit.objects.filter(tenant_id=tenant_id, id__in=keys):
+            ai_pass = (audit.summary or {}).get("ai_pass") or {}
+            run_id = str(ai_pass.get("judge_run_id") or "")
+            if run_id:
+                judge_runs[run_id] = str(audit.id)
+                out[str(audit.id)].update(
+                    judged=0, dispatched=int(ai_pass.get("dispatched") or 0))
+        if judge_runs:
+            judged = (
+                A11yJudgmentCache.objects
+                .filter(tenant_id=tenant_id, run_id__in=list(judge_runs))
+                .values("run_id").annotate(n=Count("id"))
+            )
+            for row in judged:
+                out[judge_runs[str(row["run_id"])]]["judged"] = row["n"]
+    return out
+
+
+def passes_for(route_count: int) -> int:
+    """How many capture passes a route count takes. One document holds `capture.MAX_SCREENS`
+    pages, so a bigger audit runs in more passes rather than visiting the first 60 (D-B5)."""
+    from .capture import MAX_SCREENS
+
+    return max(1, -(-int(route_count or 0) // MAX_SCREENS))
+
+
+#: The statuses an audit is CLOSED in. A re-judge is only offered for these: while a pass is
+#: still running, "how many were never looked at" has no settled answer.
+CLOSED_STATUSES = ("complete", "failed")
+
+
+def unanswered_counts(tenant_id, audits) -> dict:
+    """How many elements of each audit NOTHING ever looked at — for the button that offers to
+    ask again (task R1).
+
+    Counted from what each pass already recorded about itself, in one extra query for the whole
+    list rather than a walk through every audit's stored elements:
+
+      * `summary.ai_pass.filed_unjudged` — elements the dispatch could not ask about at all,
+        because there was no judge registered or no machine connected;
+      * the judge run's own `outputs[UNANSWERED_KEY]` — elements it was given and never reported
+        on. Written by `judge._remember_unanswered` at the only moment the two kinds of
+        `uncertain` are still distinguishable.
+
+    The two are disjoint by construction: the first were never dispatched, the second were.
+
+    ⚠️ **This is the count for a screen, not the list a re-judge acts on.** The authoritative set
+    is recomputed by `aipass.unanswered_for_capture`, which also intersects with what the capture
+    still holds — so an audit whose stored elements have since gone shows a number here and asks
+    about nothing, saying so. Doing that intersection for fifty audits on every poll would mean
+    reading every bundle of every audit to draw a badge.
+    """
+    from apps.runs.models import Run
+
+    from .judge import UNANSWERED_KEY
+
+    out: dict[str, int] = {}
+    judge_runs: dict[str, str] = {}
+    for audit in audits:
+        ai_pass = (audit.summary or {}).get("ai_pass") or {}
+        filed = ai_pass.get("filed_unjudged")
+        out[str(audit.id)] = int(filed) if isinstance(filed, int) else 0
+        run_id = str(ai_pass.get("judge_run_id") or "")
+        if run_id:
+            judge_runs[run_id] = str(audit.id)
+    if judge_runs:
+        with tenant_context(tenant_id):
+            rows = Run.objects.filter(
+                tenant_id=tenant_id, id__in=list(judge_runs)).values_list("id", "outputs")
+        for run_id, outputs in rows:
+            recorded = (outputs or {}).get(UNANSWERED_KEY) or []
+            out[judge_runs[str(run_id)]] += len(recorded)
+    return out

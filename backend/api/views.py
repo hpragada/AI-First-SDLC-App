@@ -259,7 +259,11 @@ class ProjectViewSet(
                            # exercise tenant isolation through the header path with no session
                            # — which is a property worth keeping testable. Tightening them was
                            # not part of what the scope fix was asked to do.
-                           "a11y_routes", "a11y_route_item", "a11y_audits"}:
+                           "a11y_routes", "a11y_route_item", "a11y_audits",
+                           # Re-judging spends a real engine run, so it is gated here as well as
+                           # by role inside the action — the same pair of checks as starting an
+                           # audit, which it is a second half of.
+                           "a11y_audit_rejudge"}:
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
@@ -568,7 +572,15 @@ class ProjectViewSet(
         can reach the running application, which is never this server (R2). The audit stays
         `capturing` until that machine posts what it saw and closes it.
         """
-        from apps.a11y.baseline import BaselineError, audit_manifest, start_baseline_audit
+        from apps.a11y.baseline import (
+            CLOSED_STATUSES,
+            IN_FLIGHT_STATUSES,
+            BaselineError,
+            audit_manifest,
+            audit_progress,
+            start_baseline_audit,
+            unanswered_counts,
+        )
         from apps.a11y.models import A11yBaselineAudit
         from apps.a11y.review import can_manage_pages
 
@@ -604,12 +616,70 @@ class ProjectViewSet(
 
         audits = list(A11yBaselineAudit.objects.filter(
             tenant_id=self.tenant_id, project_id=project.id)[:50])
+        # Live progress, for the audits that still have somewhere to get to. A finished audit's
+        # numbers are frozen on its own `summary`; asking again would be a second source for one
+        # answer. Two grouped queries for the whole set, however many are in flight — normally
+        # one, and this list polls every 5 seconds while anything is running.
+        progress = audit_progress(
+            self.tenant_id,
+            [str(a.id) for a in audits if a.status in IN_FLIGHT_STATUSES],
+        )
+        # How many elements of each CLOSED audit nothing ever looked at — what the "Check the
+        # rest" button counts. Only for closed ones: while a pass is running the answer is still
+        # changing, and offering to re-ask about elements the judge is at that moment working
+        # through would start a second pass over the same work.
+        unanswered = unanswered_counts(
+            self.tenant_id, [a for a in audits if a.status in CLOSED_STATUSES])
         return Response({"audits": [
             {"id": str(a.id), "status": a.status, "base_url": a.base_url,
              "routes": list(a.routes or []), "summary": a.summary or {},
+             "progress": progress.get(str(a.id)),
+             "unanswered": unanswered.get(str(a.id), 0),
              "created_at": a.created_at}
             for a in audits
         ]})
+
+    @action(detail=True, methods=["post"],
+            url_path=r"a11y-audits/(?P<audit_id>[^/.]+)/rejudge")
+    def a11y_audit_rejudge(self, request, pk=None, audit_id=None):
+        """Ask the machine again about the elements of one audit that nothing ever looked at.
+
+        **Not a second audit.** No page is visited and no browser is opened: everything the judge
+        needs was stored when the pages were captured, so this is a second pass over one capture.
+        Re-running the audit instead would re-visit every page to re-ask about a handful of
+        elements, and would then compare a fresh capture against a report drawn from the old one.
+
+        **It never re-asks about an answered `uncertain`.** "A check looked at this and could not
+        decide" is a real verdict and it belongs to the person in the review queue; only elements
+        nothing ever looked at are offered back to the machine. See
+        `aipass.unanswered_for_capture` for how the two are told apart.
+
+        Same role as starting an audit, and for the same reason: it spends a real engine run.
+        """
+        from apps.a11y.aipass import rejudge_capture
+        from apps.a11y.baseline import CLOSED_STATUSES
+        from apps.a11y.models import A11yBaselineAudit
+        from apps.a11y.review import can_manage_pages
+
+        project = self.get_object()
+        if not can_manage_pages(tenant_id=self.tenant_id, project_id=str(project.id),
+                                user_id=getattr(request.user, "id", None)):
+            return Response({"detail": PAGE_ROLE_DETAIL}, status=status.HTTP_403_FORBIDDEN)
+        audit = A11yBaselineAudit.objects.filter(
+            tenant_id=self.tenant_id, project_id=project.id, id=audit_id).first()
+        if audit is None:
+            return Response({"detail": "no such audit in this project"},
+                            status=status.HTTP_404_NOT_FOUND)
+        if audit.status not in CLOSED_STATUSES:
+            return Response(
+                {"detail": "this audit has not finished yet, so what it has not looked at is "
+                           "still changing. Wait for it to close."},
+                status=status.HTTP_409_CONFLICT)
+        out = rejudge_capture(
+            tenant_id=self.tenant_id, project_id=str(project.id), run_id=str(audit.id),
+            title=audit.base_url or "", triggered_by=str(getattr(request.user, "id", "")) or None,
+        )
+        return Response(out)
 
     @action(detail=True, methods=["get", "post"], url_path="a11y-journeys")
     def a11y_journeys(self, request, pk=None):

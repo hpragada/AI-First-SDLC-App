@@ -546,7 +546,7 @@ async def run_build(task: BuildTask, *, driver, repo_path, worktrees_root,
             out["secret_findings"] = [asdict(f) for f in secret_findings]
             # Surface the (already-redacted) findings on the companion terminal — otherwise a
             # secret block is invisible locally and the platform only sees a bare count.
-            print(f"[companion] SECRET SCAN BLOCKED push ({len(secret_findings)} finding(s)) — "
+            print(f"[companion] SECRET SCAN BLOCKED push ({len(secret_findings)} finding(s)) - "
                   f"branch NOT pushed:", file=sys.stderr)
             for line in _format_secret_findings(out["secret_findings"]):
                 print(f"   {line}", file=sys.stderr)

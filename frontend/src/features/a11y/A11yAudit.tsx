@@ -40,12 +40,14 @@ import type {
 import { A11yTabs } from "./A11yTabs";
 import { LoadFailed } from "./LoadFailed";
 import {
+  AUDIT_IN_FLIGHT,
   useA11yAudits,
   useA11yJourneys,
   useA11yRoutes,
   useDeleteA11yRoute,
   usePreviewA11yRoutes,
   useRegisterA11yRoutes,
+  useRejudgeA11yAudit,
   useStartA11yAudit,
   useStartA11yJourneys,
   useUpdateA11yRoute,
@@ -836,9 +838,98 @@ function KeyboardJourneys({ projectId, hasMachine }: { projectId: string; hasMac
   );
 }
 
+// ── the audit that is running now ───────────────────────────────────────────
+
+/** The panel S-38 designs for a running audit: what stage, and three counts (S-38 line 598).
+ *
+ * **Why it exists.** Until it did, the only thing on screen while an audit ran was a status
+ * word in a list — so an audit that had visited 6 of 10 pages and one that had visited none
+ * looked identical, and an audit whose judge had stopped looked exactly like one still working.
+ * That is this capability's own standard turned on itself: a screen must not state progress it
+ * cannot evidence, and "Checking what was found" for forty minutes states plenty.
+ *
+ * Three tiles, and the middle one changes with the stage, because what you need to know changes
+ * with it: while pages are being visited it is which pass; once they are in it is how far the
+ * judging has got. The design's live console is a separate, larger piece of work — screens are
+ * posted one per call with no progress channel to carry per-page lines — and is recorded as a
+ * pending enhancement rather than half-built here.
+ */
+function RunningAudit({ audit }: { audit: A11yAuditRow }) {
+  const progress = audit.progress ?? { visited: 0, unreachable: 0 };
+  const asked = audit.routes.length;
+  const passes = Math.max(1, Math.ceil(asked / PAGES_PER_PASS));
+  const judging = audit.status === "judging";
+  // Which pass the capture is on, from what has come back. Derived rather than reported: the
+  // companion writes one screen at a time and never says which pass it is in, and a number
+  // computed from the screens actually posted cannot claim a pass that has not started.
+  const pass = Math.min(passes, Math.floor(progress.visited / PAGES_PER_PASS) + 1);
+  const dispatched = progress.dispatched ?? 0;
+
+  return (
+    <Panel
+      title="Audit running"
+      actions={
+        <Badge variant={auditBadge(audit.status)}>
+          {STATUS_LABEL[audit.status] ?? audit.status}
+        </Badge>
+      }
+    >
+      <div className="grid grid--3" style={{ marginBottom: "var(--space-4)" }}>
+        {judging ? (
+          <div className="tile">
+            <div className="tile__num">
+              {progress.judged ?? 0}{" "}
+              <span className="t-sm u-muted">of {dispatched}</span>
+            </div>
+            <div className="tile__label">Elements judged</div>
+            <div className="tile__sub">
+              {/* Never "0 problems". An element nobody has looked at yet is not an element that
+                  passed, and this panel is on screen precisely while that is the case. */}
+              {dispatched === 0 ? "none needed judging" : "the AI half, in progress"}
+            </div>
+          </div>
+        ) : (
+          <div className="tile">
+            <div className="tile__num">
+              {pass} <span className="t-sm u-muted">of {passes}</span>
+            </div>
+            <div className="tile__label">Pass</div>
+            <div className="tile__sub">{PAGES_PER_PASS} pages per pass</div>
+          </div>
+        )}
+        <div className="tile">
+          <div className="tile__num">{progress.visited}</div>
+          <div className="tile__label">Pages visited</div>
+          <div className="tile__sub">of {asked} asked for</div>
+        </div>
+        <div className="tile">
+          <div className="tile__num">{progress.unreachable}</div>
+          <div className="tile__label">Would not open</div>
+          <div className="tile__sub">recorded, never guessed</div>
+        </div>
+      </div>
+      <p className="t-sm u-muted">
+        You can leave this page. The audit carries on and the result appears under Past audits.
+      </p>
+    </Panel>
+  );
+}
+
 // ── past audits ─────────────────────────────────────────────────────────────
 
-function PastAudits({ audits }: { audits: A11yAuditRow[] }) {
+function PastAudits({
+  audits,
+  projectId,
+  canManage,
+}: {
+  audits: A11yAuditRow[];
+  projectId: string | undefined;
+  canManage: boolean;
+}) {
+  const rejudge = useRejudgeA11yAudit(projectId);
+  // Which audit was asked about, so the message lands on that row and not on all of them.
+  const [asked, setAsked] = useState<{ id: string; text: string } | null>(null);
+
   return (
     <Panel title="Past audits" flush>
       {audits.length === 0 ? (
@@ -872,6 +963,57 @@ function PastAudits({ audits }: { audits: A11yAuditRow[] }) {
                   {audit.summary.reason}
                 </p>
               )}
+
+              {/* Elements nothing ever looked at — offered back to the machine rather than left
+                  on a person. Only on a CLOSED audit (the API only counts those), and only when
+                  there are some: a button that is always there, usually saying nothing to do, is
+                  a button nobody reads. The count is said out loud, because "check the rest" with
+                  no number is a promise of unknown size. */}
+              {(audit.unanswered ?? 0) > 0 && (
+                <div style={{ marginTop: "var(--space-3)" }}>
+                  <p className="t-sm u-muted">
+                    {audit.unanswered === 1
+                      ? "1 element was never looked at"
+                      : `${audit.unanswered} elements were never looked at`}
+                    {" — not checked and undecided, but never checked at all. They are waiting on"}
+                    {" a person in the review queue."}
+                  </p>
+                  <div className="u-row" style={{ marginTop: 6 }}>
+                    <Button
+                      variant="secondary"
+                      disabled={!canManage || rejudge.isPending}
+                      onClick={() => {
+                        setAsked(null);
+                        rejudge
+                          .mutateAsync(audit.id)
+                          .then((out) =>
+                            setAsked({
+                              id: audit.id,
+                              text: out.started
+                                ? `Asking again about ${out.asked} element(s). No page is visited — everything needed was stored when they were captured.`
+                                : out.reason || "Nothing was asked again.",
+                            }),
+                          )
+                          .catch((err: Error) =>
+                            setAsked({ id: audit.id, text: err.message }),
+                          );
+                      }}
+                    >
+                      {rejudge.isPending ? "Asking…" : "Check the rest"}
+                    </Button>
+                    {!canManage && (
+                      <span className="t-sm u-muted">
+                        The QA Lead or Tech Lead on this project runs this.
+                      </span>
+                    )}
+                  </div>
+                  {asked?.id === audit.id && (
+                    <p className="t-sm u-body" style={{ marginTop: 6 }}>
+                      {asked.text}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ))
@@ -897,6 +1039,11 @@ export function A11yAudit() {
   const [filter, setFilter] = useState<Filter>("all");
   const update = useUpdateA11yRoute(projectId);
   const remove = useDeleteA11yRoute(projectId);
+  // The audit in flight, if there is one. Nothing refuses a second audit while one is running,
+  // so there can genuinely be more than one — the list is newest-first, and the newest is the
+  // one the person on this screen just started. Any older one is still listed under Past audits
+  // with its own live badge, so showing one panel hides nothing.
+  const running = (audits.data?.audits ?? []).find((a) => AUDIT_IN_FLIGHT.includes(a.status));
 
   // `!projectId` counts as loading, and that is not defensive tidying. The query is disabled
   // until the project resolves, so `isLoading` is false and `routes.data` is undefined — which
@@ -1009,6 +1156,16 @@ export function A11yAudit() {
               canManage={canManage}
             />
           </div>
+
+          {/* Full width, above everything, and only while something is actually happening. The
+              audit in flight is the one thing on this screen nobody can afford to go looking
+              for — it was in a 320px rail below seventy-nine page rows, which is exactly how
+              far a running audit was from the person who had just started it. */}
+          {running && (
+            <div style={{ marginBottom: "var(--space-5)" }}>
+              <RunningAudit audit={running} />
+            </div>
+          )}
 
           <div className="grid grid--detail">
             <Panel title="Pages" actions={<span className="t-sm u-muted">{routes.data?.summary}</span>}>
@@ -1127,7 +1284,11 @@ export function A11yAudit() {
             </Panel>
 
             <div>
-              <PastAudits audits={audits.data?.audits ?? []} />
+              <PastAudits
+                audits={audits.data?.audits ?? []}
+                projectId={projectId}
+                canManage={canManage}
+              />
               <p className="t-sm u-muted" style={{ marginTop: "var(--space-3)" }}>
                 Each audit writes an <strong>Accessibility baseline</strong> document you can open
                 from Artifacts.

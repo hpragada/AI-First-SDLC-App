@@ -1,8 +1,8 @@
 # Web Accessibility — What Was Built, Where It Sits In The Journey, and How To Test It
 
-**For the Edvensoft team · 20 August 2026 · branch `web-accessibility-build`**
-**Covers QA‑01 … QA‑24 (31 tasks), the ten gap-fix tasks G1 … G6c, and the eighteen
-user-experience fixes of 20 August (§9)**
+**For the Edvensoft team · 21 August 2026 · branch `web-accessibility-build`**
+**Covers QA‑01 … QA‑24 (31 tasks), the ten gap-fix tasks G1 … G6c, the eighteen
+user-experience fixes of 20 August, and the six of 21 August that the first live run found (§9)**
 
 ---
 
@@ -33,18 +33,25 @@ whether they misremembered.
 | 🔬 | Built, and proven by automated tests — **but never once run against a real browser or a real application** |
 | ⚠️ | A limit, a prerequisite, or something that will surprise you |
 
-**The honest caveat, said once, at the front.** No part of the accessibility build has ever run
-live. Not once. Everything below is read from the code and from 1,207 backend tests and 54
-frontend tests — not from watching it work. Where it says *"you will see X"*, that is what the
-code does. That is exactly what this test session is for, and it is why every step below also
-says **what would mean it is broken.**
+**The honest caveat, said once, at the front — and it changed on 20 August.** It used to read
+*"no part of this has ever run live, not once"*. **The brownfield audit has now run live**, against
+Meridian Library on a real browser: pages registered, an audit claimed by a real companion, ten
+pages visited twice, and real AI verdicts recorded — including a defect no scanner can find. What
+that run also did was expose **four defects stacked behind one another**, none of which any test
+could have caught, plus five more the morning after. They are §9 items #19–#24 and they are built.
+
+**What is still unproven is now a much shorter list, and §10 is it:** the greenfield capture, the
+keyboard journey, a complete judging pass end to end, and two capture passes over 68 pages. Where
+this guide says *"you will see X"* for one of those, that is still what the code does rather than
+what anyone has watched — and every step says **what would mean it is broken.**
 
 **§9 is the section to read if you only read one.** Walking this guide turned up fifteen places
 where what was built worked but would not, on reading it as the person using it, have satisfied
 them. **The team reviewed all fifteen on 20 August: fourteen were approved and are now built, and
 the fifteenth — the migrations — the team ran themselves.** Three more (#16–#18) came from the
-team's first live run later the same day, all of them wording on the two page-registration dialogs. §9
-is the record: what was wrong, what was done, and how it is proven.
+team's first live run later the same day, all of them wording on the two page-registration dialogs;
+**six more (#19–#24) came from that run actually executing**, and those are defects rather than
+wording. §9 is the record: what was wrong, what was done, and how it is proven.
 
 ---
 
@@ -105,8 +112,8 @@ a clean, empty, working one. That was item **#1 in §9**, and while the 32 migra
 it was not hypothetical: it is precisely what the first person to open the feature would have
 been told that morning.
 
-**With the database in place and the fourteen fixes built, there is nothing left between the team
-and a first live run.**
+**With the database in place and the fourteen fixes built, there was nothing left between the team
+and a first live run — and it happened the same evening.** What it found is §9 #19–#24.
 
 ---
 
@@ -634,8 +641,29 @@ Two companions never take the same audit; a companion that *restarts* picks its 
 once the lease passes, but another machine never takes it over — an audit belongs to the machine
 that can reach the running application.
 
+✅ **While it is running, an `Audit running` panel leads the screen** — full width, above the page
+table, and only while something is actually happening. Three tiles, and the middle one changes with
+the stage because what you need to know changes with it:
+
+| Stage | The three tiles |
+|---|---|
+| Visiting pages | **Pass** *k of m* · **Pages visited** *n of m asked for* · **Would not open** *n* |
+| Checking what was found | **Elements judged** *n of m dispatched* · **Pages visited** · **Would not open** |
+
+Every number is derived from rows the platform was already writing, so nothing new is recorded to
+be able to say this. A page that **would not open** is counted as visited-and-known, not as
+progress still to come — it is a result.
+
+⚠️ **Until 21 August there was no such panel**, and the only thing on screen while an audit ran was
+a status word — in a 320px rail, below seventy-nine page rows. The team's first live run spent
+forty minutes on *Checking what was found* with no way to see that the judge was at 81 of 144, or
+that it had stopped. Item **#22 in §9**. ⚠️ **The design's live per-page console is still not
+built** — the companion posts one screen per call and says nothing between them, so there is no
+progress channel for it to read. What it would take is written down in
+`GAP_FIX_BUILD_PLAN.md` §9.2 rather than left as an assumption.
+
 **What you should see, in order, in Past audits** — this panel polls every 5 seconds while
-anything is in flight:
+anything is in flight, and shows the same status the running panel does, in the same words:
 
 | Badge | Means |
 |---|---|
@@ -648,6 +676,25 @@ anything is in flight:
 
 Plus **"N never opened"** when pages were asked for and never reported.
 
+✅ **And, on a finished audit, "N elements were never looked at" with a Check the rest button.**
+
+This is not the review queue's *uncertain*. A check that looked at an element and could not
+decide produced a real verdict, and it is a person's to answer. An element that was **never
+looked at** — because the pass could not start, or because the judging run ended before reaching
+it — is work that did not happen, and the machine can simply be asked again.
+
+**Pressing it visits no page.** Everything the judge needs was stored when the pages were
+captured: the markup, the text around it, the computed styles, the accessible name and the
+screenshot crop. So this is a second pass over one capture, not a second audit — the audit goes
+back to *Checking what was found*, the running panel shows the new pass, and it completes through
+the same closing step. Anything it still cannot answer is filed again, and the report says again
+that the check was incomplete.
+
+⚠️ **It only appears on a finished audit**, and only when there are some. While a pass is running
+the answer is still changing, and re-asking about elements the judge is at that moment working
+through would start a second pass over the same work — the API refuses it by name. Same roles as
+starting an audit, because it spends a real engine run.
+
 **What would mean it is broken:**
 
 | Symptom | What it means |
@@ -657,6 +704,7 @@ Plus **"N never opened"** when pages were asked for and never reported.
 | *Could not run* — "axe-core could not be loaded …" | §3.3 — the scanner is missing from both. The AI half still ran. |
 | A page reported with a load error | That page would not open. The platform records it as never seen and — importantly — will **not** let it resolve any existing finding by absence. |
 | An audit that says *Complete* with 0 reported | Something answered but produced nothing. Check the companion's console. |
+| Stuck on *Checking what was found*, with **Elements judged** not moving | The judging run has stopped. ✅ Since 21 August a judging run that dies **closes its own audit** — it files everything it never answered for human review, publishes the partial report and marks the audit complete, and the report says at the top that the check was incomplete. If it is genuinely stuck instead, the tile is what tells you: the number stops. |
 
 **What it leaves behind:** an **Accessibility baseline** document in Artifacts. One criterion per
 line — twenty findings of 1.4.3 across six pages is one row saying *Level AA, High, 6 pages, 20
@@ -866,7 +914,7 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The eighteen findings, and what was done about each
+## 9. The twenty-four findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
@@ -899,6 +947,18 @@ now pinned by tests like any other behaviour. All eighteen are closed.
 | 16 | **Import a list** opened a dialog titled "Add pages" — nearly the other button's name | ✅ fixed |
 | 17 | The paste box demonstrated a URL pattern in the one format that cannot carry its example | ✅ fixed |
 | 18 | **Add a page** read as though it accepted patterns only | ✅ fixed |
+| 19 | An audit opened from the screen was born unclaimable, while the screen said *Visiting pages* | ✅ fixed |
+| 20 | The companion died on the audit path, and took the whole machine down with it | ✅ fixed |
+| 21 | **Seven of the judge's tools were never exposed** — it had been unrunnable since it was written | ✅ fixed |
+| 22 | A running audit had nothing to watch, and a dead judging run stranded its audit for ever | ✅ fixed |
+| 23 | A question from a headless run could be counted but never answered | ✅ fixed |
+| 24 | Two tests still asserted a world #9 had replaced, and a `·` the Windows console cannot print | ✅ fixed |
+
+**#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
+Those came from *reading* the screens. These came from *running* them, and five of the six are
+defects rather than wording — three of which had a green test suite standing over them the whole
+time. The full account, including why each survived its tests, is
+`GAP_FIX_BUILD_PLAN.md` §9; the entries below are the short version.
 
 ---
 
@@ -1159,55 +1219,179 @@ and `/users/{id}/loans` are stored exactly as written. Naming one framework's sy
 the only syntax allowed. The real rule is *"if the path as written cannot be opened, give one that
 can"*, and that is now what it says.
 
+### #19 — An audit could not be claimed by anything ✅
+
+**Was:** an audit opened from the screen was created as `capturing` — "a machine is already
+visiting" — and the claim endpoint only ever offers `pending` audits (or a stale `claimed` one). So
+no companion could see it, ever. It sat there while the screen showed **Visiting pages**, which is
+this capability's own worst failure: a confident report of work that was not happening.
+
+**Now:** the POST passes `claimable=True`, so an audit opened from the app waits as *Waiting for a
+machine* until something takes it. The companion's own `audit` subcommand still leaves the default,
+because there the machine that opened it is already standing there.
+
+⚠️ **The tests were green throughout**, and asserted exactly the right behaviour — of a call the
+product never made. `claimable=True` appeared nowhere outside test code.
+
+### #20 — The companion died on the audit path, taking the machine with it ✅
+
+**Was:** every other companion path called `ensure_backend_importable()` before touching platform
+code; the serve→audit path did not, so an audit failed with `ModuleNotFoundError: No module named
+'apps'`. Worse, the serve loop caught only `DaemonError`, so an unexpected exception ended the whole
+companion — every other kind of work on that machine with it — and the audit was left open for ever.
+
+**Now:** the import call is there, and the guard catches anything, closing the audit with a
+plain-language reason first. **This is the widest change of the six**, and it is recorded as such:
+widening a serve-loop guard is a blunt instrument, taken because one bad audit must not stop a
+machine.
+
+### #21 — Seven of the judge's tools were never exposed ⭐ ✅
+
+**Was:** the judge was **granted** 24 tools, and the MCP server it actually talks to **defined 17**.
+`get_a11y_batch`, `get_wcag_grounding`, `record_a11y_finding` and all four keyboard-journey tools had
+no `@server.tool()` wrapper, and `get_a11y_screenshots` had quietly dropped `run_id`. **The judge and
+the keyboard journey had therefore been unrunnable since the day they were written** — the agent
+reported it had no way to read its work, and it was right.
+
+**Now:** the seven wrappers exist, `run_id` is back, and — the part that matters more — a test
+computes `granted − exposed` as a set difference and fails if anything is in it.
+
+⚠️ **Why nothing caught it, and the lesson.** There are **three** lists that look interchangeable and
+are not: the companion's tool *grant*, the HTTP route's *executable* map, and the MCP server's
+`@server.tool()` definitions. Only the third puts a tool in an agent's hands. Every test checked one
+of the first two.
+
+### #22 — A running audit could not be watched, and a dead one was never closed ✅
+
+**Two halves of one silence, and they are the reason the first live run had to be diagnosed from the
+database.**
+
+**Was, half one:** S-38 designs a full running panel; what existed was a status word in a list, in a
+320px rail that never collapsed, below seventy-nine page rows. An audit that had visited six of ten
+pages and one that had visited none looked identical.
+
+**Was, half two:** when the engine's session ended mid-judgment, the workflow returned at its
+failure branch **before** the step that does the judge's accounting. So the 63 elements it never
+answered were recorded nowhere, no report was published, and the audit read *Checking what was
+found* permanently.
+
+**Now:** the panel's three tiles are built, including **Elements judged, n of m dispatched** — the
+number that could not be seen at all. And a judging run that dies closes its own pass: everything
+unanswered is filed for a person, the partial report is published saying it is partial, and the
+audit is completed. That closure sits one line below the keyboard journey's identical one, which had
+been on that path since G6a with the judge's never added beside it.
+
+⚠️ **The live console is still not built.** See §6 B4 and `GAP_FIX_BUILD_PLAN.md` §9.2, which says
+what it would take rather than leaving it as an assumption.
+
+### #23 — A question from a headless run could be counted but never answered ✅
+
+**Was:** the sidebar badge counted the project's pending questions on the server; the Clarifications
+page fetched the tenant's and narrowed them to the work items on the **visible backlog**. A run on a
+hidden carrier work item — accessibility judging, code indexing, the gap report — is deliberately
+absent from that backlog, so its question was counted by one and hidden by the other. The badge said
+**1**, the page said **none**, and the run waited for an answer nobody could give.
+
+**Now:** the page asks the API for the project's questions — a filter that endpoint already had —
+instead of narrowing them in the browser, and takes the work item's name from the clarification
+itself, so a judging run's question reads *"Accessibility judging"* rather than eight characters of
+uuid. Hiding plumbing from a board is right; hiding a question that blocks a run is not.
+
+### #24 — Two stale tests, and a character the Windows console cannot print ✅
+
+**Two small ones, together because neither is worth its own section.**
+
+**The tests:** `test_a_folder_with_nothing_installed_…` and `test_the_scanner_alone_missing_…` both
+asserted the **pre-#9** world, where a project folder with nothing installed was refused. #9
+deliberately ended that. They only passed while nobody had run `npm install` in `runner/` — and
+committing the lockfile made that setup standard, so they went red for everyone. Rewritten to assert
+what #9 built, with the refusal they were protecting now covered by its own test, which runs the real
+script from a copy stranded where nothing can resolve above it.
+
+**The character:** the companion printed `10 page(s) · 1 pass(es)`, and a Windows console redirected
+to a file cannot encode `·`, so the log read `10 page(s) ? 1 pass(es)`. Six lines across four
+companion files now use ASCII. Only what the companion prints changed; nothing that travels to the
+platform did.
+
+
 ---
 
-## 10. What has never been run, and what I am least sure about
+## 10. What has run live, what has not, and what I am least sure about
 
-**Nothing has ever run live.** Not one audit, not one judgement, not one keyboard journey against
-a real application. Everything above is read from source and proven by tests, and a green test
-suite means *"it behaves as designed"* — never *"the scanner really returns what we think it
-returns"*.
+**This section used to open *"nothing has ever run live, not once"*. That is no longer true**, and
+the correction is the most important one in this guide.
 
-✅ **Nothing is in the way of changing that now.** The database was the last blocker and it went
-in on 20 August. What follows is the list of what a first live run is most likely to surprise us
-with — in the order I would watch them.
+### 10.1 What has now run live ✅
+
+Meridian Library, 20/21 August, a real browser on a real machine:
+
+| | Proven by watching it |
+|---|---|
+| **Registering a page list** | 79 routes pasted from `routes.json`, `/health` honoured as out of scope, 10 put in scope |
+| **Opening an audit and having a machine claim it** | *Waiting for a machine* → *Starting* → *Visiting pages*, on a companion enrolled on that project |
+| **The capture** | 10 of 10 pages visited, twice, with elements, styles, accessible names and screenshots posted one screen at a time |
+| **The scanner resolving out of the audited project** | Meridian's own axe, not the companion's — the report says so by *not* saying `(companion)` |
+| **Real AI verdicts** | 80 pass, 1 fail — including `<img id="photo-interior" … alt="library">` against 1.1.1 at 0.92 confidence, with the replacement text proposed. **That is a defect no scanner on the market can find**, which is the entire argument for this build, demonstrated once against a real page. |
+| **An audit reaching `complete`** | with its baseline document in Artifacts |
+
+⚠️ **The judging pass has not yet run start to finish.** The one that produced those verdicts was
+cut short when the tester's connection dropped at 81 of 144 elements. What that proved instead is
+that the accounting holds: the 63 it never reached were filed for a person rather than lost. Since
+#22 the audit also closes itself when that happens, which it did not on the day — and since
+**task R1** those 63 can be handed back to the machine with one button instead of being worked
+through by hand (§6 B4, and `GAP_FIX_BUILD_PLAN.md` §9.3).
+
+### 10.2 What is still unproven 🔬
 
 **Ranked by how likely I think a live run is to surprise us:**
 
 1. **The greenfield capture.** It is generated by an agent from a written contract, not run from
    a script we ship. The contract is right and enforced on ingest; whether every generated suite
    honours it is unknown. The tell is a report where nearly everything reads *not evaluated*.
-2. **The keyboard journey.** Eight criteria, one agent, a real browser, a live application, and
-   the platform's newest seam. It has never opened a page.
-3. **A real `passes` array.** Nobody has yet seen the scanner return positive evidence into the
-   platform. Everything the conformance report says about what was *examined* rests on it.
+2. **The keyboard journey.** Eight criteria, one agent, a real browser, a live application. ⚠️ It
+   has never opened a page — and until #21 it **could not have**, because four of its tools were
+   never exposed to the agent at all. It is the least-proven part of this build by a distance.
+3. **A judging pass that finishes.** 144 elements at the rate we measured is about forty minutes
+   of unbroken connection. The paging, the accounting and the closing step are all now exercised;
+   what has not been seen is all of them in one run that ends normally.
 4. **Two passes over 68 pages.** The pass loop is tested; a 68-page run against a live Express
-   app is not.
-5. **The AI checks against a real DOM.** The selection rules met a real page for the first time in
-   QA‑11b. Expect one round of correction; that is normal, and a green suite here is not a
-   working scan.
+   app is not. Ten pages is the small case.
+5. **The conformance statement against real evidence.** All 55 criteria have been rendered from
+   test data; none from a real audit's findings.
 
-**What is proven, and how much:** 1,244 backend test functions across 29 accessibility test
-files, and 76 frontend tests across five. Verified on this branch on 20 August, after all
-eighteen findings were fixed:
+⚠️ **A real `passes` array is no longer on this list.** The scanner returned positive evidence
+into the platform on the live run — that one is answered.
+
+### 10.3 What is proven by tests, and how much
+
+Verified on this branch on **21 August**, after all twenty-four findings were fixed:
 
 | Ran | Result |
 |---|---|
-| `test_a11y_baseline.py` | 156 passed |
-| `test_a11y_scope_rest.py` (new) | 22 passed |
+| `test_a11y_baseline.py` + `test_a11y_judge.py` + `test_a11y_scope_rest.py` | **246 passed** |
 | `test_a11y_journey.py` + `test_a11y_review.py` | 129 passed |
 | `test_a11y_review_rest.py` + `test_a11y_conformance_rest.py` + `test_a11y_capture.py` | 123 passed |
 | `test_a11y_journeys_rest.py` | 9 passed |
-| `test_a11y_wcag.py` (the two new pinning tests) | 2 passed |
-| The whole frontend suite | **323 passed across 19 files**, `tsc -b` clean |
+| `test_a11y_wcag.py` (the two pinning tests) | 2 passed |
+| `test_companion_runner.py` (includes the granted-minus-exposed guard) | 6 passed |
+| The whole frontend suite | **336 passed across 20 files**, `tsc -b` clean |
 
-⚠️ **Two failures elsewhere in the repository**, both pre-existing and neither accessibility:
-`test_guardrails.py::test_run_build_clean_change_reports_ok` fails because this machine has no
-git remote to push to, and there is Claude Agent SDK API drift in `test_drivers.py`. **No task has
-been raised for either.**
+⚠️ **Two tests in that set were failing until 21 August**, and for everyone: they asserted the
+pre-#9 world. Item #24. They are green now.
+
+⚠️ **Failures elsewhere in the repository**, all pre-existing and none accessibility:
+`test_guardrails.py::test_run_build_clean_change_reports_ok` fails because this machine has no git
+remote to push to; there is Claude Agent SDK API drift in `test_drivers.py`; and `npm run lint`
+reports one unresolved rule reference in `Gates.tsx`. **No task has been raised for any of them.**
 
 ⚠️ **The backend suite is never run whole** — it is killed by the machine. Only the files a
 change touches are run, which is what the table above lists.
+
+⚠️ **And the lesson of 20 August, which this section exists to keep in front of everyone:** three
+of the six defects that run found had a **green test suite standing over them the whole time**. A
+passing test proves the thing it tests. It does not prove the product ever calls it — #19 — nor
+that the list it checks is the list that matters — #21 — nor that the fixture resembles the real
+case — the batch that was 144 elements where every test used three.
 
 ---
 
@@ -1227,7 +1411,8 @@ change touches are run, which is what the table above lists.
 | | |
 |---|---|
 | `GET/PUT /api/projects/<p>/a11y-routes/` | the page list |
-| `GET/POST /api/projects/<p>/a11y-audits/` | audits; POST opens one and returns its manifest |
+| `GET/POST /api/projects/<p>/a11y-audits/` | audits; POST opens one and returns its manifest. GET carries live `progress` for anything in flight and `unanswered` for anything finished |
+| `POST /api/projects/<p>/a11y-audits/<a>/rejudge/` | ask again about the elements of one finished audit that nothing ever looked at. Visits no page |
 | `GET/POST /api/projects/<p>/a11y-journeys/` | journeys; POST starts up to the cap and names what it did not start |
 | `GET /api/projects/<p>/a11y-review/` | the queue |
 | `GET /api/projects/<p>/a11y-conformance/` · `PUT` · `POST …/sign` · `POST …/export` | the statement |
@@ -1278,6 +1463,9 @@ And on **20 August**, the fourteen findings in §9 — the ones that separated *
 it"* from *"a person is well served by it"* — followed, the same day, by three more (#16–#18)
 that the team found by reading the page-registration dialogs aloud during their first live run.
 
+**And then the run itself, which found six more (#19–#24)** — the ones that separated *"a person
+is well served by it"* from *"it runs at all"*. Three of those six had passed every test they had.
+
 Plus one found by cross-checking rather than by a failing test: **two journeys from test cases
 with no `TC-…` id shared one work item**, so the second was refused as "already being walked" and
 each showed the other's last walk. Keyed on the artifact now.
@@ -1286,7 +1474,7 @@ each showed the other's last walk. Keyed on the artifact now.
 
 | | |
 |---|---|
-| `GAP_FIX_BUILD_PLAN.md` | the ten tasks, in full, with what each build got wrong along the way |
+| `GAP_FIX_BUILD_PLAN.md` | the ten tasks, in full, with what each build got wrong along the way — **and §9, the first live run: why each defect it found survived a green test suite, plus the two things recorded rather than built (the live console, and re-asking the machine about what it never judged)** |
 | `TASK_BACKLOG_QA.md` | the 31 original tasks and their acceptance criteria |
 | `RESEARCH_CORRECTIONS.md` | where the research reports disagreed with the platform |
 | `USER_JOURNEYS.md` | the nine journeys, rewritten 20 August against what the code does — each marked built, part-built or not built |

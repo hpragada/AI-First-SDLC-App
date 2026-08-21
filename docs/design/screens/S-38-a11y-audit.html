@@ -178,9 +178,20 @@
               <div class="artifact-row__main">
                 <div class="artifact-row__title">11 Aug, 09:40</div>
                 <div class="artifact-row__meta">60 asked for · 58 reported</div>
+                <!-- A finished audit that has elements NOTHING ever looked at offers them back
+                     to the machine (task R1, 21 Aug). Not the review queue's `uncertain`: that
+                     one is a check's real verdict and belongs to a person. Pressing it visits no
+                     page — everything the judge needs was stored at capture time. -->
                 <div class="u-row" style="margin-top:6px">
                   <span class="badge badge--done"><span class="status-dot"></span>Complete</span>
                   <span class="badge badge--orange">2 never opened</span>
+                </div>
+                <p class="t-sm u-muted" style="margin-top:12px">
+                  9 elements were never looked at &mdash; not checked and undecided, but never
+                  checked at all. They are waiting on a person in the review queue.
+                </p>
+                <div class="u-row" style="margin-top:6px">
+                  <button class="btn btn--secondary">Check the rest</button>
                 </div>
               </div>
             </div>
@@ -596,8 +607,15 @@
     </div>
 
     <!-- ============ Running · the capture in progress, in passes (B5) ============ -->
+    <!-- BUILD STATUS, 21 Aug 2026 (item #22). The THREE TILES below are built and live, with one
+         difference the live screen makes and this fixture cannot: once the capture is in and the AI
+         half is running, the "Pass" tile becomes "Elements judged — n of m dispatched", because
+         that is what there is to know at that stage. The CONSOLE below is NOT built: screens are
+         posted one per call with no progress channel between them, so there is nothing for it to
+         read. What building it would take is written down in GAP_FIX_BUILD_PLAN.md §9.2 — do not
+         treat it as a design waiting on effort. -->
     <div class="state-block">
-      <span class="state-block__label">Running · capture in progress — 68 pages over two passes (B5)</span>
+      <span class="state-block__label">Running · capture in progress — 68 pages over two passes (B5) · tiles built, console not</span>
 
       <div class="panel">
         <div class="panel__header">

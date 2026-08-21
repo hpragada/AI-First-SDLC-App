@@ -1214,30 +1214,93 @@ def test_the_script_finds_the_tools_in_the_project_being_audited(tmp_path):
     assert out["scanner"]["version"] == "4.13.0", "the project's version, which the report names"
 
 
+#: Both of the tests below describe the world #9 built: a project with nothing installed is
+#: AUDITABLE, because the companion carries its own pinned toolchain. That is only true on a
+#: machine where the companion's toolchain has actually been installed, so they are skipped
+#: rather than failed where it has not — exactly as `needs_node` skips where there is no Node.
+#: The case where BOTH are missing has its own test below, and needs no toolchain to prove.
+_COMPANION_MODULES = Path(__file__).resolve().parents[2] / "runner" / "node_modules"
+needs_companion_toolchain = pytest.mark.skipif(
+    not ((_COMPANION_MODULES / "playwright").exists()
+         and (_COMPANION_MODULES / "axe-core").exists()),
+    reason="the companion's own toolchain is not installed (npm install in runner/)",
+)
+
+
 @needs_node
-def test_a_folder_with_nothing_installed_names_the_folder_and_the_command(tmp_path):
-    """A refusal a person can act on. The folder is named because the usual cause is running
-    from the wrong one, and that is invisible from a message that only says 'not installed'."""
+@needs_companion_toolchain
+def test_a_folder_with_nothing_installed_falls_back_to_the_companion(tmp_path):
+    """A project with no `node_modules` of its own is audited, not refused (#9).
+
+    **This test used to assert the opposite** — that an empty folder was refused with a message
+    naming it and the npm command. That was true until 20 August, when a missing clone became a
+    fallback rather than a refusal: an application written in Django, Rails or .NET has no
+    `node_modules` and never will, and requiring one meant the only way to audit it was to add
+    npm dev-dependencies to a client's own repository in order to look at it. The refusal is now
+    reserved for a machine where the companion has nothing either, which is the test below.
+    """
     from runner.companion.a11yaudit import preflight
 
     bare = tmp_path / "empty"
     bare.mkdir()
     out = preflight(workdir=bare, node=_NODE)
-    assert out["ok"] is False
-    assert str(bare) in out["browser"]["error"]
-    assert "npm install -D playwright axe-core" in out["browser"]["error"]
+    assert out["ok"] is True, out
+    assert out["browser"]["ok"] is True, "the companion's own browser answers for this project"
+    assert out["scanner"]["ok"] is True
+    assert out["scanner"]["from"] == "companion", (
+        "and the report must be able to SAY it was ours, not the application's")
 
 
 @needs_node
-def test_the_scanner_alone_missing_is_a_warning_and_not_a_refusal(tmp_path):
-    """The two tools are not equally fatal. No browser means no page can be opened; no scanner
-    means the AI half still runs and every screen says the measurable half did not."""
+@needs_companion_toolchain
+def test_the_scanner_alone_missing_falls_back_without_taking_the_project_browser_with_it(tmp_path):
+    """The two tools resolve independently, and the fallback is per tool, not per project.
+
+    A project shipping playwright but no axe is scanned with **its own** browser and **our**
+    scanner — so `from` is what the report reads to stamp `(companion)` on the version, and it
+    must say `companion` here even though the browser came from the project.
+
+    **This test used to assert `scanner.ok is False`** and the "could not be loaded" message.
+    That was the pre-#9 world too: the scanner had no fallback to reach for. The sentence it was
+    written to protect — that a missing scanner is a warning and not a refusal — is still true
+    and still tested, by the both-missing test below, which is now the only way to be without one.
+    """
     from runner.companion.a11yaudit import preflight
 
     out = preflight(workdir=_project_with(tmp_path, scanner=False), node=_NODE)
     assert out["ok"] is True, "the audit still runs"
+    assert out["scanner"]["ok"] is True
+    assert out["scanner"]["from"] == "companion"
+
+
+@needs_node
+def test_a_machine_with_no_toolchain_anywhere_names_the_folder_and_the_command(tmp_path,
+                                                                               monkeypatch):
+    """Both places empty — the one remaining refusal, and it must stay actionable.
+
+    Run from a COPY of the real script placed where nothing resolves above it, which is exactly
+    what a machine that has never run `npm install` in `runner/` looks like. That folder cannot
+    be faked away with a stub: faking is what let the pre-#9 assertions above sit green for a
+    day after the behaviour they described had gone.
+    """
+    import shutil as _shutil
+
+    from runner.companion import a11yaudit
+
+    stranded = tmp_path / "no-toolchain"
+    stranded.mkdir()
+    script = stranded / "a11y_audit.mjs"
+    _shutil.copy(a11yaudit.AUDIT_SCRIPT, script)
+    monkeypatch.setattr(a11yaudit, "AUDIT_SCRIPT", script)
+
+    out = a11yaudit.preflight(workdir=stranded, node=_NODE)
+    assert out["ok"] is False
+    assert str(stranded) in out["browser"]["error"], "the folder we looked in, by name"
+    assert "npm install -D playwright axe-core" in out["browser"]["error"]
+    assert "runner/" in out["browser"]["error"], "and the companion-wide fix, which is the real one"
+    # The scanner is the warning half, not the refusal half — it says so separately.
     assert out["scanner"]["ok"] is False
-    assert "axe-core could not be loaded from this project" in out["scanner"]["error"]
+    assert "the measurable checks did not run" in out["scanner"]["error"]
 
 
 def test_a_machine_with_no_node_is_reported_as_a_folder_that_cannot_run(tmp_path):
@@ -2209,3 +2272,124 @@ def test_a_failure_the_platform_cannot_be_told_about_does_not_raise(monkeypatch,
     daemon = _FakeDaemon(tmp_path, has_clone=True)
     daemon_mod.CompanionDaemon._close_failed_a11y_audit(
         daemon, {"audit_id": "a-9"}, RuntimeError("original"))   # must not raise
+
+
+# ══ live progress — what the screen can say WHILE an audit is running ═════════════════
+#
+# `summary` is written once, when the audit closes. So for the whole time one is running there
+# was no count of anything anywhere and the only thing a screen could show was the status word:
+# an audit that had visited six of ten pages and one that had visited none looked identical, and
+# an audit whose judge had stopped looked exactly like one still working. These are the numbers
+# the S-38 running panel is made of, and every one of them is DERIVED from rows that were being
+# written the whole time — nothing new is recorded to be able to say this.
+
+def test_progress_counts_the_pages_that_have_actually_come_back(world):
+    from apps.a11y.baseline import audit_progress
+
+    audit = _audit(world, "/", "/login", "/catalogue")
+    _post(world, audit, _screen("/"))
+    _post(world, audit, _screen("/login"))
+
+    progress = audit_progress(world["t"], [str(audit.id)])[str(audit.id)]
+    assert progress["visited"] == 2, "of three asked for — the third has not been visited yet"
+    assert progress["unreachable"] == 0
+
+
+def test_a_page_that_would_not_open_is_counted_as_known_not_as_missing(world):
+    """A page the browser could not open is a RESULT. Counting it as progress-not-yet-made would
+    leave the panel stuck one short for ever on an audit that had in fact finished looking."""
+    from apps.a11y.baseline import audit_progress
+
+    audit = _audit(world, "/", "/admin")
+    _post(world, audit, _screen("/"))
+    _post(world, audit, _screen("/admin", load_error="the page returned HTTP 403", elements=[]))
+
+    progress = audit_progress(world["t"], [str(audit.id)])[str(audit.id)]
+    assert progress["visited"] == 2
+    assert progress["unreachable"] == 1
+
+
+def test_an_audit_nothing_has_reported_on_yet_says_zero_rather_than_nothing(world):
+    """Zero is an answer; a missing key is not. The panel has to be able to render the moment a
+    machine claims an audit, which is before any page has been posted."""
+    from apps.a11y.baseline import audit_progress
+
+    audit = _audit(world, "/")
+    assert audit_progress(world["t"], [str(audit.id)])[str(audit.id)] == {
+        "visited": 0, "unreachable": 0}
+
+
+def test_the_judging_half_is_counted_against_what_was_actually_dispatched(world):
+    """The number the team could not see yesterday: 81 of 144. The denominator comes off the
+    audit's own summary, written when the pass was dispatched, so it is the real one."""
+    from apps.a11y.baseline import audit_progress
+    from apps.a11y.models import A11yBaselineAudit, A11yJudgmentCache
+    from apps.registry.catalog import seed_agent_specs
+    from apps.registry.models import AgentSpec
+    from apps.runs.models import Run
+    from apps.workitems.models import WorkItem
+
+    audit = _audit(world, "/")
+    seed_agent_specs(world["tenant"])
+    judge_run = Run.objects.create(
+        tenant=world["tenant"],
+        work_item=WorkItem.objects.create(
+            tenant=world["tenant"], project=world["project"], title="Accessibility judging"),
+        agent_spec=AgentSpec.objects.get(tenant=world["tenant"], key="09c_a11y_judge"),
+    )
+    audit.status = A11yBaselineAudit.Status.JUDGING
+    audit.summary = {"ai_pass": {"judge_run_id": str(judge_run.id), "dispatched": 144}}
+    audit.save(update_fields=["status", "summary"])
+    for n in range(3):
+        A11yJudgmentCache.objects.create(
+            tenant=world["tenant"], project=world["project"], checker="alt",
+            content_hash=f"{n:064d}", verdict="pass", run=judge_run)
+
+    progress = audit_progress(world["t"], [str(audit.id)])[str(audit.id)]
+    assert progress["judged"] == 3
+    assert progress["dispatched"] == 144
+
+
+def test_an_audit_that_has_not_reached_judging_carries_no_judging_keys(world):
+    """"None judged yet" and "not that stage" are different facts, and the panel shows a
+    different tile for each — so the absence has to be real rather than a zero."""
+    from apps.a11y.baseline import audit_progress
+
+    audit = _audit(world, "/")
+    assert "judged" not in audit_progress(world["t"], [str(audit.id)])[str(audit.id)]
+
+
+def test_progress_for_two_audits_at_once_does_not_mix_them_up(world):
+    """One grouped query for the whole set — which is the shape most likely to attribute one
+    audit's screens to another. Two audits of one project can genuinely overlap."""
+    from apps.a11y.baseline import audit_progress
+
+    first = _audit(world, "/", "/login")
+    second = start_baseline_audit(tenant_id=world["t"], project_id=world["p"],
+                                  base_url="http://localhost:4180")
+    _post(world, first, _screen("/"))
+    _post(world, second, _screen("/"))
+    _post(world, second, _screen("/login"))
+
+    progress = audit_progress(world["t"], [str(first.id), str(second.id)])
+    assert progress[str(first.id)]["visited"] == 1
+    assert progress[str(second.id)]["visited"] == 2
+
+
+def test_asking_about_nothing_is_not_a_query(world):
+    """The API asks only about the audits still in flight, which is normally none at all."""
+    from apps.a11y.baseline import audit_progress
+
+    assert audit_progress(world["t"], []) == {}
+
+
+def test_the_pass_arithmetic_is_the_platforms_own(world):
+    """68 pages is two passes, not one truncated at 60 (D-B5). Shared so the strip, the running
+    panel and the capture cannot disagree about how many passes a list takes."""
+    from apps.a11y.baseline import passes_for
+
+    assert passes_for(0) == 1, "an empty list still describes one pass, never zero"
+    assert passes_for(60) == 1
+    assert passes_for(61) == 2
+    assert passes_for(68) == 2
+    assert passes_for(200) == 4

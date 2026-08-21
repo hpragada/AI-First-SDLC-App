@@ -1294,3 +1294,132 @@ tasks passed its tests and the backlog read as complete, while a user could not 
 start an audit, or start a keyboard journey. The acceptance criteria never asked *"can a person get
 to this?"* Every task in this plan carries a **"What you see afterwards"** section for that reason —
 it is the question the last round did not ask.
+
+---
+
+## 9. The first live run — 20/21 August
+
+The first time any of this was executed against a real application. Meridian Library at
+`http://localhost:4180`, 79 routes registered, 10 in scope, on a brownfield project with no Jira
+and no Confluence.
+
+**It worked, and it found four defects no test could have caught, each hidden behind the one
+before it.** That is the shape of a capability that has never run: the first defect stops you
+before you can meet the second. All four are fixed and all four are in `TESTING_GUIDE.md`; they
+are recorded here because the *reason* each survived a green test suite is worth keeping.
+
+| | What was wrong | Why the tests were green |
+|---|---|---|
+| 1 | An audit opened from the screen was born **unclaimable** — `capturing`, which no companion offers to take — while the screen read *Visiting pages*. | `claimable=True` existed only in test code. The tests asserted the right behaviour of a call the product never made. |
+| 2 | The serve→audit path never called `ensure_backend_importable()`, so the audit died on `ModuleNotFoundError` — and the serve loop caught only `DaemonError`, so it took the whole companion down with it. | Every other companion path called it. Nothing tested the one that did not. |
+| 3 | **Seven granted tools were never exposed.** The judge was granted 24 and the MCP server defined 17: `get_a11y_batch`, `get_wcag_grounding`, `record_a11y_finding` and all four journey tools had no `@server.tool()` wrapper. The judge and the keyboard journey had been **unrunnable since the day they were written**. | The tests checked the permission list and the HTTP route. Neither of those puts a tool in an agent's hands; only the wrapper does. There are **three** such lists, and a test now asserts that `granted − exposed` is empty. |
+| 4 | `get_a11y_batch` returned every screen at once — 144 elements, about 80,000 characters — and the judge correctly refused to judge part of it. Its own docstring had said *"one screen at a time"* since the day it was written. | Every test used three elements over two screens, where paged and unpaged look identical. |
+
+**And a fifth, found while fixing the fourth:** `verify_writes` gets one minute, which is right for
+"does the artifact exist" and wrong for the judge's closing step — that step files a fallback
+verdict per unanswered element and then publishes. Cancelled at 60 seconds it had written 81 of
+144 and left 63 elements with no record at all, breaking the one guarantee the design rests on.
+`LONG_VERIFY_PHASES` now gives it five minutes.
+
+**What the run proved:** capture 10 of 10, twice. An audit reaching `complete`. And the judge
+recording real verdicts — 80 pass, 1 fail — including a defect no scanner can reach:
+`<img id="photo-interior" src="/assets/photos/reading-room.svg" alt="library">` against 1.1.1 at
+0.92 confidence, with the replacement text proposed.
+
+### 9.1 The six fixed the next morning — BUILT, 2026-08-21
+
+The run was cut short by a dropped connection, and what that exposed was **not** the judging. It
+was that a run which stops is invisible, and that no screen could say so.
+
+| | What was wrong | What was done |
+|---|---|---|
+| **A** | **A failed judging run stranded its audit for ever.** The workflow returns at its `phase_failed` branch *before* `verify_writes`, which is where the judge's accounting lives — so a crashed engine left the elements it never answered recorded nowhere, no report published, and the audit reading *Checking what was found* permanently. | `aipass.close_unfinished_ai_pass`, called from `fail_run_core` **one line below the journey's identical closure**, which had sat on that path since G6a without the judge's ever being added beside it. It files every unanswered element as `uncertain`, publishes the merged report and completes the audit — landing the crash path in the state the normal path already produces. A no-op for every other phase, and that is asserted rather than assumed. |
+| **B** | **A question from a headless run could be seen and never answered.** The sidebar badge counted the project's pending clarifications server-side; the page narrowed the tenant's against the visible backlog. A run on a hidden carrier work item — accessibility judging, code indexing, the gap report — is deliberately absent from that backlog, so its question was counted and then filtered away. Badge 1, page none, run waiting for ever. | The page asks the API for the project's questions — a filter the endpoint already had — instead of narrowing them in the browser, and reads the work item's name off the clarification's own `work_item_title` rather than looking it up in a list a carrier is never in. Hiding plumbing from a board is right; hiding a question that blocks a run is not. |
+| **C** | **Two tests asserted the pre-#9 world** — that a project folder with nothing installed is refused — and failed for anyone who had run `npm install` in `runner/`, which committing the lockfile made standard. | Rewritten to assert what #9 actually built: a bare folder falls back to the companion's toolchain, and the report can say `(companion)`. The refusal they were protecting is real, but now only happens when **both** places are empty, so it has a test of its own that runs the real script from a copy stranded where nothing resolves above it. |
+| **D** | **A running audit had nothing to watch.** S-38 line 598 designs a full panel; what existed was a status word in a 320px rail. The live run spent forty minutes on *Checking what was found* with no way to see that the judge was at 81 of 144, or that it had stopped. | The panel's **three tiles**, built: pass, pages visited and would-not-open while capturing; **elements judged of dispatched** once the AI half starts. Every number derived from rows already being written — `baseline.audit_progress`, two grouped queries, asked only for audits still in flight. The live console is **not** built; see 9.2. |
+| **E** | **`.grid--detail` never collapsed.** Fixed at `minmax(0,1fr) 320px` for every width, while its sibling `.grid--console` collapses at 900px on the line below it. *Past audits* — the only place an audit's progress appeared — was squeezed beside 79 page rows and pushed below the fold. Two people looked for it and concluded it did not exist. | One media query at 900px, matching the rule directly below it. |
+| **F** | The companion printed `10 page(s) ? 1 pass(es)` — characters the Windows console cannot encode once output is redirected to a file. | The six affected lines across four companion files write ASCII. Only the companion's own printed output changed; nothing that travels to the platform did. |
+
+### 9.2 Recorded, not built — the live audit console
+
+**What is missing.** S-38 designs a scrolling console beneath the tiles, one line per page as it is
+visited: `14:02:12 / · 41 elements · scanner ran`, `14:05:44 /admin/reports · could not open (timed
+out after 30s)`. The tiles now say *how far*; the console says *what happened, page by page*, which
+is what turns "3 of 10 visited" into "and the fourth one timed out".
+
+**Why it is not built alongside the tiles.** The tiles cost two grouped queries over rows the
+platform already stores. The console has nothing to read: the companion posts one screen per call
+and says nothing between them, and a page that **failed** to open is only recorded when the pass
+ends. There is no progress channel, and per-page lines would mean building one — an append-only
+event stream per audit, written by the companion as it goes and read by the panel on the 5-second
+poll it already runs.
+
+**What it would take**, so this is a decision rather than a hope:
+
+- an event row per audit step — route, element count, scanner ran or did not, opened or would not
+  open with the reason, timestamp — written on the same call that posts a screen, and on the
+  failure the companion currently only counts;
+- a read endpoint returning the tail, on the poll the running panel already makes;
+- the same bounding every other list here has — a cap on rows kept, stated on screen when it bites,
+  because a 200-page audit is 200 lines and a silent truncation reads as "that is all that
+  happened".
+
+**Until then the tiles are the whole story on screen**, and they are honest about being counts
+rather than a narrative: *would not open* is a number, and which page it was appears on the audit's
+row under Past audits when it closes.
+
+### 9.3 Asking the machine again about what it never judged — BUILT, 2026-08-21
+
+**The situation.** A judging run that dies part-way leaves every element it never reached filed as
+`uncertain — not judged`. That is the design working: nothing dispatched may vanish. But it means
+81 of 144 judged and **63 handed to a person** — not because a check looked and could not decide,
+which is what the review queue is for, but because nothing looked at all.
+
+**Most of it already existed**, and that was the surprise when this was looked at properly:
+
+- **`dispatch._cached` never serves an `uncertain` back to a dispatch.** Its own docstring says
+  why: an `uncertain` means no answer was reached, and serving it back would turn a *transient*
+  inability into a permanent one.
+- **`ingest.requests_for` reads the stored candidate bundles**, keyed on the audit's own id. The
+  elements, their markup, their styles and their screenshot crops are all still in the database.
+  **A re-judge needs no browser, no companion and no page visited again.**
+
+So what was missing was **a caller** — the same shape as **G6c**, where `start_journey_check` had
+no caller anywhere in the platform.
+
+#### What was built
+
+| | |
+|---|---|
+| **The marker** | `judge._remember_unanswered` writes the content hashes a run never reported on onto `Run.outputs`, at the one moment they are still distinguishable from an answered `uncertain`. A JSON field the run already owns: no schema change and no second place to keep in step. |
+| **The reader** | `aipass.unanswered_for_capture` — the elements nothing ever looked at, from two sources: verdicts filed with **no run against them** (`_file_unjudged`, when the pass could not start at all) and the hashes the judge run recorded. Both intersected with what this capture actually holds, because a judgment row is project-wide and one audit must not drag in another's leftovers. |
+| **The pass** | `aipass.rejudge_capture` — `start_ai_pass` with a new `only_hashes` filter, then the audit back to `judging`. It re-uses the ordinary machinery entirely: same carrier work item, same dispatch, same closing step, same report re-published, same audit completed. Whatever it does not answer this time is filed again. |
+| **The way in** | `POST /api/projects/<p>/a11y-audits/<audit>/rejudge/` and a **Check the rest** button on the audit's own row under Past audits, appearing only on a **closed** audit that has some, and saying how many. |
+
+#### The three decisions the team took, and what each cost
+
+1. **Where it starts** — the audit's own row, because that is the thing that was incomplete. The
+   count comes from what each pass recorded about itself (`baseline.unanswered_counts`, one extra
+   query for the whole list); the *authoritative* set is recomputed at re-judge time. A test
+   asserts the two agree, because a screen that offers to check twelve things and then checks
+   nine is a screen nobody trusts again.
+2. **What it does to the audit** — back to `judging`, so the running panel and the row say what
+   is happening in the words they already use, and it reaches `complete` again through the
+   ordinary closing step. Not a second audit: re-running one would re-visit every page to re-ask
+   about a handful of elements, and would then compare a fresh capture against a report drawn
+   from the old one.
+3. **What it must never do** — re-ask about an `uncertain` a check actually *reached*. That is a
+   real verdict and it belongs to the person in the review queue; handing it back would quietly
+   recycle the queue's own contents through the machine. This was the one piece of real design,
+   and it is why the marker above exists.
+
+⚠️ **The marker rests on an invariant, so the invariant is pinned by a test.** A verdict with a
+**null run** means the platform filed it because nothing could be asked; only `_file_unjudged`
+writes one. There are exactly three `record_verdict` call sites, and a test asserts that the
+agent's own tool (`judge.record_finding`) always stamps its run — because the day one of them
+stops, elements a check genuinely answered would start being fed back to the machine.
+
+⚠️ **Two real bugs were caught by these tests before they shipped**, both in the first draft of
+`rejudge_capture`: `trigger` was passed a string where the dispatch expects the trigger
+*callable*, and the re-judge had no way for a test to inject one — which would have meant a test
+starting a real workflow on the shared Temporal server.

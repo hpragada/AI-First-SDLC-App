@@ -232,7 +232,11 @@ describe("S-38 pages and audit", () => {
     ]));
     renderWithProviders(<A11yAudit />);
 
-    expect(await screen.findByText("Waiting for a machine")).toBeTruthy();
+    // Twice on purpose since the running panel was built: once in the panel that leads the
+    // screen, once on the audit's own row under Past audits. Both are the same fact, and a
+    // reader looking at either half must not have to go and find the other.
+    expect((await screen.findAllByText("Waiting for a machine")).length).toBe(2);
+    expect(screen.getByText("Audit running")).toBeTruthy();
   });
 });
 
@@ -679,5 +683,163 @@ describe("S-38 registering pages — the two ways in", () => {
     await screen.findByText("No pages are registered yet");
     expect(screen.getByText(/If you already have the list/)).toBeTruthy();
     expect(screen.getByText(/Otherwise add them one page at a time/)).toBeTruthy();
+  });
+
+  // ── the audit that is running now (S-38 line 598) ─────────────────────────
+  //
+  // Until this panel existed the only thing on screen while an audit ran was a status word in a
+  // list, in a 320px rail below the page table. The team's first live run spent forty minutes on
+  // "Checking what was found" with no way to see that the judge was at 81 of 144 — or that it
+  // had stopped. These assert the counts, because a panel that renders without them is the same
+  // silence with more furniture.
+
+  function audit(over: Record<string, unknown> = {}) {
+    return {
+      id: "a1",
+      status: "capturing",
+      base_url: "http://localhost:4180",
+      routes: ["/", "/catalogue", "/about/history"],
+      summary: {},
+      progress: { visited: 0, unreachable: 0 },
+      created_at: "2026-08-21T09:00:00Z",
+      ...over,
+    };
+  }
+
+  it("running · shows the pass, the pages visited and the ones that would not open", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [audit({ progress: { visited: 2, unreachable: 1 } })] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Audit running")).toBeTruthy();
+    expect(screen.getByText("Pages visited").previousElementSibling?.textContent)
+      .toContain("2");
+    expect(screen.getByText("Pages visited").nextElementSibling?.textContent)
+      .toBe("of 3 asked for");
+    // A page that would not open is a RESULT, and it is counted and named rather than left to
+    // look like progress that has not happened yet.
+    expect(screen.getByText("Would not open").previousElementSibling?.textContent).toBe("1");
+    expect(screen.getByText("Pass").previousElementSibling?.textContent).toContain("of 1");
+    // Nothing here asks the person to sit and watch.
+    expect(screen.getByText(/You can leave this page/)).toBeTruthy();
+  });
+
+  it("judging · shows how far the AI half has got, against what was dispatched", async () => {
+    // The number that could not be seen at all yesterday.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, {
+        audits: [audit({
+          status: "judging",
+          progress: { visited: 3, unreachable: 0, judged: 81, dispatched: 144 },
+        })],
+      }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Elements judged")).toBeTruthy();
+    expect(screen.getByText("Elements judged").previousElementSibling?.textContent)
+      .toContain("81");
+    expect(screen.getByText("Elements judged").previousElementSibling?.textContent)
+      .toContain("of 144");
+    // The capture is finished, so the pass tile has nothing left to say and gives up its slot.
+    expect(screen.queryByText("Pass")).toBeNull();
+    // The panel and the row under Past audits say the same thing, in the same words.
+    expect(screen.getAllByText("Checking what was found").length).toBe(2);
+  });
+
+  it("nothing running · no panel at all, rather than a panel full of zeros", async () => {
+    // A finished audit's numbers live on its own row under Past audits. A running panel showing
+    // 0 of 0 would read as an audit that had just started and found nothing.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, {
+        audits: [audit({ status: "complete", progress: null,
+                         summary: { asked: 3, opened: 3, never_reported: [] } })],
+      }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("/catalogue");
+    expect(screen.queryByText("Audit running")).toBeNull();
+    expect(screen.getByText("Past audits")).toBeTruthy();
+  });
+
+  // ── asking again about what nothing looked at (task R1) ───────────────────
+  //
+  // A judging run that dies leaves everything it never reached filed as `uncertain — not
+  // judged`, so nothing dispatched vanishes. Those elements then sit on a person for a reason
+  // that has nothing to do with them: not "a check could not decide", but "nothing looked".
+  // This is the offer to ask the machine again — and NOT an offer to re-run the audit, because
+  // no page needs visiting.
+
+  function closed(over: Record<string, unknown> = {}) {
+    return audit({ status: "complete", progress: null,
+                   summary: { asked: 3, opened: 3, never_reported: [] }, ...over });
+  }
+
+  it("offers to check the rest, and says how many were never looked at", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [closed({ unanswered: 12 })] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText(/12 elements were never looked at/)).toBeTruthy();
+    // The distinction the whole task rests on, said on the screen and not only in the code.
+    expect(screen.getByText(/never checked at all/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Check the rest" })).toBeTruthy();
+  });
+
+  it("pressing it asks that audit, and says no page is visited", async () => {
+    const fetchStub = stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/rejudge/, { started: true, asked: 12 }],
+      [/a11y-audits/, { audits: [closed({ unanswered: 12 })] }],
+    ]);
+    vi.stubGlobal("fetch", fetchStub);
+    renderWithProviders(<A11yAudit />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Check the rest" }));
+
+    await waitFor(() =>
+      expect(fetchStub.mock.calls.some(([url]) =>
+        String(url).includes("/a11y-audits/a1/rejudge/"))).toBe(true));
+    expect(await screen.findByText(/No page is visited/)).toBeTruthy();
+  });
+
+  it("an audit where everything was looked at offers nothing", async () => {
+    // A button that is always there, usually with nothing to do, is a button nobody reads.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [closed({ unanswered: 0 })] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("Past audits");
+    expect(screen.queryByRole("button", { name: "Check the rest" })).toBeNull();
+    expect(screen.queryByText(/never looked at/)).toBeNull();
+  });
+
+  it("a reader sees it, cannot press it, and is told whose call it is", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({ can_manage: false })],
+      [/a11y-audits/, { audits: [closed({ unanswered: 1 })] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    // One element, said in the singular — a count is not a place to be careless.
+    expect(await screen.findByText(/1 element was never looked at/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Check the rest" })).toHaveProperty("disabled", true);
+    expect(screen.getByText(/The QA Lead or Tech Lead on this project runs this/)).toBeTruthy();
   });
 });

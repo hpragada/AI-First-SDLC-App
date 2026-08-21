@@ -991,6 +991,22 @@ export interface A11yAudit {
     never_reported?: string[];
     reason?: string;
   };
+  // How far this audit has got RIGHT NOW. Present only while it is still going somewhere —
+  // `summary` above is written when it closes, so until then there was no count of anything
+  // anywhere and a screen could only show the status word. `judged`/`dispatched` appear once
+  // the AI pass has been dispatched, and not before, so "none judged yet" stays distinguishable
+  // from "not that stage".
+  progress?: {
+    visited: number;
+    unreachable: number;
+    judged?: number;
+    dispatched?: number;
+  } | null;
+  // How many elements of this audit NOTHING ever looked at — never dispatched, or dispatched to
+  // a judging run that died before reaching them. Not the same as an 'uncertain' a check
+  // actually reached: that one belongs to a person. Only counted for a closed audit, because
+  // while a pass is running the answer is still changing.
+  unanswered?: number;
   created_at: string;
 }
 

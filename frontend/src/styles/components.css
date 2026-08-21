@@ -256,6 +256,12 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
    fewer columns as space shrinks and fills wider viewports, instead of a fixed 3-across. */
 .grid--auto { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 .grid--detail { grid-template-columns: minmax(0,1fr) 320px; align-items: start; }
+/* …and it collapses, exactly as `--console` below does. Without this the 320px rail stayed 320px
+   at every width, so on the accessibility screen "Past audits" — the ONLY place an audit's
+   progress appears — was squeezed beside a table of 79 pages and pushed below the fold. Two
+   people looked for it and concluded the panel did not exist. Same breakpoint as its sibling so
+   the two rails behave the same way on the same screens. */
+@media (max-width: 900px) { .grid--detail { grid-template-columns: minmax(0,1fr); } }
 /* Review console: a narrow pick-list rail on the LEFT, the item being worked on filling the
    rest. The mirror of `--detail`, and a different job: there the 320px column is a sidebar
    ABOUT the main content, here it is the list you pick FROM and the wide half is where the

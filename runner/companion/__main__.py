@@ -75,7 +75,7 @@ def _enroll(args) -> int:
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
     print(json.dumps(data, indent=2))
-    print("\nStore the token securely — it is shown only once.")
+    print("\nStore the token securely - it is shown only once.")
     return 0
 
 
@@ -154,7 +154,7 @@ def _serve(args) -> int:
     if log_path:
         print(f"[companion] engine log: {log_path}", file=sys.stderr, flush=True)
     else:
-        print("[companion] engine log could not be opened — engine output stays terminal-only",
+        print("[companion] engine log could not be opened - engine output stays terminal-only",
               file=sys.stderr, flush=True)
 
     repo_paths = _parse_repo_map(args.repo)

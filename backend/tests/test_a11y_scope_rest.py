@@ -309,3 +309,81 @@ def test_a_waiting_audit_is_what_the_companion_is_offered(world):
     assert claimed.status_code == 200, claimed.data
     assert str(claimed.data["audit_id"]) == started["audit_id"]
     assert claimed.data["manifest"]["routes"] == ["/"], "and it carries what to visit"
+
+
+# ── Asking again about what nothing looked at (task R1) ─────────────────────
+
+
+def _closed_audit(world, status="complete"):
+    return A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"],
+        base_url="http://127.0.0.1:4180", routes=["/"], status=status)
+
+
+def _rejudge_url(world, audit):
+    return f"{world['audits']}{audit.id}/rejudge/"
+
+
+def test_asking_again_is_refused_for_a_reader(world):
+    """It spends a real engine run, so it is the same decision as starting an audit — taken
+    twice, and gated the same way both times."""
+    audit = _closed_audit(world)
+    resp = _client("dev@acme.test").post(_rejudge_url(world, audit), {}, format="json")
+    assert resp.status_code == 403
+
+
+def test_asking_again_needs_a_session_at_all(world):
+    """The whole a11y surface fell through to `AllowAny` once (§9 #2). A new write on it must
+    not reopen that by being left out of the permission list."""
+    audit = _closed_audit(world)
+    assert APIClient().post(_rejudge_url(world, audit), {}, format="json").status_code in (401, 403)
+
+
+def test_asking_again_about_an_audit_that_has_not_finished_is_refused_by_name(world):
+    """While a pass is running, "what has nothing looked at" is still changing — and offering to
+    re-ask about elements the judge is at that moment working through would start a second pass
+    over the same work. Refused with the reason, not silently ignored."""
+    audit = _closed_audit(world, status="judging")
+    resp = _client("lead@acme.test").post(_rejudge_url(world, audit), {}, format="json")
+    assert resp.status_code == 409
+    assert "has not finished yet" in resp.json()["detail"]
+
+
+def test_asking_again_about_another_projects_audit_is_a_404(world):
+    """Scoped to the project in the URL, not just to the tenant."""
+    other = Project.objects.create(tenant=world["tenant"], name="Somewhere else")
+    audit = A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=other, routes=["/"], status="complete")
+    resp = _client("lead@acme.test").post(_rejudge_url(world, audit), {}, format="json")
+    assert resp.status_code == 404
+
+
+def test_asking_again_with_nothing_unanswered_says_so_rather_than_starting_a_run(world):
+    """A closed audit where every element was looked at has nothing to ask about, and says so in
+    words instead of dispatching a judging run that would judge nothing."""
+    audit = _closed_audit(world)
+    resp = _client("lead@acme.test").post(_rejudge_url(world, audit), {}, format="json")
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert body["started"] is False and body["asked"] == 0
+    assert "has been looked at" in body["reason"]
+
+
+def test_the_audit_list_says_how_many_were_never_looked_at(world):
+    """What the button counts. Read from what the pass recorded about itself — here, the
+    elements the dispatch could not ask about at all, because no judge was registered."""
+    audit = _closed_audit(world)
+    audit.summary = {"ai_pass": {"filed_unjudged": 12}}
+    audit.save(update_fields=["summary"])
+    [row] = _client("dev@acme.test").get(world["audits"]).json()["audits"]
+    assert row["unanswered"] == 12
+
+
+def test_an_audit_still_running_is_never_offered_a_rejudge_on_the_list(world):
+    """The count is only computed for closed audits, so the button cannot appear on one whose
+    answer is still moving."""
+    audit = _closed_audit(world, status="judging")
+    audit.summary = {"ai_pass": {"filed_unjudged": 12}}
+    audit.save(update_fields=["summary"])
+    [row] = _client("dev@acme.test").get(world["audits"]).json()["audits"]
+    assert row["unanswered"] == 0

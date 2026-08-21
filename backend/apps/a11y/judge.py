@@ -316,6 +316,42 @@ def _project_for(tenant_id, run_id):
         return run.work_item.project_id
 
 
+#: Where a judgment run records the elements NOTHING ever looked at.
+UNANSWERED_KEY = "a11y_unanswered"
+
+
+def _remember_unanswered(tenant_id, run_id, content_hashes: list[str]) -> None:
+    """Record, on the run itself, which elements it never reported on.
+
+    **Why this has to be written down at all.** The moment the fallback verdicts above are
+    stored, the two kinds of `uncertain` become indistinguishable: *"a check looked at this and
+    could not decide"* and *"nothing ever looked at this"* are the same row — same verdict, same
+    confidence of 0.0, same run, same prompt version. Only the difference between the dispatched
+    set and the judged set tells them apart, and that difference exists for exactly as long as
+    this function is running.
+
+    It matters because they deserve opposite treatment. An answered `uncertain` belongs to a
+    person and must never be handed back to the machine for another go. An element nothing looked
+    at is not a judgement at all — it is work that did not happen, and asking again is the right
+    response to it. `aipass.rejudge_capture` is what asks, and this is what it reads.
+
+    Written to `Run.outputs`, which is a JSON field the run already owns, so no schema change and
+    no second place to keep in step. Merged rather than replaced: the run's own outputs (the
+    error a failed run records, for one) must survive this.
+    """
+    if not content_hashes:
+        return
+    from apps.runs.models import Run
+    from apps.tenancy.context import tenant_context
+
+    with tenant_context(tenant_id):
+        run = Run.objects.filter(id=run_id, tenant_id=tenant_id).first()
+        if run is None:
+            return
+        run.outputs = {**(run.outputs or {}), UNANSWERED_KEY: sorted(set(content_hashes))}
+        run.save(update_fields=["outputs", "updated_at"])
+
+
 def verify_judgment_completeness(*, tenant_id, project_id=None, run_id) -> dict:
     """Every dispatched element must have been judged. Records the gaps, then fails.
 
@@ -352,6 +388,8 @@ def verify_judgment_completeness(*, tenant_id, project_id=None, run_id) -> dict:
             judgment=uncertain(tuple(element.get("criteria") or ()),
                                checker=element.get("checker", ""), reason=NOT_JUDGED),
         )
+
+    _remember_unanswered(tenant_id, run_id, [e["content_hash"] for e in missing])
 
     unjudged: list[str] = sorted(element["id"] for element in missing)
     counts: dict = {
