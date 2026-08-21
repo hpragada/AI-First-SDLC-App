@@ -2393,3 +2393,150 @@ def test_the_pass_arithmetic_is_the_platforms_own(world):
     assert passes_for(61) == 2
     assert passes_for(68) == 2
     assert passes_for(200) == 4
+
+
+def _judge_run(world, batches=None):
+    """A judging run carrying the batches a dispatch would have attached."""
+    from apps.registry.catalog import seed_agent_specs
+    from apps.registry.models import AgentSpec
+    from apps.runs.models import Run
+    from apps.workitems.models import WorkItem
+
+    seed_agent_specs(world['tenant'])
+    return Run.objects.create(
+        tenant=world['tenant'],
+        work_item=WorkItem.objects.create(
+            tenant=world['tenant'], project=world['project'], title='Accessibility judging'),
+        agent_spec=AgentSpec.objects.get(tenant=world['tenant'], key='09c_a11y_judge'),
+        inputs={'a11y_batches': batches} if batches is not None else {},
+    )
+
+
+def test_a_complete_pass_never_reads_as_two_thirds_done(world):
+    """The defect the first complete live run exposed, and the reason it mattered.
+
+    144 requests over ten pages were 81 distinct elements: the site header, the footer, the nav
+    are the same markup on every page, they hash identically, and one verdict answers all ten.
+    The judge recorded 81 and was complete. The tile counted verdicts against REQUESTS and read
+    `81 of 144` — a screen telling the person who ran it that a third of the checking had not
+    happened, on a run where all of it had. That is this capability's own worst failure, told
+    about itself.
+    """
+    from apps.a11y.baseline import audit_progress
+    from apps.a11y.models import A11yBaselineAudit, A11yJudgmentCache
+
+    audit = _audit(world, "/")
+    judge_run = _judge_run(world)
+    audit.status = A11yBaselineAudit.Status.JUDGING
+    audit.summary = {"ai_pass": {"judge_run_id": str(judge_run.id),
+                                 # what the dispatch handed over…
+                                 "dispatched": 144,
+                                 # …and what it is actually about
+                                 "distinct": 81}}
+    audit.save(update_fields=["status", "summary"])
+    for n in range(81):
+        A11yJudgmentCache.objects.create(
+            tenant=world["tenant"], project=world["project"], checker="alt",
+            content_hash=f"{n:064d}", verdict="pass", run=judge_run)
+
+    progress = audit_progress(world["t"], [str(audit.id)])[str(audit.id)]
+    assert progress["judged"] == 81
+    assert progress["dispatched"] == 81, (
+        "the denominator counts the same unit as the numerator, or it is not a fraction")
+
+
+def test_a_pass_dispatched_before_this_was_recorded_still_shows_a_true_number(world):
+    """An audit that ran before the distinct count was stored must not go on showing the old
+    misleading one. Derived from the run's own batches, where the elements still are."""
+    from apps.a11y.baseline import audit_progress
+    from apps.a11y.models import A11yBaselineAudit
+
+    audit = _audit(world, "/")
+    # Three screens, all carrying the SAME element — a site header, the everyday case.
+    shared = {"id": "1-aaaa", "content_hash": "a" * 64, "checker": "semantics",
+              "criteria": ["1.3.1"], "html": "<span>Meridian Library</span>",
+              "selector": "header span", "context": ""}
+    judge_run = _judge_run(world, batches=[
+        {"route": f"/p{i}", "elements": [dict(shared), {**shared, "id": f"{i}-bbbb",
+                                                        "content_hash": f"{i}" * 64}]}
+        for i in range(3)
+    ])
+    audit.status = A11yBaselineAudit.Status.JUDGING
+    # No `distinct` key at all — the pre-fix shape.
+    audit.summary = {"ai_pass": {"judge_run_id": str(judge_run.id), "dispatched": 6}}
+    audit.save(update_fields=["status", "summary"])
+
+    progress = audit_progress(world["t"], [str(audit.id)])[str(audit.id)]
+    assert progress["dispatched"] == 4, "one shared element plus three of its own, not six slots"
+
+
+def test_what_the_panel_says_after_the_run_counts_problems_and_questions_apart(world):
+    """The panel does not disappear when the run ends — it says what happened. A problem the
+    platform is sure about and a question it is asking a person are counted separately, because
+    folding the second into the first inflates the problem count with undecided things."""
+    from apps.a11y.baseline import audit_outcome
+    from apps.a11y.models import A11yFinding
+
+    made = [("failure", "critical"), ("failure", "high"), ("failure", "high"),
+            ("needs_review", "high")]
+    for n, (outcome, severity) in enumerate(made):
+        A11yFinding.objects.create(
+            tenant=world["tenant"], project=world["project"], fingerprint=f"{n:064d}",
+            route="/", selector=f"#e{n}", criterion="1.1.1", source="ai",
+            outcome=outcome, severity=severity, status=A11yFinding.Status.OPEN)
+
+    assert audit_outcome(world["t"], world["p"]) == {
+        "problems": 3, "critical": 1, "high": 2, "waiting": 1}
+
+
+def test_the_panels_numbers_do_not_hang_off_a_column_a_baseline_audit_never_fills(world):
+    """The bug this replaced, kept as a test because it would have shipped a confident zero.
+
+    `A11yFinding.last_seen_run` is a foreign key to a real `Run`, and a baseline audit
+    deliberately manufactures none (QA-17) — so for every brownfield audit that column is NULL.
+    Counting on it reported **0 problems on an audit that found three**, which is the exact kind
+    of reassuring, wrong number this capability exists to refuse.
+    """
+    from apps.a11y.baseline import audit_outcome
+    from apps.a11y.models import A11yFinding
+
+    finding = A11yFinding.objects.create(
+        tenant=world["tenant"], project=world["project"], fingerprint="f" * 64,
+        route="/", selector="#a", criterion="1.1.1", source="ai", outcome="failure",
+        severity="critical", status=A11yFinding.Status.OPEN)
+    assert finding.last_seen_run_id is None, "the column a per-audit count would have used"
+    assert audit_outcome(world["t"], world["p"])["problems"] == 1
+
+
+def test_a_project_with_nothing_found_reports_zeros_rather_than_nothing(world):
+    """Zero is an answer and the panel renders it; a missing key is not."""
+    from apps.a11y.baseline import audit_outcome
+
+    assert audit_outcome(world["t"], world["p"]) == {
+        "problems": 0, "critical": 0, "high": 0, "waiting": 0}
+
+
+def test_a_resolved_problem_stops_being_counted(world):
+    """The tile says where the application stands NOW, so a problem that has gone is gone."""
+    from apps.a11y.baseline import audit_outcome
+    from apps.a11y.models import A11yFinding
+
+    A11yFinding.objects.create(
+        tenant=world["tenant"], project=world["project"], fingerprint="a" * 64,
+        route="/", selector="#a", criterion="1.1.1", source="ai", outcome="failure",
+        severity="critical", status=A11yFinding.Status.RESOLVED)
+    assert audit_outcome(world["t"], world["p"])["problems"] == 0
+
+
+def test_another_projects_findings_are_never_counted_here(world):
+    """Scoped to the project, and that is the widest it ever goes."""
+    from apps.a11y.baseline import audit_outcome
+    from apps.a11y.models import A11yFinding
+    from apps.projects.models import Project
+
+    other = Project.objects.create(tenant=world["tenant"], name="Somewhere else")
+    A11yFinding.objects.create(
+        tenant=world["tenant"], project=other, fingerprint="b" * 64,
+        route="/", selector="#a", criterion="1.1.1", source="ai", outcome="failure",
+        severity="critical", status=A11yFinding.Status.OPEN)
+    assert audit_outcome(world["t"], world["p"])["problems"] == 0

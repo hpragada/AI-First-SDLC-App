@@ -1315,11 +1315,17 @@ are recorded here because the *reason* each survived a green test suite is worth
 | 3 | **Seven granted tools were never exposed.** The judge was granted 24 and the MCP server defined 17: `get_a11y_batch`, `get_wcag_grounding`, `record_a11y_finding` and all four journey tools had no `@server.tool()` wrapper. The judge and the keyboard journey had been **unrunnable since the day they were written**. | The tests checked the permission list and the HTTP route. Neither of those puts a tool in an agent's hands; only the wrapper does. There are **three** such lists, and a test now asserts that `granted − exposed` is empty. |
 | 4 | `get_a11y_batch` returned every screen at once — 144 elements, about 80,000 characters — and the judge correctly refused to judge part of it. Its own docstring had said *"one screen at a time"* since the day it was written. | Every test used three elements over two screens, where paged and unpaged look identical. |
 
-**And a fifth, found while fixing the fourth:** `verify_writes` gets one minute, which is right for
-"does the artifact exist" and wrong for the judge's closing step — that step files a fallback
-verdict per unanswered element and then publishes. Cancelled at 60 seconds it had written 81 of
-144 and left 63 elements with no record at all, breaking the one guarantee the design rests on.
-`LONG_VERIFY_PHASES` now gives it five minutes.
+**And a fifth, taken as a precaution rather than proven:** `verify_writes` gets one minute, which
+is right for "does the artifact exist" and wrong for the judge's closing step — that step files a
+fallback verdict per unanswered element and then publishes a report. `LONG_VERIFY_PHASES` now
+gives those two phases five minutes.
+
+⚠️ **The evidence first given for this was a misreading, and 9.4 corrects it.** The "81 of 144"
+that looked like a cancelled half-write was neither: 144 request slots are 81 distinct elements,
+and the judge had answered all of them. On the first complete run this step took **22 seconds**,
+comfortably inside the original minute. The longer window is still the right call — that step's
+work grows with the audit, and being cut off half-way through it would leave the accounting it
+exists to guarantee half-done — but it fixed a risk, not an observed failure.
 
 **What the run proved:** capture 10 of 10, twice. An audit reaching `complete`. And the judge
 recording real verdicts — 80 pass, 1 fail — including a defect no scanner can reach:
@@ -1371,9 +1377,15 @@ row under Past audits when it closes.
 ### 9.3 Asking the machine again about what it never judged — BUILT, 2026-08-21
 
 **The situation.** A judging run that dies part-way leaves every element it never reached filed as
-`uncertain — not judged`. That is the design working: nothing dispatched may vanish. But it means
-81 of 144 judged and **63 handed to a person** — not because a check looked and could not decide,
-which is what the review queue is for, but because nothing looked at all.
+`uncertain — not judged`. That is the design working: nothing dispatched may vanish. But those
+elements then sit on a person for a reason that has nothing to do with them — not because a check
+looked and could not decide, which is what the review queue is for, but because nothing looked at
+all.
+
+⚠️ **This was surfaced with a worked example — "81 of 144, so 63 handed to a person" — and that
+example was wrong**; see 9.4. Those 144 request slots were 81 distinct elements and the judge had
+answered every one. The situation this closes is real and will happen the first time a judging run
+genuinely dies part-way; it simply had not happened yet when this was built.
 
 **Most of it already existed**, and that was the surprise when this was looked at properly:
 
@@ -1423,3 +1435,76 @@ stops, elements a check genuinely answered would start being fed back to the mac
 `rejudge_capture`: `trigger` was passed a string where the dispatch expects the trigger
 *callable*, and the re-judge had no way for a test to inject one — which would have meant a test
 starting a real workflow on the shared Temporal server.
+
+### 9.4 The first COMPLETE run — 21 August
+
+Meridian again, and this time end to end: **10 of 10 pages visited, 0 that would not open, every
+distinct element judged, the report published, the audit `complete`.** The Temporal history shows
+all six activities in order, `verify_writes` running for 22 seconds and passing, and the workflow
+closing `auto_approved: true`.
+
+The one failing finding is the one that justifies the whole build — a defect no scanner can reach:
+
+> `<img src="/assets/photos/reading-room.svg" alt="library">` against **1.1.1**, confidence
+> **0.95**, evidence citing the screenshot: the image is an illustration of a reading room, and
+> *library* describes neither what it shows nor why it is there.
+
+#### The correction: "81 of 144" was never a truncation
+
+**This corrects what §9 said the morning before.** The 20 August run was read as having died at
+81 of 144 with **63 elements lost**, and the accounting was described as having been broken. It
+was not. The judging had finished.
+
+An audit dispatches one request per (element, checker) **slot**. Ten pages of Meridian produce
+**144 slots but only 81 distinct elements**: the site header, the footer and the nav are the same
+markup on every page, they hash identically, and one verdict answers all ten. The most repeated
+one is `<span class="brand-name">Meridian Library</span>`, on all ten pages.
+
+```
+element slots: 144   ·   distinct elements: 81
+```
+
+`verify_judgment_completeness` compares hashes, computed **0 missing**, and was right. What
+actually went wrong on 20 August was only that the workflow never closed the audit — item **A**
+in 9.1 — and that fix is what let this run finish properly. The accounting was never broken.
+
+#### And the run exposed a defect in the tile built that same morning
+
+**The tile read `81 of 144` on a complete audit.** The numerator counted distinct verdicts, the
+denominator counted request slots — so a finished, correct run told the person who started it
+that a third of the checking had not happened. A screen stating something about a client's
+application that is not true, in the feature built to refuse exactly that.
+
+**Fixed by making both numbers the same unit.** `start_ai_pass` now records `distinct` — how many
+distinct elements the requests are about — beside `dispatched`, and the tile counts against that.
+An audit dispatched before this was recorded derives the number from the run's own batches rather
+than showing the old misleading one. Two tests: a capture with repeated chrome must not report
+itself incomplete, and the pre-fix shape must still produce a true number.
+
+#### The panel no longer disappears when the run ends — BUILT
+
+The team's other observation from the same run, and it is the same principle one step later: the
+panel they had been watching **vanished at the moment the answer arrived**. A person who starts an
+audit and watches it work must not have the result disappear on completion.
+
+It now stays and changes what it says. Three tiles throughout:
+
+| Stage | The three tiles |
+|---|---|
+| Visiting pages | Pass *k of m* · Pages visited · Would not open |
+| Checking what was found | **Elements judged** *n of m distinct* · Pages visited · Would not open |
+| Complete | **Pages reported** *n of m asked* · **Problems open** *n, c critical · h high* · **Waiting on a person** *n* |
+| Could not run | the machine's own reason, in its own words |
+
+Plus the never-opened banner when pages were asked for and never reported, and a way through to
+the review queue when anything is waiting.
+
+⚠️ **One thing about that panel is scoped wider than it looks, and it is labelled so.** *Problems
+open* is **this project's** current standing, not this audit's tally. A finding carries no audit
+key — `A11yFinding.last_seen_run` is a foreign key to a real `Run`, and a baseline audit
+deliberately manufactures none (QA-17), so for every brownfield audit that column is NULL. The
+first draft counted on it and would have reported **0 problems on an audit that found three**. It
+is also the right scope: the **Accessibility baseline** this panel points at is itself
+project-scoped, so that an audit covering part of an application never drops what is already known
+about the rest. The tile's sub-line says *in this project* rather than letting the number imply a
+per-run count, and a test pins the NULL column so the shortcut cannot be taken again.

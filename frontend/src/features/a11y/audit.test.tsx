@@ -216,9 +216,11 @@ describe("S-38 pages and audit", () => {
     renderWithProviders(<A11yAudit />);
 
     // The generic message blames the application and would send someone to check a server that
-    // was never contacted.
-    expect(await screen.findByText(/Playwright is not installed/)).toBeTruthy();
-    expect(screen.getByText("Could not run")).toBeTruthy();
+    // was never contacted. Said twice on purpose since the panel stays after the run: once in
+    // the panel that led the screen, once on the audit's own row under Past audits.
+    expect((await screen.findAllByText(/Playwright is not installed/)).length).toBe(2);
+    expect(screen.getByText("Audit could not run")).toBeTruthy();
+    expect(screen.getAllByText("Could not run").length).toBe(2);
   });
 
   it("a waiting audit says it is waiting for a machine, not that it is running", async () => {
@@ -752,22 +754,55 @@ describe("S-38 registering pages — the two ways in", () => {
     expect(screen.getAllByText("Checking what was found").length).toBe(2);
   });
 
-  it("nothing running · no panel at all, rather than a panel full of zeros", async () => {
-    // A finished audit's numbers live on its own row under Past audits. A running panel showing
-    // 0 of 0 would read as an audit that had just started and found nothing.
+  it("finished · the panel stays and says what the audit came to", async () => {
+    // It used to disappear the moment the run ended, which is the worst possible moment for the
+    // panel somebody has been watching to vanish: the answer arrives and the screen goes blank.
     vi.stubGlobal("fetch", stubRoutes([
       ...authed(),
       [/a11y-routes/, routesBody()],
       [/a11y-audits/, {
-        audits: [audit({ status: "complete", progress: null,
-                         summary: { asked: 3, opened: 3, never_reported: [] } })],
+        audits: [audit({
+          status: "complete", progress: null,
+          summary: { asked: 3, opened: 3, never_reported: [] },
+          outcome: { problems: 4, critical: 1, high: 3, waiting: 2 },
+        })],
       }],
     ]));
     renderWithProviders(<A11yAudit />);
 
-    await screen.findByText("/catalogue");
+    expect(await screen.findByText(/Audit complete/)).toBeTruthy();
     expect(screen.queryByText("Audit running")).toBeNull();
-    expect(screen.getByText("Past audits")).toBeTruthy();
+    expect(screen.getByText("Pages reported").previousElementSibling?.textContent).toBe("3");
+    expect(screen.getByText("Problems open").previousElementSibling?.textContent).toBe("4");
+    expect(screen.getByText("Problems open").nextElementSibling?.textContent)
+      .toContain("1 critical");
+    // The two are counted apart: a problem the platform is sure about and a question it is
+    // asking a person are different things, and the way through to answering them is offered.
+    expect(screen.getByText("Waiting on a person").previousElementSibling?.textContent).toBe("2");
+    expect(screen.getByRole("link", { name: /Answer the 2 waiting/ })).toBeTruthy();
+  });
+
+  it("finished with nothing waiting · does not read as an application with no problems", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, {
+        audits: [audit({
+          status: "complete", progress: null,
+          summary: { asked: 3, opened: 2, never_reported: ["/admin/reports"] },
+          outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
+        })],
+      }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText(/Audit complete/);
+    expect(screen.getByText("every check answered on its own")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /waiting/ })).toBeNull();
+    // A page that never opened is stated, never absorbed into a clean-looking result.
+    expect(screen.getByText("One page was asked for and never opened")).toBeTruthy();
+    expect(screen.getByText(/nothing they might have contained is treated as passing/))
+      .toBeTruthy();
   });
 
   // ── asking again about what nothing looked at (task R1) ───────────────────

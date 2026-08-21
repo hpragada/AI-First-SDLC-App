@@ -439,7 +439,7 @@ def audit_progress(tenant_id, audit_ids: list[str]) -> dict:
             if run_id:
                 judge_runs[run_id] = str(audit.id)
                 out[str(audit.id)].update(
-                    judged=0, dispatched=int(ai_pass.get("dispatched") or 0))
+                    judged=0, dispatched=_distinct_dispatched(tenant_id, run_id, ai_pass))
         if judge_runs:
             judged = (
                 A11yJudgmentCache.objects
@@ -449,6 +449,35 @@ def audit_progress(tenant_id, audit_ids: list[str]) -> dict:
             for row in judged:
                 out[judge_runs[str(row["run_id"])]]["judged"] = row["n"]
     return out
+
+
+def _distinct_dispatched(tenant_id, judge_run_id, ai_pass: dict) -> int:
+    """How many DISTINCT elements this judging pass was asked about.
+
+    **Not the number of requests, and the difference is not a rounding error.** The same markup
+    on ten pages — a site header, a footer link — is one thing to judge: it hashes identically,
+    one verdict answers all ten, and the completeness check counts it once. On our own reference
+    application 144 requests were 81 distinct elements, so a tile counting verdicts against
+    requests reported a finished, correct audit as two-thirds done. A screen saying a third of
+    the checking did not happen when it did is the exact failure this whole capability exists to
+    refuse, so the denominator has to be the same unit as the numerator.
+
+    Recorded at dispatch (`aipass.start_ai_pass`) and read from there. Derived from the run's
+    own batches only for a pass dispatched before that was recorded, so an audit that predates
+    this still shows a true number rather than the old misleading one.
+    """
+    distinct = ai_pass.get("distinct")
+    if isinstance(distinct, int) and distinct > 0:
+        return distinct
+    from apps.runs.models import Run
+
+    with tenant_context(tenant_id):
+        run = Run.objects.filter(id=judge_run_id, tenant_id=tenant_id).first()
+    batches = ((run.inputs or {}).get("a11y_batches") or []) if run else []
+    hashes = {element.get("content_hash")
+              for screen in batches for element in (screen.get("elements") or [])
+              if element.get("content_hash")}
+    return len(hashes) or int(ai_pass.get("dispatched") or 0)
 
 
 def passes_for(route_count: int) -> int:
@@ -506,3 +535,45 @@ def unanswered_counts(tenant_id, audits) -> dict:
             recorded = (outputs or {}).get(UNANSWERED_KEY) or []
             out[judge_runs[str(run_id)]] += len(recorded)
     return out
+
+
+def audit_outcome(tenant_id, project_id) -> dict:
+    """Where this project stands, for the panel that stays on screen after a run ends.
+
+    The panel does not disappear when the audit finishes — it changes what it says. A person who
+    started an audit and watched it work must not have the answer vanish at the moment it
+    arrives; that is the same silence the running panel was built against, one step later.
+
+    **Project-wide, and that is the honest scope rather than a convenience.** A finding carries
+    no audit key: `last_seen_run` is a foreign key to a real `Run`, and a baseline audit
+    deliberately manufactures none (QA-17), so for every brownfield audit that column is NULL.
+    Counting on it would have reported **0 problems on an audit that found three** — the exact
+    kind of confident, wrong, reassuring number this whole capability exists to refuse.
+
+    Project scope is also the right question. The **Accessibility baseline** this panel points at
+    is itself scoped to the project rather than to one audit, precisely so an audit that reached
+    38 of 50 routes does not silently drop what is already known about the other 12. "Where does
+    this application stand?" is the question a baseline answers, and this is that number.
+
+    Two counts, kept apart on purpose: a problem the platform is sure about, and a question it is
+    asking a person. Folding the second into the first would inflate the problem count with
+    things nobody has decided yet.
+    """
+    from django.db.models import Count, Q
+
+    from .models import A11yFinding
+    from .triage import TRIAGE_REVIEW
+
+    with tenant_context(tenant_id):
+        row = (
+            A11yFinding.objects
+            .filter(tenant_id=tenant_id, project_id=project_id,
+                    status=A11yFinding.Status.OPEN)
+            .aggregate(
+                problems=Count("id", filter=~Q(outcome=TRIAGE_REVIEW)),
+                critical=Count("id", filter=Q(severity="critical") & ~Q(outcome=TRIAGE_REVIEW)),
+                high=Count("id", filter=Q(severity="high") & ~Q(outcome=TRIAGE_REVIEW)),
+                waiting=Count("id", filter=Q(outcome=TRIAGE_REVIEW)),
+            )
+        )
+    return {k: int(v or 0) for k, v in row.items()}

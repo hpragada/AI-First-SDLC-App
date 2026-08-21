@@ -577,6 +577,7 @@ class ProjectViewSet(
             IN_FLIGHT_STATUSES,
             BaselineError,
             audit_manifest,
+            audit_outcome,
             audit_progress,
             start_baseline_audit,
             unanswered_counts,
@@ -624,6 +625,12 @@ class ProjectViewSet(
             self.tenant_id,
             [str(a.id) for a in audits if a.status in IN_FLIGHT_STATUSES],
         )
+        # What the newest audit CAME TO, if it has finished. The panel that showed it running
+        # does not disappear when it stops — it changes what it says — so the numbers a person
+        # was watching for have to be there when they arrive. Only the newest, because that is
+        # the only one the panel shows; every other finished audit is a row under Past audits.
+        outcome = (audit_outcome(self.tenant_id, str(project.id))
+                   if audits and audits[0].status in CLOSED_STATUSES else None)
         # How many elements of each CLOSED audit nothing ever looked at — what the "Check the
         # rest" button counts. Only for closed ones: while a pass is running the answer is still
         # changing, and offering to re-ask about elements the judge is at that moment working
@@ -634,6 +641,10 @@ class ProjectViewSet(
             {"id": str(a.id), "status": a.status, "base_url": a.base_url,
              "routes": list(a.routes or []), "summary": a.summary or {},
              "progress": progress.get(str(a.id)),
+             # Only on the newest, because that is the only one the panel shows — and the
+             # numbers are this PROJECT's current standing, not a per-audit tally, which is
+             # what a finding can actually be attributed to. See `audit_outcome`.
+             "outcome": outcome if a is audits[0] else None,
              "unanswered": unanswered.get(str(a.id), 0),
              "created_at": a.created_at}
             for a in audits

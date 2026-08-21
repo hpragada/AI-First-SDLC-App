@@ -387,3 +387,31 @@ def test_an_audit_still_running_is_never_offered_a_rejudge_on_the_list(world):
     audit.save(update_fields=["summary"])
     [row] = _client("dev@acme.test").get(world["audits"]).json()["audits"]
     assert row["unanswered"] == 0
+
+
+def test_the_newest_finished_audit_carries_what_the_panel_shows(world):
+    """The panel stays after the run ends, so the numbers it shows have to be on the payload —
+    and only on the newest, because that is the only audit it shows."""
+    from apps.a11y.models import A11yFinding
+
+    older = _closed_audit(world)
+    newest = _closed_audit(world)
+    A11yFinding.objects.create(
+        tenant=world["tenant"], project=world["project"], fingerprint="c" * 64,
+        route="/", selector="#a", criterion="1.1.1", source="ai", outcome="failure",
+        severity="critical", status=A11yFinding.Status.OPEN)
+
+    rows = {r["id"]: r for r in _client("dev@acme.test").get(world["audits"]).json()["audits"]}
+    assert rows[str(newest.id)]["outcome"]["problems"] == 1
+    assert rows[str(newest.id)]["outcome"]["critical"] == 1
+    assert rows[str(older.id)]["outcome"] is None, "every older audit is a row, not the panel"
+
+
+def test_an_audit_still_running_carries_no_outcome_yet(world):
+    """While it is going, what it came to is not a settled fact."""
+    audit = _closed_audit(world, status="judging")
+    [row] = _client("dev@acme.test").get(world["audits"]).json()["audits"]
+    assert row["id"] == str(audit.id)
+    assert row["outcome"] is None
+    assert row["progress"] is not None, "…but its live progress is there"
+

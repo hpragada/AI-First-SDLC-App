@@ -1007,6 +1007,11 @@ export interface A11yAudit {
   // actually reached: that one belongs to a person. Only counted for a closed audit, because
   // while a pass is running the answer is still changing.
   unanswered?: number;
+  // What a FINISHED audit came to, for the panel that stays on screen after the run ends.
+  // `waiting` is counted apart from `problems` on purpose: a problem the platform is sure
+  // about and a question it is asking a person are not the same thing. Present only on the
+  // newest audit, because that is the only one the panel shows.
+  outcome?: { problems: number; critical: number; high: number; waiting: number } | null;
   created_at: string;
 }
 

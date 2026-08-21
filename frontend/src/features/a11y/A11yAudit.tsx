@@ -14,6 +14,7 @@
 // a page, which is why registering goes through a confirm step that shows the difference before
 // anything is written. See `AddPages` below, and `preview_registration` on the platform.
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import {
@@ -840,51 +841,136 @@ function KeyboardJourneys({ projectId, hasMachine }: { projectId: string; hasMac
 
 // ── the audit that is running now ───────────────────────────────────────────
 
-/** The panel S-38 designs for a running audit: what stage, and three counts (S-38 line 598).
+/** The panel S-38 designs for the newest audit — running, then finished (S-38 lines 598, 645).
  *
- * **Why it exists.** Until it did, the only thing on screen while an audit ran was a status
- * word in a list — so an audit that had visited 6 of 10 pages and one that had visited none
- * looked identical, and an audit whose judge had stopped looked exactly like one still working.
- * That is this capability's own standard turned on itself: a screen must not state progress it
- * cannot evidence, and "Checking what was found" for forty minutes states plenty.
+ * **Why it exists.** Until it did, the only thing on screen while an audit ran was a status word
+ * in a list — so an audit that had visited 6 of 10 pages and one that had visited none looked
+ * identical, and an audit whose judge had stopped looked exactly like one still working. That is
+ * this capability's own standard turned on itself: a screen must not state progress it cannot
+ * evidence, and "Checking what was found" for forty minutes states plenty.
  *
- * Three tiles, and the middle one changes with the stage, because what you need to know changes
- * with it: while pages are being visited it is which pass; once they are in it is how far the
- * judging has got. The design's live console is a separate, larger piece of work — screens are
- * posted one per call with no progress channel to carry per-page lines — and is recorded as a
- * pending enhancement rather than half-built here.
+ * **And it does not disappear when the run ends.** It changes what it says. A person who started
+ * an audit and watched it work must not have the answer vanish at the moment it arrives — that
+ * is the same silence one step later, and it is what the team met on the first complete run.
+ *
+ * Three tiles throughout, because what you need to know changes with the stage: which pass while
+ * the pages are being visited, how far the judging has got once they are in, and what the whole
+ * thing came to once it stops. The design's live per-page console is a separate, larger piece of
+ * work — screens are posted one per call with no progress channel to carry per-page lines — and
+ * is recorded as a pending enhancement rather than half-built here.
  */
-function RunningAudit({ audit }: { audit: A11yAuditRow }) {
+function LatestAudit({ audit }: { audit: A11yAuditRow }) {
+  const running = AUDIT_IN_FLIGHT.includes(audit.status);
+  const asked = audit.summary?.asked ?? audit.routes.length;
+  const badge = (
+    <Badge variant={auditBadge(audit.status)}>
+      {STATUS_LABEL[audit.status] ?? audit.status}
+    </Badge>
+  );
+
+  if (!running) {
+    const outcome = audit.outcome ?? { problems: 0, critical: 0, high: 0, waiting: 0 };
+    const neverOpened = audit.summary?.never_reported ?? [];
+    const failed = audit.status === "failed";
+    return (
+      <Panel
+        title={failed ? "Audit could not run" : `Audit complete · ${when(audit.created_at)}`}
+        actions={badge}
+      >
+        {failed ? (
+          // Its own words, whatever the machine gave us. The generic "the application did not
+          // respond" would send someone to check a server that was never contacted.
+          <p className="t-sm u-body">
+            {audit.summary?.reason || "The audit stopped before it could report anything."}
+          </p>
+        ) : (
+          <>
+            <div className="grid grid--3" style={{ marginBottom: "var(--space-4)" }}>
+              <div className="tile">
+                <div className="tile__num">{audit.summary?.opened ?? 0}</div>
+                <div className="tile__label">Pages reported</div>
+                <div className="tile__sub">of {asked} asked for</div>
+              </div>
+              {/* This PROJECT open, not this audit. A finding carries no audit key, and the
+                  Accessibility baseline is itself project-scoped for the same reason — so that
+                  an audit covering part of an application never drops what is already known
+                  about the rest. The sub-line says so rather than letting the tile imply a
+                  per-run tally. */}
+              <div className="tile">
+                <div className="tile__num">{outcome.problems}</div>
+                <div className="tile__label">Problems open</div>
+                <div className="tile__sub">
+                  {outcome.critical} critical &middot; {outcome.high} high &middot; in this project
+                </div>
+              </div>
+              <div className="tile">
+                <div className="tile__num">{outcome.waiting}</div>
+                <div className="tile__label">Waiting on a person</div>
+                {/* Never "0 problems left". Nothing waiting means every check was sure enough to
+                    answer on its own — not that the application is clean. */}
+                <div className="tile__sub">
+                  {outcome.waiting === 0
+                    ? "every check answered on its own"
+                    : "the checks could not decide"}
+                </div>
+              </div>
+            </div>
+
+            {/* A page that never opened is stated, never absorbed. Nothing it might have
+                contained is treated as passing, and it cannot close a problem found there
+                before. */}
+            {neverOpened.length > 0 && (
+              <Banner
+                variant="warning"
+                title={
+                  neverOpened.length === 1
+                    ? "One page was asked for and never opened"
+                    : `${neverOpened.length} pages were asked for and never opened`
+                }
+              >
+                <span className="t-mono">{neverOpened.slice(0, 4).join(", ")}</span>
+                {neverOpened.length > 4 && ` and ${neverOpened.length - 4} more`}. Recorded as
+                never seen, so nothing they might have contained is treated as passing.
+              </Banner>
+            )}
+
+            <div className="u-row" style={{ marginTop: "var(--space-4)" }}>
+              <span className="t-sm u-muted">
+                The <strong>Accessibility baseline</strong> document is in Artifacts.
+              </span>
+              {outcome.waiting > 0 && (
+                <Link to="/a11y" className="btn btn--secondary btn--sm">
+                  Answer the {outcome.waiting} waiting
+                </Link>
+              )}
+            </div>
+          </>
+        )}
+      </Panel>
+    );
+  }
+
   const progress = audit.progress ?? { visited: 0, unreachable: 0 };
-  const asked = audit.routes.length;
   const passes = Math.max(1, Math.ceil(asked / PAGES_PER_PASS));
   const judging = audit.status === "judging";
   // Which pass the capture is on, from what has come back. Derived rather than reported: the
   // companion writes one screen at a time and never says which pass it is in, and a number
   // computed from the screens actually posted cannot claim a pass that has not started.
   const pass = Math.min(passes, Math.floor(progress.visited / PAGES_PER_PASS) + 1);
+  // DISTINCT elements, not requests. The same markup on ten pages is one thing to judge, and
+  // counting verdicts against requests made a finished audit read as two-thirds done.
   const dispatched = progress.dispatched ?? 0;
 
   return (
-    <Panel
-      title="Audit running"
-      actions={
-        <Badge variant={auditBadge(audit.status)}>
-          {STATUS_LABEL[audit.status] ?? audit.status}
-        </Badge>
-      }
-    >
+    <Panel title="Audit running" actions={badge}>
       <div className="grid grid--3" style={{ marginBottom: "var(--space-4)" }}>
         {judging ? (
           <div className="tile">
             <div className="tile__num">
-              {progress.judged ?? 0}{" "}
-              <span className="t-sm u-muted">of {dispatched}</span>
+              {progress.judged ?? 0} <span className="t-sm u-muted">of {dispatched}</span>
             </div>
             <div className="tile__label">Elements judged</div>
             <div className="tile__sub">
-              {/* Never "0 problems". An element nobody has looked at yet is not an element that
-                  passed, and this panel is on screen precisely while that is the case. */}
               {dispatched === 0 ? "none needed judging" : "the AI half, in progress"}
             </div>
           </div>
@@ -1039,11 +1125,11 @@ export function A11yAudit() {
   const [filter, setFilter] = useState<Filter>("all");
   const update = useUpdateA11yRoute(projectId);
   const remove = useDeleteA11yRoute(projectId);
-  // The audit in flight, if there is one. Nothing refuses a second audit while one is running,
-  // so there can genuinely be more than one — the list is newest-first, and the newest is the
-  // one the person on this screen just started. Any older one is still listed under Past audits
-  // with its own live badge, so showing one panel hides nothing.
-  const running = (audits.data?.audits ?? []).find((a) => AUDIT_IN_FLIGHT.includes(a.status));
+  // The newest audit, whatever state it is in. Deliberately not "the one in flight": the panel
+  // stays after the run ends and shows what it came to, because the moment the answer arrives is
+  // the worst possible moment for the panel somebody was watching to disappear. The list is
+  // newest-first; every older audit is a row under Past audits.
+  const latest = (audits.data?.audits ?? [])[0];
 
   // `!projectId` counts as loading, and that is not defensive tidying. The query is disabled
   // until the project resolves, so `isLoading` is false and `routes.data` is undefined — which
@@ -1161,9 +1247,9 @@ export function A11yAudit() {
               audit in flight is the one thing on this screen nobody can afford to go looking
               for — it was in a 320px rail below seventy-nine page rows, which is exactly how
               far a running audit was from the person who had just started it. */}
-          {running && (
+          {latest && (
             <div style={{ marginBottom: "var(--space-5)" }}>
-              <RunningAudit audit={running} />
+              <LatestAudit audit={latest} />
             </div>
           )}
 

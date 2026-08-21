@@ -142,6 +142,13 @@ def start_ai_pass(*, tenant_id, project_id, run_id, work_item_id=None, title: st
         "started": bool(result.run_id),
         "judge_run_id": result.run_id,
         "dispatched": len(result.dispatched),
+        # How many DISTINCT elements those requests are about, which is not the same number and
+        # is the one a screen must show. The same markup on ten pages — a site header, a footer
+        # link — is one thing to judge: it hashes identically, one verdict answers all ten, and
+        # the judge is right to record 81 verdicts for 144 requests. Counting requests against
+        # verdicts made a complete run read as two-thirds done, which is this capability's own
+        # worst failure told about itself.
+        "distinct": len({r.content_hash for r in result.dispatched}),
         "from_cache": len(result.from_cache),
         "deferred": len(result.deferred),
         "reason": result.unavailable_reason,

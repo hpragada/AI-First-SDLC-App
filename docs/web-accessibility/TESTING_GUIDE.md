@@ -648,16 +648,38 @@ the stage because what you need to know changes with it:
 | Stage | The three tiles |
 |---|---|
 | Visiting pages | **Pass** *k of m* · **Pages visited** *n of m asked for* · **Would not open** *n* |
-| Checking what was found | **Elements judged** *n of m dispatched* · **Pages visited** · **Would not open** |
+| Checking what was found | **Elements judged** *n of m* · **Pages visited** · **Would not open** |
+| Complete | **Pages reported** *n of m asked* · **Problems open** *n, c critical · h high* · **Waiting on a person** *n* |
+| Could not run | the machine's own reason, in its own words |
+
+✅ **It does not disappear when the audit finishes — it changes what it says.** The team's first
+complete run met the old behaviour: the panel they had been watching vanished at the moment the
+answer arrived. A complete audit also shows the never-opened banner, if any page was asked for
+and never reported, and a way through to the review queue if anything is waiting on a person.
 
 Every number is derived from rows the platform was already writing, so nothing new is recorded to
 be able to say this. A page that **would not open** is counted as visited-and-known, not as
 progress still to come — it is a result.
 
+⚠️ **Two of these are counted more carefully than they look, and both were wrong first.**
+
+*Elements judged* counts **distinct elements**, not requests. An audit sends one request per
+(element, check) slot, and ten Meridian pages are **144 slots but only 81 distinct elements** —
+the header, the footer and the nav are the same markup everywhere, they hash identically, and one
+verdict answers all ten. Counting verdicts against slots made a complete run read *81 of 144*.
+
+*Problems open* is **this project's** current standing, not this audit's tally, and the tile says
+so. A finding carries no audit key — a baseline audit deliberately manufactures no `Run` for its
+`last_seen_run` to point at — so counting per audit reported **0 problems on an audit that found
+three**. It is also the right scope: the Accessibility baseline is itself project-scoped, so an
+audit covering part of an application never drops what is known about the rest.
+
 ⚠️ **Until 21 August there was no such panel**, and the only thing on screen while an audit ran was
 a status word — in a 320px rail, below seventy-nine page rows. The team's first live run spent
-forty minutes on *Checking what was found* with no way to see that the judge was at 81 of 144, or
-that it had stopped. Item **#22 in §9**. ⚠️ **The design's live per-page console is still not
+forty minutes on *Checking what was found* with no way to see how far the judge had got, or that
+it had stopped. Item **#22 in §9**. ⚠️ **And in its first version the panel disappeared when the
+audit finished**, so the answer vanished at the moment it arrived; it now stays and reports what
+the audit came to. ⚠️ **The design's live per-page console is still not
 built** — the companion posts one screen per call and says nothing between them, so there is no
 progress channel for it to read. What it would take is written down in
 `GAP_FIX_BUILD_PLAN.md` §9.2 rather than left as an assumption.
@@ -1270,13 +1292,13 @@ database.**
 320px rail that never collapsed, below seventy-nine page rows. An audit that had visited six of ten
 pages and one that had visited none looked identical.
 
-**Was, half two:** when the engine's session ended mid-judgment, the workflow returned at its
-failure branch **before** the step that does the judge's accounting. So the 63 elements it never
-answered were recorded nowhere, no report was published, and the audit read *Checking what was
-found* permanently.
+**Was, half two:** when a run reports failure, the workflow returns at its failure branch
+**before** the step that does the judge's accounting. So nothing it had left unanswered was
+recorded, no report was published, and the audit read *Checking what was found* permanently.
 
-**Now:** the panel's three tiles are built, including **Elements judged, n of m dispatched** — the
-number that could not be seen at all. And a judging run that dies closes its own pass: everything
+**Now:** the panel's three tiles are built, including **Elements judged** — the number that could
+not be seen at all — and the panel stays after the run ends rather than vanishing at the moment
+the answer arrives. And a judging run that dies closes its own pass: everything
 unanswered is filed for a person, the partial report is published saying it is partial, and the
 audit is completed. That closure sits one line below the keyboard journey's identical one, which had
 been on that path since G6a with the judge's never added beside it.
@@ -1334,12 +1356,16 @@ Meridian Library, 20/21 August, a real browser on a real machine:
 | **Real AI verdicts** | 80 pass, 1 fail — including `<img id="photo-interior" … alt="library">` against 1.1.1 at 0.92 confidence, with the replacement text proposed. **That is a defect no scanner on the market can find**, which is the entire argument for this build, demonstrated once against a real page. |
 | **An audit reaching `complete`** | with its baseline document in Artifacts |
 
-⚠️ **The judging pass has not yet run start to finish.** The one that produced those verdicts was
-cut short when the tester's connection dropped at 81 of 144 elements. What that proved instead is
-that the accounting holds: the 63 it never reached were filed for a person rather than lost. Since
-#22 the audit also closes itself when that happens, which it did not on the day — and since
-**task R1** those 63 can be handed back to the machine with one button instead of being worked
-through by hand (§6 B4, and `GAP_FIX_BUILD_PLAN.md` §9.3).
+✅ **A judging pass, start to finish.** On **21 August** the whole brownfield journey ran end to
+end: 10 of 10 pages visited, none that would not open, **every distinct element judged**, the
+report published and the audit `complete`. 80 pass, 1 fail — the `alt="library"` defect above.
+
+⚠️ **And this corrects what was said about the 20 August run.** It was read as having died at
+"81 of 144" with 63 elements lost. It had not: an audit sends one request per (element, check)
+slot, and those ten pages are **144 slots but 81 distinct elements** — the header and footer are
+the same markup on every page and one verdict answers all ten. The judging had finished; the only
+thing broken that day was that the workflow never closed the audit, which is item #22. Nothing
+was ever lost, and no re-judge was needed.
 
 ### 10.2 What is still unproven 🔬
 
@@ -1351,9 +1377,8 @@ through by hand (§6 B4, and `GAP_FIX_BUILD_PLAN.md` §9.3).
 2. **The keyboard journey.** Eight criteria, one agent, a real browser, a live application. ⚠️ It
    has never opened a page — and until #21 it **could not have**, because four of its tools were
    never exposed to the agent at all. It is the least-proven part of this build by a distance.
-3. **A judging pass that finishes.** 144 elements at the rate we measured is about forty minutes
-   of unbroken connection. The paging, the accounting and the closing step are all now exercised;
-   what has not been seen is all of them in one run that ends normally.
+3. ~~**A judging pass that finishes.**~~ ✅ **Answered on 21 August** — see 10.1. About 27 minutes
+   end to end, all of it on one unbroken connection.
 4. **Two passes over 68 pages.** The pass loop is tested; a 68-page run against a live Express
    app is not. Ten pages is the small case.
 5. **The conformance statement against real evidence.** All 55 criteria have been rendered from
