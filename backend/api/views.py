@@ -662,7 +662,12 @@ class ProjectViewSet(
              # what a finding can actually be attributed to. See `audit_outcome`.
              "outcome": outcome if a is audits[0] else None,
              "unanswered": unanswered.get(str(a.id), 0),
-             "created_at": a.created_at}
+             "created_at": a.created_at,
+             # When the audit last moved, which is NOT `created_at` once a second judging pass
+             # has run over the same capture: a re-judge re-uses the audit row deliberately
+             # (see `rejudge_capture`), so without this the only time on screen was the audit's
+             # own start — an hour older than the work being watched.
+             "updated_at": a.updated_at}
             for a in audits
         ]})
 

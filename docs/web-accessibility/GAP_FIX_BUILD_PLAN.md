@@ -1874,3 +1874,102 @@ deferred. The cap was hit. Both statements were made from a progress number inst
 **Verified:** 29 in `test_a11y_dispatch.py` (3 new: elements-not-slots, the silent all-repeat
 case, and one definition of the remainder), 291 across dispatch + report + baseline, 53 on the
 audit screen (5 new, including a `judging` row that must stay silent), `tsc` and `eslint` clean.
+
+### 9.10 The second pass, described in the first pass's words — 21 August (BUILT)
+
+The last untested path in this section: pressing **Check the rest** on the finished 21 August
+audit. It offered 6 elements, all on `/staff/shelf-audit` — the tail of the capped pass, which
+is where the four broken `#shelf-*` switches live.
+
+**The engine half worked, first time.** 6 asked, 6 answered, four new 1.3.1 failures at 0.97
+confidence, findings 21 → 25, the report re-published in place (25 failures, 0 needing review,
+**and the incompleteness blockquote correctly gone**), the baseline at v2 — 3 criteria across 7
+pages in 25 items. The `Check the rest` path does what it says.
+
+**The screen then described that pass entirely in the previous one's words.** Four claims on one
+screen, all wrong:
+
+> Not everything captured was checked · This run reached its limit before every element was
+> checked — 6 elements were left for a second pass.
+>
+> 6 elements were never looked at … They are waiting on a person in the review queue.
+>
+> \[Check the rest]
+
+…while the tile beside them read **0 waiting on a person**, and the panel above read
+**0 of 126** for a pass that went back for six.
+
+#### One root cause
+
+`rejudge_capture` merged **four** keys onto the pass that had stopped and inherited the rest:
+
+```
+this pass:  dispatched 6 · judge_run_id <new> · filed_unjudged 0 · rejudged true
+inherited:  distinct 126 · deferred 12 · deferred_distinct 6
+            reason "Stopped at this run's limit of 200 — 12 item(s)…"
+```
+
+`_distinct_dispatched` prefers `distinct` → the running tile's denominator was the first pass's
+(**0 of 126**). `unanswered_counts` sums `deferred_distinct` → the badge, the sentence and the
+button all offered 6 elements the pass had just answered. `unaskedNote` reads
+`deferred_distinct` → a pass that hit no limit said it had stopped at one.
+
+The first pass is written with `summary["ai_pass"] = {…result…}` — a **replacement**. The second
+pass was the only place that merged. It now replaces too, keeping only the audit-level facts
+around it (`asked`, `opened`, `names`, `never_reported`), which are facts about the **capture**
+that a second judging pass does not touch. It adds `rejudged_at` and `rejudged_asked`.
+
+#### The button that could not be cleared by using it
+
+Separately, and worse. The badge is a cheap sum of what each pass recorded about itself;
+`unanswered_for_capture` is the authoritative recount from the capture. The two can legitimately
+disagree — an element may since have been answered by another run, or have dropped out of the
+capture — and `unanswered_counts`' own docstring says so. That disagreement was **permanent**:
+the button offered work that did not exist, and pressing it returned early with
+`started: False` **without writing anything**, because only the started path touched the
+summary. So it offered the same work again, for ever.
+
+`_mark_nothing_left` now records the recount — zeroing `filed_unjudged` and `deferred_distinct`,
+clearing the sentence that explained them, and setting `nothing_left`, which `unanswered_counts`
+honours outright (the third input, the judging run's own list of what it never reported, is a
+true record of that run and is not rewritten; the flag is what says it has since been answered).
+This is also what repairs the audit already in that state: pressing the button fixes it.
+
+#### The review queue it never checked
+
+> 6 elements were never looked at … **They are waiting on a person in the review queue.**
+
+Hard-coded copy, checking nothing. An element nothing ever looked at has no finding and
+therefore no queue entry — that is exactly what distinguishes it from an `uncertain`, which a
+check reached and could not decide. The sentence sent a reader to an empty queue to look for
+work that was only ever behind that button. Reworded to say nobody is waiting on them and that
+asking again is the only thing that answers them. **Not a symptom of the above:** it would
+mislead just as badly on an audit whose counts were perfectly correct.
+
+#### Saying that a second pass is a second pass
+
+`rejudged` has been written to the summary since §9.3 and **no screen read it**. So a completed
+audit appeared to vanish and be replaced by a running one, and the panel said *Audit running ·
+Pages visited 12 of 12* for a pass that opens no browser at all. The panel is now "Checking the
+rest of this audit", the badge is "Checking the rest", the two capture tiles are relabelled to
+say they describe the capture, and a line states plainly that no page is visited. The finished
+title and the Past-audits row carry the recheck time — `created_at` still identifies the audit,
+`rejudged_at` says when the numbers under it last changed. `updated_at` is now sent on each
+audit row; it was not exposed at all.
+
+#### Decided, not fixed
+
+**The newest audit is on screen twice** — as the panel and as the first Past-audits row. The
+comment on `latest` claimed Past audits held "every older audit"; the code passed the whole
+list. **Team decision, 21 August: keep the row, fix the comment.** Dropping it would take
+**Check the rest** — which lives on that row — off the only audit anyone presses it on, and a
+history that stops before today is the worse screen.
+
+**Every one of the 25 findings is `critical`, none `high`.** A truthful read of the data: the
+judge really did mark them all critical. Whether a missing `alt` deserves the same severity as a
+broken switch is judge calibration, not a screen defect. Recorded here, not folded into this fix.
+
+**Verified:** 2 new backend tests in `test_a11y_report.py` (a second pass inherits nothing; a
+re-judge that finds nothing left clears the button), **264 across report + baseline**, 5 new on
+the audit screen for 58 total and **114 across the a11y frontend suite**, `tsc`, `eslint` and
+`ruff` clean.

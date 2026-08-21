@@ -25,6 +25,8 @@ it, because half the verdicts are still in flight.
 """
 from __future__ import annotations
 
+from django.utils import timezone
+
 from apps.tenancy.context import tenant_context
 
 from .defects import record_a11y_findings
@@ -433,6 +435,39 @@ def unanswered_for_capture(*, tenant_id, project_id, run_id) -> list[str]:
     return sorted(hashes - answered)
 
 
+def _mark_nothing_left(*, tenant_id, run_id) -> None:
+    """Record on the audit that nothing of this capture is unanswered any more. Never raises.
+
+    Only the counts the screen adds up are touched — `filed_unjudged`, `deferred_distinct` — and
+    a `nothing_left` flag for the third input, the judging run's own list of what it never
+    reported on. That list lives on the `Run` and is a true record of what THAT run did; it is
+    not rewritten here, so the flag is what says "and all of it has since been answered".
+
+    Cleared by the next real pass, which replaces `ai_pass` wholesale rather than merging.
+    """
+    from .models import A11yBaselineAudit
+
+    if not _is_uuid(run_id):
+        return
+    with tenant_context(tenant_id):
+        audit = A11yBaselineAudit.objects.filter(id=str(run_id), tenant_id=tenant_id).first()
+        if audit is None:
+            return
+        summary = dict(audit.summary or {})
+        ai_pass = dict(summary.get("ai_pass") or {})
+        if not ai_pass:
+            return
+        ai_pass.update(filed_unjudged=0, deferred_distinct=0, nothing_left=True)
+        # The stopped-at-the-limit sentence goes with the count it explains. Left behind, a
+        # fully checked audit went on saying it had stopped short.
+        if ai_pass.get("deferred"):
+            ai_pass["deferred"] = 0
+            ai_pass["reason"] = ""
+        summary["ai_pass"] = ai_pass
+        audit.summary = summary
+        audit.save(update_fields=["summary", "updated_at"])
+
+
 def rejudge_capture(*, tenant_id, project_id, run_id, title: str = "",
                     triggered_by=None, trigger=None) -> dict:
     """Ask the machine again about the elements nothing ever looked at (task R1). Never raises.
@@ -455,6 +490,17 @@ def rejudge_capture(*, tenant_id, project_id, run_id, title: str = "",
     unanswered = unanswered_for_capture(
         tenant_id=tenant_id, project_id=project_id, run_id=run_id)
     if not unanswered:
+        # …and RECORD that, rather than only saying it once into a toast.
+        #
+        # The badge and the button are drawn from `unanswered_counts`, which sums what each pass
+        # recorded about itself — a cheap count for a list of fifty audits. THIS is the
+        # authoritative answer, and the two can legitimately disagree: an element counted here
+        # may since have been answered by another run, or have dropped out of the capture
+        # altogether. Without this write the disagreement was permanent — the button offered
+        # work that did not exist, pressing it changed nothing (the summary is only written on
+        # the started path below), and so it offered the same work again for ever. A control
+        # that cannot be cleared by using it is worse than no control.
+        _mark_nothing_left(tenant_id=tenant_id, run_id=run_id)
         return {"started": False, "asked": 0,
                 "reason": "every element of this check has been looked at"}
     out = start_ai_pass(
@@ -481,15 +527,31 @@ def rejudge_capture(*, tenant_id, project_id, run_id, title: str = "",
                 # pointing at the old run, a second re-judge would offer up elements this pass
                 # had already answered.
                 summary = dict(audit.summary or {})
-                summary["ai_pass"] = {**(summary.get("ai_pass") or {}),
-                                      "judge_run_id": out["judge_run_id"],
-                                      "dispatched": out.get("dispatched", 0),
-                                      # …and the new pass's OWN filed count replaces the old
-                                      # one, which the button's arithmetic adds. Carried over,
-                                      # elements this pass has just answered would go on being
-                                      # counted as never looked at.
-                                      "filed_unjudged": out.get("filed_unjudged", 0),
-                                      "rejudged": True}
+                # REPLACED, never merged onto the pass that stopped — the same thing
+                # `baseline` does when the first pass is recorded, and for a sharper reason
+                # here. Merging four keys over the old dict left `distinct`, `deferred`,
+                # `deferred_distinct` and `reason` describing the pass that gave up, and every
+                # screen that reads them then described THIS pass in the last one's words: a
+                # re-judge of 6 elements reported "0 of 126"; a pass that hit no limit said it
+                # had stopped at one; and the stale `deferred_distinct` kept the "check the
+                # rest" button on an audit with nothing left, offering 6 elements it had just
+                # answered. (What made that last one permanent is separate and fixed in
+                # `_mark_nothing_left`: pressing the button then wrote nothing at all.)
+                # `out` is `start_ai_pass`'s return, so this is the new pass's whole account of
+                # itself. Only the audit-level facts around it (`asked`, `opened`, `names`,
+                # `never_reported`) survive, and they are facts about the CAPTURE, which a
+                # second judging pass does not touch.
+                summary["ai_pass"] = {
+                    **{k: v for k, v in out.items() if k not in ("report", "asked")},
+                    "rejudged": True,
+                    # When THIS pass started, so a screen showing a re-judge is not left with
+                    # only the audit's own start time — an hour older than the work on screen.
+                    "rejudged_at": timezone.now().isoformat(),
+                    # …and how many elements it went back for. Named separately from
+                    # `dispatched` because they differ whenever an element is answered from
+                    # cache, and this is the number the button promised out loud.
+                    "rejudged_asked": len(unanswered),
+                }
                 audit.summary = summary
                 audit.status = A11yBaselineAudit.Status.JUDGING
                 audit.save(update_fields=["summary", "status", "updated_at"])

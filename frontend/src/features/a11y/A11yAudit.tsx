@@ -104,6 +104,31 @@ function unaskedNote(audit: A11yAuditRow): string {
   return (pass.filed_unjudged ?? 0) > 0 ? pass.reason ?? "" : "";
 }
 
+/** Is what this audit is doing (or last did) a SECOND judging pass over the same capture?
+ *
+ * "Check the rest" deliberately re-uses the audit row rather than opening a second audit — it
+ * visits no page and re-judges one stored capture, so a second audit would be a lie about what
+ * happened. But nothing on screen read the flag, so the completed audit a person was looking at
+ * appeared to vanish and be replaced by a running one, and the running panel said "Audit
+ * running · Pages visited 12 of 12" for a pass that opens no browser at all.
+ */
+function isRejudge(audit: A11yAuditRow): boolean {
+  return Boolean(audit.summary?.ai_pass?.rejudged);
+}
+
+/** When the work now on screen actually started. The audit's own `created_at` is the FIRST
+ *  pass's, and putting it beside a second pass dates the screen an hour early. */
+function passStartedAt(audit: A11yAuditRow): string {
+  return audit.summary?.ai_pass?.rejudged_at || audit.updated_at || audit.created_at;
+}
+
+/** The status word, in the words of the pass actually running. `judging` on a re-judge is not
+ *  "Checking what was found" — everything was found an hour ago; this is checking the rest. */
+function statusLabel(audit: A11yAuditRow): string {
+  if (audit.status === "judging" && isRejudge(audit)) return "Checking the rest";
+  return STATUS_LABEL[audit.status] ?? audit.status;
+}
+
 function auditBadge(status: string): "done" | "failed" | "waiting" {
   if (status === "complete") return "done";
   if (status === "failed") return "failed";
@@ -900,7 +925,7 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
   const asked = audit.summary?.asked ?? audit.routes.length;
   const badge = (
     <Badge variant={auditBadge(audit.status)}>
-      {STATUS_LABEL[audit.status] ?? audit.status}
+      {statusLabel(audit)}
     </Badge>
   );
 
@@ -908,9 +933,20 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
     const outcome = audit.outcome ?? { problems: 0, critical: 0, high: 0, waiting: 0 };
     const neverOpened = audit.summary?.never_reported ?? [];
     const failed = audit.status === "failed";
+    // `created_at` is when the AUDIT began, and it identifies the audit — but on one that has
+    // since had a second judging pass it is the wrong time to sit above numbers that changed an
+    // hour later. Both are said, in that order, so the row is still recognisable as the audit
+    // it is.
+    const rechecked = isRejudge(audit) ? when(passStartedAt(audit)) : "";
     return (
       <Panel
-        title={failed ? "Audit could not run" : `Audit complete · ${when(audit.created_at)}`}
+        title={
+          failed
+            ? "Audit could not run"
+            : rechecked
+              ? `Audit complete · ${when(audit.created_at)}, rechecked ${rechecked}`
+              : `Audit complete · ${when(audit.created_at)}`
+        }
         actions={badge}
       >
         {failed ? (
@@ -1044,8 +1080,26 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
   // counting verdicts against requests made a finished audit read as two-thirds done.
   const dispatched = progress.dispatched ?? 0;
 
+  // A re-judge opens no browser and visits no page: the two capture tiles below are true about
+  // the CAPTURE and would read as work happening now. Said once, plainly, rather than left to
+  // be inferred from tiles that have not moved.
+  const rejudging = isRejudge(audit);
+
   return (
-    <Panel title="Audit running" actions={badge}>
+    <Panel
+      title={rejudging ? "Checking the rest of this audit" : "Audit running"}
+      actions={badge}
+    >
+      {rejudging && (
+        <p className="t-sm u-body" style={{ marginBottom: "var(--space-4)" }}>
+          Started {when(passStartedAt(audit))}, going back over{" "}
+          <strong>
+            {audit.summary?.ai_pass?.rejudged_asked ?? 0} element(s)
+          </strong>{" "}
+          that nothing had looked at. No page is visited — everything needed was stored when the
+          pages were captured, so the two counts below are what that capture found.
+        </p>
+      )}
       <div className="grid grid--3" style={{ marginBottom: "var(--space-4)" }}>
         {judging ? (
           <div className="tile">
@@ -1068,17 +1122,22 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
         )}
         <div className="tile">
           <div className="tile__num">{progress.visited}</div>
-          <div className="tile__label">Pages visited</div>
-          <div className="tile__sub">of {asked} asked for</div>
+          <div className="tile__label">{rejudging ? "Pages in the capture" : "Pages visited"}</div>
+          <div className="tile__sub">
+            {rejudging ? "visited when the audit ran" : `of ${asked} asked for`}
+          </div>
         </div>
         <div className="tile">
           <div className="tile__num">{progress.unreachable}</div>
           <div className="tile__label">Would not open</div>
-          <div className="tile__sub">recorded, never guessed</div>
+          <div className="tile__sub">
+            {rejudging ? "when the audit ran" : "recorded, never guessed"}
+          </div>
         </div>
       </div>
       <p className="t-sm u-muted">
-        You can leave this page. The audit carries on and the result appears under Past audits.
+        You can leave this page. {rejudging ? "This carries on" : "The audit carries on"} and the
+        result appears under Past audits.
       </p>
     </Panel>
   );
@@ -1114,9 +1173,17 @@ function PastAudits({
                 {audit.summary?.asked ?? audit.routes.length} asked for ·{" "}
                 {audit.summary?.opened ?? 0} reported
               </div>
+              {/* A re-judge re-uses this row rather than adding one, so without this line the
+                  row dates itself an hour early and a person who just pressed Check the rest
+                  sees only the original audit's time above a badge that says it is running. */}
+              {isRejudge(audit) && (
+                <div className="artifact-row__meta">
+                  Rechecked {when(passStartedAt(audit))}
+                </div>
+              )}
               <div className="u-row" style={{ marginTop: 6 }}>
                 <Badge variant={auditBadge(audit.status)}>
-                  {STATUS_LABEL[audit.status] ?? audit.status}
+                  {statusLabel(audit)}
                 </Badge>
                 {(audit.summary?.never_reported?.length ?? 0) > 0 && (
                   <Badge variant="outline" dot={false}>
@@ -1152,12 +1219,20 @@ function PastAudits({
                   no number is a promise of unknown size. */}
               {(audit.unanswered ?? 0) > 0 && (
                 <div style={{ marginTop: "var(--space-3)" }}>
+                  {/* It does NOT say these are waiting in the review queue, and that sentence
+                      was here until the first re-judge put it next to a "0 waiting on a person"
+                      tile on the same screen. An element nothing ever looked at has no finding
+                      and therefore no queue entry — that is exactly what distinguishes it from
+                      an `uncertain`, which a check reached and could not decide. The old copy
+                      sent a reader to an empty queue to look for work that was only ever here,
+                      behind this button. */}
                   <p className="t-sm u-muted">
                     {audit.unanswered === 1
                       ? "1 element was never looked at"
                       : `${audit.unanswered} elements were never looked at`}
-                    {" — not checked and undecided, but never checked at all. They are waiting on"}
-                    {" a person in the review queue."}
+                    {" — not checked and undecided, but never checked at all. Nothing here says"}
+                    {" whether they are accessible, and nobody is waiting on them: asking again"}
+                    {" is the only thing that answers them."}
                   </p>
                   <div className="u-row" style={{ marginTop: 6 }}>
                     <Button
@@ -1222,8 +1297,13 @@ export function A11yAudit() {
   const remove = useDeleteA11yRoute(projectId);
   // The newest audit, whatever state it is in. Deliberately not "the one in flight": the panel
   // stays after the run ends and shows what it came to, because the moment the answer arrives is
-  // the worst possible moment for the panel somebody was watching to disappear. The list is
-  // newest-first; every older audit is a row under Past audits.
+  // the worst possible moment for the panel somebody was watching to disappear.
+  //
+  // The list is newest-first, and Past audits below is the WHOLE history — this one included,
+  // not just the older ones. So the newest audit is on screen twice: in detail here, and as a
+  // row down there. That is deliberate (team decision, 21 August): the row is where "Check the
+  // rest" lives, and moving it up here to remove the repetition would take the button off the
+  // only audit anybody presses it on. A history that stops before today is the worse screen.
   const latest = (audits.data?.audits ?? [])[0];
 
   // `!projectId` counts as loading, and that is not defensive tidying. The query is disabled

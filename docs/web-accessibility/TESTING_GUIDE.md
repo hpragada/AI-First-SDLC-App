@@ -1559,6 +1559,52 @@ been, reading `dispatched: 126` as the whole story. That 126 is the de-duplicate
 the 200 that were taken — 212 went in, 12 were deferred, the cap was hit. Both claims came from
 reading a progress number instead of the four-line function that applies the cap.
 
+### #33 — The second pass was described in the first pass's words ⭐ ✅
+
+Found by the team pressing **Check the rest** on the finished 21 August audit — the last path in
+this capability that had never been exercised.
+
+**The check itself worked, first time.** It went back for the 6 elements nothing had looked at,
+all on `/staff/shelf-audit`, and answered all six: **four new failures**, the broken
+`#shelf-fiction` / `-childrens` / `-local` / `-reference` switches, WCAG 1.3.1 at 0.97. Findings
+went 21 → 25, the report was re-published with its incompleteness warning correctly **gone**, and
+the baseline reached v2 — 3 criteria across 7 pages in 25 items.
+
+**Then the screen described that pass entirely in the previous one's words.** Four claims on one
+screen: *"this run reached its limit … 6 elements were left"* (it hit no limit and left none),
+*"6 elements were never looked at"* (they had just been looked at), a **Check the rest** button
+offering those same six, and a progress tile reading **0 of 126** for a pass that went back for
+six. Underneath, one cause: a second pass wrote four keys onto the stopped pass's record and
+inherited everything else. It now replaces that record wholesale, exactly as the first pass does,
+keeping only the facts about the capture — which a second judging pass does not touch.
+
+**A button that could not be cleared by using it.** The badge is a cheap sum of what each pass
+recorded about itself; the re-judge recomputes the real list from the capture. When they
+disagreed — as they legitimately can — pressing the button returned "every element has been
+looked at" and **wrote nothing**, so it offered the same phantom work again for ever. The
+recount is now recorded, which also means pressing the button is what repairs an audit already
+stuck in that state.
+
+**A sentence that sent people to an empty queue.** *"They are waiting on a person in the review
+queue"* was hard-coded and checked nothing — printed three inches under a tile reading **0
+waiting on a person**. An element nothing ever looked at has no finding and so no queue entry;
+that is precisely what makes it different from one a check reached and could not decide. It now
+says nobody is waiting on them and that asking again is the only thing that answers them.
+
+**And a second pass now says it is one.** The flag saying so had been recorded since the feature
+was built and no screen read it — so a completed audit appeared to vanish and be replaced by a
+running one, and the panel claimed *Pages visited 12 of 12* for a pass that opens no browser.
+
+**How to check it:** finish an audit that left something unchecked, press **Check the rest**. The
+panel should read *Checking the rest of this audit*, say plainly that no page is visited, and
+count against the number it went back for — not the original audit's. When it finishes, the
+warning banner, the "never looked at" line and the button should all be **gone**, and the title
+should carry both times: when the audit ran, and when it was rechecked. Press **Check the rest**
+on an audit with nothing left and the button must disappear rather than sit there.
+
+**Recorded, not fixed:** every one of the 25 findings is `critical` and none is `high`. That is
+what the judge actually decided — a calibration question, not a screen defect.
+
 ---
 
 ## 10. What has run live, what has not, and what I am least sure about

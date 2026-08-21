@@ -1253,3 +1253,120 @@ def test_a_pass_that_reached_everything_still_counts_nothing(world):
                                "deferred_distinct": 0}}
 
     assert unanswered_counts(world["t"], [_Audit()])[_Audit.id] == 0
+
+
+def test_a_second_pass_never_describes_itself_in_the_first_ones_words(world):
+    """The 21 August live failure, pinned.
+
+    A re-judge merged four keys onto the pass that stopped and inherited everything else, so
+    `distinct`, `deferred`, `deferred_distinct` and `reason` went on describing the run that
+    gave up. Every screen reading them then described THIS pass in the last one's words: a
+    re-judge of six elements reported "0 of 126"; a pass that hit no limit said it had stopped
+    at one; and the stale `deferred_distinct` kept the Check-the-rest button on an audit with
+    nothing left, offering elements it had just answered.
+
+    Asserted on the fields rather than on any sentence, because the sentence is the symptom.
+    """
+    from apps.a11y import judge as judge_mod
+    from apps.a11y.aipass import _remember_source_run, rejudge_capture, start_ai_pass
+    from apps.a11y.models import A11yBaselineAudit
+
+    audit = A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"], routes=["/checkout"],
+        status=A11yBaselineAudit.Status.COMPLETE)
+    _ingest(world)
+    A11yCandidateBundle.objects.filter(
+        tenant=world["tenant"], run_key=world["run_id"]).update(run_key=str(audit.id))
+    first = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id),
+                          trigger=FakeTrigger(world), triggered_by=str(world["user"].id))
+    _remember_source_run(world["t"], first["judge_run_id"], str(audit.id))
+    # A first pass that stopped at its own limit, written exactly as the dispatcher writes it,
+    # plus the audit-level facts that belong to the CAPTURE and must survive.
+    audit.summary = {
+        "asked": 12, "opened": 12, "never_reported": [],
+        "ai_pass": {"judge_run_id": first["judge_run_id"],
+                    "dispatched": 200, "distinct": 126,
+                    "deferred": 12, "deferred_distinct": 6,
+                    "filed_unjudged": 0,
+                    "reason": "Stopped at this run's limit of 200 — 12 item(s) still need "
+                              "judging. Run the check again to continue from here."},
+    }
+    audit.save(update_fields=["summary"])
+    with pytest.raises(WriteCompletenessError):
+        judge_mod.verify_judgment_completeness(tenant_id=world["t"],
+                                               run_id=first["judge_run_id"])
+
+    out = rejudge_capture(tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id),
+                          trigger=FakeTrigger(world), triggered_by=str(world["user"].id))
+    assert out["started"] is True
+    audit.refresh_from_db()
+    second = audit.summary["ai_pass"]
+
+    # Nothing of the pass that stopped survives into the account of the one that ran.
+    assert 0 < second["distinct"] <= out["asked"], (
+        "the denominator on the running panel is THIS pass's element count, not the last one's"
+    )
+    assert second["deferred"] == 0
+    assert second["deferred_distinct"] == 0
+    assert not second["reason"], "the stopped-at-the-limit sentence belonged to the first pass"
+    assert second["dispatched"] != 200
+
+    # It says what it is, and when — the screen has no other way to tell a second pass from an
+    # audit that has started over, and the audit's own `created_at` is the first pass's.
+    assert second["rejudged"] is True
+    assert second["rejudged_at"]
+    assert second["rejudged_asked"] == out["asked"] > 0
+
+    # And the facts about the CAPTURE are untouched: a second judging pass visits no page.
+    assert audit.summary["asked"] == 12
+    assert audit.summary["opened"] == 12
+
+
+def test_asking_again_and_finding_nothing_left_takes_the_button_away(world):
+    """A control that cannot be cleared by using it is worse than no control.
+
+    The screen's count is a cheap sum of what each pass recorded about itself; the re-judge
+    recomputes the real set from the capture. They can legitimately disagree — an element may
+    since have been answered by another run, or have dropped out of the capture. Before this,
+    that disagreement was permanent: the button offered work that did not exist, pressing it
+    wrote nothing (only the started path touched the summary), so it offered the same work
+    again for ever.
+    """
+    from apps.a11y.aipass import rejudge_capture, unanswered_for_capture
+    from apps.a11y.models import A11yBaselineAudit
+
+    audit = A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"], routes=["/checkout"],
+        status=A11yBaselineAudit.Status.COMPLETE)
+    _ingest(world)
+    A11yCandidateBundle.objects.filter(
+        tenant=world["tenant"], run_key=world["run_id"]).update(run_key=str(audit.id))
+    # Everything in the capture already has a verdict, so there is genuinely nothing to ask.
+    for request in requests_for(world["t"], world["p"], str(audit.id)):
+        record_verdict(
+            tenant_id=world["t"], project_id=world["p"], run_id=None,
+            content_hash=request.content_hash,
+            judgment=A11yJudgment(verdict=A11Y_PASS, criteria=["1.1.1"], confidence=0.9,
+                                  evidence="answered", suggested_fix=""))
+    # …but the audit's own summary still says six were left behind, which is what the badge and
+    # the button read.
+    audit.summary = {"ai_pass": {"filed_unjudged": 0, "deferred": 12, "deferred_distinct": 6,
+                                 "reason": "Stopped at this run's limit of 200."}}
+    audit.save(update_fields=["summary"])
+    assert unanswered_counts(world["t"], [audit])[str(audit.id)] == 6
+    assert unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id)) == []
+
+    out = rejudge_capture(tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id),
+                          trigger=FakeTrigger(world), triggered_by=str(world["user"].id))
+    assert out["started"] is False
+    assert "every element" in out["reason"]
+
+    audit.refresh_from_db()
+    assert audit.summary["ai_pass"]["nothing_left"] is True
+    assert unanswered_counts(world["t"], [audit])[str(audit.id)] == 0, (
+        "pressing the button has to be able to make it go away"
+    )
+    assert not audit.summary["ai_pass"]["reason"], (
+        "and the sentence explaining the count goes with the count"
+    )

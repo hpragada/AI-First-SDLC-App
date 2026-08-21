@@ -516,6 +516,135 @@ describe("S-38 pages and audit", () => {
     expect(screen.getAllByText(/none is connected/).length).toBeGreaterThan(0);
   });
 
+  // ── a SECOND judging pass over one capture ("check the rest") ─────────────────────────────
+  //
+  // The 21 August live failure. A re-judge deliberately re-uses the audit row rather than
+  // opening a second audit — it visits no page and re-judges one stored capture — but nothing
+  // on screen read the flag that says so. The completed audit a person was watching appeared to
+  // vanish and be replaced by a running one, the panel said "Audit running · Pages visited 12 of
+  // 12" for a pass that opens no browser, and every count and sentence beside it belonged to the
+  // pass that had stopped an hour earlier.
+
+  it("names a second pass as one instead of calling it a fresh audit", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        ...judgingAudit({
+          dispatched: 6, distinct: 6, deferred: 0, deferred_distinct: 0, filed_unjudged: 0,
+          rejudged: true, rejudged_at: "2026-08-21T15:27:00Z", rejudged_asked: 6,
+        }),
+        progress: { visited: 12, unreachable: 0, judged: 0, dispatched: 6 },
+        updated_at: "2026-08-21T15:27:00Z",
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("Checking the rest of this audit");
+    expect(screen.queryByText("Audit running")).toBeNull();
+    // The badge too — "Checking what was found" is what the FIRST pass does.
+    expect(screen.getAllByText("Checking the rest").length).toBeGreaterThan(0);
+    // And it does not claim pages are being visited, because none are.
+    expect(screen.queryByText("Pages visited")).toBeNull();
+    expect(screen.getAllByText(/No page is visited/).length).toBeGreaterThan(0);
+  });
+
+  it("counts this pass's elements, not the one that stopped", async () => {
+    // The tile read "0 of 126" on a pass that went back for six, because the denominator was
+    // the previous pass's `distinct`. The API now sends this pass's own numbers; this pins that
+    // the screen shows the denominator it is given rather than any remembered one.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        ...judgingAudit({
+          dispatched: 6, distinct: 6, deferred: 0, deferred_distinct: 0,
+          rejudged: true, rejudged_at: "2026-08-21T15:27:00Z", rejudged_asked: 6,
+        }),
+        progress: { visited: 12, unreachable: 0, judged: 2, dispatched: 6 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("Checking the rest of this audit");
+    expect(screen.getByText("Elements judged")).toBeTruthy();
+    expect(screen.getAllByText(/of 6/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/of 126/)).toBeNull();
+  });
+
+  it("dates a rechecked audit by the recheck, not only by when it first ran", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        ...judgingAudit({
+          dispatched: 6, distinct: 6, deferred: 0, deferred_distinct: 0, filed_unjudged: 0,
+          rejudged: true, rejudged_at: "2026-08-21T15:27:00Z", rejudged_asked: 6,
+        }),
+        status: "complete",
+        outcome: { problems: 25, critical: 25, high: 0, waiting: 0 },
+        updated_at: "2026-08-21T15:27:00Z",
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    // Both times, in that order: `created_at` still identifies the audit, and the recheck says
+    // when the numbers underneath last changed.
+    expect(await screen.findByText(/Audit complete .*rechecked/)).toBeTruthy();
+    // …and the row under Past audits says it too, rather than dating itself an hour early.
+    expect(screen.getAllByText(/^Rechecked /).length).toBeGreaterThan(0);
+  });
+
+  it("a finished second pass that left nothing says nothing was left", async () => {
+    // The screenshot the team sent: a complete re-judge that answered all six still showed
+    // "Not everything captured was checked — 6 elements were left for a second pass", because
+    // the stale `deferred_distinct` had been carried over. With the pass's own numbers there is
+    // nothing to say, and saying nothing is the correct output.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        ...judgingAudit({
+          dispatched: 6, distinct: 6, deferred: 0, deferred_distinct: 0, filed_unjudged: 0,
+          reason: "", rejudged: true, rejudged_at: "2026-08-21T15:27:00Z", rejudged_asked: 6,
+        }),
+        status: "complete",
+        unanswered: 0,
+        outcome: { problems: 25, critical: 25, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText(/Audit complete/)).toBeTruthy();
+    expect(screen.queryByText("Not everything captured was checked")).toBeNull();
+    expect(screen.queryByText(/left for a second pass/)).toBeNull();
+    expect(screen.queryByText(/never looked at/)).toBeNull();
+    expect(screen.queryByText("Check the rest")).toBeNull();
+  });
+
+  it("never sends anyone to the review queue for something no check ever reached", async () => {
+    // The contradiction the team read off one screen: "0 waiting on a person" in a tile, and
+    // "they are waiting on a person in the review queue" three inches below it. An element
+    // nothing ever looked at has no finding and therefore no queue entry — that is exactly what
+    // distinguishes it from an `uncertain`, which a check reached and could not decide.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        ...judgingAudit({ deferred: 12, deferred_distinct: 6, dispatched: 200, distinct: 126 }),
+        status: "complete",
+        unanswered: 6,
+        outcome: { problems: 25, critical: 25, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText(/6 elements were never looked at/)).toBeTruthy();
+    expect(screen.queryByText(/waiting on a person in the review queue/)).toBeNull();
+    expect(screen.getAllByText(/asking again is the only thing that answers them/).length)
+      .toBeGreaterThan(0);
+  });
+
   it("an abandoned audit that has been closed shows the machine's own reason", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...authed(),

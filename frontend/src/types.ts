@@ -1013,6 +1013,22 @@ export interface A11yAudit {
       // machine connected. Tells that case apart from the cap case WITHOUT matching on the
       // wording of `reason`, which would break the moment somebody improved a sentence.
       filed_unjudged?: number;
+      // A SECOND judging pass over the same capture ("check the rest"), not the audit's first.
+      // Written by `rejudge_capture`, which re-uses the audit row rather than opening a second
+      // audit — so without this a completed audit appears to vanish and be replaced by a
+      // running one, with nothing on screen explaining why.
+      rejudged?: boolean;
+      // When that second pass started. The audit's own `created_at` is the first pass's, and on
+      // a re-judge it is the wrong time to put next to work that is happening now.
+      rejudged_at?: string;
+      // How many elements that second pass went back for. Not `dispatched` — they differ
+      // whenever an element is answered from cache — and this is the number the button
+      // promised out loud before it was pressed.
+      rejudged_asked?: number;
+      // A re-judge went looking and found nothing of this capture unanswered. Settles the
+      // count outright: the other fields are what each pass recorded about ITSELF at the time,
+      // and this is the authoritative recount from the capture.
+      nothing_left?: boolean;
     };
     // Whether the browser answered when the capture asked what each element is called. A whole
     // capture with no names is a broken toolchain, and it hides: every element still arrives,
@@ -1049,6 +1065,9 @@ export interface A11yAudit {
   // newest audit, because that is the only one the panel shows.
   outcome?: { problems: number; critical: number; high: number; waiting: number } | null;
   created_at: string;
+  // When the audit last moved. Equal to `created_at` for an audit that ran once; later than it
+  // once a second judging pass has run over the same capture.
+  updated_at?: string;
 }
 
 export interface A11yPolicy {

@@ -736,6 +736,14 @@ def unanswered_counts(tenant_id, audits) -> dict:
     judge_runs: dict[str, str] = {}
     for audit in audits:
         ai_pass = (audit.summary or {}).get("ai_pass") or {}
+        # A re-judge that went looking and found nothing left says so here, and it settles the
+        # question outright. The three counts below are what each pass recorded ABOUT ITSELF at
+        # the time; this is the authoritative recount, made by the one caller that reads the
+        # capture back. Without it a "check the rest" that came up empty changed nothing, so the
+        # badge went on offering the same elements it had just confirmed were answered.
+        if ai_pass.get("nothing_left"):
+            out[str(audit.id)] = 0
+            continue
         filed = ai_pass.get("filed_unjudged")
         # `deferred_distinct`, never `deferred`: the raw number is request slots, and the tail of
         # a capped pass is usually markup already dispatched earlier in the same run. An audit
