@@ -17,7 +17,7 @@
         <p class="page-head__sub">
           The third tab on the Accessibility destination (gaps B1, B2, B4, B5). Before it, there
           was no screen at all: the pages had to be registered over raw HTTP and the scan run from
-          a terminal. <strong>Built in tasks 8a, 8b and G6a–G6c, and revised 20 Aug</strong> (read-only state for anyone but QA&nbsp;Lead / Tech&nbsp;Lead / Admin; a <em>Waiting for a machine</em> badge on a journey nothing has claimed; what the machine needs, said before the button; and a failed load said as a failure rather than as an empty list) — every state below is as
+          a terminal. <strong>Built in tasks 8a, 8b and G6a–G6c, revised twice on 20 Aug</strong> (read-only state for anyone but QA&nbsp;Lead / Tech&nbsp;Lead / Admin; a <em>Waiting for a machine</em> badge on a journey nothing has claimed; what the machine needs, said before the button; and a failed load said as a failure rather than as an empty list; then, after the first live run, the two page-registration dialogs reworded after the team read them back to us wrongly — the import dialog named after its button, both accepted paste formats shown, and the single-page form no longer reading as pattern-only) — every state below is as
           built, keyboard journeys included. The journeys panel renders whether or not any pages
           are registered: a journey follows a test case, not the page list.
         </p>
@@ -178,9 +178,20 @@
               <div class="artifact-row__main">
                 <div class="artifact-row__title">11 Aug, 09:40</div>
                 <div class="artifact-row__meta">60 asked for · 58 reported</div>
+                <!-- A finished audit that has elements NOTHING ever looked at offers them back
+                     to the machine (task R1, 21 Aug). Not the review queue's `uncertain`: that
+                     one is a check's real verdict and belongs to a person. Pressing it visits no
+                     page — everything the judge needs was stored at capture time. -->
                 <div class="u-row" style="margin-top:6px">
                   <span class="badge badge--done"><span class="status-dot"></span>Complete</span>
                   <span class="badge badge--orange">2 never opened</span>
+                </div>
+                <p class="t-sm u-muted" style="margin-top:12px">
+                  9 elements were never looked at &mdash; not checked and undecided, but never
+                  checked at all. They are waiting on a person in the review queue.
+                </p>
+                <div class="u-row" style="margin-top:6px">
+                  <button class="btn btn--secondary">Check the rest</button>
                 </div>
               </div>
             </div>
@@ -364,10 +375,10 @@
 
     <!-- ============ Empty · nothing registered yet, add pages (B2) ============ -->
     <div class="state-block">
-      <span class="state-block__label">Empty · no pages registered yet — the add-pages panel (B2, works for any application)</span>
+      <span class="state-block__label">Empty · no pages registered yet — the import panel (B2, works for any application)</span>
 
       <div class="panel">
-        <div class="panel__header"><h2 class="panel__title">Add pages</h2></div>
+        <div class="panel__header"><h2 class="panel__title">Import a list</h2></div>
         <div class="panel__body">
           <div class="banner banner--info">
             <span class="banner__icon">i</span>
@@ -379,27 +390,42 @@
             </div>
           </div>
 
-          <!-- ONE box, not two. The dropped one took a path per line with the name after TWO
-               spaces, and nothing could validate that: the path checker refuses empty paths,
-               full URLs, paths not starting with `/` and line breaks — but not spaces. So a
-               single space instead of two would register `/events/:id Event detail` as a real
-               path, and it would be asked for and reported unreachable on every audit, forever.
-               A typo nobody can see is the worst kind, so the format that cannot carry one is
-               the only one offered. Team decision, 2026-08-19. -->
+          <!-- ONE box, TWO accepted formats. The dropped design took a path per line with the
+               name after TWO spaces, and nothing could validate that: the path checker refuses
+               empty paths, full URLs, paths not starting with `/` and line breaks — but not
+               spaces. So a single space instead of two would register `/events/:id Event detail`
+               as a real path, reported unreachable on every audit forever.
+
+               That killed the name-on-the-line format, NOT one path per line. This mockup read
+               as though JSON were the only thing accepted, and on 2026-08-20 the team quoted it
+               back to us as the requirement — which is how a stale mockup becomes a bug report.
+               A bare path per line is accepted and always should have been (#8, 2026-08-20): a
+               line containing a space is refused by line number, which closes the hole the old
+               format opened.
+
+               The pattern is shown ONLY in the JSON half. Line mode returns bare paths, so
+               there is nowhere to say what `/events/:id` should open; demonstrating one in the
+               line half teaches the single combination the platform cannot honour (#17).
+               Team decision, 2026-08-19; corrected 2026-08-20. -->
           <div class="field" style="margin-top:var(--space-5)">
             <span class="field__label">Your pages</span>
-            <textarea class="textarea" rows="8">[
-  { "path": "/",            "title": "Home" },
-  { "path": "/catalogue",   "title": "Browse the catalogue" },
-  { "path": "/admin/debug", "title": "Internal debug page", "enabled": false },
-  { "path": "/events/:id",  "title": "Event detail", "example": "/events/482" }
-]</textarea>
+            <textarea class="textarea" rows="12">/
+/catalogue
+/about/history
+
+— or a JSON list —
+
+[{"path": "/catalogue", "title": "Browse the catalogue"},
+ {"path": "/events/:id", "example": "/events/482"}]</textarea>
             <span class="field__help">
-              A list of paths — <span class="t-mono">["/", "/catalogue"]</span> — or a list of
-              entries carrying <span class="t-mono">path</span>, with optional
-              <span class="t-mono">title</span>, <span class="t-mono">enabled</span> and
-              <span class="t-mono">example</span>. Anything we cannot read is named back to you,
-              never silently dropped.
+              <strong>Either format works.</strong> One path per line is enough. Paste a JSON list
+              when you also want to give each page a name, say whether it is in scope, or point a
+              pattern at a real page: entries carrying <span class="t-mono">path</span>, with
+              optional <span class="t-mono">title</span>, <span class="t-mono">enabled</span>
+              (or <span class="t-mono">in_scope</span>) and <span class="t-mono">example</span>.
+              A path no browser can open — <span class="t-mono">/events/:id</span> — needs the
+              JSON form, because only it can carry the example page to visit. Anything we cannot
+              read is named back to you, never silently dropped.
             </span>
           </div>
 
@@ -527,10 +553,20 @@
           <div class="field" style="margin-top:var(--space-4)">
             <span class="field__label">Example page</span>
             <input class="input" type="text" placeholder="/events/482">
+            <!-- Leads with the normal case (#18). Read scanning down the form, "Only for a
+                 pattern like /events/:id" describes the DIALOG rather than the field, and on
+                 2026-08-20 two people concluded this form accepted patterns only. Three shapes,
+                 because `normalise_path` never parses patterns — it wants a leading `/` and
+                 checks nothing else, so naming one framework's syntax read as the only one
+                 allowed. -->
             <span class="field__help">
-              Only for a pattern like <span class="t-mono">/events/:id</span>, which no browser
-              can open. The audit visits the example and still records the finding against the
-              pattern.
+              <strong>Leave this empty for a normal page.</strong> It is only needed when the
+              path above cannot be opened in a browser as written — whatever your framework
+              writes them as: <span class="t-mono">/events/:id</span>,
+              <span class="t-mono">/books/[isbn]</span>,
+              <span class="t-mono">/users/{id}/loans</span>. Give one real page that matches —
+              <span class="t-mono">/events/482</span> — and the audit visits that, while still
+              recording what it finds against the pattern above.
             </span>
           </div>
 
@@ -571,8 +607,15 @@
     </div>
 
     <!-- ============ Running · the capture in progress, in passes (B5) ============ -->
+    <!-- BUILD STATUS, 21 Aug 2026 (item #22). The THREE TILES below are built and live, with one
+         difference the live screen makes and this fixture cannot: once the capture is in and the AI
+         half is running, the "Pass" tile becomes "Elements judged — n of m dispatched", because
+         that is what there is to know at that stage. The CONSOLE below is NOT built: screens are
+         posted one per call with no progress channel between them, so there is nothing for it to
+         read. What building it would take is written down in GAP_FIX_BUILD_PLAN.md §9.2 — do not
+         treat it as a design waiting on effort. -->
     <div class="state-block">
-      <span class="state-block__label">Running · capture in progress — 68 pages over two passes (B5)</span>
+      <span class="state-block__label">Running · capture in progress — 68 pages over two passes (B5) · tiles built, console not</span>
 
       <div class="panel">
         <div class="panel__header">
@@ -615,6 +658,15 @@
     </div>
 
     <!-- ============ Complete · what the audit accounted for ============ -->
+    <!-- BUILT, 21 Aug. This is the SAME panel as the running one above, not a second one: it
+         stays on screen when the audit finishes and changes what it says, because the moment the
+         answer arrives is the worst possible moment for the panel somebody has been watching to
+         disappear. Two differences from this fixture, both deliberate: "Problems open" is THIS
+         PROJECT's standing rather than one audit's tally (a finding carries no audit key — a
+         baseline audit manufactures no Run for `last_seen_run` to point at — and the baseline
+         document is project-scoped for the same reason), and its sub-line says so. The three
+         buttons below are not built; the way through to the review queue is, when anything is
+         waiting. -->
     <div class="state-block">
       <span class="state-block__label">Complete · every page asked for is accounted for, including the ones that never opened</span>
 

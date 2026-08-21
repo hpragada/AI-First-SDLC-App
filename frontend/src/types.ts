@@ -703,8 +703,15 @@ export interface OnboardingHub {
   // backend that predates this — still renders the hub rather than blanking it.
   a11y?: {
     routes_registered: number;
+    // FINISHED audits only. A `judging` audit used to count here, and the step then said "1
+    // audit run — open the report from Artifacts" while it was still going: there is no report
+    // until the judging ends, because the baseline is published only when a position has
+    // settled.
     audits_run: number;
-    status: "not_started" | "ready" | "done";
+    // …so an audit still going is carried separately, and the line can say so over the top of
+    // whatever the tick says. Same pairing as the Index code step.
+    running?: boolean;
+    status: "not_started" | "ready" | "running" | "done";
   };
   adopt_types: AdoptType[];
 }
@@ -990,7 +997,53 @@ export interface A11yAudit {
     unreachable?: string[];
     never_reported?: string[];
     reason?: string;
+    // What the AI half did. `reason` here is the DISPATCH's own account — most importantly the
+    // one it gives when it stopped at this run's limit, which is the only record that some
+    // elements were never asked about at all.
+    ai_pass?: {
+      reason?: string;
+      deferred?: number;
+      // Distinct ELEMENTS the cap left unanswered, which is not the same as `deferred` above:
+      // duplicates are not collapsed before the cap, so the tail of a stopped pass is often
+      // markup already judged earlier in the same run.
+      deferred_distinct?: number;
+      dispatched?: number;
+      distinct?: number;
+    };
+    // Whether the browser answered when the capture asked what each element is called. A whole
+    // capture with no names is a broken toolchain, and it hides: every element still arrives,
+    // three checks run perfectly, and the fourth silently never selects anything.
+    names?: { named?: number; nameable?: number; reason?: string };
+    // Closed by the platform because the machine capturing it went away, rather than by a run
+    // that finished and found nothing openable. Same status, entirely different thing to do.
+    abandoned?: boolean;
   };
+  // This audit says it is running, and nothing has been heard from the machine holding it for
+  // a long while. DERIVED on read and never written: a machine switched off for good never
+  // comes back to be swept, and the screen must not be the last thing still claiming the audit
+  // is running.
+  stalled?: boolean;
+  // How far this audit has got RIGHT NOW. Present only while it is still going somewhere —
+  // `summary` above is written when it closes, so until then there was no count of anything
+  // anywhere and a screen could only show the status word. `judged`/`dispatched` appear once
+  // the AI pass has been dispatched, and not before, so "none judged yet" stays distinguishable
+  // from "not that stage".
+  progress?: {
+    visited: number;
+    unreachable: number;
+    judged?: number;
+    dispatched?: number;
+  } | null;
+  // How many elements of this audit NOTHING ever looked at — never dispatched, or dispatched to
+  // a judging run that died before reaching them. Not the same as an 'uncertain' a check
+  // actually reached: that one belongs to a person. Only counted for a closed audit, because
+  // while a pass is running the answer is still changing.
+  unanswered?: number;
+  // What a FINISHED audit came to, for the panel that stays on screen after the run ends.
+  // `waiting` is counted apart from `problems` on purpose: a problem the platform is sure
+  // about and a question it is asking a person are not the same thing. Present only on the
+  // newest audit, because that is the only one the panel shows.
+  outcome?: { problems: number; critical: number; high: number; waiting: number } | null;
   created_at: string;
 }
 

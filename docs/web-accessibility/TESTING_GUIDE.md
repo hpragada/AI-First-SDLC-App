@@ -1,8 +1,8 @@
 # Web Accessibility — What Was Built, Where It Sits In The Journey, and How To Test It
 
-**For the Edvensoft team · 20 August 2026 · branch `web-accessibility-build`**
-**Covers QA‑01 … QA‑24 (31 tasks), the ten gap-fix tasks G1 … G6c, and the fourteen
-user-experience fixes of 20 August (§9)**
+**For the Edvensoft team · 21 August 2026 · branch `web-accessibility-build`**
+**Covers QA‑01 … QA‑24 (31 tasks), the ten gap-fix tasks G1 … G6c, the eighteen
+user-experience fixes of 20 August, and the six of 21 August that the first live run found (§9)**
 
 ---
 
@@ -20,7 +20,8 @@ the source won and the plan was corrected in the same change.
 
 **The walk itself changed the product.** Reading each screen as the person using it turned up
 fifteen things that worked but would not have served them; the team approved fourteen and they
-are built. Every one of them is recorded in §9, and every place in this guide where the behaviour
+are built. **Three more came from the team's own first live run, the same day** — two dialogs they
+read and described back to us wrongly, which is the most reliable signal a screen can give. Every one of them is recorded in §9, and every place in this guide where the behaviour
 changed says what it used to do — so a reader who saw the old screen is not left wondering
 whether they misremembered.
 
@@ -32,17 +33,25 @@ whether they misremembered.
 | 🔬 | Built, and proven by automated tests — **but never once run against a real browser or a real application** |
 | ⚠️ | A limit, a prerequisite, or something that will surprise you |
 
-**The honest caveat, said once, at the front.** No part of the accessibility build has ever run
-live. Not once. Everything below is read from the code and from 1,207 backend tests and 54
-frontend tests — not from watching it work. Where it says *"you will see X"*, that is what the
-code does. That is exactly what this test session is for, and it is why every step below also
-says **what would mean it is broken.**
+**The honest caveat, said once, at the front — and it changed on 20 August.** It used to read
+*"no part of this has ever run live, not once"*. **The brownfield audit has now run live**, against
+Meridian Library on a real browser: pages registered, an audit claimed by a real companion, ten
+pages visited twice, and real AI verdicts recorded — including a defect no scanner can find. What
+that run also did was expose **four defects stacked behind one another**, none of which any test
+could have caught, plus five more the morning after. They are §9 items #19–#24 and they are built.
+
+**What is still unproven is now a much shorter list, and §10 is it:** the greenfield capture, the
+keyboard journey, a complete judging pass end to end, and two capture passes over 68 pages. Where
+this guide says *"you will see X"* for one of those, that is still what the code does rather than
+what anyone has watched — and every step says **what would mean it is broken.**
 
 **§9 is the section to read if you only read one.** Walking this guide turned up fifteen places
 where what was built worked but would not, on reading it as the person using it, have satisfied
 them. **The team reviewed all fifteen on 20 August: fourteen were approved and are now built, and
-the fifteenth — the migrations — the team ran themselves.** §9 is the record: what was wrong, what
-was done, and how it is proven.
+the fifteenth — the migrations — the team ran themselves.** Three more (#16–#18) came from the
+team's first live run later the same day, all of them wording on the two page-registration dialogs;
+**six more (#19–#24) came from that run actually executing**, and those are defects rather than
+wording. §9 is the record: what was wrong, what was done, and how it is proven.
 
 ---
 
@@ -103,8 +112,8 @@ a clean, empty, working one. That was item **#1 in §9**, and while the 32 migra
 it was not hypothetical: it is precisely what the first person to open the feature would have
 been told that morning.
 
-**With the database in place and the fourteen fixes built, there is nothing left between the team
-and a first live run.**
+**With the database in place and the fourteen fixes built, there was nothing left between the team
+and a first live run — and it happened the same evening.** What it found is §9 #19–#24.
 
 ---
 
@@ -276,8 +285,13 @@ to add npm dev-dependencies to the client's own repository in order to look at i
 cd ../meridian-library-web-accessibility && npm install && npm start
 ```
 
-Serves at `http://localhost:4180`. 69 routes in `routes.json`; one (`/health`) is marked out of
-scope, so 68 pages to audit.
+Serves at `http://localhost:4180`. **79 routes** in `routes.json`; one (`/health`) is marked
+out of scope, so **78 pages to audit** — two capture passes.
+
+⚠️ It was 69 until 20 August. The developer's `main` added ten pages (subject index, shelf audit,
+card services, problem report, branch finder and their near-duplicate partners) and moved the
+fixture-checking tools out of the app into `docs/web-accessibility/evaluation/harness/`. If you
+see 69, you are on the old history — see §1.
 
 ⚠️ Its README claims *"Meridian Library conforms to WCAG 2.1 Level AA. Last audited March
 2024."* Treat that as a claim to be tested, not a fact.
@@ -455,7 +469,7 @@ The same three screens as brownfield. They are described once, in §6.
 You point the platform at it and ask *"where does this stand?"*
 
 Meridian Library is a community library site: Node and Express, server-rendered, no JavaScript
-framework, 69 routes.
+framework, 79 routes.
 
 ### B1 — Create the project and reach the hub ✅
 
@@ -491,19 +505,39 @@ the **Pages & audit** tab.
 so it cannot discover its pages. Somebody has to say what they are. Nothing is audited until you
 do, and the empty state says exactly that.
 
-**What you do:** press **Import a list** and paste a list of pages.
+**Which of the two buttons.** **Import a list** if you already have the pages written down
+somewhere — a routes file, a sitemap, a page inventory. **Add a page** if you are building the
+list up by hand. The empty state says this; until 20 August it did not, and the two buttons were
+a choice with nothing to make it on.
+
+**What you do:** press **Import a list** and paste a list of pages. The dialog is titled
+*Import a list* — ⚠️ until 20 August it was titled **"Add pages"**, which is nearly the name of
+the other button, so people believed they had opened the wrong one. Item #16 in §9.
 
 ✅ **One path per line is enough.**
 
 ```
 /
 /catalogue
-/catalogue/:id
+/about/history
 ```
 
 Blank lines are skipped and so are `#` comments. Paste a **JSON** list instead when you also want
 to give each page a name or say whether it is in scope: entries carrying `path`, with optional
 `title`, `enabled` (or `in_scope`), `notes` and `example`.
+
+```json
+[{"path": "/catalogue", "title": "Browse the catalogue"},
+ {"path": "/events/:id", "example": "/events/482"}]
+```
+
+⚠️ **A pattern must go in the JSON form, and only there.** Line mode returns bare paths, so there
+is nowhere to say what `/events/:id` should open; the audit would then request that address
+literally, fail, and report the page unreachable on every run. The placeholder in the box used to
+demonstrate a pattern in the **line** half — teaching the one combination that cannot work — and
+that was fixed on 20 August along with showing both formats side by side. Item #17 in §9.
+
+✅ Meridian has **no** pattern routes, so this does not affect the walkthrough below.
 
 ⚠️ **A line containing a space is refused, by line number**, and that refusal is deliberate. The
 path checker rejects an empty path, a full URL, a path not starting with `/` and a line break —
@@ -521,7 +555,7 @@ clear list of pages. Item #8 in §9.
    `routes`. Paste the value of `routes`.
 2. ✅ **`in_scope` is honoured**, so `/health` — the one route Meridian's author marked out of
    scope — arrives out of scope, and nothing is named back to you as unrecognised. Until 20 August
-   `in_scope` was not a recognised column, all 69 pages were registered in scope, and the confirm
+   `in_scope` was not a recognised column, all of its pages were registered in scope, and the confirm
    screen warned about it (honestly, but as a chore for the reader). Item #14 in §9.
    ⚠️ A *genuinely* unknown column — `inScope` in camelCase, say — is still named back, with the
    sentence that matters: *"If one of them says whether a page is in scope, those pages will be
@@ -533,7 +567,29 @@ clear list of pages. Item #8 in §9.
    platform cannot tell "I removed this page" from "I just fixed a typo" apart, and nobody has to:
    you are shown both and asked which, before anything is written.
 
-**Then, day to day:** **Add a page** adds one, and **Edit** on a row edits that row. Editing a row
+**Then, day to day:** **Add a page** adds one, and **Edit** on a row edits that row.
+
+**What Add a page asks for.** Four controls, and only the first is required:
+
+| Field | Required | What it is for |
+|---|---|---|
+| **Path** | **yes** | any page — `/catalogue`, `/about/history`. A pattern is allowed too. |
+| **Name** | no | makes the report readable; nothing depends on it |
+| **Example page** | no | **only** when the path cannot be opened in a browser as written |
+| **Audit this page** | on by default | whether it is in scope |
+
+⚠️ **This dialog is not "for patterns".** Two people on the team read it that way on 20 August,
+because the Example page help began *"Only for a pattern like `/events/:id`"* — which, read
+scanning down the form, describes the dialog rather than the field. It now begins *"Leave this
+empty for a normal page."* Item #18 in §9.
+
+✅ **Any pattern shape works**, not just `:id`. The platform never parses patterns: `normalise_path`
+wants a leading `/` and nothing else, so `/events/:id`, `/books/[isbn]` and `/users/{id}/loans` are
+all stored exactly as written. The rule is not "must look like `:id`" — it is *"if the path as
+written cannot be opened, give one that can"*, and the field now names three shapes so no single
+framework's syntax reads as the only one allowed.
+
+Editing a row
 is an edit — the ghost-page problem only exists in the pasted list, where there are no
 identities. ⚠️ **Renaming a page does not move its history**: findings are identified by the page
 they were found on, so the problems stay at the old address. The editor says so before it happens.
@@ -585,8 +641,51 @@ Two companions never take the same audit; a companion that *restarts* picks its 
 once the lease passes, but another machine never takes it over — an audit belongs to the machine
 that can reach the running application.
 
+✅ **While it is running, an `Audit running` panel leads the screen** — full width, above the page
+table, and only while something is actually happening. Three tiles, and the middle one changes with
+the stage because what you need to know changes with it:
+
+| Stage | The three tiles |
+|---|---|
+| Visiting pages | **Pass** *k of m* · **Pages visited** *n of m asked for* · **Would not open** *n* |
+| Checking what was found | **Elements judged** *n of m* · **Pages visited** · **Would not open** |
+| Complete | **Pages reported** *n of m asked* · **Problems open** *n, c critical · h high* · **Waiting on a person** *n* |
+| Could not run | the machine's own reason, in its own words |
+
+✅ **It does not disappear when the audit finishes — it changes what it says.** The team's first
+complete run met the old behaviour: the panel they had been watching vanished at the moment the
+answer arrived. A complete audit also shows the never-opened banner, if any page was asked for
+and never reported, and a way through to the review queue if anything is waiting on a person.
+
+Every number is derived from rows the platform was already writing, so nothing new is recorded to
+be able to say this. A page that **would not open** is counted as visited-and-known, not as
+progress still to come — it is a result.
+
+⚠️ **Two of these are counted more carefully than they look, and both were wrong first.**
+
+*Elements judged* counts **distinct elements**, not requests. An audit sends one request per
+(element, check) slot, and ten Meridian pages are **144 slots but only 81 distinct elements** —
+the header, the footer and the nav are the same markup everywhere, they hash identically, and one
+verdict answers all ten. Counting verdicts against slots made a complete run read *81 of 144*.
+
+*Problems open* is **this project's** current standing, not this audit's tally, and the tile says
+so. A finding carries no audit key — a baseline audit deliberately manufactures no `Run` for its
+`last_seen_run` to point at — so counting per audit reported **0 problems on an audit that found
+three**. It is also the right scope: the Accessibility baseline is itself project-scoped, so an
+audit covering part of an application never drops what is known about the rest.
+
+⚠️ **Until 21 August there was no such panel**, and the only thing on screen while an audit ran was
+a status word — in a 320px rail, below seventy-nine page rows. The team's first live run spent
+forty minutes on *Checking what was found* with no way to see how far the judge had got, or that
+it had stopped. Item **#22 in §9**. ⚠️ **And in its first version the panel disappeared when the
+audit finished**, so the answer vanished at the moment it arrived; it now stays and reports what
+the audit came to. ⚠️ **The design's live per-page console is still not
+built** — the companion posts one screen per call and says nothing between them, so there is no
+progress channel for it to read. What it would take is written down in
+`GAP_FIX_BUILD_PLAN.md` §9.2 rather than left as an assumption.
+
 **What you should see, in order, in Past audits** — this panel polls every 5 seconds while
-anything is in flight:
+anything is in flight, and shows the same status the running panel does, in the same words:
 
 | Badge | Means |
 |---|---|
@@ -599,6 +698,25 @@ anything is in flight:
 
 Plus **"N never opened"** when pages were asked for and never reported.
 
+✅ **And, on a finished audit, "N elements were never looked at" with a Check the rest button.**
+
+This is not the review queue's *uncertain*. A check that looked at an element and could not
+decide produced a real verdict, and it is a person's to answer. An element that was **never
+looked at** — because the pass could not start, or because the judging run ended before reaching
+it — is work that did not happen, and the machine can simply be asked again.
+
+**Pressing it visits no page.** Everything the judge needs was stored when the pages were
+captured: the markup, the text around it, the computed styles, the accessible name and the
+screenshot crop. So this is a second pass over one capture, not a second audit — the audit goes
+back to *Checking what was found*, the running panel shows the new pass, and it completes through
+the same closing step. Anything it still cannot answer is filed again, and the report says again
+that the check was incomplete.
+
+⚠️ **It only appears on a finished audit**, and only when there are some. While a pass is running
+the answer is still changing, and re-asking about elements the judge is at that moment working
+through would start a second pass over the same work — the API refuses it by name. Same roles as
+starting an audit, because it spends a real engine run.
+
 **What would mean it is broken:**
 
 | Symptom | What it means |
@@ -608,6 +726,7 @@ Plus **"N never opened"** when pages were asked for and never reported.
 | *Could not run* — "axe-core could not be loaded …" | §3.3 — the scanner is missing from both. The AI half still ran. |
 | A page reported with a load error | That page would not open. The platform records it as never seen and — importantly — will **not** let it resolve any existing finding by absence. |
 | An audit that says *Complete* with 0 reported | Something answered but produced nothing. Check the companion's console. |
+| Stuck on *Checking what was found*, with **Elements judged** not moving | The judging run has stopped. ✅ Since 21 August a judging run that dies **closes its own audit** — it files everything it never answered for human review, publishes the partial report and marks the audit complete, and the report says at the top that the check was incomplete. If it is genuinely stuck instead, the tile is what tells you: the number stops. |
 
 **What it leaves behind:** an **Accessibility baseline** document in Artifacts. One criterion per
 line — twenty findings of 1.4.3 across six pages is one row saying *Level AA, High, 6 pages, 20
@@ -817,12 +936,18 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The fifteen findings, and what was done about each
+## 9. The twenty-four findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
 20 August. Fourteen were approved and all fourteen are built; the fifteenth was the migrations,
-which the team ran the same day.** All fifteen are closed.
+which the team ran the same day.**
+
+**Three more arrived the same day, and they arrived the best possible way: the team read the two
+page-registration dialogs during a live run and told us what they thought each one did.** Both
+readings were wrong, and nothing was broken — the words were. A screen understood backwards by the
+people who commissioned it is not a screen that works, so #16–#18 are wording, and the wording is
+now pinned by tests like any other behaviour. All eighteen are closed.
 
 | # | What was wrong | Status |
 |---|---|---|
@@ -841,6 +966,21 @@ which the team ran the same day.** All fifteen are closed.
 | 13 | `.diagram-frame` was 2.29:1 contrast in our own design system | ✅ fixed |
 | 14 | `in_scope` was not an accepted column, and our own demo app uses it | ✅ fixed |
 | 15 | A role key was shown to the user as a role name | ✅ fixed |
+| 16 | **Import a list** opened a dialog titled "Add pages" — nearly the other button's name | ✅ fixed |
+| 17 | The paste box demonstrated a URL pattern in the one format that cannot carry its example | ✅ fixed |
+| 18 | **Add a page** read as though it accepted patterns only | ✅ fixed |
+| 19 | An audit opened from the screen was born unclaimable, while the screen said *Visiting pages* | ✅ fixed |
+| 20 | The companion died on the audit path, and took the whole machine down with it | ✅ fixed |
+| 21 | **Seven of the judge's tools were never exposed** — it had been unrunnable since it was written | ✅ fixed |
+| 22 | A running audit had nothing to watch, and a dead judging run stranded its audit for ever | ✅ fixed |
+| 23 | A question from a headless run could be counted but never answered | ✅ fixed |
+| 24 | Two tests still asserted a world #9 had replaced, and a `·` the Windows console cannot print | ✅ fixed |
+
+**#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
+Those came from *reading* the screens. These came from *running* them, and five of the six are
+defects rather than wording — three of which had a green test suite standing over them the whole
+time. The full account, including why each survived its tests, is
+`GAP_FIX_BUILD_PLAN.md` §9; the entries below are the short version.
 
 ---
 
@@ -1023,7 +1163,7 @@ enforce. Flagged three times. Now `--text-body`, which is 8.86:1 — the value t
 
 ### #14 — `in_scope` was not an accepted column ✅
 
-Our own reference brownfield application writes `in_scope` for all 69 of its routes. Every one
+Our own reference brownfield application writes `in_scope` for all 79 of its routes. Every one
 came back as an unrecognised column and every page was registered in scope, including the one its
 author had deliberately excluded.
 
@@ -1039,55 +1179,360 @@ something actually reads.
 *"Editing and signing need the qa_lead role"* → *"…the QA Lead role"*, through the `roleLabel`
 helper that exists for exactly this and was written after an earlier bug of the same kind.
 
+### #16 — The button and the dialog it opens had different names ✅
+
+**Was:** the **Import a list** button opened a modal titled **"Add pages"** — which is nearly the
+name of the *other* button on the same screen. A person who pressed Import a list arrived somewhere
+that read like the single-page form and could reasonably think they had misclicked.
+
+**Now:** the dialog is titled **Import a list**, after the button that opens it. A test asserts the
+heading matches, and that "Add pages" is gone.
+
+**Also fixed alongside it:** the empty state now names *which* button to press — *"If you already
+have the list — a routes file, a sitemap, a page inventory — import it. Otherwise add them one page
+at a time."* Two buttons that both add pages, with nothing anywhere saying what separated them, was
+the reason the question was asked at all.
+
+### #17 — The paste box taught the one combination that cannot work ✅
+
+**Was:** the placeholder read `/` · `/catalogue` · `/catalogue/:id` — a **pattern**, demonstrated in
+**line** mode. Line mode returns bare paths (`_read_lines`), so there is nowhere to say what
+`/catalogue/:id` should open. Following the example registers a page no browser can open, and every
+audit afterwards reports it unreachable. The placeholder demonstrated the single combination the
+platform cannot honour.
+
+**Now:** the placeholder shows **both accepted formats**, and the pattern appears only in the JSON
+half — the half that can carry `example`:
+
+```
+/
+/catalogue
+/about/history
+
+— or a JSON list —
+
+[{"path": "/catalogue", "title": "Browse the catalogue"},
+ {"path": "/events/:id", "example": "/events/482"}]
+```
+
+Showing both was the team's own requirement, and it is what makes the placement meaningful: the two
+formats sit side by side, and the pattern is visibly in the one that works. The help now says so in
+words — *"A path no browser can open needs the JSON form, because only it can carry the example page
+to visit."* A test splits the placeholder on the separator and asserts nothing pattern-shaped is in
+the line half and `example` is in the JSON half.
+
+⚠️ **Both formats were always accepted.** The team's recollection that the box was JSON-only was the
+opposite of the truth: JSON-only was the *bug*, fixed as #8 on 20 August. Nothing about acceptance
+changed here — only what the box shows you.
+
+### #18 — "Add a page" read as though it were for patterns only ✅
+
+**Was:** the Example page help began *"Only for a pattern like `/events/:id`, which no browser can
+open."* Read on its own — which is how anyone scanning down a form reads it — that describes the
+**dialog**, not the field. Two people concluded the form accepted patterns only, and asked how they
+were meant to add an ordinary page.
+
+**Now:** it begins **"Leave this empty for a normal page."** — the case that applies to nearly
+everyone, said first — and only then explains what the field is for.
+
+**And it names three pattern shapes, not one**, because the platform never parses patterns at all:
+`normalise_path` requires a leading `/` and checks nothing else, so `/events/:id`, `/books/[isbn]`
+and `/users/{id}/loans` are stored exactly as written. Naming one framework's syntax made it read as
+the only syntax allowed. The real rule is *"if the path as written cannot be opened, give one that
+can"*, and that is now what it says.
+
+### #19 — An audit could not be claimed by anything ✅
+
+**Was:** an audit opened from the screen was created as `capturing` — "a machine is already
+visiting" — and the claim endpoint only ever offers `pending` audits (or a stale `claimed` one). So
+no companion could see it, ever. It sat there while the screen showed **Visiting pages**, which is
+this capability's own worst failure: a confident report of work that was not happening.
+
+**Now:** the POST passes `claimable=True`, so an audit opened from the app waits as *Waiting for a
+machine* until something takes it. The companion's own `audit` subcommand still leaves the default,
+because there the machine that opened it is already standing there.
+
+⚠️ **The tests were green throughout**, and asserted exactly the right behaviour — of a call the
+product never made. `claimable=True` appeared nowhere outside test code.
+
+### #20 — The companion died on the audit path, taking the machine with it ✅
+
+**Was:** every other companion path called `ensure_backend_importable()` before touching platform
+code; the serve→audit path did not, so an audit failed with `ModuleNotFoundError: No module named
+'apps'`. Worse, the serve loop caught only `DaemonError`, so an unexpected exception ended the whole
+companion — every other kind of work on that machine with it — and the audit was left open for ever.
+
+**Now:** the import call is there, and the guard catches anything, closing the audit with a
+plain-language reason first. **This is the widest change of the six**, and it is recorded as such:
+widening a serve-loop guard is a blunt instrument, taken because one bad audit must not stop a
+machine.
+
+### #21 — Seven of the judge's tools were never exposed ⭐ ✅
+
+**Was:** the judge was **granted** 24 tools, and the MCP server it actually talks to **defined 17**.
+`get_a11y_batch`, `get_wcag_grounding`, `record_a11y_finding` and all four keyboard-journey tools had
+no `@server.tool()` wrapper, and `get_a11y_screenshots` had quietly dropped `run_id`. **The judge and
+the keyboard journey had therefore been unrunnable since the day they were written** — the agent
+reported it had no way to read its work, and it was right.
+
+**Now:** the seven wrappers exist, `run_id` is back, and — the part that matters more — a test
+computes `granted − exposed` as a set difference and fails if anything is in it.
+
+⚠️ **Why nothing caught it, and the lesson.** There are **three** lists that look interchangeable and
+are not: the companion's tool *grant*, the HTTP route's *executable* map, and the MCP server's
+`@server.tool()` definitions. Only the third puts a tool in an agent's hands. Every test checked one
+of the first two.
+
+### #22 — A running audit could not be watched, and a dead one was never closed ✅
+
+**Two halves of one silence, and they are the reason the first live run had to be diagnosed from the
+database.**
+
+**Was, half one:** S-38 designs a full running panel; what existed was a status word in a list, in a
+320px rail that never collapsed, below seventy-nine page rows. An audit that had visited six of ten
+pages and one that had visited none looked identical.
+
+**Was, half two:** when a run reports failure, the workflow returns at its failure branch
+**before** the step that does the judge's accounting. So nothing it had left unanswered was
+recorded, no report was published, and the audit read *Checking what was found* permanently.
+
+**Now:** the panel's three tiles are built, including **Elements judged** — the number that could
+not be seen at all — and the panel stays after the run ends rather than vanishing at the moment
+the answer arrives. And a judging run that dies closes its own pass: everything
+unanswered is filed for a person, the partial report is published saying it is partial, and the
+audit is completed. That closure sits one line below the keyboard journey's identical one, which had
+been on that path since G6a with the judge's never added beside it.
+
+⚠️ **The live console is still not built.** See §6 B4 and `GAP_FIX_BUILD_PLAN.md` §9.2, which says
+what it would take rather than leaving it as an assumption.
+
+### #23 — A question from a headless run could be counted but never answered ✅
+
+**Was:** the sidebar badge counted the project's pending questions on the server; the Clarifications
+page fetched the tenant's and narrowed them to the work items on the **visible backlog**. A run on a
+hidden carrier work item — accessibility judging, code indexing, the gap report — is deliberately
+absent from that backlog, so its question was counted by one and hidden by the other. The badge said
+**1**, the page said **none**, and the run waited for an answer nobody could give.
+
+**Now:** the page asks the API for the project's questions — a filter that endpoint already had —
+instead of narrowing them in the browser, and takes the work item's name from the clarification
+itself, so a judging run's question reads *"Accessibility judging"* rather than eight characters of
+uuid. Hiding plumbing from a board is right; hiding a question that blocks a run is not.
+
+### #24 — Two stale tests, and a character the Windows console cannot print ✅
+
+**Two small ones, together because neither is worth its own section.**
+
+**The tests:** `test_a_folder_with_nothing_installed_…` and `test_the_scanner_alone_missing_…` both
+asserted the **pre-#9** world, where a project folder with nothing installed was refused. #9
+deliberately ended that. They only passed while nobody had run `npm install` in `runner/` — and
+committing the lockfile made that setup standard, so they went red for everyone. Rewritten to assert
+what #9 built, with the refusal they were protecting now covered by its own test, which runs the real
+script from a copy stranded where nothing can resolve above it.
+
+**The character:** the companion printed `10 page(s) · 1 pass(es)`, and a Windows console redirected
+to a file cannot encode `·`, so the log read `10 page(s) ? 1 pass(es)`. Six lines across four
+companion files now use ASCII. Only what the companion prints changed; nothing that travels to the
+platform did.
+
+
+### #25 — An audit whose machine went away could never end ✅
+
+**Found on the live run of 21 August**, by the operator's computer restarting mid-audit. One page
+was in; nothing else ever came. The audit stayed `capturing` and the screen went on saying
+**Visiting pages** about a machine that no longer existed.
+
+**The claim lease already recovers a dead companion's work — but only from `pending` and stale
+`claimed`.** An audit reaches `capturing` the instant its first screen lands, and past that line
+there was no lease, no timeout and no cancel. Worse, nothing renewed an audit's lease at all:
+`claimed_at` was stamped once at claim and never touched again, so audit liveness was not being
+tracked in the first place.
+
+**Three parts.** The heartbeat now renews the lease on the audit a companion is *capturing*
+(capped off `created_at`, so no migration). A capture nothing has been heard from for the lease
+is closed as `failed` with the machine's own reason — swept from the companion's heartbeat and
+its claim, both of which are already writes, so reading the audit list never writes to it.
+Liveness counts *either* signal, the heartbeat or a screen arriving: heartbeat alone would depend
+on a companion mode that might not heartbeat, screens alone would kill an audit stuck on one very
+slow page. And the screen derives `stalled` on read, never written, so a computer switched off
+for good still produces an honest panel rather than a permanent lie.
+
+**Failed, not judged and not resumed** — a report from four of twelve pages would state a
+position about an application most of which was never looked at, and re-visiting captured routes
+needs a resumption design that does not exist. A fresh audit costs minutes.
+
+⚠️ **The near-miss.** The first version also swept `claimed`, and broke an existing test that was
+right to break: a `claimed` audit has captured nothing, and the lease hands it to the next machine
+that asks, so it simply runs. Failing it would have turned a working recovery into a manual
+restart. Abandonment applies to `capturing` alone.
+
+**It closed the live one itself.** The plan was to close the stuck audit by hand; by the time that
+ran, the companion's own heartbeat had already done it at 04:38:36 — `opened: 1`, eleven pages
+listed as never reported, reason in the machine's words.
+
+
+
+### #26 — A pass that stopped at its limit said nothing, anywhere ✅
+
+**Found on the live run of 21 August.** Twelve pages came to 205 element slots against a cap of
+200, so the dispatch stopped and deferred 5. It wrote an honest sentence into the audit's own
+summary — *"Stopped at this run's limit of 200 — 5 item(s) still need judging"* — and **nothing
+read it**: not the screen, not the run report, not the published baseline. The audit would have
+closed as **complete**, shown *12 of 12 pages reported*, and never said part of it was unchecked.
+
+**And the "Check the rest" button would not have appeared either.** `unanswered_counts` counted
+elements no judge could be asked about, and elements a run was given and dropped. Cap-deferred
+elements are neither: never dispatched, never filed.
+
+**The fix asks the direct question.** An element of this capture with **no verdict at all** is
+unanswered — no judge, run dropped it, or the dispatch stopped short, all one rule instead of
+three categories to keep in step. An element that *was* answered stays answered, a real
+`uncertain` included: that belongs to the person in the review queue. The finished audit now
+renders the dispatch's own reason, as a banner on the panel and a line on the row.
+
+⚠️ The count on the button is in **slots**, the only number the summary keeps, and repeated
+chrome is several slots and one element — so it can read high where the tail of a capped pass
+was markup the cache can already answer. The re-judge recomputes in elements and is what acts.
+
+### #27 — The onboarding step called a running audit a finished one ✅
+
+**Reported by the team from the same run.** The hub read **"1 audit run — open the report from
+Artifacts"** while the audit was still judging. There is no report to open until judging ends:
+the baseline is published when the judge run closes, deliberately, so it never states a position
+that is still changing.
+
+`audits_run` now counts finished audits only, with a separate `running` beside it — the same
+`{status, running}` pairing the Index code step already uses, because the tick switches on one
+and the sentence has to be able to say *"and another is going right now"* over the top of it.
+Four states, four tests: running says so and offers no report; finished is done; finished-plus-
+running keeps the tick and adds the sentence; a failed audit leaves the step simply *ready*.
+
+**The team's note is the lesson worth keeping:** *when you fix something, consider everything
+else it touches so those behave accordingly.* The audit screen had been taught to tell the truth
+about a running audit three separate times, and the hub two clicks away was still reading the
+old count.
+
+
+
+### #28 — One of the four checks had never run ⭐ ✅
+
+**The most important defect this feature has had**, found on the live audit of 21 August — not by
+a failure, but by a number that had always been zero.
+
+```
+checker slots, every audit ever run on this project:
+color 173   ·   semantics 47   ·   alt 22   ·   label 0
+```
+
+`_applies_label` requires a computed accessible name, deliberately: 2.5.3 compares the name a
+screen reader announces against the visible text, and with no name there is nothing to compare.
+That name came from `page.accessibility.snapshot()` — **an API Playwright has since removed**. It
+threw on every element; `fillAccessibleNames` wrapped each element in a bare `catch {}` written
+for one awkward element, and it swallowed the total failure just as quietly. **0 of 242 stored
+elements had a name.** So **2.5.3 Label in Name** — the check with most to say that only a person
+can settle — was off from the day it was written, and the always-empty review queue was the
+symptom.
+
+**Four parts.** `locator.ariaSnapshot({ timeout, depth: 0 })` restores the name — measured first
+against a real browser at ~6ms an element, with an explicit timeout because that call otherwise
+waits for ever and one stale selector would stop an audit. The parse is anchored at `- role
+"name"` so it cannot read a quoted word out of an element's own text and invent a name, which is
+worse than having none. The platform then counts, on every audit, how many *nameable* elements
+came back named, and says *"One of the checks could not run"* when none did — so this can never
+hide again, and it is named apart from the cap warning because it must never read as "the
+application has no label problems". Finally the "check the rest" count moved to distinct elements,
+after the finished audit showed that its 5 deferred slots were repeats that had lost nothing.
+
+⚠️ **An existing test caught a mistake in the fix**, and it was right to:
+`test_asking_again_when_everything_has_been_looked_at_starts_nothing`. "No verdict anywhere" only
+means *ask again* once a pass has run — a capture that has never been judged needs its **first**
+pass, not a second.
+
+**Not yet proven live.** `/account/card-services` should produce seven label candidates on the
+next run, and that is where the first real `uncertain` is expected.
+
+
 ---
 
-## 10. What has never been run, and what I am least sure about
+## 10. What has run live, what has not, and what I am least sure about
 
-**Nothing has ever run live.** Not one audit, not one judgement, not one keyboard journey against
-a real application. Everything above is read from source and proven by tests, and a green test
-suite means *"it behaves as designed"* — never *"the scanner really returns what we think it
-returns"*.
+**This section used to open *"nothing has ever run live, not once"*. That is no longer true**, and
+the correction is the most important one in this guide.
 
-✅ **Nothing is in the way of changing that now.** The database was the last blocker and it went
-in on 20 August. What follows is the list of what a first live run is most likely to surprise us
-with — in the order I would watch them.
+### 10.1 What has now run live ✅
+
+Meridian Library, 20/21 August, a real browser on a real machine:
+
+| | Proven by watching it |
+|---|---|
+| **Registering a page list** | 79 routes pasted from `routes.json`, `/health` honoured as out of scope, 10 put in scope |
+| **Opening an audit and having a machine claim it** | *Waiting for a machine* → *Starting* → *Visiting pages*, on a companion enrolled on that project |
+| **The capture** | 10 of 10 pages visited, twice, with elements, styles, accessible names and screenshots posted one screen at a time |
+| **The scanner resolving out of the audited project** | Meridian's own axe, not the companion's — the report says so by *not* saying `(companion)` |
+| **Real AI verdicts** | 80 pass, 1 fail — including `<img id="photo-interior" … alt="library">` against 1.1.1 at 0.92 confidence, with the replacement text proposed. **That is a defect no scanner on the market can find**, which is the entire argument for this build, demonstrated once against a real page. |
+| **An audit reaching `complete`** | with its baseline document in Artifacts |
+
+✅ **A judging pass, start to finish.** On **21 August** the whole brownfield journey ran end to
+end: 10 of 10 pages visited, none that would not open, **every distinct element judged**, the
+report published and the audit `complete`. 80 pass, 1 fail — the `alt="library"` defect above.
+
+⚠️ **And this corrects what was said about the 20 August run.** It was read as having died at
+"81 of 144" with 63 elements lost. It had not: an audit sends one request per (element, check)
+slot, and those ten pages are **144 slots but 81 distinct elements** — the header and footer are
+the same markup on every page and one verdict answers all ten. The judging had finished; the only
+thing broken that day was that the workflow never closed the audit, which is item #22. Nothing
+was ever lost, and no re-judge was needed.
+
+### 10.2 What is still unproven 🔬
 
 **Ranked by how likely I think a live run is to surprise us:**
 
 1. **The greenfield capture.** It is generated by an agent from a written contract, not run from
    a script we ship. The contract is right and enforced on ingest; whether every generated suite
    honours it is unknown. The tell is a report where nearly everything reads *not evaluated*.
-2. **The keyboard journey.** Eight criteria, one agent, a real browser, a live application, and
-   the platform's newest seam. It has never opened a page.
-3. **A real `passes` array.** Nobody has yet seen the scanner return positive evidence into the
-   platform. Everything the conformance report says about what was *examined* rests on it.
+2. **The keyboard journey.** Eight criteria, one agent, a real browser, a live application. ⚠️ It
+   has never opened a page — and until #21 it **could not have**, because four of its tools were
+   never exposed to the agent at all. It is the least-proven part of this build by a distance.
+3. ~~**A judging pass that finishes.**~~ ✅ **Answered on 21 August** — see 10.1. About 27 minutes
+   end to end, all of it on one unbroken connection.
 4. **Two passes over 68 pages.** The pass loop is tested; a 68-page run against a live Express
-   app is not.
-5. **The AI checks against a real DOM.** The selection rules met a real page for the first time in
-   QA‑11b. Expect one round of correction; that is normal, and a green suite here is not a
-   working scan.
+   app is not. Ten pages is the small case.
+5. **The conformance statement against real evidence.** All 55 criteria have been rendered from
+   test data; none from a real audit's findings.
 
-**What is proven, and how much:** 1,244 backend test functions across 29 accessibility test
-files, and 70 frontend tests across five. Verified on this branch on 20 August, after the fifteen
-findings were fixed:
+⚠️ **A real `passes` array is no longer on this list.** The scanner returned positive evidence
+into the platform on the live run — that one is answered.
+
+### 10.3 What is proven by tests, and how much
+
+Verified on this branch on **21 August**, after all twenty-four findings were fixed:
 
 | Ran | Result |
 |---|---|
-| `test_a11y_baseline.py` | 156 passed |
-| `test_a11y_scope_rest.py` (new) | 22 passed |
+| `test_a11y_baseline.py` + `test_a11y_judge.py` + `test_a11y_scope_rest.py` | **246 passed** |
 | `test_a11y_journey.py` + `test_a11y_review.py` | 129 passed |
 | `test_a11y_review_rest.py` + `test_a11y_conformance_rest.py` + `test_a11y_capture.py` | 123 passed |
 | `test_a11y_journeys_rest.py` | 9 passed |
-| `test_a11y_wcag.py` (the two new pinning tests) | 2 passed |
-| The whole frontend suite | **323 passed across 19 files**, `tsc -b` clean |
+| `test_a11y_wcag.py` (the two pinning tests) | 2 passed |
+| `test_companion_runner.py` (includes the granted-minus-exposed guard) | 6 passed |
+| The whole frontend suite | **336 passed across 20 files**, `tsc -b` clean |
 
-⚠️ **Two failures elsewhere in the repository**, both pre-existing and neither accessibility:
-`test_guardrails.py::test_run_build_clean_change_reports_ok` fails because this machine has no
-git remote to push to, and there is Claude Agent SDK API drift in `test_drivers.py`. **No task has
-been raised for either.**
+⚠️ **Two tests in that set were failing until 21 August**, and for everyone: they asserted the
+pre-#9 world. Item #24. They are green now.
+
+⚠️ **Failures elsewhere in the repository**, all pre-existing and none accessibility:
+`test_guardrails.py::test_run_build_clean_change_reports_ok` fails because this machine has no git
+remote to push to; there is Claude Agent SDK API drift in `test_drivers.py`; and `npm run lint`
+reports one unresolved rule reference in `Gates.tsx`. **No task has been raised for any of them.**
 
 ⚠️ **The backend suite is never run whole** — it is killed by the machine. Only the files a
 change touches are run, which is what the table above lists.
+
+⚠️ **And the lesson of 20 August, which this section exists to keep in front of everyone:** three
+of the six defects that run found had a **green test suite standing over them the whole time**. A
+passing test proves the thing it tests. It does not prove the product ever calls it — #19 — nor
+that the list it checks is the list that matters — #21 — nor that the fixture resembles the real
+case — the batch that was 144 elements where every test used three.
 
 ---
 
@@ -1107,7 +1552,8 @@ change touches are run, which is what the table above lists.
 | | |
 |---|---|
 | `GET/PUT /api/projects/<p>/a11y-routes/` | the page list |
-| `GET/POST /api/projects/<p>/a11y-audits/` | audits; POST opens one and returns its manifest |
+| `GET/POST /api/projects/<p>/a11y-audits/` | audits; POST opens one and returns its manifest. GET carries live `progress` for anything in flight and `unanswered` for anything finished |
+| `POST /api/projects/<p>/a11y-audits/<a>/rejudge/` | ask again about the elements of one finished audit that nothing ever looked at. Visits no page |
 | `GET/POST /api/projects/<p>/a11y-journeys/` | journeys; POST starts up to the cap and names what it did not start |
 | `GET /api/projects/<p>/a11y-review/` | the queue |
 | `GET /api/projects/<p>/a11y-conformance/` · `PUT` · `POST …/sign` · `POST …/export` | the statement |
@@ -1155,7 +1601,11 @@ platform (`apps/a11y/data/wcag22.json`) and is loaded by migration.
 | **G6a/b/c** | The keyboard journey had no address, no browser, no way to run several, and no caller |
 
 And on **20 August**, the fourteen findings in §9 — the ones that separated *"a person can reach
-it"* from *"a person is well served by it"*.
+it"* from *"a person is well served by it"* — followed, the same day, by three more (#16–#18)
+that the team found by reading the page-registration dialogs aloud during their first live run.
+
+**And then the run itself, which found six more (#19–#24)** — the ones that separated *"a person
+is well served by it"* from *"it runs at all"*. Three of those six had passed every test they had.
 
 Plus one found by cross-checking rather than by a failing test: **two journeys from test cases
 with no `TC-…` id shared one work item**, so the second was refused as "already being walked" and
@@ -1165,7 +1615,7 @@ each showed the other's last walk. Keyed on the artifact now.
 
 | | |
 |---|---|
-| `GAP_FIX_BUILD_PLAN.md` | the ten tasks, in full, with what each build got wrong along the way |
+| `GAP_FIX_BUILD_PLAN.md` | the ten tasks, in full, with what each build got wrong along the way — **and §9, the first live run: why each defect it found survived a green test suite, plus the two things recorded rather than built (the live console, and re-asking the machine about what it never judged)** |
 | `TASK_BACKLOG_QA.md` | the 31 original tasks and their acceptance criteria |
 | `RESEARCH_CORRECTIONS.md` | where the research reports disagreed with the platform |
 | `USER_JOURNEYS.md` | the nine journeys, rewritten 20 August against what the code does — each marked built, part-built or not built |

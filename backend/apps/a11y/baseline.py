@@ -298,6 +298,10 @@ def finish_baseline_audit(*, tenant_id, audit_id, trigger=None, reason: str = ""
             audit.save(update_fields=["status", "summary", "updated_at"])
         return {"audit_id": run_key, "status": audit.status, **summary}
 
+    # Before the judging, because it is a fact about the capture and belongs on the audit even
+    # if the AI half never starts.
+    summary["names"] = _name_coverage(tenant_id, str(audit.project_id), run_key)
+
     result = start_ai_pass(
         tenant_id=tenant_id, project_id=str(audit.project_id), run_id=run_key,
         title=_title(audit), trigger=trigger,
@@ -320,6 +324,62 @@ def finish_baseline_audit(*, tenant_id, audit_id, trigger=None, reason: str = ""
         # IS dispatched it is written after that run ends instead — a baseline published while
         # half the verdicts are still in flight would state a position that is about to change.
         out["baseline"] = publish_baseline_for(tenant_id=tenant_id, audit=audit)
+    return out
+
+
+#: Tags whose elements essentially always have an accessible name — a link or a button with
+#: visible text has one by definition, and a heading takes its name from its own text. If a whole
+#: capture holds these and NOT ONE of them was named, the browser did not answer, and that is a
+#: fact about the machine rather than about the application.
+NAMEABLE_TAGS = ("a", "button", "input", "select", "textarea", "summary",
+                 "h1", "h2", "h3", "h4", "h5", "h6")
+
+NAMES_UNREAD = (
+    "the browser returned no accessible name for any element on any page, so the "
+    "**Label in Name** check (2.5.3) could not run — it compares the name a screen reader "
+    "announces against the visible text, and had nothing to compare. Every other check ran "
+    "normally. This is a fault on the machine that captured the pages, not in the application: "
+    "update the companion and audit again."
+)
+
+
+def _name_coverage(tenant_id, project_id, run_key: str) -> dict:
+    """Did the browser actually answer when asked what each element is called?
+
+    **Why the platform checks its own input.** The capture asks the browser for every element's
+    computed accessible name, and one element failing is normal and harmless — the label check
+    skips it. *Every* element failing is a broken toolchain, and it is invisible: the elements
+    all arrive, three of the four checks run perfectly, and the fourth simply never selects
+    anything. That is exactly what happened. `page.accessibility` was removed from Playwright,
+    the capture's per-element `catch` swallowed the failure on all of them, and **2.5.3 never
+    selected a single element in the entire life of the feature** — found on the live audit of
+    21 August, by noticing that one checker's count had always been zero.
+
+    Checked here rather than trusted from the capture, because a capture written by an older
+    companion cannot report a problem nobody knew to look for yet. Counted over the elements the
+    platform kept, which is enough: a page with no links, buttons or headings at all is not a
+    page anyone audits.
+    """
+    from .models import A11yCandidateBundle
+
+    with tenant_context(tenant_id):
+        rows = list(
+            A11yCandidateBundle.objects
+            .filter(tenant_id=tenant_id, project_id=project_id, run_key=str(run_key))
+            .values_list("element", flat=True)
+        )
+    nameable = 0
+    named = 0
+    for element in rows:
+        element = element or {}
+        if str(element.get("tag") or "").lower() not in NAMEABLE_TAGS:
+            continue
+        nameable += 1
+        if str(element.get("accessible_name") or "").strip():
+            named += 1
+    out = {"named": named, "nameable": nameable}
+    if nameable and not named:
+        out["reason"] = NAMES_UNREAD
     return out
 
 
@@ -374,3 +434,366 @@ def complete_audit(tenant_id, capture_key) -> bool:
     # capture closed would have published a standing that was still changing.
     publish_baseline_for(tenant_id=tenant_id, audit=audit)
     return True
+
+
+#: The statuses an audit can be in while something is still happening to it. Progress is asked
+#: for these and nobody else: a finished audit's numbers are already frozen on its `summary`,
+#: and re-deriving them would be two sources for one answer.
+IN_FLIGHT_STATUSES = ("pending", "claimed", "capturing", "judging")
+
+#: The one state an audit can be in that NOTHING could recover it from, and so the only state
+#: this module's abandonment applies to. An audit here is held by a machine on somebody's desk
+#: that this server can never see, and it got here because a screen arrived.
+#:
+#: The other three are deliberately absent, each already answered somewhere better:
+#:   * `pending`  — nobody has taken it; there is nothing wrong with it and the claim offers it.
+#:   * `claimed`  — taken but nothing captured yet, and the claim lease hands a stale one to the
+#:                  next machine that asks. RE-CLAIMING IS STRICTLY BETTER THAN FAILING IT: the
+#:                  audit simply runs. Closing these here would have thrown that away.
+#:   * `judging`  — a Temporal run, closed from the other end by `close_unfinished_ai_pass`.
+ABANDONABLE_STATUSES = ("capturing",)
+
+#: What a person is told when the machine holding their audit went away. In the audit's own
+#: `summary["reason"]`, which is what the "Could not run" panel reads.
+ABANDONED_REASON = (
+    "the machine visiting the pages stopped reporting — it was closed, restarted or "
+    "disconnected part-way through. What it had already captured is kept, but nothing is "
+    "reported from a partial pass: a baseline written from some of the pages would state "
+    "coverage this audit never had. Start the audit again."
+)
+
+
+def _last_screen_at(tenant_id, audits) -> dict:
+    """The newest screen posted under each audit's key. One grouped query for the whole set."""
+    from django.db.models import Max
+
+    from .models import A11yScreenScan
+
+    keys = [str(a.id) for a in audits]
+    if not keys:
+        return {}
+    with tenant_context(tenant_id):
+        rows = (
+            A11yScreenScan.objects
+            .filter(tenant_id=tenant_id, run_key__in=keys)
+            .values("run_key").annotate(last=Max("created_at"))
+        )
+        return {row["run_key"]: row["last"] for row in rows}
+
+
+def stalled_audit_ids(tenant_id, audits, *, stale_before) -> set[str]:
+    """Which of these audits nothing has been heard from since `stale_before`. **Reads only.**
+
+    **Why liveness is measured from the work and not only from the claim.** An audit is captured
+    by a machine outside the platform, so the only evidence it is still there is that it is still
+    talking to us — and it talks in two ways: the companion's heartbeat (which renews
+    `claimed_at`, see `_renew_claims_for`) and the screens themselves. Either counts. Keying on
+    the heartbeat alone would make this depend on a companion mode that might not heartbeat;
+    keying on screens alone would kill an audit stuck on one very slow page. Whichever spoke
+    last is the answer.
+
+    `stale_before` is passed in rather than read from a constant here, because how long a
+    machine may be silent is the runner's lease policy (`api.runner_views.CLAIM_LEASE`) and this
+    module has no business deciding it.
+    """
+    held = [a for a in audits if a.status in ABANDONABLE_STATUSES]
+    latest = _last_screen_at(tenant_id, held)
+    out = set()
+    for audit in held:
+        spoke = [audit.claimed_at or audit.created_at]
+        seen = latest.get(str(audit.id))
+        if seen:
+            spoke.append(seen)
+        if max(spoke) < stale_before:
+            out.add(str(audit.id))
+    return out
+
+
+def abandon_audit(*, tenant_id, audit_id, reason: str = "") -> dict:
+    """Close ONE audit whose machine stopped reporting. Returns what it was closed as.
+
+    **Failed, not resumed, and not judged.** Half a capture is in the database under this
+    audit's key, and it is kept — but it is not sent to the judge and no baseline is published
+    from it. A report from four of twelve pages would be this capability's own worst failure
+    wearing a tick: a document stating a position about an application, most of which was never
+    looked at. The pages that did report are cheap to visit again.
+
+    **Not resumed either**, and that is a deliberate limit rather than an oversight. Re-visiting
+    routes already captured under this key would need a resumption design that does not exist —
+    what happens to the bundles already stored for a route being visited a second time — and a
+    fresh audit costs minutes. Resumption is worth its own task if a capture ever gets long
+    enough for the difference to matter.
+
+    Idempotent, and only ever acts on an audit a companion is actually holding: an audit that
+    has already closed, or is in `judging` (a Temporal run, closed from the other end), is
+    returned untouched with `closed: False`.
+    """
+    from .models import A11yBaselineAudit, A11yScreenScan
+
+    audit = _audit(tenant_id, audit_id)
+    if audit.status not in ABANDONABLE_STATUSES:
+        return {"audit_id": str(audit.id), "status": audit.status, "closed": False}
+
+    run_key = str(audit.id)
+    with tenant_context(tenant_id):
+        scans = list(
+            A11yScreenScan.objects
+            .filter(tenant_id=tenant_id, project_id=audit.project_id, run_key=run_key)
+            .values_list("route", "load_error")
+        )
+        seen = {route for route, _ in scans}
+        summary = {
+            "asked": len(audit.routes or []),
+            "opened": len({r for r, err in scans if not (err or "").strip()}),
+            "unreachable": sorted({r for r, err in scans if (err or "").strip()}),
+            # What was asked for and never came back. Said plainly rather than folded into
+            # `unreachable`: these pages were never attempted, which is not the same fact as a
+            # page that would not open, and the difference is what somebody re-running needs.
+            "never_reported": sorted(r for r in (audit.routes or []) if r not in seen),
+            "reason": str(reason or "").strip() or ABANDONED_REASON,
+            #: So a reader (and a test) can tell this apart from an audit that ran and found
+            #: nothing openable — same status, entirely different thing to go and do.
+            "abandoned": True,
+        }
+        audit.status = A11yBaselineAudit.Status.FAILED
+        audit.summary = {**(audit.summary or {}), **summary}
+        audit.save(update_fields=["status", "summary", "updated_at"])
+    return {"audit_id": run_key, "status": audit.status, "closed": True, **summary}
+
+
+def abandon_stale_audits(*, tenant_id, project_id=None, stale_before, reason: str = "") -> list:
+    """Close every audit on this project that a machine stopped reporting on. Returns their ids.
+
+    Called from the companion's own writes — its heartbeat and its audit claim — rather than
+    from anything a screen asks for, so reading the audit list never writes to it. That also
+    puts the sweep exactly where the evidence arrives: a machine that reboots comes back, says
+    hello, and the audit it abandoned is closed within seconds of it doing so.
+    """
+    from .models import A11yBaselineAudit
+
+    with tenant_context(tenant_id):
+        rows = A11yBaselineAudit.objects.filter(
+            tenant_id=tenant_id, status__in=ABANDONABLE_STATUSES)
+        if project_id:
+            rows = rows.filter(project_id=project_id)
+        rows = list(rows)
+
+    stale = stalled_audit_ids(tenant_id, rows, stale_before=stale_before)
+    closed = []
+    for row in rows:
+        if str(row.id) in stale:
+            abandon_audit(tenant_id=tenant_id, audit_id=str(row.id), reason=reason)
+            closed.append(str(row.id))
+    return closed
+
+
+def audit_progress(tenant_id, audit_ids: list[str]) -> dict:
+    """How far each of these audits has actually got, right now (S-38 running panel).
+
+    **Why this is derived and not stored.** `summary` is written once, when the audit closes —
+    so for the whole time an audit is running there is no count of anything anywhere, and the
+    only thing a screen could say was the status word. Yesterday's live run spent forty minutes
+    on `Checking what was found` with no way for the person who started it to see that the judge
+    was at 81 of 144, or that it had stopped. The rows this reads are being written the whole
+    time; nothing new has to be recorded to be able to say so.
+
+    Two counts per audit, from two grouped queries over the whole set rather than a query per
+    audit — the panel polls every 5 seconds:
+
+      * **visited / unreachable** — screen scans posted under this audit's key. `unreachable` is
+        a page the browser could not open, which is a RESULT and is counted as visited-and-known
+        rather than as progress not yet made.
+      * **judged / dispatched** — once the AI pass has started, how many of the elements it was
+        given have a verdict recorded. `dispatched` comes off the audit's own summary, written
+        when the pass was dispatched, so the denominator is the real one and not a guess.
+
+    Returns `{audit_id: {...}}`, missing nothing and inventing nothing: an audit that has had no
+    screen posted yet is `{"visited": 0, "unreachable": 0}` with no judging keys at all, which is
+    what lets a screen tell "none yet" from "not that stage".
+    """
+    from django.db.models import Count, Q
+
+    from .models import A11yBaselineAudit, A11yJudgmentCache, A11yScreenScan
+
+    keys = [str(a) for a in audit_ids if str(a or "").strip()]
+    if not keys:
+        return {}
+    out: dict[str, dict] = {key: {"visited": 0, "unreachable": 0} for key in keys}
+
+    with tenant_context(tenant_id):
+        scans = (
+            A11yScreenScan.objects
+            .filter(tenant_id=tenant_id, run_key__in=keys)
+            .values("run_key")
+            .annotate(
+                visited=Count("id"),
+                # A load error is stored as text, so "no error" is the empty string, not NULL.
+                unreachable=Count("id", filter=~Q(load_error="")),
+            )
+        )
+        for row in scans:
+            out[str(row["run_key"])].update(
+                visited=row["visited"], unreachable=row["unreachable"])
+
+        # The judging half. Only for audits that actually dispatched a pass — the judge run id
+        # and the element count are both on the summary written at dispatch.
+        judge_runs = {}
+        for audit in A11yBaselineAudit.objects.filter(tenant_id=tenant_id, id__in=keys):
+            ai_pass = (audit.summary or {}).get("ai_pass") or {}
+            run_id = str(ai_pass.get("judge_run_id") or "")
+            if run_id:
+                judge_runs[run_id] = str(audit.id)
+                out[str(audit.id)].update(
+                    judged=0, dispatched=_distinct_dispatched(tenant_id, run_id, ai_pass))
+        if judge_runs:
+            judged = (
+                A11yJudgmentCache.objects
+                .filter(tenant_id=tenant_id, run_id__in=list(judge_runs))
+                .values("run_id").annotate(n=Count("id"))
+            )
+            for row in judged:
+                out[judge_runs[str(row["run_id"])]]["judged"] = row["n"]
+    return out
+
+
+def _distinct_dispatched(tenant_id, judge_run_id, ai_pass: dict) -> int:
+    """How many DISTINCT elements this judging pass was asked about.
+
+    **Not the number of requests, and the difference is not a rounding error.** The same markup
+    on ten pages — a site header, a footer link — is one thing to judge: it hashes identically,
+    one verdict answers all ten, and the completeness check counts it once. On our own reference
+    application 144 requests were 81 distinct elements, so a tile counting verdicts against
+    requests reported a finished, correct audit as two-thirds done. A screen saying a third of
+    the checking did not happen when it did is the exact failure this whole capability exists to
+    refuse, so the denominator has to be the same unit as the numerator.
+
+    Recorded at dispatch (`aipass.start_ai_pass`) and read from there. Derived from the run's
+    own batches only for a pass dispatched before that was recorded, so an audit that predates
+    this still shows a true number rather than the old misleading one.
+    """
+    distinct = ai_pass.get("distinct")
+    if isinstance(distinct, int) and distinct > 0:
+        return distinct
+    from apps.runs.models import Run
+
+    with tenant_context(tenant_id):
+        run = Run.objects.filter(id=judge_run_id, tenant_id=tenant_id).first()
+    batches = ((run.inputs or {}).get("a11y_batches") or []) if run else []
+    hashes = {element.get("content_hash")
+              for screen in batches for element in (screen.get("elements") or [])
+              if element.get("content_hash")}
+    return len(hashes) or int(ai_pass.get("dispatched") or 0)
+
+
+def passes_for(route_count: int) -> int:
+    """How many capture passes a route count takes. One document holds `capture.MAX_SCREENS`
+    pages, so a bigger audit runs in more passes rather than visiting the first 60 (D-B5)."""
+    from .capture import MAX_SCREENS
+
+    return max(1, -(-int(route_count or 0) // MAX_SCREENS))
+
+
+#: The statuses an audit is CLOSED in. A re-judge is only offered for these: while a pass is
+#: still running, "how many were never looked at" has no settled answer.
+CLOSED_STATUSES = ("complete", "failed")
+
+
+def unanswered_counts(tenant_id, audits) -> dict:
+    """How many elements of each audit NOTHING ever looked at — for the button that offers to
+    ask again (task R1).
+
+    Counted from what each pass already recorded about itself, in one extra query for the whole
+    list rather than a walk through every audit's stored elements:
+
+      * `summary.ai_pass.filed_unjudged` — elements the dispatch could not ask about at all,
+        because there was no judge registered or no machine connected;
+      * `summary.ai_pass.deferred_distinct` — elements the dispatch **stopped short of**,
+        having reached this run's limit. Neither filed nor handed to a run, so before this they
+        were counted nowhere and an audit closed as complete with them silently unchecked;
+      * the judge run's own `outputs[UNANSWERED_KEY]` — elements it was given and never reported
+        on. Written by `judge._remember_unanswered` at the only moment the two kinds of
+        `uncertain` are still distinguishable.
+
+    The three are disjoint by construction: the first two were never dispatched (for different
+    reasons), the third was.
+
+    Both are counted in DISTINCT ELEMENTS, which is what the screen has to say and what a
+    re-judge would actually ask about. `deferred` on its own is element-and-check *slots*, and
+    the tail of a capped pass is usually markup dispatched earlier in the same run — counting it
+    raw put a "check the rest" button on an audit with nothing left to check.
+
+    ⚠️ **This is the count for a screen, not the list a re-judge acts on.** The authoritative set
+    is recomputed by `aipass.unanswered_for_capture`, which also intersects with what the capture
+    still holds — so an audit whose stored elements have since gone shows a number here and asks
+    about nothing, saying so. Doing that intersection for fifty audits on every poll would mean
+    reading every bundle of every audit to draw a badge.
+    """
+    from apps.runs.models import Run
+
+    from .judge import UNANSWERED_KEY
+
+    out: dict[str, int] = {}
+    judge_runs: dict[str, str] = {}
+    for audit in audits:
+        ai_pass = (audit.summary or {}).get("ai_pass") or {}
+        filed = ai_pass.get("filed_unjudged")
+        # `deferred_distinct`, never `deferred`: the raw number is request slots, and the tail of
+        # a capped pass is usually markup already dispatched earlier in the same run. An audit
+        # from before this key existed has no honest count available, so it reports none rather
+        # than the misleading one — the same choice the "elements judged" tile made.
+        deferred = ai_pass.get("deferred_distinct")
+        out[str(audit.id)] = ((int(filed) if isinstance(filed, int) else 0)
+                              + (int(deferred) if isinstance(deferred, int) else 0))
+        run_id = str(ai_pass.get("judge_run_id") or "")
+        if run_id:
+            judge_runs[run_id] = str(audit.id)
+    if judge_runs:
+        with tenant_context(tenant_id):
+            rows = Run.objects.filter(
+                tenant_id=tenant_id, id__in=list(judge_runs)).values_list("id", "outputs")
+        for run_id, outputs in rows:
+            recorded = (outputs or {}).get(UNANSWERED_KEY) or []
+            out[judge_runs[str(run_id)]] += len(recorded)
+    return out
+
+
+def audit_outcome(tenant_id, project_id) -> dict:
+    """Where this project stands, for the panel that stays on screen after a run ends.
+
+    The panel does not disappear when the audit finishes — it changes what it says. A person who
+    started an audit and watched it work must not have the answer vanish at the moment it
+    arrives; that is the same silence the running panel was built against, one step later.
+
+    **Project-wide, and that is the honest scope rather than a convenience.** A finding carries
+    no audit key: `last_seen_run` is a foreign key to a real `Run`, and a baseline audit
+    deliberately manufactures none (QA-17), so for every brownfield audit that column is NULL.
+    Counting on it would have reported **0 problems on an audit that found three** — the exact
+    kind of confident, wrong, reassuring number this whole capability exists to refuse.
+
+    Project scope is also the right question. The **Accessibility baseline** this panel points at
+    is itself scoped to the project rather than to one audit, precisely so an audit that reached
+    38 of 50 routes does not silently drop what is already known about the other 12. "Where does
+    this application stand?" is the question a baseline answers, and this is that number.
+
+    Two counts, kept apart on purpose: a problem the platform is sure about, and a question it is
+    asking a person. Folding the second into the first would inflate the problem count with
+    things nobody has decided yet.
+    """
+    from django.db.models import Count, Q
+
+    from .models import A11yFinding
+    from .triage import TRIAGE_REVIEW
+
+    with tenant_context(tenant_id):
+        row = (
+            A11yFinding.objects
+            .filter(tenant_id=tenant_id, project_id=project_id,
+                    status=A11yFinding.Status.OPEN)
+            .aggregate(
+                problems=Count("id", filter=~Q(outcome=TRIAGE_REVIEW)),
+                critical=Count("id", filter=Q(severity="critical") & ~Q(outcome=TRIAGE_REVIEW)),
+                high=Count("id", filter=Q(severity="high") & ~Q(outcome=TRIAGE_REVIEW)),
+                waiting=Count("id", filter=Q(outcome=TRIAGE_REVIEW)),
+            )
+        )
+    return {k: int(v or 0) for k, v in row.items()}

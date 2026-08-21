@@ -14,6 +14,7 @@
 // a page, which is why registering goes through a confirm step that shows the difference before
 // anything is written. See `AddPages` below, and `preview_registration` on the platform.
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import {
@@ -40,12 +41,14 @@ import type {
 import { A11yTabs } from "./A11yTabs";
 import { LoadFailed } from "./LoadFailed";
 import {
+  AUDIT_IN_FLIGHT,
   useA11yAudits,
   useA11yJourneys,
   useA11yRoutes,
   useDeleteA11yRoute,
   usePreviewA11yRoutes,
   useRegisterA11yRoutes,
+  useRejudgeA11yAudit,
   useStartA11yAudit,
   useStartA11yJourneys,
   useUpdateA11yRoute,
@@ -206,7 +209,10 @@ function AddPages({
 
   return (
     <Modal
-      title="Add pages"
+      // Named for the button that opens it. It used to be titled "Add pages", which is nearly
+      // the name of the OTHER button on that screen — so clicking `Import a list` landed you on
+      // something that read like the single-page form, and the two were told apart by guessing.
+      title="Import a list"
       onClose={onClose}
       footer={
         <>
@@ -235,20 +241,33 @@ function AddPages({
         <span className="field__label" id="pages-box">
           Your pages
         </span>
+        {/* BOTH formats are shown because both are accepted, and which one you need depends on
+            what you have. The pattern appears only in the JSON half, and that placement is the
+            point: line mode returns bare paths, so there is nowhere to say what `/events/:id`
+            should open. Demonstrating a pattern in the line half — which is what this
+            placeholder used to do — teaches the one combination that cannot work, and every
+            audit afterwards reports that page unreachable. */}
         <Textarea
           aria-labelledby="pages-box"
-          rows={10}
-          placeholder={"/\n/catalogue\n/catalogue/:id"}
+          rows={12}
+          placeholder={
+            "/\n/catalogue\n/about/history\n" +
+            "\n— or a JSON list —\n\n" +
+            '[{"path": "/catalogue", "title": "Browse the catalogue"},\n' +
+            ' {"path": "/events/:id", "example": "/events/482"}]'
+          }
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
         <span className="field__help">
-          <strong>One path per line</strong> is enough — <span className="t-mono">/checkout</span>.
-          Paste a JSON list instead when you also want to give each page a name or say whether it
-          is in scope: entries carrying <span className="t-mono">path</span>, with optional{" "}
-          <span className="t-mono">title</span>, <span className="t-mono">enabled</span> (or{" "}
-          <span className="t-mono">in_scope</span>) and <span className="t-mono">example</span>.
-          Anything we cannot read is named back to you, never silently dropped.
+          <strong>Either format works.</strong> One path per line is enough. Paste a JSON list
+          when you also want to give each page a name, say whether it is in scope, or point a
+          pattern at a real page: entries carrying <span className="t-mono">path</span>, with
+          optional <span className="t-mono">title</span>, <span className="t-mono">enabled</span>{" "}
+          (or <span className="t-mono">in_scope</span>) and <span className="t-mono">example</span>.
+          A path no browser can open — <span className="t-mono">/events/:id</span> — needs the
+          JSON form, because only it can carry the example page to visit. Anything we cannot read
+          is named back to you, never silently dropped.
         </span>
       </label>
 
@@ -373,10 +392,24 @@ function PageEditor({
           onChange={(e) => setExample(e.target.value)}
           placeholder="/events/482"
         />
+        {/* Read on its own — which is how a person scanning down the form reads it — the old
+            wording ("Only for a pattern like /events/:id") described the DIALOG rather than the
+            field, and people came away believing this form only accepted patterns. It says what
+            to do with it when you have a normal page first, because that is nearly everyone.
+
+            Several shapes, because the platform does not parse patterns at all: `normalise_path`
+            wants a leading `/` and nothing else, so `:id`, `[isbn]` and `{id}` are stored as
+            written. The rule is not "must look like :id" — it is "if the path as written cannot
+            be opened, give one that can", and naming one framework's syntax made it look like
+            the only one allowed. */}
         <span className="field__help">
-          Only for a pattern like <span className="t-mono">/events/:id</span>, which no browser
-          can open. The audit visits the example and still records the finding against the
-          pattern.
+          <strong>Leave this empty for a normal page.</strong> It is only needed when the path
+          above cannot be opened in a browser as written — whatever your framework writes them
+          as: <span className="t-mono">/events/:id</span>,{" "}
+          <span className="t-mono">/books/[isbn]</span>,{" "}
+          <span className="t-mono">/users/{"{id}"}/loans</span>. Give one real page that matches —{" "}
+          <span className="t-mono">/events/482</span> — and the audit visits that, while still
+          recording what it finds against the pattern above.
         </span>
       </label>
 
@@ -806,9 +839,230 @@ function KeyboardJourneys({ projectId, hasMachine }: { projectId: string; hasMac
   );
 }
 
+// ── the audit that is running now ───────────────────────────────────────────
+
+/** The panel S-38 designs for the newest audit — running, then finished (S-38 lines 598, 645).
+ *
+ * **Why it exists.** Until it did, the only thing on screen while an audit ran was a status word
+ * in a list — so an audit that had visited 6 of 10 pages and one that had visited none looked
+ * identical, and an audit whose judge had stopped looked exactly like one still working. That is
+ * this capability's own standard turned on itself: a screen must not state progress it cannot
+ * evidence, and "Checking what was found" for forty minutes states plenty.
+ *
+ * **And it does not disappear when the run ends.** It changes what it says. A person who started
+ * an audit and watched it work must not have the answer vanish at the moment it arrives — that
+ * is the same silence one step later, and it is what the team met on the first complete run.
+ *
+ * Three tiles throughout, because what you need to know changes with the stage: which pass while
+ * the pages are being visited, how far the judging has got once they are in, and what the whole
+ * thing came to once it stops. The design's live per-page console is a separate, larger piece of
+ * work — screens are posted one per call with no progress channel to carry per-page lines — and
+ * is recorded as a pending enhancement rather than half-built here.
+ */
+function LatestAudit({ audit }: { audit: A11yAuditRow }) {
+  const running = AUDIT_IN_FLIGHT.includes(audit.status);
+  const asked = audit.summary?.asked ?? audit.routes.length;
+  const badge = (
+    <Badge variant={auditBadge(audit.status)}>
+      {STATUS_LABEL[audit.status] ?? audit.status}
+    </Badge>
+  );
+
+  if (!running) {
+    const outcome = audit.outcome ?? { problems: 0, critical: 0, high: 0, waiting: 0 };
+    const neverOpened = audit.summary?.never_reported ?? [];
+    const failed = audit.status === "failed";
+    return (
+      <Panel
+        title={failed ? "Audit could not run" : `Audit complete · ${when(audit.created_at)}`}
+        actions={badge}
+      >
+        {failed ? (
+          // Its own words, whatever the machine gave us. The generic "the application did not
+          // respond" would send someone to check a server that was never contacted.
+          <p className="t-sm u-body">
+            {audit.summary?.reason || "The audit stopped before it could report anything."}
+          </p>
+        ) : (
+          <>
+            <div className="grid grid--3" style={{ marginBottom: "var(--space-4)" }}>
+              <div className="tile">
+                <div className="tile__num">{audit.summary?.opened ?? 0}</div>
+                <div className="tile__label">Pages reported</div>
+                <div className="tile__sub">of {asked} asked for</div>
+              </div>
+              {/* This PROJECT open, not this audit. A finding carries no audit key, and the
+                  Accessibility baseline is itself project-scoped for the same reason — so that
+                  an audit covering part of an application never drops what is already known
+                  about the rest. The sub-line says so rather than letting the tile imply a
+                  per-run tally. */}
+              <div className="tile">
+                <div className="tile__num">{outcome.problems}</div>
+                <div className="tile__label">Problems open</div>
+                <div className="tile__sub">
+                  {outcome.critical} critical &middot; {outcome.high} high &middot; in this project
+                </div>
+              </div>
+              <div className="tile">
+                <div className="tile__num">{outcome.waiting}</div>
+                <div className="tile__label">Waiting on a person</div>
+                {/* Never "0 problems left". Nothing waiting means every check was sure enough to
+                    answer on its own — not that the application is clean. */}
+                <div className="tile__sub">
+                  {outcome.waiting === 0
+                    ? "every check answered on its own"
+                    : "the checks could not decide"}
+                </div>
+              </div>
+            </div>
+
+            {/* An audit that stopped at its own limit says so. The dispatch always recorded
+                this — "stopped at this run's limit of N, M item(s) still need judging" — and
+                nothing on any screen read it, so a pass that never asked about part of what it
+                captured closed as COMPLETE and said nothing. A quiet success is the worst
+                failure this capability has, and it was sitting in its own summary. */}
+            {audit.summary?.ai_pass?.reason && (
+              <Banner variant="warning" title="Not everything captured was checked">
+                {audit.summary.ai_pass.reason}
+              </Banner>
+            )}
+
+            {/* A different sentence from the one above, and a worse one: that says part of what
+                was captured went unasked, this says one of the four checks could not run at all.
+                Named separately so it can never be read as "the application has no label
+                problems" — nothing looked for any. */}
+            {audit.summary?.names?.reason && (
+              <Banner variant="warning" title="One of the checks could not run">
+                {audit.summary.names.reason}
+              </Banner>
+            )}
+
+            {/* A page that never opened is stated, never absorbed. Nothing it might have
+                contained is treated as passing, and it cannot close a problem found there
+                before. */}
+            {neverOpened.length > 0 && (
+              <Banner
+                variant="warning"
+                title={
+                  neverOpened.length === 1
+                    ? "One page was asked for and never opened"
+                    : `${neverOpened.length} pages were asked for and never opened`
+                }
+              >
+                <span className="t-mono">{neverOpened.slice(0, 4).join(", ")}</span>
+                {neverOpened.length > 4 && ` and ${neverOpened.length - 4} more`}. Recorded as
+                never seen, so nothing they might have contained is treated as passing.
+              </Banner>
+            )}
+
+            <div className="u-row" style={{ marginTop: "var(--space-4)" }}>
+              <span className="t-sm u-muted">
+                The <strong>Accessibility baseline</strong> document is in Artifacts.
+              </span>
+              {outcome.waiting > 0 && (
+                <Link to="/a11y" className="btn btn--secondary btn--sm">
+                  Answer the {outcome.waiting} waiting
+                </Link>
+              )}
+            </div>
+          </>
+        )}
+      </Panel>
+    );
+  }
+
+  const progress = audit.progress ?? { visited: 0, unreachable: 0 };
+
+  // Says it is running, and nothing has come back from the machine holding it for a long while.
+  // Shown BEFORE the running panel, because everything below this point describes work in
+  // progress and none of it is happening. The audit is closed for real the moment any companion
+  // on this project reports in; until then this is the honest reading of the same row, and if
+  // that machine never comes back it is the only one there will ever be.
+  if (audit.stalled) {
+    return (
+      <Panel title="Audit stopped reporting" actions={<Badge variant="failed">Stopped</Badge>}>
+        <p className="t-sm u-body">
+          Nothing has come back from the machine running this audit for a long while — it was
+          most likely closed, restarted or disconnected part-way through. It reported{" "}
+          <strong>
+            {progress.visited} of {asked}
+          </strong>{" "}
+          pages before it went quiet.
+        </p>
+        <p className="t-sm u-muted" style={{ marginTop: "var(--space-3)" }}>
+          Nothing is reported from a partial pass, so this audit will be closed as failed as soon
+          as a companion on this project reports in. You can start a new audit now — what was
+          captured here costs only the minutes it took.
+        </p>
+      </Panel>
+    );
+  }
+
+  const passes = Math.max(1, Math.ceil(asked / PAGES_PER_PASS));
+  const judging = audit.status === "judging";
+  // Which pass the capture is on, from what has come back. Derived rather than reported: the
+  // companion writes one screen at a time and never says which pass it is in, and a number
+  // computed from the screens actually posted cannot claim a pass that has not started.
+  const pass = Math.min(passes, Math.floor(progress.visited / PAGES_PER_PASS) + 1);
+  // DISTINCT elements, not requests. The same markup on ten pages is one thing to judge, and
+  // counting verdicts against requests made a finished audit read as two-thirds done.
+  const dispatched = progress.dispatched ?? 0;
+
+  return (
+    <Panel title="Audit running" actions={badge}>
+      <div className="grid grid--3" style={{ marginBottom: "var(--space-4)" }}>
+        {judging ? (
+          <div className="tile">
+            <div className="tile__num">
+              {progress.judged ?? 0} <span className="t-sm u-muted">of {dispatched}</span>
+            </div>
+            <div className="tile__label">Elements judged</div>
+            <div className="tile__sub">
+              {dispatched === 0 ? "none needed judging" : "the AI half, in progress"}
+            </div>
+          </div>
+        ) : (
+          <div className="tile">
+            <div className="tile__num">
+              {pass} <span className="t-sm u-muted">of {passes}</span>
+            </div>
+            <div className="tile__label">Pass</div>
+            <div className="tile__sub">{PAGES_PER_PASS} pages per pass</div>
+          </div>
+        )}
+        <div className="tile">
+          <div className="tile__num">{progress.visited}</div>
+          <div className="tile__label">Pages visited</div>
+          <div className="tile__sub">of {asked} asked for</div>
+        </div>
+        <div className="tile">
+          <div className="tile__num">{progress.unreachable}</div>
+          <div className="tile__label">Would not open</div>
+          <div className="tile__sub">recorded, never guessed</div>
+        </div>
+      </div>
+      <p className="t-sm u-muted">
+        You can leave this page. The audit carries on and the result appears under Past audits.
+      </p>
+    </Panel>
+  );
+}
+
 // ── past audits ─────────────────────────────────────────────────────────────
 
-function PastAudits({ audits }: { audits: A11yAuditRow[] }) {
+function PastAudits({
+  audits,
+  projectId,
+  canManage,
+}: {
+  audits: A11yAuditRow[];
+  projectId: string | undefined;
+  canManage: boolean;
+}) {
+  const rejudge = useRejudgeA11yAudit(projectId);
+  // Which audit was asked about, so the message lands on that row and not on all of them.
+  const [asked, setAsked] = useState<{ id: string; text: string } | null>(null);
+
   return (
     <Panel title="Past audits" flush>
       {audits.length === 0 ? (
@@ -842,6 +1096,65 @@ function PastAudits({ audits }: { audits: A11yAuditRow[] }) {
                   {audit.summary.reason}
                 </p>
               )}
+              {/* And why part of it was never asked about, which is a different sentence from
+                  the one above: that one is why the audit failed, this one is why a successful
+                  audit is incomplete. */}
+              {audit.summary?.ai_pass?.reason && (
+                <p className="t-sm u-muted" style={{ marginTop: 6 }}>
+                  {audit.summary.ai_pass.reason}
+                </p>
+              )}
+
+              {/* Elements nothing ever looked at — offered back to the machine rather than left
+                  on a person. Only on a CLOSED audit (the API only counts those), and only when
+                  there are some: a button that is always there, usually saying nothing to do, is
+                  a button nobody reads. The count is said out loud, because "check the rest" with
+                  no number is a promise of unknown size. */}
+              {(audit.unanswered ?? 0) > 0 && (
+                <div style={{ marginTop: "var(--space-3)" }}>
+                  <p className="t-sm u-muted">
+                    {audit.unanswered === 1
+                      ? "1 element was never looked at"
+                      : `${audit.unanswered} elements were never looked at`}
+                    {" — not checked and undecided, but never checked at all. They are waiting on"}
+                    {" a person in the review queue."}
+                  </p>
+                  <div className="u-row" style={{ marginTop: 6 }}>
+                    <Button
+                      variant="secondary"
+                      disabled={!canManage || rejudge.isPending}
+                      onClick={() => {
+                        setAsked(null);
+                        rejudge
+                          .mutateAsync(audit.id)
+                          .then((out) =>
+                            setAsked({
+                              id: audit.id,
+                              text: out.started
+                                ? `Asking again about ${out.asked} element(s). No page is visited — everything needed was stored when they were captured.`
+                                : out.reason || "Nothing was asked again.",
+                            }),
+                          )
+                          .catch((err: Error) =>
+                            setAsked({ id: audit.id, text: err.message }),
+                          );
+                      }}
+                    >
+                      {rejudge.isPending ? "Asking…" : "Check the rest"}
+                    </Button>
+                    {!canManage && (
+                      <span className="t-sm u-muted">
+                        The QA Lead or Tech Lead on this project runs this.
+                      </span>
+                    )}
+                  </div>
+                  {asked?.id === audit.id && (
+                    <p className="t-sm u-body" style={{ marginTop: 6 }}>
+                      {asked.text}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ))
@@ -867,6 +1180,11 @@ export function A11yAudit() {
   const [filter, setFilter] = useState<Filter>("all");
   const update = useUpdateA11yRoute(projectId);
   const remove = useDeleteA11yRoute(projectId);
+  // The newest audit, whatever state it is in. Deliberately not "the one in flight": the panel
+  // stays after the run ends and shows what it came to, because the moment the answer arrives is
+  // the worst possible moment for the panel somebody was watching to disappear. The list is
+  // newest-first; every older audit is a row under Past audits.
+  const latest = (audits.data?.audits ?? [])[0];
 
   // `!projectId` counts as loading, and that is not defensive tidying. The query is disabled
   // until the project resolves, so `isLoading` is false and `routes.data` is undefined — which
@@ -946,7 +1264,10 @@ export function A11yAudit() {
         <Panel>
           <EmptyState
             title="No pages are registered yet"
-            text="The platform has no access to your application, so it cannot discover its pages — somebody has to say what they are. Nothing is audited until you do."
+            // The last sentence names which button to press. Without it the two buttons are a
+            // choice with nothing to make it on: both add pages, and the difference — do you
+            // already have the list, or are you building it up — was never stated anywhere.
+            text="The platform has no access to your application, so it cannot discover its pages — somebody has to say what they are. Nothing is audited until you do. If you already have the list — a routes file, a sitemap, a page inventory — import it. Otherwise add them one page at a time."
             action={
               canManage ? (
                 <div className="gate-panel__actions" style={{ justifyContent: "center" }}>
@@ -976,6 +1297,16 @@ export function A11yAudit() {
               canManage={canManage}
             />
           </div>
+
+          {/* Full width, above everything, and only while something is actually happening. The
+              audit in flight is the one thing on this screen nobody can afford to go looking
+              for — it was in a 320px rail below seventy-nine page rows, which is exactly how
+              far a running audit was from the person who had just started it. */}
+          {latest && (
+            <div style={{ marginBottom: "var(--space-5)" }}>
+              <LatestAudit audit={latest} />
+            </div>
+          )}
 
           <div className="grid grid--detail">
             <Panel title="Pages" actions={<span className="t-sm u-muted">{routes.data?.summary}</span>}>
@@ -1094,7 +1425,11 @@ export function A11yAudit() {
             </Panel>
 
             <div>
-              <PastAudits audits={audits.data?.audits ?? []} />
+              <PastAudits
+                audits={audits.data?.audits ?? []}
+                projectId={projectId}
+                canManage={canManage}
+              />
               <p className="t-sm u-muted" style={{ marginTop: "var(--space-3)" }}>
                 Each audit writes an <strong>Accessibility baseline</strong> document you can open
                 from Artifacts.

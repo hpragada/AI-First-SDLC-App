@@ -575,17 +575,21 @@ def submit_gap_report(tenant_id, project_id, phases, resume_phase=None, blockers
     )
 
 
-def get_a11y_batch(tenant_id, run_id) -> dict:
+def get_a11y_batch(tenant_id, run_id, start=0) -> dict:
     """The elements this accessibility judgment run must judge (09c_a11y_judge, QA-02a).
 
     `dispatch` decided what needed judging and attached it to the run; this is that list, one
     screen at a time. Each element carries the short `id` the judge echoes back to
     `record_a11y_finding` — the internal content hash never leaves the platform, because a
     model copying 64 hex characters back is one typo away from filing a verdict against a
-    different element."""
+    different element.
+
+    Paged: `start` is a flat element index, and `next_start` carries the next one until it comes
+    back null. `total_elements` is the whole run on every page — that is the contract to check
+    yourself against, not the size of the page in your hand."""
     from apps.a11y.judge import batch_for_run
 
-    return batch_for_run(tenant_id, run_id)
+    return batch_for_run(tenant_id, run_id, start=start)
 
 
 def get_wcag_grounding(tenant_id, criteria) -> dict:

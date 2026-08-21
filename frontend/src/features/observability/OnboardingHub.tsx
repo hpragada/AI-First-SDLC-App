@@ -512,7 +512,9 @@ function OnboardingHubLive() {
   // to a lookup table, which is what drifted in the first place.
   // Defaulted rather than optional-chained at every use: a backend that predates this field
   // must still render the step, showing it as not started, which is what it is.
-  const a11y = data.a11y ?? { routes_registered: 0, audits_run: 0, status: "not_started" as const };
+  const a11y = data.a11y ?? {
+    routes_registered: 0, audits_run: 0, running: false, status: "not_started" as const,
+  };
   const gapResumeLabel =
     data.gap.resume_label ||
     (data.gap.resume_phase ?? "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -680,12 +682,23 @@ function OnboardingHubLive() {
             title="Check accessibility"
             desc={
               a11y.status === "done"
-                ? `${a11y.audits_run} audit${a11y.audits_run === 1 ? "" : "s"} run — open the report from Artifacts.`
-                : a11y.status === "ready"
-                  ? `${a11y.routes_registered} page(s) registered. Run a first audit against WCAG 2.2 AA.`
-                  : "Register the pages of the application and run a first audit against WCAG 2.2 AA. This tells you where the application stands before you change anything."
+                ? `${a11y.audits_run} audit${a11y.audits_run === 1 ? "" : "s"} run — open the report from Artifacts.` +
+                  // Said over the top of the tick rather than instead of it. A finished audit
+                  // stays finished while the next one runs, and both facts are true at once.
+                  (a11y.running ? " Another audit is running now." : "")
+                : a11y.status === "running"
+                  ? "An audit is running now. It appears here, with its report, once it finishes."
+                  : a11y.status === "ready"
+                    ? `${a11y.routes_registered} page(s) registered. Run a first audit against WCAG 2.2 AA.`
+                    : "Register the pages of the application and run a first audit against WCAG 2.2 AA. This tells you where the application stands before you change anything."
             }
-            state={a11y.status === "done" ? "done" : a11y.status === "ready" ? "active" : undefined}
+            state={
+              a11y.status === "done"
+                ? "done"
+                : a11y.status === "ready" || a11y.status === "running"
+                  ? "active"
+                  : undefined
+            }
           >
             <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
               <Link

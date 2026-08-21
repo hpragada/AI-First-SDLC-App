@@ -185,3 +185,21 @@ def is_merge_conflict(exc) -> bool:
     if getattr(cause, "type", "") == "MergeConflict":
         return True
     return "merge conflict" in failure_reason(exc).lower()
+
+
+#: Phases whose write-completeness check does REAL WORK, not a presence check, and so cannot
+#: live inside the one-minute activity timeout the check normally gets.
+#:
+#: `a11y_judge` is the case that proved it. Its branch of `verify_write_completeness_core` does
+#: two things beyond looking an artifact up: it records an `uncertain` verdict for every
+#: dispatched element the judge never answered — up to a full batch of them, one database write
+#: each against a remote server — and then publishes the merged report and closes the audit.
+#: On the first live run that ran past sixty seconds and Temporal cancelled it mid-way: 81 of
+#: 144 fallbacks were written and 63 elements silently got none, which is precisely the
+#: "nothing dispatched may vanish from a conformance report" guarantee the branch exists to
+#: keep. The work is the same class the workflow already gives five minutes to elsewhere
+#: (publish, register_phase_result); one minute was sized for the check it USED to be.
+#:
+#: Kept here rather than imported from `apps.a11y` because the workflow module is deliberately
+#: Django-free — see the note at the top of this file.
+LONG_VERIFY_PHASES = frozenset({"a11y_judge", "a11y_journey"})

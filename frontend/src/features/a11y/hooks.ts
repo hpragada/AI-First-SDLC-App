@@ -106,7 +106,11 @@ export function useA11yRoutes(projectId: string | undefined) {
 // only while one is actually in flight: a page left open on a finished audit should not keep
 // asking, and `refetchIntervalInBackground` off means a forgotten tab stops by itself.
 const AUDIT_POLL_MS = 5000;
-const AUDIT_IN_FLIGHT = ["pending", "claimed", "capturing", "judging"];
+// Exported, because the screen asks the same question this poll does — "is anything still
+// happening?" — and two copies of this list would drift into disagreeing about whether to show
+// a running audit and whether to keep asking about it. Mirrors `baseline.IN_FLIGHT_STATUSES`,
+// which is what decides whether the API sends live progress at all.
+export const AUDIT_IN_FLIGHT = ["pending", "claimed", "capturing", "judging"];
 
 export function useA11yAudits(projectId: string | undefined) {
   const tenantId = useTenantId();
@@ -181,6 +185,23 @@ export function useStartA11yAudit(projectId: string | undefined) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["a11y-audits", projectId] });
       qc.invalidateQueries({ queryKey: ["a11y-routes", projectId] });
+    },
+  });
+}
+
+/** Ask again about what nothing looked at (task R1). Invalidates the audit list, so the row's
+ *  badge flips to "Checking what was found" and the running panel takes over from there. */
+export function useRejudgeA11yAudit(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (auditId: string) =>
+      api.a11yAuditRejudge(tenantId, projectId as string, auditId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["a11y-audits", projectId] });
+      // The queue holds the very items this re-asks about, so it must not go on showing them
+      // as waiting on a person while the machine is having another go.
+      qc.invalidateQueries({ queryKey: ["a11y-review", projectId] });
     },
   });
 }

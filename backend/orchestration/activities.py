@@ -1153,6 +1153,16 @@ def fail_run_core(inp: AgentRunInput, reason: str) -> dict:
     from apps.a11y.journey import close_unfinished_journey
 
     close_unfinished_journey(tenant_id=inp.tenant_id, run_id=inp.run_id, reason=reason)
+    # …and a failed JUDGING pass must not leave an audit saying it is still checking. Same
+    # reasoning as the line above and the same blind spot: this path returns before
+    # `verify_writes`, which is where the judge's accounting lives — file every element the run
+    # never answered as `uncertain`, publish the merged report, complete the audit. Without
+    # this, an engine that lost its session mid-judgment left the audit reading "Checking what
+    # was found" for ever and its unanswered elements recorded nowhere. A no-op for every phase
+    # that judged nothing.
+    from apps.a11y.aipass import close_unfinished_ai_pass
+
+    close_unfinished_ai_pass(tenant_id=inp.tenant_id, run_id=inp.run_id)
     return {"status": "failed"}
 
 

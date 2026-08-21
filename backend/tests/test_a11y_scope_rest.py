@@ -255,3 +255,163 @@ def test_in_scope_survives_the_round_trip_over_rest(world):
     assert resp.status_code == 200, resp.content
     scope = {r["path"]: r["enabled"] for r in resp.json()["routes"]}
     assert scope["/health"] is False, "the flag our own reference app writes is honoured"
+
+
+# ── An audit opened from the app has to be one a machine can pick up ────────
+
+
+def test_an_audit_started_from_the_app_waits_for_a_machine(world):
+    """The audit the button opens must be CLAIMABLE, and nothing else asserted this.
+
+    `start_baseline_audit(claimable=...)` decides the opening status: `pending` — waiting for a
+    machine — or `capturing`, which means "a machine is already visiting". The REST caller did
+    not pass it, so every audit opened from the app was born `capturing`, and
+    `RunnerA11yAuditClaimView` only ever offers `pending` (or a `claimed` one past its lease).
+    No companion could see it. The audit sat still while the screen read "Visiting pages".
+
+    Every existing claim test passes `claimable=True` by hand, which is exactly why they all
+    passed while the only caller that ships was wired the other way. This asserts the wiring.
+    """
+    resp = _client("lead@acme.test").post(world["audits"], {}, format="json")
+    assert resp.status_code == 201, resp.content
+    assert resp.json()["status"] == A11yBaselineAudit.Status.PENDING
+
+    audit = A11yBaselineAudit.objects.get(id=resp.json()["audit_id"])
+    assert audit.status == A11yBaselineAudit.Status.PENDING
+    assert audit.enrollment_id is None, "opened for whichever machine claims it, not a named one"
+
+
+def test_a_waiting_audit_is_what_the_companion_is_offered(world):
+    """The other half of the same fact, from the machine's side.
+
+    The bug lived in the seam between two halves that were each tested alone: the app opened an
+    audit, the companion asked for one, and nothing joined them up. So this opens one the way the
+    button does — over REST — and then claims it the way the companion does.
+    """
+    from django.test import RequestFactory
+
+    from api.runner_views import RunnerA11yAuditClaimView, RunnerStateView
+    from apps.runs.models import RunnerEnrollment
+
+    started = _client("lead@acme.test").post(world["audits"], {}, format="json").json()
+
+    runner = RunnerEnrollment.objects.create(
+        tenant=world["tenant"], project=world["project"], label="laptop",
+        enroll_token_hash="hash-laptop")
+    original = RunnerStateView._resolve_runner
+    RunnerStateView._resolve_runner = staticmethod(lambda _r: runner)
+    try:
+        claimed = RunnerA11yAuditClaimView().get(
+            RequestFactory().get("/api/runner/a11y-audits/"))
+    finally:
+        RunnerStateView._resolve_runner = original
+
+    assert claimed.status_code == 200, claimed.data
+    assert str(claimed.data["audit_id"]) == started["audit_id"]
+    assert claimed.data["manifest"]["routes"] == ["/"], "and it carries what to visit"
+
+
+# ── Asking again about what nothing looked at (task R1) ─────────────────────
+
+
+def _closed_audit(world, status="complete"):
+    return A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"],
+        base_url="http://127.0.0.1:4180", routes=["/"], status=status)
+
+
+def _rejudge_url(world, audit):
+    return f"{world['audits']}{audit.id}/rejudge/"
+
+
+def test_asking_again_is_refused_for_a_reader(world):
+    """It spends a real engine run, so it is the same decision as starting an audit — taken
+    twice, and gated the same way both times."""
+    audit = _closed_audit(world)
+    resp = _client("dev@acme.test").post(_rejudge_url(world, audit), {}, format="json")
+    assert resp.status_code == 403
+
+
+def test_asking_again_needs_a_session_at_all(world):
+    """The whole a11y surface fell through to `AllowAny` once (§9 #2). A new write on it must
+    not reopen that by being left out of the permission list."""
+    audit = _closed_audit(world)
+    assert APIClient().post(_rejudge_url(world, audit), {}, format="json").status_code in (401, 403)
+
+
+def test_asking_again_about_an_audit_that_has_not_finished_is_refused_by_name(world):
+    """While a pass is running, "what has nothing looked at" is still changing — and offering to
+    re-ask about elements the judge is at that moment working through would start a second pass
+    over the same work. Refused with the reason, not silently ignored."""
+    audit = _closed_audit(world, status="judging")
+    resp = _client("lead@acme.test").post(_rejudge_url(world, audit), {}, format="json")
+    assert resp.status_code == 409
+    assert "has not finished yet" in resp.json()["detail"]
+
+
+def test_asking_again_about_another_projects_audit_is_a_404(world):
+    """Scoped to the project in the URL, not just to the tenant."""
+    other = Project.objects.create(tenant=world["tenant"], name="Somewhere else")
+    audit = A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=other, routes=["/"], status="complete")
+    resp = _client("lead@acme.test").post(_rejudge_url(world, audit), {}, format="json")
+    assert resp.status_code == 404
+
+
+def test_asking_again_with_nothing_unanswered_says_so_rather_than_starting_a_run(world):
+    """A closed audit where every element was looked at has nothing to ask about, and says so in
+    words instead of dispatching a judging run that would judge nothing."""
+    audit = _closed_audit(world)
+    resp = _client("lead@acme.test").post(_rejudge_url(world, audit), {}, format="json")
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert body["started"] is False and body["asked"] == 0
+    assert "has been looked at" in body["reason"]
+
+
+def test_the_audit_list_says_how_many_were_never_looked_at(world):
+    """What the button counts. Read from what the pass recorded about itself — here, the
+    elements the dispatch could not ask about at all, because no judge was registered."""
+    audit = _closed_audit(world)
+    audit.summary = {"ai_pass": {"filed_unjudged": 12}}
+    audit.save(update_fields=["summary"])
+    [row] = _client("dev@acme.test").get(world["audits"]).json()["audits"]
+    assert row["unanswered"] == 12
+
+
+def test_an_audit_still_running_is_never_offered_a_rejudge_on_the_list(world):
+    """The count is only computed for closed audits, so the button cannot appear on one whose
+    answer is still moving."""
+    audit = _closed_audit(world, status="judging")
+    audit.summary = {"ai_pass": {"filed_unjudged": 12}}
+    audit.save(update_fields=["summary"])
+    [row] = _client("dev@acme.test").get(world["audits"]).json()["audits"]
+    assert row["unanswered"] == 0
+
+
+def test_the_newest_finished_audit_carries_what_the_panel_shows(world):
+    """The panel stays after the run ends, so the numbers it shows have to be on the payload —
+    and only on the newest, because that is the only audit it shows."""
+    from apps.a11y.models import A11yFinding
+
+    older = _closed_audit(world)
+    newest = _closed_audit(world)
+    A11yFinding.objects.create(
+        tenant=world["tenant"], project=world["project"], fingerprint="c" * 64,
+        route="/", selector="#a", criterion="1.1.1", source="ai", outcome="failure",
+        severity="critical", status=A11yFinding.Status.OPEN)
+
+    rows = {r["id"]: r for r in _client("dev@acme.test").get(world["audits"]).json()["audits"]}
+    assert rows[str(newest.id)]["outcome"]["problems"] == 1
+    assert rows[str(newest.id)]["outcome"]["critical"] == 1
+    assert rows[str(older.id)]["outcome"] is None, "every older audit is a row, not the panel"
+
+
+def test_an_audit_still_running_carries_no_outcome_yet(world):
+    """While it is going, what it came to is not a settled fact."""
+    audit = _closed_audit(world, status="judging")
+    [row] = _client("dev@acme.test").get(world["audits"]).json()["audits"]
+    assert row["id"] == str(audit.id)
+    assert row["outcome"] is None
+    assert row["progress"] is not None, "…but its live progress is there"
+

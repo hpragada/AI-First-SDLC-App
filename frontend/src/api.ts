@@ -415,7 +415,7 @@ export const api = {
   // Clarifications (interactive Q&A — req #2): list pending and answer them in the web app.
   listClarifications: (
     tenantId: string,
-    q: { status?: string; work_item?: string; run?: string } = {},
+    q: { status?: string; work_item?: string; run?: string; project?: string } = {},
   ) => req<Clarification[]>("GET", "/clarifications/", { tenantId, query: q }),
   // History: the same endpoint, but paged. Passing `page` is what switches the response to an
   // envelope — callers that omit it (every existing one) still get a bare array.
@@ -510,6 +510,11 @@ export const api = {
     body: { base_url?: string; routes?: string[] },
   ) => req<{ audit_id: string; status: string }>(
     "POST", `/projects/${projectId}/a11y-audits/`, { tenantId, body }),
+  // Ask the machine again about the elements of one audit nothing ever looked at. NOT a second
+  // audit: no page is visited, because everything the judge needs was stored at capture time.
+  a11yAuditRejudge: (tenantId: string, projectId: string, auditId: string) =>
+    req<{ started: boolean; asked: number; dispatched?: number; reason?: string }>(
+      "POST", `/projects/${projectId}/a11y-audits/${auditId}/rejudge/`, { tenantId }),
   a11yJourneys: (tenantId: string, projectId: string) =>
     req<A11yJourneyList>("GET", `/projects/${projectId}/a11y-journeys/`, { tenantId }),
   // `test_refs` omitted starts every walkable journey; the ids come from the list above.

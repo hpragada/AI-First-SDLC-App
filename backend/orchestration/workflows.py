@@ -10,7 +10,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
-    from .build_types import failure_reason
+    from .build_types import LONG_VERIFY_PHASES, failure_reason
     from .types import AgentRunInput, GateDecision, PhaseReport
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -148,7 +148,15 @@ class AgentRunWorkflow:
             try:
                 await workflow.execute_activity(
                     "verify_writes", args=[inp, [inp.phase]],
-                    start_to_close_timeout=timedelta(minutes=1),
+                    # One minute is right for what this check usually is: look the phase's
+                    # artifact up and confirm it has a body. For the phases in
+                    # LONG_VERIFY_PHASES it is not that check at all — it writes a fallback
+                    # verdict for every unanswered element and then publishes a report, which
+                    # is the same class of work this workflow already gives five minutes to.
+                    # Cancelled half-way it leaves the accounting it exists to guarantee
+                    # half-done; see the note on the constant.
+                    start_to_close_timeout=timedelta(
+                        minutes=5 if inp.phase in LONG_VERIFY_PHASES else 1),
                     retry_policy=RetryPolicy(maximum_attempts=1),
                 )
                 break

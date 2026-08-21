@@ -78,11 +78,38 @@ def _elements(batches: list[dict]) -> dict[str, dict]:
     }
 
 
-def batch_for_run(tenant_id, run_id) -> dict:
-    """The elements this judgment run must judge, as the agent sees them.
+#: Most elements handed over in one call. A cap counted in ELEMENTS rather than characters,
+#: because that is the unit the judge reasons in and the number it can check itself against —
+#: but the two are only loosely related, and saying so matters: on our own reference application
+#: the home page averages 553 characters per element and the terms page 914, so 25 elements is
+#: ~14k characters on one screen and ~23k on another. It is a sane bound, not a guarantee.
+MAX_BATCH_ELEMENTS = 25
+
+
+def batch_for_run(tenant_id, run_id, start: int = 0,
+                  max_elements: int = MAX_BATCH_ELEMENTS) -> dict:
+    """The elements this judgment run must judge, ONE SCREEN AT A TIME (QA-02a).
 
     The internal `content_hash` is stripped: the agent works in `id`s, and the platform maps
     each one back when the verdict arrives.
+
+    **Paged, and it was always meant to be.** This function's own contract said "one screen at
+    a time" from the day it was written; the code returned every screen in a single dict. On the
+    first live run that was 144 elements over 10 screens — 80,000 characters before the rulebook
+    or a single screenshot had been added — and the judge correctly reported it could not hold
+    the batch, then stopped rather than judging a part of it and calling that the whole. Ten
+    screens is the SMALL case: an audit visits up to `capture.MAX_SCREENS` in a pass.
+
+    `start` is a flat element index across the run, exactly like `get_a11y_screenshots` — the
+    tool it sits beside, which has always paged this way, so the judge already knows the shape.
+    One call never crosses a screen boundary: elements are grouped by screen deliberately (an
+    element's meaning depends on the page around it), and a slice spanning two pages would hand
+    the judge half of each. A screen with more elements than `max_elements` is split across
+    calls, and `screen.offset` says where in that screen this piece begins.
+
+    `total_elements` is the whole run's count on EVERY page, never the count of this page. It is
+    the judge's contract — every dispatched element gets exactly one verdict — and a number that
+    shrank to the size of the current slice would quietly redefine what "all of them" means.
     """
     batches = _batches(tenant_id, run_id)
     screens = [
@@ -95,9 +122,40 @@ def batch_for_run(tenant_id, run_id) -> dict:
         }
         for batch in batches
     ]
+    total = sum(len(screen["elements"]) for screen in screens)
+    start = max(0, int(start or 0))
+    cap = max(1, int(max_elements or MAX_BATCH_ELEMENTS))
+
+    cursor = 0
+    for index, screen in enumerate(screens):
+        count = len(screen["elements"])
+        if start < cursor + count:
+            offset = start - cursor
+            elements = screen["elements"][offset:offset + cap]
+            nxt = start + len(elements)
+            return {
+                "screens": [{"route": screen["route"], "elements": elements}],
+                "screen": {
+                    "route": screen["route"],
+                    "index": index + 1,
+                    "of": len(screens),
+                    "elements_on_screen": count,
+                    "offset": offset,
+                    # True when this screen is split, so the judge knows the page continues and
+                    # does not read a partial screen as the whole of it.
+                    "continues": offset + len(elements) < count,
+                },
+                "total_elements": total,
+                "start": start,
+                "returned": len(elements),
+                "next_start": nxt if nxt < total else None,
+            }
+        cursor += count
+
+    # Past the end (or nothing to judge at all): an empty page, said plainly.
     return {
-        "screens": screens,
-        "total_elements": sum(len(screen["elements"]) for screen in screens),
+        "screens": [], "screen": None, "total_elements": total,
+        "start": start, "returned": 0, "next_start": None,
     }
 
 
@@ -258,6 +316,42 @@ def _project_for(tenant_id, run_id):
         return run.work_item.project_id
 
 
+#: Where a judgment run records the elements NOTHING ever looked at.
+UNANSWERED_KEY = "a11y_unanswered"
+
+
+def _remember_unanswered(tenant_id, run_id, content_hashes: list[str]) -> None:
+    """Record, on the run itself, which elements it never reported on.
+
+    **Why this has to be written down at all.** The moment the fallback verdicts above are
+    stored, the two kinds of `uncertain` become indistinguishable: *"a check looked at this and
+    could not decide"* and *"nothing ever looked at this"* are the same row — same verdict, same
+    confidence of 0.0, same run, same prompt version. Only the difference between the dispatched
+    set and the judged set tells them apart, and that difference exists for exactly as long as
+    this function is running.
+
+    It matters because they deserve opposite treatment. An answered `uncertain` belongs to a
+    person and must never be handed back to the machine for another go. An element nothing looked
+    at is not a judgement at all — it is work that did not happen, and asking again is the right
+    response to it. `aipass.rejudge_capture` is what asks, and this is what it reads.
+
+    Written to `Run.outputs`, which is a JSON field the run already owns, so no schema change and
+    no second place to keep in step. Merged rather than replaced: the run's own outputs (the
+    error a failed run records, for one) must survive this.
+    """
+    if not content_hashes:
+        return
+    from apps.runs.models import Run
+    from apps.tenancy.context import tenant_context
+
+    with tenant_context(tenant_id):
+        run = Run.objects.filter(id=run_id, tenant_id=tenant_id).first()
+        if run is None:
+            return
+        run.outputs = {**(run.outputs or {}), UNANSWERED_KEY: sorted(set(content_hashes))}
+        run.save(update_fields=["outputs", "updated_at"])
+
+
 def verify_judgment_completeness(*, tenant_id, project_id=None, run_id) -> dict:
     """Every dispatched element must have been judged. Records the gaps, then fails.
 
@@ -294,6 +388,8 @@ def verify_judgment_completeness(*, tenant_id, project_id=None, run_id) -> dict:
             judgment=uncertain(tuple(element.get("criteria") or ()),
                                checker=element.get("checker", ""), reason=NOT_JUDGED),
         )
+
+    _remember_unanswered(tenant_id, run_id, [e["content_hash"] for e in missing])
 
     unjudged: list[str] = sorted(element["id"] for element in missing)
     counts: dict = {

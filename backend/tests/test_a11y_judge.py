@@ -84,9 +84,14 @@ def run(project):
 
 
 def ids_of(run_fixture) -> list[str]:
+    """Every element id in the run — paging through, the way the judge now has to."""
     tenant, _proj, row, _requests = run_fixture
-    batch = judge.batch_for_run(tenant.id, row.id)
-    return [e["id"] for screen in batch["screens"] for e in screen["elements"]]
+    ids, start = [], 0
+    while start is not None:
+        batch = judge.batch_for_run(tenant.id, row.id, start=start)
+        ids += [e["id"] for screen in batch["screens"] for e in screen["elements"]]
+        start = batch["next_start"]
+    return ids
 
 
 def report(run_fixture, element_id, **kwargs):
@@ -117,12 +122,59 @@ def test_two_identical_elements_on_one_page_get_different_handles():
 
 
 # ── what the agent reads ─────────────────────────────────────────────
-def test_the_batch_lists_every_dispatched_element_by_screen(run):
+def test_the_batch_hands_over_one_screen_at_a_time(run):
+    """One screen per call, never two — an element's meaning depends on the page around it,
+    and a slice spanning two pages would hand the judge half of each."""
     tenant, _proj, row, requests = run
-    batch = judge.batch_for_run(tenant.id, row.id)
-    assert batch["total_elements"] == len(requests)
-    assert [screen["route"] for screen in batch["screens"]] == ["/home", "/checkout"]
-    assert len(batch["screens"][0]["elements"]) == 2
+    first = judge.batch_for_run(tenant.id, row.id)
+    assert [screen["route"] for screen in first["screens"]] == ["/home"]
+    assert len(first["screens"][0]["elements"]) == 2
+    assert first["screen"]["index"] == 1 and first["screen"]["of"] == 2
+    assert first["screen"]["continues"] is False
+
+    second = judge.batch_for_run(tenant.id, row.id, start=first["next_start"])
+    assert [screen["route"] for screen in second["screens"]] == ["/checkout"]
+    assert second["next_start"] is None, "the last page says so"
+
+
+def test_the_contract_is_the_whole_run_on_every_page(run):
+    """`total_elements` must never shrink to the size of the page in hand. It is the number the
+    judge checks itself against — every dispatched element gets exactly one verdict — and a
+    count that tracked the current slice would quietly redefine what 'all of them' means."""
+    tenant, _proj, row, requests = run
+    start, seen = 0, 0
+    while start is not None:
+        batch = judge.batch_for_run(tenant.id, row.id, start=start)
+        assert batch["total_elements"] == len(requests)
+        seen += batch["returned"]
+        start = batch["next_start"]
+    assert seen == len(requests), "paging must reach every element exactly once"
+
+
+def test_a_crowded_screen_is_split_and_says_it_continues(run):
+    """The home page on our own reference app carried 37 elements to every other page's 12.
+    A screen bigger than the cap is split, and the judge is told the page is not finished —
+    otherwise it reads a partial screen as the whole of it."""
+    tenant, _proj, row, _requests = run
+    first = judge.batch_for_run(tenant.id, row.id, max_elements=1)
+    assert first["returned"] == 1
+    assert first["screen"]["route"] == "/home"
+    assert first["screen"]["continues"] is True, "this screen has more to come"
+    assert first["screen"]["elements_on_screen"] == 2
+    assert first["screen"]["offset"] == 0
+
+    rest = judge.batch_for_run(tenant.id, row.id, start=first["next_start"], max_elements=1)
+    assert rest["screen"]["route"] == "/home", "still the same screen, not the next one"
+    assert rest["screen"]["offset"] == 1
+    assert rest["screen"]["continues"] is False
+
+
+def test_paging_past_the_end_is_an_empty_page_not_an_error(run):
+    tenant, _proj, row, requests = run
+    out = judge.batch_for_run(tenant.id, row.id, start=999)
+    assert out["screens"] == [] and out["returned"] == 0
+    assert out["next_start"] is None
+    assert out["total_elements"] == len(requests), "the contract still reads true"
 
 
 def test_the_agent_never_sees_a_content_hash(run):
@@ -498,3 +550,143 @@ def test_the_agent_body_carries_the_guardrails_that_make_it_safe():
     assert "uncertain" in body
     assert "evidence" in body
     assert "one call per element" in body             # the coverage contract
+
+
+# ── the check that finishes the run needs longer than a presence check ──────────
+
+
+def test_the_long_verify_phases_are_the_real_phase_keys():
+    """`LONG_VERIFY_PHASES` lives in the Django-free workflow module, so it holds STRINGS rather
+    than importing these constants. That is the right call and it is also how a key silently
+    stops matching — rename `JUDGE_PHASE` and the timeout quietly reverts to one minute, with
+    the only symptom a run that fails after doing all its work. Asserted here instead."""
+    from apps.a11y.journey import JOURNEY_PHASE
+    from apps.a11y.judge import JUDGE_PHASE
+    from orchestration.build_types import LONG_VERIFY_PHASES
+
+    assert JUDGE_PHASE in LONG_VERIFY_PHASES
+    assert JOURNEY_PHASE in LONG_VERIFY_PHASES
+
+
+def test_the_judge_phase_gets_the_longer_verification_window():
+    """One minute was sized for "does the artifact exist"; this branch writes a fallback verdict
+    per unanswered element and then publishes a report. Cancelled part-way it wrote 81 of 144
+    fallbacks and left 63 elements with none — the exact thing the branch exists to prevent."""
+    import inspect
+
+    from orchestration import workflows
+
+    source = inspect.getsource(workflows)
+    assert "LONG_VERIFY_PHASES else 1" in source, (
+        "verify_writes must take its timeout from the phase, not a flat one minute"
+    )
+
+
+# ── a judging run that DIED still has to account for itself ─────────────────
+#
+# The workflow returns at its `phase_failed` branch BEFORE `verify_writes`, which is where the
+# judge's accounting lives. So everything below is about the path a crashed engine takes: the
+# elements it never answered, the report nobody would otherwise see, and the audit that would
+# otherwise read "Checking what was found" for ever. Yesterday's live run ended exactly here.
+
+
+def _judging_audit(tenant, proj, judge_run, routes=("/home", "/checkout")):
+    """A baseline audit whose capture this judging run was dispatched about."""
+    from apps.a11y.aipass import _remember_source_run
+    from apps.a11y.models import A11yBaselineAudit
+
+    audit = A11yBaselineAudit.objects.create(
+        tenant=tenant, project=proj, base_url="http://localhost:4180",
+        routes=list(routes), status=A11yBaselineAudit.Status.JUDGING,
+    )
+    _remember_source_run(tenant.id, str(judge_run.id), str(audit.id))
+    return audit
+
+
+def test_a_judging_run_that_died_files_every_element_it_never_answered(run):
+    """Nothing dispatched may vanish. One of three was judged before the engine went; the other
+    two must reach a person as `uncertain`, not disappear from the record."""
+    from apps.a11y.aipass import close_unfinished_ai_pass
+
+    tenant, proj, row, _ = run
+    answered = ids_of(run)[0]
+    report(run, answered, verdict="pass", confidence=0.95)
+
+    out = close_unfinished_ai_pass(tenant_id=tenant.id, run_id=row.id)
+
+    assert out["accounted"] is False, "it did not finish, and must not claim it did"
+    assert "2 were never reported on" in out["reason"]
+    stored = {j.content_hash: j for j in A11yJudgmentCache.objects.filter(
+        tenant=tenant, project=proj, run_id=row.id)}
+    assert len(stored) == 3, "one judged, two filed — none lost"
+    assert sum(1 for j in stored.values() if j.verdict == "uncertain") == 2
+
+
+def test_a_judging_run_that_died_completes_the_audit_it_was_about(run):
+    """The audit is CLOSED, not left mid-sentence. `Checking what was found` for ever is the
+    same lie as a clean report: it states work that is not happening."""
+    from apps.a11y.aipass import close_unfinished_ai_pass
+    from apps.a11y.models import A11yBaselineAudit
+
+    tenant, proj, row, _ = run
+    audit = _judging_audit(tenant, proj, row)
+
+    close_unfinished_ai_pass(tenant_id=tenant.id, run_id=row.id)
+
+    audit.refresh_from_db()
+    assert audit.status == A11yBaselineAudit.Status.COMPLETE
+
+
+def test_the_failed_run_path_is_what_actually_calls_it(run):
+    """The wiring, not the function. `close_unfinished_ai_pass` existing changes nothing unless
+    the path a crashed run takes reaches it — and the journey's identical closure had sat one
+    line away on that path since G6a without the judge's ever being added beside it."""
+    from apps.a11y.models import A11yBaselineAudit
+    from orchestration.activities import fail_run_core
+    from orchestration.types import AgentRunInput
+
+    tenant, proj, row, _ = run
+    audit = _judging_audit(tenant, proj, row)
+
+    fail_run_core(
+        AgentRunInput(
+            run_id=str(row.id), tenant_id=str(tenant.id), project_id=str(proj.id),
+            work_item_id=str(row.work_item_id), agent_spec_id=str(row.agent_spec_id),
+            phase="a11y_judge", auto_approve=True,
+        ),
+        "the engine session ended before the judging finished",
+    )
+
+    audit.refresh_from_db()
+    assert audit.status == A11yBaselineAudit.Status.COMPLETE
+    assert A11yJudgmentCache.objects.filter(
+        tenant=tenant, run_id=row.id, verdict="uncertain").count() == 3, (
+        "every element it was given, filed for a person")
+
+
+def test_a_failed_run_that_judged_nothing_is_left_completely_alone(project):
+    """A no-op for every other phase in the platform — which is the price of putting it on the
+    shared failure path, and has to be paid rather than assumed."""
+    from apps.a11y.models import A11yBaselineAudit
+    from orchestration.activities import fail_run_core
+    from orchestration.types import AgentRunInput
+
+    tenant, proj = project
+    row = _run_for(tenant, proj, "02_requirements")
+    audit = A11yBaselineAudit.objects.create(
+        tenant=tenant, project=proj, routes=["/"],
+        status=A11yBaselineAudit.Status.JUDGING)
+
+    fail_run_core(
+        AgentRunInput(
+            run_id=str(row.id), tenant_id=str(tenant.id), project_id=str(proj.id),
+            work_item_id=str(row.work_item_id), agent_spec_id=str(row.agent_spec_id),
+            phase="02_requirements",
+        ),
+        "the branch would not build",
+    )
+
+    audit.refresh_from_db()
+    assert audit.status == A11yBaselineAudit.Status.JUDGING, (
+        "an unrelated phase failing must not close somebody's audit")
+    assert A11yJudgmentCache.objects.filter(tenant=tenant).count() == 0

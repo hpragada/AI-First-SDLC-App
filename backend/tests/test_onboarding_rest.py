@@ -351,8 +351,9 @@ def test_onboarding_hub_shape_before_anything(client, project, member):
     # A brownfield project has pages the platform cannot discover — it has no access to the
     # running application, deliberately — so the accessibility step starts at "nobody has told
     # us yet" rather than at "nothing found" (task 8a).
-    assert resp.data["a11y"] == {"routes_registered": 0, "audits_run": 0,
-                                 "status": "not_started"}
+    a11y = resp.data["a11y"]
+    assert a11y["routes_registered"] == 0 and a11y["audits_run"] == 0
+    assert a11y["running"] is False and a11y["status"] == "not_started"
     assert resp.data["upload"] == [] and resp.data["adopt"] == []
     # Assert the MEANING, not the exact dict (S5-18): both steps grew keys after this test was
     # written — `index.repos` for the per-repo cards, and `running`/`run_id`/`question` so the hub
@@ -410,3 +411,69 @@ def test_onboarding_surfaces_are_tenant_isolated(client, db):
     assert c.get(_hub_url(p1)).status_code == 200
     # cross-tenant project id is invisible under this admin's session (RLS/tenant scoping)
     assert c.get(_hub_url(p2)).status_code == 404
+
+
+# ── the accessibility step, while an audit is actually running ───────────────
+#
+# The step counted a `judging` audit as run, and then said "1 audit run — open the report from
+# Artifacts" while the audit was still going. There is no report to open until the judging ends:
+# the baseline is published when the judge run closes, deliberately, so that it never states a
+# position that is still changing. Seen on the live run of 21 August.
+
+
+def _an_audit(project, status):
+    from apps.a11y.models import A11yBaselineAudit, A11yRoute
+
+    A11yRoute.objects.get_or_create(
+        tenant=project.tenant, project=project, path="/",
+        defaults={"label": "Home", "enabled": True})
+    return A11yBaselineAudit.objects.create(
+        tenant=project.tenant, project=project, base_url="http://localhost:4180",
+        routes=["/"], status=status)
+
+
+def test_an_audit_still_running_is_not_reported_as_a_finished_one(client, project, member):
+    _login(client, "dev@acme.com", "dev-pass!")
+    _an_audit(project, "judging")
+
+    a11y = client.get(_hub_url(project)).data["a11y"]
+
+    assert a11y["status"] == "running", "it is going, not done"
+    assert a11y["running"] is True
+    assert a11y["audits_run"] == 0, "nothing to open from Artifacts yet"
+
+
+def test_a_finished_audit_makes_the_step_done(client, project, member):
+    _login(client, "dev@acme.com", "dev-pass!")
+    _an_audit(project, "complete")
+
+    a11y = client.get(_hub_url(project)).data["a11y"]
+
+    assert a11y["status"] == "done"
+    assert a11y["audits_run"] == 1
+    assert a11y["running"] is False
+
+
+def test_a_finished_audit_stays_finished_while_the_next_one_runs(client, project, member):
+    """Both facts are true at once, so both are carried. The tick does not flicker back off
+    because somebody started another audit."""
+    _login(client, "dev@acme.com", "dev-pass!")
+    _an_audit(project, "complete")
+    _an_audit(project, "capturing")
+
+    a11y = client.get(_hub_url(project)).data["a11y"]
+
+    assert a11y["status"] == "done" and a11y["audits_run"] == 1
+    assert a11y["running"] is True
+
+
+def test_an_audit_that_could_not_run_leaves_the_step_where_it_was(client, project, member):
+    """A failed audit is not a finished one and is not a running one. With pages registered the
+    step is simply ready again, which is the true thing to say."""
+    _login(client, "dev@acme.com", "dev-pass!")
+    _an_audit(project, "failed")
+
+    a11y = client.get(_hub_url(project)).data["a11y"]
+
+    assert a11y["status"] == "ready"
+    assert a11y["audits_run"] == 0 and a11y["running"] is False

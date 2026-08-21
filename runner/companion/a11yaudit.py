@@ -237,12 +237,12 @@ def run_baseline_audit(*, client, project_id: str, workdir, base_url: str = "",
                 "preflight": ready, "finished": finished}
 
     batches = [asked[i:i + MAX_SCREENS] for i in range(0, len(asked), MAX_SCREENS)]
-    print(f"[companion] {len(asked)} page(s) · {len(batches)} pass(es)")
+    print(f"[companion] {len(asked)} page(s) | {len(batches)} pass(es)")
 
     passes: list[dict] = []
     captured, posted, failures = 0, 0, []
     for index, batch in enumerate(batches, start=1):
-        print(f"[companion] pass {index}/{len(batches)} — {len(batch)} page(s)")
+        print(f"[companion] pass {index}/{len(batches)} - {len(batch)} page(s)")
         ran = run_audit_script(
             {**manifest, "routes": batch,
              "output": pass_output(output, index, len(batches))},

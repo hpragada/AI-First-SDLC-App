@@ -1294,3 +1294,452 @@ tasks passed its tests and the backlog read as complete, while a user could not 
 start an audit, or start a keyboard journey. The acceptance criteria never asked *"can a person get
 to this?"* Every task in this plan carries a **"What you see afterwards"** section for that reason —
 it is the question the last round did not ask.
+
+---
+
+## 9. The first live run — 20/21 August
+
+The first time any of this was executed against a real application. Meridian Library at
+`http://localhost:4180`, 79 routes registered, 10 in scope, on a brownfield project with no Jira
+and no Confluence.
+
+**It worked, and it found four defects no test could have caught, each hidden behind the one
+before it.** That is the shape of a capability that has never run: the first defect stops you
+before you can meet the second. All four are fixed and all four are in `TESTING_GUIDE.md`; they
+are recorded here because the *reason* each survived a green test suite is worth keeping.
+
+| | What was wrong | Why the tests were green |
+|---|---|---|
+| 1 | An audit opened from the screen was born **unclaimable** — `capturing`, which no companion offers to take — while the screen read *Visiting pages*. | `claimable=True` existed only in test code. The tests asserted the right behaviour of a call the product never made. |
+| 2 | The serve→audit path never called `ensure_backend_importable()`, so the audit died on `ModuleNotFoundError` — and the serve loop caught only `DaemonError`, so it took the whole companion down with it. | Every other companion path called it. Nothing tested the one that did not. |
+| 3 | **Seven granted tools were never exposed.** The judge was granted 24 and the MCP server defined 17: `get_a11y_batch`, `get_wcag_grounding`, `record_a11y_finding` and all four journey tools had no `@server.tool()` wrapper. The judge and the keyboard journey had been **unrunnable since the day they were written**. | The tests checked the permission list and the HTTP route. Neither of those puts a tool in an agent's hands; only the wrapper does. There are **three** such lists, and a test now asserts that `granted − exposed` is empty. |
+| 4 | `get_a11y_batch` returned every screen at once — 144 elements, about 80,000 characters — and the judge correctly refused to judge part of it. Its own docstring had said *"one screen at a time"* since the day it was written. | Every test used three elements over two screens, where paged and unpaged look identical. |
+
+**And a fifth, taken as a precaution rather than proven:** `verify_writes` gets one minute, which
+is right for "does the artifact exist" and wrong for the judge's closing step — that step files a
+fallback verdict per unanswered element and then publishes a report. `LONG_VERIFY_PHASES` now
+gives those two phases five minutes.
+
+⚠️ **The evidence first given for this was a misreading, and 9.4 corrects it.** The "81 of 144"
+that looked like a cancelled half-write was neither: 144 request slots are 81 distinct elements,
+and the judge had answered all of them. On the first complete run this step took **22 seconds**,
+comfortably inside the original minute. The longer window is still the right call — that step's
+work grows with the audit, and being cut off half-way through it would leave the accounting it
+exists to guarantee half-done — but it fixed a risk, not an observed failure.
+
+**What the run proved:** capture 10 of 10, twice. An audit reaching `complete`. And the judge
+recording real verdicts — 80 pass, 1 fail — including a defect no scanner can reach:
+`<img id="photo-interior" src="/assets/photos/reading-room.svg" alt="library">` against 1.1.1 at
+0.92 confidence, with the replacement text proposed.
+
+### 9.1 The six fixed the next morning — BUILT, 2026-08-21
+
+The run was cut short by a dropped connection, and what that exposed was **not** the judging. It
+was that a run which stops is invisible, and that no screen could say so.
+
+| | What was wrong | What was done |
+|---|---|---|
+| **A** | **A failed judging run stranded its audit for ever.** The workflow returns at its `phase_failed` branch *before* `verify_writes`, which is where the judge's accounting lives — so a crashed engine left the elements it never answered recorded nowhere, no report published, and the audit reading *Checking what was found* permanently. | `aipass.close_unfinished_ai_pass`, called from `fail_run_core` **one line below the journey's identical closure**, which had sat on that path since G6a without the judge's ever being added beside it. It files every unanswered element as `uncertain`, publishes the merged report and completes the audit — landing the crash path in the state the normal path already produces. A no-op for every other phase, and that is asserted rather than assumed. |
+| **B** | **A question from a headless run could be seen and never answered.** The sidebar badge counted the project's pending clarifications server-side; the page narrowed the tenant's against the visible backlog. A run on a hidden carrier work item — accessibility judging, code indexing, the gap report — is deliberately absent from that backlog, so its question was counted and then filtered away. Badge 1, page none, run waiting for ever. | The page asks the API for the project's questions — a filter the endpoint already had — instead of narrowing them in the browser, and reads the work item's name off the clarification's own `work_item_title` rather than looking it up in a list a carrier is never in. Hiding plumbing from a board is right; hiding a question that blocks a run is not. |
+| **C** | **Two tests asserted the pre-#9 world** — that a project folder with nothing installed is refused — and failed for anyone who had run `npm install` in `runner/`, which committing the lockfile made standard. | Rewritten to assert what #9 actually built: a bare folder falls back to the companion's toolchain, and the report can say `(companion)`. The refusal they were protecting is real, but now only happens when **both** places are empty, so it has a test of its own that runs the real script from a copy stranded where nothing resolves above it. |
+| **D** | **A running audit had nothing to watch.** S-38 line 598 designs a full panel; what existed was a status word in a 320px rail. The live run spent forty minutes on *Checking what was found* with no way to see that the judge was at 81 of 144, or that it had stopped. | The panel's **three tiles**, built: pass, pages visited and would-not-open while capturing; **elements judged of dispatched** once the AI half starts. Every number derived from rows already being written — `baseline.audit_progress`, two grouped queries, asked only for audits still in flight. The live console is **not** built; see 9.2. |
+| **E** | **`.grid--detail` never collapsed.** Fixed at `minmax(0,1fr) 320px` for every width, while its sibling `.grid--console` collapses at 900px on the line below it. *Past audits* — the only place an audit's progress appeared — was squeezed beside 79 page rows and pushed below the fold. Two people looked for it and concluded it did not exist. | One media query at 900px, matching the rule directly below it. |
+| **F** | The companion printed `10 page(s) ? 1 pass(es)` — characters the Windows console cannot encode once output is redirected to a file. | The six affected lines across four companion files write ASCII. Only the companion's own printed output changed; nothing that travels to the platform did. |
+
+### 9.2 Recorded, not built — the live audit console
+
+**What is missing.** S-38 designs a scrolling console beneath the tiles, one line per page as it is
+visited: `14:02:12 / · 41 elements · scanner ran`, `14:05:44 /admin/reports · could not open (timed
+out after 30s)`. The tiles now say *how far*; the console says *what happened, page by page*, which
+is what turns "3 of 10 visited" into "and the fourth one timed out".
+
+**Why it is not built alongside the tiles.** The tiles cost two grouped queries over rows the
+platform already stores. The console has nothing to read: the companion posts one screen per call
+and says nothing between them, and a page that **failed** to open is only recorded when the pass
+ends. There is no progress channel, and per-page lines would mean building one — an append-only
+event stream per audit, written by the companion as it goes and read by the panel on the 5-second
+poll it already runs.
+
+**What it would take**, so this is a decision rather than a hope:
+
+- an event row per audit step — route, element count, scanner ran or did not, opened or would not
+  open with the reason, timestamp — written on the same call that posts a screen, and on the
+  failure the companion currently only counts;
+- a read endpoint returning the tail, on the poll the running panel already makes;
+- the same bounding every other list here has — a cap on rows kept, stated on screen when it bites,
+  because a 200-page audit is 200 lines and a silent truncation reads as "that is all that
+  happened".
+
+**Until then the tiles are the whole story on screen**, and they are honest about being counts
+rather than a narrative: *would not open* is a number, and which page it was appears on the audit's
+row under Past audits when it closes.
+
+### 9.3 Asking the machine again about what it never judged — BUILT, 2026-08-21
+
+**The situation.** A judging run that dies part-way leaves every element it never reached filed as
+`uncertain — not judged`. That is the design working: nothing dispatched may vanish. But those
+elements then sit on a person for a reason that has nothing to do with them — not because a check
+looked and could not decide, which is what the review queue is for, but because nothing looked at
+all.
+
+⚠️ **This was surfaced with a worked example — "81 of 144, so 63 handed to a person" — and that
+example was wrong**; see 9.4. Those 144 request slots were 81 distinct elements and the judge had
+answered every one. The situation this closes is real and will happen the first time a judging run
+genuinely dies part-way; it simply had not happened yet when this was built.
+
+**Most of it already existed**, and that was the surprise when this was looked at properly:
+
+- **`dispatch._cached` never serves an `uncertain` back to a dispatch.** Its own docstring says
+  why: an `uncertain` means no answer was reached, and serving it back would turn a *transient*
+  inability into a permanent one.
+- **`ingest.requests_for` reads the stored candidate bundles**, keyed on the audit's own id. The
+  elements, their markup, their styles and their screenshot crops are all still in the database.
+  **A re-judge needs no browser, no companion and no page visited again.**
+
+So what was missing was **a caller** — the same shape as **G6c**, where `start_journey_check` had
+no caller anywhere in the platform.
+
+#### What was built
+
+| | |
+|---|---|
+| **The marker** | `judge._remember_unanswered` writes the content hashes a run never reported on onto `Run.outputs`, at the one moment they are still distinguishable from an answered `uncertain`. A JSON field the run already owns: no schema change and no second place to keep in step. |
+| **The reader** | `aipass.unanswered_for_capture` — the elements nothing ever looked at, from two sources: verdicts filed with **no run against them** (`_file_unjudged`, when the pass could not start at all) and the hashes the judge run recorded. Both intersected with what this capture actually holds, because a judgment row is project-wide and one audit must not drag in another's leftovers. |
+| **The pass** | `aipass.rejudge_capture` — `start_ai_pass` with a new `only_hashes` filter, then the audit back to `judging`. It re-uses the ordinary machinery entirely: same carrier work item, same dispatch, same closing step, same report re-published, same audit completed. Whatever it does not answer this time is filed again. |
+| **The way in** | `POST /api/projects/<p>/a11y-audits/<audit>/rejudge/` and a **Check the rest** button on the audit's own row under Past audits, appearing only on a **closed** audit that has some, and saying how many. |
+
+#### The three decisions the team took, and what each cost
+
+1. **Where it starts** — the audit's own row, because that is the thing that was incomplete. The
+   count comes from what each pass recorded about itself (`baseline.unanswered_counts`, one extra
+   query for the whole list); the *authoritative* set is recomputed at re-judge time. A test
+   asserts the two agree, because a screen that offers to check twelve things and then checks
+   nine is a screen nobody trusts again.
+2. **What it does to the audit** — back to `judging`, so the running panel and the row say what
+   is happening in the words they already use, and it reaches `complete` again through the
+   ordinary closing step. Not a second audit: re-running one would re-visit every page to re-ask
+   about a handful of elements, and would then compare a fresh capture against a report drawn
+   from the old one.
+3. **What it must never do** — re-ask about an `uncertain` a check actually *reached*. That is a
+   real verdict and it belongs to the person in the review queue; handing it back would quietly
+   recycle the queue's own contents through the machine. This was the one piece of real design,
+   and it is why the marker above exists.
+
+⚠️ **The marker rests on an invariant, so the invariant is pinned by a test.** A verdict with a
+**null run** means the platform filed it because nothing could be asked; only `_file_unjudged`
+writes one. There are exactly three `record_verdict` call sites, and a test asserts that the
+agent's own tool (`judge.record_finding`) always stamps its run — because the day one of them
+stops, elements a check genuinely answered would start being fed back to the machine.
+
+⚠️ **Two real bugs were caught by these tests before they shipped**, both in the first draft of
+`rejudge_capture`: `trigger` was passed a string where the dispatch expects the trigger
+*callable*, and the re-judge had no way for a test to inject one — which would have meant a test
+starting a real workflow on the shared Temporal server.
+
+### 9.4 The first COMPLETE run — 21 August
+
+Meridian again, and this time end to end: **10 of 10 pages visited, 0 that would not open, every
+distinct element judged, the report published, the audit `complete`.** The Temporal history shows
+all six activities in order, `verify_writes` running for 22 seconds and passing, and the workflow
+closing `auto_approved: true`.
+
+The one failing finding is the one that justifies the whole build — a defect no scanner can reach:
+
+> `<img src="/assets/photos/reading-room.svg" alt="library">` against **1.1.1**, confidence
+> **0.95**, evidence citing the screenshot: the image is an illustration of a reading room, and
+> *library* describes neither what it shows nor why it is there.
+
+#### The correction: "81 of 144" was never a truncation
+
+**This corrects what §9 said the morning before.** The 20 August run was read as having died at
+81 of 144 with **63 elements lost**, and the accounting was described as having been broken. It
+was not. The judging had finished.
+
+An audit dispatches one request per (element, checker) **slot**. Ten pages of Meridian produce
+**144 slots but only 81 distinct elements**: the site header, the footer and the nav are the same
+markup on every page, they hash identically, and one verdict answers all ten. The most repeated
+one is `<span class="brand-name">Meridian Library</span>`, on all ten pages.
+
+```
+element slots: 144   ·   distinct elements: 81
+```
+
+`verify_judgment_completeness` compares hashes, computed **0 missing**, and was right. What
+actually went wrong on 20 August was only that the workflow never closed the audit — item **A**
+in 9.1 — and that fix is what let this run finish properly. The accounting was never broken.
+
+#### And the run exposed a defect in the tile built that same morning
+
+**The tile read `81 of 144` on a complete audit.** The numerator counted distinct verdicts, the
+denominator counted request slots — so a finished, correct run told the person who started it
+that a third of the checking had not happened. A screen stating something about a client's
+application that is not true, in the feature built to refuse exactly that.
+
+**Fixed by making both numbers the same unit.** `start_ai_pass` now records `distinct` — how many
+distinct elements the requests are about — beside `dispatched`, and the tile counts against that.
+An audit dispatched before this was recorded derives the number from the run's own batches rather
+than showing the old misleading one. Two tests: a capture with repeated chrome must not report
+itself incomplete, and the pre-fix shape must still produce a true number.
+
+#### The panel no longer disappears when the run ends — BUILT
+
+The team's other observation from the same run, and it is the same principle one step later: the
+panel they had been watching **vanished at the moment the answer arrived**. A person who starts an
+audit and watches it work must not have the result disappear on completion.
+
+It now stays and changes what it says. Three tiles throughout:
+
+| Stage | The three tiles |
+|---|---|
+| Visiting pages | Pass *k of m* · Pages visited · Would not open |
+| Checking what was found | **Elements judged** *n of m distinct* · Pages visited · Would not open |
+| Complete | **Pages reported** *n of m asked* · **Problems open** *n, c critical · h high* · **Waiting on a person** *n* |
+| Could not run | the machine's own reason, in its own words |
+
+Plus the never-opened banner when pages were asked for and never reported, and a way through to
+the review queue when anything is waiting.
+
+⚠️ **One thing about that panel is scoped wider than it looks, and it is labelled so.** *Problems
+open* is **this project's** current standing, not this audit's tally. A finding carries no audit
+key — `A11yFinding.last_seen_run` is a foreign key to a real `Run`, and a baseline audit
+deliberately manufactures none (QA-17), so for every brownfield audit that column is NULL. The
+first draft counted on it and would have reported **0 problems on an audit that found three**. It
+is also the right scope: the **Accessibility baseline** this panel points at is itself
+project-scoped, so that an audit covering part of an application never drops what is already known
+about the rest. The tile's sub-line says *in this project* rather than letting the number imply a
+per-run count, and a test pins the NULL column so the shortcut cannot be taken again.
+
+
+---
+
+### 9.5 An audit whose machine went away — 21 August (BUILT)
+
+The scope was re-cut to twelve pages chosen to make the AI hesitate, the audit was started, and
+the **operator's computer restarted while it was running**. Page 1 was in; nothing else ever
+came. The audit sat at:
+
+```
+audit 1c471111   status = capturing
+claimed 04:20:06   ·   last write 04:20:57   ·   screens in: 1 of 12
+```
+
+and it would have sat there for ever. The screen went on saying **Visiting pages** about a
+machine that no longer existed — this capability's own worst failure, in the feature built to
+refuse it. It is the same defect as 9.1 item **A**, one state further along: that fix closed the
+audit when the *judging* run died, and nobody checked the *capture* end.
+
+#### Why nothing could end it
+
+The platform already recovers a dead companion's work — the claim lease from Bugs S.No 110/111.
+It offers back two audit states: `pending`, and `claimed` whose stamp has gone stale. An audit
+moves to **`capturing`** the instant its first screen lands, and past that line there was no
+lease, no timeout and no cancel:
+
+* the restarted companion could not pick it back up — its claim poll cannot see `capturing`;
+* nothing renewed an audit's lease either. `claimed_at` was stamped once and never touched
+  again, so **an audit's liveness was not actually being tracked at all**;
+* and starting another audit is not refused, so the abandoned one just becomes a row under Past
+  audits that reads "Visiting pages" permanently.
+
+#### The fix — three parts
+
+**A. The heartbeat renews the audit's lease.** `_renew_claims_for` already does this for runs;
+it now also renews the audit each companion is *capturing*, capped off `created_at` rather than
+a `first_claimed_at` column — an audit is claimed within a second of being created, so its own
+age is the same measurement without a migration. This part had to come first: without it, part B
+would declare a slow-but-healthy capture dead, which is exactly the S.No 111 mid-flight re-claim
+being reintroduced.
+
+**B. A stale capture is closed as failed, with the reason.** `baseline.abandon_audit` /
+`abandon_stale_audits`, swept from the companion's heartbeat and its audit claim — both already
+writes, so **reading the audit list never writes to it**. Liveness is measured from *either*
+signal: the heartbeat, or a screen actually arriving. Keying on the heartbeat alone would depend
+on a companion mode that might not heartbeat; keying on screens alone would kill an audit stuck
+on one very slow page.
+
+Failed, **not judged and not resumed**, both deliberate. A report built from four of twelve
+pages would be a document stating a position about an application most of which was never looked
+at. Re-visiting routes already captured under this key would need a resumption design that does
+not exist — what happens to the bundles already stored for a route being visited twice — and a
+fresh audit costs minutes. Resumption is worth its own task if captures ever get long enough for
+the difference to matter.
+
+**C. The screen tells the truth even if the machine never comes back.** A computer switched off
+for good never reports in to be swept, so `stalled` is **derived on read and never written**:
+an in-flight audit nothing has been heard from for the lease reads as *Audit stopped reporting*,
+says how far it got, and says a new one can be started now.
+
+⚠️ **The near-miss, and the reason `ABANDONABLE_STATUSES` is one state and not two.** The first
+version swept `claimed` as well as `capturing`, and broke
+`test_a_machine_that_restarts_mid_audit_picks_its_own_audit_back_up`. That test was right: a
+`claimed` audit has captured **nothing**, and the existing lease hands it to the next machine
+that asks, so it simply runs. Failing it would have converted a recovery that worked into a
+failure somebody has to go and restart by hand. Abandonment now applies to `capturing` alone —
+the one state nothing else could get an audit out of — and a test pins the distinction.
+
+#### It closed the real one before it was ever run by hand
+
+The plan was to close audit `1c471111` explicitly. By the time that ran, the sweep had already
+done it: **04:38:36**, on the live companion's own heartbeat, `opened: 1`, the eleven unvisited
+pages listed under `never_reported`, and the reason in the machine's words. The bug found on the
+live run was closed by the fix for it, on the live system, unassisted.
+
+**Verified:** 191 in `test_a11y_baseline.py`, 73 across `test_a11y_scope_rest.py` +
+`test_companion_daemon.py`, 44 on the audit screen, `tsc` and `eslint` clean on the changed
+files. The four pre-existing `views.py` ruff findings are unchanged and still not from this work.
+
+
+---
+
+### 9.6 A pass that stopped at its limit, and said nothing — 21 August (BUILT)
+
+The twelve-page scope came to **205 element slots against a cap of 200**, so the dispatch
+stopped and handed back **5 deferred**. It recorded that honestly, in the audit's own summary:
+
+> *"Stopped at this run's limit of 200 — 5 item(s) still need judging. Run the check again to
+> continue from here; nothing was skipped."*
+
+**And nothing anywhere read it.** Grepping the whole frontend for `ai_pass` or `deferred`
+returned nothing; the run report and the published baseline never mention them either. So the
+audit would have closed as **complete**, shown *12 of 12 pages reported*, and never once said
+that five element-slots were not checked. A quiet success, which is the worst failure this
+capability has.
+
+⚠️ **And the "Check the rest" button would not have appeared.** This was stated wrongly to the
+team first and corrected against the code. `unanswered_counts` counted exactly two things —
+`filed_unjudged` (no judge to ask) and the judge run's `a11y_unanswered` (given to a run that
+never reported). Cap-deferred elements are in **neither**: never dispatched, never filed. The
+audit's own `filed_unjudged: 0` proves it.
+
+#### D1 — "nothing looked at this" now means what it says
+
+`unanswered_for_capture` asks the direct question: **is there a verdict for this element at
+all?** No verdict row means nothing looked, whatever the reason nothing did — no judge, a run
+that dropped it, or a dispatch that stopped short. One rule instead of three categories to keep
+in step, and the cap case is covered by construction rather than by remembering it exists.
+
+An element that *was* answered stays answered, including a genuine `uncertain`: that verdict
+belongs to the person in the review queue, and re-asking would quietly recycle the queue through
+the machine. `unanswered_counts` — the cheap screen count — adds `deferred` to what it already
+counted.
+
+⚠️ `deferred` is counted in **slots**, the only number the summary kept, and repeated chrome is
+several slots and one element. So the button can read high where the tail of a capped pass was
+markup the cache can already answer. `unanswered_for_capture` recomputes in elements and is the
+number that acts; the docstring says so.
+
+#### D2 — the finished audit says why part of it was never asked about
+
+The dispatch's own sentence now renders: a warning banner on the complete panel
+(*"Not everything captured was checked"*) and a line on the audit's row under Past audits. It
+sits beside — not instead of — `summary.reason`, because *why the audit failed* and *why a
+successful audit is incomplete* are two different sentences.
+
+#### D3 — and the onboarding step stopped calling a running audit a finished one
+
+Reported by the team from the live run: the hub read **"1 audit run — open the report from
+Artifacts"** while the audit was still judging. The step counted `complete` **and** `judging` as
+run. But there is no report to open until the judging ends — the baseline is published when the
+judge run closes, deliberately, so that it never states a position that is still changing.
+
+`audits_run` now counts finished audits only, and a separate `running` rides beside it — the
+same `{status, running}` pairing the Index code step already uses, and for the same reason: the
+tick and the button switch on `status`, while the line of text has to be able to say *"and
+another one is going right now"* over the top of it. Four states, each with a test: running says
+so and offers no report; finished is done; finished-plus-running keeps the tick and adds the
+sentence; and a failed audit leaves the step simply *ready*, which is the true thing to say.
+
+**This is the team's point about a fix touching everything it touches**, and they were right to
+make it: the audit screen had been taught to tell the truth about a running audit three times
+over, and the hub two clicks away was still reading the old count.
+
+**Verified:** 62 in `test_a11y_report.py`, 19 in `test_onboarding_rest.py`, 46 on the audit
+screen, 23 on the hub, `tsc` and `eslint` clean on every changed file.
+
+
+---
+
+### 9.7 The check that never ran — 21 August ⭐ (BUILT)
+
+The twelve-page audit finished cleanly: **12 of 12 pages, 125 of 125 elements judged, 19 real
+failures, 0 never answered.** Both control pages behaved — `/loans/history` and `/staff/overview`
+are built correctly and came back clean while their broken twins produced eight findings between
+them, which is the evidence that the judge is judging rather than pattern-matching.
+
+**And the review queue was still empty.** Zero `uncertain`, zero below the 0.80 threshold. So the
+question became *why*, and the answer was not the model.
+
+```
+checker slots, every audit this project has ever run:
+color 173   ·   semantics 47   ·   alt 22   ·   label 0
+```
+
+**`label` has never selected a single element.** Not on these pages, not on the previous ten, not
+once in the life of the feature. The chain, each link verified rather than reasoned about:
+
+1. `rules._applies_label` requires a computed accessible name — `if not name: return False`,
+   deliberately: 2.5.3 compares the announced name against the visible text, and with no name
+   there is nothing to compare.
+2. That name is filled by the capture calling **`page.accessibility.snapshot()`**.
+3. **Playwright removed that API.** `probe: page.accessibility is: undefined` — no
+   `accessibility.js` in `playwright-core/lib/client`, no `accessibility` in `types.d.ts`, at the
+   pinned 1.62.1.
+4. `fillAccessibleNames` wrapped each element in a bare `catch {}` — written for one awkward
+   element, and it swallowed a total failure just as quietly.
+5. **0 of 242 stored elements carry a non-empty accessible name.**
+
+So WCAG **2.5.3 Label in Name** — the check with most to say that only a person can settle, and
+therefore the likeliest source of a review-queue item — was switched off from the day it was
+written, by a dependency change, behind a silent guard. The team's instinct that an always-empty
+queue was suspicious was right, and it was never about the pages.
+
+#### The fix, in four parts
+
+**1 · The name comes back.** `locator.ariaSnapshot({ timeout, depth: 0 })` replaces the removed
+call. Measured against the real browser before writing a line of it: 106 elements in **590ms**
+(~6ms each), and a selector that matches nothing throws at the timeout instead of hanging — that
+matters, because `ariaSnapshot` defaults to **no timeout at all**, so one stale selector would
+have stopped the audit rather than cost it a name.
+
+The parse is anchored: `- role "name"` at the start of the first line. An unanchored search for a
+quoted string reads `- paragraph: He said "hello"` as a paragraph named *hello*, and **inventing a
+name is worse than having none** — a made-up name is exactly what makes the label check compare a
+string against itself and always pass. Tested as JavaScript, extracted from the shipped file and
+run against snapshots copied from a real browser, including that trap.
+
+**2 · The platform checks its own input, so this cannot hide again.** `baseline._name_coverage`
+counts, over the elements a capture actually produced, how many *nameable* ones (links, buttons,
+form controls, headings — things that have a name by definition) came back named. None of them
+named is a broken machine, not an application without names, and the audit records it and the
+screen says so: *"One of the checks could not run."* Named apart from the cap banner on purpose —
+it must never read as "the application has no label problems", because nothing looked for any.
+
+Checked server-side rather than trusted from the capture, because a capture written by an older
+companion cannot report a problem nobody knew to look for. Silent when there is nothing nameable
+in a capture at all: that says nothing about the machine, and an accusation would be a guess.
+
+**3 · The stopped pass counts elements, not slots.** ⚠️ **A defect D1 introduced, caught by
+running the numbers against the finished audit rather than assuming.** The 21 August run deferred
+**5 request slots and lost nothing** — every one was chrome already dispatched earlier in the same
+run, so one verdict answered it, and all 125 distinct elements were judged. Counting the raw
+`deferred` would have put a *"Check the rest — 5 elements"* button on an audit with nothing left
+to check. `start_ai_pass` now records `deferred_distinct` (deferred hashes minus dispatched ones)
+and that is what the button counts; an audit from before the key existed reports **none** rather
+than the misleading number, the same choice the "elements judged" tile made.
+
+**4 · And a boundary D1 got wrong, caught by an existing test.** "No verdict anywhere" is only
+*asking again* once a pass has run. A capture that has never been judged also has no verdicts, and
+every element would have answered the question — but what that capture needs is its **first**
+pass, dispatched the ordinary way. `unanswered_for_capture` now applies the rule only when a judge
+run exists for the capture. The test that caught it,
+`test_asking_again_when_everything_has_been_looked_at_starts_nothing`, was right and the code was
+wrong.
+
+**Verified:** 262 across `test_a11y_baseline.py` + `test_a11y_scope_rest.py` +
+`test_a11y_scan_coverage.py`, 64 in `test_a11y_report.py`, 48 on the audit screen, `tsc` and
+`eslint` clean.
+
+**Not yet proven live**, and this is the next run's job: `/account/card-services` alone should
+produce seven label candidates — buttons whose spoken name shares no word with the visible one
+("Renew" → *"Extend the loan period on every item"*) — and that is where the first genuine
+`uncertain` should appear.

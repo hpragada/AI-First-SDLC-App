@@ -1214,30 +1214,93 @@ def test_the_script_finds_the_tools_in_the_project_being_audited(tmp_path):
     assert out["scanner"]["version"] == "4.13.0", "the project's version, which the report names"
 
 
+#: Both of the tests below describe the world #9 built: a project with nothing installed is
+#: AUDITABLE, because the companion carries its own pinned toolchain. That is only true on a
+#: machine where the companion's toolchain has actually been installed, so they are skipped
+#: rather than failed where it has not — exactly as `needs_node` skips where there is no Node.
+#: The case where BOTH are missing has its own test below, and needs no toolchain to prove.
+_COMPANION_MODULES = Path(__file__).resolve().parents[2] / "runner" / "node_modules"
+needs_companion_toolchain = pytest.mark.skipif(
+    not ((_COMPANION_MODULES / "playwright").exists()
+         and (_COMPANION_MODULES / "axe-core").exists()),
+    reason="the companion's own toolchain is not installed (npm install in runner/)",
+)
+
+
 @needs_node
-def test_a_folder_with_nothing_installed_names_the_folder_and_the_command(tmp_path):
-    """A refusal a person can act on. The folder is named because the usual cause is running
-    from the wrong one, and that is invisible from a message that only says 'not installed'."""
+@needs_companion_toolchain
+def test_a_folder_with_nothing_installed_falls_back_to_the_companion(tmp_path):
+    """A project with no `node_modules` of its own is audited, not refused (#9).
+
+    **This test used to assert the opposite** — that an empty folder was refused with a message
+    naming it and the npm command. That was true until 20 August, when a missing clone became a
+    fallback rather than a refusal: an application written in Django, Rails or .NET has no
+    `node_modules` and never will, and requiring one meant the only way to audit it was to add
+    npm dev-dependencies to a client's own repository in order to look at it. The refusal is now
+    reserved for a machine where the companion has nothing either, which is the test below.
+    """
     from runner.companion.a11yaudit import preflight
 
     bare = tmp_path / "empty"
     bare.mkdir()
     out = preflight(workdir=bare, node=_NODE)
-    assert out["ok"] is False
-    assert str(bare) in out["browser"]["error"]
-    assert "npm install -D playwright axe-core" in out["browser"]["error"]
+    assert out["ok"] is True, out
+    assert out["browser"]["ok"] is True, "the companion's own browser answers for this project"
+    assert out["scanner"]["ok"] is True
+    assert out["scanner"]["from"] == "companion", (
+        "and the report must be able to SAY it was ours, not the application's")
 
 
 @needs_node
-def test_the_scanner_alone_missing_is_a_warning_and_not_a_refusal(tmp_path):
-    """The two tools are not equally fatal. No browser means no page can be opened; no scanner
-    means the AI half still runs and every screen says the measurable half did not."""
+@needs_companion_toolchain
+def test_the_scanner_alone_missing_falls_back_without_taking_the_project_browser_with_it(tmp_path):
+    """The two tools resolve independently, and the fallback is per tool, not per project.
+
+    A project shipping playwright but no axe is scanned with **its own** browser and **our**
+    scanner — so `from` is what the report reads to stamp `(companion)` on the version, and it
+    must say `companion` here even though the browser came from the project.
+
+    **This test used to assert `scanner.ok is False`** and the "could not be loaded" message.
+    That was the pre-#9 world too: the scanner had no fallback to reach for. The sentence it was
+    written to protect — that a missing scanner is a warning and not a refusal — is still true
+    and still tested, by the both-missing test below, which is now the only way to be without one.
+    """
     from runner.companion.a11yaudit import preflight
 
     out = preflight(workdir=_project_with(tmp_path, scanner=False), node=_NODE)
     assert out["ok"] is True, "the audit still runs"
+    assert out["scanner"]["ok"] is True
+    assert out["scanner"]["from"] == "companion"
+
+
+@needs_node
+def test_a_machine_with_no_toolchain_anywhere_names_the_folder_and_the_command(tmp_path,
+                                                                               monkeypatch):
+    """Both places empty — the one remaining refusal, and it must stay actionable.
+
+    Run from a COPY of the real script placed where nothing resolves above it, which is exactly
+    what a machine that has never run `npm install` in `runner/` looks like. That folder cannot
+    be faked away with a stub: faking is what let the pre-#9 assertions above sit green for a
+    day after the behaviour they described had gone.
+    """
+    import shutil as _shutil
+
+    from runner.companion import a11yaudit
+
+    stranded = tmp_path / "no-toolchain"
+    stranded.mkdir()
+    script = stranded / "a11y_audit.mjs"
+    _shutil.copy(a11yaudit.AUDIT_SCRIPT, script)
+    monkeypatch.setattr(a11yaudit, "AUDIT_SCRIPT", script)
+
+    out = a11yaudit.preflight(workdir=stranded, node=_NODE)
+    assert out["ok"] is False
+    assert str(stranded) in out["browser"]["error"], "the folder we looked in, by name"
+    assert "npm install -D playwright axe-core" in out["browser"]["error"]
+    assert "runner/" in out["browser"]["error"], "and the companion-wide fix, which is the real one"
+    # The scanner is the warning half, not the refusal half — it says so separately.
     assert out["scanner"]["ok"] is False
-    assert "axe-core could not be loaded from this project" in out["scanner"]["error"]
+    assert "the measurable checks did not run" in out["scanner"]["error"]
 
 
 def test_a_machine_with_no_node_is_reported_as_a_folder_that_cannot_run(tmp_path):
@@ -2125,3 +2188,877 @@ def test_the_companion_pins_its_own_browser_and_scanner():
     assert set(deps) == {"axe-core", "playwright"}
     for name, version in deps.items():
         assert version[0].isdigit(), f"{name} is pinned exactly, not floated: {version}"
+
+
+# ── The audit path has to stand on its own, and must never take the machine down ──
+#
+# Both of these come from the team's first live run. The moment an audit could actually be
+# claimed — which needed `claimable=True` on the REST caller — the companion claimed one, and
+# died on `ModuleNotFoundError: No module named 'apps'`. Neither half had ever been reachable
+# before, so neither had ever been exercised.
+
+
+def test_the_audit_path_puts_backend_on_the_path_itself(monkeypatch, tmp_path):
+    """`run_baseline_audit` imports `apps.a11y.capture` lazily, and on this path nobody had put
+    `backend/` on `sys.path`. Its three callers are the two `__main__` subcommands and the engine
+    driver factory — a companion that only ever runs audits reaches none of them.
+    """
+    from runner.companion import daemon as daemon_mod
+
+    called = []
+    monkeypatch.setattr(daemon_mod, "ensure_backend_importable",
+                        lambda: called.append(True))
+    monkeypatch.setattr(daemon_mod, "RemoteStateClient", lambda **kw: object(), raising=False)
+
+    import runner.companion.a11yaudit as a11yaudit_mod
+    monkeypatch.setattr(a11yaudit_mod, "run_baseline_audit",
+                        lambda **kw: {"posted": 0})
+
+    daemon = _FakeDaemon(tmp_path, has_clone=True)
+    daemon_mod.CompanionDaemon._run_a11y_audit(daemon, {
+        "audit_id": "a-1", "project_id": "p-1", "repo": "acme/web", "manifest": {}})
+
+    assert called, "the audit path never made `apps.*` importable, so it died on the import"
+
+
+def test_an_audit_that_raises_closes_the_audit_and_says_so_plainly(monkeypatch, tmp_path):
+    """A raising audit must close with a reason rather than being dropped.
+
+    Left `claimed`, it is indistinguishable on screen from an audit no machine has reached yet,
+    for the whole fifteen minutes its lease takes to age out. And the reason is written for the
+    person reading the report: the exception goes to this machine's log, never to the screen.
+    """
+    from runner.companion import daemon as daemon_mod
+
+    posted = {}
+
+    class _Client:
+        def call(self, tool, **kw):
+            posted["tool"] = tool
+            posted.update(kw)
+            return {}
+
+    # Patched where it LIVES, not on the daemon module: `_close_failed_a11y_audit` imports it
+    # inside the function, so a name bound on `daemon_mod` is never the one looked up.
+    import runner.companion.state_client as state_client_mod
+    monkeypatch.setattr(state_client_mod, "RemoteStateClient", lambda **kw: _Client())
+
+    daemon = _FakeDaemon(tmp_path, has_clone=True)
+    daemon_mod.CompanionDaemon._close_failed_a11y_audit(
+        daemon, {"audit_id": "a-9"}, ModuleNotFoundError("No module named 'apps'"))
+
+    assert posted["tool"] == "finish_a11y_audit"
+    assert posted["audit_id"] == "a-9"
+    reason = posted["reason"]
+    assert "stopped before it could visit any pages" in reason
+    assert "Start a new audit" in reason
+    # The two things a reader must never be shown, and the one they must be told.
+    assert "ModuleNotFound" not in reason and "apps" not in reason
+    assert "tells you anything about your application" in reason
+
+
+def test_a_failure_the_platform_cannot_be_told_about_does_not_raise(monkeypatch, tmp_path):
+    """Best-effort: the 15-minute lease is the backstop, and this must not be what kills the
+    companion after the thing it exists to survive already went wrong."""
+    from runner.companion import daemon as daemon_mod
+
+    class _DeadClient:
+        def call(self, tool, **kw):
+            raise OSError("the platform is unreachable")
+
+    import runner.companion.state_client as state_client_mod
+    monkeypatch.setattr(state_client_mod, "RemoteStateClient", lambda **kw: _DeadClient())
+
+    daemon = _FakeDaemon(tmp_path, has_clone=True)
+    daemon_mod.CompanionDaemon._close_failed_a11y_audit(
+        daemon, {"audit_id": "a-9"}, RuntimeError("original"))   # must not raise
+
+
+# ══ live progress — what the screen can say WHILE an audit is running ═════════════════
+#
+# `summary` is written once, when the audit closes. So for the whole time one is running there
+# was no count of anything anywhere and the only thing a screen could show was the status word:
+# an audit that had visited six of ten pages and one that had visited none looked identical, and
+# an audit whose judge had stopped looked exactly like one still working. These are the numbers
+# the S-38 running panel is made of, and every one of them is DERIVED from rows that were being
+# written the whole time — nothing new is recorded to be able to say this.
+
+def test_progress_counts_the_pages_that_have_actually_come_back(world):
+    from apps.a11y.baseline import audit_progress
+
+    audit = _audit(world, "/", "/login", "/catalogue")
+    _post(world, audit, _screen("/"))
+    _post(world, audit, _screen("/login"))
+
+    progress = audit_progress(world["t"], [str(audit.id)])[str(audit.id)]
+    assert progress["visited"] == 2, "of three asked for — the third has not been visited yet"
+    assert progress["unreachable"] == 0
+
+
+def test_a_page_that_would_not_open_is_counted_as_known_not_as_missing(world):
+    """A page the browser could not open is a RESULT. Counting it as progress-not-yet-made would
+    leave the panel stuck one short for ever on an audit that had in fact finished looking."""
+    from apps.a11y.baseline import audit_progress
+
+    audit = _audit(world, "/", "/admin")
+    _post(world, audit, _screen("/"))
+    _post(world, audit, _screen("/admin", load_error="the page returned HTTP 403", elements=[]))
+
+    progress = audit_progress(world["t"], [str(audit.id)])[str(audit.id)]
+    assert progress["visited"] == 2
+    assert progress["unreachable"] == 1
+
+
+def test_an_audit_nothing_has_reported_on_yet_says_zero_rather_than_nothing(world):
+    """Zero is an answer; a missing key is not. The panel has to be able to render the moment a
+    machine claims an audit, which is before any page has been posted."""
+    from apps.a11y.baseline import audit_progress
+
+    audit = _audit(world, "/")
+    assert audit_progress(world["t"], [str(audit.id)])[str(audit.id)] == {
+        "visited": 0, "unreachable": 0}
+
+
+def test_the_judging_half_is_counted_against_what_was_actually_dispatched(world):
+    """The number the team could not see yesterday: 81 of 144. The denominator comes off the
+    audit's own summary, written when the pass was dispatched, so it is the real one."""
+    from apps.a11y.baseline import audit_progress
+    from apps.a11y.models import A11yBaselineAudit, A11yJudgmentCache
+    from apps.registry.catalog import seed_agent_specs
+    from apps.registry.models import AgentSpec
+    from apps.runs.models import Run
+    from apps.workitems.models import WorkItem
+
+    audit = _audit(world, "/")
+    seed_agent_specs(world["tenant"])
+    judge_run = Run.objects.create(
+        tenant=world["tenant"],
+        work_item=WorkItem.objects.create(
+            tenant=world["tenant"], project=world["project"], title="Accessibility judging"),
+        agent_spec=AgentSpec.objects.get(tenant=world["tenant"], key="09c_a11y_judge"),
+    )
+    audit.status = A11yBaselineAudit.Status.JUDGING
+    audit.summary = {"ai_pass": {"judge_run_id": str(judge_run.id), "dispatched": 144}}
+    audit.save(update_fields=["status", "summary"])
+    for n in range(3):
+        A11yJudgmentCache.objects.create(
+            tenant=world["tenant"], project=world["project"], checker="alt",
+            content_hash=f"{n:064d}", verdict="pass", run=judge_run)
+
+    progress = audit_progress(world["t"], [str(audit.id)])[str(audit.id)]
+    assert progress["judged"] == 3
+    assert progress["dispatched"] == 144
+
+
+def test_an_audit_that_has_not_reached_judging_carries_no_judging_keys(world):
+    """"None judged yet" and "not that stage" are different facts, and the panel shows a
+    different tile for each — so the absence has to be real rather than a zero."""
+    from apps.a11y.baseline import audit_progress
+
+    audit = _audit(world, "/")
+    assert "judged" not in audit_progress(world["t"], [str(audit.id)])[str(audit.id)]
+
+
+def test_progress_for_two_audits_at_once_does_not_mix_them_up(world):
+    """One grouped query for the whole set — which is the shape most likely to attribute one
+    audit's screens to another. Two audits of one project can genuinely overlap."""
+    from apps.a11y.baseline import audit_progress
+
+    first = _audit(world, "/", "/login")
+    second = start_baseline_audit(tenant_id=world["t"], project_id=world["p"],
+                                  base_url="http://localhost:4180")
+    _post(world, first, _screen("/"))
+    _post(world, second, _screen("/"))
+    _post(world, second, _screen("/login"))
+
+    progress = audit_progress(world["t"], [str(first.id), str(second.id)])
+    assert progress[str(first.id)]["visited"] == 1
+    assert progress[str(second.id)]["visited"] == 2
+
+
+def test_asking_about_nothing_is_not_a_query(world):
+    """The API asks only about the audits still in flight, which is normally none at all."""
+    from apps.a11y.baseline import audit_progress
+
+    assert audit_progress(world["t"], []) == {}
+
+
+def test_the_pass_arithmetic_is_the_platforms_own(world):
+    """68 pages is two passes, not one truncated at 60 (D-B5). Shared so the strip, the running
+    panel and the capture cannot disagree about how many passes a list takes."""
+    from apps.a11y.baseline import passes_for
+
+    assert passes_for(0) == 1, "an empty list still describes one pass, never zero"
+    assert passes_for(60) == 1
+    assert passes_for(61) == 2
+    assert passes_for(68) == 2
+    assert passes_for(200) == 4
+
+
+def _judge_run(world, batches=None):
+    """A judging run carrying the batches a dispatch would have attached."""
+    from apps.registry.catalog import seed_agent_specs
+    from apps.registry.models import AgentSpec
+    from apps.runs.models import Run
+    from apps.workitems.models import WorkItem
+
+    seed_agent_specs(world['tenant'])
+    return Run.objects.create(
+        tenant=world['tenant'],
+        work_item=WorkItem.objects.create(
+            tenant=world['tenant'], project=world['project'], title='Accessibility judging'),
+        agent_spec=AgentSpec.objects.get(tenant=world['tenant'], key='09c_a11y_judge'),
+        inputs={'a11y_batches': batches} if batches is not None else {},
+    )
+
+
+def test_a_complete_pass_never_reads_as_two_thirds_done(world):
+    """The defect the first complete live run exposed, and the reason it mattered.
+
+    144 requests over ten pages were 81 distinct elements: the site header, the footer, the nav
+    are the same markup on every page, they hash identically, and one verdict answers all ten.
+    The judge recorded 81 and was complete. The tile counted verdicts against REQUESTS and read
+    `81 of 144` — a screen telling the person who ran it that a third of the checking had not
+    happened, on a run where all of it had. That is this capability's own worst failure, told
+    about itself.
+    """
+    from apps.a11y.baseline import audit_progress
+    from apps.a11y.models import A11yBaselineAudit, A11yJudgmentCache
+
+    audit = _audit(world, "/")
+    judge_run = _judge_run(world)
+    audit.status = A11yBaselineAudit.Status.JUDGING
+    audit.summary = {"ai_pass": {"judge_run_id": str(judge_run.id),
+                                 # what the dispatch handed over…
+                                 "dispatched": 144,
+                                 # …and what it is actually about
+                                 "distinct": 81}}
+    audit.save(update_fields=["status", "summary"])
+    for n in range(81):
+        A11yJudgmentCache.objects.create(
+            tenant=world["tenant"], project=world["project"], checker="alt",
+            content_hash=f"{n:064d}", verdict="pass", run=judge_run)
+
+    progress = audit_progress(world["t"], [str(audit.id)])[str(audit.id)]
+    assert progress["judged"] == 81
+    assert progress["dispatched"] == 81, (
+        "the denominator counts the same unit as the numerator, or it is not a fraction")
+
+
+def test_a_pass_dispatched_before_this_was_recorded_still_shows_a_true_number(world):
+    """An audit that ran before the distinct count was stored must not go on showing the old
+    misleading one. Derived from the run's own batches, where the elements still are."""
+    from apps.a11y.baseline import audit_progress
+    from apps.a11y.models import A11yBaselineAudit
+
+    audit = _audit(world, "/")
+    # Three screens, all carrying the SAME element — a site header, the everyday case.
+    shared = {"id": "1-aaaa", "content_hash": "a" * 64, "checker": "semantics",
+              "criteria": ["1.3.1"], "html": "<span>Meridian Library</span>",
+              "selector": "header span", "context": ""}
+    judge_run = _judge_run(world, batches=[
+        {"route": f"/p{i}", "elements": [dict(shared), {**shared, "id": f"{i}-bbbb",
+                                                        "content_hash": f"{i}" * 64}]}
+        for i in range(3)
+    ])
+    audit.status = A11yBaselineAudit.Status.JUDGING
+    # No `distinct` key at all — the pre-fix shape.
+    audit.summary = {"ai_pass": {"judge_run_id": str(judge_run.id), "dispatched": 6}}
+    audit.save(update_fields=["status", "summary"])
+
+    progress = audit_progress(world["t"], [str(audit.id)])[str(audit.id)]
+    assert progress["dispatched"] == 4, "one shared element plus three of its own, not six slots"
+
+
+def test_what_the_panel_says_after_the_run_counts_problems_and_questions_apart(world):
+    """The panel does not disappear when the run ends — it says what happened. A problem the
+    platform is sure about and a question it is asking a person are counted separately, because
+    folding the second into the first inflates the problem count with undecided things."""
+    from apps.a11y.baseline import audit_outcome
+    from apps.a11y.models import A11yFinding
+
+    made = [("failure", "critical"), ("failure", "high"), ("failure", "high"),
+            ("needs_review", "high")]
+    for n, (outcome, severity) in enumerate(made):
+        A11yFinding.objects.create(
+            tenant=world["tenant"], project=world["project"], fingerprint=f"{n:064d}",
+            route="/", selector=f"#e{n}", criterion="1.1.1", source="ai",
+            outcome=outcome, severity=severity, status=A11yFinding.Status.OPEN)
+
+    assert audit_outcome(world["t"], world["p"]) == {
+        "problems": 3, "critical": 1, "high": 2, "waiting": 1}
+
+
+def test_the_panels_numbers_do_not_hang_off_a_column_a_baseline_audit_never_fills(world):
+    """The bug this replaced, kept as a test because it would have shipped a confident zero.
+
+    `A11yFinding.last_seen_run` is a foreign key to a real `Run`, and a baseline audit
+    deliberately manufactures none (QA-17) — so for every brownfield audit that column is NULL.
+    Counting on it reported **0 problems on an audit that found three**, which is the exact kind
+    of reassuring, wrong number this capability exists to refuse.
+    """
+    from apps.a11y.baseline import audit_outcome
+    from apps.a11y.models import A11yFinding
+
+    finding = A11yFinding.objects.create(
+        tenant=world["tenant"], project=world["project"], fingerprint="f" * 64,
+        route="/", selector="#a", criterion="1.1.1", source="ai", outcome="failure",
+        severity="critical", status=A11yFinding.Status.OPEN)
+    assert finding.last_seen_run_id is None, "the column a per-audit count would have used"
+    assert audit_outcome(world["t"], world["p"])["problems"] == 1
+
+
+def test_a_project_with_nothing_found_reports_zeros_rather_than_nothing(world):
+    """Zero is an answer and the panel renders it; a missing key is not."""
+    from apps.a11y.baseline import audit_outcome
+
+    assert audit_outcome(world["t"], world["p"]) == {
+        "problems": 0, "critical": 0, "high": 0, "waiting": 0}
+
+
+def test_a_resolved_problem_stops_being_counted(world):
+    """The tile says where the application stands NOW, so a problem that has gone is gone."""
+    from apps.a11y.baseline import audit_outcome
+    from apps.a11y.models import A11yFinding
+
+    A11yFinding.objects.create(
+        tenant=world["tenant"], project=world["project"], fingerprint="a" * 64,
+        route="/", selector="#a", criterion="1.1.1", source="ai", outcome="failure",
+        severity="critical", status=A11yFinding.Status.RESOLVED)
+    assert audit_outcome(world["t"], world["p"])["problems"] == 0
+
+
+def test_another_projects_findings_are_never_counted_here(world):
+    """Scoped to the project, and that is the widest it ever goes."""
+    from apps.a11y.baseline import audit_outcome
+    from apps.a11y.models import A11yFinding
+    from apps.projects.models import Project
+
+    other = Project.objects.create(tenant=world["tenant"], name="Somewhere else")
+    A11yFinding.objects.create(
+        tenant=world["tenant"], project=other, fingerprint="b" * 64,
+        route="/", selector="#a", criterion="1.1.1", source="ai", outcome="failure",
+        severity="critical", status=A11yFinding.Status.OPEN)
+    assert audit_outcome(world["t"], world["p"])["problems"] == 0
+
+
+# ══ an audit whose machine went away ═════════════════════════════════════════════════
+#
+# The capture half of an audit runs on a machine this server cannot see, so the platform learns
+# it is still there only from the fact that it is still talking. The claim lease already
+# recovered a dead companion's work — but it only ever looked at `pending` and stale `claimed`
+# audits, and an audit moves to `capturing` the instant its first screen lands. Past that line
+# there was no lease, no timeout and no way to cancel: a laptop that restarted mid-audit left the
+# row saying "Visiting pages" for ever, which is this capability's own worst failure — a
+# confident report of work that is not happening. Found on the live run of 21 August.
+
+def test_an_audit_whose_machine_stopped_reporting_is_closed_with_the_reason(world):
+    from apps.a11y.baseline import ABANDONED_REASON, abandon_audit
+
+    audit = _audit(world, "/", "/login", "/catalogue")
+    _post(world, audit, _screen("/"))
+
+    out = abandon_audit(tenant_id=world["t"], audit_id=str(audit.id))
+
+    assert out["closed"] is True
+    assert out["status"] == "failed"
+    assert out["reason"] == ABANDONED_REASON
+    assert out["abandoned"] is True
+    audit.refresh_from_db()
+    assert audit.status == "failed"
+    assert audit.summary["reason"] == ABANDONED_REASON
+
+
+def test_what_the_abandoned_audit_did_capture_is_stated_not_thrown_away(world):
+    """One page reported, two never asked about. Both facts are on the record — the difference
+    is the whole of what somebody re-running needs to know."""
+    from apps.a11y.baseline import abandon_audit
+
+    audit = _audit(world, "/", "/login", "/catalogue")
+    _post(world, audit, _screen("/"))
+
+    out = abandon_audit(tenant_id=world["t"], audit_id=str(audit.id))
+
+    assert out["asked"] == 3
+    assert out["opened"] == 1
+    assert out["never_reported"] == ["/catalogue", "/login"]
+    assert A11yScreenScan.objects.filter(run_key=str(audit.id)).count() == 1, (
+        "what it captured is kept — the audit is failed, not erased"
+    )
+
+
+def test_an_abandoned_audit_is_never_judged_and_publishes_nothing(world, monkeypatch):
+    """A report from one of three pages would be a document stating a position about an
+    application most of which was never looked at. Failed is the honest end."""
+    from apps.a11y import baseline as baseline_mod
+    from apps.a11y.baseline import abandon_audit
+
+    audit = _audit(world, "/", "/login", "/catalogue")
+    _post(world, audit, _screen("/"))
+
+    def _boom(**kwargs):  # pragma: no cover - the point is that it is never called
+        raise AssertionError("a partial capture must never reach the judge")
+
+    monkeypatch.setattr(baseline_mod, "publish_baseline_for", _boom)
+    monkeypatch.setattr(baseline_mod, "start_ai_pass", _boom, raising=False)
+    abandon_audit(tenant_id=world["t"], audit_id=str(audit.id))
+
+
+def test_closing_an_audit_that_is_not_being_captured_does_nothing(world):
+    """`judging` is a Temporal run and is closed from the other end; a finished audit is
+    finished. Only the states a companion actually holds are this function's business."""
+    from apps.a11y.baseline import abandon_audit
+
+    audit = _audit(world, "/")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(status="judging")
+
+    out = abandon_audit(tenant_id=world["t"], audit_id=str(audit.id))
+    assert out["closed"] is False
+    audit.refresh_from_db()
+    assert audit.status == "judging", "left exactly as it was"
+
+
+def test_a_machine_that_is_still_posting_screens_is_not_declared_dead(world):
+    """Liveness is measured from the WORK as well as the heartbeat. An audit whose claim was
+    stamped an hour ago but whose last screen landed a moment ago is plainly alive, and killing
+    it would be the S.No 111 mid-flight re-claim all over again."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audit_ids
+
+    audit = _audit(world, "/", "/login")
+    _post(world, audit, _screen("/"))
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        claimed_at=timezone.now() - timedelta(hours=1), status="capturing")
+    audit.refresh_from_db()
+
+    stale_before = timezone.now() - timedelta(minutes=15)
+    assert stalled_audit_ids(world["t"], [audit], stale_before=stale_before) == set()
+
+
+def test_an_audit_that_has_said_nothing_at_all_for_the_lease_is_stalled(world):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audit_ids
+
+    audit = _audit(world, "/", "/login")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        claimed_at=timezone.now() - timedelta(hours=1), status="capturing")
+    audit.refresh_from_db()
+
+    stale_before = timezone.now() - timedelta(minutes=15)
+    assert stalled_audit_ids(world["t"], [audit], stale_before=stale_before) == {str(audit.id)}
+
+
+def test_reading_which_audits_are_stalled_never_writes_to_them(world):
+    """The screen asks this on every poll. A read that closed an audit would mean looking at a
+    list changed it — and the answer has to stay available to a person who simply reloads."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audit_ids
+
+    audit = _audit(world, "/")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        claimed_at=timezone.now() - timedelta(hours=1), status="capturing")
+    audit.refresh_from_db()
+
+    stalled_audit_ids(world["t"], [audit], stale_before=timezone.now() - timedelta(minutes=15))
+
+    audit.refresh_from_db()
+    assert audit.status == "capturing", "derived, never written"
+    assert audit.summary == {}
+
+
+def test_a_pending_audit_nobody_has_claimed_is_not_stalled(world):
+    """Nothing has gone wrong with an audit that is simply waiting for a machine to pick it up,
+    however long it waits — and the claim lease already offers that one back."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audit_ids
+
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"],
+                                 base_url="http://localhost:5173",
+                                 routes=["/"], claimable=True)
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        created_at=timezone.now() - timedelta(hours=2))
+    audit.refresh_from_db()
+    assert audit.status == "pending"
+    assert stalled_audit_ids(
+        world["t"], [audit], stale_before=timezone.now() - timedelta(minutes=15)) == set()
+
+
+def test_the_sweep_closes_the_dead_one_and_leaves_the_live_one_alone(world):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import abandon_stale_audits
+
+    dead = _audit(world, "/", "/login")
+    live = _audit(world)
+    A11yBaselineAudit.objects.filter(id=dead.id).update(
+        claimed_at=timezone.now() - timedelta(hours=1), status="capturing")
+    A11yBaselineAudit.objects.filter(id=live.id).update(
+        claimed_at=timezone.now(), status="capturing")
+
+    closed = abandon_stale_audits(tenant_id=world["t"], project_id=world["p"],
+                                  stale_before=timezone.now() - timedelta(minutes=15))
+
+    assert closed == [str(dead.id)]
+    dead.refresh_from_db()
+    live.refresh_from_db()
+    assert dead.status == "failed"
+    assert live.status == "capturing"
+
+
+def test_the_sweep_does_not_reach_another_project(world):
+    """Scoped to the project the companion is enrolled on. A machine reporting in about one
+    application has said nothing whatever about another."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import abandon_stale_audits
+
+    other = Project.objects.create(tenant=world["tenant"], name="Another App")
+    register_routes(tenant_id=world["t"], project_id=str(other.id), routes=["/"])
+    theirs = start_baseline_audit(tenant_id=world["t"], project_id=str(other.id),
+                                  base_url="http://localhost:5173")
+    A11yBaselineAudit.objects.filter(id=theirs.id).update(
+        claimed_at=timezone.now() - timedelta(hours=1), status="capturing")
+
+    closed = abandon_stale_audits(tenant_id=world["t"], project_id=world["p"],
+                                  stale_before=timezone.now() - timedelta(minutes=15))
+
+    assert closed == []
+    theirs.refresh_from_db()
+    assert theirs.status == "capturing"
+
+
+# ── and the two places the companion actually tells us it is alive ──────────────────
+
+def _heartbeat(runner):
+    """What the companion's heartbeat does, without the HTTP layer: the view's own body."""
+    from django.test import RequestFactory
+
+    from api.runner_views import RunnerHeartbeatView, RunnerStateView
+
+    request = RequestFactory().post("/api/runner/heartbeat/")
+    original = RunnerStateView._resolve_runner
+    RunnerStateView._resolve_runner = staticmethod(lambda _r: runner)
+    try:
+        return RunnerHeartbeatView().post(request)
+    finally:
+        RunnerStateView._resolve_runner = original
+
+
+def test_the_heartbeat_keeps_a_live_machines_audit_from_ageing_out(world):
+    """Part A, and it has to come first: until this, NOTHING renewed an audit's claim — it was
+    stamped once and never touched — so a capture that legitimately took longer than the lease
+    would be declared dead by the very sweep that fixes the stuck audit."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    runner = _enrol(world)
+    audit = _audit(world, "/", "/login")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        enrollment=runner, status="capturing",
+        claimed_at=timezone.now() - timedelta(minutes=40))
+
+    _heartbeat(runner)
+
+    audit.refresh_from_db()
+    assert audit.status == "capturing", "still being captured by a machine that is still there"
+    assert audit.claimed_at > timezone.now() - timedelta(minutes=1), "lease renewed"
+
+
+def test_a_live_machine_never_closes_the_audit_it_is_holding(world):
+    """The heartbeat renews BEFORE it sweeps. The other order would have a companion close the
+    very audit it was in the middle of capturing."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    runner = _enrol(world)
+    audit = _audit(world, "/", "/login")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        enrollment=runner, status="capturing",
+        claimed_at=timezone.now() - timedelta(hours=1))
+
+    response = _heartbeat(runner)
+
+    assert response.data["audits_closed"] == 0
+    audit.refresh_from_db()
+    assert audit.status == "capturing"
+
+
+def test_a_restarted_machine_closes_the_audit_its_predecessor_abandoned(world):
+    """The live case from 21 August: the laptop restarts mid-capture, the companion comes back,
+    and the audit it left behind is closed within seconds of it saying hello."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import ABANDONED_REASON
+
+    dead_machine = _enrol(world, "dev-before-the-reboot")
+    audit = _audit(world, "/", "/login")
+    _post(world, audit, _screen("/"))
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        enrollment=dead_machine, status="capturing",
+        claimed_at=timezone.now() - timedelta(hours=1))
+    A11yScreenScan.objects.filter(run_key=str(audit.id)).update(
+        created_at=timezone.now() - timedelta(hours=1))
+
+    back = _enrol(world, "dev-after-the-reboot")
+    response = _heartbeat(back)
+
+    assert response.data["audits_closed"] == 1
+    audit.refresh_from_db()
+    assert audit.status == "failed"
+    assert audit.summary["reason"] == ABANDONED_REASON
+    assert audit.summary["opened"] == 1
+    assert audit.summary["never_reported"] == ["/login"]
+
+
+def test_asking_for_work_also_closes_what_a_dead_machine_left(world):
+    """A companion started fresh asks for work before it has heartbeated, and an audit still
+    showing as running is the first thing its owner sees on the screen."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    _repo(world)
+    dead_machine = _enrol(world, "dev-gone")
+    stuck = _audit(world, "/", "/login")
+    A11yBaselineAudit.objects.filter(id=stuck.id).update(
+        enrollment=dead_machine, status="capturing",
+        claimed_at=timezone.now() - timedelta(hours=1))
+
+    _claim(world, _enrol(world, "dev-new"))
+
+    stuck.refresh_from_db()
+    assert stuck.status == "failed"
+
+
+def test_the_audit_list_says_which_running_audit_has_gone_quiet(world):
+    """Part C. A machine switched off for good never comes back to be swept, so the screen must
+    not be the last thing still claiming the audit is running — and reading the list must not
+    be what closes it."""
+    from datetime import timedelta
+
+    from django.test import RequestFactory
+    from django.utils import timezone
+
+    from api.views import ProjectViewSet
+
+    audit = _audit(world, "/", "/login")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        status="capturing", claimed_at=timezone.now() - timedelta(hours=1))
+
+    view = ProjectViewSet()
+    view.request = RequestFactory().get("/")
+    view.request.tenant_id = world["t"]
+    view.format_kwarg = None
+    view.get_object = lambda: world["project"]
+    response = view.a11y_audits(view.request, pk=world["p"])
+
+    row = response.data["audits"][0]
+    assert row["stalled"] is True
+    audit.refresh_from_db()
+    assert audit.status == "capturing", "the screen reads; it does not close"
+
+
+def test_a_stale_claim_is_still_handed_on_and_never_abandoned(world):
+    """The near-miss this whole change had to avoid. A `claimed` audit has captured NOTHING, and
+    the claim lease already hands a stale one to the next machine that asks — so it simply runs.
+    The first version of the sweep closed those too, which would have turned a recovery that
+    worked into a failure a person has to go and restart. Abandonment applies to `capturing`
+    alone: the one state nothing could get an audit out of."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import abandon_stale_audits
+
+    _repo(world)
+    _register(world, "/")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"], claimable=True)
+    machine = _enrol(world, "dev-1")
+    _claim(world, machine)
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        claimed_at=timezone.now() - timedelta(hours=2))
+
+    closed = abandon_stale_audits(tenant_id=world["t"], project_id=world["p"],
+                                  stale_before=timezone.now() - timedelta(minutes=15))
+
+    assert closed == [], "a claim nobody has captured under is recoverable, not abandoned"
+    audit.refresh_from_db()
+    assert audit.status == "claimed"
+    again = _claim(world, machine)
+    assert again.status_code == 200, "and it is still there to be picked back up"
+
+
+# ══ the check that never ran ══════════════════════════════════════════════════════════
+#
+# The capture asks the browser for every element's computed accessible name. One element failing
+# is normal and harmless — `_applies_label` skips it. EVERY element failing is a broken
+# toolchain, and it hides completely: the elements all arrive, three checks run perfectly, and
+# the fourth simply never selects anything. That is what happened. `page.accessibility` was
+# removed from Playwright, the capture's per-element `catch` swallowed the failure on all of
+# them, and 2.5.3 never selected a single element in the whole life of the feature — found on
+# the live audit of 21 August by noticing one checker's count had always been zero.
+
+def test_a_capture_where_nothing_could_be_named_says_so(world):
+    from apps.a11y.baseline import _name_coverage
+    from apps.a11y.models import A11yCandidateBundle
+
+    audit = _audit(world, "/")
+    for index, tag in enumerate(("a", "button", "h1")):
+        A11yCandidateBundle.objects.create(
+            tenant_id=world["t"], project_id=world["p"], run_key=str(audit.id),
+            route="/", position=index, selector=f"#e{index}", checkers=["semantics"],
+            element={"tag": tag, "text": "Renew", "accessible_name": ""},
+        )
+
+    out = _name_coverage(world["t"], world["p"], str(audit.id))
+
+    assert out["nameable"] == 3 and out["named"] == 0
+    assert "2.5.3" in out["reason"] and "Label in Name" in out["reason"]
+    assert "not in the application" in out["reason"], (
+        "it must point at the machine, not send somebody to fix the app"
+    )
+
+
+def test_one_element_without_a_name_is_not_a_broken_machine(world):
+    """The normal case, and it must stay silent. Plenty of real controls have no computed name —
+    that is 4.1.2's problem, reported as a finding, not a fault in the audit."""
+    from apps.a11y.baseline import _name_coverage
+    from apps.a11y.models import A11yCandidateBundle
+
+    audit = _audit(world, "/")
+    for index, name in enumerate(("Catalogue", "", "Help")):
+        A11yCandidateBundle.objects.create(
+            tenant_id=world["t"], project_id=world["p"], run_key=str(audit.id),
+            route="/", position=index, selector=f"#e{index}", checkers=["semantics"],
+            element={"tag": "a", "text": "x", "accessible_name": name},
+        )
+
+    out = _name_coverage(world["t"], world["p"], str(audit.id))
+
+    assert out["named"] == 2 and out["nameable"] == 3
+    assert "reason" not in out, "two of three named is a working machine"
+
+
+def test_a_capture_with_nothing_nameable_in_it_makes_no_claim(world):
+    """A page of nothing but paragraphs says nothing about whether names can be read. Silence is
+    the honest answer, not an accusation."""
+    from apps.a11y.baseline import _name_coverage
+    from apps.a11y.models import A11yCandidateBundle
+
+    audit = _audit(world, "/")
+    A11yCandidateBundle.objects.create(
+        tenant_id=world["t"], project_id=world["p"], run_key=str(audit.id),
+        route="/", position=0, selector="#p1", checkers=["color"],
+        element={"tag": "p", "text": "words", "accessible_name": ""},
+    )
+
+    out = _name_coverage(world["t"], world["p"], str(audit.id))
+
+    assert out == {"named": 0, "nameable": 0}
+
+
+def test_the_audit_carries_what_it_could_read(world, ready_folder):
+    """On the audit itself, so the screen can say it and a reader of an old audit can see which
+    of its checks were actually able to run."""
+    audit = _audit(world, "/")
+    _post(world, audit, _screen("/"))
+
+    finish_baseline_audit(tenant_id=world["t"], audit_id=str(audit.id), trigger=None)
+
+    audit.refresh_from_db()
+    assert "names" in audit.summary
+    assert set(audit.summary["names"]) >= {"named", "nameable"}
+
+
+def test_the_audit_script_does_not_use_the_removed_accessibility_api():
+    """The regression guard for the worst defect this feature has had. `page.accessibility` was
+    removed from Playwright; the call threw on every element, a per-element `catch` swallowed it,
+    and 2.5.3 never selected anything for the whole life of the feature. Nothing about that was
+    visible: the elements arrived, three checks ran, and the fourth was silently absent."""
+    script = _script()
+    # The CALL, not the word: the comment above `fillAccessibleNames` names the dead API on
+    # purpose, so that whoever reads it next knows why this is written the way it is.
+    assert "await page.accessibility" not in script, (
+        "this API no longer exists; use locator.ariaSnapshot()"
+    )
+    assert ".accessibility.snapshot(" not in script.replace("`page.accessibility.snapshot()`", "")
+    assert "ariaSnapshot(" in script
+
+
+def test_the_audit_script_bounds_the_wait_for_one_name():
+    """`ariaSnapshot` defaults to waiting FOR EVER. A selector that no longer matches — an
+    element re-rendered between collection and naming — would stop the audit rather than cost it
+    one name."""
+    script = _script()
+    assert "NAME_TIMEOUT_MS" in script
+    assert "timeout: NAME_TIMEOUT_MS" in script
+
+
+def test_the_audit_script_reads_a_name_out_of_a_real_aria_snapshot(tmp_path):
+    """The parser itself, run as JavaScript, against snapshots taken from a real browser.
+
+    Worth a real test rather than a source assertion: a regex is exactly the kind of thing that
+    quietly does the wrong thing, and this one decides whether an entire WCAG criterion is
+    checked. The cases below are Playwright 1.62 output, copied from what it actually returned
+    for Meridian's pages.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed on this machine")
+
+    script = _script()
+    start = script.index("function nameFromAriaSnapshot")
+    end = script.index("\n}", start) + 2
+    fn = script[start:end]
+
+    cases = [
+        # (snapshot, the name it must read)
+        ('- button "Extend the loan period on every item": Renew',
+         "Extend the loan period on every item"),
+        ('- heading "Card services" [level=1]', "Card services"),
+        ('- link "Skip to content":\n  - /url: "#main"', "Skip to content"),
+        ('- link "What\'s on":\n  - /url: /events/calendar', "What's on"),
+        # No name at all — a paragraph is not named, and must not borrow one.
+        ('- paragraph: Things you can do with your membership card.', ""),
+        # …and MUST NOT take a quoted string out of the element's own text.
+        ('- paragraph: He said "hello" to the room', ""),
+        ('- text: Meridian Library', ""),
+        ("", ""),
+    ]
+    harness = fn + "\nconst cases = " + json.dumps(cases) + ";\n" + """
+    const bad = [];
+    for (const [snapshot, expected] of cases) {
+      const got = nameFromAriaSnapshot(snapshot);
+      if (got !== expected) bad.push({ snapshot, expected, got });
+    }
+    process.stdout.write(JSON.stringify(bad));
+    """
+    path = tmp_path / "parse.mjs"
+    path.write_text(harness, encoding="utf-8")
+    out = subprocess.run([node, str(path)], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout or "[]") == [], out.stdout

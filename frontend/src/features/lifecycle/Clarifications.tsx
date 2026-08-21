@@ -271,9 +271,12 @@ export function ClarificationHistory({
 function ClarificationsLive() {
   const { selectedProject } = useAuth();
   const projectId = selectedProject?.project_id;
-  const workItems = useWorkItems(projectId);
-  const workItemIds = new Set((workItems.data ?? []).map((w) => w.id));
-  const clarifications = useClarifications({ status: "pending" });
+  // Scoped to the project by the API, NOT narrowed against the backlog here. A question asked
+  // by a run on a hidden carrier work item — accessibility judging, code indexing, the gap
+  // report — has no row in `useWorkItems` (`carrier_q` excludes them by design), so filtering
+  // on it hid exactly the questions nobody else can answer and left those runs waiting for
+  // ever. Hiding plumbing from a board is right; hiding a question that blocks a run is not.
+  const clarifications = useClarifications({ status: "pending", project: projectId });
   const answer = useAnswerClarification();
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   // Free text typed against an "Other (please specify)" choice, keyed by question id.
@@ -282,8 +285,12 @@ function ClarificationsLive() {
   const [justAnswered, setJustAnswered] = useState<Clarification | null>(null);
   const [tab, setTab] = useState<"pending" | "history">("pending");
 
-  const loading = clarifications.isLoading || workItems.isLoading;
-  const pending = (clarifications.data ?? []).filter((c) => workItemIds.has(c.work_item));
+  // `!projectId` counts as loading. The query drops an empty filter rather than sending one, so
+  // without this the half-second before the project resolves would fetch the WHOLE workspace's
+  // pending questions and show another project's on this one's screen. It never did before,
+  // because the backlog it used to filter against was empty until the project resolved too.
+  const loading = !projectId || clarifications.isLoading;
+  const pending = projectId ? (clarifications.data ?? []) : [];
   const current = pending[0];
   const currentId = current?.id;
 
@@ -296,10 +303,14 @@ function ClarificationsLive() {
     // Keyed on the clarification id only — re-seeding on every render would wipe edits.
   }, [currentId]);
 
-  const workItemLabel = (id: string) => {
-    const wi = workItems.data?.find((w) => w.id === id);
-    return wi ? `${id.slice(0, 8)} · ${wi.title || wi.type}` : id.slice(0, 8);
-  };
+  // Read off the clarification itself rather than looked up in the backlog. The serializer
+  // already resolves `work_item_title` for every clarification, including the ones whose work
+  // item is hidden plumbing — so a judging run's question reads "Accessibility judging" instead
+  // of a bare uuid, which is the whole reason the lookup existed.
+  const workItemLabel = (c: Clarification) =>
+    c.work_item_title
+      ? `${c.work_item.slice(0, 8)} · ${c.work_item_title}`
+      : c.work_item.slice(0, 8);
 
   // The answer actually submitted for a question. For a choice where the selected option is
   // the "Other (please specify)" one, that's the free text the user typed — not the literal
@@ -447,7 +458,7 @@ function ClarificationsLive() {
               <CardBody style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
                 <Badge variant="done">Answered</Badge>
                 <span className="t-sm u-body">
-                  {workItemLabel(justAnswered.work_item)} — run resumed.
+                  {workItemLabel(justAnswered)} — run resumed.
                 </span>
               </CardBody>
             </Card>
@@ -457,7 +468,7 @@ function ClarificationsLive() {
         <Card className="clar-card">
           <CardBody>
             <div className="clar-card__head">
-              <span className="wi-card__id">{workItemLabel(current.work_item)}</span>
+              <span className="wi-card__id">{workItemLabel(current)}</span>
               <Badge variant="needs-answer">{phaseLabel(current.phase)} · needs answer</Badge>
               <span className="u-spacer" />
               {isRunListening(current.run_status) ? (
