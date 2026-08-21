@@ -1003,9 +1003,17 @@ export interface A11yAudit {
     ai_pass?: {
       reason?: string;
       deferred?: number;
+      // Distinct ELEMENTS the cap left unanswered, which is not the same as `deferred` above:
+      // duplicates are not collapsed before the cap, so the tail of a stopped pass is often
+      // markup already judged earlier in the same run.
+      deferred_distinct?: number;
       dispatched?: number;
       distinct?: number;
     };
+    // Whether the browser answered when the capture asked what each element is called. A whole
+    // capture with no names is a broken toolchain, and it hides: every element still arrives,
+    // three checks run perfectly, and the fourth silently never selects anything.
+    names?: { named?: number; nameable?: number; reason?: string };
     // Closed by the platform because the machine capturing it went away, rather than by a run
     // that finished and found nothing openable. Same status, entirely different thing to do.
     abandoned?: boolean;

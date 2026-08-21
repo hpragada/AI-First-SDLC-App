@@ -78,6 +78,10 @@ async function importFromProject(name) {
 const MAX_SCREENS = 60;
 const MAX_ELEMENTS_PER_SCREEN = 600;
 
+// How long to wait for ONE element's accessible name. `ariaSnapshot` defaults to no timeout at
+// all, so a selector that no longer matches would stop the audit rather than cost it a name.
+const NAME_TIMEOUT_MS = 1000;
+
 /** How long one route gets to load before it is recorded as unreachable. Generous: a cold dev
  *  server's first request can be slow, and reporting a working page as unreachable is a worse
  *  error than waiting. */
@@ -289,25 +293,61 @@ async function collectElements(page) {
   );
 }
 
+/** The accessible name out of one line of an aria snapshot.
+ *
+ *  A snapshot's first line is `- role "name" [attrs]` with the element's own text or children
+ *  following after a colon. Anchored at the role on purpose: an unanchored search for a quoted
+ *  string would read `- paragraph: He said "hello"` as a paragraph named *hello*, and inventing
+ *  a name is worse than not having one — see `fillAccessibleNames`. */
+function nameFromAriaSnapshot(snapshot) {
+  const first = String(snapshot || "").split("\n")[0];
+  const match = first.match(/^\s*-\s+[a-z-]+\s+"((?:[^"\\]|\\.)*)"/);
+  return match ? match[1].replace(/\\(.)/g, "$1") : "";
+}
+
 /** The name a screen reader would announce, from the browser itself.
  *
- *  Blank when it cannot be read, and blank is safe: `rules._applies_label` skips an element
- *  with no computed name, so the cost is one check not running rather than a check running on
- *  a value we made up. Approximating the name from `aria-label` or the visible text would make
- *  the label check compare a string against itself and always pass. */
+ *  Blank when it cannot be read, and blank is safe *for one element*: `rules._applies_label`
+ *  skips an element with no computed name, so the cost is one check not running rather than a
+ *  check running on a value we made up. Approximating the name from `aria-label` or the visible
+ *  text would make the label check compare a string against itself and always pass.
+ *
+ *  ⚠️ **Blank for EVERY element is not safe, and that is exactly what happened.** This used to
+ *  call `page.accessibility.snapshot()`, which Playwright has since removed — `page.accessibility`
+ *  is now `undefined`, so the call threw on every element and the per-element `catch` below
+ *  swallowed it. Every name came back empty, and `2.5.3 Label in Name` — the check with most to
+ *  say that only a person can settle — never selected a single element in the whole life of the
+ *  feature. Found on the live audit of 21 August, by noticing that one of four checks had never
+ *  produced anything.
+ *
+ *  So the counts come back, and the caller reports them. A silent per-element guard must not be
+ *  able to hide a total failure; that is the same "absence with no stated reason" this capture
+ *  refuses everywhere else.
+ *
+ *  `timeout` is not optional: `ariaSnapshot` defaults to waiting for ever, and a selector that
+ *  matches nothing (the page moved on, an element re-rendered) would otherwise hang the audit
+ *  on one row. `depth: 0` keeps the reply to the element's own line. About 6ms each, measured. */
 async function fillAccessibleNames(page, elements) {
+  let read = 0;
+  let asked = 0;
   for (const element of elements) {
+    asked += 1;
     try {
-      const handle = await page.$(element.selector);
-      if (!handle) continue;
-      const snapshot = await page.accessibility.snapshot({ root: handle, interestingOnly: false });
-      if (snapshot && snapshot.name) element.accessible_name = String(snapshot.name);
-      await handle.dispose();
+      const snapshot = await page
+        .locator(element.selector)
+        .first()
+        .ariaSnapshot({ timeout: NAME_TIMEOUT_MS, depth: 0 });
+      const name = nameFromAriaSnapshot(snapshot);
+      if (name) {
+        element.accessible_name = name;
+        read += 1;
+      }
     } catch {
       // One element's name is never worth the page. Left blank, which downstream reads as
       // "no computed name available" rather than as a name.
     }
   }
+  return { read, asked };
 }
 
 /** Attach what the scan said about each captured element, matched on axe's own target. */
@@ -380,7 +420,18 @@ async function captureRoute(page, axe, baseUrl, route, visitPath) {
   }
 
   const elements = await collectElements(page);
-  await fillAccessibleNames(page, elements);
+  const names = await fillAccessibleNames(page, elements);
+  // On stderr, never stdout: this file's stdout IS the capture, and a stray line would corrupt
+  // it. Said out loud because a page where NOTHING could be named is a broken toolchain rather
+  // than a page without names - the platform reaches the same conclusion from the capture
+  // itself (`baseline._name_coverage`), and this is the line that tells whoever is watching
+  // the companion which page it started on.
+  if (names.asked > 0 && names.read === 0) {
+    process.stderr.write(
+      `[a11y] no accessible name could be read for any of ${names.asked} element(s) on ` +
+      `${screen.route} - the label check cannot run on this page
+`);
+  }
   attachElementFindings(elements, scan.violations);
   screen.elements = elements;
 

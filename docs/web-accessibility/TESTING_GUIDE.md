@@ -1413,6 +1413,45 @@ about a running audit three separate times, and the hub two clicks away was stil
 old count.
 
 
+
+### #28 — One of the four checks had never run ⭐ ✅
+
+**The most important defect this feature has had**, found on the live audit of 21 August — not by
+a failure, but by a number that had always been zero.
+
+```
+checker slots, every audit ever run on this project:
+color 173   ·   semantics 47   ·   alt 22   ·   label 0
+```
+
+`_applies_label` requires a computed accessible name, deliberately: 2.5.3 compares the name a
+screen reader announces against the visible text, and with no name there is nothing to compare.
+That name came from `page.accessibility.snapshot()` — **an API Playwright has since removed**. It
+threw on every element; `fillAccessibleNames` wrapped each element in a bare `catch {}` written
+for one awkward element, and it swallowed the total failure just as quietly. **0 of 242 stored
+elements had a name.** So **2.5.3 Label in Name** — the check with most to say that only a person
+can settle — was off from the day it was written, and the always-empty review queue was the
+symptom.
+
+**Four parts.** `locator.ariaSnapshot({ timeout, depth: 0 })` restores the name — measured first
+against a real browser at ~6ms an element, with an explicit timeout because that call otherwise
+waits for ever and one stale selector would stop an audit. The parse is anchored at `- role
+"name"` so it cannot read a quoted word out of an element's own text and invent a name, which is
+worse than having none. The platform then counts, on every audit, how many *nameable* elements
+came back named, and says *"One of the checks could not run"* when none did — so this can never
+hide again, and it is named apart from the cap warning because it must never read as "the
+application has no label problems". Finally the "check the rest" count moved to distinct elements,
+after the finished audit showed that its 5 deferred slots were repeats that had lost nothing.
+
+⚠️ **An existing test caught a mistake in the fix**, and it was right to:
+`test_asking_again_when_everything_has_been_looked_at_starts_nothing`. "No verdict anywhere" only
+means *ask again* once a pass has run — a capture that has never been judged needs its **first**
+pass, not a second.
+
+**Not yet proven live.** `/account/card-services` should produce seven label candidates on the
+next run, and that is where the first real `uncertain` is expected.
+
+
 ---
 
 ## 10. What has run live, what has not, and what I am least sure about

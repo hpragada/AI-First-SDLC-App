@@ -2906,3 +2906,159 @@ def test_a_stale_claim_is_still_handed_on_and_never_abandoned(world):
     assert audit.status == "claimed"
     again = _claim(world, machine)
     assert again.status_code == 200, "and it is still there to be picked back up"
+
+
+# ══ the check that never ran ══════════════════════════════════════════════════════════
+#
+# The capture asks the browser for every element's computed accessible name. One element failing
+# is normal and harmless — `_applies_label` skips it. EVERY element failing is a broken
+# toolchain, and it hides completely: the elements all arrive, three checks run perfectly, and
+# the fourth simply never selects anything. That is what happened. `page.accessibility` was
+# removed from Playwright, the capture's per-element `catch` swallowed the failure on all of
+# them, and 2.5.3 never selected a single element in the whole life of the feature — found on
+# the live audit of 21 August by noticing one checker's count had always been zero.
+
+def test_a_capture_where_nothing_could_be_named_says_so(world):
+    from apps.a11y.baseline import _name_coverage
+    from apps.a11y.models import A11yCandidateBundle
+
+    audit = _audit(world, "/")
+    for index, tag in enumerate(("a", "button", "h1")):
+        A11yCandidateBundle.objects.create(
+            tenant_id=world["t"], project_id=world["p"], run_key=str(audit.id),
+            route="/", position=index, selector=f"#e{index}", checkers=["semantics"],
+            element={"tag": tag, "text": "Renew", "accessible_name": ""},
+        )
+
+    out = _name_coverage(world["t"], world["p"], str(audit.id))
+
+    assert out["nameable"] == 3 and out["named"] == 0
+    assert "2.5.3" in out["reason"] and "Label in Name" in out["reason"]
+    assert "not in the application" in out["reason"], (
+        "it must point at the machine, not send somebody to fix the app"
+    )
+
+
+def test_one_element_without_a_name_is_not_a_broken_machine(world):
+    """The normal case, and it must stay silent. Plenty of real controls have no computed name —
+    that is 4.1.2's problem, reported as a finding, not a fault in the audit."""
+    from apps.a11y.baseline import _name_coverage
+    from apps.a11y.models import A11yCandidateBundle
+
+    audit = _audit(world, "/")
+    for index, name in enumerate(("Catalogue", "", "Help")):
+        A11yCandidateBundle.objects.create(
+            tenant_id=world["t"], project_id=world["p"], run_key=str(audit.id),
+            route="/", position=index, selector=f"#e{index}", checkers=["semantics"],
+            element={"tag": "a", "text": "x", "accessible_name": name},
+        )
+
+    out = _name_coverage(world["t"], world["p"], str(audit.id))
+
+    assert out["named"] == 2 and out["nameable"] == 3
+    assert "reason" not in out, "two of three named is a working machine"
+
+
+def test_a_capture_with_nothing_nameable_in_it_makes_no_claim(world):
+    """A page of nothing but paragraphs says nothing about whether names can be read. Silence is
+    the honest answer, not an accusation."""
+    from apps.a11y.baseline import _name_coverage
+    from apps.a11y.models import A11yCandidateBundle
+
+    audit = _audit(world, "/")
+    A11yCandidateBundle.objects.create(
+        tenant_id=world["t"], project_id=world["p"], run_key=str(audit.id),
+        route="/", position=0, selector="#p1", checkers=["color"],
+        element={"tag": "p", "text": "words", "accessible_name": ""},
+    )
+
+    out = _name_coverage(world["t"], world["p"], str(audit.id))
+
+    assert out == {"named": 0, "nameable": 0}
+
+
+def test_the_audit_carries_what_it_could_read(world, ready_folder):
+    """On the audit itself, so the screen can say it and a reader of an old audit can see which
+    of its checks were actually able to run."""
+    audit = _audit(world, "/")
+    _post(world, audit, _screen("/"))
+
+    finish_baseline_audit(tenant_id=world["t"], audit_id=str(audit.id), trigger=None)
+
+    audit.refresh_from_db()
+    assert "names" in audit.summary
+    assert set(audit.summary["names"]) >= {"named", "nameable"}
+
+
+def test_the_audit_script_does_not_use_the_removed_accessibility_api():
+    """The regression guard for the worst defect this feature has had. `page.accessibility` was
+    removed from Playwright; the call threw on every element, a per-element `catch` swallowed it,
+    and 2.5.3 never selected anything for the whole life of the feature. Nothing about that was
+    visible: the elements arrived, three checks ran, and the fourth was silently absent."""
+    script = _script()
+    # The CALL, not the word: the comment above `fillAccessibleNames` names the dead API on
+    # purpose, so that whoever reads it next knows why this is written the way it is.
+    assert "await page.accessibility" not in script, (
+        "this API no longer exists; use locator.ariaSnapshot()"
+    )
+    assert ".accessibility.snapshot(" not in script.replace("`page.accessibility.snapshot()`", "")
+    assert "ariaSnapshot(" in script
+
+
+def test_the_audit_script_bounds_the_wait_for_one_name():
+    """`ariaSnapshot` defaults to waiting FOR EVER. A selector that no longer matches — an
+    element re-rendered between collection and naming — would stop the audit rather than cost it
+    one name."""
+    script = _script()
+    assert "NAME_TIMEOUT_MS" in script
+    assert "timeout: NAME_TIMEOUT_MS" in script
+
+
+def test_the_audit_script_reads_a_name_out_of_a_real_aria_snapshot(tmp_path):
+    """The parser itself, run as JavaScript, against snapshots taken from a real browser.
+
+    Worth a real test rather than a source assertion: a regex is exactly the kind of thing that
+    quietly does the wrong thing, and this one decides whether an entire WCAG criterion is
+    checked. The cases below are Playwright 1.62 output, copied from what it actually returned
+    for Meridian's pages.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed on this machine")
+
+    script = _script()
+    start = script.index("function nameFromAriaSnapshot")
+    end = script.index("\n}", start) + 2
+    fn = script[start:end]
+
+    cases = [
+        # (snapshot, the name it must read)
+        ('- button "Extend the loan period on every item": Renew',
+         "Extend the loan period on every item"),
+        ('- heading "Card services" [level=1]', "Card services"),
+        ('- link "Skip to content":\n  - /url: "#main"', "Skip to content"),
+        ('- link "What\'s on":\n  - /url: /events/calendar', "What's on"),
+        # No name at all — a paragraph is not named, and must not borrow one.
+        ('- paragraph: Things you can do with your membership card.', ""),
+        # …and MUST NOT take a quoted string out of the element's own text.
+        ('- paragraph: He said "hello" to the room', ""),
+        ('- text: Meridian Library', ""),
+        ("", ""),
+    ]
+    harness = fn + "\nconst cases = " + json.dumps(cases) + ";\n" + """
+    const bad = [];
+    for (const [snapshot, expected] of cases) {
+      const got = nameFromAriaSnapshot(snapshot);
+      if (got !== expected) bad.push({ snapshot, expected, got });
+    }
+    process.stdout.write(JSON.stringify(bad));
+    """
+    path = tmp_path / "parse.mjs"
+    path.write_text(harness, encoding="utf-8")
+    out = subprocess.run([node, str(path)], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout or "[]") == [], out.stdout

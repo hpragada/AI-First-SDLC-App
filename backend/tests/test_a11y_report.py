@@ -1199,10 +1199,36 @@ def test_the_button_counts_what_the_cap_left_behind(world):
 
     class _Audit:
         id = "0f1e2d3c-4b5a-4967-8899-aabbccddeeff"
-        summary = {"ai_pass": {"filed_unjudged": 0, "deferred": 5,
+        summary = {"ai_pass": {"filed_unjudged": 0, "deferred": 9,
+                               "deferred_distinct": 5,
                                "judge_run_id": "", "dispatched": 200}}
 
     assert unanswered_counts(world["t"], [_Audit()])[_Audit.id] == 5
+
+
+def test_a_stopped_pass_whose_tail_was_all_repeats_offers_nothing(world):
+    """The 21 August audit stopped 5 requests short and lost NOTHING: every one was chrome
+    already dispatched earlier in the same run, so one verdict answered it. Counting the raw
+    number put a "check the rest" button on an audit with nothing left to check."""
+    from apps.a11y.baseline import unanswered_counts
+
+    class _Audit:
+        id = "0f1e2d3c-4b5a-4967-8899-aabbccddee03"
+        summary = {"ai_pass": {"filed_unjudged": 0, "deferred": 5, "deferred_distinct": 0}}
+
+    assert unanswered_counts(world["t"], [_Audit()])[_Audit.id] == 0
+
+
+def test_an_audit_from_before_the_distinct_count_existed_claims_nothing(world):
+    """No honest number is available for it, and the misleading one is worse than none — the
+    same choice the "elements judged" tile made for the same reason."""
+    from apps.a11y.baseline import unanswered_counts
+
+    class _Audit:
+        id = "0f1e2d3c-4b5a-4967-8899-aabbccddee04"
+        summary = {"ai_pass": {"filed_unjudged": 0, "deferred": 5}}
+
+    assert unanswered_counts(world["t"], [_Audit()])[_Audit.id] == 0
 
 
 def test_the_two_kinds_of_never_asked_are_added_not_confused(world):
@@ -1212,7 +1238,8 @@ def test_the_two_kinds_of_never_asked_are_added_not_confused(world):
 
     class _Audit:
         id = "0f1e2d3c-4b5a-4967-8899-aabbccddee01"
-        summary = {"ai_pass": {"filed_unjudged": 3, "deferred": 5}}
+        summary = {"ai_pass": {"filed_unjudged": 3, "deferred": 5,
+                               "deferred_distinct": 5}}
 
     assert unanswered_counts(world["t"], [_Audit()])[_Audit.id] == 8
 
@@ -1222,6 +1249,7 @@ def test_a_pass_that_reached_everything_still_counts_nothing(world):
 
     class _Audit:
         id = "0f1e2d3c-4b5a-4967-8899-aabbccddee02"
-        summary = {"ai_pass": {"filed_unjudged": 0, "deferred": 0}}
+        summary = {"ai_pass": {"filed_unjudged": 0, "deferred": 0,
+                               "deferred_distinct": 0}}
 
     assert unanswered_counts(world["t"], [_Audit()])[_Audit.id] == 0

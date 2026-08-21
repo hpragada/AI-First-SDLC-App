@@ -1655,3 +1655,91 @@ over, and the hub two clicks away was still reading the old count.
 
 **Verified:** 62 in `test_a11y_report.py`, 19 in `test_onboarding_rest.py`, 46 on the audit
 screen, 23 on the hub, `tsc` and `eslint` clean on every changed file.
+
+
+---
+
+### 9.7 The check that never ran — 21 August ⭐ (BUILT)
+
+The twelve-page audit finished cleanly: **12 of 12 pages, 125 of 125 elements judged, 19 real
+failures, 0 never answered.** Both control pages behaved — `/loans/history` and `/staff/overview`
+are built correctly and came back clean while their broken twins produced eight findings between
+them, which is the evidence that the judge is judging rather than pattern-matching.
+
+**And the review queue was still empty.** Zero `uncertain`, zero below the 0.80 threshold. So the
+question became *why*, and the answer was not the model.
+
+```
+checker slots, every audit this project has ever run:
+color 173   ·   semantics 47   ·   alt 22   ·   label 0
+```
+
+**`label` has never selected a single element.** Not on these pages, not on the previous ten, not
+once in the life of the feature. The chain, each link verified rather than reasoned about:
+
+1. `rules._applies_label` requires a computed accessible name — `if not name: return False`,
+   deliberately: 2.5.3 compares the announced name against the visible text, and with no name
+   there is nothing to compare.
+2. That name is filled by the capture calling **`page.accessibility.snapshot()`**.
+3. **Playwright removed that API.** `probe: page.accessibility is: undefined` — no
+   `accessibility.js` in `playwright-core/lib/client`, no `accessibility` in `types.d.ts`, at the
+   pinned 1.62.1.
+4. `fillAccessibleNames` wrapped each element in a bare `catch {}` — written for one awkward
+   element, and it swallowed a total failure just as quietly.
+5. **0 of 242 stored elements carry a non-empty accessible name.**
+
+So WCAG **2.5.3 Label in Name** — the check with most to say that only a person can settle, and
+therefore the likeliest source of a review-queue item — was switched off from the day it was
+written, by a dependency change, behind a silent guard. The team's instinct that an always-empty
+queue was suspicious was right, and it was never about the pages.
+
+#### The fix, in four parts
+
+**1 · The name comes back.** `locator.ariaSnapshot({ timeout, depth: 0 })` replaces the removed
+call. Measured against the real browser before writing a line of it: 106 elements in **590ms**
+(~6ms each), and a selector that matches nothing throws at the timeout instead of hanging — that
+matters, because `ariaSnapshot` defaults to **no timeout at all**, so one stale selector would
+have stopped the audit rather than cost it a name.
+
+The parse is anchored: `- role "name"` at the start of the first line. An unanchored search for a
+quoted string reads `- paragraph: He said "hello"` as a paragraph named *hello*, and **inventing a
+name is worse than having none** — a made-up name is exactly what makes the label check compare a
+string against itself and always pass. Tested as JavaScript, extracted from the shipped file and
+run against snapshots copied from a real browser, including that trap.
+
+**2 · The platform checks its own input, so this cannot hide again.** `baseline._name_coverage`
+counts, over the elements a capture actually produced, how many *nameable* ones (links, buttons,
+form controls, headings — things that have a name by definition) came back named. None of them
+named is a broken machine, not an application without names, and the audit records it and the
+screen says so: *"One of the checks could not run."* Named apart from the cap banner on purpose —
+it must never read as "the application has no label problems", because nothing looked for any.
+
+Checked server-side rather than trusted from the capture, because a capture written by an older
+companion cannot report a problem nobody knew to look for. Silent when there is nothing nameable
+in a capture at all: that says nothing about the machine, and an accusation would be a guess.
+
+**3 · The stopped pass counts elements, not slots.** ⚠️ **A defect D1 introduced, caught by
+running the numbers against the finished audit rather than assuming.** The 21 August run deferred
+**5 request slots and lost nothing** — every one was chrome already dispatched earlier in the same
+run, so one verdict answered it, and all 125 distinct elements were judged. Counting the raw
+`deferred` would have put a *"Check the rest — 5 elements"* button on an audit with nothing left
+to check. `start_ai_pass` now records `deferred_distinct` (deferred hashes minus dispatched ones)
+and that is what the button counts; an audit from before the key existed reports **none** rather
+than the misleading number, the same choice the "elements judged" tile made.
+
+**4 · And a boundary D1 got wrong, caught by an existing test.** "No verdict anywhere" is only
+*asking again* once a pass has run. A capture that has never been judged also has no verdicts, and
+every element would have answered the question — but what that capture needs is its **first**
+pass, dispatched the ordinary way. `unanswered_for_capture` now applies the rule only when a judge
+run exists for the capture. The test that caught it,
+`test_asking_again_when_everything_has_been_looked_at_starts_nothing`, was right and the code was
+wrong.
+
+**Verified:** 262 across `test_a11y_baseline.py` + `test_a11y_scope_rest.py` +
+`test_a11y_scan_coverage.py`, 64 in `test_a11y_report.py`, 48 on the audit screen, `tsc` and
+`eslint` clean.
+
+**Not yet proven live**, and this is the next run's job: `/account/card-services` alone should
+produce seven label candidates — buttons whose spoken name shares no word with the visible one
+("Renew" → *"Extend the loan period on every item"*) — and that is where the first genuine
+`uncertain` should appear.

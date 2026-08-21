@@ -298,6 +298,10 @@ def finish_baseline_audit(*, tenant_id, audit_id, trigger=None, reason: str = ""
             audit.save(update_fields=["status", "summary", "updated_at"])
         return {"audit_id": run_key, "status": audit.status, **summary}
 
+    # Before the judging, because it is a fact about the capture and belongs on the audit even
+    # if the AI half never starts.
+    summary["names"] = _name_coverage(tenant_id, str(audit.project_id), run_key)
+
     result = start_ai_pass(
         tenant_id=tenant_id, project_id=str(audit.project_id), run_id=run_key,
         title=_title(audit), trigger=trigger,
@@ -320,6 +324,62 @@ def finish_baseline_audit(*, tenant_id, audit_id, trigger=None, reason: str = ""
         # IS dispatched it is written after that run ends instead — a baseline published while
         # half the verdicts are still in flight would state a position that is about to change.
         out["baseline"] = publish_baseline_for(tenant_id=tenant_id, audit=audit)
+    return out
+
+
+#: Tags whose elements essentially always have an accessible name — a link or a button with
+#: visible text has one by definition, and a heading takes its name from its own text. If a whole
+#: capture holds these and NOT ONE of them was named, the browser did not answer, and that is a
+#: fact about the machine rather than about the application.
+NAMEABLE_TAGS = ("a", "button", "input", "select", "textarea", "summary",
+                 "h1", "h2", "h3", "h4", "h5", "h6")
+
+NAMES_UNREAD = (
+    "the browser returned no accessible name for any element on any page, so the "
+    "**Label in Name** check (2.5.3) could not run — it compares the name a screen reader "
+    "announces against the visible text, and had nothing to compare. Every other check ran "
+    "normally. This is a fault on the machine that captured the pages, not in the application: "
+    "update the companion and audit again."
+)
+
+
+def _name_coverage(tenant_id, project_id, run_key: str) -> dict:
+    """Did the browser actually answer when asked what each element is called?
+
+    **Why the platform checks its own input.** The capture asks the browser for every element's
+    computed accessible name, and one element failing is normal and harmless — the label check
+    skips it. *Every* element failing is a broken toolchain, and it is invisible: the elements
+    all arrive, three of the four checks run perfectly, and the fourth simply never selects
+    anything. That is exactly what happened. `page.accessibility` was removed from Playwright,
+    the capture's per-element `catch` swallowed the failure on all of them, and **2.5.3 never
+    selected a single element in the entire life of the feature** — found on the live audit of
+    21 August, by noticing that one checker's count had always been zero.
+
+    Checked here rather than trusted from the capture, because a capture written by an older
+    companion cannot report a problem nobody knew to look for yet. Counted over the elements the
+    platform kept, which is enough: a page with no links, buttons or headings at all is not a
+    page anyone audits.
+    """
+    from .models import A11yCandidateBundle
+
+    with tenant_context(tenant_id):
+        rows = list(
+            A11yCandidateBundle.objects
+            .filter(tenant_id=tenant_id, project_id=project_id, run_key=str(run_key))
+            .values_list("element", flat=True)
+        )
+    nameable = 0
+    named = 0
+    for element in rows:
+        element = element or {}
+        if str(element.get("tag") or "").lower() not in NAMEABLE_TAGS:
+            continue
+        nameable += 1
+        if str(element.get("accessible_name") or "").strip():
+            named += 1
+    out = {"named": named, "nameable": nameable}
+    if nameable and not named:
+        out["reason"] = NAMES_UNREAD
     return out
 
 
@@ -647,9 +707,9 @@ def unanswered_counts(tenant_id, audits) -> dict:
 
       * `summary.ai_pass.filed_unjudged` — elements the dispatch could not ask about at all,
         because there was no judge registered or no machine connected;
-      * `summary.ai_pass.deferred` — elements the dispatch **stopped short of**, having reached
-        this run's limit. Neither filed nor handed to a run, so before this they were counted
-        nowhere and an audit closed as complete with them silently unchecked;
+      * `summary.ai_pass.deferred_distinct` — elements the dispatch **stopped short of**,
+        having reached this run's limit. Neither filed nor handed to a run, so before this they
+        were counted nowhere and an audit closed as complete with them silently unchecked;
       * the judge run's own `outputs[UNANSWERED_KEY]` — elements it was given and never reported
         on. Written by `judge._remember_unanswered` at the only moment the two kinds of
         `uncertain` are still distinguishable.
@@ -657,10 +717,10 @@ def unanswered_counts(tenant_id, audits) -> dict:
     The three are disjoint by construction: the first two were never dispatched (for different
     reasons), the third was.
 
-    ⚠️ `deferred` is counted in element-and-check **slots**, which is the only number the summary
-    kept — and the same markup repeated across pages is several slots and one element. So this
-    can read HIGH where the tail of a capped pass was repeated chrome the cache can already
-    answer. `unanswered_for_capture` recomputes in elements and is the number that acts.
+    Both are counted in DISTINCT ELEMENTS, which is what the screen has to say and what a
+    re-judge would actually ask about. `deferred` on its own is element-and-check *slots*, and
+    the tail of a capped pass is usually markup dispatched earlier in the same run — counting it
+    raw put a "check the rest" button on an audit with nothing left to check.
 
     ⚠️ **This is the count for a screen, not the list a re-judge acts on.** The authoritative set
     is recomputed by `aipass.unanswered_for_capture`, which also intersects with what the capture
@@ -677,7 +737,11 @@ def unanswered_counts(tenant_id, audits) -> dict:
     for audit in audits:
         ai_pass = (audit.summary or {}).get("ai_pass") or {}
         filed = ai_pass.get("filed_unjudged")
-        deferred = ai_pass.get("deferred")
+        # `deferred_distinct`, never `deferred`: the raw number is request slots, and the tail of
+        # a capped pass is usually markup already dispatched earlier in the same run. An audit
+        # from before this key existed has no honest count available, so it reports none rather
+        # than the misleading one — the same choice the "elements judged" tile made.
+        deferred = ai_pass.get("deferred_distinct")
         out[str(audit.id)] = ((int(filed) if isinstance(filed, int) else 0)
                               + (int(deferred) if isinstance(deferred, int) else 0))
         run_id = str(ai_pass.get("judge_run_id") or "")

@@ -151,6 +151,16 @@ def start_ai_pass(*, tenant_id, project_id, run_id, work_item_id=None, title: st
         "distinct": len({r.content_hash for r in result.dispatched}),
         "from_cache": len(result.from_cache),
         "deferred": len(result.deferred),
+        # …and how many DISTINCT elements are actually left unanswered by that. Duplicates are
+        # not collapsed before the cap, so the tail of a stopped pass is often markup that was
+        # already dispatched earlier in the same run — in which case one verdict answers it and
+        # nothing is missing at all. The 21 August audit deferred 5 requests and lost NOTHING:
+        # every one was chrome already judged. `deferred` alone drove a "check the rest" button
+        # offering work that did not exist, so this is the number the button counts.
+        "deferred_distinct": len(
+            {r.content_hash for r in result.deferred}
+            - {r.content_hash for r in result.dispatched}
+        ),
         "reason": result.unavailable_reason,
     }
     # Whatever could not be asked about is FILED, not just reported (QA-13). `dispatch` builds
@@ -348,7 +358,9 @@ def unanswered_for_capture(*, tenant_id, project_id, run_id) -> list[str]:
         moment they are still distinguishable from an answered `uncertain`;
       * **the dispatch stopped at the cap before reaching it** — `deferred`, which is neither
         filed nor handed to a run, and so is invisible to both of the above. Caught by asking
-        the direct question instead: an element of this capture with no verdict row at all.
+        the direct question instead: an element of this capture with no verdict row at all,
+        once a pass has run at all. A capture that has never been judged is not this function's
+        business — what it needs is a first pass, not a second.
 
     Deliberately **not** "every `uncertain` in this capture". A check that looked and could not
     decide produced a real verdict; it belongs to a person, and handing it back to the machine
@@ -378,23 +390,27 @@ def unanswered_for_capture(*, tenant_id, project_id, run_id) -> list[str]:
                     run__isnull=True, content_hash__in=list(captured))
             .values_list("content_hash", flat=True)
         )
-    # Elements with NO verdict row at all — nothing ever looked at them, whatever the reason.
-    # This is what catches a pass that STOPPED AT THE CAP: those requests were never dispatched
-    # and never filed, so neither of the two sources below knows about them, and before this the
-    # audit closed as complete with them silently unchecked. Written as "has no answer" rather
-    # than as a third category, because a category is a thing to keep in step and this is simply
-    # the question being asked directly.
-    with tenant_context(tenant_id):
-        known = set(
-            A11yJudgmentCache.objects
-            .filter(tenant_id=tenant_id, project_id=project_id,
-                    content_hash__in=sorted(captured))
-            .values_list("content_hash", flat=True)
-        )
-    hashes |= captured - known
-
     judge_run_id = _judge_run_for(tenant_id, key)
     if judge_run_id:
+        # Elements with NO verdict row at all — nothing ever looked at them, whatever the
+        # reason. This is what catches a pass that STOPPED AT THE CAP: those requests were never
+        # dispatched and never filed, so neither of the other two sources knows about them, and
+        # before this an audit closed as complete with them silently unchecked.
+        #
+        # **Only once a pass has actually run**, which is what `judge_run_id` says. A capture
+        # that has never been judged also has no verdicts, and every element in it would answer
+        # this question — but what that capture needs is its FIRST pass, dispatched the ordinary
+        # way, not a re-judge. This function is "ask again about what nothing looked at", and
+        # before there has been a first asking it has nothing to say.
+        with tenant_context(tenant_id):
+            known = set(
+                A11yJudgmentCache.objects
+                .filter(tenant_id=tenant_id, project_id=project_id,
+                        content_hash__in=sorted(captured))
+                .values_list("content_hash", flat=True)
+            )
+        hashes |= captured - known
+
         from apps.runs.models import Run
 
         from .judge import UNANSWERED_KEY

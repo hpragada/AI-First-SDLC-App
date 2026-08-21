@@ -325,6 +325,52 @@ describe("S-38 pages and audit", () => {
     expect(screen.getAllByText(/5 item\(s\) still need judging/).length).toBeGreaterThan(0);
   });
 
+  // One of the four checks not running at all is a different, worse sentence than part of the
+  // capture going unasked - and it must never read as "the application has no label problems",
+  // because nothing looked for any.
+  it("an audit whose machine could not read any name says that check did not run", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "complete", base_url: "http://localhost:4180",
+        routes: ["/"], created_at: "2026-08-18T14:02:00Z",
+        summary: {
+          asked: 1, opened: 1, unreachable: [], never_reported: [],
+          names: {
+            named: 0, nameable: 42,
+            reason: "the browser returned no accessible name for any element on any page, so the Label in Name check (2.5.3) could not run.",
+          },
+        },
+        outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("One of the checks could not run")).toBeTruthy();
+    expect(screen.getByText(/Label in Name/)).toBeTruthy();
+  });
+
+  it("an audit whose names were read says nothing about it", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "complete", base_url: "http://localhost:4180",
+        routes: ["/"], created_at: "2026-08-18T14:02:00Z",
+        summary: {
+          asked: 1, opened: 1, unreachable: [], never_reported: [],
+          names: { named: 40, nameable: 42 },
+        },
+        outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText(/Audit complete/)).toBeTruthy();
+    expect(screen.queryByText("One of the checks could not run")).toBeNull();
+  });
+
   it("a complete audit that checked everything says nothing about limits", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...authed(),

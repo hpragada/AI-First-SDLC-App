@@ -927,6 +927,16 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
               </Banner>
             )}
 
+            {/* A different sentence from the one above, and a worse one: that says part of what
+                was captured went unasked, this says one of the four checks could not run at all.
+                Named separately so it can never be read as "the application has no label
+                problems" — nothing looked for any. */}
+            {audit.summary?.names?.reason && (
+              <Banner variant="warning" title="One of the checks could not run">
+                {audit.summary.names.reason}
+              </Banner>
+            )}
+
             {/* A page that never opened is stated, never absorbed. Nothing it might have
                 contained is treated as passing, and it cannot close a problem found there
                 before. */}
