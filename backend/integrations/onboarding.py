@@ -1792,16 +1792,22 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
         }
 
     with tenant_context(tenant_id):
+        from apps.a11y.baseline import IN_FLIGHT_STATUSES
         from apps.a11y.models import A11yBaselineAudit, A11yRoute
 
         a11y_routes = A11yRoute.objects.filter(
             tenant_id=tenant_id, project_id=project_id, enabled=True).count()
-        # `complete` and `judging` both mean the pages were visited and something came back;
-        # judging is the AI half still finishing, which is not the user's step to wait on.
+        # Counted apart, because the step used to count `judging` as run and then say "1 audit
+        # run — open the report from Artifacts" while the audit was still going. There is no
+        # report to open until the judging ends: the baseline is published when the judge run
+        # closes, precisely so it never states a position that is still changing. So a finished
+        # audit is what makes this step done, and one still going says that it is going.
         a11y_audits = A11yBaselineAudit.objects.filter(
             tenant_id=tenant_id, project_id=project_id,
-            status__in=(A11yBaselineAudit.Status.COMPLETE,
-                        A11yBaselineAudit.Status.JUDGING)).count()
+            status=A11yBaselineAudit.Status.COMPLETE).count()
+        a11y_running = A11yBaselineAudit.objects.filter(
+            tenant_id=tenant_id, project_id=project_id,
+            status__in=IN_FLIGHT_STATUSES).exists()
 
     gap = read_gap_report(tenant_id=tenant_id, project_id=project_id)
     # Live state of the two headless steps. Outside the block above because each opens its own
@@ -1843,7 +1849,12 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
         "a11y": {
             "routes_registered": a11y_routes,
             "audits_run": a11y_audits,
+            # Both `running` and `status`, the same shape and the same reason as the Index code
+            # step below: the tick and the button switch on `status`, while the line of text has
+            # to be able to say "and another one is going right now" over the top of it.
+            "running": a11y_running,
             "status": ("done" if a11y_audits else
+                       "running" if a11y_running else
                        "ready" if a11y_routes else "not_started"),
         },
         "index": {

@@ -703,8 +703,15 @@ export interface OnboardingHub {
   // backend that predates this — still renders the hub rather than blanking it.
   a11y?: {
     routes_registered: number;
+    // FINISHED audits only. A `judging` audit used to count here, and the step then said "1
+    // audit run — open the report from Artifacts" while it was still going: there is no report
+    // until the judging ends, because the baseline is published only when a position has
+    // settled.
     audits_run: number;
-    status: "not_started" | "ready" | "done";
+    // …so an audit still going is carried separately, and the line can say so over the top of
+    // whatever the tick says. Same pairing as the Index code step.
+    running?: boolean;
+    status: "not_started" | "ready" | "running" | "done";
   };
   adopt_types: AdoptType[];
 }
@@ -990,6 +997,15 @@ export interface A11yAudit {
     unreachable?: string[];
     never_reported?: string[];
     reason?: string;
+    // What the AI half did. `reason` here is the DISPATCH's own account — most importantly the
+    // one it gives when it stopped at this run's limit, which is the only record that some
+    // elements were never asked about at all.
+    ai_pass?: {
+      reason?: string;
+      deferred?: number;
+      dispatched?: number;
+      distinct?: number;
+    };
     // Closed by the platform because the machine capturing it went away, rather than by a run
     // that finished and found nothing openable. Same status, entirely different thing to do.
     abandoned?: boolean;

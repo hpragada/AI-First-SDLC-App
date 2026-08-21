@@ -647,11 +647,20 @@ def unanswered_counts(tenant_id, audits) -> dict:
 
       * `summary.ai_pass.filed_unjudged` — elements the dispatch could not ask about at all,
         because there was no judge registered or no machine connected;
+      * `summary.ai_pass.deferred` — elements the dispatch **stopped short of**, having reached
+        this run's limit. Neither filed nor handed to a run, so before this they were counted
+        nowhere and an audit closed as complete with them silently unchecked;
       * the judge run's own `outputs[UNANSWERED_KEY]` — elements it was given and never reported
         on. Written by `judge._remember_unanswered` at the only moment the two kinds of
         `uncertain` are still distinguishable.
 
-    The two are disjoint by construction: the first were never dispatched, the second were.
+    The three are disjoint by construction: the first two were never dispatched (for different
+    reasons), the third was.
+
+    ⚠️ `deferred` is counted in element-and-check **slots**, which is the only number the summary
+    kept — and the same markup repeated across pages is several slots and one element. So this
+    can read HIGH where the tail of a capped pass was repeated chrome the cache can already
+    answer. `unanswered_for_capture` recomputes in elements and is the number that acts.
 
     ⚠️ **This is the count for a screen, not the list a re-judge acts on.** The authoritative set
     is recomputed by `aipass.unanswered_for_capture`, which also intersects with what the capture
@@ -668,7 +677,9 @@ def unanswered_counts(tenant_id, audits) -> dict:
     for audit in audits:
         ai_pass = (audit.summary or {}).get("ai_pass") or {}
         filed = ai_pass.get("filed_unjudged")
-        out[str(audit.id)] = int(filed) if isinstance(filed, int) else 0
+        deferred = ai_pass.get("deferred")
+        out[str(audit.id)] = ((int(filed) if isinstance(filed, int) else 0)
+                              + (int(deferred) if isinstance(deferred, int) else 0))
         run_id = str(ai_pass.get("judge_run_id") or "")
         if run_id:
             judge_runs[run_id] = str(audit.id)

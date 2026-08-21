@@ -1587,3 +1587,71 @@ live run was closed by the fix for it, on the live system, unassisted.
 **Verified:** 191 in `test_a11y_baseline.py`, 73 across `test_a11y_scope_rest.py` +
 `test_companion_daemon.py`, 44 on the audit screen, `tsc` and `eslint` clean on the changed
 files. The four pre-existing `views.py` ruff findings are unchanged and still not from this work.
+
+
+---
+
+### 9.6 A pass that stopped at its limit, and said nothing — 21 August (BUILT)
+
+The twelve-page scope came to **205 element slots against a cap of 200**, so the dispatch
+stopped and handed back **5 deferred**. It recorded that honestly, in the audit's own summary:
+
+> *"Stopped at this run's limit of 200 — 5 item(s) still need judging. Run the check again to
+> continue from here; nothing was skipped."*
+
+**And nothing anywhere read it.** Grepping the whole frontend for `ai_pass` or `deferred`
+returned nothing; the run report and the published baseline never mention them either. So the
+audit would have closed as **complete**, shown *12 of 12 pages reported*, and never once said
+that five element-slots were not checked. A quiet success, which is the worst failure this
+capability has.
+
+⚠️ **And the "Check the rest" button would not have appeared.** This was stated wrongly to the
+team first and corrected against the code. `unanswered_counts` counted exactly two things —
+`filed_unjudged` (no judge to ask) and the judge run's `a11y_unanswered` (given to a run that
+never reported). Cap-deferred elements are in **neither**: never dispatched, never filed. The
+audit's own `filed_unjudged: 0` proves it.
+
+#### D1 — "nothing looked at this" now means what it says
+
+`unanswered_for_capture` asks the direct question: **is there a verdict for this element at
+all?** No verdict row means nothing looked, whatever the reason nothing did — no judge, a run
+that dropped it, or a dispatch that stopped short. One rule instead of three categories to keep
+in step, and the cap case is covered by construction rather than by remembering it exists.
+
+An element that *was* answered stays answered, including a genuine `uncertain`: that verdict
+belongs to the person in the review queue, and re-asking would quietly recycle the queue through
+the machine. `unanswered_counts` — the cheap screen count — adds `deferred` to what it already
+counted.
+
+⚠️ `deferred` is counted in **slots**, the only number the summary kept, and repeated chrome is
+several slots and one element. So the button can read high where the tail of a capped pass was
+markup the cache can already answer. `unanswered_for_capture` recomputes in elements and is the
+number that acts; the docstring says so.
+
+#### D2 — the finished audit says why part of it was never asked about
+
+The dispatch's own sentence now renders: a warning banner on the complete panel
+(*"Not everything captured was checked"*) and a line on the audit's row under Past audits. It
+sits beside — not instead of — `summary.reason`, because *why the audit failed* and *why a
+successful audit is incomplete* are two different sentences.
+
+#### D3 — and the onboarding step stopped calling a running audit a finished one
+
+Reported by the team from the live run: the hub read **"1 audit run — open the report from
+Artifacts"** while the audit was still judging. The step counted `complete` **and** `judging` as
+run. But there is no report to open until the judging ends — the baseline is published when the
+judge run closes, deliberately, so that it never states a position that is still changing.
+
+`audits_run` now counts finished audits only, and a separate `running` rides beside it — the
+same `{status, running}` pairing the Index code step already uses, and for the same reason: the
+tick and the button switch on `status`, while the line of text has to be able to say *"and
+another one is going right now"* over the top of it. Four states, each with a test: running says
+so and offers no report; finished is done; finished-plus-running keeps the tick and adds the
+sentence; and a failed audit leaves the step simply *ready*, which is the true thing to say.
+
+**This is the team's point about a fix touching everything it touches**, and they were right to
+make it: the audit screen had been taught to tell the truth about a running audit three times
+over, and the hub two clicks away was still reading the old count.
+
+**Verified:** 62 in `test_a11y_report.py`, 19 in `test_onboarding_rest.py`, 46 on the audit
+screen, 23 on the hub, `tsc` and `eslint` clean on every changed file.

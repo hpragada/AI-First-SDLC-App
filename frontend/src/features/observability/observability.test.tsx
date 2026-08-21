@@ -362,6 +362,30 @@ describe("S-24 onboarding — the accessibility step (B4)", () => {
     expect(await screen.findByText(/2 audits run/)).toBeTruthy();
   });
 
+  // An audit that is still going is NOT one that has run. The step counted `judging` as done
+  // and then said "1 audit run - open the report from Artifacts" while the run was mid-flight:
+  // there is no report until the judging ends, because the baseline is published only when the
+  // position has settled. Seen on the live run of 21 August.
+  it("running · says an audit is going, and does not offer a report that does not exist", async () => {
+    vi.stubGlobal("fetch", stubHub({
+      routes_registered: 12, audits_run: 0, running: true, status: "running",
+    }));
+    renderWithProviders(<OnboardingHub />);
+
+    expect(await screen.findByText(/An audit is running now/)).toBeTruthy();
+    expect(screen.queryByText(/open the report from Artifacts/)).toBeNull();
+  });
+
+  it("done and running at once · the tick stays, and the line says another is going", async () => {
+    vi.stubGlobal("fetch", stubHub({
+      routes_registered: 12, audits_run: 1, running: true, status: "done",
+    }));
+    renderWithProviders(<OnboardingHub />);
+
+    expect(await screen.findByText(/1 audit run/)).toBeTruthy();
+    expect(screen.getByText(/Another audit is running now/)).toBeTruthy();
+  });
+
   it("a payload with no accessibility block still renders the hub", async () => {
     // A backend that predates this field must not blank the screen a brownfield user lands on.
     vi.stubGlobal("fetch", stubHub(undefined));

@@ -916,6 +916,17 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
               </div>
             </div>
 
+            {/* An audit that stopped at its own limit says so. The dispatch always recorded
+                this — "stopped at this run's limit of N, M item(s) still need judging" — and
+                nothing on any screen read it, so a pass that never asked about part of what it
+                captured closed as COMPLETE and said nothing. A quiet success is the worst
+                failure this capability has, and it was sitting in its own summary. */}
+            {audit.summary?.ai_pass?.reason && (
+              <Banner variant="warning" title="Not everything captured was checked">
+                {audit.summary.ai_pass.reason}
+              </Banner>
+            )}
+
             {/* A page that never opened is stated, never absorbed. Nothing it might have
                 contained is treated as passing, and it cannot close a problem found there
                 before. */}
@@ -1073,6 +1084,14 @@ function PastAudits({
               {audit.summary?.reason && (
                 <p className="t-sm u-muted" style={{ marginTop: 6 }}>
                   {audit.summary.reason}
+                </p>
+              )}
+              {/* And why part of it was never asked about, which is a different sentence from
+                  the one above: that one is why the audit failed, this one is why a successful
+                  audit is incomplete. */}
+              {audit.summary?.ai_pass?.reason && (
+                <p className="t-sm u-muted" style={{ marginTop: 6 }}>
+                  {audit.summary.ai_pass.reason}
                 </p>
               )}
 

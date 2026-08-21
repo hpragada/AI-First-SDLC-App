@@ -1127,3 +1127,101 @@ def test_a_second_asking_never_offers_up_what_the_first_one_answered(world):
     assert unanswered_counts(world["t"], [audit])[str(audit.id)] == 0, (
         "and the button that offers it is gone too")
 
+
+# ── and what the dispatch never reached at all ──────────────────────────────────────
+#
+# A pass stops at its own limit and hands the remainder back as `deferred`. Those requests were
+# never dispatched and never filed, so neither of the two sources above knew about them: on the
+# live run of 21 August an audit closed as COMPLETE with five element-slots never asked about,
+# no button offering them, and no sentence anywhere saying so. A quiet success, which is the
+# worst failure this capability has.
+
+
+def test_an_element_the_cap_never_reached_is_offered_back(world):
+    """The whole of D1. Not "was it filed" or "did a run drop it" — the direct question: is
+    there a verdict for this element anywhere? No verdict means nothing looked at it, whatever
+    the reason nothing did."""
+    from apps.a11y.aipass import start_ai_pass, unanswered_for_capture
+    from apps.a11y.models import A11yJudgmentCache
+
+    _ingest(world)
+    out = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"],
+                        trigger=FakeTrigger(world))
+    assert out["started"] is True
+
+    # The judge answers everything it was given except one element, and nothing files that one:
+    # the shape a cap leaves behind, where the request never reached a run at all.
+    from apps.a11y import judge as judge_mod
+
+    ids = _element_ids(world, out["judge_run_id"])
+    assert len(ids) > 1
+    for element_id, criteria in ids[1:]:
+        judge_mod.record_finding(
+            tenant_id=world["t"], run_id=out["judge_run_id"], project_id=world["p"],
+            element_id=element_id, criteria=criteria, verdict="pass", confidence=0.95,
+            evidence="the accessible name describes the image",
+        )
+    A11yJudgmentCache.objects.filter(
+        tenant_id=world["t"], project_id=world["p"]).count()
+
+    offered = unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"])
+    assert len(offered) == 1, "the one element nothing ever recorded an answer for"
+
+
+def test_an_element_that_was_answered_is_not_offered_back_as_never_looked_at(world):
+    """The other half of the same rule, and the one that stops it recycling the review queue.
+    A verdict — including an `uncertain` a check genuinely reached — means something DID look."""
+    from apps.a11y import judge as judge_mod
+    from apps.a11y.aipass import start_ai_pass, unanswered_for_capture
+
+    _ingest(world)
+    out = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"],
+                        trigger=FakeTrigger(world))
+    for element_id, criteria in _element_ids(world, out["judge_run_id"]):
+        judge_mod.record_finding(
+            tenant_id=world["t"], run_id=out["judge_run_id"], project_id=world["p"],
+            element_id=element_id, criteria=criteria, verdict="uncertain", confidence=0.2,
+            evidence="the page does not say whether this is decorative",
+        )
+
+    assert unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"]) == [], (
+        "every one of these belongs to a person; re-asking would recycle the queue"
+    )
+
+
+def test_the_button_counts_what_the_cap_left_behind(world):
+    """`unanswered_counts` is the cheap screen count, read from what each pass recorded about
+    itself. Before this it read `filed_unjudged` alone, which is zero for a capped pass — so the
+    button never appeared for the one case that produced it on the live run."""
+    from apps.a11y.baseline import unanswered_counts
+
+    class _Audit:
+        id = "0f1e2d3c-4b5a-4967-8899-aabbccddeeff"
+        summary = {"ai_pass": {"filed_unjudged": 0, "deferred": 5,
+                               "judge_run_id": "", "dispatched": 200}}
+
+    assert unanswered_counts(world["t"], [_Audit()])[_Audit.id] == 5
+
+
+def test_the_two_kinds_of_never_asked_are_added_not_confused(world):
+    """`filed_unjudged` (there was no judge to ask) and `deferred` (we stopped at the limit) are
+    different reasons for the same fact, and both are work that did not happen."""
+    from apps.a11y.baseline import unanswered_counts
+
+    class _Audit:
+        id = "0f1e2d3c-4b5a-4967-8899-aabbccddee01"
+        summary = {"ai_pass": {"filed_unjudged": 3, "deferred": 5}}
+
+    assert unanswered_counts(world["t"], [_Audit()])[_Audit.id] == 8
+
+
+def test_a_pass_that_reached_everything_still_counts_nothing(world):
+    from apps.a11y.baseline import unanswered_counts
+
+    class _Audit:
+        id = "0f1e2d3c-4b5a-4967-8899-aabbccddee02"
+        summary = {"ai_pass": {"filed_unjudged": 0, "deferred": 0}}
+
+    assert unanswered_counts(world["t"], [_Audit()])[_Audit.id] == 0

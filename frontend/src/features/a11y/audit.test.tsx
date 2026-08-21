@@ -299,6 +299,52 @@ describe("S-38 pages and audit", () => {
     expect(await screen.findByText("Audit running")).toBeTruthy();
   });
 
+  // A pass that stopped at its own limit. The dispatch always recorded this and nothing on any
+  // screen read it, so an audit that never asked about part of what it captured closed as
+  // COMPLETE and said nothing at all. Found on the live run of 21 August.
+  it("a complete audit that did not check everything says so", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "complete", base_url: "http://localhost:4180",
+        routes: ["/", "/login"], created_at: "2026-08-18T14:02:00Z",
+        summary: {
+          asked: 2, opened: 2, unreachable: [], never_reported: [],
+          ai_pass: {
+            deferred: 5, dispatched: 200, distinct: 125,
+            reason: "Stopped at this run's limit of 200 — 5 item(s) still need judging. Run the check again to continue from here; nothing was skipped.",
+          },
+        },
+        outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Not everything captured was checked")).toBeTruthy();
+    expect(screen.getAllByText(/5 item\(s\) still need judging/).length).toBeGreaterThan(0);
+  });
+
+  it("a complete audit that checked everything says nothing about limits", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "complete", base_url: "http://localhost:4180",
+        routes: ["/"], created_at: "2026-08-18T14:02:00Z",
+        summary: {
+          asked: 1, opened: 1, unreachable: [], never_reported: [],
+          ai_pass: { deferred: 0, dispatched: 12, distinct: 12 },
+        },
+        outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText(/Audit complete/)).toBeTruthy();
+    expect(screen.queryByText("Not everything captured was checked")).toBeNull();
+  });
+
   it("an abandoned audit that has been closed shows the machine's own reason", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...authed(),

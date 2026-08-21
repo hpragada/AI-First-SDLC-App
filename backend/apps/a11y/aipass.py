@@ -345,7 +345,10 @@ def unanswered_for_capture(*, tenant_id, project_id, run_id) -> list[str]:
         else in the platform writes a verdict with a null run;
       * **the judge run started and never reported on it** — it ran out of session, context or
         connection. `judge._remember_unanswered` records those on the run itself, at the one
-        moment they are still distinguishable from an answered `uncertain`.
+        moment they are still distinguishable from an answered `uncertain`;
+      * **the dispatch stopped at the cap before reaching it** — `deferred`, which is neither
+        filed nor handed to a run, and so is invisible to both of the above. Caught by asking
+        the direct question instead: an element of this capture with no verdict row at all.
 
     Deliberately **not** "every `uncertain` in this capture". A check that looked and could not
     decide produced a real verdict; it belongs to a person, and handing it back to the machine
@@ -375,6 +378,21 @@ def unanswered_for_capture(*, tenant_id, project_id, run_id) -> list[str]:
                     run__isnull=True, content_hash__in=list(captured))
             .values_list("content_hash", flat=True)
         )
+    # Elements with NO verdict row at all — nothing ever looked at them, whatever the reason.
+    # This is what catches a pass that STOPPED AT THE CAP: those requests were never dispatched
+    # and never filed, so neither of the two sources below knows about them, and before this the
+    # audit closed as complete with them silently unchecked. Written as "has no answer" rather
+    # than as a third category, because a category is a thing to keep in step and this is simply
+    # the question being asked directly.
+    with tenant_context(tenant_id):
+        known = set(
+            A11yJudgmentCache.objects
+            .filter(tenant_id=tenant_id, project_id=project_id,
+                    content_hash__in=sorted(captured))
+            .values_list("content_hash", flat=True)
+        )
+    hashes |= captured - known
+
     judge_run_id = _judge_run_for(tenant_id, key)
     if judge_run_id:
         from apps.runs.models import Run

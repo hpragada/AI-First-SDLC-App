@@ -1371,6 +1371,48 @@ ran, the companion's own heartbeat had already done it at 04:38:36 — `opened: 
 listed as never reported, reason in the machine's words.
 
 
+
+### #26 — A pass that stopped at its limit said nothing, anywhere ✅
+
+**Found on the live run of 21 August.** Twelve pages came to 205 element slots against a cap of
+200, so the dispatch stopped and deferred 5. It wrote an honest sentence into the audit's own
+summary — *"Stopped at this run's limit of 200 — 5 item(s) still need judging"* — and **nothing
+read it**: not the screen, not the run report, not the published baseline. The audit would have
+closed as **complete**, shown *12 of 12 pages reported*, and never said part of it was unchecked.
+
+**And the "Check the rest" button would not have appeared either.** `unanswered_counts` counted
+elements no judge could be asked about, and elements a run was given and dropped. Cap-deferred
+elements are neither: never dispatched, never filed.
+
+**The fix asks the direct question.** An element of this capture with **no verdict at all** is
+unanswered — no judge, run dropped it, or the dispatch stopped short, all one rule instead of
+three categories to keep in step. An element that *was* answered stays answered, a real
+`uncertain` included: that belongs to the person in the review queue. The finished audit now
+renders the dispatch's own reason, as a banner on the panel and a line on the row.
+
+⚠️ The count on the button is in **slots**, the only number the summary keeps, and repeated
+chrome is several slots and one element — so it can read high where the tail of a capped pass
+was markup the cache can already answer. The re-judge recomputes in elements and is what acts.
+
+### #27 — The onboarding step called a running audit a finished one ✅
+
+**Reported by the team from the same run.** The hub read **"1 audit run — open the report from
+Artifacts"** while the audit was still judging. There is no report to open until judging ends:
+the baseline is published when the judge run closes, deliberately, so it never states a position
+that is still changing.
+
+`audits_run` now counts finished audits only, with a separate `running` beside it — the same
+`{status, running}` pairing the Index code step already uses, because the tick switches on one
+and the sentence has to be able to say *"and another is going right now"* over the top of it.
+Four states, four tests: running says so and offers no report; finished is done; finished-plus-
+running keeps the tick and adds the sentence; a failed audit leaves the step simply *ready*.
+
+**The team's note is the lesson worth keeping:** *when you fix something, consider everything
+else it touches so those behave accordingly.* The audit screen had been taught to tell the truth
+about a running audit three separate times, and the hub two clicks away was still reading the
+old count.
+
+
 ---
 
 ## 10. What has run live, what has not, and what I am least sure about
