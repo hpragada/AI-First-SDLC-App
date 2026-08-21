@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from apps.tenancy.context import tenant_context
@@ -213,6 +214,12 @@ def evidence_for(finding) -> dict:
     scan = _scan_for(finding)
     box = ((bundle.element or {}).get("box") or {}) if bundle is not None else {}
     return {
+        # Which capture this picture came out of — the audit's own id on a brownfield pass, the
+        # run's on a greenfield one. Returned from here rather than looked up again because the
+        # row it comes off has already been fetched, and a second query for a field we are
+        # holding is a second chance to disagree with it.
+        "run_key": (bundle.run_key if bundle is not None else "") or (
+            scan.run_key if scan is not None else "") or "",
         "page_ref": scan.page_image_ref if scan is not None else "",
         "element_ref": finding.screenshot_ref or (
             bundle.screenshot_ref if bundle is not None else ""),
@@ -294,6 +301,7 @@ def _item(finding, *, handles, user_id, evidence=None, now=None) -> dict:
         "box": evidence["box"],
         "url": evidence["url"],
         "capture_reason": evidence["reason"],
+        "capture_key": evidence["run_key"],
     }
 
 
@@ -315,6 +323,11 @@ def _row(finding, *, handles, user_id, now=None) -> dict:
         "verdict": finding.verdict,
         "confidence": finding.confidence,
         "severity_if_confirmed": finding.severity,
+        # What the platform decided, and whether it is still open. Constant across the review
+        # queue — everything in it is `needs_review` and open — and the reason this shape can
+        # also serve a finding opened to be read, where it is the first thing a reader needs.
+        "outcome": finding.outcome,
+        "status": finding.status,
         "evidence": finding.evidence,
         "suggested_fix": finding.suggested_fix,
         "lock": lock_state(finding, user_id=user_id, now=now),
@@ -419,6 +432,64 @@ def open_item(*, tenant_id, project_id, finding_id, user_id, take_lock=True) -> 
             "note": finding.adjudication_note,
         }
         return payload
+
+
+def _captured_by(tenant_id, project_id, capture_key: str) -> dict | None:
+    """The baseline audit whose pass produced this evidence, when one did.
+
+    A finding carries no audit of its own and must not: the ledger outlives every pass, and a
+    finding first seen three audits ago is still the same problem. What identifies the pass is
+    the **capture key** on the picture — `A11yCandidateBundle.run_key`, which a brownfield audit
+    sets to its own id. So the audit is resolved from the evidence rather than stored beside it,
+    and the answer is "the audit that took this picture", which is exactly the question a reader
+    looking at the picture is asking.
+
+    `None` on greenfield, where the key names a `Run` and there is no audit — the same shape as
+    `_provenance`, and for the same reason: nothing to link to, so nothing shown.
+    """
+    from .models import A11yBaselineAudit
+
+    if not capture_key:
+        return None
+    try:
+        audit = A11yBaselineAudit.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, id=capture_key).first()
+    except (ValidationError, ValueError):
+        # A capture key that is not a uuid at all. It cannot be an audit, and a malformed
+        # pointer is not worth failing a read for.
+        return None
+    if audit is None:
+        return None
+    summary = audit.summary or {}
+    return {
+        "id": str(audit.id),
+        "label": f"audit {str(audit.id)[:8]}",
+        "finished_at": audit.updated_at,
+        "status": audit.status,
+        "asked": int(summary.get("asked") or len(audit.routes or [])),
+        "opened": int(summary.get("opened") or 0),
+    }
+
+
+def read_finding(*, tenant_id, project_id, finding_id, user_id=None) -> dict:
+    """One finding, opened to be **read**. Nothing is claimed.
+
+    **This is the whole of what S-39 needed that did not already exist.** The evidence, the
+    picture, the element's rectangle and the provenance were all already assembled — by
+    `open_item`, for the review console. What could not be reused was the side effect: opening
+    an item is also what takes and renews the review claim, and a failure nobody is reviewing
+    must not acquire a reviewer's name because somebody followed a link to look at it.
+
+    So this is `open_item` with the claim off, plus the audit that took the picture. `can_review`
+    is still answered honestly for this user, because the screen offers a way through to the
+    console and should not offer it to someone who cannot answer.
+    """
+    payload = open_item(tenant_id=tenant_id, project_id=project_id, finding_id=finding_id,
+                        user_id=user_id, take_lock=False)
+    with tenant_context(tenant_id):
+        payload["captured_by"] = _captured_by(tenant_id, project_id,
+                                              payload.get("capture_key") or "")
+    return payload
 
 
 # ---------------------------------------------------------------------------------------

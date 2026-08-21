@@ -80,6 +80,19 @@ function conformance(over: Record<string, unknown> = {}) {
     export_refused_because:
       "This cannot be exported unsigned. A conformance statement carries someone's professional judgement, and the platform has none to give.",
     can_sign: true,
+    // Which pass the numbers were compiled from. The default is a project that has had one
+    // audit, because that is the ordinary case and the one the section is written for.
+    basis: {
+      latest: {
+        id: "48506881-0000-0000-0000-000000000000",
+        label: "audit 48506881",
+        finished_at: "2026-08-21T12:01:00Z",
+        asked: 12,
+        opened: 12,
+      },
+      audits: 1,
+      runs: 0,
+    },
     ...over,
   };
 }
@@ -255,5 +268,46 @@ describe("S-37 conformance statement", () => {
     await screen.findByText("1.1.1 Non-text Content");
     // Not hidden — it is exactly what the signature makes someone responsible for.
     expect(screen.getAllByText("suggested").length).toBe(2);
+  });
+});
+
+describe("S-37 · which run this statement was compiled from", () => {
+  it("names the audit and when it finished", async () => {
+    vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance()]]));
+    renderWithProviders(<A11yConformanceScreen />);
+
+    await screen.findByText("audit 48506881");
+    expect(screen.getByText("12 of 12")).toBeDefined();
+  });
+
+  it("counts the earlier audits rather than claiming this one is all of it", async () => {
+    // The findings ledger is cumulative, so "this is what was checked" would be untrue the
+    // moment a project has had two.
+    vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance({
+      basis: {
+        latest: {
+          id: "48506881-0000-0000-0000-000000000000",
+          label: "audit 48506881",
+          finished_at: "2026-08-21T12:01:00Z",
+          asked: 12,
+          opened: 12,
+        },
+        audits: 3,
+        runs: 0,
+      },
+    })]]));
+    renderWithProviders(<A11yConformanceScreen />);
+
+    await screen.findByText("audit 48506881");
+    expect(screen.getByText("2 earlier audit(s)")).toBeDefined();
+  });
+
+  it("says plainly when nothing has ever been audited", async () => {
+    vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance({
+      basis: { latest: null, audits: 0, runs: 0 },
+    })]]));
+    renderWithProviders(<A11yConformanceScreen />);
+
+    await screen.findByText("No completed audit is recorded for this project");
   });
 });

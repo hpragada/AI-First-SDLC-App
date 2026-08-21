@@ -134,12 +134,19 @@ def _judge(world, request, verdict, confidence, evidence="quoted markup", fix="a
 # a pure function.
 
 def test_every_row_still_shows_source_confidence_criterion_and_fix(world):
+    """The table carries where it came from and how sure it was; the fix is in the document.
+
+    The fix left the table when it stopped being truncated — a paragraph cannot live in a
+    markdown cell. What this guards is that none of the four was *dropped*, which is the only
+    way that move could have gone wrong.
+    """
     body = report_body(MergedReport(rows=[_row()], routes=["/checkout"]))
-    line = next(line for line in body.splitlines() if "img.hero" in line)
+    line = next(line for line in body.splitlines() if line.startswith("|")
+                and "img.hero" in line)
     assert SOURCE_AI in line
     assert "93%" in line
-    assert "describe what the image shows" in line
     assert "1.1.1" in body
+    assert "describe what the image shows" in body
 
 
 def test_a_finding_breaching_two_criteria_shows_both_on_one_row(world):
@@ -148,9 +155,9 @@ def test_a_finding_breaching_two_criteria_shows_both_on_one_row(world):
     body = report_body(MergedReport(
         rows=[_row(criteria=("1.3.1", "4.1.2"), checker="semantics", selector="div.btn")],
         routes=["/checkout"]))
-    line = next(line for line in body.splitlines() if "div.btn" in line)
-    assert "1.3.1, 4.1.2" in line
-    assert len([x for x in body.splitlines() if "div.btn" in x]) == 1
+    rows = [x for x in body.splitlines() if x.startswith("|") and "div.btn" in x]
+    assert len(rows) == 1
+    assert "1.3.1, 4.1.2" in rows[0]
 
 
 def test_a_measurement_is_still_shown_as_measured_not_as_a_percentage(world):
@@ -340,3 +347,152 @@ def test_the_test_report_is_untouched_by_this_task():
 
 def test_an_empty_run_still_says_a_scan_may_not_have_happened(world):
     assert "only a clean result if a scan actually ran" in report_body(MergedReport())
+
+
+# ══ The whole finding, printed ════════════════════════════════════════════════════
+#
+# The team read an audit's report and found the two sentences that mattered were the two the
+# document had cut. A markdown cell cannot hold a line break, so bounding it was never a
+# formatting choice — prose in a table stops wherever the limit lands, and on that run it
+# landed mid-sentence inside the alt text the document was telling somebody to write.
+#
+# Raising the limit moves the cut; it does not remove it. So the paragraphs left the table.
+
+_LONG_EVIDENCE = (
+    'Screenshot shows a bar chart titled "Loans per month, 2026" with eight monthly bars '
+    '(Jan-Aug) ranging from approximately 1,050 to 1,225 loans. The element carries alt="", '
+    'hiding all chart data from assistive technology. The adjacent text ("Loans rose in the '
+    'spring and fell back over the summer holidays") provides only a narrative trend summary '
+    "- not the specific monthly figures the chart displays. Those figures are unavailable to "
+    "screen-reader users."
+)
+_LONG_FIX = (
+    'Replace alt="" with descriptive alt text conveying the chart\'s data: alt="Bar chart: '
+    "Loans per month in 2026. Lending rose from approximately 1,050 in January to a peak of "
+    'approximately 1,225 in May, then declined to approximately 1,050 by August." For richer '
+    "access to the underlying data, also consider adding a linked data table beneath the chart."
+)
+
+
+def _table_row(body: str, selector: str) -> str:
+    return next(x for x in body.splitlines() if x.startswith("| ") and selector in x)
+
+
+def test_a_long_finding_is_printed_whole_somewhere_in_the_document(world):
+    """The sentence that says *why it fails* is the one the old limit cut. Both halves whole."""
+    body = report_body(MergedReport(
+        rows=[_row(evidence=_LONG_EVIDENCE, suggested_fix=_LONG_FIX)], routes=["/checkout"]))
+    assert _LONG_EVIDENCE in body
+    assert _LONG_FIX in body
+    assert "Those figures are unavailable to screen-reader users." in body
+
+
+def test_the_table_summarises_and_the_number_is_what_joins_the_two_halves(world):
+    """A reader scanning the table has to be able to name the row they want in full."""
+    body = report_body(MergedReport(
+        rows=[_row(evidence=_LONG_EVIDENCE, suggested_fix=_LONG_FIX)], routes=["/checkout"]))
+    row = _table_row(body, "img.hero")
+    assert row.startswith("| 1 | ")
+    # The cell holds the opening and stops on a sentence; the sentence that decides the finding
+    # is further down the paragraph, and is not in the table at all.
+    assert "ranging from approximately 1,050 to 1,225 loans." in row
+    assert "Those figures are unavailable" not in row
+    assert "**1. `img.hero` on `/checkout`**" in body
+
+
+def test_the_fix_column_is_gone_from_the_table_rather_than_widened(world):
+    """A wider cell is the same defect further along. The column is not there at all."""
+    body = report_body(MergedReport(rows=[_row()], routes=["/checkout"]))
+    head = next(x for x in body.splitlines() if x.startswith("| # | Source |"))
+    assert "Suggested fix" not in head
+    assert "What was found" in head
+
+
+def test_the_detail_says_which_check_how_sure_and_how_bad(world):
+    body = report_body(MergedReport(rows=[_row()], routes=["/checkout"]))
+    line = next(x for x in body.splitlines() if x.startswith("**1. "))
+    assert "1.1.1" in line
+    assert "`alt`" in line
+    assert "93% confident" in line
+    assert "Critical" in line
+
+
+def test_numbering_runs_across_the_whole_document_not_per_section(world):
+    """Three sections each numbering from 1 would give this report three number 1s, and "have
+    a look at 4" would be a question rather than a reference."""
+    from apps.a11y.triage import TRIAGE_PASS
+
+    body = report_body(MergedReport(
+        rows=[
+            _row(selector="img.a"),
+            _row(selector="img.b", outcome=TRIAGE_REVIEW, verdict=A11Y_UNCERTAIN,
+                 confidence=0.4),
+            _row(selector="img.c", outcome=TRIAGE_PASS, verdict=A11Y_PASS),
+        ],
+        routes=["/checkout"]))
+    assert _table_row(body, "img.a").split("|")[1].strip() == "1"
+    assert _table_row(body, "img.b").split("|")[1].strip() == "2"
+    assert _table_row(body, "img.c").split("|")[1].strip() == "3"
+
+
+def test_a_row_with_nothing_written_about_it_gets_no_empty_detail(world):
+    """A scanner rule with no remediation text. A numbered heading with nothing under it reads
+    as text that failed to render."""
+    body = report_body(MergedReport(
+        rows=[_row(source=SOURCE_RULE, confidence=None, verdict="", evidence="",
+                   suggested_fix="")],
+        routes=["/checkout"]))
+    assert "img.hero" in body
+    assert "**1. `img.hero`" not in body
+    assert "#### Details" not in body
+
+
+def test_a_reason_in_the_incomplete_notice_is_no_longer_bounded_either(world):
+    """A blockquote line is not a table cell. It was cut only because `_cell` was the tool at
+    hand."""
+    reason = "The judge was unavailable. " + (
+        "The queue held it for retry and never got one. " * 12)
+    body = report_body(MergedReport(
+        rows=[_row(outcome=TRIAGE_REVIEW, verdict=A11Y_UNCERTAIN, confidence=None,
+                   evidence=reason)],
+        routes=["/checkout"]))
+    assert f"> - {' '.join(reason.split())}" in body
+
+
+# ── the gist itself ───────────────────────────────────────────────────────────────
+
+def test_a_short_finding_is_not_marked_as_shortened():
+    from apps.a11y.report import _gist
+
+    assert _gist('alt="IMG_1234" is a filename') == 'alt="IMG_1234" is a filename'
+
+
+def test_a_gist_ends_on_a_sentence_when_there_is_one_to_end_on():
+    from apps.a11y.report import _gist
+
+    text = ("The element carries an empty alt attribute. " + "Everything after this is more "
+            "detail that the column has no room for. " * 4)
+    gist = _gist(text)
+    assert gist.endswith("no room for.")
+    assert not gist.endswith("…")
+
+
+def test_a_gist_never_stops_in_the_middle_of_a_word():
+    from apps.a11y.report import _gist
+
+    gist = _gist("supercalifragilistic " * 40)
+    assert gist.endswith("…")
+    assert "supercalifragilisti…" not in gist
+
+
+def test_a_gist_keeps_a_table_a_table():
+    from apps.a11y.report import _gist
+
+    assert "|" not in _gist("a | b").replace("\\|", "")
+
+
+def test_prose_keeps_every_character_of_the_finding():
+    from apps.a11y.report import _prose
+
+    assert _prose("  a\n\n  b  ") == "a b"
+    assert _prose(_LONG_FIX) == _LONG_FIX

@@ -1077,6 +1077,11 @@ export interface A11yReviewItem {
   verdict: string;
   confidence: number | null;
   severity_if_confirmed: string;
+  // What the PLATFORM decided, and whether it is still open. Constant across the review queue —
+  // everything in it is `needs_review` and open — and the first thing a reader needs on S-39,
+  // which is reached from a report and is therefore mostly opened on confirmed failures.
+  outcome: string;
+  status: string;
   evidence: string;
   suggested_fix: string;
   // Where the finding came from (G3). All null on a baseline audit — an audit of an existing
@@ -1099,10 +1104,31 @@ export interface A11yReviewFinding extends A11yReviewItem {
   url: string;
   // Why there is no picture. Blank when there is one. Never left unsaid.
   capture_reason: string;
+  // Which capture this evidence came out of — the audit's own id on a brownfield pass, the
+  // run's on a greenfield one. Resolved to `captured_by` on the read-only screen.
+  capture_key: string;
   can_review: boolean;
   locked_out: string;
   adjudication: string;
   note: string;
+}
+
+// The read-only view of one finding (S-39): the same evidence the console shows, opened without
+// taking a review claim, plus the audit whose pass took the picture.
+//
+// **`captured_by` is null on greenfield and must stay so.** There the capture key names a `Run`
+// and no audit exists — the same rule `work_item_id` follows, and for the same reason: nothing
+// to link to, so nothing shown rather than an empty link.
+export interface A11yFindingDetail extends A11yReviewFinding {
+  captured_by: {
+    id: string;
+    // "audit 4850688e" — short enough to say out loud, long enough to find.
+    label: string;
+    finished_at: string | null;
+    status: string;
+    asked: number;
+    opened: number;
+  } | null;
 }
 
 export interface A11yReviewQueue {
@@ -1233,9 +1259,28 @@ export interface A11yConformanceTotals {
   platform_suggested: number;
 }
 
+// Which accessibility checks the statement was compiled from, and when the most recent of them
+// ran. Also written INTO the wording by `draft_body`, so the person signing signs it too — this
+// copy is for the screen, which still has to be able to say it after a reviewer has replaced the
+// wording with their own.
+export interface A11yConformanceBasis {
+  latest: {
+    id: string;
+    label: string;
+    finished_at: string | null;
+    asked: number;
+    opened: number;
+  } | null;
+  // Every completed audit, not just the named one: the findings ledger is cumulative, so a
+  // statement compiled today rests on every pass recorded up to today.
+  audits: number;
+  runs: number;
+}
+
 export interface A11yConformance {
   scope: string;
   body: string;
+  basis: A11yConformanceBasis;
   drafted: boolean;
   rows: A11yConformanceRow[];
   totals: A11yConformanceTotals;

@@ -137,6 +137,18 @@ def _cell(text, limit: int = 120) -> str:
     return _report_cell(text, limit)
 
 
+def _prose(text) -> str:
+    from .report import _prose as _report_prose
+
+    return _report_prose(text)
+
+
+def _gist(text) -> str:
+    from .report import _gist as _report_gist
+
+    return _report_gist(text)
+
+
 def _criterion_table(rows: list[dict], headings: dict) -> list[str]:
     lines = [
         "| Criterion | Level | Severity | Pages affected | Failures | Needs review |",
@@ -154,27 +166,69 @@ def _criterion_table(rows: list[dict], headings: dict) -> list[str]:
     return lines
 
 
+def _backlog_details(items: list[dict]) -> list[str]:
+    """Each backlog row in full, under the table that summarises it.
+
+    Both halves are printed and the fix comes first, because that is the column's promise —
+    *what to change*. The evidence follows it as the reason, rather than replacing it when a
+    fix exists, which is what the single bounded cell was forced to do.
+    """
+    from .report import finding_link
+
+    lines: list[str] = []
+    for item in items:
+        fix = _prose(item.get("suggested_fix"))
+        evidence = _prose(item.get("evidence"))
+        if not fix and not evidence:
+            continue
+        link = finding_link(item.get("finding"))
+        if not lines:
+            lines.extend(["### The same list, in full", ""])
+        lines.extend([
+            f"**{item['priority']}. `{_prose(item['selector'])}` on "
+            f"`{_prose(item['route'])}`** — {item['criterion']}, "
+            f"{item['severity'].title()}." + (f" {link}" if link else ""),
+            "",
+        ])
+        if fix:
+            lines.extend([f"**What to change.** {fix}", ""])
+        if evidence:
+            lines.extend([f"**Why.** {evidence}", ""])
+    return lines
+
+
 def _backlog_table(items: list[dict]) -> list[str]:
+    """The fix list: a table to scan, then every item written out with nothing removed.
+
+    The cut was worst here. This column held whichever of the fix or the evidence existed, at
+    160 characters — under half of what the per-run report allowed — so on the audit that
+    prompted this, thirteen of twenty-six rows stopped mid-sentence, one of them inside the
+    quoted alt text it was telling somebody to write. A developer working this list was being
+    handed instructions that ended before they said what to do.
+    """
     lines = [
         "| # | Severity | Criterion | Page | Element | What to change |",
         "|---|---|---|---|---|---|",
     ]
-    for item in items[:MAX_BACKLOG_ROWS]:
+    shown = items[:MAX_BACKLOG_ROWS]
+    for item in shown:
         lines.append(
             f"| {item['priority']} | {item['severity'].title()} | {item['criterion']} "
             f"| {_cell(item['route'], 50)} | `{_cell(item['selector'], 50)}` "
-            f"| {_cell(item['suggested_fix'] or item['evidence'], 160)} |"
+            f"| {_gist(item['suggested_fix'] or item['evidence'])} |"
         )
     lines.append("")
     if len(items) > MAX_BACKLOG_ROWS:
-        # Said out loud. A truncated list that does not admit it is a list someone will work to
-        # the end of and believe they are finished.
+        # Said out loud, and said before the detail rather than after it, so a reader who stops
+        # at the table has still been told. A truncated list that does not admit it is a list
+        # someone will work to the end of and believe they are finished.
         lines.extend([
             f"…and {len(items) - MAX_BACKLOG_ROWS} more. This document shows the first "
             f"{MAX_BACKLOG_ROWS}; every item is tracked as its own work item under "
             f"“{_cell('Accessibility backlog', 60)}”.",
             "",
         ])
+    lines.extend(_backlog_details(shown))
     return lines
 
 

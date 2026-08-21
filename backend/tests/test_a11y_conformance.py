@@ -607,3 +607,120 @@ def test_signing_an_empty_project_is_allowed_and_says_so(world):
     assert Event.objects.get(
         action="a11y.conformance.signed").payload["not_evaluated"] == ALL_AA
     assert f"**{ALL_AA} were not**" in out["body"]
+
+
+# ══ Which audit this statement came from, and when ═══════════════════════════════════
+#
+# The team's ask: a reader — and above all the person signing — has to be able to see which
+# run the numbers were compiled from and when somebody ran it. A signed statement that cannot
+# say what produced it is a statement nobody can check a year later.
+#
+# It goes INSIDE the wording rather than beside it, which is the part that matters: the section
+# is covered by `signed_body_hash`, so it is signed along with everything else. A label printed
+# next to the document would go on looking right after the document was edited.
+
+def _audit(world, **over):
+    from apps.a11y.models import A11yBaselineAudit
+
+    base = {
+        "tenant": world["tenant"], "project": world["project"],
+        "base_url": "http://localhost:4180", "routes": ["/", "/catalogue"],
+        "status": A11yBaselineAudit.Status.COMPLETE,
+        "summary": {"asked": 12, "opened": 12},
+    }
+    base.update(over)
+    return A11yBaselineAudit.objects.create(**base)
+
+
+def test_the_statement_names_the_audit_it_was_compiled_from(world):
+    from apps.a11y.conformance import evidence_basis
+
+    audit = _audit(world)
+    basis = evidence_basis(world["t"], world["p"])
+    assert basis["latest"]["id"] == str(audit.id)
+    assert basis["latest"]["asked"] == 12
+    assert basis["latest"]["opened"] == 12
+    assert basis["audits"] == 1
+
+    body = state(tenant_id=world["t"], project_id=world["p"])["body"]
+    assert "## What this is based on" in body
+    assert str(audit.id) in body
+    assert f"audit {str(audit.id)[:8]}" in body
+    assert audit.updated_at.strftime("%d %B %Y") in body
+
+
+def test_the_provenance_is_part_of_what_gets_signed(world):
+    """The whole reason it is a section and not a caption."""
+    from apps.a11y.conformance import _body_hash
+
+    audit = _audit(world)
+    signed = _sign(world)
+    assert signed["signed"] is True
+    row = A11yConformanceStatement.objects.get(project_id=world["p"])
+    assert str(audit.id) in row.body
+    assert row.signed_body_hash == _body_hash(row.body)
+
+
+def test_a_project_that_has_never_been_audited_says_exactly_that(world):
+    body = state(tenant_id=world["t"], project_id=world["p"])["body"]
+    assert "No completed accessibility audit is recorded for this project" in body
+
+
+def test_an_audit_that_never_finished_is_not_offered_as_evidence(world):
+    """An abandoned audit published nothing. Naming it would credit this statement with
+    coverage it never had."""
+    from apps.a11y.conformance import evidence_basis
+    from apps.a11y.models import A11yBaselineAudit
+
+    _audit(world, status=A11yBaselineAudit.Status.FAILED)
+    _audit(world, status=A11yBaselineAudit.Status.CAPTURING)
+    assert evidence_basis(world["t"], world["p"])["latest"] is None
+    assert evidence_basis(world["t"], world["p"])["audits"] == 0
+
+
+def test_the_most_recent_audit_is_named_and_the_earlier_ones_are_counted(world):
+    """The ledger is cumulative: a statement compiled today rests on every completed pass, not
+    only the latest. Saying "this is what was checked" would be untrue the moment a project has
+    had two."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.conformance import evidence_basis
+    from apps.a11y.models import A11yBaselineAudit
+
+    # Stamped apart deliberately. Three audits created in one test land inside a single
+    # timestamp, and a test whose "most recent" depended on that would be asserting the tie
+    # rather than the ordering.
+    now = timezone.now()
+    for index, audit in enumerate([_audit(world), _audit(world)]):
+        A11yBaselineAudit.objects.filter(id=audit.id).update(
+            updated_at=now - timedelta(days=index + 1))
+    latest = _audit(world)
+    A11yBaselineAudit.objects.filter(id=latest.id).update(updated_at=now)
+    basis = evidence_basis(world["t"], world["p"])
+    assert basis["latest"]["id"] == str(latest.id)
+    assert basis["audits"] == 3
+
+    body = state(tenant_id=world["t"], project_id=world["p"])["body"]
+    assert str(latest.id) in body
+    assert "2 earlier completed audit(s)" in body
+
+
+def test_the_screen_gets_the_basis_as_data_as_well_as_prose(world):
+    """The body is the reviewer's to edit — they may cut the section — and the screen still has
+    to be able to say which audit the numbers came from."""
+    audit = _audit(world)
+    payload = state(tenant_id=world["t"], project_id=world["p"])
+    assert payload["basis"]["latest"]["id"] == str(audit.id)
+
+
+def test_a_reviewers_own_wording_is_never_overwritten_with_ours(world):
+    """`draft_body` is a draft. Once a reviewer has written their own, the section is theirs to
+    keep or cut, and the platform does not put it back."""
+    _audit(world)
+    save_draft(tenant_id=world["t"], project_id=world["p"], user_id=world["aisha"].id,
+               body="# Our own statement\n\nWe wrote this ourselves.")
+    payload = state(tenant_id=world["t"], project_id=world["p"])
+    assert payload["body"] == "# Our own statement\n\nWe wrote this ourselves."
+    assert payload["basis"]["latest"] is not None

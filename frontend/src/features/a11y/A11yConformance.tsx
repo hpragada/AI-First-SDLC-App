@@ -221,6 +221,55 @@ function Signing({
   );
 }
 
+function basisWhen(value: string | null | undefined): string {
+  if (!value) return "";
+  return new Date(value).toLocaleString(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+// Which accessibility checks this statement was compiled from, and when the most recent of them
+// ran. A signed statement that cannot say what produced it is one nobody can check a year later.
+function Basis({ data }: { data: A11yConformance }) {
+  const basis = data.basis;
+  const latest = basis?.latest;
+  if (!latest) {
+    return (
+      <Banner variant="warning" title="No completed audit is recorded for this project">
+        Nothing here rests on a check this platform ran, so every criterion it would have
+        established is listed as not evaluated.
+      </Banner>
+    );
+  }
+  return (
+    <div className="meta-row" style={{ marginBottom: "var(--space-4)" }}>
+      <span className="meta-item">
+        Compiled from <strong>{latest.label}</strong>
+      </span>
+      <span className="meta-item">
+        Finished <strong>{basisWhen(latest.finished_at)}</strong>
+      </span>
+      <span className="meta-item">
+        Pages{" "}
+        <strong>
+          {latest.opened} of {latest.asked}
+        </strong>
+      </span>
+      {/* Every completed audit, not only the named one: the findings ledger is cumulative, so
+          "this is what was checked" would be untrue the moment a project has had two. */}
+      {basis.audits > 1 && (
+        <span className="meta-item">
+          and <strong>{`${basis.audits - 1} earlier audit(s)`}</strong>
+        </span>
+      )}
+    </div>
+  );
+}
+
 function Draft({ data, projectId }: { data: A11yConformance; projectId: string }) {
   const save = useSaveA11yConformance(projectId);
   const [scope, setScope] = useState(data.scope);
@@ -236,6 +285,12 @@ function Draft({ data, projectId }: { data: A11yConformance; projectId: string }
         </span>
       }
     >
+      {/* Which pass produced the numbers this statement is made of, said on the screen as well
+          as inside the wording. Both, deliberately: the wording is what gets signed and must
+          carry it, and the wording is also the reviewer's to replace — so the screen keeps its
+          own copy rather than relying on a paragraph somebody may have cut. */}
+      <Basis data={data} />
+
       <Field label="Scope of this statement">
         <Input value={scope} onChange={(e) => setScope(e.target.value)} />
       </Field>

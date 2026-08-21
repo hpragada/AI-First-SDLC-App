@@ -656,3 +656,69 @@ def test_a_report_whose_scope_did_not_move_says_nothing_about_it(world):
 
     body = baseline_body(tenant_id=world["t"], project_id=world["p"])
     assert "The page list changed" not in body
+
+
+# ══ The backlog prints the whole instruction ═════════════════════════════════════════
+#
+# This column was cut at 160 characters — under half of what the per-run report allowed —
+# and it held whichever of the fix or the evidence existed, never both. On the audit that
+# prompted this, thirteen of twenty-six rows stopped mid-sentence; one of them stopped inside
+# the quoted alt text it was telling somebody to write.
+
+_LONG_FIX = (
+    'Replace alt="" with descriptive alt text conveying the chart\'s data: alt="Bar chart: '
+    "Loans per month in 2026. Lending rose from approximately 1,050 in January to a peak of "
+    'approximately 1,225 in May, then declined to approximately 1,050 by August." For richer '
+    "access to the underlying data, also consider adding a linked data table beneath the chart."
+)
+
+
+def test_the_backlog_prints_the_whole_fix_not_the_first_160_characters(world):
+    _finding(world, suggested_fix=_LONG_FIX, fingerprint="long-fix")
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"])
+    assert _LONG_FIX in body
+    assert "declined to approximately 1,050 by August." in body
+
+
+def test_the_backlog_table_still_scans_in_one_line_per_item(world):
+    _finding(world, suggested_fix=_LONG_FIX, fingerprint="long-fix")
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"])
+    row = next(x for x in body.splitlines() if x.startswith("| 1 | Critical |"))
+    assert "declined to approximately 1,050 by August." not in row
+    assert row.rstrip().endswith("|")
+
+
+def test_the_backlog_gives_the_reason_as_well_as_the_fix(world):
+    """The single bounded cell had to choose one. A document has room for both, and the fix
+    without its reason is an instruction a developer cannot check."""
+    _finding(world, suggested_fix="give it a name", evidence="the button announces nothing",
+             fingerprint="both")
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"])
+    assert "**What to change.** give it a name" in body
+    assert "**Why.** the button announces nothing" in body
+
+
+def test_the_detail_is_numbered_the_same_as_the_row_it_belongs_to(world):
+    _finding(world, route="/a", fingerprint="a")
+    _finding(world, route="/b", fingerprint="b")
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"])
+    numbers = [x.split(".")[0].removeprefix("**") for x in body.splitlines()
+               if x.startswith("**") and "` on `" in x]
+    assert numbers == ["1", "2"]
+
+
+def test_a_cut_short_backlog_says_so_before_the_detail_not_after_it(world):
+    """A reader who stops at the table has still been told. The notice moved above the detail
+    when the detail was added underneath it."""
+    for index in range(MAX_BACKLOG_ROWS + 5):
+        _finding(world, route=f"/r{index}", fingerprint=f"f{index}")
+    lines = baseline_body(tenant_id=world["t"], project_id=world["p"]).splitlines()
+    assert lines.index(next(x for x in lines if "and 5 more" in x)) < \
+        lines.index(next(x for x in lines if x.startswith("### The same list")))
+
+
+def test_a_backlog_item_with_no_words_gets_no_empty_detail(world):
+    _finding(world, suggested_fix="", evidence="", fingerprint="silent")
+    body = baseline_body(tenant_id=world["t"], project_id=world["p"])
+    assert "| 1 | Critical |" in body
+    assert "### The same list" not in body

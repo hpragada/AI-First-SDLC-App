@@ -64,6 +64,41 @@ NOT_JUDGED = (
     "This element was captured and selected for checking, but no verdict was recorded for it."
 )
 
+#: Where a finding can be looked at — the picture, the element's rectangle on it, and the whole
+#: of what the check saw (S-39). Every AI finding in this document says "screenshot shows…", and
+#: until there was a screen holding that screenshot the sentence pointed at nothing a reader
+#: could reach. Rendered only for a finding the ledger holds, because only then is there an id
+#: to be reached *by* — see `finding_link`.
+FINDING_PATH = "/a11y/finding/"
+
+
+def finding_link(row, identity: dict | None = None) -> str:
+    """`[…](/a11y/finding/<id>)`, or "" for a row nothing can be reached by.
+
+    A **stored** finding carries its own id. A **merge** row does not, and that is not an edge
+    case here: a baseline audit manufactures no `Run`, so `open_findings_for_run` matches
+    nothing for it and the per-run report renders from the merge — which is exactly the document
+    the team was reading when they went looking for the screenshot.
+
+    So `identity` maps fingerprint → id, built once by `publish_report` from the ledger it has
+    just written. The fingerprint is what makes two sightings the same problem, so this resolves
+    to the same row the ledger holds rather than to a guess.
+    """
+    identifier = str(getattr(row, "id", "") or "")
+    if not identifier and identity:
+        identifier = identity.get(_fingerprint_of(row), "")
+    return "" if not identifier else f"[See the capture]({FINDING_PATH}{identifier})"
+
+
+def _fingerprint_of(row) -> str:
+    from .findings import fingerprint
+
+    stored = str(getattr(row, "fingerprint", "") or "")
+    return stored or fingerprint(
+        route=getattr(row, "route", ""), selector=getattr(row, "selector", ""),
+        criterion=_primary(row), checker=str(getattr(row, "checker", "") or ""),
+    )
+
 
 @dataclass(frozen=True)
 class ReportRow:
@@ -263,9 +298,49 @@ def merge_run(*, tenant_id, project_id, run_id) -> MergedReport:
 
 
 def _cell(text: str, limit: int = 300) -> str:
-    """One table cell: no pipes, no newlines, bounded — a markdown table is line-oriented."""
+    """One table cell: no pipes, no newlines, bounded — a markdown table is line-oriented.
+
+    Keep this for the things a cell can genuinely hold — a route, a selector, a rule id, an
+    enumeration. **It is no longer used for a finding's own words.** A markdown cell cannot
+    hold a line break, so bounding it was never a formatting choice: prose in a table gets cut
+    wherever the limit lands, which on this run was mid-sentence inside the alt text the
+    document was telling somebody to write. Raising the limit does not fix that — it moves it.
+    A table is the wrong container for a paragraph, so the paragraphs left (`_details`).
+    """
     flat = " ".join(str(text or "").split()).replace("|", "\\|")
     return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
+
+
+def _prose(text) -> str:
+    """A finding's own words, whole, for printing outside a table.
+
+    Only the line structure is flattened, and only because a blank line would end the paragraph
+    early — every character of the text itself survives. Nothing is escaped: a pipe outside a
+    table is a pipe.
+    """
+    return " ".join(str(text or "").split())
+
+
+#: How long the scanning column may run before it is summarised. A gist by design and not a
+#: truncation: whatever this shortens is printed in full immediately below the same table, so
+#: the reader who wants the whole sentence has it on the same screen.
+GIST_LIMIT = 150
+
+
+def _gist(text, limit: int = GIST_LIMIT) -> str:
+    """The opening of a finding, for scanning down a column.
+
+    Prefers a whole sentence, then a whole word, and never a half one. It ends in `…` only when
+    it actually stopped early, so a short finding reads as complete because it is.
+    """
+    flat = _prose(text).replace("|", "\\|")
+    if len(flat) <= limit:
+        return flat
+    stop = flat.rfind(". ", 0, limit + 1)
+    if stop > limit // 3:                      # a sentence, if there is a real one to end on
+        return flat[: stop + 1]
+    space = flat.rfind(" ", 0, limit)
+    return flat[: space if space > 0 else limit].rstrip(" ,;:") + "…"
 
 
 def severity_of(row, headings: dict | None = None) -> str:
@@ -291,21 +366,72 @@ def severity_of(row, headings: dict | None = None) -> str:
 
 
 def _rows_table(rows: list, headings: dict | None = None, *,
-                severity: bool = True) -> list[str]:
-    """One table of findings. `severity` is off for the passes table on purpose — a row that
-    passed has nothing to weigh, and a severity beside it reads as something left to fix."""
-    head = "| Source |" + (" Severity |" if severity else "") + \
-           " Criteria | Route | Element | Confidence | What was found | Suggested fix |"
-    lines = [head, "|---|" + ("---|" if severity else "") + "---|---|---|---|---|---|"]
-    for row in rows:
+                severity: bool = True, start: int = 1) -> list[str]:
+    """One table of findings, numbered, for scanning.
+
+    `severity` is off for the passes table on purpose — a row that passed has nothing to weigh,
+    and a severity beside it reads as something left to fix.
+
+    **Two columns became one, and gained a number.** *Suggested fix* is gone from here entirely
+    and *What was found* is now a gist: both are paragraphs, and both are written out under
+    `_details` immediately below this table. The leading number is what joins the two halves,
+    which is why it is rendered here rather than left to the markdown — a reader scanning the
+    table has to be able to name the row they want to read in full.
+    """
+    head = "| # | Source |" + (" Severity |" if severity else "") + \
+           " Criteria | Route | Element | Confidence | What was found |"
+    lines = [head, "|---|---|" + ("---|" if severity else "") + "---|---|---|---|---|"]
+    for index, row in enumerate(rows, start=start):
         confidence = "measured" if row.confidence is None else f"{row.confidence:.0%}"
         weight = f" {severity_of(row, headings).title()} |" if severity else ""
         lines.append(
-            f"| {row.source} |{weight} {', '.join(row.criteria)} | {_cell(row.route, 80)} "
-            f"| `{_cell(row.selector, 80)}` | {confidence} | {_cell(row.evidence)} "
-            f"| {_cell(row.suggested_fix)} |"
+            f"| {index} | {row.source} |{weight} {', '.join(row.criteria)} "
+            f"| {_cell(row.route, 80)} | `{_cell(row.selector, 80)}` | {confidence} "
+            f"| {_gist(row.evidence)} |"
         )
     lines.append("")
+    return lines
+
+
+def _details(rows: list, headings: dict | None = None, *,
+             severity: bool = True, start: int = 1,
+             identity: dict | None = None) -> list[str]:
+    """Each row of the table above, written out with nothing removed.
+
+    This is the half of the fix that matters. The report has always *had* the whole finding —
+    the ledger holds it, the judge wrote it — and the document has never printed it, because
+    the only place it appeared was a table cell that had to be bounded. Here there is no cell
+    and no bound: the evidence and the fix are paragraphs in a document, which is what they
+    always were.
+
+    A row with neither is skipped rather than given an empty heading. That happens for a
+    scanner finding whose rule carries no remediation text, and a numbered heading with nothing
+    under it reads as text that failed to render.
+    """
+    lines: list[str] = []
+    for index, row in enumerate(rows, start=start):
+        evidence = _prose(getattr(row, "evidence", ""))
+        fix = _prose(getattr(row, "suggested_fix", ""))
+        if not evidence and not fix:
+            continue
+        checker = str(getattr(row, "checker", "") or "")
+        facts = [f"{row.source} check" + (f" `{checker}`" if checker else "")]
+        if row.confidence is not None:
+            facts.append(f"{row.confidence:.0%} confident")
+        if severity:
+            facts.append(severity_of(row, headings).title())
+        link = finding_link(row, identity)
+        if not lines:
+            lines.extend(["#### Details", ""])
+        lines.extend([
+            f"**{index}. `{_prose(row.selector)}` on `{_prose(row.route)}`** — "
+            f"{_primary(row)}, {', '.join(facts)}." + (f" {link}" if link else ""),
+            "",
+        ])
+        if evidence:
+            lines.extend([f"**What was found.** {evidence}", ""])
+        if fix:
+            lines.extend([f"**What to change.** {fix}", ""])
     return lines
 
 
@@ -323,7 +449,8 @@ def _primary(row) -> str:
     return criteria[0] if criteria else ""
 
 
-def _grouped(rows: list, headings: dict, *, severity: bool = True) -> list[str]:
+def _grouped(rows: list, headings: dict, *, severity: bool = True,
+             start: int = 1, identity: dict | None = None) -> list[str]:
     """Rows under one heading per WCAG criterion, worst-numbered first within the group.
 
     Grouping by criterion is what makes the document answer a conformance question — "where do
@@ -337,14 +464,21 @@ def _grouped(rows: list, headings: dict, *, severity: bool = True) -> list[str]:
         by_criterion.setdefault(_primary(row), []).append(row)
 
     lines: list[str] = []
+    number = start
     for criterion in sorted(by_criterion):
         detail = headings.get(criterion) or {}
         handle = detail.get("handle") or ""
         level = detail.get("level") or ""
         name = f"{criterion} {handle}".strip() or "(no criterion named)"
+        group = by_criterion[criterion]
         lines.append(f"### {name}{f' — Level {level}' if level else ''}")
         lines.append("")
-        lines.extend(_rows_table(by_criterion[criterion], headings, severity=severity))
+        lines.extend(_rows_table(group, headings, severity=severity, start=number))
+        # Under this criterion's own table rather than collected at the end of the document:
+        # the reader who wants row 3 in full is looking at row 3 right now.
+        lines.extend(_details(group, headings, severity=severity, start=number,
+                              identity=identity))
+        number += len(group)
     return lines
 
 
@@ -361,7 +495,7 @@ def _could_not_answer(rows: list) -> list:
 
 
 def report_body(report: MergedReport, *, findings: list | None = None, title: str = "",
-                resolved: int = 0) -> str:
+                resolved: int = 0, identity: dict | None = None) -> str:
     """The merged report as a document a person reads.
 
     Markdown, because the platform's artifact preview renders it generically by content type —
@@ -410,7 +544,9 @@ def report_body(report: MergedReport, *, findings: list | None = None, title: st
             "they are accessible.",
             "",
         ])
-        lines.extend([f"> - {_cell(reason, 400)}" for reason in reasons if reason])
+        # A reason is a sentence, and a blockquote line has room for one. It was bounded here
+        # only because `_cell` was the tool at hand; there is no table to fit.
+        lines.extend([f"> - {_prose(reason)}" for reason in reasons if reason])
         lines.append("")
     if report.unjudged:
         lines.extend([
@@ -434,7 +570,9 @@ def report_body(report: MergedReport, *, findings: list | None = None, title: st
             f"did. Screens: {_cell(', '.join(r for r in routes if r), 400)}.",
             "",
         ])
-        lines.extend([f"> - {_cell(reason, 400)}" for reason in reasons if reason])
+        # A reason is a sentence, and a blockquote line has room for one. It was bounded here
+        # only because `_cell` was the tool at hand; there is no table to fit.
+        lines.extend([f"> - {_prose(reason)}" for reason in reasons if reason])
         lines.append("")
     if report.unreachable:
         # The strongest silence (QA-17), and the one a reader is most likely to mistake for
@@ -450,22 +588,46 @@ def report_body(report: MergedReport, *, findings: list | None = None, title: st
             f"accessible. Routes: {_cell(', '.join(r for r in routes if r), 400)}.",
             "",
         ])
-        lines.extend([f"> - {_cell(reason, 400)}" for reason in reasons if reason])
+        # A reason is a sentence, and a blockquote line has room for one. It was bounded here
+        # only because `_cell` was the tool at hand; there is no table to fit.
+        lines.extend([f"> - {_prose(reason)}" for reason in reasons if reason])
         lines.append("")
 
+    # One counter across the whole document, so a number names exactly one finding. Numbering
+    # per section would give this report three number 1s, and "have a look at 4" would be a
+    # question rather than a reference.
+    number = 1
     if failures:
         lines.extend(["## Failures", ""])
-        lines.extend(_grouped(failures, headings))
+        lines.append(
+            "The table is for scanning. Every row is written out in full underneath it, "
+            "numbered to match — nothing here is shortened except to fit the column."
+        )
+        if any(finding_link(row, identity) for row in rows):
+            # Said once, at the top, rather than left for a reader to work out from a link they
+            # may not click. Almost every AI finding in this document opens with "Screenshot
+            # shows…", and until S-39 that sentence pointed at a picture nothing could open.
+            lines.append("")
+            lines.append(
+                "Where a finding describes a screenshot, **See the capture** opens the picture "
+                "it was describing, with the element marked on it."
+            )
+        lines.append("")
+        lines.extend(_grouped(failures, headings, start=number, identity=identity))
+        number += len(failures)
     if review:
         lines.extend([
             "## Needs human review", "",
             "Nothing here is a failure and nothing here blocks. Each one is a question the "
             "check could not answer confidently enough to state.", "",
         ])
-        lines.extend(_grouped(review, headings))
+        lines.extend(_grouped(review, headings, start=number, identity=identity))
+        number += len(review)
     if report.passes:
         lines.extend(["## Passed", ""])
-        lines.extend(_grouped(report.passes, headings, severity=False))
+        lines.extend(_grouped(report.passes, headings, severity=False, start=number,
+                              identity=identity))
+        number += len(report.passes)
 
     if report.without_criterion:
         lines.extend([
@@ -526,7 +688,7 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
     from apps.registry.models import Artifact
     from apps.runs.models import Run
 
-    from .findings import open_findings_for_run, record_run_findings
+    from .findings import ids_by_fingerprint, open_findings_for_run, record_run_findings
 
     report = merge_run(tenant_id=tenant_id, project_id=project_id, run_id=run_id)
     ledger: dict = {"opened": [], "seen_again": [], "resolved": []}
@@ -545,8 +707,12 @@ def publish_report(*, tenant_id, project_id, run_id, title: str = "") -> dict:
     # and still open. If the write above failed there is nothing to read, so the merge is used
     # — a report from slightly different data beats no report at all.
     stored = [] if ledger.get("error") else open_findings_for_run(tenant_id, project_id, run_id)
+    # Fingerprint → ledger id, so a row that did NOT come back from `open_findings_for_run` can
+    # still point at the finding it is. That is the ordinary case on a brownfield audit, which
+    # has no `Run` for those rows to hang off — and it is the report a client actually reads.
+    identity = {} if ledger.get("error") else ids_by_fingerprint(tenant_id, project_id)
     body = report_body(report, findings=stored or None, title=title,
-                       resolved=len(ledger["resolved"]))
+                       resolved=len(ledger["resolved"]), identity=identity)
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     staged = None
     try:

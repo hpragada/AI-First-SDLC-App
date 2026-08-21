@@ -1743,3 +1743,82 @@ wrong.
 produce seven label candidates — buttons whose spoken name shares no word with the visible one
 ("Renew" → *"Extend the loan period on every item"*) — and that is where the first genuine
 `uncertain` should appear.
+
+### 9.8 Three things the team found reading the documents — 21 August (BUILT)
+
+The 21 August audit finished cleanly and produced its two artifacts. Reading them raised three
+observations, all of them about the documents rather than the checking. Mock-ups of the first two
+were drawn on the product's own design system, confirmed by the team, and then built.
+
+#### 1 · The reports printed part of the finding
+
+A markdown table cell cannot hold a line break, so every cell was bounded — 300 characters in the
+per-run report, **160** in the baseline backlog. Measured on that run: 9 of 26 evidence strings
+exceeded the first, 13 of 26 fixes exceeded the second. The chart finding lost the sentence that
+made it a failure (*"Those figures are unavailable to screen-reader users"*), and the backlog's
+copy of its fix stopped mid-sentence **inside the quoted alt text it was telling somebody to
+write**.
+
+Raising the limit moves the cut; it does not remove it. **A table is the wrong container for a
+paragraph**, so the paragraphs left it:
+
+* rows are **numbered**, with one counter across the whole document — three sections numbering
+  from 1 would give one report three number 1s, and "have a look at 4" would be a question;
+* *What was found* becomes a gist (`report._gist`) — a whole sentence where there is one to end
+  on, a whole word otherwise, and `…` only when it genuinely stopped early;
+* *Suggested fix* leaves the table entirely, and both halves are printed under **Details**
+  beneath their own criterion's table (`report._details`, `baseline_report._backlog_details`).
+
+`_cell` stays, for the things a cell can hold — a route, a selector, an enumeration. `_prose`
+flattens line structure and nothing else. The blockquote reasons in the D-A11Y-3 notices were
+bounded at 400 for the same borrowed reason and are no longer: a blockquote line is not a cell.
+
+#### 2 · "Screenshot shows…" pointed at nothing — **S-39**
+
+All 26 findings say it. The pictures were being kept, and `a11y-review/<id>/screenshot` already
+served any finding on the project. What did not exist was anywhere to *see* one: the only screen
+that drew a capture was the review console, which by definition holds `needs_review` items only,
+and all 26 of these were confirmed failures.
+
+Almost everything needed already existed. **The one genuinely new thing is opening a finding
+without claiming it** — `GET a11y-review/<id>` takes the review claim as a side effect, which is
+right for a reviewer working a queue and wrong for anyone following a link out of a report: a
+failure nobody is reviewing must not acquire a reviewer's name because somebody looked at it.
+
+* `review.read_finding` = `open_item(take_lock=False)` plus the audit that took the picture.
+* `GET projects/<id>/a11y-finding/<finding_id>` — same gating as the console's read.
+* `review._captured_by` resolves the audit from the capture's own `run_key`, **not** from the
+  finding: a finding outlives every pass that saw it, and the question a reader looking at a
+  picture is asking is "which audit took this one?". `null` on greenfield, where the key names a
+  `Run` — the same rule `_provenance` follows.
+* S-39 (`A11yFinding.tsx`) reuses the console's `Capture` component, which moved to its own file
+  so two screens cannot drift about where the element box goes.
+* Both documents link to it. ⚠️ **The per-run report needed one extra step**: a baseline audit
+  manufactures no `Run`, so `open_findings_for_run` matches nothing and that report renders from
+  the *merge*, whose rows have no id. `findings.ids_by_fingerprint` maps fingerprint → id and
+  `finding_link` resolves through it. Without that the link would have appeared on the baseline
+  and silently not on the report — which is the document the team was reading.
+
+#### 3 · The statement could not say which run produced it
+
+`conformance.evidence_basis` names the most recent **completed** audit, when it finished, and how
+many pages it opened; it counts the earlier ones rather than naming them, because the findings
+ledger is cumulative and "this is what was checked" would be untrue the moment a project has had
+two. A `failed` audit is excluded — it published nothing, so listing it would credit the statement
+with coverage it never had.
+
+It is rendered **inside** `draft_body`, which is the point: the section is covered by
+`signed_body_hash`, so the person signing signs the claim about provenance too. A label beside the
+document would not be signed, and would go on looking right after the wording was replaced. The
+same data is also on `state()` for the screen, because the wording is the reviewer's to edit and
+they may cut the section.
+
+**Verified:** 45 in `test_a11y_conformance.py`, 23 in `test_a11y_review_rest.py`, 32 in
+`test_a11y_report_fields.py`, 24 in `test_a11y_baseline_report.py`, plus the report, findings,
+defects, gate and baseline suites unchanged and green; 364 frontend tests including 9 new on S-39
+and 3 on the statement's provenance; `tsc` and `eslint` clean.
+
+**Proven against the live data, read-only**: rendering the 21 August audit's baseline and report
+from the shared database now prints every fix in full — the chart's alt text ends where the judge
+ended it — and puts 26 capture links on the report, each resolving to the same finding id the
+baseline links to.

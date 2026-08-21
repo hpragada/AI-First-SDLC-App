@@ -3,5 +3,6 @@
 // QA-24 coverage map, and nothing else.
 export { A11yAudit } from "./A11yAudit";
 export { A11yReview } from "./A11yReview";
+export { A11yFinding } from "./A11yFinding";
 export { A11yConformanceScreen } from "./A11yConformance";
 export { LoadFailed } from "./LoadFailed";

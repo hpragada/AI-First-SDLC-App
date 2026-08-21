@@ -2,6 +2,7 @@
 // `X-Tenant-ID` header (the pre-auth scoping mechanism); tenant-create is the one
 // call that doesn't. No business logic lives here — it mirrors the server surface.
 import type {
+  A11yFindingDetail,
   A11yReviewDecision,
   A11yReviewFinding,
   A11yConformance,
@@ -534,6 +535,13 @@ export const api = {
   // reviewer is doing rather than needing a button nobody remembers to press.
   a11yReviewItem: (tenantId: string, projectId: string, findingId: string) =>
     req<A11yReviewFinding>("GET", `/projects/${projectId}/a11y-review/${findingId}/`, {
+      tenantId,
+    }),
+  // Reading one finding (S-39). Deliberately NOT `a11yReviewItem`: that GET claims the item as
+  // a side effect, and a failure nobody is reviewing must not acquire a reviewer's name because
+  // somebody followed a link to it out of a report.
+  a11yFinding: (tenantId: string, projectId: string, findingId: string) =>
+    req<A11yFindingDetail>("GET", `/projects/${projectId}/a11y-finding/${findingId}/`, {
       tenantId,
     }),
   a11yReviewDecide: (

@@ -194,3 +194,162 @@ def test_an_unknown_finding_is_a_404(world):
 
 def test_the_console_needs_a_signed_in_member(world):
     assert APIClient().get(f"{world['base']}/").status_code in (401, 403)
+
+
+# ══ Reading a finding without reviewing it (S-39) ═════════════════════════════════════
+#
+# Every AI finding in an audit's report opens with "Screenshot shows…", and the team could
+# not find that screenshot anywhere. The pictures existed and an endpoint already served
+# them — but the only screen that drew one was the review console, which holds nothing
+# except items awaiting a person. All twenty-six findings on the run that prompted this were
+# confirmed failures. There was nowhere to look at any of them.
+#
+# The one genuinely new thing is opening a finding WITHOUT claiming it. `GET a11y-review/<id>`
+# takes the review claim as a side effect, which is right for a reviewer working the queue and
+# wrong for anyone following a link out of a document.
+
+def _finding_url(world) -> str:
+    return f"/api/projects/{world['project'].id}/a11y-finding/{world['finding'].id}/"
+
+
+def test_a_finding_can_be_opened_to_be_read(world):
+    body = _client("aisha@acme.test").get(_finding_url(world)).json()
+    assert body["id"] == str(world["finding"].id)
+    assert body["criterion"] == "1.1.1"
+    assert body["criterion_handle"] == "Non-text Content"
+    assert body["evidence"] == "alt reads like a filename"
+    assert body["route"] == "/checkout"
+    assert body["selector"] == "img.hero"
+    # The picture, and where the element sits on it.
+    assert body["page_image"] is True
+    assert body["box"] == {"x": 8.0, "y": 92.0, "width": 210.0, "height": 88.0}
+
+
+def test_reading_a_finding_takes_no_claim(world):
+    """The whole reason this is not the review endpoint. A failure nobody is reviewing must not
+    acquire a reviewer's name because somebody followed a link to look at it."""
+    _client("aisha@acme.test").get(_finding_url(world))
+    world["finding"].refresh_from_db()
+    assert world["finding"].review_locked_by_id is None
+    assert world["finding"].review_locked_at is None
+
+    # And the next reviewer to open it properly is not locked out by the reader.
+    opened = _client("tom@acme.test").get(
+        f"{world['base']}/{world['finding'].id}/").json()
+    assert opened["locked_out"] == ""
+    assert opened["lock"]["by_me"] is True
+
+
+def test_reading_says_whether_this_person_could_answer_it(world):
+    """The screen offers a way through to the console, and must not offer it to someone who
+    cannot answer."""
+    assert _client("aisha@acme.test").get(_finding_url(world)).json()["can_review"] is True
+    assert _client("dev@acme.test").get(_finding_url(world)).json()["can_review"] is False
+
+
+def test_the_finding_says_what_it_is_not_only_what_the_ai_thought(world):
+    """A report is mostly confirmed failures, and a screen reached from one has to be able to
+    say so. The queue's own rows never needed this — everything in it is `needs_review`."""
+    body = _client("aisha@acme.test").get(_finding_url(world)).json()
+    assert body["outcome"] == "needs_review"
+    assert body["status"] == "open"
+
+
+def test_a_finding_on_another_project_is_not_found(world):
+    other = Project.objects.create(tenant=world["project"].tenant, name="Elsewhere")
+    resp = _client("aisha@acme.test").get(
+        f"/api/projects/{other.id}/a11y-finding/{world['finding'].id}/")
+    assert resp.status_code == 404
+
+
+def test_reading_a_finding_needs_a_session(world):
+    assert APIClient().get(_finding_url(world)).status_code in (401, 403)
+
+
+def test_the_capture_this_came_from_is_named_when_it_was_an_audit(world):
+    """"Found by audit 4850688e, 21 August" — resolved from the picture's own capture key, not
+    stored on the finding, because a finding outlives every pass that saw it."""
+    from apps.a11y.models import A11yBaselineAudit, A11yCandidateBundle
+
+    audit = A11yBaselineAudit.objects.create(
+        tenant=world["project"].tenant, project=world["project"],
+        base_url="http://localhost:4180", routes=["/checkout"],
+        status=A11yBaselineAudit.Status.COMPLETE, summary={"asked": 12, "opened": 12})
+    A11yCandidateBundle.objects.filter(tenant=world["project"].tenant).update(
+        run_key=str(audit.id))
+
+    body = _client("aisha@acme.test").get(_finding_url(world)).json()
+    assert body["captured_by"]["id"] == str(audit.id)
+    assert body["captured_by"]["label"] == f"audit {str(audit.id)[:8]}"
+    assert body["captured_by"]["opened"] == 12
+    assert body["captured_by"]["finished_at"]
+
+
+def test_a_greenfield_finding_names_no_audit_rather_than_an_empty_one(world):
+    """The capture key is a `Run` there. Null is the right answer and must stay one — the same
+    rule the work-item provenance follows."""
+    assert _client("aisha@acme.test").get(_finding_url(world)).json()["captured_by"] is None
+
+
+def test_the_report_points_at_the_finding_it_is_describing(world):
+    """The other half of the observation: a document that says "screenshot shows" and gives no
+    way to reach the screenshot."""
+    from apps.a11y.findings import open_findings_for_run
+    from apps.a11y.report import report_body
+
+    run_id = world["finding"].last_seen_run_id
+    stored = open_findings_for_run(str(world["project"].tenant_id), str(world["project"].id),
+                                   run_id)
+    body = report_body(MergedReport(rows=[], routes=["/checkout"]), findings=stored)
+    assert f"(/a11y/finding/{world['finding'].id})" in body
+
+
+def test_a_row_that_has_not_reached_the_ledger_is_linked_to_nothing(world):
+    """A merge row has no identity yet, so there is nothing to link to — and a link to nowhere
+    is worse than none."""
+    from apps.a11y.report import report_body
+
+    body = report_body(MergedReport(rows=[ReportRow(
+        source=SOURCE_AI, outcome=TRIAGE_REVIEW, criteria=("1.1.1",), route="/checkout",
+        selector="img.hero", evidence="e", verdict=A11Y_UNCERTAIN, confidence=0.4,
+    )], routes=["/checkout"]))
+    assert "/a11y/finding/" not in body
+
+
+def test_a_merge_row_is_linked_through_the_ledger_it_matches(world):
+    """The path the real report takes, and the one that would have silently produced no links.
+
+    A baseline audit manufactures no `Run`, so `open_findings_for_run` matches nothing for it
+    and the per-run report renders from the merge — where rows have no id. Resolving them by
+    fingerprint is what puts a link on the document a client actually reads.
+    """
+    from apps.a11y.findings import ids_by_fingerprint
+    from apps.a11y.report import report_body
+
+    identity = ids_by_fingerprint(str(world["project"].tenant_id), str(world["project"].id))
+    body = report_body(
+        MergedReport(rows=[ReportRow(
+            source=SOURCE_AI, outcome=TRIAGE_REVIEW, criteria=("1.1.1",), route="/checkout",
+            selector="img.hero", evidence="e", verdict=A11Y_UNCERTAIN, confidence=0.4,
+            checker="alt",
+        )], routes=["/checkout"]),
+        identity=identity,
+    )
+    assert f"(/a11y/finding/{world['finding'].id})" in body
+
+
+def test_a_merge_row_matching_nothing_in_the_ledger_is_linked_to_nothing(world):
+    """A different element on a different screen. The fingerprint is what "the same problem"
+    means, so a near miss must not borrow another finding's picture."""
+    from apps.a11y.findings import ids_by_fingerprint
+    from apps.a11y.report import report_body
+
+    body = report_body(
+        MergedReport(rows=[ReportRow(
+            source=SOURCE_AI, outcome=TRIAGE_REVIEW, criteria=("1.1.1",), route="/basket",
+            selector="img.other", evidence="e", verdict=A11Y_UNCERTAIN, confidence=0.4,
+            checker="alt",
+        )], routes=["/basket"]),
+        identity=ids_by_fingerprint(str(world["project"].tenant_id), str(world["project"].id)),
+    )
+    assert "/a11y/finding/" not in body

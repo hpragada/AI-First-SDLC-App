@@ -37,6 +37,18 @@ export function useA11yReviewItem(projectId: string | undefined, findingId: stri
   });
 }
 
+// Reading one finding (S-39). No `refetchInterval`, and that is the point: the review item
+// polls because polling is what renews its claim, and this read takes no claim to renew. A
+// finding opened to be looked at should sit still.
+export function useA11yFinding(projectId: string | undefined, findingId: string | undefined) {
+  const tenantId = useTenantId();
+  return useQuery({
+    queryKey: ["a11y-finding", projectId, findingId],
+    queryFn: () => api.a11yFinding(tenantId, projectId as string, findingId as string),
+    enabled: Boolean(projectId && findingId && tenantId),
+  });
+}
+
 export function useDecideA11yFinding(projectId: string | undefined) {
   const tenantId = useTenantId();
   const qc = useQueryClient();

@@ -127,6 +127,30 @@ def open_findings_for_run(tenant_id, project_id, run_id) -> list:
         )
 
 
+def ids_by_fingerprint(tenant_id, project_id) -> dict[str, str]:
+    """{fingerprint: finding id} for every open finding on this project.
+
+    What it is for: linking a **merge** row to the ledger row it is. A baseline audit records
+    its findings against no `Run` (`record_run_findings` resolves its key to `None` on purpose),
+    so `open_findings_for_run` matches nothing for it and the per-run report renders from the
+    merge — where the rows have no id, and so nothing to link to.
+
+    Keyed on the fingerprint rather than on route+selector because the fingerprint is what
+    "the same problem" means here, and a second, weaker rule for the same question is exactly
+    the drift this module warns against everywhere else.
+    """
+    from .models import A11yFinding
+
+    with tenant_context(tenant_id):
+        return {
+            row["fingerprint"]: str(row["id"])
+            for row in A11yFinding.objects.filter(
+                tenant_id=tenant_id, project_id=project_id,
+                status=A11yFinding.Status.OPEN,
+            ).values("fingerprint", "id")
+        }
+
+
 def severity_for(level: str) -> str:
     return SEVERITY_BY_LEVEL.get((level or "").strip().upper(), DEFAULT_SEVERITY)
 

@@ -242,6 +242,9 @@ class ProjectViewSet(
         # is enforced per-project inside `review.adjudicate`, not here, because the role is a
         # project Membership and this class-level hook has no project in hand.
         if self.action in {"a11y_review", "a11y_review_item", "a11y_review_screenshot",
+                           # Reading one finding (S-39) — the same read as the console's, minus
+                           # the claim, so it is gated exactly the same way.
+                           "a11y_finding",
                            "a11y_conformance", "a11y_conformance_sign",
                            "a11y_conformance_export", "a11y_journeys",
                            # The page list, the page editor and audits were missing from this
@@ -837,6 +840,31 @@ class ProjectViewSet(
             return Response(open_item(
                 tenant_id=self.tenant_id, project_id=str(project.id),
                 finding_id=finding_id, user_id=user_id,
+            ))
+        except ReviewError as exc:
+            raise NotFound(str(exc)) from exc
+
+    @action(detail=True, methods=["get"], url_path=r"a11y-finding/(?P<finding_id>[^/]+)")
+    def a11y_finding(self, request, pk=None, finding_id=None):
+        """One finding, opened to be READ — no claim taken, no lock renewed (S-39).
+
+        Every finding in an audit's report says "screenshot shows…", and until this endpoint
+        there was nowhere to go and see that screenshot unless the finding happened to be
+        awaiting a person. The queue holds only `needs_review`; a confirmed failure — which is
+        what a report is mostly made of — could not be opened at all.
+
+        **Deliberately not `a11y-review/<id>`.** That one claims the item as a side effect,
+        which is right for a reviewer working the queue and wrong for anyone following a link
+        out of a document: a failure nobody is reviewing must not acquire a reviewer's name
+        because somebody looked at it. Same evidence, same picture, no side effect.
+        """
+        from apps.a11y.review import ReviewError, read_finding
+
+        project = self.get_object()
+        try:
+            return Response(read_finding(
+                tenant_id=self.tenant_id, project_id=str(project.id),
+                finding_id=finding_id, user_id=getattr(request.user, "id", None),
             ))
         except ReviewError as exc:
             raise NotFound(str(exc)) from exc

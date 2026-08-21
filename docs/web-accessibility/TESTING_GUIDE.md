@@ -1452,6 +1452,76 @@ pass, not a second.
 next run, and that is where the first real `uncertain` is expected.
 
 
+### #29 — The reports printed part of the finding ✅
+
+Found by the team reading the 21 August artifacts. A markdown table cell cannot hold a line
+break, so every cell was bounded: **300** characters in the per-run report, **160** in the
+baseline backlog. On that run, 9 of 26 evidence strings and 13 of 26 fixes were longer than that.
+
+What the cut took was not filler. The chart finding lost the sentence that made it a failure —
+*"Those figures are unavailable to screen-reader users"* — leaving a reader with a description
+and no conclusion. The backlog's copy of the same fix stopped **inside the quoted alt text it was
+telling somebody to write**.
+
+Raising the limit moves the cut. It does not remove it, and a 687-character cell is unreadable in
+a table anyway. **A table is the wrong container for a paragraph**, so both documents now number
+their rows, summarise in the column, and print every finding in full underneath its own table
+under **Details**. The gist ends on a whole sentence where there is one and a whole word
+otherwise, and carries `…` only when it really stopped early — so a short finding reads as
+complete, because it is.
+
+Two smaller things went with it: the *Suggested fix* column is gone from the table rather than
+widened, and the blockquote reasons in the "we did not look at everything" notices are no longer
+bounded either — they were cut at 400 only because `_cell` was the tool at hand, and a blockquote
+line is not a cell.
+
+### #30 — "Screenshot shows…" pointed at nothing ⭐ ✅
+
+Every one of the 26 findings opens with it, and the team could not find a screenshot anywhere.
+
+The pictures were being kept. An endpoint already streamed them, for any finding on the project.
+The element's rectangle was already stored in the screenshot's own pixel space. What did not
+exist was **anywhere to look**: the only screen that drew a capture was the review console, which
+holds `needs_review` items and nothing else — and all 26 of these were confirmed failures.
+
+So S-39 is mostly assembly, with one genuinely new piece. **Opening a finding must not claim it.**
+`GET a11y-review/<id>` takes the review lock as a side effect — correct for a reviewer working a
+queue, wrong for anyone following a link out of a report, because a failure nobody is reviewing
+would acquire a reviewer's name just because somebody looked at it. `GET a11y-finding/<id>` is the
+same read with the claim off.
+
+The screen names the audit that took the picture, resolved from the capture's own key rather than
+from the finding — a finding outlives every pass that saw it, and "which audit took *this* one" is
+the question a person looking at a picture is asking. Null on greenfield, where there is no audit,
+and said as nothing rather than as an empty link.
+
+⚠️ **The link nearly landed on only one of the two documents.** A baseline audit manufactures no
+`Run`, so the per-run report renders from the merge, whose rows carry no ledger id — the link
+would have appeared on the baseline and silently not on the report, which is the document a client
+reads. Resolved by fingerprint (`findings.ids_by_fingerprint`), which is what "the same problem"
+already means here.
+
+**How to check it:** open the accessibility report artifact, follow **See the capture** on any
+failure. You should get the page with an orange box round the element, the audit named and dated,
+and the whole of what the check saw. Then reload the review queue — the finding you opened must
+**not** be locked to you.
+
+### #31 — The conformance statement could not say which run produced it ✅
+
+A signed statement that cannot name its evidence is one nobody can check a year later. It now
+opens with **What this is based on**: the most recent completed audit, its id, when it finished,
+and how many pages it opened — plus a count of the earlier ones, because the findings ledger is
+cumulative and naming only the latest would read as "this is what was checked".
+
+It is inside the wording rather than beside it, and that is the whole design. The section is
+covered by `signed_body_hash`, so it is signed along with the conformance claims; a label printed
+next to the document would not be, and would go on looking right after the wording was edited to
+say something else. A failed audit is left out — it published nothing, and listing it would credit
+the statement with coverage it never had.
+
+The screen keeps its own copy of the same facts, because the wording is the reviewer's to replace
+and they may cut the section.
+
 ---
 
 ## 10. What has run live, what has not, and what I am least sure about
@@ -1545,6 +1615,7 @@ case — the batch that was 144 elements where every test used three.
 | Pages & audit, and keyboard journeys | `/a11y/pages` |
 | Review queue | `/a11y` |
 | Conformance statement | `/a11y/conformance` |
+| One finding, read-only — the capture the report describes | `/a11y/finding/<finding id>` |
 | Brownfield onboarding hub (step 6 links here) | `/onboarding` |
 
 ### 11.2 Endpoints
@@ -1556,6 +1627,7 @@ case — the batch that was 144 elements where every test used three.
 | `POST /api/projects/<p>/a11y-audits/<a>/rejudge/` | ask again about the elements of one finished audit that nothing ever looked at. Visits no page |
 | `GET/POST /api/projects/<p>/a11y-journeys/` | journeys; POST starts up to the cap and names what it did not start |
 | `GET /api/projects/<p>/a11y-review/` | the queue |
+| `GET /api/projects/<p>/a11y-finding/<f>/` | one finding, opened to be read. **Takes no review claim** — the queue's own `GET a11y-review/<f>/` does, which is why this is separate |
 | `GET /api/projects/<p>/a11y-conformance/` · `PUT` · `POST …/sign` · `POST …/export` | the statement |
 | `GET /api/projects/<p>/a11y-backlog/` | what to fix first |
 | `GET /api/projects/<p>/a11y-policy/` | this project's effective policy |

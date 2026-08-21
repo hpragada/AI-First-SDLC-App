@@ -287,6 +287,103 @@ def provenance(tenant_id, project_id) -> dict:
     return {"judges": engines, "scanners": scanners}
 
 
+def evidence_basis(tenant_id, project_id) -> dict:
+    """Which accessibility checks this statement rests on, and when they ran.
+
+    **Not the same thing as `provenance` above, and deliberately the opposite of it.** That
+    records our engine, model and prompt version, is written to the signature's audit entry and
+    is never shown to a tenant. This is the client's own half of the same question — *which
+    audit produced this, and when did somebody run it* — and it belongs on the screen and,
+    more importantly, inside the wording that gets signed.
+
+    **Every completed audit is counted, not only the most recent one.** The findings ledger is
+    project-scoped and cumulative, so a statement compiled today rests on everything recorded
+    up to today. Naming only the latest audit would read as "this is what was checked", which
+    would be untrue the moment a project has had two.
+
+    A `failed` audit is left out on purpose. It published nothing — an audit whose machine went
+    away has its partial capture kept and its baseline deliberately not written — so listing it
+    as a basis would credit this statement with coverage it never had.
+    """
+    from .models import A11yBaselineAudit, A11yFinding
+
+    complete = A11yBaselineAudit.Status.COMPLETE
+    with tenant_context(tenant_id):
+        audits = A11yBaselineAudit.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, status=complete)
+        # A total order, not just a sort key. Two audits can carry the same `updated_at` — two
+        # finishing inside one timestamp is unlikely in the field and routine in a test — and
+        # a tie there would make "the most recent audit" a different answer on different reads
+        # of the same data, on a document somebody signs.
+        latest = audits.order_by("-updated_at", "-created_at", "-id").first()
+        total = audits.count()
+        # Greenfield: a finding recorded against a build's own run rather than an audit. Counted
+        # rather than listed — a project with two hundred runs would drown the statement.
+        runs = (
+            A11yFinding.objects
+            .filter(tenant_id=tenant_id, project_id=project_id,
+                    status=A11yFinding.Status.OPEN, last_seen_run__isnull=False)
+            .values_list("last_seen_run_id", flat=True).distinct().count()
+        )
+    return {
+        "latest": None if latest is None else {
+            "id": str(latest.id),
+            "label": f"audit {str(latest.id)[:8]}",
+            "finished_at": latest.updated_at,
+            "asked": int((latest.summary or {}).get("asked") or len(latest.routes or [])),
+            "opened": int((latest.summary or {}).get("opened") or 0),
+        },
+        "audits": total,
+        "runs": runs,
+    }
+
+
+def _basis_lines(basis: dict | None) -> list[str]:
+    """The "what this is based on" section, in the statement's own words.
+
+    **Inside `draft_body` rather than beside it**, which is the whole point of the change: the
+    section is part of what `signed_body_hash` covers, so the person signing is signing the
+    claim about which audit this came from as well as the claim about conformance. A label
+    printed next to the document would not be signed, and would go on looking right after the
+    document had been edited to say something else.
+    """
+    basis = basis or {}
+    lines = ["## What this is based on", ""]
+    latest = basis.get("latest")
+    if latest is None and not basis.get("runs"):
+        lines += [
+            "**No completed accessibility audit is recorded for this project.** Nothing below "
+            "rests on a check this platform ran, so every criterion it would have established "
+            "is listed as not evaluated.",
+            "",
+        ]
+        return lines
+
+    if latest is not None:
+        when = latest["finished_at"]
+        stamp = when.strftime("%d %B %Y at %H:%M UTC") if when else "an unrecorded time"
+        lines.append(
+            f"The most recent accessibility audit of this application was **{latest['label']}** "
+            f"(`{latest['id']}`), which asked for {latest['asked']} page(s), opened "
+            f"{latest['opened']}, and finished on {stamp}."
+        )
+        others = int(basis.get("audits") or 0) - 1
+        if others > 0:
+            lines.append("")
+            lines.append(
+                f"It is not the only evidence here. {others} earlier completed audit(s) of this "
+                f"project also contribute findings, because what is recorded about an "
+                f"application accumulates rather than being replaced by the latest pass."
+            )
+    if basis.get("runs"):
+        lines.append("")
+        lines.append(
+            f"{basis['runs']} development run(s) contributed findings that are still open."
+        )
+    lines.append("")
+    return lines
+
+
 def evidence_fingerprint(tenant_id, project_id) -> str:
     """A hash of everything the statement rests on (team decision C1).
 
@@ -311,11 +408,17 @@ def evidence_fingerprint(tenant_id, project_id) -> str:
 # The document
 # ---------------------------------------------------------------------------------------
 
-def draft_body(*, scope: str, rows: list[dict], version: str = "2.2") -> str:
+def draft_body(*, scope: str, rows: list[dict], version: str = "2.2",
+               basis: dict | None = None) -> str:
     """The platform's draft of the statement. The reviewer edits this freely.
 
     Written to be readable by the person it is *about* — a procurement reader, not us. Every
     number in it is derived from `rows`, so the prose and the table can never disagree.
+
+    `basis` names the audit the evidence came from and when it ran (`evidence_basis`). It is
+    rendered *into* the document rather than shown beside it so that the person signing signs
+    it too — a statement that cannot say which pass produced it is a statement nobody can check
+    a year later.
     """
     counts = totals(rows)
     lines = [
@@ -325,6 +428,7 @@ def draft_body(*, scope: str, rows: list[dict], version: str = "2.2") -> str:
         "",
         f"> {DISCLAIMER}",
         "",
+        *_basis_lines(basis),
         "## Summary",
         "",
         f"Of the {counts['total']} Level A and AA success criteria, **{counts['evaluated']} "
@@ -401,13 +505,18 @@ def state(*, tenant_id, project_id) -> dict:
     """Everything S-37 renders: the rows, the counts, the draft, and the signature's standing."""
     row = _statement(tenant_id, project_id)
     rows = criterion_rows(tenant_id, project_id, verdicts=row.verdicts or {})
-    body = row.body or draft_body(scope=row.scope, rows=rows)
+    basis = evidence_basis(tenant_id, project_id)
+    body = row.body or draft_body(scope=row.scope, rows=rows, basis=basis)
     fingerprint = evidence_fingerprint(tenant_id, project_id)
     stale = is_stale(row, evidence_hash=fingerprint)
     return {
         "scope": row.scope,
         "body": body,
         "drafted": not row.body,
+        # Also on the payload, not only inside the wording. The body is the reviewer's to edit
+        # — they may cut the section — and the screen still has to be able to say which audit
+        # the numbers on it were compiled from.
+        "basis": basis,
         "rows": rows,
         "totals": totals(rows),
         "disclaimer": DISCLAIMER,
@@ -514,7 +623,8 @@ def sign(*, tenant_id, project_id, user_id, name: str, acknowledged: bool = Fals
 
     row = _statement(tenant_id, project_id)
     rows = criterion_rows(tenant_id, project_id, verdicts=row.verdicts or {})
-    body = row.body or draft_body(scope=row.scope, rows=rows)
+    body = row.body or draft_body(
+        scope=row.scope, rows=rows, basis=evidence_basis(tenant_id, project_id))
     counts = totals(rows)
 
     with tenant_context(tenant_id):
