@@ -990,7 +990,15 @@ export interface A11yAudit {
     unreachable?: string[];
     never_reported?: string[];
     reason?: string;
+    // Closed by the platform because the machine capturing it went away, rather than by a run
+    // that finished and found nothing openable. Same status, entirely different thing to do.
+    abandoned?: boolean;
   };
+  // This audit says it is running, and nothing has been heard from the machine holding it for
+  // a long while. DERIVED on read and never written: a machine switched off for good never
+  // comes back to be swept, and the screen must not be the last thing still claiming the audit
+  // is running.
+  stalled?: boolean;
   // How far this audit has got RIGHT NOW. Present only while it is still going somewhere —
   // `summary` above is written when it closes, so until then there was no count of anything
   // anywhere and a screen could only show the status word. `judged`/`dispatched` appear once

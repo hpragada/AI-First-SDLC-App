@@ -142,6 +142,9 @@ def _renew_claims_for(runner) -> int:
     from django.db import transaction
     from django.utils import timezone
 
+    from apps.a11y.baseline import ABANDONABLE_STATUSES
+    from apps.a11y.models import A11yBaselineAudit
+
     now_dt = timezone.now()
     now = now_dt.isoformat()
     # Bugs S.No 134: a claim first held before this cutoff has been renewed for too long without
@@ -171,6 +174,31 @@ def _renew_claims_for(runner) -> int:
             inputs["dispatch"] = dispatch
             run.inputs = inputs
             run.save(update_fields=["inputs", "updated_at"])
+            renewed += 1
+
+        # The same lease, for the accessibility audits this companion is holding. Only the ones
+        # it is actively CAPTURING: a `claimed` audit has captured nothing yet and its stale
+        # claim is already handed to the next machine that asks, which beats renewing it.
+        #
+        # Until this,
+        # NOTHING renewed an audit's claim: `claimed_at` was stamped once at claim and never
+        # touched, so an audit's liveness was not actually being tracked at all. That was
+        # survivable only because a claim goes stale unnoticed; it stops being survivable the
+        # moment something acts on staleness, which `abandon_stale_audits` now does.
+        #
+        # Capped off `created_at` rather than a `first_claimed_at` column, which is what runs
+        # use: an audit is claimed within a second of being created, so its own age is the same
+        # measurement — and reaching for a column would mean a migration for a number already
+        # in the row.
+        audits = (
+            A11yBaselineAudit.objects.select_for_update(skip_locked=True)
+            .filter(tenant_id=runner.tenant_id, enrollment_id=runner.id,
+                    status__in=ABANDONABLE_STATUSES,
+                    created_at__gte=now_dt - MAX_CLAIM_AGE)
+        )
+        for audit in audits:
+            audit.claimed_at = now_dt
+            audit.save(update_fields=["claimed_at", "updated_at"])
             renewed += 1
     return renewed
 
@@ -520,12 +548,26 @@ class RunnerHeartbeatView(APIView):
     permission_classes: list = []
 
     def post(self, request):
+        from django.utils import timezone
+
+        from apps.a11y.baseline import abandon_stale_audits
+
         runner = RunnerStateView._resolve_runner(request)
         if runner is None:
             return Response({"detail": "invalid or missing Runner token"},
                             status=status.HTTP_401_UNAUTHORIZED)
         renewed = _renew_claims_for(runner)
-        return Response({"ok": True, "claims_renewed": renewed,
+        # Renew first, THEN sweep — otherwise a companion could close the very audit it is
+        # holding. An accessibility audit is captured by a machine this server cannot see, so
+        # the machine going away (closed, restarted, laptop shut) left the audit in `capturing`
+        # for ever: the claim lease only ever offered `pending` and stale `claimed` back, so
+        # nothing recovered it, nothing failed it, and the screen went on saying "Visiting
+        # pages" about a machine that no longer existed. Swept here because a rebooted companion
+        # says hello within seconds of coming back, and because a heartbeat is already a write.
+        closed = abandon_stale_audits(
+            tenant_id=str(runner.tenant_id), project_id=str(runner.project_id),
+            stale_before=timezone.now() - CLAIM_LEASE)
+        return Response({"ok": True, "claims_renewed": renewed, "audits_closed": len(closed),
                          "last_seen": runner.last_seen.isoformat() if runner.last_seen else None})
 
 
@@ -721,7 +763,7 @@ class RunnerA11yAuditClaimView(APIView):
         from django.db.models import Q
         from django.utils import timezone
 
-        from apps.a11y.baseline import audit_manifest
+        from apps.a11y.baseline import abandon_stale_audits, audit_manifest
         from apps.a11y.models import A11yBaselineAudit
         from apps.projects.preview_config import resolve_audit_repo
 
@@ -732,6 +774,12 @@ class RunnerA11yAuditClaimView(APIView):
         tid = str(runner.tenant_id)
         now = timezone.now()
         stale_before = now - CLAIM_LEASE
+        # Before looking for work, close anything a dead machine left mid-capture. Here as well
+        # as on the heartbeat because a companion started fresh (rather than resumed) asks for
+        # work before it has heartbeated, and because an audit still showing as running is the
+        # first thing its owner sees when they come back to the screen.
+        abandon_stale_audits(tenant_id=tid, project_id=str(runner.project_id),
+                             stale_before=stale_before)
         with tenant_context(tid), transaction.atomic():
             owned = Q(enrollment_id=runner.id)
             broadcast = Q(project_id=runner.project_id) & Q(enrollment__isnull=True)

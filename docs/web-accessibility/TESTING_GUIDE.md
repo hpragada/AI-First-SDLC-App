@@ -1336,6 +1336,41 @@ companion files now use ASCII. Only what the companion prints changed; nothing t
 platform did.
 
 
+### #25 — An audit whose machine went away could never end ✅
+
+**Found on the live run of 21 August**, by the operator's computer restarting mid-audit. One page
+was in; nothing else ever came. The audit stayed `capturing` and the screen went on saying
+**Visiting pages** about a machine that no longer existed.
+
+**The claim lease already recovers a dead companion's work — but only from `pending` and stale
+`claimed`.** An audit reaches `capturing` the instant its first screen lands, and past that line
+there was no lease, no timeout and no cancel. Worse, nothing renewed an audit's lease at all:
+`claimed_at` was stamped once at claim and never touched again, so audit liveness was not being
+tracked in the first place.
+
+**Three parts.** The heartbeat now renews the lease on the audit a companion is *capturing*
+(capped off `created_at`, so no migration). A capture nothing has been heard from for the lease
+is closed as `failed` with the machine's own reason — swept from the companion's heartbeat and
+its claim, both of which are already writes, so reading the audit list never writes to it.
+Liveness counts *either* signal, the heartbeat or a screen arriving: heartbeat alone would depend
+on a companion mode that might not heartbeat, screens alone would kill an audit stuck on one very
+slow page. And the screen derives `stalled` on read, never written, so a computer switched off
+for good still produces an honest panel rather than a permanent lie.
+
+**Failed, not judged and not resumed** — a report from four of twelve pages would state a
+position about an application most of which was never looked at, and re-visiting captured routes
+needs a resumption design that does not exist. A fresh audit costs minutes.
+
+⚠️ **The near-miss.** The first version also swept `claimed`, and broke an existing test that was
+right to break: a `claimed` audit has captured nothing, and the lease hands it to the next machine
+that asks, so it simply runs. Failing it would have turned a working recovery into a manual
+restart. Abandonment applies to `capturing` alone.
+
+**It closed the live one itself.** The plan was to close the stuck audit by hand; by the time that
+ran, the companion's own heartbeat had already done it at 04:38:36 — `opened: 1`, eleven pages
+listed as never reported, reason in the machine's words.
+
+
 ---
 
 ## 10. What has run live, what has not, and what I am least sure about

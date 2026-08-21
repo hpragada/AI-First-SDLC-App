@@ -1508,3 +1508,82 @@ is also the right scope: the **Accessibility baseline** this panel points at is 
 project-scoped, so that an audit covering part of an application never drops what is already known
 about the rest. The tile's sub-line says *in this project* rather than letting the number imply a
 per-run count, and a test pins the NULL column so the shortcut cannot be taken again.
+
+
+---
+
+### 9.5 An audit whose machine went away — 21 August (BUILT)
+
+The scope was re-cut to twelve pages chosen to make the AI hesitate, the audit was started, and
+the **operator's computer restarted while it was running**. Page 1 was in; nothing else ever
+came. The audit sat at:
+
+```
+audit 1c471111   status = capturing
+claimed 04:20:06   ·   last write 04:20:57   ·   screens in: 1 of 12
+```
+
+and it would have sat there for ever. The screen went on saying **Visiting pages** about a
+machine that no longer existed — this capability's own worst failure, in the feature built to
+refuse it. It is the same defect as 9.1 item **A**, one state further along: that fix closed the
+audit when the *judging* run died, and nobody checked the *capture* end.
+
+#### Why nothing could end it
+
+The platform already recovers a dead companion's work — the claim lease from Bugs S.No 110/111.
+It offers back two audit states: `pending`, and `claimed` whose stamp has gone stale. An audit
+moves to **`capturing`** the instant its first screen lands, and past that line there was no
+lease, no timeout and no cancel:
+
+* the restarted companion could not pick it back up — its claim poll cannot see `capturing`;
+* nothing renewed an audit's lease either. `claimed_at` was stamped once and never touched
+  again, so **an audit's liveness was not actually being tracked at all**;
+* and starting another audit is not refused, so the abandoned one just becomes a row under Past
+  audits that reads "Visiting pages" permanently.
+
+#### The fix — three parts
+
+**A. The heartbeat renews the audit's lease.** `_renew_claims_for` already does this for runs;
+it now also renews the audit each companion is *capturing*, capped off `created_at` rather than
+a `first_claimed_at` column — an audit is claimed within a second of being created, so its own
+age is the same measurement without a migration. This part had to come first: without it, part B
+would declare a slow-but-healthy capture dead, which is exactly the S.No 111 mid-flight re-claim
+being reintroduced.
+
+**B. A stale capture is closed as failed, with the reason.** `baseline.abandon_audit` /
+`abandon_stale_audits`, swept from the companion's heartbeat and its audit claim — both already
+writes, so **reading the audit list never writes to it**. Liveness is measured from *either*
+signal: the heartbeat, or a screen actually arriving. Keying on the heartbeat alone would depend
+on a companion mode that might not heartbeat; keying on screens alone would kill an audit stuck
+on one very slow page.
+
+Failed, **not judged and not resumed**, both deliberate. A report built from four of twelve
+pages would be a document stating a position about an application most of which was never looked
+at. Re-visiting routes already captured under this key would need a resumption design that does
+not exist — what happens to the bundles already stored for a route being visited twice — and a
+fresh audit costs minutes. Resumption is worth its own task if captures ever get long enough for
+the difference to matter.
+
+**C. The screen tells the truth even if the machine never comes back.** A computer switched off
+for good never reports in to be swept, so `stalled` is **derived on read and never written**:
+an in-flight audit nothing has been heard from for the lease reads as *Audit stopped reporting*,
+says how far it got, and says a new one can be started now.
+
+⚠️ **The near-miss, and the reason `ABANDONABLE_STATUSES` is one state and not two.** The first
+version swept `claimed` as well as `capturing`, and broke
+`test_a_machine_that_restarts_mid_audit_picks_its_own_audit_back_up`. That test was right: a
+`claimed` audit has captured **nothing**, and the existing lease hands it to the next machine
+that asks, so it simply runs. Failing it would have converted a recovery that worked into a
+failure somebody has to go and restart by hand. Abandonment now applies to `capturing` alone —
+the one state nothing else could get an audit out of — and a test pins the distinction.
+
+#### It closed the real one before it was ever run by hand
+
+The plan was to close audit `1c471111` explicitly. By the time that ran, the sweep had already
+done it: **04:38:36**, on the live companion's own heartbeat, `opened: 1`, the eleven unvisited
+pages listed under `never_reported`, and the reason in the machine's words. The bug found on the
+live run was closed by the fix for it, on the live system, unassisted.
+
+**Verified:** 191 in `test_a11y_baseline.py`, 73 across `test_a11y_scope_rest.py` +
+`test_companion_daemon.py`, 44 on the audit screen, `tsc` and `eslint` clean on the changed
+files. The four pre-existing `views.py` ruff findings are unchanged and still not from this work.

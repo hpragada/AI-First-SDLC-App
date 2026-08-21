@@ -2540,3 +2540,369 @@ def test_another_projects_findings_are_never_counted_here(world):
         route="/", selector="#a", criterion="1.1.1", source="ai", outcome="failure",
         severity="critical", status=A11yFinding.Status.OPEN)
     assert audit_outcome(world["t"], world["p"])["problems"] == 0
+
+
+# ══ an audit whose machine went away ═════════════════════════════════════════════════
+#
+# The capture half of an audit runs on a machine this server cannot see, so the platform learns
+# it is still there only from the fact that it is still talking. The claim lease already
+# recovered a dead companion's work — but it only ever looked at `pending` and stale `claimed`
+# audits, and an audit moves to `capturing` the instant its first screen lands. Past that line
+# there was no lease, no timeout and no way to cancel: a laptop that restarted mid-audit left the
+# row saying "Visiting pages" for ever, which is this capability's own worst failure — a
+# confident report of work that is not happening. Found on the live run of 21 August.
+
+def test_an_audit_whose_machine_stopped_reporting_is_closed_with_the_reason(world):
+    from apps.a11y.baseline import ABANDONED_REASON, abandon_audit
+
+    audit = _audit(world, "/", "/login", "/catalogue")
+    _post(world, audit, _screen("/"))
+
+    out = abandon_audit(tenant_id=world["t"], audit_id=str(audit.id))
+
+    assert out["closed"] is True
+    assert out["status"] == "failed"
+    assert out["reason"] == ABANDONED_REASON
+    assert out["abandoned"] is True
+    audit.refresh_from_db()
+    assert audit.status == "failed"
+    assert audit.summary["reason"] == ABANDONED_REASON
+
+
+def test_what_the_abandoned_audit_did_capture_is_stated_not_thrown_away(world):
+    """One page reported, two never asked about. Both facts are on the record — the difference
+    is the whole of what somebody re-running needs to know."""
+    from apps.a11y.baseline import abandon_audit
+
+    audit = _audit(world, "/", "/login", "/catalogue")
+    _post(world, audit, _screen("/"))
+
+    out = abandon_audit(tenant_id=world["t"], audit_id=str(audit.id))
+
+    assert out["asked"] == 3
+    assert out["opened"] == 1
+    assert out["never_reported"] == ["/catalogue", "/login"]
+    assert A11yScreenScan.objects.filter(run_key=str(audit.id)).count() == 1, (
+        "what it captured is kept — the audit is failed, not erased"
+    )
+
+
+def test_an_abandoned_audit_is_never_judged_and_publishes_nothing(world, monkeypatch):
+    """A report from one of three pages would be a document stating a position about an
+    application most of which was never looked at. Failed is the honest end."""
+    from apps.a11y import baseline as baseline_mod
+    from apps.a11y.baseline import abandon_audit
+
+    audit = _audit(world, "/", "/login", "/catalogue")
+    _post(world, audit, _screen("/"))
+
+    def _boom(**kwargs):  # pragma: no cover - the point is that it is never called
+        raise AssertionError("a partial capture must never reach the judge")
+
+    monkeypatch.setattr(baseline_mod, "publish_baseline_for", _boom)
+    monkeypatch.setattr(baseline_mod, "start_ai_pass", _boom, raising=False)
+    abandon_audit(tenant_id=world["t"], audit_id=str(audit.id))
+
+
+def test_closing_an_audit_that_is_not_being_captured_does_nothing(world):
+    """`judging` is a Temporal run and is closed from the other end; a finished audit is
+    finished. Only the states a companion actually holds are this function's business."""
+    from apps.a11y.baseline import abandon_audit
+
+    audit = _audit(world, "/")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(status="judging")
+
+    out = abandon_audit(tenant_id=world["t"], audit_id=str(audit.id))
+    assert out["closed"] is False
+    audit.refresh_from_db()
+    assert audit.status == "judging", "left exactly as it was"
+
+
+def test_a_machine_that_is_still_posting_screens_is_not_declared_dead(world):
+    """Liveness is measured from the WORK as well as the heartbeat. An audit whose claim was
+    stamped an hour ago but whose last screen landed a moment ago is plainly alive, and killing
+    it would be the S.No 111 mid-flight re-claim all over again."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audit_ids
+
+    audit = _audit(world, "/", "/login")
+    _post(world, audit, _screen("/"))
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        claimed_at=timezone.now() - timedelta(hours=1), status="capturing")
+    audit.refresh_from_db()
+
+    stale_before = timezone.now() - timedelta(minutes=15)
+    assert stalled_audit_ids(world["t"], [audit], stale_before=stale_before) == set()
+
+
+def test_an_audit_that_has_said_nothing_at_all_for_the_lease_is_stalled(world):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audit_ids
+
+    audit = _audit(world, "/", "/login")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        claimed_at=timezone.now() - timedelta(hours=1), status="capturing")
+    audit.refresh_from_db()
+
+    stale_before = timezone.now() - timedelta(minutes=15)
+    assert stalled_audit_ids(world["t"], [audit], stale_before=stale_before) == {str(audit.id)}
+
+
+def test_reading_which_audits_are_stalled_never_writes_to_them(world):
+    """The screen asks this on every poll. A read that closed an audit would mean looking at a
+    list changed it — and the answer has to stay available to a person who simply reloads."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audit_ids
+
+    audit = _audit(world, "/")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        claimed_at=timezone.now() - timedelta(hours=1), status="capturing")
+    audit.refresh_from_db()
+
+    stalled_audit_ids(world["t"], [audit], stale_before=timezone.now() - timedelta(minutes=15))
+
+    audit.refresh_from_db()
+    assert audit.status == "capturing", "derived, never written"
+    assert audit.summary == {}
+
+
+def test_a_pending_audit_nobody_has_claimed_is_not_stalled(world):
+    """Nothing has gone wrong with an audit that is simply waiting for a machine to pick it up,
+    however long it waits — and the claim lease already offers that one back."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audit_ids
+
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"],
+                                 base_url="http://localhost:5173",
+                                 routes=["/"], claimable=True)
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        created_at=timezone.now() - timedelta(hours=2))
+    audit.refresh_from_db()
+    assert audit.status == "pending"
+    assert stalled_audit_ids(
+        world["t"], [audit], stale_before=timezone.now() - timedelta(minutes=15)) == set()
+
+
+def test_the_sweep_closes_the_dead_one_and_leaves_the_live_one_alone(world):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import abandon_stale_audits
+
+    dead = _audit(world, "/", "/login")
+    live = _audit(world)
+    A11yBaselineAudit.objects.filter(id=dead.id).update(
+        claimed_at=timezone.now() - timedelta(hours=1), status="capturing")
+    A11yBaselineAudit.objects.filter(id=live.id).update(
+        claimed_at=timezone.now(), status="capturing")
+
+    closed = abandon_stale_audits(tenant_id=world["t"], project_id=world["p"],
+                                  stale_before=timezone.now() - timedelta(minutes=15))
+
+    assert closed == [str(dead.id)]
+    dead.refresh_from_db()
+    live.refresh_from_db()
+    assert dead.status == "failed"
+    assert live.status == "capturing"
+
+
+def test_the_sweep_does_not_reach_another_project(world):
+    """Scoped to the project the companion is enrolled on. A machine reporting in about one
+    application has said nothing whatever about another."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import abandon_stale_audits
+
+    other = Project.objects.create(tenant=world["tenant"], name="Another App")
+    register_routes(tenant_id=world["t"], project_id=str(other.id), routes=["/"])
+    theirs = start_baseline_audit(tenant_id=world["t"], project_id=str(other.id),
+                                  base_url="http://localhost:5173")
+    A11yBaselineAudit.objects.filter(id=theirs.id).update(
+        claimed_at=timezone.now() - timedelta(hours=1), status="capturing")
+
+    closed = abandon_stale_audits(tenant_id=world["t"], project_id=world["p"],
+                                  stale_before=timezone.now() - timedelta(minutes=15))
+
+    assert closed == []
+    theirs.refresh_from_db()
+    assert theirs.status == "capturing"
+
+
+# ── and the two places the companion actually tells us it is alive ──────────────────
+
+def _heartbeat(runner):
+    """What the companion's heartbeat does, without the HTTP layer: the view's own body."""
+    from django.test import RequestFactory
+
+    from api.runner_views import RunnerHeartbeatView, RunnerStateView
+
+    request = RequestFactory().post("/api/runner/heartbeat/")
+    original = RunnerStateView._resolve_runner
+    RunnerStateView._resolve_runner = staticmethod(lambda _r: runner)
+    try:
+        return RunnerHeartbeatView().post(request)
+    finally:
+        RunnerStateView._resolve_runner = original
+
+
+def test_the_heartbeat_keeps_a_live_machines_audit_from_ageing_out(world):
+    """Part A, and it has to come first: until this, NOTHING renewed an audit's claim — it was
+    stamped once and never touched — so a capture that legitimately took longer than the lease
+    would be declared dead by the very sweep that fixes the stuck audit."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    runner = _enrol(world)
+    audit = _audit(world, "/", "/login")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        enrollment=runner, status="capturing",
+        claimed_at=timezone.now() - timedelta(minutes=40))
+
+    _heartbeat(runner)
+
+    audit.refresh_from_db()
+    assert audit.status == "capturing", "still being captured by a machine that is still there"
+    assert audit.claimed_at > timezone.now() - timedelta(minutes=1), "lease renewed"
+
+
+def test_a_live_machine_never_closes_the_audit_it_is_holding(world):
+    """The heartbeat renews BEFORE it sweeps. The other order would have a companion close the
+    very audit it was in the middle of capturing."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    runner = _enrol(world)
+    audit = _audit(world, "/", "/login")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        enrollment=runner, status="capturing",
+        claimed_at=timezone.now() - timedelta(hours=1))
+
+    response = _heartbeat(runner)
+
+    assert response.data["audits_closed"] == 0
+    audit.refresh_from_db()
+    assert audit.status == "capturing"
+
+
+def test_a_restarted_machine_closes_the_audit_its_predecessor_abandoned(world):
+    """The live case from 21 August: the laptop restarts mid-capture, the companion comes back,
+    and the audit it left behind is closed within seconds of it saying hello."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import ABANDONED_REASON
+
+    dead_machine = _enrol(world, "dev-before-the-reboot")
+    audit = _audit(world, "/", "/login")
+    _post(world, audit, _screen("/"))
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        enrollment=dead_machine, status="capturing",
+        claimed_at=timezone.now() - timedelta(hours=1))
+    A11yScreenScan.objects.filter(run_key=str(audit.id)).update(
+        created_at=timezone.now() - timedelta(hours=1))
+
+    back = _enrol(world, "dev-after-the-reboot")
+    response = _heartbeat(back)
+
+    assert response.data["audits_closed"] == 1
+    audit.refresh_from_db()
+    assert audit.status == "failed"
+    assert audit.summary["reason"] == ABANDONED_REASON
+    assert audit.summary["opened"] == 1
+    assert audit.summary["never_reported"] == ["/login"]
+
+
+def test_asking_for_work_also_closes_what_a_dead_machine_left(world):
+    """A companion started fresh asks for work before it has heartbeated, and an audit still
+    showing as running is the first thing its owner sees on the screen."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    _repo(world)
+    dead_machine = _enrol(world, "dev-gone")
+    stuck = _audit(world, "/", "/login")
+    A11yBaselineAudit.objects.filter(id=stuck.id).update(
+        enrollment=dead_machine, status="capturing",
+        claimed_at=timezone.now() - timedelta(hours=1))
+
+    _claim(world, _enrol(world, "dev-new"))
+
+    stuck.refresh_from_db()
+    assert stuck.status == "failed"
+
+
+def test_the_audit_list_says_which_running_audit_has_gone_quiet(world):
+    """Part C. A machine switched off for good never comes back to be swept, so the screen must
+    not be the last thing still claiming the audit is running — and reading the list must not
+    be what closes it."""
+    from datetime import timedelta
+
+    from django.test import RequestFactory
+    from django.utils import timezone
+
+    from api.views import ProjectViewSet
+
+    audit = _audit(world, "/", "/login")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        status="capturing", claimed_at=timezone.now() - timedelta(hours=1))
+
+    view = ProjectViewSet()
+    view.request = RequestFactory().get("/")
+    view.request.tenant_id = world["t"]
+    view.format_kwarg = None
+    view.get_object = lambda: world["project"]
+    response = view.a11y_audits(view.request, pk=world["p"])
+
+    row = response.data["audits"][0]
+    assert row["stalled"] is True
+    audit.refresh_from_db()
+    assert audit.status == "capturing", "the screen reads; it does not close"
+
+
+def test_a_stale_claim_is_still_handed_on_and_never_abandoned(world):
+    """The near-miss this whole change had to avoid. A `claimed` audit has captured NOTHING, and
+    the claim lease already hands a stale one to the next machine that asks — so it simply runs.
+    The first version of the sweep closed those too, which would have turned a recovery that
+    worked into a failure a person has to go and restart. Abandonment applies to `capturing`
+    alone: the one state nothing could get an audit out of."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import abandon_stale_audits
+
+    _repo(world)
+    _register(world, "/")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"], claimable=True)
+    machine = _enrol(world, "dev-1")
+    _claim(world, machine)
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        claimed_at=timezone.now() - timedelta(hours=2))
+
+    closed = abandon_stale_audits(tenant_id=world["t"], project_id=world["p"],
+                                  stale_before=timezone.now() - timedelta(minutes=15))
+
+    assert closed == [], "a claim nobody has captured under is recoverable, not abandoned"
+    audit.refresh_from_db()
+    assert audit.status == "claimed"
+    again = _claim(world, machine)
+    assert again.status_code == 200, "and it is still there to be picked back up"

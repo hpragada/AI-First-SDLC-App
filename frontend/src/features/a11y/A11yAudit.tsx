@@ -951,6 +951,32 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
   }
 
   const progress = audit.progress ?? { visited: 0, unreachable: 0 };
+
+  // Says it is running, and nothing has come back from the machine holding it for a long while.
+  // Shown BEFORE the running panel, because everything below this point describes work in
+  // progress and none of it is happening. The audit is closed for real the moment any companion
+  // on this project reports in; until then this is the honest reading of the same row, and if
+  // that machine never comes back it is the only one there will ever be.
+  if (audit.stalled) {
+    return (
+      <Panel title="Audit stopped reporting" actions={<Badge variant="failed">Stopped</Badge>}>
+        <p className="t-sm u-body">
+          Nothing has come back from the machine running this audit for a long while — it was
+          most likely closed, restarted or disconnected part-way through. It reported{" "}
+          <strong>
+            {progress.visited} of {asked}
+          </strong>{" "}
+          pages before it went quiet.
+        </p>
+        <p className="t-sm u-muted" style={{ marginTop: "var(--space-3)" }}>
+          Nothing is reported from a partial pass, so this audit will be closed as failed as soon
+          as a companion on this project reports in. You can start a new audit now — what was
+          captured here costs only the minutes it took.
+        </p>
+      </Panel>
+    );
+  }
+
   const passes = Math.max(1, Math.ceil(asked / PAGES_PER_PASS));
   const judging = audit.status === "judging";
   // Which pass the capture is on, from what has come back. Derived rather than reported: the

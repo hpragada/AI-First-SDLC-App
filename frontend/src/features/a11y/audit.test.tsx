@@ -240,6 +240,84 @@ describe("S-38 pages and audit", () => {
     expect((await screen.findAllByText("Waiting for a machine")).length).toBe(2);
     expect(screen.getByText("Audit running")).toBeTruthy();
   });
+
+  // An audit whose machine went away. Until this, the panel went on saying "Visiting pages"
+  // about a laptop that had been switched off — the same silence the panel was built against,
+  // wearing the panel's own clothes. The row is closed for real the moment any companion on the
+  // project reports in; this is the reading for the machine that never comes back.
+  it("an audit nothing has been heard from says so instead of claiming to be running", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "capturing", base_url: "http://localhost:4180",
+        routes: ["/", "/login", "/catalogue"],
+        created_at: "2026-08-18T14:02:00Z", summary: {},
+        progress: { visited: 1, unreachable: 0 }, stalled: true,
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Audit stopped reporting")).toBeTruthy();
+    expect(screen.queryByText("Audit running")).toBeNull();
+    // How far it actually got, said out loud — the pages it did report are not lost, and
+    // knowing there was one is the difference between re-running and going to look for a fault.
+    expect(screen.getByText("1 of 3")).toBeTruthy();
+  });
+
+  it("an audit that is genuinely running is not called stopped", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "capturing", base_url: "http://localhost:4180",
+        routes: ["/", "/login"],
+        created_at: "2026-08-18T14:02:00Z", summary: {},
+        progress: { visited: 1, unreachable: 0 }, stalled: false,
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Audit running")).toBeTruthy();
+    expect(screen.queryByText("Audit stopped reporting")).toBeNull();
+  });
+
+  it("an older payload with no stalled field reads as running, not as stopped", async () => {
+    // The safe direction: an audit wrongly called stopped would send somebody to restart a run
+    // that was working perfectly well.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "capturing", base_url: "http://localhost:4180",
+        routes: ["/"], created_at: "2026-08-18T14:02:00Z", summary: {},
+        progress: { visited: 1, unreachable: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Audit running")).toBeTruthy();
+  });
+
+  it("an abandoned audit that has been closed shows the machine's own reason", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "failed", base_url: "http://localhost:4180",
+        routes: ["/", "/login"], created_at: "2026-08-18T14:02:00Z",
+        summary: {
+          asked: 2, opened: 1, unreachable: [], never_reported: ["/login"],
+          abandoned: true,
+          reason: "the machine visiting the pages stopped reporting — it was closed, restarted or disconnected part-way through.",
+        },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Audit could not run")).toBeTruthy();
+    expect(screen.getAllByText(/stopped reporting/).length).toBeGreaterThan(0);
+  });
 });
 
 describe("S-38 adding pages", () => {

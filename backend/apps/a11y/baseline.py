@@ -381,6 +381,151 @@ def complete_audit(tenant_id, capture_key) -> bool:
 #: and re-deriving them would be two sources for one answer.
 IN_FLIGHT_STATUSES = ("pending", "claimed", "capturing", "judging")
 
+#: The one state an audit can be in that NOTHING could recover it from, and so the only state
+#: this module's abandonment applies to. An audit here is held by a machine on somebody's desk
+#: that this server can never see, and it got here because a screen arrived.
+#:
+#: The other three are deliberately absent, each already answered somewhere better:
+#:   * `pending`  — nobody has taken it; there is nothing wrong with it and the claim offers it.
+#:   * `claimed`  — taken but nothing captured yet, and the claim lease hands a stale one to the
+#:                  next machine that asks. RE-CLAIMING IS STRICTLY BETTER THAN FAILING IT: the
+#:                  audit simply runs. Closing these here would have thrown that away.
+#:   * `judging`  — a Temporal run, closed from the other end by `close_unfinished_ai_pass`.
+ABANDONABLE_STATUSES = ("capturing",)
+
+#: What a person is told when the machine holding their audit went away. In the audit's own
+#: `summary["reason"]`, which is what the "Could not run" panel reads.
+ABANDONED_REASON = (
+    "the machine visiting the pages stopped reporting — it was closed, restarted or "
+    "disconnected part-way through. What it had already captured is kept, but nothing is "
+    "reported from a partial pass: a baseline written from some of the pages would state "
+    "coverage this audit never had. Start the audit again."
+)
+
+
+def _last_screen_at(tenant_id, audits) -> dict:
+    """The newest screen posted under each audit's key. One grouped query for the whole set."""
+    from django.db.models import Max
+
+    from .models import A11yScreenScan
+
+    keys = [str(a.id) for a in audits]
+    if not keys:
+        return {}
+    with tenant_context(tenant_id):
+        rows = (
+            A11yScreenScan.objects
+            .filter(tenant_id=tenant_id, run_key__in=keys)
+            .values("run_key").annotate(last=Max("created_at"))
+        )
+        return {row["run_key"]: row["last"] for row in rows}
+
+
+def stalled_audit_ids(tenant_id, audits, *, stale_before) -> set[str]:
+    """Which of these audits nothing has been heard from since `stale_before`. **Reads only.**
+
+    **Why liveness is measured from the work and not only from the claim.** An audit is captured
+    by a machine outside the platform, so the only evidence it is still there is that it is still
+    talking to us — and it talks in two ways: the companion's heartbeat (which renews
+    `claimed_at`, see `_renew_claims_for`) and the screens themselves. Either counts. Keying on
+    the heartbeat alone would make this depend on a companion mode that might not heartbeat;
+    keying on screens alone would kill an audit stuck on one very slow page. Whichever spoke
+    last is the answer.
+
+    `stale_before` is passed in rather than read from a constant here, because how long a
+    machine may be silent is the runner's lease policy (`api.runner_views.CLAIM_LEASE`) and this
+    module has no business deciding it.
+    """
+    held = [a for a in audits if a.status in ABANDONABLE_STATUSES]
+    latest = _last_screen_at(tenant_id, held)
+    out = set()
+    for audit in held:
+        spoke = [audit.claimed_at or audit.created_at]
+        seen = latest.get(str(audit.id))
+        if seen:
+            spoke.append(seen)
+        if max(spoke) < stale_before:
+            out.add(str(audit.id))
+    return out
+
+
+def abandon_audit(*, tenant_id, audit_id, reason: str = "") -> dict:
+    """Close ONE audit whose machine stopped reporting. Returns what it was closed as.
+
+    **Failed, not resumed, and not judged.** Half a capture is in the database under this
+    audit's key, and it is kept — but it is not sent to the judge and no baseline is published
+    from it. A report from four of twelve pages would be this capability's own worst failure
+    wearing a tick: a document stating a position about an application, most of which was never
+    looked at. The pages that did report are cheap to visit again.
+
+    **Not resumed either**, and that is a deliberate limit rather than an oversight. Re-visiting
+    routes already captured under this key would need a resumption design that does not exist —
+    what happens to the bundles already stored for a route being visited a second time — and a
+    fresh audit costs minutes. Resumption is worth its own task if a capture ever gets long
+    enough for the difference to matter.
+
+    Idempotent, and only ever acts on an audit a companion is actually holding: an audit that
+    has already closed, or is in `judging` (a Temporal run, closed from the other end), is
+    returned untouched with `closed: False`.
+    """
+    from .models import A11yBaselineAudit, A11yScreenScan
+
+    audit = _audit(tenant_id, audit_id)
+    if audit.status not in ABANDONABLE_STATUSES:
+        return {"audit_id": str(audit.id), "status": audit.status, "closed": False}
+
+    run_key = str(audit.id)
+    with tenant_context(tenant_id):
+        scans = list(
+            A11yScreenScan.objects
+            .filter(tenant_id=tenant_id, project_id=audit.project_id, run_key=run_key)
+            .values_list("route", "load_error")
+        )
+        seen = {route for route, _ in scans}
+        summary = {
+            "asked": len(audit.routes or []),
+            "opened": len({r for r, err in scans if not (err or "").strip()}),
+            "unreachable": sorted({r for r, err in scans if (err or "").strip()}),
+            # What was asked for and never came back. Said plainly rather than folded into
+            # `unreachable`: these pages were never attempted, which is not the same fact as a
+            # page that would not open, and the difference is what somebody re-running needs.
+            "never_reported": sorted(r for r in (audit.routes or []) if r not in seen),
+            "reason": str(reason or "").strip() or ABANDONED_REASON,
+            #: So a reader (and a test) can tell this apart from an audit that ran and found
+            #: nothing openable — same status, entirely different thing to go and do.
+            "abandoned": True,
+        }
+        audit.status = A11yBaselineAudit.Status.FAILED
+        audit.summary = {**(audit.summary or {}), **summary}
+        audit.save(update_fields=["status", "summary", "updated_at"])
+    return {"audit_id": run_key, "status": audit.status, "closed": True, **summary}
+
+
+def abandon_stale_audits(*, tenant_id, project_id=None, stale_before, reason: str = "") -> list:
+    """Close every audit on this project that a machine stopped reporting on. Returns their ids.
+
+    Called from the companion's own writes — its heartbeat and its audit claim — rather than
+    from anything a screen asks for, so reading the audit list never writes to it. That also
+    puts the sweep exactly where the evidence arrives: a machine that reboots comes back, says
+    hello, and the audit it abandoned is closed within seconds of it doing so.
+    """
+    from .models import A11yBaselineAudit
+
+    with tenant_context(tenant_id):
+        rows = A11yBaselineAudit.objects.filter(
+            tenant_id=tenant_id, status__in=ABANDONABLE_STATUSES)
+        if project_id:
+            rows = rows.filter(project_id=project_id)
+        rows = list(rows)
+
+    stale = stalled_audit_ids(tenant_id, rows, stale_before=stale_before)
+    closed = []
+    for row in rows:
+        if str(row.id) in stale:
+            abandon_audit(tenant_id=tenant_id, audit_id=str(row.id), reason=reason)
+            closed.append(str(row.id))
+    return closed
+
 
 def audit_progress(tenant_id, audit_ids: list[str]) -> dict:
     """How far each of these audits has actually got, right now (S-38 running panel).

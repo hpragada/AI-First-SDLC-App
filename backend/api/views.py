@@ -572,6 +572,8 @@ class ProjectViewSet(
         can reach the running application, which is never this server (R2). The audit stays
         `capturing` until that machine posts what it saw and closes it.
         """
+        from django.utils import timezone
+
         from apps.a11y.baseline import (
             CLOSED_STATUSES,
             IN_FLIGHT_STATUSES,
@@ -579,11 +581,14 @@ class ProjectViewSet(
             audit_manifest,
             audit_outcome,
             audit_progress,
+            stalled_audit_ids,
             start_baseline_audit,
             unanswered_counts,
         )
         from apps.a11y.models import A11yBaselineAudit
         from apps.a11y.review import can_manage_pages
+
+        from .runner_views import CLAIM_LEASE
 
         project = self.get_object()
         if request.method == "POST":
@@ -637,10 +642,18 @@ class ProjectViewSet(
         # through would start a second pass over the same work.
         unanswered = unanswered_counts(
             self.tenant_id, [a for a in audits if a.status in CLOSED_STATUSES])
+        # Which in-flight audits nothing has been heard from. DERIVED, never written: a machine
+        # switched off for good never comes back to be swept, and the screen must not be the one
+        # thing still claiming the audit is running. Reading a list has no business closing an
+        # audit, so this says so and leaves the row alone.
+        stalled = stalled_audit_ids(
+            self.tenant_id, audits, stale_before=timezone.now() - CLAIM_LEASE)
         return Response({"audits": [
             {"id": str(a.id), "status": a.status, "base_url": a.base_url,
              "routes": list(a.routes or []), "summary": a.summary or {},
              "progress": progress.get(str(a.id)),
+             # "this says it is running, and nothing has come back from it for a long while".
+             "stalled": str(a.id) in stalled,
              # Only on the newest, because that is the only one the panel shows — and the
              # numbers are this PROJECT's current standing, not a per-audit tally, which is
              # what a finding can actually be attributed to. See `audit_outcome`.
