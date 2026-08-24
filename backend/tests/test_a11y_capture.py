@@ -725,18 +725,31 @@ def test_a_changed_element_gets_a_new_cache_key(world):
     assert hashes[0] != hashes[1]
 
 
-def test_the_cache_key_reads_exactly_the_four_things_the_judge_looks_at(world):
+def test_the_cache_key_reads_exactly_what_the_judge_looks_at(world):
     """Pinned so a field cannot be added to the fingerprint without someone deciding to.
 
     Every input added here is a new way for two identical elements to look different, and the
-    cost of getting that wrong is silent: the cache stops hitting and nobody is told."""
+    cost of getting that wrong is silent: the cache stops hitting and nobody is told.
+
+    **`structure` was added 2026-08-24, and leaving it out cost more.** A container's markup
+    is bounded, so a table can gain three hundred rows while the first eight thousand
+    characters stay byte-for-byte identical. Keyed on the markup alone, that table keeps its
+    old verdict for ever and the cache answers about a page that no longer exists. A missed
+    cache hit costs one judgment; a stale one costs the truth.
+
+    Its arrival invalidates every stored verdict once. That is the intended price, and it
+    was paid at a moment when no reviewer had ruled on anything, so no human decision went
+    with it.
+    """
     import inspect
 
     from apps.a11y import dispatch
 
     source = inspect.getsource(dispatch.content_hash)
-    assert "parts = (checker, candidate.html, candidate.screenshot_ref, candidate.context)" \
-        in source
+    assert ("parts = (checker, candidate.html, candidate.screenshot_ref, candidate.context, "
+            "outline)") in source
+    # Sorted keys, or two runs over an unchanged page would disagree about the key.
+    assert "sort_keys=True" in source
 
 
 def test_requests_are_in_a_stable_order(world):

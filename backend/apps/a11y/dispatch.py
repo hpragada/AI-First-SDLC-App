@@ -26,6 +26,7 @@ half-worked must route its items to a human, never look like a clean result (D-A
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 
 from integrations.types import (
@@ -139,11 +140,18 @@ class DispatchResult:
 def content_hash(checker: str, candidate: A11yCandidate) -> str:
     """The cache key: a hash of everything that could change the answer.
 
-    Covers the checker and the three inputs the judge actually looks at. Excludes the selector
-    and the route on purpose — see `A11yJudgmentCache`'s docstring for why. The parts are
+    Covers the checker and every input the judge actually looks at. Excludes the selector and
+    the route on purpose — see `A11yJudgmentCache`'s docstring for why. The parts are
     length-prefixed so that moving text from one field to another cannot collide.
+
+    **`structure` is in here, and has to be.** A container's markup is bounded, so a table can
+    gain three hundred rows while the first eight thousand characters stay identical. Hash only
+    the markup and that table keeps its old verdict for ever — the cache would be answering
+    about a page that no longer exists. Serialised with sorted keys so two runs over an
+    unchanged page produce the same key.
     """
-    parts = (checker, candidate.html, candidate.screenshot_ref, candidate.context)
+    outline = json.dumps(candidate.structure or {}, sort_keys=True, separators=(",", ":"))
+    parts = (checker, candidate.html, candidate.screenshot_ref, candidate.context, outline)
     payload = "\x1f".join(f"{len(p)}:{p}" for p in parts)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -299,6 +307,7 @@ def _group_by_screen(requests: list[A11yRequest]) -> list[dict]:
             "selector": request.candidate.selector,
             "html": request.candidate.html,
             "markup_truncated": request.candidate.markup_truncated,
+            "structure": dict(request.candidate.structure or {}),
             "screenshot_ref": request.candidate.screenshot_ref,
             "context": request.candidate.context,
         })

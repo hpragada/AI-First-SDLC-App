@@ -937,7 +937,7 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The forty findings, and what was done about each
+## 9. The forty-one findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
@@ -1011,6 +1011,7 @@ have happened again on a different rule.
 | 38 | **The 1.3.1 check is narrower than the criterion it is recorded against** | ✅ fixed |
 | 39 | Charts drawn on a canvas, and icons drawn by a font, were checked by nobody | ✅ fixed |
 | 40 | **Nothing checked that a check covers the criterion it claims** | ✅ fixed |
+| 41 | **A big table reached the AI with most of it missing** | ✅ fixed |
 
 **#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
 Those came from *reading* the screens. These came from *running* them, and five of the six are
@@ -1925,6 +1926,56 @@ about a problem of this shape.
 **How to use it:** whenever a new kind of failure turns up in the wild, add it to the list —
 **before** fixing it, so the fix has something to prove itself against. Same discipline as the
 list of false alarms kept for the secret scanner.
+
+### #41 — A big table reached the AI with most of it missing ⭐ ✅
+
+**Raised by the team**, reading #38: *if answering "not sure" does not actually help, it should
+have a surgical permanent fix, right?* It should, and it now does.
+
+**What was wrong.** Everything on a page that we send to the AI is capped at **8,000
+characters** — a sensible limit that stops one enormous element swamping a run. A button is
+never anywhere near it. **A table is.** A realistic row of five columns costs about 190
+characters, so the cap holds roughly **forty rows**. Past that, the AI was handed the top of a
+table and answered as though it had seen all of it, and nothing told anybody.
+
+It never showed up in testing because our test site's tables are small — across the whole 21
+August audit the largest thing we captured was 503 characters. On a client's reporting screen it
+would have happened on almost every table.
+
+**Why "say you're not sure" wasn't good enough.** That stops us being *wrong*. It does not make
+us *useful*. "Not sure" sends the item to a person to look at — so on a real reporting screen,
+**every large table would land in the review queue**, and we'd have turned an automated check
+back into a manual one precisely where tables matter most. Honest, and no use to anybody.
+
+**The fix: send the shape instead of the contents.** What the rule actually asks about a table
+is its *arrangement* — how many rows and columns, which cells are headings, what the top row
+and the left-hand column say. That is a few hundred characters **for a table of any size**,
+because it depends on how *wide* a table is, not how *long*.
+
+Measured against a real 401-row table, in the same browser the audit uses:
+
+| | Sent before | Sent now |
+|---|---|---|
+| A 3-row table | 206 characters | 317 characters |
+| **A 401-row table** | **31,985 characters, cut off at 8,000 — three quarters lost** | **906 characters, nothing about the shape lost** |
+
+**It is also a better answer, not just a smaller one.** Working out a table's grid from raw page
+code is something ordinary software does perfectly and an AI does unreliably. That work now
+happens once, in the browser, and the AI spends its effort on the part that genuinely needs
+judgement. The failing case now reads straight off: *401 rows, 2 columns, no heading cells, and
+a top row saying "Title" and "Status" that isn't marked up as headings.*
+
+⚠️ **One consequence, and it is deliberate.** The shape is part of how we recognise "we have
+already answered this element", so **every stored answer is discarded once** and the next audit
+works from scratch. It has to be: a table can gain three hundred rows while its first 8,000
+characters stay identical, and without this it would keep its old verdict for ever — the
+platform answering about a page that no longer exists.
+
+The timing is the good part: **nobody has reviewed a single finding yet**, so no human decision
+was lost with it. Done later, it would have cleared rulings people had made.
+
+**How to check it:** put a table of more than about fifty rows on a page and audit it. The
+finding should describe the whole table — its real row count — not just the top of it.
 
 ---
 

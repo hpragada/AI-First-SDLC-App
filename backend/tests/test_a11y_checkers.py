@@ -468,6 +468,86 @@ def test_a_structure_failure_that_names_the_markup_is_accepted():
                   suggested_fix="make the first row <th scope='col'>Subject</th> ...")
 
 
+# ── the container's shape, which is what makes the container checks work ─────
+OUTLINE = {"kind": "table", "rows": 401, "columns": 2, "header_cells": 0,
+           "first_row": [{"text": "Title", "header": False},
+                         {"text": "Status", "header": False}]}
+
+
+def test_a_containers_shape_travels_to_the_judge():
+    """The whole point of the outline: a table's markup is bounded and its shape is not.
+
+    Measured on a real 401-row table in a real browser: 31,985 characters of markup against 906
+    of outline, with nothing about the shape lost. The markup would have been cut at 8,000 —
+    three quarters of the table gone, and the judge answering as though it had seen all of it.
+    """
+    element = CapturedElement.from_dict(
+        {"tag": "table", "selector": "#orders", "structure": OUTLINE})
+    assert to_candidate(element).structure["rows"] == 401
+
+
+def test_an_element_that_is_not_a_container_carries_no_shape():
+    """`null` from the capture means "not one of those", and must not read as an empty table."""
+    assert CapturedElement.from_dict({"tag": "button", "structure": None}).structure == {}
+    assert to_candidate(element(tag="button")).structure == {}
+
+
+def test_the_judge_is_handed_the_shape_along_with_the_markup():
+    from apps.a11y.dispatch import _group_by_screen
+
+    requests = select([{"tag": "table", "selector": "#orders", "route": "/r",
+                        "html": "<table>...</table>", "structure": OUTLINE}])
+    element = _group_by_screen(requests)[0]["elements"][0]
+    assert element["structure"]["header_cells"] == 0
+    assert element["checker"] == "structure"
+
+
+def test_a_table_that_grew_is_not_answered_from_the_old_verdict():
+    """The reason the shape is part of the cache key, and it is not hypothetical.
+
+    A container's markup is bounded, so a table can gain three hundred rows while the first
+    eight thousand characters stay identical. Keyed on markup alone, that table keeps its old
+    answer for ever — the cache answering about a page that no longer exists.
+    """
+    from apps.a11y.dispatch import content_hash
+
+    markup = "<table id=orders><tr><td>Title</td></tr>"      # identical either side
+    small = to_candidate(CapturedElement.from_dict(
+        {"tag": "table", "html": markup, "structure": {**OUTLINE, "rows": 3}}))
+    grown = to_candidate(CapturedElement.from_dict(
+        {"tag": "table", "html": markup, "structure": {**OUTLINE, "rows": 401}}))
+
+    assert small.html == grown.html
+    assert content_hash("structure", small) != content_hash("structure", grown)
+
+
+def test_the_same_page_twice_produces_the_same_key():
+    """A run that cannot be reproduced cannot be compared against the golden set, and a key
+    that moved on its own would re-judge every element of every unchanged page."""
+    from apps.a11y.dispatch import content_hash
+
+    def built():
+        return to_candidate(CapturedElement.from_dict(
+            {"tag": "table", "html": "<table></table>",
+             "structure": {"columns": 2, "rows": 9, "kind": "table"}}))
+
+    assert content_hash("structure", built()) == content_hash("structure", built())
+
+
+def test_a_container_the_capture_could_not_describe_says_so_rather_than_going_quiet():
+    """"We could not look" and "there is no structure here" are different answers, and an
+    absent outline would collapse them into one."""
+    unreadable = CapturedElement.from_dict(
+        {"tag": "table", "structure": {"kind": "unreadable", "reason": "detached node"}})
+    assert to_candidate(unreadable).structure["kind"] == "unreadable"
+
+
+def test_the_agent_is_taught_to_read_the_shape_before_the_markup():
+    body = AGENT_BODY.read_text(encoding="utf-8")
+    assert "`structure`" in body
+    assert "unreadable" in body
+
+
 # ── markup the judge was only shown part of ──────────────────────────
 def test_a_truncated_container_travels_to_the_judge_saying_so():
     """A judge shown the first part of a long table and not told so would answer about the

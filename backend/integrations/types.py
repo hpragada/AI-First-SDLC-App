@@ -1,7 +1,8 @@
 """Vendor-free value objects + errors shared across connectors."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -311,9 +312,21 @@ class A11yCandidate:
     selector: str = ""          # CSS selector locating the element in the rendered page
     html: str = ""              # the element's outerHTML
     #: True when `html` is only the beginning of the element's markup, because there was more
-    #: than the capture sends. It matters most for the container checks: a judge shown the
-    #: first part of a long table and not told so would answer about the whole of it.
+    #: than the capture sends. Still carried now that `structure` exists, because it is the
+    #: backstop rather than the answer: an outline describes a container's shape, and a judge
+    #: reading detail out of the markup itself still has to know when that markup stops.
     markup_truncated: bool = False
+    #: The container's shape when it is a container, computed in the browser: rows, columns,
+    #: which cells are headers and with what scope, whether a group of fields is grouped and
+    #: what names it. Empty for anything that is not a container.
+    #:
+    #: **Bounded by width, not by length**, which is the property that matters: a table's
+    #: markup grows with every row and gets cut off; its outline does not. It is also the
+    #: better input rather than merely the smaller one — recovering a grid from a wall of tags
+    #: is something code does perfectly and a language model does unreliably, so the parsing
+    #: happens once, in the browser, and the judge spends itself on the part that needs
+    #: judgment.
+    structure: Mapping = field(default_factory=dict)
     screenshot_ref: str = ""    # object-store key of the element/page image (pointer only)
     context: str = ""           # surrounding text/markup the judge needs
     route: str = ""             # the screen/route the element belongs to

@@ -829,6 +829,37 @@ def test_the_audit_script_still_offers_what_it_always_did():
         assert tag in offered, tag
 
 
+def test_the_audit_script_measures_a_containers_shape():
+    """The half of the container checks that lives in the browser.
+
+    A table's markup grows with every row and is bounded; its shape is not. The counting has to
+    happen where the live page is, so this pins that the capture does it and sends it under the
+    name the platform reads. Verified in a real browser against a 401-row table: 31,985
+    characters of markup, 906 of outline, nothing about the shape lost.
+    """
+    script = _script()
+    assert "structure: outlineOf(el)" in script
+    for part in ("tableOutline", "listOutline", "fieldsOutline", "repeatedOutline"):
+        assert part in script, part
+    # Every fact the judge is taught to read has to be one the capture actually sends.
+    for field in ("header_cells", "header_scopes", "first_row", "first_column", "columns",
+                  "grouped", "group_name", "other_children", "repeated_class"):
+        assert field in script, field
+
+
+def test_the_outline_is_bounded_so_a_long_container_costs_no_more_than_a_short_one():
+    """The property that makes this a fix rather than a bigger limit. Raising the markup cap
+    would only move the cliff; a bound on width does not have one."""
+    script = _script()
+    assert "MAX_SAMPLE = 12" in script
+    assert "MAX_SAMPLE_CHARS = 40" in script
+
+
+def test_a_container_the_capture_cannot_describe_is_reported_not_dropped():
+    script = _script()
+    assert '"unreadable"' in script or "kind: \"unreadable\"" in script
+
+
 def test_the_audit_script_captures_all_six_style_keys():
     """A missing key does not raise anywhere — it reads as "no" and silently drops the element
     from every check that needed it. Both ends spell the list out for that reason."""

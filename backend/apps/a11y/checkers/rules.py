@@ -140,8 +140,9 @@ class CapturedElement:
     of facts the rules below actually read — every field is a per-element cost in the browser,
     and a field nothing reads is a field that will quietly stop being captured correctly.
 
-    `html`, `context`, `screenshot_ref`, `selector`, `route` and `markup_truncated` are not
-    read by any rule; they are carried through onto the `A11yCandidate` the judge receives.
+    `html`, `context`, `screenshot_ref`, `selector`, `route`, `markup_truncated` and
+    `structure` are not read by any rule; they are carried through onto the `A11yCandidate`
+    the judge receives.
     (`html` is the one exception: `structure` reads it, because whether a form already groups
     its fields is a fact about the markup and nothing else.)
     """
@@ -162,6 +163,17 @@ class CapturedElement:
     #: exactly at the limit is not truncated, and guessing would make the judge hedge on a
     #: complete answer.
     markup_truncated: bool = False
+    #: The container's shape, when it is a container: how many rows and columns, which cells
+    #: are headers, whether a group of fields is grouped and what names it. Empty for
+    #: everything else.
+    #:
+    #: **This is what makes the container checks work at any size.** Markup is bounded, and a
+    #: five-column table row costs about 190 characters, so the bound holds roughly forty rows
+    #: — past that the judge was being handed the top of a table and answering as though it
+    #: were the whole of it. An outline is bounded by how WIDE a table is rather than how long,
+    #: so ten rows and ten thousand cost the same. Measured on a 401-row table: 31,985
+    #: characters of markup, 906 of outline, and nothing about the shape lost.
+    structure: Mapping = field(default_factory=dict)
     context: str = ""
     screenshot_ref: str = ""
     route: str = ""
@@ -192,6 +204,10 @@ class CapturedElement:
             },
             html=str(raw.get("html") or ""),
             markup_truncated=bool(raw.get("markup_truncated")),
+            # `null` for a non-container is the capture saying "not one of those", which is
+            # not the same as a container it could not read — that arrives as
+            # `{"kind": "unreadable", ...}` and reaches the judge as such.
+            structure=dict(raw.get("structure") or {}),
             context=str(raw.get("context") or ""),
             screenshot_ref=str(raw.get("screenshot_ref") or ""),
             route=str(raw.get("route") or ""),
@@ -591,6 +607,7 @@ def to_candidate(element: CapturedElement) -> A11yCandidate:
         selector=element.selector,
         html=element.html,
         markup_truncated=element.markup_truncated,
+        structure=dict(element.structure or {}),
         screenshot_ref=element.screenshot_ref,
         context=element.context,
         route=element.route,

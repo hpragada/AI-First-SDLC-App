@@ -279,13 +279,23 @@ an author's *claim* that there is no structure here, and whether that claim is t
 question 1.3.1 asks. A layout table announced as one is a `pass`, and saying so costs one
 judgment.
 
-### One thing found while building it
+### One thing found while building it, and the fix that followed
 
-A container's markup travels to the judge bounded at 8000 characters. For a button that is
-never close; for a long table it is, and the judge would have answered about a table it saw
-only part of — silently. The capture now says when it had to cut, the flag travels with the
-element, and the judge is told to answer `uncertain` naming the truncation rather than judge a
-fragment. **This benefits every check, not only this one.**
+A container's markup travels to the judge bounded at **8,000 characters** — about forty rows of
+a five-column table. For a button that is never close; for a long table it is, and the judge
+would have answered about a table it saw only part of, silently.
+
+The first answer was to say so: the capture reports when it had to cut, and the judge answers
+`uncertain` naming the truncation. **The team rejected that as a fix, correctly** — it stops us
+being wrong without making us useful, because an uncertain verdict routes to a person, and on a
+real reporting screen every large table would land in the review queue.
+
+**The permanent fix (§9.19 of `GAP_FIX_BUILD_PLAN.md`): send the shape, not the markup.** How
+many rows and columns, which cells are headers and what they are scoped to, what the top row and
+left column say. A few hundred characters for a table of any size, because it is bounded by how
+*wide* a container is rather than how *long*. Measured on a 401-row table: 31,985 characters of
+markup against 906 of outline, with nothing about the shape lost. The truncation flag stays,
+demoted to a backstop.
 
 ### Question 3 — also built, later the same day
 

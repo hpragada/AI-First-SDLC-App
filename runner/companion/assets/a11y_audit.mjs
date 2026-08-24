@@ -232,6 +232,141 @@ async function collectElements(page) {
         "table", "tr", "ul", "ol", "fieldset", "form", "canvas", "iframe",
       ].join(",");
 
+      // ── the structural outline ──────────────────────────────────────────────
+      //
+      //  Sending a container's raw markup does not scale, and the way it fails is silent. A
+      //  five-column table row is about 190 characters, so MAX_MARKUP holds roughly forty
+      //  rows: past that the judge is handed the top of a table and answers as though it were
+      //  the whole of it.
+      //
+      //  Raising the limit only moves the cliff. This removes it: the outline describes the
+      //  container's SHAPE, which is what 1.3.1 actually asks about, and its size is bounded
+      //  by how WIDE a table is rather than how long. Ten rows and ten thousand cost the same.
+      //
+      //  It is also the better input, not merely the smaller one. Recovering a grid from a
+      //  wall of tags is something code does perfectly and a language model does unreliably —
+      //  so the parsing happens here, once, and the judge gets to spend itself on the question
+      //  that actually needs judgment.
+      const MAX_SAMPLE = 12;         // how many rows/items to quote
+      const MAX_SAMPLE_CHARS = 40;   // how much of each
+
+      function words(node) {
+        return ((node && node.textContent) || "").replace(/\s+/g, " ").trim()
+          .slice(0, MAX_SAMPLE_CHARS);
+      }
+
+      function tableOutline(el) {
+        const rows = [...el.querySelectorAll(":scope > tr, :scope > * > tr")];
+        const first = rows[0];
+        const firstCells = first ? [...first.children] : [];
+        const scopes = [...new Set(
+          [...el.querySelectorAll("th[scope]")].map((th) => th.getAttribute("scope")))];
+        return {
+          kind: "table",
+          rows: rows.length,
+          columns: firstCells.length,
+          header_cells: el.querySelectorAll("th").length,
+          header_scopes: scopes,
+          caption: words(el.querySelector(":scope > caption")),
+          // What the top row says, and whether each of its cells is actually a header cell.
+          // A row of plain cells reading like column titles is the commonest 1.3.1 failure
+          // there is, and this is the whole of the evidence for it.
+          first_row: firstCells.map((c) => ({
+            text: words(c), header: c.tagName.toLowerCase() === "th",
+          })),
+          // The same question down the left-hand side, for a table whose row labels are the
+          // first column.
+          first_column: rows.slice(0, MAX_SAMPLE).map((r) => {
+            const cell = r.children[0];
+            return cell
+              ? { text: words(cell), header: cell.tagName.toLowerCase() === "th" }
+              : { text: "", header: false };
+          }),
+          nested_tables: el.querySelectorAll("table").length,
+        };
+      }
+
+      function listOutline(el) {
+        const items = [...el.children].filter(
+          (c) => ["li", "dt", "dd"].includes(c.tagName.toLowerCase()));
+        return {
+          kind: "list",
+          items: items.length,
+          // Children that are not items at all. A list holding stray content is a list whose
+          // structure does not say what it looks like.
+          other_children: el.children.length - items.length,
+          nested_lists: el.querySelectorAll("ul, ol, dl").length,
+          sample: items.slice(0, MAX_SAMPLE).map(words),
+        };
+      }
+
+      function fieldsOutline(el) {
+        const controls = [...el.querySelectorAll("input, select, textarea")]
+          .filter((c) => (c.getAttribute("type") || "").toLowerCase() !== "hidden");
+        const group = el.querySelector("fieldset, [role='group'], [role='radiogroup']");
+        const legend = group && group.querySelector("legend");
+        return {
+          kind: "fields",
+          controls: controls.length,
+          types: [...new Set(controls.map(
+            (c) => (c.getAttribute("type") || c.tagName).toLowerCase()))],
+          // Fields that only mean anything as a set: one radio button on its own answers
+          // nothing, so whether they are grouped is the whole question.
+          grouped_fields: controls.filter((c) =>
+            ["radio", "checkbox"].includes((c.getAttribute("type") || "").toLowerCase())).length,
+          grouped: !!group,
+          group_name: group
+            ? (words(legend) || (group.getAttribute("aria-label") || "").slice(0, MAX_SAMPLE_CHARS))
+            : "",
+          labels: el.querySelectorAll("label").length,
+        };
+      }
+
+      function repeatedOutline(el) {
+        const counts = {};
+        for (const child of el.children) {
+          const key = (child.getAttribute("class") || "").trim().toLowerCase();
+          if (key) counts[key] = (counts[key] || 0) + 1;
+        }
+        let repeated = "";
+        let most = 0;
+        for (const [key, n] of Object.entries(counts)) {
+          if (n > most) { most = n; repeated = key; }
+        }
+        if (most < 3) return null;      // a pair is an arrangement, not a list
+        const same = [...el.children].filter(
+          (c) => (c.getAttribute("class") || "").trim().toLowerCase() === repeated);
+        return {
+          kind: "repeated",
+          children: el.children.length,
+          repeated_class: repeated,
+          repeated_count: most,
+          child_tags: [...new Set(same.map((c) => c.tagName.toLowerCase()))],
+          sample: same.slice(0, MAX_SAMPLE).map(words),
+        };
+      }
+
+      /** The container's shape, or null for anything that is not a container.
+       *
+       *  Bounded on purpose: every field here is either a count or a short quotation, so an
+       *  outline costs the same for a ten-row table and a ten-thousand-row one. That is the
+       *  property that makes it a fix rather than a bigger limit. */
+      function outlineOf(el) {
+        try {
+          const tag = el.tagName.toLowerCase();
+          if (tag === "table") return tableOutline(el);
+          if (["ul", "ol", "dl"].includes(tag)) return listOutline(el);
+          if (["form", "fieldset"].includes(tag)) return fieldsOutline(el);
+          if (tag === "div") return repeatedOutline(el);
+          return null;
+        } catch (err) {
+          // A container that cannot be described is reported as such, never as an absent
+          // outline: the judge has to be able to tell "no structure here" from "we could not
+          // look", and silence would collapse the two.
+          return { kind: "unreadable", reason: String((err && err.message) || err) };
+        }
+      }
+
       function cssPath(el) {
         const parts = [];
         let node = el;
@@ -299,6 +434,9 @@ async function collectElements(page) {
           styles: styles(el),
           parent_styles: el.parentElement ? styles(el.parentElement) : {},
           html: el.outerHTML.slice(0, MAX_MARKUP),
+          // The container's shape, bounded, for the checks that ask about arrangement rather
+          // than about one element. Absent for anything that is not a container.
+          structure: outlineOf(el),
           // True when there was more and it did not fit. The judge is told, and answers
           // `uncertain` naming the truncation rather than judging a table it half saw.
           markup_truncated: el.outerHTML.length > MAX_MARKUP,

@@ -17,9 +17,9 @@ only then do we move on.
 
 > **Status, 2026-08-21.** This line used to read *"nothing in here is built yet"*. **All eleven
 > gaps in §3 and §4 are built**, and the document has since grown a second half nobody planned
-> for: **§9, what running it turned up** — **twenty-two so far across eighteen sections**, all
+> for: **§9, what running it turned up** — **twenty-three so far across nineteen sections**, all
 > built. #19–#35 were found by people watching the product work rather than by
-> reading code; #36–#40 came the other way, from the team asking whether we capture every
+> reading code; #36–#41 came the other way, from the team asking whether we capture every
 > element WCAG puts in scope and the answer being no. §3 is the plan as written; §9 is what
 > reality added to it, and §9 is now the larger and the more useful of the two.
 
@@ -1331,12 +1331,12 @@ Jira and no Confluence — 10 in scope on the first run, 12 on the third, 11 on 
 team took `/staff/shelf-audit` out to stay under the judging cap.
 
 > **This section was appended as an afterthought and is now the larger half of the document.**
-> §3 is the plan as written; §9 is what running it added: **twenty-two findings across eighteen
-> sections** (§9.1–§9.18), all built. #19–#35 were produced by a person
-> watching the product work; #36–#40 by putting twelve textbook WCAG failures through the
+> §3 is the plan as written; §9 is what running it added: **twenty-three findings across nineteen
+> sections** (§9.1–§9.19), all built. #19–#35 were produced by a person
+> watching the product work; #36–#41 by putting twelve textbook WCAG failures through the
 > selection code after the team asked what we do and do not capture. **Every built one has a
 > green test suite standing over it** — which is the point, and why they are written up at
-> length. They are numbered #19–#40 in the Testing Guide.
+> length. They are numbered #19–#41 in the Testing Guide.
 
 **It worked, and it found four defects no test could have caught, each hidden behind the one
 before it.** That is the shape of a capability that has never run: the first defect stops you
@@ -2348,3 +2348,69 @@ can argue with, which is the most a test can do about this.
 
 **Verified:** 55 tests, 46 corpus rows across all five claimed criteria. Regression: 354 across
 the corpus, checkers, capability, capture and dispatch suites.
+
+### 9.19 A container's markup did not scale, and failed silently — 24 August ⭐ (BUILT)
+
+**Raised by the team**, reading §9.16: *if answering "not sure" does not actually help, it
+should have a surgical permanent fix, right?* It should, and it now does.
+
+**The number, which §9.16 should have stated.** An element's markup reaches the judge bounded at
+**8,000 characters**. A five-column table row of realistic markup measures 188, so the bound
+holds roughly **forty rows**. Across the whole 21 August audit the largest element captured was
+503 characters — nowhere near it — because Meridian's tables are small. On a client's reporting
+screen it would bite on almost every table.
+
+**Why `uncertain` was not the fix.** It stops us being *wrong*; it does not make us *useful*. An
+uncertain verdict routes the element to a person, so on a real reporting screen **every large
+table would land in the review queue** — an automated check turned back into a manual one
+exactly where tables matter most. Honest, and useless.
+
+**The fix: send the shape, not the markup.** What 1.3.1 asks about a table is its arrangement —
+how many rows and columns, which cells are headers and what they are scoped to, whether there is
+a caption, what the top row and left column say. That is a few hundred characters for a table of
+**any** size, because it is bounded by how *wide* a container is rather than how *long*.
+
+**Measured in the real browser engine, against a real 401-row table:**
+
+| | markup | outline |
+|---|---|---|
+| 3-row table | 206 chars | 317 chars |
+| **401-row table** | **31,985 chars** — cut at 8,000, three quarters lost | **906 chars, nothing about the shape lost** |
+
+**It is also the better input, not merely the smaller one.** Recovering a grid from a wall of
+tags is something code does perfectly and a language model does unreliably. The parsing now
+happens once, in the browser, and the judge spends itself on the part that actually needs
+judgment. The failing case reads directly: `rows: 401, columns: 2, header_cells: 0`, with a
+first row of two cells whose `header` is `false` and whose text is "Title" and "Status" —
+column headings to every reader of the page, ordinary cells to every screen reader.
+
+**In the cache key, and it had to be.** A container's markup is bounded, so a table can gain
+three hundred rows while its first 8,000 characters stay byte-for-byte identical. Keyed on
+markup alone, that table would keep its old verdict for ever — the cache answering about a page
+that no longer exists. A missed cache hit costs one judgment; a stale one costs the truth.
+
+⚠️ **This invalidates every stored verdict once**, so the next audit re-judges from scratch.
+That is the intended price, and it was paid at the one moment it is free: **no reviewer has
+ruled on any finding yet**, so no human decision went with it. Later, it would have cleared
+rulings people had made.
+
+**The truncation flag stays**, demoted to what it should always have been — a backstop for
+detail further down the markup, not the answer to the question.
+
+**Three deliberate details:**
+- A container the capture **could not** describe arrives as `{"kind": "unreadable"}` with a
+  reason, never as an absent outline. "We could not look" and "there is no structure here" are
+  different answers and must not collapse into one.
+- A non-container carries **no** outline at all, so an empty one can never read as an empty
+  table.
+- Serialised with sorted keys, or two runs over an unchanged page would disagree about the
+  cache key and re-judge everything for ever.
+
+**Verified:** the outline functions were lifted out of the shipped capture script and run in
+**Playwright, the same engine the companion drives**, against a page holding every shape they
+exist for — a table with no headers, the same table done correctly, a list with stray content,
+grouped and ungrouped fields, a card grid, a two-panel layout (correctly `null`), and the
+401-row table. 10 new tests in `test_a11y_checkers.py` and 3 in `test_a11y_baseline.py`, 235
+across the checker and capture suites, 305 across dispatch, corpus, report and judge. A third
+guard test — the one pinning exactly what the cache key reads — fired and was updated with its
+reasoning rather than loosened.

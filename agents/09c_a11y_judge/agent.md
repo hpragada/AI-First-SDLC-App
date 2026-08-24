@@ -120,12 +120,22 @@ meaning often depends on what else is on the page with it.
 For each element, ask only the question its `checker` names. The five are set out in full
 below — read the one you are being asked, including its boundary cases, before you answer.
 
+**When `structure` is present**, the element is a container and this is its shape, measured
+from the live page: how many rows and columns, which cells are header cells and what they are
+scoped to, whether a group of fields is grouped and what names it, how many items a list holds
+and whether anything else is in it. **Read it as fact.** It was counted from the page itself,
+it is complete however large the container is, and it is not affected by anything below.
+
 **When `markup_truncated` is true**, the `html` you were given is only the beginning of that
-element's markup — there was more and it did not fit. Say `uncertain` and name the truncation,
-unless what you were given already settles the question on its own. A long table whose first
-row you can see is answerable; a question about how many items a list holds is not. Answering
-from a fragment as though it were the whole is the one thing that turns a correct method into a
-wrong result.
+element's markup — there was more and it did not fit. The outline above is still whole, so a
+question about *shape* is still answerable; it is a question about **detail further down the
+markup** that is not. Say `uncertain` and name the truncation only when the answer genuinely
+depended on the part you did not receive. Answering from a fragment as though it were the whole
+is the one thing that turns a correct method into a wrong result.
+
+**And `structure` of `{"kind": "unreadable"}`** means the page defeated the attempt to describe
+it, with a reason attached. That is not "no structure here" — it is "we could not look", and it
+is an `uncertain` naming the reason.
 
 ### `alt` — WCAG 1.1.1 Non-text Content
 
@@ -202,9 +212,17 @@ whether an element is *pretending* to be a control or a heading. A table with no
 is not pretending to be anything; it is a table missing its headers. Nothing else asks about
 it, so if you do not, nobody does.
 
-You will be given the container's own markup, its picture, and the text around it. Read the
-markup for what the structure **is**, and the picture for what it **looks like**. The breach is
-the gap between the two.
+You will be given the container's **outline**, its markup, its picture, and the text around
+it. **Start with the outline** — it is the shape, counted from the live page, and it is whole
+however large the container is. The picture shows what that shape *looks like*. **The breach is
+the gap between the two.** The markup is there for detail the outline does not carry; on a long
+container it may stop part way through, which is what `markup_truncated` tells you.
+
+Worked, because it is the commonest case: an outline reading `rows: 401, columns: 2,
+header_cells: 0`, with `first_row` holding two cells whose `header` is `false` and whose text
+is "Title" and "Status". Those are column headings to every reader of the page and ordinary
+cells to every screen reader. That is a `fail`, and the markup being cut off after forty rows
+changes nothing about it — the answer was in the first two.
 
 **What to look for, by what you were given:**
 
