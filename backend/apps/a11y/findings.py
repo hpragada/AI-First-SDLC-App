@@ -219,7 +219,7 @@ def _ruling_still_applies(existing, incoming_hash: str) -> bool:
 #: report must mean the same thing by the same words.
 NOTHING_IN_SCOPE = "no element on this page was in scope for this check"
 
-#: Every criterion the four AI checks own, flattened. Read once here rather than per route.
+#: Every criterion the AI checks own, flattened. Read once here rather than per route.
 AI_OWNED_CRITERIA: frozenset[str] = frozenset(
     criterion for criteria in A11Y_CHECKER_CRITERIA.values() for criterion in criteria
 )

@@ -537,7 +537,7 @@ def test_the_agent_body_uses_only_platform_tools():
     body = AGENT_BODY.read_text(encoding="utf-8")
     for tool in ("get_a11y_batch", "get_wcag_grounding", "record_a11y_finding"):
         assert tool in body
-    # Its whole job is the four checkers and the criteria they own.
+    # Its whole job is the checkers and the criteria they own.
     for checker in A11Y_CHECKER_CRITERIA:
         assert checker in body
     for criterion in ("1.1.1", "1.3.1", "4.1.2", "1.4.1", "2.5.3"):

@@ -84,6 +84,17 @@ REQUIREMENTS: dict[str, AnswerRequirement] = {
             "text itself, e.g. suggested_fix='Chart: revenue grew from £1.2m to £3.4m in 2025'"
         ),
     ),
+    "structure": _NeedsFix(
+        checker="structure",
+        needs="the markup that is missing",
+        message=(
+            "a failing `structure` finding must say what markup to add in suggested_fix — "
+            "1.3.1 is breached because the arrangement is visible and not written down, so the "
+            "finding is not complete until it names what to write. e.g. suggested_fix='make "
+            "the first row header cells: <th scope=\'col\'>Subject</th>' or 'wrap the three "
+            "delivery options in a <fieldset> with <legend>Delivery</legend>'"
+        ),
+    ),
     "color": _NeedsFix(
         checker="color",
         needs="the second visual cue that is missing",

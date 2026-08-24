@@ -247,9 +247,24 @@ A11Y_VERDICTS = frozenset({A11Y_PASS, A11Y_FAIL, A11Y_UNCERTAIN})
 A11Y_CHECKER_CRITERIA: dict[str, tuple[str, ...]] = {
     "alt": ("1.1.1",),                  # Non-text Content — is the alt text meaningful?
     "semantics": ("1.3.1", "4.1.2"),    # Info and Relationships / Name, Role, Value
+    "structure": ("1.3.1",),            # Info and Relationships — is the visible structure real?
     "color": ("1.4.1",),                # Use of Color — is meaning carried by colour alone?
     "label": ("2.5.3",),                # Label in Name — does the visible label match the AN?
 }
+
+#: **Why `semantics` and `structure` both carry 1.3.1, and are still two checks.**
+#: They ask different questions about it. `semantics` looks at ONE element and asks whether it
+#: is pretending to be a control or a heading. `structure` looks at a CONTAINER — a table, a
+#: list, a group of fields — and asks whether the arrangement a sighted person can see is
+#: written into the markup at all. A table with no header cells is not pretending to be
+#: anything, so the first question never reaches it; that gap is why every page of the 21
+#: August audit was recorded as satisfying 1.3.1 while nothing had looked at its tables
+#: (`SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`).
+#:
+#: Kept apart rather than merged because the accuracy harness scores **per checker**: folded
+#: together, a good score on fake buttons would hide a poor one on tables, which is the exact
+#: averaging that let this go unnoticed. Two checkers may own one criterion without conflict —
+#: coverage takes the worst outcome reported for it, never the most recent.
 
 #: checker -> criteria for the **journey** checks (QA-20, Phase 2). These cannot be answered
 #: from a captured page at all: each one is a question about what happens *while you operate
@@ -295,6 +310,10 @@ class A11yCandidate:
 
     selector: str = ""          # CSS selector locating the element in the rendered page
     html: str = ""              # the element's outerHTML
+    #: True when `html` is only the beginning of the element's markup, because there was more
+    #: than the capture sends. It matters most for the container checks: a judge shown the
+    #: first part of a long table and not told so would answer about the whole of it.
+    markup_truncated: bool = False
     screenshot_ref: str = ""    # object-store key of the element/page image (pointer only)
     context: str = ""           # surrounding text/markup the judge needs
     route: str = ""             # the screen/route the element belongs to

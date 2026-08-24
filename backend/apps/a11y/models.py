@@ -113,7 +113,7 @@ class A11yCandidateBundle(TenantScopedModel):
     # over ~2.7 KB. Ingest truncates rather than failing the whole screen on one long selector.
     selector = models.CharField(max_length=512)       # unique within a route
 
-    # Which of the four checks apply to this element, in `rules.CHECKERS` order.
+    # Which of the AI checks apply to this element, in `rules.CHECKERS` order.
     checkers = ArrayField(models.CharField(max_length=16), default=list)
 
     # The captured element exactly as `rules.CapturedElement.from_dict` reads it. Stored whole
@@ -146,7 +146,7 @@ class A11yScreenScan(TenantScopedModel):
 
     The other half of the merged report. `A11yCandidateBundle.axe` carries the scanner's verdict
     on an element the AI is going to be asked about, which is what makes the two comparable —
-    but a row only exists for an element one of the four checks applies to. A scanner failure on
+    but a row only exists for an element one of the AI checks applies to. A scanner failure on
     anything else has no bundle, so without this table the merged report's rule half would
     quietly cover a subset of the scan and read as the whole of it.
 

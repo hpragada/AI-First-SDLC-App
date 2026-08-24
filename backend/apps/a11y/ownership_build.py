@@ -36,7 +36,7 @@ sequence of the extracted region is compared to the word sequence of the parsed 
 (number + name + level + owner + tier + rationale, in document order). A dropped row, a
 swallowed rationale or an invented word fails the build. This is the same proof QA-04 uses
 on the normative WCAG text, and it exists because the first version of this parser silently
-dropped **four rows** — including 1.4.1 Use of Color, one of the four POC checkers — where
+dropped **four rows** — including 1.4.1 Use of Color, one of the POC checkers — where
 `Sensory CharacteristicsA` gave the pattern nowhere to anchor.
 
 **Two things beyond the primary owner**, because a criterion is rarely one engine's alone:

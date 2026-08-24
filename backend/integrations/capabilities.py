@@ -173,10 +173,10 @@ class CodeIntel(Protocol):
 
 @runtime_checkable
 class A11yAI(Protocol):
-    """AI accessibility judgment (model-agnostic, vendor-free) — the four WCAG questions a
-    rule scanner like axe genuinely cannot answer: is the alt text *meaningful*, is this
-    really a button, is meaning carried by colour *alone*, does the visible label match the
-    accessible name.
+    """AI accessibility judgment (model-agnostic, vendor-free) — the WCAG questions a rule
+    scanner like axe genuinely cannot answer: is the alt text *meaningful*, is this really a
+    button, is the arrangement of this table written into the markup, is meaning carried by
+    colour *alone*, does the visible label match the accessible name.
 
     A capability for its **shape** (#9): callers ask `get_capability(tenant, "a11yai")` and
     never name a model or vendor, so the judge underneath can be swapped without touching
@@ -190,7 +190,7 @@ class A11yAI(Protocol):
       - A check that cannot answer returns `uncertain` (see `types.uncertain`) so the item
         goes to human review. It never guesses, raises, or returns a partial result.
 
-    **These four are a per-element question, not a way to start work** (D-A11Y-4, QA-03). The
+    **These are per-element questions, not a way to start work** (D-A11Y-4, QA-03). The
     platform's own implementation judges in batches — one agent run per dispatch, so ten
     screens cost one run and not four hundred — so asking it about a single element answers
     from what has already been judged, and says `uncertain` ("not judged yet") when nothing
@@ -209,6 +209,16 @@ class A11yAI(Protocol):
         exposed as one (real role/name/state), or a styled `div` faking it?"""
         ...
 
+    def check_structure(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
+        """WCAG 1.3.1 — is the arrangement a sighted person can see written into the markup?
+
+        The container question, and the counterpart to `check_semantics`'s element question: a
+        table whose top row is obviously headings, a list of items, a set of fields that
+        clearly belong together. None of those is *pretending* to be anything, so nothing else
+        here reaches them.
+        """
+        ...
+
     def check_color(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
         """WCAG 1.4.1 — is meaning conveyed by colour alone, with no text/shape/icon backup?"""
         ...
@@ -222,7 +232,7 @@ class A11yAI(Protocol):
         """WCAG 2.1.1 / 2.1.2 / 2.4.3 / 2.4.7 / 2.4.11 / 3.2.1 / 3.2.2 / 4.1.3 — the eight
         questions that can only be answered by **operating** the application (QA-20).
 
-        The four checks above ask about a page standing still. This one asks what happens while
+        The checks above ask about a page standing still. This one asks what happens while
         someone uses it: does tabbing ever trap you, does focus stay visible and unobscured,
         does anything change under you when an element takes focus or a field is typed in, is a
         status message announced at all. None of it is visible in a captured page, which is why

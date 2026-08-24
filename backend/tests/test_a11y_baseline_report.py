@@ -782,7 +782,7 @@ def test_a_re_judge_that_finished_the_job_clears_the_documents_warning_too(world
 def test_the_baseline_says_when_a_whole_check_could_not_run(world):
     """The name check needs the browser to answer what each element is called. When the
     toolchain breaks it selects nothing — every element still arrives, three checks run
-    perfectly, and the fourth reports nothing. Silence from a check that never ran is
+    perfectly, and one reports nothing. Silence from a check that never ran is
     indistinguishable from a clean result unless the document says which it was."""
     _finding(world, fingerprint="one")
     audit = _audit_with(
@@ -790,7 +790,7 @@ def test_the_baseline_says_when_a_whole_check_could_not_run(world):
         names={"named": 0, "nameable": 91,
                "reason": "the browser did not answer when asked what each element is called."})
     body = baseline_body(tenant_id=world["t"], project_id=world["p"], audit=audit)
-    assert "**One of the four checks could not run at all.**" in body
+    assert "**One of the checks could not run at all.**" in body
     assert "its silence is not a clean result" in body
 
 

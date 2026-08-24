@@ -2,7 +2,7 @@
 
 What these prove, against the task's acceptance criteria:
 
-  AC1  a tenant with `a11yai` configured resolves to an object exposing all four checks
+  AC1  a tenant with `a11yai` configured resolves to an object exposing every check
   AC2  every check returns a COMPLETE result — criteria, verdict, confidence, evidence,
        suggested_fix — including the missing-input and cannot-answer paths
   AC3  the capability is tenant-scoped, proven under the real RLS app role (not the
@@ -13,7 +13,7 @@ They also pin the three team decisions of 2026-08-12: every tenant is auto-provi
 "connect" step for a capability with nothing to connect), one judgment carries every WCAG
 criterion it breaches, and the vendor slug names the platform rather than a model.
 
-UPDATED BY QA-03 (D-A11Y-4). QA-01 shipped these four checks as a stub returning `NOT_WIRED`,
+UPDATED BY QA-03 (D-A11Y-4). QA-01 shipped these checks as a stub returning `NOT_WIRED`,
 with a test pinning that string so its removal would be *provable* rather than assumed. This
 is that removal: the checks now answer from the judgments the batch path has stored, and say
 "not judged yet" when there are none. `NOT_WIRED` no longer exists anywhere in the codebase —
@@ -40,7 +40,7 @@ from integrations.types import (
     uncertain,
 )
 
-#: The four checks, with every WCAG criterion each one covers. `semantics` covers two
+#: The checks, with every WCAG criterion each one covers. `semantics` covers two
 #: because one fake button breaches both (team decision — see A11yJudgment's docstring).
 CHECKS = [
     ("check_alt", "alt", ("1.1.1",)),
@@ -80,7 +80,7 @@ def test_configured_tenant_resolves_to_the_a11yai_capability(tenant):
     assert isinstance(checker, A11yAI)  # behind the vendor-free Protocol, not a named model
 
 
-def test_all_four_checks_are_exposed(tenant):
+def test_every_check_is_exposed(tenant):
     _connect_a11yai(tenant)
     checker = get_capability(tenant.id, "a11yai")
     for method, _, _ in CHECKS:
@@ -232,13 +232,33 @@ def test_uncertain_helper_builds_a_complete_judgment():
     assert judgment.evidence == "could not see the element"
 
 
+def test_the_capability_offers_a_check_for_every_checker_in_the_registry():
+    """A checker in the registry with no method on the capability is selectable, dispatchable
+    and unanswerable — it would reach the judge and have nowhere to put the verdict."""
+    from integrations.capabilities import A11yAI
+
+    for checker in A11Y_CHECKER_CRITERIA:
+        assert hasattr(A11yAI, f"check_{checker}"), checker
+
+
 def test_every_checker_maps_to_a_real_wcag_criterion():
-    """The four POC checkers and the criteria they own (research: 1.1.1 / 1.3.1+4.1.2 /
+    """The five POC checkers and the criteria they own (research: 1.1.1 / 1.3.1+4.1.2 / 1.3.1 /
     1.4.1 / 2.5.3). Guards against a checker silently reporting against the wrong criterion,
-    which would corrupt the conformance picture downstream."""
+    which would corrupt the conformance picture downstream.
+
+    **`semantics` and `structure` both carry 1.3.1, deliberately.** They ask different
+    questions about it: one looks at a single element and asks whether it is pretending to be a
+    control or a heading; the other looks at a container and asks whether the arrangement a
+    sighted person can see is written into the markup at all. A table with no header cells is
+    not pretending to be anything, so the first question never reached it — which is how every
+    page of the 21 August audit came to be recorded as satisfying 1.3.1 with its tables
+    unexamined. They stay two checkers because accuracy is scored per checker, and folded
+    together a good score on fake buttons would hide a poor one on tables.
+    """
     assert A11Y_CHECKER_CRITERIA == {
         "alt": ("1.1.1",),
         "semantics": ("1.3.1", "4.1.2"),
+        "structure": ("1.3.1",),
         "color": ("1.4.1",),
         "label": ("2.5.3",),
     }

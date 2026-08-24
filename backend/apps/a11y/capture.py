@@ -138,7 +138,7 @@ def _violation(raw, route: str) -> dict:
     """One thing the rule scanner proved about this screen, normalised (QA-12).
 
     Screen-level, and deliberately NOT derived from the captured elements. An element only gets
-    stored if one of the four AI checks applies to it, so a scanner failure on anything else —
+    stored if one of the AI checks applies to it, so a scanner failure on anything else —
     a missing `lang`, a duplicate id, a landmark problem — would have no record anywhere in the
     platform. Its text would still be in the test report, as prose an LLM wrote, which is not
     something the merge may parse and rely on. So the scan reports itself, whole.
@@ -244,7 +244,7 @@ def _screen(raw) -> dict:
         raise CaptureError(
             f"screen {route!r} captured {len(elements)} elements, over the limit of "
             f"{MAX_ELEMENTS_PER_SCREEN}. Nothing was stored for it — capture the elements the "
-            f"four checks look at, not every node on the page."
+            f"AI checks look at, not every node on the page."
         )
     violations = data.get("axe_violations")
     if violations is None:

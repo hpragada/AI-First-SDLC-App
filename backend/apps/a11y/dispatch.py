@@ -298,6 +298,7 @@ def _group_by_screen(requests: list[A11yRequest]) -> list[dict]:
             "criteria": list(A11Y_CHECKER_CRITERIA[request.checker]),
             "selector": request.candidate.selector,
             "html": request.candidate.html,
+            "markup_truncated": request.candidate.markup_truncated,
             "screenshot_ref": request.candidate.screenshot_ref,
             "context": request.candidate.context,
         })

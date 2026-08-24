@@ -68,7 +68,7 @@ NOT_WALKED_YET = (
 
 
 class BuiltinA11yAI:
-    """Judges the four POC accessibility questions for one tenant.
+    """Judges the POC accessibility questions for one tenant.
 
     Holds the tenant (every judgment is that tenant's data, and the lookup runs under that
     tenant's RLS role) and the connection's `scopes`, which is where the per-tenant judgment
@@ -85,6 +85,9 @@ class BuiltinA11yAI:
 
     def check_semantics(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
         return self._judge("semantics", candidate, project_id)
+
+    def check_structure(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
+        return self._judge("structure", candidate, project_id)
 
     def check_color(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
         return self._judge("color", candidate, project_id)
@@ -117,11 +120,11 @@ class BuiltinA11yAI:
         return [uncertain(criteria, checker=checker, reason=NOT_WALKED_YET)
                 for checker, criteria in A11Y_JOURNEY_CRITERIA.items()]
 
-    # ── one path for all four ───────────────────────────────────────────
+    # ── one path for all of them ────────────────────────────────────────
     def _judge(self, checker: str, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
         """The single place a judgment is produced, so the guarantees the capability makes —
         always a complete result, never a raise, `uncertain` when it cannot answer — hold for
-        all four checks by construction rather than by four copies of the same care.
+        every check by construction rather than by a copy of the same care per check.
         """
         from apps.a11y.dispatch import stored_judgment
 

@@ -66,7 +66,7 @@ EXPECTED_55 = [
     "4.1.2", "4.1.3",
 ]
 
-# The four POC checkers judge against these (QA-01 `A11Y_CHECKER_CRITERIA`).
+# The POC checkers judge against these (QA-01 `A11Y_CHECKER_CRITERIA`).
 POC_CRITERIA = ["1.1.1", "1.3.1", "1.4.1", "2.5.3", "4.1.2"]
 
 
@@ -125,7 +125,7 @@ def test_every_criterion_answers_the_act_question_explicitly():
     assert len(without) == 25
     for crit in dataset()["criteria"]:
         assert crit["no_act_rule"] == (not crit["act_rules"])
-    # 1.4.1 Use of Color is one of the four POC checkers and has no ACT rule at all —
+    # 1.4.1 Use of Color is one of the POC checkers and has no ACT rule at all —
     # exactly why it needs an AI judge rather than a deterministic scan.
     assert next(c for c in dataset()["criteria"] if c["number"] == "1.4.1")["no_act_rule"]
 
@@ -1029,7 +1029,13 @@ def test_built_coverage_is_what_the_documents_claim():
     )
     ai = {c for pair in A11Y_CHECKER_CRITERIA.values() for c in pair}
     journey = {c for pair in A11Y_JOURNEY_CRITERIA.values() for c in pair}
-    assert len(CHECKERS) == 4 and ai == {"1.1.1", "1.3.1", "1.4.1", "2.5.3", "4.1.2"}
+    # Five checkers over five criteria, not one each: `semantics` covers two, and 1.3.1 is
+    # covered twice over because it is two different questions. `semantics` asks whether one
+    # element is pretending to be a control or a heading; `structure` asks whether a
+    # container's visible arrangement exists in the markup at all. Adding the second did not
+    # widen what the POC claims to cover - the criteria set below is unchanged - it closed a
+    # hole inside a criterion already claimed (SCOPE_GAP_INFO_AND_RELATIONSHIPS.md).
+    assert len(CHECKERS) == 5 and ai == {"1.1.1", "1.3.1", "1.4.1", "2.5.3", "4.1.2"}
     assert journey == {"2.1.1", "2.1.2", "2.4.3", "2.4.7", "2.4.11", "3.2.1", "3.2.2", "4.1.3"}
 
 

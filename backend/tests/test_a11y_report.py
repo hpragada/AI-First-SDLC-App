@@ -218,7 +218,7 @@ def _by_checker(world, checker):
 # ══ the capture carries the whole scan, not only what got selected ═════════════════
 
 def test_a_screens_whole_scan_is_read_and_stored(world):
-    """The completeness half of AC1. A row only exists for an element one of the four AI checks
+    """The completeness half of AC1. A row only exists for an element one of the AI checks
     applies to, so a violation on anything else would have no record anywhere — which is why
     the scan reports itself at screen level."""
     out = _ingest(world)

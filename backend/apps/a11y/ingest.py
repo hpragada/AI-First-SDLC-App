@@ -5,7 +5,7 @@ page. This turns it into the rows the AI pass reads — and does the two things 
 scan affordable and honest, in this order:
 
   1. **Select, then crop** (team decision, 2026-08-14). The rules in `checkers.rules` decide
-     which elements any of the four checks apply to, and only those get an image cut for them.
+     which elements any of the AI checks apply to, and only those get an image cut for them.
      A screen offers a few hundred elements and yields a few dozen candidates, so cropping
      first would spend most of its work on elements nobody will ever ask about.
 
@@ -302,7 +302,7 @@ def ingest_screen(*, tenant_id, project_id, screen: dict, run_id=None, run_key=N
             element = CapturedElement.from_dict(raw)
             # SELECTION FIRST — this is the line the ordering decision is about. Everything
             # below it (a crop, an object write, a row) happens only for an element at least
-            # one of the four checks actually applies to.
+            # one of the AI checks actually applies to.
             checkers = checkers_for(element)
             if not checkers:
                 continue

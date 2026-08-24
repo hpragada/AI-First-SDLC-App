@@ -212,7 +212,7 @@ def _row_from_triage(finding: TriagedFinding, audit: dict | None = None) -> Repo
 def _row_from_rule(failure: A11yRuleFailure) -> ReportRow:
     """A scanner failure on something the AI was never asked about.
 
-    Most of the scan lands here — the four AI checks apply to a minority of what axe flags —
+    Most of the scan lands here — the AI checks apply to a minority of what axe flags —
     and it is the half that would have been missing if the merge only walked the judgments.
     """
     return ReportRow(

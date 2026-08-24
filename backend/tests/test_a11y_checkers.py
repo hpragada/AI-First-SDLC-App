@@ -357,6 +357,143 @@ def test_a_submit_button_whose_name_already_holds_its_value_is_not_asked_about()
     assert "label" not in checkers_for(met)
 
 
+# ── structure: WCAG 1.3.1, the container question ────────────────────
+@pytest.mark.parametrize("tag", ["table", "ul", "ol", "dl", "fieldset"])
+def test_structure_selects_every_container_that_carries_an_arrangement(tag):
+    """Including the ones that look correct.
+
+    Whether a table's headers are the RIGHT cells, whether a list's items are really items,
+    whether a legend names its group — none of that is decidable from the tag, and the rule
+    engine already covers the cases where markup contradicts itself. What is left is the
+    judgment this check exists for.
+    """
+    assert "structure" in checkers_for(element(tag=tag, text="Subject Shelf"))
+
+
+def test_structure_selects_a_table_with_no_header_cells():
+    """The failure that went unreported on eleven pages: not pretending to be anything, so
+    `semantics` never reached it, and the page was recorded as satisfying 1.3.1 regardless."""
+    table = element(tag="table", selector="#subject-index", text="Subject Shelf Botany 4B",
+                    html="<table id=subject-index><tr><td>Subject</td><td>Shelf</td></tr>"
+                         "<tr><td>Botany</td><td>4B</td></tr></table>")
+    assert checkers_for(table) == ("structure",)
+
+
+def test_a_layout_table_is_still_asked_about_rather_than_assumed_harmless():
+    """`role=presentation` is an author's CLAIM that there is no structure here. Whether that
+    is true is the question 1.3.1 asks — the same reasoning that keeps `alt=""` in scope for
+    the alt check. A layout table announced as one is a `pass`, and saying so costs one
+    judgment."""
+    assert "structure" in checkers_for(
+        element(tag="table", role="presentation", text="left right"))
+
+
+def test_structure_selects_a_run_of_identically_classed_children():
+    """A list drawn without being one. To a screen reader it is an undifferentiated run of
+    text with no count, no beginning and no end."""
+    grid = element(tag="div", attrs={"class": "card-grid"}, text="one two three",
+                   html='<div class="card-grid"><div class="card">one</div>'
+                        '<div class="card">two</div><div class="card">three</div></div>')
+    assert "structure" in checkers_for(grid)
+
+
+def test_two_panels_are_a_layout_and_are_left_alone():
+    """Two of anything is a pair, not a list, and a two-panel arrangement is far more often a
+    layout. The threshold is named (`REPEATED_CHILD_MINIMUM`) so it can be raised on evidence
+    rather than argued about."""
+    split = element(tag="div", attrs={"class": "split"}, text="left right",
+                    html='<div class="split"><div class="pane">left</div>'
+                         '<div class="pane">right</div></div>')
+    assert "structure" not in checkers_for(split)
+
+
+def test_the_containers_own_class_is_never_counted_as_one_of_its_children():
+    """Otherwise a container with two same-class children would reach three by counting
+    itself, and every two-panel layout would be judged."""
+    assert "structure" not in checkers_for(element(
+        tag="div", attrs={"class": "pane"}, text="left right",
+        html='<div class="pane"><div class="pane">left</div><div class="pane">right</div></div>'))
+
+
+def test_structure_selects_a_form_whose_grouped_fields_have_no_grouping():
+    """Radio buttons under a heading that is only text tell a screen-reader user the options
+    and never the question they answer."""
+    form = element(tag="form", text="Delivery",
+                   html='<form><input type="radio" name="d"><input type="radio" name="d"></form>')
+    assert "structure" in checkers_for(form)
+
+
+@pytest.mark.parametrize("markup", [
+    '<form><fieldset><legend>Delivery</legend><input type="radio" name="d"></fieldset></form>',
+    '<form><div role="radiogroup" aria-label="Delivery"><input type="radio" name="d"></div></form>',
+    '<form><div role="group" aria-label="Delivery"><input type="checkbox" name="d"></div></form>',
+])
+def test_a_form_that_already_groups_its_fields_is_not_asked_about(markup):
+    """Correct is correct, whether it is carried by a native element or by ARIA."""
+    assert "structure" not in checkers_for(element(tag="form", text="Delivery", html=markup))
+
+
+def test_a_form_with_no_fields_that_need_grouping_is_left_alone():
+    """A search box is not a set of related options. Anything else about a form is another
+    checker's business, or nobody's."""
+    assert "structure" not in checkers_for(element(
+        tag="form", text="Search", html='<form><input type="search" name="q"></form>'))
+
+
+def test_structure_skips_a_container_that_never_rendered():
+    assert "structure" not in checkers_for(element(tag="table", rendered=False))
+
+
+def test_the_two_halves_of_1_3_1_are_separate_checks_that_may_both_apply():
+    """`semantics` answers for one element; `structure` answers for the arrangement. Both own
+    1.3.1, and coverage takes the worst outcome reported for it — so a correct table holding a
+    fake button does not let either answer hide the other."""
+    from integrations.types import A11Y_CHECKER_CRITERIA
+
+    assert "1.3.1" in A11Y_CHECKER_CRITERIA["semantics"]
+    assert A11Y_CHECKER_CRITERIA["structure"] == ("1.3.1",)
+
+
+def test_a_failing_structure_finding_must_name_the_markup_to_add():
+    """"This table has no headers" does not tell anyone what to write, and writing it is the
+    whole reason this question is answered by judgment rather than by a rule."""
+    with pytest.raises(AnswerIncomplete, match="markup to add"):
+        verify_answer(checker="structure", verdict="fail",
+                      evidence="the first row is <td> cells", suggested_fix="")
+
+
+def test_a_structure_failure_that_names_the_markup_is_accepted():
+    verify_answer(checker="structure", verdict="fail",
+                  evidence="the first row is <td> cells",
+                  suggested_fix="make the first row <th scope='col'>Subject</th> ...")
+
+
+# ── markup the judge was only shown part of ──────────────────────────
+def test_a_truncated_container_travels_to_the_judge_saying_so():
+    """A judge shown the first part of a long table and not told so would answer about the
+    whole of it. Silently — which is the shape of every other silence found this week."""
+    cut = element(tag="table", selector="#big", html="<table id=big><tr><td>a</td></tr>")
+    cut = CapturedElement(**{**cut.__dict__, "markup_truncated": True})
+    assert to_candidate(cut).markup_truncated is True
+
+
+def test_markup_that_fitted_is_never_reported_as_truncated():
+    """Never inferred from length: a container that happens to sit exactly at the limit is not
+    truncated, and guessing would make the judge hedge on a complete answer."""
+    assert to_candidate(element(tag="table", html="<table></table>")).markup_truncated is False
+
+
+def test_the_capture_reports_truncation_rather_than_the_platform_guessing_at_it():
+    assert CapturedElement.from_dict({"tag": "table", "markup_truncated": True}).markup_truncated
+    assert not CapturedElement.from_dict({"tag": "table"}).markup_truncated
+
+
+def test_the_agent_is_told_what_to_do_with_markup_it_only_half_received():
+    body = AGENT_BODY.read_text(encoding="utf-8")
+    assert "markup_truncated" in body
+    assert "uncertain" in body.lower()
+
+
 # ── selecting a whole page ───────────────────────────────────────────
 def test_one_element_can_be_selected_by_more_than_one_check():
     """A fake button styled only in colour is two different questions with two answers."""
@@ -490,11 +627,11 @@ def test_the_agent_body_states_every_requirement_the_tool_enforces():
     """A rule enforced at the tool but never taught in the body is a rejection the judge has
     no way to anticipate — it learns it one wasted round trip at a time."""
     body = AGENT_BODY.read_text(encoding="utf-8")
-    for phrase in ("replacement alt text", "second cue", "both strings"):
+    for phrase in ("replacement alt text", "second cue", "both strings", "markup to add"):
         assert phrase in body.lower(), f"the agent body never mentions {phrase!r}"
 
 
-def test_the_agent_body_covers_all_four_checks_and_their_criteria():
+def test_the_agent_body_covers_all_five_checks_and_their_criteria():
     body = AGENT_BODY.read_text(encoding="utf-8")
     for checker, criteria in A11Y_CHECKER_CRITERIA.items():
         assert f"`{checker}`" in body
@@ -538,6 +675,9 @@ def judged(db):
         element(tag="button", selector="button#pay", text="Buy now",
                 accessible_name="Purchase",
                 html="<button aria-label='Purchase'>Buy now</button>", route="/home"),
+        element(tag="table", selector="table#orders", text="Order Status 1041 Shipped",
+                html="<table id='orders'><tr><td>Order</td><td>Status</td></tr>"
+                     "<tr><td>1041</td><td>Shipped</td></tr></table>", route="/home"),
     ]
     requests: list[A11yRequest] = select(page)
     run = Run.objects.create(

@@ -1,4 +1,4 @@
-"""Candidate selection — which elements each of the four checkers applies to (QA-03).
+"""Candidate selection — which elements each of the five checkers applies to (QA-03).
 
 Every rule here is a decision that an element **will** or **will not** be judged, and the
 second half of that is the dangerous one: a skip rule is a promise that nothing this checker
@@ -28,10 +28,14 @@ from dataclasses import dataclass, field
 
 from integrations.types import A11Y_CHECKER_CRITERIA, A11yCandidate
 
-#: The four checkers, in the order a page's requests are emitted. Fixed so that two runs over
+#: The five checkers, in the order a page's requests are emitted. Fixed so that two runs over
 #: the same page produce the same batch in the same order — a judgment run that is not
 #: reproducible cannot be compared against the golden set (QA-09).
-CHECKERS: tuple[str, ...] = ("alt", "semantics", "color", "label")
+#:
+#: `structure` sits beside `semantics` because they are the two halves of one criterion: one
+#: asks whether an element is pretending to be something, the other whether a container's
+#: visible arrangement exists in the markup at all.
+CHECKERS: tuple[str, ...] = ("alt", "semantics", "structure", "color", "label")
 
 #: The computed style properties the rules read. Named here because this is also the list the
 #: companion has to capture (QA-11b): a property missing from the capture silently turns every
@@ -54,6 +58,18 @@ NATIVE_CONTROL_TAGS = frozenset({
 })
 
 HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+
+#: Containers whose whole point is to carry a structure, so "is that structure real?" is always
+#: a fair question to ask about one. The unit of work for `structure` is the container and not
+#: the element inside it, because the question cannot be answered from a cell: whether a table
+#: has headers is a fact about the table.
+STRUCTURE_TAGS = frozenset({"table", "ul", "ol", "dl", "fieldset"})
+
+#: How many identically-classed children make a run of `div`s read as a list to the eye. Three
+#: rather than two because two of anything is a pair, and a two-panel layout is far more often
+#: a layout than a list. Named so the team can raise it if it turns out to cost more judgments
+#: than it earns — which is a measurement now, not a guess (`evaluation/scorer/`).
+REPEATED_CHILD_MINIMUM = 3
 
 #: ARIA roles that make something a user interface component — the scope of 2.5.3 Label in
 #: Name, and what `semantics` is asking about when it asks "is this really a control?".
@@ -93,6 +109,11 @@ TEXT_CUE_MARKERS = ("*", "✓", "✗", "×", "!", "⚠")
 VALUE_LABEL_INPUT_TYPES = frozenset({"submit", "reset", "button"})
 
 _WHITESPACE = re.compile(r"\s+")
+_CLASS_ATTR = re.compile(r'class="([^"]*)"')
+#: A grouping the markup already carries, so a set of related fields is not ungrouped.
+_GROUPING = re.compile(r'<fieldset|role="(?:group|radiogroup)"', re.IGNORECASE)
+#: Fields that only mean anything as a set — one radio button on its own answers nothing.
+_GROUPED_INPUT = re.compile(r'<input[^>]*type="(?:radio|checkbox)"', re.IGNORECASE)
 _PX = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*px\s*$", re.IGNORECASE)
 _NAMED_WEIGHTS = {"normal": 400.0, "bold": 700.0, "bolder": 700.0, "lighter": 100.0}
 #: Colours that paint nothing, so "this element has a background colour" is false for them.
@@ -107,8 +128,10 @@ class CapturedElement:
     of facts the rules below actually read — every field is a per-element cost in the browser,
     and a field nothing reads is a field that will quietly stop being captured correctly.
 
-    `html`, `context`, `screenshot_ref`, `selector` and `route` are not read by any rule; they
-    are carried through onto the `A11yCandidate` the judge receives.
+    `html`, `context`, `screenshot_ref`, `selector`, `route` and `markup_truncated` are not
+    read by any rule; they are carried through onto the `A11yCandidate` the judge receives.
+    (`html` is the one exception: `structure` reads it, because whether a form already groups
+    its fields is a fact about the markup and nothing else.)
     """
 
     selector: str = ""
@@ -122,6 +145,11 @@ class CapturedElement:
     styles: Mapping[str, str] = field(default_factory=dict)          # see STYLE_KEYS
     parent_styles: Mapping[str, str] = field(default_factory=dict)   # same keys, on the parent
     html: str = ""
+    #: True when `html` is a fragment because the element's markup was longer than the capture
+    #: sends. Never inferred from the length of what arrived — a container that happens to be
+    #: exactly at the limit is not truncated, and guessing would make the judge hedge on a
+    #: complete answer.
+    markup_truncated: bool = False
     context: str = ""
     screenshot_ref: str = ""
     route: str = ""
@@ -151,6 +179,7 @@ class CapturedElement:
                 for k, v in dict(raw.get("parent_styles") or {}).items()
             },
             html=str(raw.get("html") or ""),
+            markup_truncated=bool(raw.get("markup_truncated")),
             context=str(raw.get("context") or ""),
             screenshot_ref=str(raw.get("screenshot_ref") or ""),
             route=str(raw.get("route") or ""),
@@ -306,6 +335,71 @@ def _applies_semantics(element: CapturedElement) -> bool:
     return _looks_like_heading(element)
 
 
+def _inside(html: str) -> str:
+    """Everything after the container's own opening tag, so its own class is not counted."""
+    opening = html.find(">")
+    return html[opening + 1:] if opening >= 0 else html
+
+
+def _repeats_a_child_class(html: str) -> bool:
+    """Three or more children carrying the same class — a list drawn without being one.
+
+    A heuristic, and deliberately a conservative one. It is here because the failure it catches
+    is common and completely invisible to a rule engine: a card grid or a "list" of styled
+    `div`s reads as a list to the eye and, to a screen reader, is an undifferentiated run of
+    text with no count, no start and no end.
+
+    It costs a judgment on some containers that turn out to be fine — a footer with four
+    identical columns, a nav with five links. That is the intended direction to be wrong in:
+    the judge answers "this is a layout, and it says so", which is a cheap right answer, where
+    the alternative is never asking and never finding the real ones.
+    """
+    counts: dict[str, int] = {}
+    for value in _CLASS_ATTR.findall(_inside(html)):
+        key = _normalise(value)
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        if counts[key] >= REPEATED_CHILD_MINIMUM:
+            return True
+    return False
+
+
+def _applies_structure(element: CapturedElement) -> bool:
+    """Structure the page shows that the markup may not carry — 1.3.1.
+
+    **The question `semantics` cannot reach.** That rule asks whether an element is pretending
+    to be a control or a heading. A table with no header cells is not pretending to be
+    anything; it is simply a table missing its headers. So nothing selected it, nothing judged
+    it, and every page of the 21 August audit was recorded as satisfying 1.3.1 with its tables
+    unexamined (`SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`).
+
+    **Every table, list and field group is selected, including the ones that look correct.**
+    Not out of caution: whether a table's headers are the *right* cells, whether a list's items
+    are really items, whether a legend actually names its group — none of that can be decided
+    from the tag alone, and a rule engine already covers the cases where the markup contradicts
+    itself. What is left is exactly the judgment this check exists for. There are few enough
+    containers on a page for that to be affordable.
+
+    **`role="presentation"` is not a skip**, for the same reason it is not one for an image: it
+    is an author's claim that the thing carries no structure, and whether that claim is true is
+    the whole question 1.3.1 asks. A layout table announced as a layout table is a `pass`, and
+    saying so costs one judgment.
+    """
+    if not element.rendered:
+        return False
+    if element.tag in STRUCTURE_TAGS:
+        return True
+    if element.tag == "form":
+        # A form is only a structure question when it holds fields that mean nothing alone.
+        # Anything else about a form is another checker's business, or nobody's.
+        return bool(_GROUPED_INPUT.search(element.html)
+                    and not _GROUPING.search(element.html))
+    if element.tag == "div":
+        return _repeats_a_child_class(element.html)
+    return False
+
+
 def _applies_color(element: CapturedElement) -> bool:
     """Meaning that may be carried by colour with nothing else to carry it — 1.4.1.
 
@@ -388,6 +482,20 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
         applies=_applies_semantics,
     ),
     SelectionRule(
+        checker="structure",
+        criteria=A11Y_CHECKER_CRITERIA["structure"],
+        covers="tables, lists and field groups — whether the arrangement a sighted person can "
+               "see is written into the markup at all; a form holding radio buttons or "
+               "checkboxes with no grouping around them; and a container repeating the same "
+               "child class three or more times, which is how a list gets drawn without being "
+               "one",
+        skips="containers with no rendered box, and nothing else. A table that looks correct "
+              "is still selected: whether its headers are the RIGHT cells cannot be decided "
+              "from the tag. `role=presentation` is NOT a skip — it is an author's claim that "
+              "there is no structure here, and whether that is true is the question.",
+        applies=_applies_structure,
+    ),
+    SelectionRule(
         checker="color",
         criteria=A11Y_CHECKER_CRITERIA["color"],
         covers="text or filled areas whose colour singles them out from their surroundings "
@@ -415,7 +523,7 @@ _RULES_BY_CHECKER: dict[str, SelectionRule] = {rule.checker: rule for rule in SE
 
 
 def checkers_for(element: CapturedElement) -> tuple[str, ...]:
-    """Which of the four checks this element should be judged by, in `CHECKERS` order.
+    """Which of the five checks this element should be judged by, in `CHECKERS` order.
 
     An element can legitimately be selected by more than one: a `<div role="button">` styled
     only in colour is both a semantics question and a colour question, and they are different
@@ -431,6 +539,7 @@ def to_candidate(element: CapturedElement) -> A11yCandidate:
     return A11yCandidate(
         selector=element.selector,
         html=element.html,
+        markup_truncated=element.markup_truncated,
         screenshot_ref=element.screenshot_ref,
         context=element.context,
         route=element.route,

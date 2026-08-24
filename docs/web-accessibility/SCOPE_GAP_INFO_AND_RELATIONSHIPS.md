@@ -1,8 +1,12 @@
 # Scope gap — WCAG 1.3.1 *Info and Relationships*
 
-**Status:** open · needs a team decision before it can be built
+**Status:** CLOSED — the team chose **Option B** and it is built (2026-08-24)
 **Raised:** 2026-08-24, from the live audit of Meridian Library on 21 August
 **Written for:** the whole team, including anyone who has not read the code
+
+> **What was decided and what was built — §11.** The analysis below is kept as written, because
+> it is the record of how the answer was reached and of what the platform claimed while the gap
+> was open. Nothing in §1–§10 has been edited to match the outcome.
 
 > **One sentence.** The check that carries WCAG 1.3.1 asks a narrower question than the
 > criterion does, so a whole family of real accessibility failures — visual structure that
@@ -236,10 +240,67 @@ is a silence nothing can measure. So whichever option is chosen, the groundwork 
 
 ---
 
+## 11. What the team decided, and what was built — 2026-08-24
+
+**Decision: Option B**, with C skipped. The team's instruction was that time did not matter and
+the fix should be accurate, so the interim disclaimer was passed over in favour of closing the
+coverage itself. **Consequence, accepted knowingly:** the conformance statement kept claiming
+full 1.3.1 coverage in the window between the decision and the build.
+
+### The fifth check
+
+A checker called **`structure`**, owning 1.3.1 on its own. `semantics` keeps 1.3.1 and 4.1.2.
+
+**Two checkers now own 1.3.1, and that is the design rather than a duplication.** They ask
+different questions about it — one about an element, one about a container — and they stay
+apart because the accuracy harness scores **per checker**. Folded into one, a good score on
+fake buttons would average away a poor one on tables, which is the same hiding that let this go
+unnoticed in the first place. Coverage takes the worst outcome reported for a criterion, so
+neither answer can mask the other.
+
+### What it is handed
+
+Its unit of work is the **container**, which is the whole point — whether a table has headers
+is a fact about the table, not about any cell in it.
+
+| Selected | Not selected |
+|---|---|
+| every rendered `<table>`, `<ul>`, `<ol>`, `<dl>`, `<fieldset>` | a container that never rendered |
+| a `<form>` holding radio buttons or checkboxes **with no grouping around them** | a form whose fields are already grouped, natively or by ARIA |
+| a container repeating the same child class **three or more times** | two repeated children — a pair is a layout, not a list |
+
+**Containers that look correct are still selected.** Whether a table's headers are the *right*
+cells, whether a list's items are really items, whether a legend actually names its group —
+none of that is decidable from the tag, and the rule scanner already covers the cases where the
+markup contradicts itself. What is left is exactly the judgment this check exists for.
+
+**`role="presentation"` is not a skip**, for the same reason it is not one for an image: it is
+an author's *claim* that there is no structure here, and whether that claim is true is the
+question 1.3.1 asks. A layout table announced as one is a `pass`, and saying so costs one
+judgment.
+
+### One thing found while building it
+
+A container's markup travels to the judge bounded at 8000 characters. For a button that is
+never close; for a long table it is, and the judge would have answered about a table it saw
+only part of — silently. The capture now says when it had to cut, the flag travels with the
+element, and the judge is told to answer `uncertain` naming the truncation rather than judge a
+fragment. **This benefits every check, not only this one.**
+
+### Still open from §10
+
+Question 3 — a guard that fails when a check is registered against a criterion it does not
+cover — **was not built.** It is the item that stops this recurring on a different criterion,
+and it is still worth doing. What exists today is narrower: a test asserting the exact
+checker→criteria map, which catches a *change* to the mapping but cannot tell whether the check
+underneath actually covers what it claims.
+
+---
+
 ## Cross-references
 
 - `GAP_FIX_BUILD_PLAN.md` — the live-run findings, including fixes 1 and 2
-- `TASK_BACKLOG_QA.md` — QA-03 (the four checkers), QA-05 (the routing table)
+- `TASK_BACKLOG_QA.md` — QA-03 (the checkers, and the note recording the fifth), QA-05 (the routing table)
 - `evaluation/GOLDEN_DATASET_SPEC.md` §8 — the completeness check, which is what would have
   surfaced this without anyone reading a conformance statement
 - `backend/apps/a11y/checkers/rules.py` — the selection rules, and `describe_rules()` for a

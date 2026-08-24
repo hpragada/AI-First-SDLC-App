@@ -45,7 +45,7 @@ its exact wording is what conformance is judged on.
    page until it comes back null. A crowded screen is split across calls — `screen.continues` is
    true when the page you hold has more to come. Each element carries:
    - `id` — the short handle you echo back when you report on it. Copy it **exactly**.
-   - `checker` — which question you are being asked about this element (see *The four
+   - `checker` — which question you are being asked about this element (see *The five
      questions* below).
    - `criteria` — the WCAG criteria this element was queued against. Your verdict may name
      these and no others.
@@ -117,8 +117,15 @@ missing image where it does not.
 Work through the batch in the order given. Screens are grouped deliberately: an element's
 meaning often depends on what else is on the page with it.
 
-For each element, ask only the question its `checker` names. The four are set out in full
+For each element, ask only the question its `checker` names. The five are set out in full
 below — read the one you are being asked, including its boundary cases, before you answer.
+
+**When `markup_truncated` is true**, the `html` you were given is only the beginning of that
+element's markup — there was more and it did not fit. Say `uncertain` and name the truncation,
+unless what you were given already settles the question on its own. A long table whose first
+row you can see is answerable; a question about how many items a list holds is not. Answering
+from a fragment as though it were the whole is the one thing that turns a correct method into a
+wrong result.
 
 ### `alt` — WCAG 1.1.1 Non-text Content
 
@@ -184,6 +191,60 @@ control is not a failure just because it is custom.
 **Uncertain when:** you can see a role and a name in the markup but cannot tell whether the
 state is kept up to date, or when the element's behaviour is not visible in what you were
 given.
+
+### `structure` — WCAG 1.3.1 Info and Relationships
+
+**The question:** the arrangement a sighted person can see on this container — is it written
+into the markup, or does it only exist visually?
+
+This is the **container** question, and it is not the same as `semantics`. That one asks
+whether an element is *pretending* to be a control or a heading. A table with no header cells
+is not pretending to be anything; it is a table missing its headers. Nothing else asks about
+it, so if you do not, nobody does.
+
+You will be given the container's own markup, its picture, and the text around it. Read the
+markup for what the structure **is**, and the picture for what it **looks like**. The breach is
+the gap between the two.
+
+**What to look for, by what you were given:**
+
+- **A table.** Are the cells that read as headings marked up as headings (`<th>`), and do they
+  point at the right rows or columns? A table using `<td>` throughout, with a first row that is
+  obviously a set of column titles, is a plain failure. So is a table whose left-hand column is
+  clearly a row label and is not marked as one.
+- **A list.** Is it a list of things to the eye — and is each item genuinely an item? A list
+  whose entries are split across several items, or whose items hold unrelated content, does not
+  convey the structure it appears to.
+- **A group of fields.** Do the fields that visibly belong to one question have that grouping
+  in the markup, with the question itself as the group's name? Radio buttons under a heading
+  that is only text tell a screen-reader user the options and never the question.
+- **A container of repeated children.** Cards, tiles, rows of items. If it reads as a list of
+  things, is it one? A screen-reader user is otherwise given an undifferentiated run of text
+  with no count, no beginning and no end.
+
+**Passes, and they are common — say so plainly:**
+
+- A layout table, or any container arranged for appearance and carrying no information in its
+  arrangement. It carries no structure, so there is none to convey. Say `pass` and say why.
+- A table with correct headers, a real list, a properly named group. Being asked about a
+  container is not evidence that anything is wrong with it: most containers on most pages are
+  fine, and a confident `pass` is a useful answer.
+- A container whose grouping is carried by ARIA (`role="table"`, `role="list"`,
+  `role="group"` with a name) rather than by native elements. Correct is correct.
+
+**Failing means naming the markup to add.** "This table has no headers" does not tell anyone
+what to write. `suggested_fix` has to carry the change: which cells become `<th>`, what
+`scope` they take, what a `<legend>` should say. That is the whole reason this question is
+answered by judgment rather than by a rule.
+
+**Uncertain when:** the arrangement's meaning depends on content you were not given; when you
+cannot tell a data table from a layout table because the picture is missing and the markup is
+ambiguous; or when `markup_truncated` says you saw only part of it and the part you saw does
+not settle the question.
+
+**Do not report the same problem twice.** If you are also asked a `semantics` question about an
+element inside this container, keep them apart: `semantics` answers for that element, this
+answers for the arrangement. One fake button inside a correct table is one finding, not two.
 
 ### `color` — WCAG 1.4.1 Use of Color
 

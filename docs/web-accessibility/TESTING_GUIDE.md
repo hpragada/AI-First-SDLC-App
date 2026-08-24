@@ -960,8 +960,9 @@ list is now longer than the walkthrough that started it.
 asked: *as per WCAG, are we capturing and checking every element we should be?* Twelve textbook
 failures were put through the platform's own selection code. **Eleven were handed to no check at
 all** — several correctly, because they are the rule scanner's job; roughly eight were reported
-by nobody. Two of the three below are fixed. The third is a scope decision, still open, and
-written up on its own in `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.
+by nobody. All three are fixed. The third was a scope decision rather than a defect — the team
+was given three options and chose the thorough one — and its full analysis is written up on its
+own in `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.
 
 | # | What was wrong | Status |
 |---|---|---|
@@ -1002,7 +1003,7 @@ written up on its own in `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.
 | 35 | **A criterion checked on eleven pages was reported on one** | ✅ fixed |
 | 36 | **Table rows, lists and form groups were never captured at all** | ✅ fixed |
 | 37 | A submit button's visible label could never be read | ✅ fixed |
-| 38 | **The 1.3.1 check is narrower than the criterion it is recorded against** | ⬜ open |
+| 38 | **The 1.3.1 check is narrower than the criterion it is recorded against** | ✅ fixed |
 
 **#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
 Those came from *reading* the screens. These came from *running* them, and five of the six are
@@ -1791,7 +1792,7 @@ there any text here?" test reads inner text the same way, so a submit button sty
 still out of scope for Use of Colour. Same family, different criterion; this fix was scoped to
 2.5.3 and widening it is a separate decision.
 
-### #38 — The 1.3.1 check is narrower than the criterion it is recorded against ⬜ OPEN
+### #38 — The 1.3.1 check is narrower than the criterion it is recorded against ⭐ ✅
 
 **What it is.** WCAG 1.3.1 *Info and Relationships* says: anything a sighted person can work out
 by **looking** at the page must also be written into the markup. Table headings must be marked as
@@ -1806,11 +1807,46 @@ scanner or by us, and the page is recorded as **passing 1.3.1**.
 tested. The check was built to answer a narrower question than the routing table records it
 against, and nothing in between ever compared the two.
 
-**Why it is open rather than fixed.** Closing it means either widening an existing check into two
-different jobs, or building a fifth check whose unit of work is a whole table rather than one
-element. Both are real design decisions with real cost, and both are the team's call.
+**What was done.** The team was given three options and chose the thorough one: a **fifth
+check**, called `structure`, whose job is only this. Its unit of work is the **container** —
+because whether a table has headers is a fact about the table, not about any cell in it.
 
-**Full write-up, the options, and the decision needed:**
+It is now shown every table, list and group of fields on a page, a form whose radio buttons or
+checkboxes have no grouping around them, and any container that repeats the same kind of child
+three or more times — which is how a list gets drawn without being one. Two repeats are left
+alone, because a pair is a layout rather than a list.
+
+**Containers that look correct are shown to it too.** Whether a table's headings are the *right*
+cells, whether a list's items are really items, whether a group's label actually names the
+question — none of that can be decided from the markup alone, and most containers on most pages
+turn out to be fine. A confident "this is correct" is a useful answer.
+
+**A layout table is still asked about.** A page can declare that a table is only for
+arrangement. That is the author's *claim*, and whether it is true is exactly what 1.3.1 asks —
+the same reasoning that keeps a blank `alt` in scope for the image check.
+
+**The team chose to skip the cheap interim option** (recording 1.3.1 as only partly covered, so
+the paperwork was honest while the real fix was built), on the instruction that accuracy
+mattered more than time. So the conformance statement kept claiming full coverage until this
+landed. Worth knowing, and it was a deliberate call.
+
+**Found while building it.** A container's markup reaches the AI capped at a fixed size. For a
+button that is never close to the limit; for a long table it is — and the AI would have
+answered about a table it only saw the top of, without anyone knowing. The capture now says
+when it had to cut, and the AI is told to answer "not sure, I only saw part of this" instead of
+guessing. **That helps every check, not just this one.**
+
+**How to check it:** run an audit over a page holding a table whose top row is styled as
+headings but marked up as ordinary cells. It should now produce a 1.3.1 finding naming the
+markup to add. Before this, nothing looked at it and the page was reported as passing.
+
+**Still open, and worth doing:** nothing yet fails when a check is registered against a
+criterion it does not actually cover. That is the guard that would stop this happening on a
+different criterion. What exists is narrower — a test pinning which check claims which
+criterion, which catches a change to the mapping but cannot tell whether the check underneath
+covers what it claims.
+
+**Full analysis, and the options as they were put to the team:**
 `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.
 
 ---

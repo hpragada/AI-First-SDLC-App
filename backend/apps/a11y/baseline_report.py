@@ -249,7 +249,7 @@ def _incomplete_lines(tenant_id, audit) -> list[str]:
 
       * **A whole check that could not run.** The name check needs the browser to answer what
         each element is called, and when the toolchain breaks it silently selects nothing: every
-        element still arrives, three checks run perfectly, and the fourth reports nothing at all.
+        element still arrives, every other check runs perfectly, and one reports nothing at all.
         An empty result from a check that never ran is indistinguishable from a clean one.
 
     The count comes from `unanswered_counts` — deliberately the SAME function the "check the
@@ -275,7 +275,7 @@ def _incomplete_lines(tenant_id, audit) -> list[str]:
     if reason := str(names.get("reason") or "").strip():
         lines.extend([
             "",
-            "> **One of the four checks could not run at all.** " + _prose(reason) + " Nothing "
+            "> **One of the checks could not run at all.** " + _prose(reason) + " Nothing "
             "here says anything about that check, so its silence is not a clean result.",
         ])
     return lines

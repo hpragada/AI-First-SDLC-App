@@ -349,7 +349,7 @@ def _name_coverage(tenant_id, project_id, run_key: str) -> dict:
     **Why the platform checks its own input.** The capture asks the browser for every element's
     computed accessible name, and one element failing is normal and harmless — the label check
     skips it. *Every* element failing is a broken toolchain, and it is invisible: the elements
-    all arrive, three of the four checks run perfectly, and the fourth simply never selects
+    all arrive, every other check runs perfectly, and one of them simply never selects
     anything. That is exactly what happened. `page.accessibility` was removed from Playwright,
     the capture's per-element `catch` swallowed the failure on all of them, and **2.5.3 never
     selected a single element in the entire life of the feature** — found on the live audit of

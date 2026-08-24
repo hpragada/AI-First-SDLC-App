@@ -2950,7 +2950,7 @@ def test_a_stale_claim_is_still_handed_on_and_never_abandoned(world):
 # The capture asks the browser for every element's computed accessible name. One element failing
 # is normal and harmless — `_applies_label` skips it. EVERY element failing is a broken
 # toolchain, and it hides completely: the elements all arrive, three checks run perfectly, and
-# the fourth simply never selects anything. That is what happened. `page.accessibility` was
+# one of them simply never selects anything. That is what happened. `page.accessibility` was
 # removed from Playwright, the capture's per-element `catch` swallowed the failure on all of
 # them, and 2.5.3 never selected a single element in the whole life of the feature — found on
 # the live audit of 21 August by noticing one checker's count had always been zero.
@@ -3031,7 +3031,7 @@ def test_the_audit_script_does_not_use_the_removed_accessibility_api():
     """The regression guard for the worst defect this feature has had. `page.accessibility` was
     removed from Playwright; the call threw on every element, a per-element `catch` swallowed it,
     and 2.5.3 never selected anything for the whole life of the feature. Nothing about that was
-    visible: the elements arrived, three checks ran, and the fourth was silently absent."""
+    visible: the elements arrived, the others ran, and one was silently absent."""
     script = _script()
     # The CALL, not the word: the comment above `fillAccessibleNames` names the dead API on
     # purpose, so that whoever reads it next knows why this is written the way it is.

@@ -264,6 +264,11 @@ async function collectElements(page) {
         return parent ? (parent.innerText || "").trim().slice(0, 4000) : "";
       }
 
+      // How much of an element's own markup travels to the judge. Ample for a control;
+      // reachable by a long table, which is exactly when the judge most needs to know that
+      // what it is looking at is a fragment.
+      const MAX_MARKUP = 8000;
+
       const seen = new Set();
       const out = [];
       for (const el of document.querySelectorAll(OFFER)) {
@@ -293,7 +298,10 @@ async function collectElements(page) {
             getComputedStyle(el).visibility !== "hidden",
           styles: styles(el),
           parent_styles: el.parentElement ? styles(el.parentElement) : {},
-          html: el.outerHTML.slice(0, 8000),
+          html: el.outerHTML.slice(0, MAX_MARKUP),
+          // True when there was more and it did not fit. The judge is told, and answers
+          // `uncertain` naming the truncation rather than judging a table it half saw.
+          markup_truncated: el.outerHTML.length > MAX_MARKUP,
           context: surroundingText(el),
           box: {
             x: box.left + window.scrollX,

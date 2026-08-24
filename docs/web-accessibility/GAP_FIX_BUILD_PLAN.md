@@ -17,8 +17,8 @@ only then do we move on.
 
 > **Status, 2026-08-21.** This line used to read *"nothing in here is built yet"*. **All eleven
 > gaps in §3 and §4 are built**, and the document has since grown a second half nobody planned
-> for: **§9, what running it turned up** — **twenty so far across sixteen sections**, nineteen
-> built and one open. #19–#35 were found by people watching the product work rather than by
+> for: **§9, what running it turned up** — **twenty so far across sixteen sections**, all
+> built. #19–#35 were found by people watching the product work rather than by
 > reading code; #36–#38 came the other way, from the team asking whether we capture every
 > element WCAG puts in scope and the answer being no. §3 is the plan as written; §9 is what
 > reality added to it, and §9 is now the larger and the more useful of the two.
@@ -1332,7 +1332,7 @@ team took `/staff/shelf-audit` out to stay under the judging cap.
 
 > **This section was appended as an afterthought and is now the larger half of the document.**
 > §3 is the plan as written; §9 is what running it added: **twenty findings across sixteen
-> sections** (§9.1–§9.16) — nineteen built, one open. #19–#35 were produced by a person
+> sections** (§9.1–§9.16), all built. #19–#35 were produced by a person
 > watching the product work; #36–#38 by putting twelve textbook WCAG failures through the
 > selection code after the team asked what we do and do not capture. **Every built one has a
 > green test suite standing over it** — which is the point, and why they are written up at
@@ -2252,7 +2252,7 @@ scope for colour. Same family, different criterion, and the team scoped this fix
 parametrised, the typed-in text field that must **not** be selected, the valueless button, and
 the button whose name already contains its label.
 
-### 9.16 The 1.3.1 scope gap — 24 August (OPEN, written up separately)
+### 9.16 The 1.3.1 scope gap — 24 August ⭐ (BUILT — Option B)
 
 The third finding from the same investigation, and the only one that is not a fix. The check
 carrying **1.3.1 Info and Relationships** asks *"is this a fake control or a fake heading?"* The
@@ -2263,4 +2263,33 @@ cells is claimed by nobody while the page is recorded as passing 1.3.1.
 It is not a bug: every rule is deliberate, documented and tested. The check was built to answer a
 narrower question than the routing table records it against, and nothing ever compared the two.
 
-**Full write-up, options and the decision needed: `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.**
+**Decided and built the same day: Option B**, a fifth checker called `structure` owning 1.3.1
+on its own, whose unit of work is the **container** — because whether a table has headers is a
+fact about the table and not about any cell in it. It is handed every rendered table, list and
+field group, a form whose radio buttons or checkboxes have no grouping around them, and a
+container repeating the same child class three or more times (a list drawn without being one).
+Two repeats are left alone: a pair is a layout.
+
+`semantics` keeps 1.3.1 alongside it, deliberately. The two ask different questions and stay
+apart because accuracy is scored **per checker** — folded together, a good score on fake buttons
+would average away a poor one on tables, which is the same hiding that let this go unnoticed.
+
+**Option C was skipped on the team's instruction** ("the fix should be accurate, time does not
+matter"), so the conformance statement kept claiming full 1.3.1 coverage until this landed.
+
+**Found while building it:** a container's markup reaches the judge bounded at 8000 characters,
+so a long table would have been judged from a fragment, silently. The capture now reports when
+it had to cut, and the judge answers `uncertain` naming the truncation instead. That one helps
+every check.
+
+**Not built, and still worth doing:** a guard that fails when a check is registered against a
+criterion it does not actually cover. That is the thing that stops this recurring elsewhere; the
+test that exists pins the mapping, which is narrower.
+
+**Verified:** 26 new tests in `test_a11y_checkers.py` (126 total) — every container shape, both
+correctly-built shapes that must be left alone, the repeated-class threshold, the container's
+own class not counting as one of its children, and the truncation flag end to end. Two guard
+tests fired during the build and were updated with their reasoning rather than loosened.
+Regression: 462 across checkers, capability, judge, WCAG, ownership and the baseline report.
+
+**Full analysis and the options as they were put: `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.**
