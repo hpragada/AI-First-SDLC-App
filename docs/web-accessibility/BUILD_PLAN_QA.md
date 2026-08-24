@@ -60,7 +60,7 @@ Tasks: **QA‑23a**, QA‑23, QA‑24.
 
 **Status markers are deliberately not changed here.** Which of these is now 🟢 is the team's call, not mine — this note records what the runs did so that call can be made on evidence. The per‑task blocks in `TASK_BACKLOG_QA.md` still read 🟡.
 
-**What is also true, and is not in the 24 tasks at all:** **sixteen further findings** came out of those five runs and are built. They live in `GAP_FIX_BUILD_PLAN.md` §9 (eleven sections) and are numbered #19–#34 in `TESTING_GUIDE.md` §9 — a section nobody planned for, now larger than the plan it was appended to.
+**What is also true, and is not in the 24 tasks at all:** **seventeen further findings** came out of those five runs and are built. They live in `GAP_FIX_BUILD_PLAN.md` §9 (thirteen sections) and are numbered #19–#35 in `TESTING_GUIDE.md` §9 — a section nobody planned for, now larger than the plan it was appended to.
 
 ---
 

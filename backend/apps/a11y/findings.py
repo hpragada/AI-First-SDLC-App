@@ -33,7 +33,7 @@ from __future__ import annotations
 from hashlib import sha256
 
 from apps.tenancy.context import tenant_context
-from integrations.types import A11Y_JOURNEY_CRITERIA
+from integrations.types import A11Y_CHECKER_CRITERIA, A11Y_JOURNEY_CRITERIA
 
 from . import coverage
 from .selectors import is_positional, normalise
@@ -213,6 +213,60 @@ def _ruling_still_applies(existing, incoming_hash: str) -> bool:
     return bool(incoming_hash) and incoming_hash == existing.adjudicated_content_hash
 
 
+#: What a page gets recorded as when an AI check ran over it and had nothing to ask about.
+#: Deliberately the same outcome axe reports as `inapplicable` — the rule ran, and found
+#: nothing in its scope — because that is exactly what happened and the two halves of this
+#: report must mean the same thing by the same words.
+NOTHING_IN_SCOPE = "no element on this page was in scope for this check"
+
+#: Every criterion the four AI checks own, flattened. Read once here rather than per route.
+AI_OWNED_CRITERIA: frozenset[str] = frozenset(
+    criterion for criteria in A11Y_CHECKER_CRITERIA.values() for criterion in criteria
+)
+
+
+def _fill_in_scope_gaps(report, by_route: dict[str, list]) -> None:
+    """Record "checked, nothing in scope" for AI criteria a page raised no question about.
+
+    **The gap this closes, in one line:** a conformance statement said *"Does not support — failed
+    on 1 of 1 pages checked"* about an eleven-page audit.
+
+    An AI check writes coverage from the elements it *judged*, so a page where the check selected
+    nothing wrote nothing. For three of the five AI-owned criteria that is invisible, because the
+    rule scanner also covers them and reports its own `inapplicable` for every page. **2.5.3 is
+    the only criterion in the registry that is AI-owned with no scanner counterpart**, so it is
+    the only one where the silence reaches the document — and Label in Name is *satisfied* on a
+    page whose controls all announce their visible text, which is the strongest positive result
+    there is. Recording nothing for it turned eleven examined pages into one.
+
+    The dangerous direction is the inverse of what Meridian showed us: an application with **no**
+    Label-in-Name problems produced no coverage at all and read as **not evaluated** — a criterion
+    checked on every page, printed as one nobody looked at, in the document a client signs.
+
+    **Two guards, and both are the point:**
+
+    * **`report.routes` only, which is the pages that OPENED** (`scanner.rule_findings_for` keeps
+      an unreachable route out of it deliberately). A page the browser never reached must never
+      appear here as one a check ran over.
+    * **A page with anything unjudged is skipped entirely.** If a pass stopped at its limit part
+      way through a page, the elements it never reached might have raised exactly the question
+      being filled in here. "We do not know" is the true answer and silence is how this codebase
+      says it.
+
+    Existing observations always win: `coverage.record` ranks `not_applicable` last, and nothing
+    already answered is overwritten here anyway.
+    """
+    incomplete = {str(item.get("route") or "") for item in report.unjudged}
+    for route in report.routes:
+        if route in incomplete:
+            continue
+        answered = {criterion for criterion, _outcome, _detail in by_route.get(route, ())}
+        by_route.setdefault(route, []).extend(
+            (criterion, "not_applicable", NOTHING_IN_SCOPE)
+            for criterion in sorted(AI_OWNED_CRITERIA - answered)
+        )
+
+
 def record_run_findings(*, tenant_id, project_id, run_id, report) -> dict:
     """Write one run's merged findings to the ledger, recognising what it has seen before.
 
@@ -261,6 +315,7 @@ def record_run_findings(*, tenant_id, project_id, run_id, report) -> dict:
         by_route: dict[str, list] = {}
         for row in report.rows:
             by_route.setdefault(row.route, []).extend(coverage.observations_for_row(row))
+        _fill_in_scope_gaps(report, by_route)
         for route, observations in by_route.items():
             coverage.record(
                 tenant_id=tenant_id, project_id=project_id, run_key=str(run_id or ""),

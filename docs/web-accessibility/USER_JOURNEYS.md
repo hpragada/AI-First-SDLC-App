@@ -14,10 +14,20 @@ and the code disagree, the code wins and the step is corrected here.
 | ⬜ **Not built** | Nothing of it exists. It is written here because it is still the plan |
 
 ⚠️ **Built means "a person can reach it and the tests pass". It does not mean "it has run."**
-Nothing in this document has ever executed against a real browser or a real application. The 32
-database changes it needs went in on 20 August, so nothing is in the way of a first live run —
-but until one happens, every ✅ here rests on tests. `TESTING_GUIDE.md` §1 and §10 are the current
-account of that.
+
+**Updated 21 August 2026.** This paragraph used to say *"nothing in this document has ever
+executed against a real browser or a real application"*. **That is no longer true, and the
+distinction it was making still is.**
+
+**What has run:** five audits against Meridian Library on 20–21 August drove the **brownfield**
+chain end to end — a real browser on a real machine, real AI verdicts, real defects opened, both
+documents published, and a second judging pass over one capture. Seventeen findings came out
+of those runs and are built (`GAP_FIX_BUILD_PLAN.md` §9).
+
+**What has not:** every one of those runs was a **baseline audit of an existing application**. A
+baseline audit does not touch the greenfield capture, the keyboard journey, the review console or
+signing — so a ✅ on J8 or J9 below still means *"reachable and tested"*, not *"watched working"*.
+Each journey now says which it is. `TESTING_GUIDE.md` §10.2 is the live list.
 
 ---
 
@@ -192,6 +202,17 @@ against WCAG 2.2.
 **Done when:** 1 and 4–7, which are. **Not done:** 2 and 3 — onboarding assesses no posture and
 registers no pages.
 
+> ✅ **And 4–7 have now been watched working, five times** (20–21 August, Meridian Library). The
+> last run: 11 pages asked for and 11 opened, 124 distinct elements judged, 21 failures found, 21
+> defect tickets and a backlog epic opened from nothing, and both documents published with a
+> working link from every finding to the screenshot it describes. **This is the one journey in
+> this document that is proven rather than tested.**
+>
+> ⬜ Step 3's automatic half stays unbuilt and its placeholder is visible in the code:
+> `A11yRoute.Source.ONBOARDING` — the label a page would carry if onboarding had found it — is
+> defined and **has never been written by anything**. It is a slot held open for OP-06, not a
+> feature that exists and fails.
+
 ---
 
 ## J6 — Remediate an onboarded app to WCAG 🟡
@@ -205,6 +226,17 @@ the source, and which **closes itself** when a later audit stops finding it — 
 comes back. The reviewer confirms anything the checks were unsure about, that decision holds until
 the element itself changes, and the baseline report's movement section is the progress-against-
 baseline view.
+
+> ⚠️ **Built and tested; never once observed.** Five live audits have opened defects. **None has
+> ever closed one**, because the project's data was wiped between every run — so a second audit
+> has never met a finding from a first. That makes three things in the paragraph above claims
+> resting on tests alone: a defect **closing itself**, a defect **reopening**, and the baseline's
+> **Movement** section, which has only ever printed *"this is the first baseline"*.
+>
+> **This is the cheapest gap on the board to close and the most valuable.** Fix two or three of
+> the findings in the application, run the audit again, and do not reset. It is the difference
+> between "we find your problems" and "we track them to closed" — which is what this journey
+> sells.
 
 ⬜ What does not exist is `OP-08`: the campaign wrapper — picking a slice of the backlog as a
 piece of work, tracking it as one thing, and reporting the campaign rather than the ledger. Today
@@ -238,6 +270,12 @@ J3's missing piece.
 
 **What it delivers:** the eight criteria that cannot be answered by reading a page standing
 still, because each one is a question about what happens *while you operate the application*.
+
+> ⚠️ **The ✅ here means built and tested. This has never opened a page in a real browser.**
+> Every acceptance criterion below is green against a deliberately planted trap in the test
+> suite, and **zero journey runs exist in any project.** Five live audits did not touch it —
+> they read pages standing still, which is the one thing this journey exists because you cannot
+> do. It is the least-proven part of the whole build, by a distance.
 
 1. ✅ **The QA Lead points it at a journey**, from the Keyboard journeys panel on Pages & audit.
    A journey is a test case describing a complete path through the application — so the panel is
@@ -279,6 +317,22 @@ still, because each one is a question about what happens *while you operate the 
 
 **What it delivers:** a person keeps the checks honest, and produces a statement they have signed
 — with the platform never claiming compliance on its own.
+
+> ⚠️ **Half proven, and the halves are worth separating** (21 August).
+>
+> ✅ **The statement drafts itself correctly from a real audit.** Checked against the live
+> Meridian data: it names which audit it was drawn from and when, lists all 55 criteria with 21
+> genuinely evaluated from real evidence and 34 as *not evaluated*, and **refuses to export while
+> unsigned**, saying so in its own words.
+>
+> ⬜ **Nobody has ever signed one**, so step 4 below — signing, the export it unlocks, and a
+> statement being marked *stale* when new evidence arrives — rests entirely on tests.
+>
+> ⬜ **And the review queue in step 1 has been empty on all five runs.** Every check was
+> confident enough to answer on its own. So the queue, the 15-minute claim, the "someone else has
+> this open" message and confirm-raises-a-defect have **never met a real finding**. Filling it
+> deliberately needs a genuinely *ambiguous* page, not a broken one — ambiguity is what makes a
+> check say "I am not sure".
 
 1. ✅ **The unsure findings land in the review queue.** Each shows the criterion in plain words,
    the element's markup and the text around it, and **the whole page with the element ringed** —
@@ -347,9 +401,12 @@ change either list has to restate them rather than leave a stale figure in a pro
 
 - **`BUILD_PLAN_QA.md` / `TASK_BACKLOG_QA.md`** — J1, J4, the J5 **audit**, J8, J9, plus the
   `a11yai` capability and Edvensoft's internal accuracy work. All 31 tasks built.
-- **`GAP_FIX_BUILD_PLAN.md`** — the ten fixes that made those tasks *reachable*: a screen to
-  register pages and run an audit, a caller for the keyboard journey, a truthful greenfield
-  capture, and the plumbing kept off the user's board. All ten built, 19–20 August.
+- **`GAP_FIX_BUILD_PLAN.md`** — the **eleven** fixes that made those tasks *reachable*: a screen
+  to register pages and run an audit, a caller for the keyboard journey, a truthful greenfield
+  capture, and the plumbing kept off the user's board. All eleven built, 19–20 August. **Plus §9,
+  which nobody planned for:** seventeen more findings across thirteen sections, every one produced by
+  a person watching the product work on 20–21 August rather than by reading code. §9 is now the
+  larger half of that document.
 - **`BUILD_PLAN_OTHER_PHASES.md` / `TASK_BACKLOG_OTHER_PHASES.md`** — J2, J3, the J5 **onboarding
   posture step**, J6's campaign, J7. **None of the nine tasks is built.**
 

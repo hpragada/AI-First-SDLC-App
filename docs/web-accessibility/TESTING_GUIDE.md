@@ -2,7 +2,7 @@
 
 **For the Edvensoft team · 21 August 2026 · branch `web-accessibility-build`**
 **Covers QA‑01 … QA‑24 (31 tasks), the ten gap-fix tasks G1 … G6c, the eighteen
-user-experience fixes of 20 August, and the sixteen that five live runs found on 20–21 August (§9)**
+user-experience fixes of 20 August, and the seventeen that five live runs found on 20–21 August (§9)**
 
 ---
 
@@ -936,7 +936,7 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The thirty-four findings, and what was done about each
+## 9. The thirty-five findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
@@ -949,8 +949,9 @@ readings were wrong, and nothing was broken — the words were. A screen underst
 people who commissioned it is not a screen that works, so #16–#18 are wording, and the wording is
 now pinned by tests like any other behaviour. All eighteen are closed.
 
-**#19 onward came from running it.** Sixteen more, found across five live audits of Meridian
-Library on 20–21 August by people watching the product work. **Every one of them had a green test
+**#19 onward came from running it.** Seventeen more, found across five live audits of Meridian
+Library on 20–21 August by people watching the product work — the last of them by reading the
+conformance statement those audits produced. **Every one of them had a green test
 suite standing over it** — which is why they are written up at length rather than ticked off. The
 list is now longer than the walkthrough that started it.
 
@@ -990,6 +991,7 @@ list is now longer than the walkthrough that started it.
 | 32 | A running audit was described as stopped | ✅ fixed |
 | 33 | **The second pass was described in the first pass's words** | ✅ fixed |
 | 34 | The baseline never said when a check was incomplete | ✅ fixed |
+| 35 | **A criterion checked on eleven pages was reported on one** | ✅ fixed |
 
 **#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
 Those came from *reading* the screens. These came from *running* them, and five of the six are
@@ -1648,6 +1650,56 @@ under *What has been looked at* it should say the check is incomplete and name t
 **The case worth checking deliberately:** a baseline with **no findings at all** must still carry
 the warning. "No accessibility problems are open" is exactly when "part of this was never
 checked" matters most.
+
+### #35 — A criterion checked on eleven pages was reported on one ⭐ ✅
+
+Found by reading the **live** conformance statement, which is the only place it was ever visible.
+Two rows of the same document, from the same audit of eleven pages:
+
+> **1.1.1** — 14 open failures; failed on 5 of 11 pages checked; checked on 1 page with nothing
+> wrong; **5 pages had nothing for this rule to apply to.**
+>
+> **2.5.3** — 7 open failures; **failed on 1 of 1 pages checked.**
+
+The first accounts for all eleven pages. The second accounts for one and drops ten without a word
+— and the Label-in-Name check had run over every one of them.
+
+**Why the ten vanished.** The platform records two different things: what was **wrong**, and what
+was **looked at**. The rule scanner records "looked at" for every page, including pages where its
+rules found nothing to apply to. The AI checks only recorded "looked at" for pages where they
+actually had a question to ask. On a page where every button already announces its own visible
+text, the Label-in-Name check has nothing to ask — the criterion is simply **satisfied** — so it
+said nothing at all.
+
+For four of the five AI-owned criteria that never showed, because the rule scanner covers those
+same criteria and quietly filled the gaps. **Label in Name is the only criterion in the whole
+standard that our AI checks own and the scanner does not touch**, so it is the only one where the
+hole reached the page.
+
+**The direction that matters, and it is the opposite of what we saw.** Meridian *fails* this
+criterion, so the statement made a failure claim on thin evidence — not good, but the safe way
+round. Now picture an application with **no** Label-in-Name problems at all: it produces no record
+of being looked at, and the statement prints **not evaluated** — a criterion the platform checked
+on every single page, reported to a client as one nobody looked at, in a document someone signs.
+That is the exact sentence this whole capability exists to prevent, printed by the capability
+itself.
+
+**Now:** every page a check ran over gets an answer, including *"nothing on this page was in scope
+for this check"* — the same words, and the same meaning, the rule scanner already uses. Two things
+are deliberately left silent: a page the browser **never opened**, and a page where the checking
+**stopped part way through**. In both cases we genuinely do not know, and saying nothing is how
+this codebase says so.
+
+**How to check it:** run an audit, open the **Conformance statement**, and read the *What was
+checked* column. Every criterion with a tick in *Established by* should account for the **same
+number of pages** as the audit opened. A criterion claiming fewer pages than the audit visited is
+this bug coming back.
+
+⚠️ **This changes the next audit, not the one already stored.** The record of what was looked at
+is written when a run is recorded, so the 21 August statement will keep saying "1 of 1" until
+another audit runs. Verified before any test was written by re-computing from the stored capture:
+2.5.3 goes from 1 page to 11, and 1.1.1 from 6 to 11 — the same defect a second time, which the
+scanner had been hiding.
 
 ---
 

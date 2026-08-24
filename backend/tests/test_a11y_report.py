@@ -1370,3 +1370,9 @@ def test_asking_again_and_finding_nothing_left_takes_the_button_away(world):
     assert not audit.summary["ai_pass"]["reason"], (
         "and the sentence explaining the count goes with the count"
     )
+    # No screen reads these two on a closed audit — they are only asked for while one is in
+    # flight, and this path only runs on one that has finished. They are cleared anyway: one
+    # pass's numbers left inside another pass's record is the exact shape of the bug that put
+    # "0 of 126" on a re-judge of six, and that one was unreachable right up until it wasn't.
+    assert audit.summary["ai_pass"]["distinct"] == 0
+    assert audit.summary["ai_pass"]["dispatched"] == 0

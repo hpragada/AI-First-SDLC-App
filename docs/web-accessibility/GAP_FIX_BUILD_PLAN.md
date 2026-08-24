@@ -17,8 +17,8 @@ only then do we move on.
 
 > **Status, 2026-08-21.** This line used to read *"nothing in here is built yet"*. **All eleven
 > gaps in §3 and §4 are built**, and the document has since grown a second half nobody planned
-> for: **§9, the live-run findings** — **sixteen so far across eleven sections**, every one found
-> by a person watching the product work rather than by reading code. §3 is the plan as written; §9
+> for: **§9, the live-run findings** — **seventeen so far across thirteen sections**, every one
+> found by a person watching the product work rather than by reading code. §3 is the plan as written; §9
 > is what reality added to it, and §9 is now the larger and the more useful of the two.
 
 ### How to read a task
@@ -1329,9 +1329,9 @@ Jira and no Confluence — 10 in scope on the first run, 12 on the third, 11 on 
 team took `/staff/shelf-audit` out to stay under the judging cap.
 
 > **This section was appended as an afterthought and is now the larger half of the document.**
-> §3 is the plan as written; §9 is what running it added: **sixteen findings across eleven
-> sections** (§9.1–§9.11), every one produced by a person watching the product work, and **every
-> one with a green test suite standing over it.** They are numbered #19–#34 in the Testing Guide.
+> §3 is the plan as written; §9 is what running it added: **seventeen findings across thirteen
+> sections** (§9.1–§9.13), every one produced by a person watching the product work, and **every
+> one with a green test suite standing over it.** They are numbered #19–#35 in the Testing Guide.
 
 **It worked, and it found four defects no test could have caught, each hidden behind the one
 before it.** That is the shape of a capability that has never run: the first defect stops you
@@ -2067,3 +2067,109 @@ hand there is no honest per-pass coverage to report. Every path the team uses pa
 **Verified:** 6 new tests in `test_a11y_baseline_report.py` for 64 total; rendered against the
 live WCAG-Audit project in all three states (complete, six unchecked, a check that never ran)
 before any test was written; `ruff` clean.
+
+### 9.12 A criterion checked on eleven pages, reported on one — 21 August ⭐ (BUILT)
+
+Found by a recon pass over the **live** conformance statement, not by reading code. Two rows of
+the same document, from the same audit:
+
+| Criterion | What it said |
+|---|---|
+| **1.1.1** | 14 open failures; failed on 5 of 11 pages checked; checked on 1 page with nothing wrong; **5 pages had nothing for this rule to apply to** |
+| **2.5.3** | 7 open failures; **failed on 1 of 1 pages checked** |
+
+1.1.1 accounts for all eleven pages. **2.5.3 accounts for one and drops ten in silence.** The
+audit visited eleven and the Label-in-Name check ran over every one of them.
+
+#### Why
+
+Coverage — the record of *what was looked at*, as opposed to *what was wrong* — is written by
+each engine separately. The rule scanner reads all four of axe's channels **including
+`inapplicable`**, so an axe-owned criterion gets a row for every page whether anything applied or
+not (`coverage.from_scan`). The AI half builds its coverage from the elements it **judged**
+(`findings.record_run_findings`), so a page where a check selected nothing wrote nothing.
+
+For 1.1.1, 1.3.1, 1.4.1 and 4.1.2 that is invisible: axe covers those criteria too and fills the
+per-page account in. **2.5.3 is the only criterion in the registry that is AI-owned with no
+scanner counterpart** (`ownership.json`), so it is the only one where the silence reaches the
+document.
+
+And the silence is describing the *strongest positive result there is*. `_applies_label` skips a
+control when its accessible name already contains its visible text, because at that point 2.5.3
+is **met as a matter of fact** and there is nothing left to judge. Ten pages of correctly-labelled
+controls produced ten pages of nothing.
+
+#### The direction that matters
+
+Meridian fails 2.5.3, so its statement made a *failure* claim from thin evidence — bad, but the
+safe direction. **Invert it.** An application with **no** Label-in-Name problems produces no
+coverage at all, and the statement prints **not evaluated** — a criterion the platform checked on
+every single page, reported to a client as one nobody looked at, in a document somebody signs.
+That is this capability's founding rule broken by the capability itself.
+
+#### The fix
+
+`findings._fill_in_scope_gaps`: after the judged rows are turned into observations, every
+AI-owned criterion that a page raised no question about is recorded as `not_applicable` with
+*"no element on this page was in scope for this check"* — deliberately the same outcome and the
+same meaning as axe's `inapplicable`, because the two halves of one report must not use one word
+for two things.
+
+**Two guards, and both are the point:**
+
+- **`report.routes` only — the pages that OPENED.** `scanner.rule_findings_for` keeps an
+  unreachable route out of that list on purpose. A page the browser never reached must never
+  appear as one a check ran over.
+- **A page with anything unjudged is skipped entirely.** If a pass stopped at its limit part way
+  through a page, the elements it never reached might have raised exactly the question being
+  filled in. "We do not know" is the true answer, and silence is how this codebase says it.
+
+Existing answers always win: `coverage.record` ranks `not_applicable` last, and the fill-in skips
+any criterion already answered.
+
+#### Verified against the real capture before a test was written
+
+Re-computed from the stored 21 August capture, without writing anything:
+
+| Criterion | Pages accounted for, before → after |
+|---|---|
+| 1.1.1 | 6 → **11** |
+| 1.3.1 | 11 → 11 |
+| 1.4.1 | 11 → 11 |
+| **2.5.3** | **1 → 11** |
+| 4.1.2 | 11 → 11 |
+
+1.1.1 moving 6 → 11 is the same defect a second time, hidden: the AI half only ever covered six
+of those pages and axe was quietly making up the difference.
+
+⚠️ **This changes the NEXT audit, not the stored one.** Coverage rows are written when a run is
+recorded, so the 21 August statement keeps saying "1 of 1" until another audit runs. Said here
+because the reverse mistake — telling the team a fix had landed and letting them open a document
+rendered before it — cost a round trip on 21 August (§9.8).
+
+**Not built, by team decision:** the fuller variant, which would tell the two skip reasons apart
+— *no visible text* (genuinely inapplicable) versus *name already contains the label* (the
+criterion **met**) — and record the second as a pass. That would turn ten silent pages into ten
+positive results rather than ten neutral ones. It touches the selection path; the surgical fix
+above does not.
+
+**Verified:** 4 new tests in `test_a11y_conformance.py` for 49 total — the page with nothing to
+ask about, the page that never opened, the page left part-checked, and the real answer that must
+not be spoken over.
+
+### 9.13 Two housekeeping items from the same recon — 21 August
+
+**Cleared:** `_mark_nothing_left` zeroed the counts the screens read but left `distinct` and
+`dispatched` behind from the previous pass. **No screen could reach them** — they are only read
+for an audit *in flight*, and that function only runs on one that has *finished*. Cleared anyway:
+one pass's numbers sitting inside another pass's record is the exact shape of §9.10, and that one
+was unreachable too, right up until it was on screen saying "0 of 126".
+
+**Left alone, deliberately, and recorded so nobody re-finds them as bugs:**
+
+- **`publish_baseline(audit=None)` states no incompleteness.** With no audit in hand there is no
+  honest per-pass coverage to report. Every path a person can reach passes the audit; the other
+  is not called by anything. Building a warning for an unreachable case adds code with no reader.
+- **`A11yRoute.Source.ONBOARDING` is defined and has never been written by anything.** It is the
+  label a page would carry if onboarding had discovered it — a slot held open for **OP-06**, not
+  a feature that exists and fails. Removing it would only mean putting it back.

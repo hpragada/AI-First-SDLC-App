@@ -457,7 +457,13 @@ def _mark_nothing_left(*, tenant_id, run_id) -> None:
         ai_pass = dict(summary.get("ai_pass") or {})
         if not ai_pass:
             return
-        ai_pass.update(filed_unjudged=0, deferred_distinct=0, nothing_left=True)
+        # `distinct` and `dispatched` go too, though no screen reads them on a closed audit —
+        # they are only asked for while one is in flight, and this only runs on one that has
+        # finished. They are cleared because leaving one pass's numbers inside another pass's
+        # record is the exact shape of the bug that put "0 of 126" on a re-judge of six, and a
+        # record that cannot mislead beats a record that merely has no reader today.
+        ai_pass.update(filed_unjudged=0, deferred_distinct=0, distinct=0, dispatched=0,
+                       nothing_left=True)
         # The stopped-at-the-limit sentence goes with the count it explains. Left behind, a
         # fully checked audit went on saying it had stopped short.
         if ai_pass.get("deferred"):

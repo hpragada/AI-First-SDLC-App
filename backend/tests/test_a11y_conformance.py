@@ -724,3 +724,98 @@ def test_a_reviewers_own_wording_is_never_overwritten_with_ours(world):
     payload = state(tenant_id=world["t"], project_id=world["p"])
     assert payload["body"] == "# Our own statement\n\nWe wrote this ourselves."
     assert payload["basis"]["latest"] is not None
+
+
+# ── every opened page gets an answer for every AI-owned criterion ─────────────────────────
+#
+# The live defect, 21 August. Meridian's conformance statement said of 2.5.3 Label in Name:
+#
+#     Does not support — 7 open failures; failed on 1 of 1 pages checked.
+#
+# The audit had visited **eleven**. Ten of them announced every control's visible text correctly,
+# so the check selected nothing there and wrote nothing — and 2.5.3 is the only criterion in the
+# registry that is AI-owned with no rule-scanner counterpart, so nothing else filled the gap in.
+# 1.1.1 on the same run reads "failed on 5 of 11 pages checked; checked on 1 with nothing wrong;
+# 5 pages had nothing for this rule to apply to" — every page accounted for, because axe covers
+# 1.1.1 too.
+
+def test_a_page_a_check_found_nothing_to_ask_about_is_still_a_page_that_was_checked(world):
+    """The inverse of the live case, and the dangerous one: an application with NO Label-in-Name
+    problems recorded no 2.5.3 coverage at all and read as **not evaluated** — a criterion
+    examined on every page, printed in a signed document as one nobody looked at."""
+    routes = ["/", "/catalogue", "/loans"]
+    record_run_findings(
+        tenant_id=world["t"], project_id=world["p"], run_id=None,
+        report=MergedReport(routes=routes, rows=[
+            ReportRow(source=SOURCE_AI, outcome=TRIAGE_PASS, criteria=("1.1.1",), route=route,
+                      selector="img.hero", evidence="the alt text describes it", checker="alt",
+                      verdict="pass", confidence=0.95)
+            for route in routes
+        ]))
+
+    got = coverage.summary(world["t"], world["p"])
+    assert set(got["2.5.3"]["routes"]) == set(routes), (
+        "every page the browser opened must appear under 2.5.3, not only the ones that "
+        "raised a question"
+    )
+    assert set(got["2.5.3"]["routes"].values()) == {"not_applicable"}
+    # …and the criterion is no longer invisible to the statement.
+    row = next(r for r in criterion_rows(world["t"], world["p"]) if r["criterion"] == "2.5.3")
+    assert row["suggested"] != NOT_EVALUATED, "checked on three pages is not 'nobody looked'"
+    assert row["routes_checked"] == 3
+
+
+def test_a_page_that_never_opened_is_never_recorded_as_checked(world):
+    """The guard that matters most. `scanner.rule_findings_for` keeps an unreachable route out of
+    `report.routes` deliberately; this must read that list and no other. Claiming a check ran over
+    a page the browser could not even reach is the worst failure this capability has."""
+    record_run_findings(
+        tenant_id=world["t"], project_id=world["p"], run_id=None,
+        report=MergedReport(
+            routes=["/"],
+            unreachable=[{"route": "/admin", "reason": "timed out after 30s"}],
+            rows=[ReportRow(source=SOURCE_AI, outcome=TRIAGE_PASS, criteria=("1.1.1",),
+                            route="/", selector="img", evidence="fine", checker="alt",
+                            verdict="pass", confidence=0.95)]))
+
+    got = coverage.summary(world["t"], world["p"])
+    for criterion in ("1.1.1", "1.3.1", "1.4.1", "2.5.3", "4.1.2"):
+        assert "/admin" not in got.get(criterion, {}).get("routes", {}), (
+            f"{criterion} claims coverage of a page that never opened"
+        )
+
+
+def test_a_page_left_part_checked_is_left_alone_rather_than_filled_in(world):
+    """A pass that stopped at its own limit part way through a page. The elements it never reached
+    might have raised exactly the question being filled in here, so "we do not know" is the true
+    answer — and silence is how this codebase says it."""
+    record_run_findings(
+        tenant_id=world["t"], project_id=world["p"], run_id=None,
+        report=MergedReport(
+            routes=["/", "/loans"],
+            unjudged=[{"route": "/loans", "selector": "#switch-a", "reason": "never judged"}],
+            rows=[ReportRow(source=SOURCE_AI, outcome=TRIAGE_PASS, criteria=("1.1.1",),
+                            route="/", selector="img", evidence="fine", checker="alt",
+                            verdict="pass", confidence=0.95)]))
+
+    got = coverage.summary(world["t"], world["p"])
+    assert "/" in got["2.5.3"]["routes"], "the complete page is filled in"
+    assert "/loans" not in got["2.5.3"]["routes"], (
+        "the part-checked page must stay silent, not be declared clear of a check that "
+        "never finished running over it"
+    )
+
+
+def test_filling_the_gaps_never_speaks_over_a_real_answer(world):
+    """`not_applicable` is the weakest thing that can be said. A page where the check genuinely
+    failed must keep saying so."""
+    record_run_findings(
+        tenant_id=world["t"], project_id=world["p"], run_id=None,
+        report=MergedReport(routes=["/account"], rows=[
+            ReportRow(source=SOURCE_AI, outcome=TRIAGE_FAILURE, criteria=("2.5.3",),
+                      route="/account", selector="#card-upgrade",
+                      evidence="the button says Upgrade and announces Change plan",
+                      checker="label", verdict="fail", confidence=0.95)]))
+
+    got = coverage.summary(world["t"], world["p"])
+    assert got["2.5.3"]["routes"]["/account"] == "failed"
