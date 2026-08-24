@@ -374,8 +374,8 @@ Before we trust these checks in front of tenants, *we* need to measure how often
 | ID | Title | Type | Depends On | Status |
 |----|-------|------|-----------|--------|
 | QA‑09 | Build the internal golden set (team‑only) | Internal | QA‑03 | ⏸ |
-| QA‑10a | Create the local accuracy-harness entry point | Internal | — | ⬜ |
-| QA‑10 | Build the internal accuracy harness (team‑only) | Internal | QA‑10a | ⬜ |
+| QA‑10a | Create the local accuracy-harness entry point | Internal | — | 🟢 |
+| QA‑10 | Build the internal accuracy harness (team‑only) | Internal | QA‑10a | 🟢 |
 
 **QA‑09 — Build the internal golden set (team‑only)** — **⏸ PARKED (2026‑08‑17)**
 - **Epic:** E‑EVAL · **Story:** US‑G1 · **Type:** Internal (not a tenant feature) · **Status:** ⏸ Parked (2026‑08‑17) · **Depends On:** QA‑03 · **Blocks:** — *(was QA‑10; see D‑A11Y‑63)*
@@ -390,30 +390,53 @@ Before we trust these checks in front of tenants, *we* need to measure how often
   - [ ] Given a new dataset version, when added, then the previous version is retained.
 
 **QA‑10a — Create the local accuracy-harness entry point** — **NEW (R6)**
-- **Epic:** E‑EVAL · **Story:** US‑G2 · **Type:** Internal (not a tenant feature) · **Status:** ⬜ Pending · **Depends On:** — · **Blocks:** QA‑10
+- **Epic:** E‑EVAL · **Story:** US‑G2 · **Type:** Internal (not a tenant feature) · **Status:** 🟢 Done (2026‑08‑24) · **Depends On:** — · **Blocks:** QA‑10
 - **Description:** QA‑10 says to wire the accuracy scorer "into Edvensoft CI" — but **this repository has no CI**: no `.github/`, no `Jenkinsfile`, no `.gitlab-ci.yml`, only `docker-compose.yml`. So the thing QA‑10 plugs into has to exist first. Team decision **D4**: for the POC the harness runs **locally via `make`**, not in a pipeline; a real pipeline comes when a client depends on it. In build terms: add a `make a11y-eval` target that runs the scorer against the golden set and writes a versioned results file, plus a stored **baseline** of the last accepted numbers it compares against. Keep it entirely inside Edvensoft's own repo/CI space — never tenant data, never the platform UI. Edge case: with no stored baseline the first run **records** its numbers as the baseline rather than failing.
   > **Related prerequisite (also R6):** ~~`pytest-cov` is not installed and no coverage config exists~~ — **done**: `pytest-cov` and a module-scoped `make cov` are in place (`make cov MOD=… TESTS=…`, `--cov-fail-under=90`). Module-scoped deliberately, because running the full backend suite is known to be killed.
   > **D‑A11Y‑82 applies here too (2026‑08‑18).** This harness has **no consumer inside the platform**. It reads the label sources, writes a file we look at, and stops there. It is **read-only against the platform database** — it must never write to it. And because nothing in the product reads its output, the open question of whether accuracy is tallied across all clients or per client stops being an architectural decision and becomes a reporting preference, to settle when QA‑10 is built.
   > **D‑A11Y‑64 — AC1 no longer presupposes the golden set (team, 2026‑08‑17).** AC1 was written as *"Given the golden set…"* when QA‑09 was expected to land first. With QA‑09 parked (D‑A11Y‑62) that wording would make this task unbuildable on a technicality, and building it against a fabricated golden set would be exactly the fixture-only completion the Definition of Done forbids. The criterion is restated as *"given a label source"* — which is the honest requirement, and which the live adjudication trail already satisfies. **This is a wording correction to match reality, not a lowering of the bar.**
 - **Acceptance Criteria:**
-  - [ ] Given ~~the golden set~~ **a label source**, when `make a11y-eval` runs, then it prints per-checker numbers and writes a versioned results file.
-  - [ ] Given no prior baseline, when it runs, then it records the first numbers as the baseline instead of failing.
-  - [ ] Given the repository, when searched, then the harness and its data are never referenced by tenant-facing code.
-  - [ ] Given **no label source at all**, when it runs, then it says so and exits without inventing a number — silence is never reported as a score.
+  - [x] Given ~~the golden set~~ **a label source**, when `make a11y-eval` runs, then it prints per-checker numbers and writes a versioned results file.
+  - [x] Given no prior baseline, when it runs, then it records the first numbers as the baseline instead of failing.
+  - [x] Given the repository, when searched, then the harness and its data are never referenced by tenant-facing code. *(Verified 2026‑08‑24: every match across `backend/`, `frontend/`, `runner/`, `mcp_platform_state/` and `agents/` is a **comment** explaining why selection order is stable — no import, no path, no execution.)*
+  - [x] Given **no label source at all**, when it runs, then it says so and exits without inventing a number — silence is never reported as a score. *(Demonstrated live against the 21 August audit: it printed the completeness table, said NO ANSWER KEY, and exited 0.)*
 
 **QA‑10 — Build the internal accuracy harness (team‑only)** — **RE‑SCOPED (R6, then again 2026‑08‑17)**
-- **Epic:** E‑EVAL · **Story:** US‑G2 · **Type:** Internal (not a tenant feature) · **Status:** ⬜ Pending · **Depends On:** ~~QA‑09,~~ QA‑10a · **Blocks:** ~~QA‑22~~ — **nothing (D‑A11Y‑82)**
+- **Epic:** E‑EVAL · **Story:** US‑G2 · **Type:** Internal (not a tenant feature) · **Status:** 🟢 Done (2026‑08‑24) · **Depends On:** ~~QA‑09,~~ QA‑10a · **Blocks:** ~~QA‑22~~ — **nothing (D‑A11Y‑82)**
 - **Description:** We need to know, in numbers, how accurate each checker is, and to stop a model or prompt change from quietly degrading it — this task builds the scorer. In build terms: build a scorer that runs each checker against **every label source available** and reports precision, recall and F1 per checker; write a **per-checker report** (sample size, precision, whether it clears the bar, when it was last computed) ~~that QA‑22 reads~~ — **read by us, by nothing in the platform (D‑A11Y‑82)**; and make **promotion of a new model or prompt version fail** when any checker drops below the stored baseline from QA‑10a. "Promotion" here means *us shipping a changed model or prompt*, and the thing blocked is **our release**, never a tenant's work. Edge cases: a new checker with no prior baseline records its first numbers as the baseline rather than blocking; a checker whose sample is too small to mean anything is reported as **not yet measurable**, never as passing.
   > **Correction (R6).** "Wire it into CI" — there is no CI. It runs through the local `make` entry point from QA‑10a (decision D4). The *rule* is unchanged: an accuracy regression blocks promotion. Only where it runs changed.
   > **D‑A11Y‑63 — Two label sources, not one (team, 2026‑08‑17).** The scorer no longer waits on QA‑09. It reads **whichever of these exist**: (1) the **golden set** — a fixed answer key, the only source that can measure *recall*, because it also lists what a checker should have found and didn't; (2) **live adjudications** — `A11yFinding.adjudication` (`confirmed`/`rejected`, with `adjudicated_by`), written every time a reviewer settles an uncertain finding. Source 2 exists in the schema today and accrues as a by-product of normal review work; source 1 does not exist yet. Each is a set of expert verdicts on specific elements of specific screens — the same shape — so the scorer takes both and **labels each number with the source it came from**, because a precision figure from live review and one from a fixed answer key are not interchangeable evidence. **Recall is reported as unmeasured while only source 2 is present.** Never silently compute a recall-shaped number from adjudications alone: the denominator would be "findings we reported", which makes it precision wearing recall's name.
   > **D‑A11Y‑65 — A minimum sample, and demotion (team, 2026‑08‑17).** **Amended 2026‑08‑18 (D‑A11Y‑82):** every word below still holds *as a rule for reading the report* — a percentage from three calls is not evidence, and a number that got worse must be allowed to say so. What is gone is the consequence: "promotes itself" and "demotes itself back to advisory" described a checker gaining and losing the right to stop a tenant's merge. **No checker has that right to gain any more.** Read "promoted" below as *"we consider this checker proven"*, and "demoted" as *"we no longer do"*. Three correct calls out of three is not evidence. A checker needs a **minimum number of adjudicated findings before any percentage is allowed to mean anything** (proposed: 30 per checker, recorded in the baseline file next to the tolerance band so it is a decision and not a constant). Below that the reliability record says *not yet measurable*, which QA‑22 must read as **not proven**. Promotion is also **reversible**: if precision falls below the bar as more adjudications arrive, the checker demotes itself back to advisory. Without demotion, "earned once" becomes "trusted forever", and a prompt change could quietly degrade a checker that is already blocking merges — the exact failure this epic exists to prevent.
 - **Acceptance Criteria:**
-  - [ ] Given ~~the golden set~~ **any available label source**, when the harness runs, then it reports precision/recall/F1 per checker, **each figure labelled with the source it was computed from**.
-  - [ ] Given only live adjudications, when it runs, then **recall is reported as unmeasured** rather than estimated.
-  - [ ] Given a checker below the minimum sample size, when it runs, then it is reported as **not yet measurable**, never as passing.
-  - [ ] Given a model/prompt change that lowers a checker's accuracy below baseline, when the harness runs, then **shipping that change** is blocked with the failing checker named — *our* release, never a tenant's work (D‑A11Y‑82).
-  - [ ] Given no regression, when it runs, then the change may ship and the baseline updates.
-  - [ ] Given a checker we previously considered proven that falls below the bar, when it runs, then the report says so plainly rather than keeping the old number.
+  - [x] Given ~~the golden set~~ **any available label source**, when the harness runs, then it reports precision/recall/F1 per checker, **each figure labelled with the source it was computed from**.
+  - [x] Given only live adjudications, when it runs, then **recall is reported as unmeasured** rather than estimated.
+  - [x] Given a checker below the minimum sample size, when it runs, then it is reported as **not yet measurable**, never as passing.
+  - [x] Given a model/prompt change that lowers a checker's accuracy below baseline, when the harness runs, then **shipping that change** is blocked with the failing checker named — *our* release, never a tenant's work (D‑A11Y‑82).
+  - [x] Given no regression, when it runs, then the change may ship and the baseline updates.
+  - [x] Given a checker we previously considered proven that falls below the bar, when it runs, then the report says so plainly rather than keeping the old number. *(The stored baseline takes the new, worse figure — keeping the flattering old one is how "proven once" becomes "trusted forever".)*
+
+**Built 2026‑08‑24 — `evaluation/scorer/`, run by `make a11y-eval`.**
+
+- **Where it lives:** `docs/web-accessibility/evaluation/scorer/`, beside the golden set it
+  reads and the fixture harness — one directory, one grep, and deliberately **not** a package
+  under `backend/`, so nothing tenant-facing can import it even by accident.
+- **Two halves.** *Completeness* counts what was dropped and needs no answer key at all, so it
+  works today. *Accuracy* needs one, and says so plainly when there is none.
+- **The two silences are told apart**, which is the point of building it now. An element
+  *captured but never judged* is excluded from every figure and reported as coverage — that
+  run was incomplete, not inaccurate. An element **never captured** counts against us, and gets
+  its own line, because its fix is nowhere near the model. That is finding #36 made measurable.
+- **Proven end to end against the 21 August audit** with a throwaway answer key in a scratch
+  directory: real selectors joined to real stored verdicts, `alt` scored 6/6, the arguable
+  record was caught as over-confident, and `/loans/current` was reported as having lost
+  elements before any check saw them. The real dataset does not exist yet (QA‑09); nothing
+  fabricated was committed.
+- **A mismatch found while wiring it up.** `GOLDEN_DATASET_SPEC.md` §2 names the checks
+  `meaningful-alt` / `fake-semantics` / `colour-only` / `label`; the platform's stored verdicts
+  say `alt` / `semantics` / `color` / `label`. Translated in `labels.py`, so either set works.
+  Untranslated, **no label would have joined to any verdict** and the report would have
+  announced that the checks found nothing at all.
+- **40 unit tests**, no database and no Django — `make a11y-eval-test`.
 
 ---
 

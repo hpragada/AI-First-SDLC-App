@@ -2,7 +2,7 @@
 # Windows without `make`? Use the shim: ./make.ps1 <target>  (e.g. ./make.ps1 dev)
 
 .DEFAULT_GOAL := help
-.PHONY: help up down logs build migrate seed dev test cov lint fmt
+.PHONY: help up down logs build migrate seed dev test cov lint fmt a11y-eval a11y-eval-test
 
 help:  ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -57,3 +57,21 @@ lint:  ## ruff + mypy (backend) ; eslint (frontend)
 
 fmt:  ## Auto-format (ruff format)
 	docker compose --profile app run --rm backend ruff format .
+
+# ── Edvensoft-internal accessibility evaluation (QA-10a / QA-10) ─────────────────────
+# NOT a tenant feature. Reads the platform's own audit records, writes a file we look at,
+# and stops there: nothing in the product reads its output, and it never writes to the
+# database. There is no CI in this repository, which is why this runs through `make` and
+# not through a pipeline (decision D4).
+#
+#   make a11y-eval                                 # the latest finished audit
+#   make a11y-eval ARGS="--completeness-only"      # counting only, needs no answer key
+#   make a11y-eval ARGS="--run <audit-id> --dry-run"
+#
+# Exit codes: 1 = a checker regressed and OUR release is blocked (never a client's work);
+# 2 = something was dropped between being on the page and getting an answer.
+a11y-eval:  ## Internal: score the accessibility checks against the golden set
+	docker compose --profile app run --rm backend sh -c 'python ../docs/web-accessibility/evaluation/scorer/run.py $(ARGS)'
+
+a11y-eval-test:  ## Internal: unit-test the scorer (no database, no platform)
+	docker compose --profile app run --rm backend sh -c 'cd ../docs/web-accessibility/evaluation/scorer && python -m pytest tests -q'

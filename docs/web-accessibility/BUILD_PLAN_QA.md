@@ -41,6 +41,7 @@ Tasks: **QA‑23a**, QA‑23, QA‑24.
 **Status at 2026‑08‑18:** M0 complete except the E‑EVAL tasks · M1 complete · M2 complete · **M3 complete: QA‑20 and QA‑21 built (🟡), QA‑22 🟢 done** · **M4 complete — QA‑23a 🟢, QA‑23 🟡, QA‑24 🟡** (console + signed conformance statement; 115 new tests green). **All 24 QA tasks are now built.** Six of them (QA‑11a, QA‑12, QA‑20, QA‑21, QA‑23, QA‑24) are 🟡 waiting on one live session against a real application; the E‑EVAL tasks remain parked and gate nothing.
 
 > **2026‑08‑18 — E‑EVAL is off the critical path for good (D‑A11Y‑82).** The internal accuracy evaluation no longer feeds anything in the product, so QA‑10a and QA‑10 gate nothing and QA‑22 depends only on QA‑20.
+> **2026‑08‑24 — QA‑10a and QA‑10 are built** (`evaluation/scorer/`, `make a11y-eval`). Still off the critical path, still read by nothing in the product. The half that needs no answer key — counting what was dropped — works today; the half that scores accuracy waits on the golden set (QA‑09), and says so rather than printing a number it does not have.
 
 > **Four tasks share one live checkpoint: QA‑11a, QA‑12, QA‑20 and QA‑21.** All four are built and fully tested, and none has driven a real browser. One session against a running application closes all four. **QA‑22 is not among them** — it is proven against the gate itself, which needs no browser.
 
