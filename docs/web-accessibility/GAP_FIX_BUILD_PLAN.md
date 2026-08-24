@@ -17,9 +17,9 @@ only then do we move on.
 
 > **Status, 2026-08-21.** This line used to read *"nothing in here is built yet"*. **All eleven
 > gaps in §3 and §4 are built**, and the document has since grown a second half nobody planned
-> for: **§9, what running it turned up** — **twenty so far across sixteen sections**, all
+> for: **§9, what running it turned up** — **twenty-two so far across eighteen sections**, all
 > built. #19–#35 were found by people watching the product work rather than by
-> reading code; #36–#38 came the other way, from the team asking whether we capture every
+> reading code; #36–#40 came the other way, from the team asking whether we capture every
 > element WCAG puts in scope and the answer being no. §3 is the plan as written; §9 is what
 > reality added to it, and §9 is now the larger and the more useful of the two.
 
@@ -1331,12 +1331,12 @@ Jira and no Confluence — 10 in scope on the first run, 12 on the third, 11 on 
 team took `/staff/shelf-audit` out to stay under the judging cap.
 
 > **This section was appended as an afterthought and is now the larger half of the document.**
-> §3 is the plan as written; §9 is what running it added: **twenty findings across sixteen
-> sections** (§9.1–§9.16), all built. #19–#35 were produced by a person
-> watching the product work; #36–#38 by putting twelve textbook WCAG failures through the
+> §3 is the plan as written; §9 is what running it added: **twenty-two findings across eighteen
+> sections** (§9.1–§9.18), all built. #19–#35 were produced by a person
+> watching the product work; #36–#40 by putting twelve textbook WCAG failures through the
 > selection code after the team asked what we do and do not capture. **Every built one has a
 > green test suite standing over it** — which is the point, and why they are written up at
-> length. They are numbered #19–#38 in the Testing Guide.
+> length. They are numbered #19–#40 in the Testing Guide.
 
 **It worked, and it found four defects no test could have caught, each hidden behind the one
 before it.** That is the shape of a capability that has never run: the first defect stops you
@@ -2293,3 +2293,58 @@ tests fired during the build and were updated with their reasoning rather than l
 Regression: 462 across checkers, capability, judge, WCAG, ownership and the baseline report.
 
 **Full analysis and the options as they were put: `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.**
+
+### 9.17 Two more things nobody was looking at — 24 August (BUILT)
+
+The last two uncovered shapes from the twelve-case probe of §9.14, both **1.1.1 Non-text
+Content**, both reported by nobody — not by the rule scanner and not by us.
+
+**A `<canvas>`.** A drawing surface: a chart, a signature pad, a seating plan. Whatever it
+renders exists only as pixels, and nothing inside it is reachable. No rule anywhere can say
+whether its fallback text describes what was drawn, because answering needs somebody to look at
+it — which is the exact shape of question the AI half exists for. Now selected.
+
+**An icon drawn by a font.** Two ways in, and the first is not a heuristic: a single character
+from the Unicode **Private Use Area** has no meaning of its own, so what a sighted person sees
+is whatever picture the font puts there. The second is the empty-element case — nothing to
+read, no image inside, and a class naming an icon family.
+
+**Deliberately still not selected**, each for a stated reason rather than by omission: an
+`<iframe>` with no title (the rule scanner proves that deterministically, and a second opinion
+costs a judgment on every embed); and an icon font using a real word as its ligature
+(`<i class="material-icons">delete</i>` is announced as "delete" — a poor alternative, but an
+alternative, and selecting it would queue every such icon to be told it is mediocre).
+
+### 9.18 Nothing checked that a check covers the criterion it claims — 24 August ⭐ (BUILT)
+
+**The durable lesson of §9.16, made mechanical.** The 1.3.1 gap was not a coding error. A check
+was built to answer one question well, the routing table filed it under a criterion far broader
+than that question, and **nothing anywhere compared the two**. Every test in the suite asked
+*"does this rule do what it says?"*; none asked *"does what it says amount to the criterion it
+is filed under?"*
+
+**Built:** `backend/tests/test_a11y_selection_corpus.py` — a corpus of real accessibility
+failures, each with the same shape done correctly beside it. Three rules bind it:
+
+1. **Every criterion the checks claim must own at least one failing shape.** Claim a criterion,
+   build no selection for it, and there is nothing to put in the corpus. That is exactly the 21
+   August failure, and it can no longer pass.
+2. **Every failing shape must be selected by a check claiming its criterion** — so a criterion
+   with nothing reaching it fails here rather than in a client's conformance statement.
+3. **Every criterion must also own a shape that must NOT be selected.** Without this a rule
+   that returned `True` would satisfy rule 2 for everything and the file would be a rubber
+   stamp. These rows come straight from the `skips` prose on each `SelectionRule` — that prose,
+   made executable.
+
+**Proven against the failure it was built for.** With `structure` removed in memory — the
+platform exactly as it stood on 21 August — **five of the recorded 1.3.1 failures reach no
+check at all** and the guard names each one. Before it existed, the same state produced a clean
+run and a conformance statement saying eleven pages satisfied 1.3.1.
+
+**What it cannot do**, recorded so a green run is not over-read: it proves a criterion has
+*some* path to a check, not that the coverage is complete. A criterion can hold one shape here
+and still miss ten others in the world. It converts an unbounded silence into a list somebody
+can argue with, which is the most a test can do about this.
+
+**Verified:** 55 tests, 46 corpus rows across all five claimed criteria. Regression: 354 across
+the corpus, checkers, capability, capture and dispatch suites.

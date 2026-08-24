@@ -287,13 +287,21 @@ only part of — silently. The capture now says when it had to cut, the flag tra
 element, and the judge is told to answer `uncertain` naming the truncation rather than judge a
 fragment. **This benefits every check, not only this one.**
 
-### Still open from §10
+### Question 3 — also built, later the same day
 
-Question 3 — a guard that fails when a check is registered against a criterion it does not
-cover — **was not built.** It is the item that stops this recurring on a different criterion,
-and it is still worth doing. What exists today is narrower: a test asserting the exact
-checker→criteria map, which catches a *change* to the mapping but cannot tell whether the check
-underneath actually covers what it claims.
+The guard is `backend/tests/test_a11y_selection_corpus.py`: a corpus of real accessibility
+failures, each with the same shape done correctly beside it. A criterion the checks claim must
+own at least one failing shape **and** at least one shape that must be left alone — the second
+half being what stops a rule that claimed everything from satisfying the first.
+
+**Proven against this very gap.** With `structure` removed in memory, so the platform stands
+exactly as it did on 21 August, **five of the recorded 1.3.1 failures reach no check** and the
+guard names each. That same state previously produced a clean test run and a conformance
+statement claiming eleven pages satisfied 1.3.1.
+
+It proves a criterion has *some* path to a check, not that its coverage is complete — an
+unbounded silence turned into a list somebody can argue with, which is the most a test can do
+about this. §9.18 of `GAP_FIX_BUILD_PLAN.md` has the detail.
 
 ---
 

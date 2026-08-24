@@ -937,7 +937,7 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The thirty-eight findings, and what was done about each
+## 9. The forty findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
@@ -963,6 +963,11 @@ all** — several correctly, because they are the rule scanner's job; roughly ei
 by nobody. All three are fixed. The third was a scope decision rather than a defect — the team
 was given three options and chose the thorough one — and its full analysis is written up on its
 own in `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.
+
+**#39 and #40 close the same investigation.** #39 is the last two shapes from that same
+twelve-case probe. **#40 is the one that matters most**: nothing anywhere checked that a check
+actually covers the rule it is filed under, which is *why* #38 could happen at all and could
+have happened again on a different rule.
 
 | # | What was wrong | Status |
 |---|---|---|
@@ -1004,6 +1009,8 @@ own in `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.
 | 36 | **Table rows, lists and form groups were never captured at all** | ✅ fixed |
 | 37 | A submit button's visible label could never be read | ✅ fixed |
 | 38 | **The 1.3.1 check is narrower than the criterion it is recorded against** | ✅ fixed |
+| 39 | Charts drawn on a canvas, and icons drawn by a font, were checked by nobody | ✅ fixed |
+| 40 | **Nothing checked that a check covers the criterion it claims** | ✅ fixed |
 
 **#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
 Those came from *reading* the screens. These came from *running* them, and five of the six are
@@ -1848,6 +1855,76 @@ covers what it claims.
 
 **Full analysis, and the options as they were put to the team:**
 `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.
+
+### #39 — Charts drawn on a canvas, and icons drawn by a font, were checked by nobody ✅
+
+**What these are.** Two ways of putting a picture on a page that are not an image tag, so
+nothing that looks for images ever found them.
+
+A **canvas** is a blank drawing surface a page paints on — charts, signature pads, seating
+plans. Whatever it draws exists only as coloured pixels; there is nothing inside it to read. No
+rule can say whether the text offered as a substitute describes what was actually drawn,
+because answering that needs somebody to look at the picture. That is exactly the kind of
+question the AI half exists for, and it was never being asked.
+
+An **icon font** draws a picture using a character. A page writes what looks like a letter, and
+the font renders a bin, a warning triangle, a padlock. Because it is technically text, an image
+check never sees it — and a screen reader announces nothing useful.
+
+**Now:** both are checked. For icon fonts there are two ways in, and the first is not
+guesswork — certain character codes are reserved to mean "whatever this font wants", so a
+single one of those is a picture by definition. The second catches an empty element whose class
+names an icon family: nothing to read, no image inside, and something visibly being drawn.
+
+**Two things are still deliberately left alone**, each for a stated reason:
+- An **embedded frame with no title** — the rule scanner proves that one outright, and asking
+  the AI as well would cost a judgement on every embed for a second opinion on a settled fact.
+- An icon font that uses a **real word** to pick its picture. It is announced as that word —
+  a poor description, but a description. Flagging it would queue every such icon on every page
+  to be told it is mediocre.
+
+**How to check it:** put a chart on a page as a canvas with no description. It should now be
+reported against 1.1.1. Before this, nothing looked at it.
+
+### #40 — Nothing checked that a check covers the criterion it claims ⭐ ✅
+
+**What this is.** Not a defect in any one check — a hole in what our tests were able to ask.
+
+Finding #38 happened because a check was built to answer one question well, was then filed
+under a rule of the standard that is much broader than that question, and **nothing ever
+compared the two.** Every test we had asked *"does this check do what it says?"* Not one asked
+*"does what it says add up to the rule it is filed under?"* So the platform reported eleven
+pages as passing a rule it had barely examined, every test was green, and it took a person
+reading the finished document to notice.
+
+That is the kind of thing that happens again, on a different rule, unless something stops it.
+
+**Now:** there is a list of **real accessibility failures** — forty-six of them — each written
+down as the actual shape it takes on a page, and each paired with the same thing done
+correctly. Three rules hold it together:
+
+1. **Every rule of the standard we claim must have at least one real failure written down for
+   it.** Claim it, build nothing that finds it, and there is nothing to add to the list. That
+   is precisely what happened on 21 August, and it can no longer pass quietly.
+2. **Every one of those failures must actually reach a check.** If one doesn't, a named test
+   fails here — rather than a client's conformance document being wrong.
+3. **Every rule must also have something written down that must NOT be flagged.** Without
+   this, a check that flagged absolutely everything would satisfy point 2 for every rule at
+   once, and the whole list would be a rubber stamp.
+
+**Proven against the failure it was built for.** I put the platform back to exactly how it
+stood on 21 August and ran it: **five of the recorded failures reach no check at all**, and the
+list names each one. In that same state, before this existed, everything was green.
+
+**What it does not do**, said plainly so a green run is not read as more than it is: it proves
+each rule has *a* way of being found, not that we find everything. A rule can have one failure
+listed here and still miss ten others in the real world. What it does is turn an open-ended
+silence into a list somebody can look at and argue with — which is the most a test can do
+about a problem of this shape.
+
+**How to use it:** whenever a new kind of failure turns up in the wild, add it to the list —
+**before** fixing it, so the fix has something to prove itself against. Same discipline as the
+list of false alarms kept for the secret scanner.
 
 ---
 

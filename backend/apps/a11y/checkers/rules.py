@@ -98,6 +98,18 @@ IMPLICIT_ROLES: dict[str, str] = {
 HEADING_MIN_PX = 18.0
 HEADING_MIN_WEIGHT = 600.0
 
+#: The Unicode Private Use Area. A font may put anything it likes at these codepoints, and an
+#: icon font is exactly what does: the character has no meaning of its own, and what a sighted
+#: person sees is a picture. So a single Private Use character IS non-text content presented to
+#: the user — not a heuristic, a fact about what the codepoint means.
+PRIVATE_USE_FIRST, PRIVATE_USE_LAST = 0xE000, 0xF8FF
+
+#: How icon fonts name themselves in a class attribute. Only consulted for an element with **no
+#: text and no image inside it** — something is being drawn there, and nothing in the markup
+#: says what. A wrapper that turns out to be empty decoration comes back `pass`, which costs one
+#: judgment and is the right direction to be wrong in.
+ICON_CLASS_MARKERS = ("icon", "fa-", "glyphicon", "material-icons", "bi-", "ico-")
+
 #: Conventional non-colour markers. A required field flagged with a red asterisk carries a
 #: second cue in the text itself, so colour is not the *only* visual means and 1.4.1 is met.
 TEXT_CUE_MARKERS = ("*", "✓", "✗", "×", "!", "⚠")
@@ -297,11 +309,46 @@ def _has_second_cue(element: CapturedElement) -> bool:
 
 # ── the rules themselves ───────────────────────────────────────────────────────────
 
+def _is_icon_glyph(element: CapturedElement) -> bool:
+    """A picture drawn by a font rather than by an image — still non-text content (1.1.1).
+
+    Two ways to know, and the first is not a guess. A single character from the **Private Use
+    Area** has no meaning of its own; what the user sees is whatever picture the font puts
+    there. The second is the empty-element case: nothing to read, no image inside, and a class
+    naming an icon family — something is being drawn and nothing says what.
+
+    **Deliberately not selected:** an icon font using a *word* as its ligature
+    (`<i class="material-icons">delete</i>`). Its text is a real word, so it is announced as
+    "delete" — a poor alternative, but an alternative. Selecting it would put every such icon
+    on every page into the queue to be told it is mediocre.
+    """
+    text = element.text.strip()
+    if len(text) == 1 and PRIVATE_USE_FIRST <= ord(text) <= PRIVATE_USE_LAST:
+        return True
+    if text or _has_nested_graphic(element):
+        return False
+    classes = str(element.attrs.get("class", "")).lower()
+    return any(marker in classes for marker in ICON_CLASS_MARKERS)
+
+
 def _applies_alt(element: CapturedElement) -> bool:
-    """Non-text content that is presented to the user — the scope of 1.1.1."""
+    """Non-text content that is presented to the user — the scope of 1.1.1.
+
+    **`<iframe>` is not here on purpose.** A frame with no title is `frame-title`, which the
+    rule scanner proves deterministically; adding it would buy a second opinion on something
+    already measured and cost a judgment on every embed.
+    """
     if not element.rendered:
         return False
     if element.role == "img" or element.tag in {"img", "area"}:
+        return True
+    if element.tag == "canvas":
+        # A drawing surface, and nothing inside it is reachable: whatever it renders — a chart,
+        # a signature, a game — exists only as pixels. There is no rule anywhere that can say
+        # whether its fallback content describes what was drawn, because answering needs
+        # somebody to look at it. That is the whole shape of a question this check exists for.
+        return True
+    if _is_icon_glyph(element):
         return True
     if element.tag == "input":
         return element.attrs.get("type", "").strip().lower() == "image"
@@ -464,11 +511,15 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
     SelectionRule(
         checker="alt",
         criteria=A11Y_CHECKER_CRITERIA["alt"],
-        covers="images, image inputs, image maps, anything with role=img, and SVGs that are "
-               "exposed to assistive technology",
+        covers="images, image inputs, image maps, anything with role=img, SVGs that are "
+               "exposed to assistive technology, <canvas> drawing surfaces, and icons drawn "
+               "by a font rather than by an image",
         skips="elements with no rendered box, and bare SVGs with no role, no name and no "
               "<title> — those are never announced, so there is no alternative to judge. An "
-              "empty alt is NOT skipped: an informative image left empty is the failure.",
+              "empty alt is NOT skipped: an informative image left empty is the failure. "
+              "<iframe> is left to the rule scanner, which proves a missing frame title "
+              "deterministically. An icon font using a real word as its ligature is left "
+              "alone — it has an alternative, even if a poor one.",
         applies=_applies_alt,
     ),
     SelectionRule(
