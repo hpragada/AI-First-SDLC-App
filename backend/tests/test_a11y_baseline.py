@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -790,6 +791,42 @@ def test_a_second_audit_reuses_the_first_ones_capture_where_nothing_changed(worl
 def _script() -> str:
     return (_REPO / "runner" / "companion" / "assets" / "a11y_audit.mjs").read_text(
         encoding="utf-8")
+
+
+def _offer_tags() -> set[str]:
+    """The bare tag names the capture offers, read out of the script rather than restated."""
+    block = _script().split("const OFFER = [", 1)[1].split("].join", 1)[0]
+    return set(re.findall(r'"([a-z0-9]+)"', re.sub("//.*", "", block)))
+
+
+def test_the_audit_script_offers_the_containers_that_structure_lives_on():
+    """The other half of a pairing that failed silently for a whole audit.
+
+    A rule that would claim an element never gets the chance if the capture never offers it,
+    and nothing anywhere reports the difference. `/loans/current` tints each row of its loans
+    table to carry the status; the colour rule claims a tinted row on sight
+    (`test_color_selects_a_table_row_tinted_to_carry_a_status`); `tr` was not in this list. So
+    the row never arrived, the page produced no colour finding, and the conformance statement
+    recorded it as a page where 1.4.1 had been checked.
+
+    The rest of these are offered for a reason worth stating, because most are not claimed by
+    any rule yet: structure lives on the container, so a table with no header cells and a set
+    of radio buttons with no grouping are invisible while only their children are offered. An
+    element that is offered and declined is **counted**, and `rules.explain()` can name the
+    rule that declined it. An element never offered is a silence nothing can measure.
+    """
+    offered = _offer_tags()
+    for tag in ("table", "tr", "ul", "ol", "fieldset", "form", "canvas", "iframe"):
+        assert tag in offered, tag
+
+
+def test_the_audit_script_still_offers_what_it_always_did():
+    """Added alongside the containers: growing the list must never quietly shrink it."""
+    offered = _offer_tags()
+    for tag in ("img", "svg", "area", "input", "button", "a", "select", "textarea",
+                "h1", "h2", "h3", "h4", "h5", "h6", "label", "summary", "details",
+                "p", "li", "td", "th", "span"):
+        assert tag in offered, tag
 
 
 def test_the_audit_script_captures_all_six_style_keys():

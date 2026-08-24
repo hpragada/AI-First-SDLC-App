@@ -17,9 +17,11 @@ only then do we move on.
 
 > **Status, 2026-08-21.** This line used to read *"nothing in here is built yet"*. **All eleven
 > gaps in §3 and §4 are built**, and the document has since grown a second half nobody planned
-> for: **§9, the live-run findings** — **seventeen so far across thirteen sections**, every one
-> found by a person watching the product work rather than by reading code. §3 is the plan as written; §9
-> is what reality added to it, and §9 is now the larger and the more useful of the two.
+> for: **§9, what running it turned up** — **twenty so far across sixteen sections**, nineteen
+> built and one open. #19–#35 were found by people watching the product work rather than by
+> reading code; #36–#38 came the other way, from the team asking whether we capture every
+> element WCAG puts in scope and the answer being no. §3 is the plan as written; §9 is what
+> reality added to it, and §9 is now the larger and the more useful of the two.
 
 ### How to read a task
 
@@ -1329,9 +1331,12 @@ Jira and no Confluence — 10 in scope on the first run, 12 on the third, 11 on 
 team took `/staff/shelf-audit` out to stay under the judging cap.
 
 > **This section was appended as an afterthought and is now the larger half of the document.**
-> §3 is the plan as written; §9 is what running it added: **seventeen findings across thirteen
-> sections** (§9.1–§9.13), every one produced by a person watching the product work, and **every
-> one with a green test suite standing over it.** They are numbered #19–#35 in the Testing Guide.
+> §3 is the plan as written; §9 is what running it added: **twenty findings across sixteen
+> sections** (§9.1–§9.16) — nineteen built, one open. #19–#35 were produced by a person
+> watching the product work; #36–#38 by putting twelve textbook WCAG failures through the
+> selection code after the team asked what we do and do not capture. **Every built one has a
+> green test suite standing over it** — which is the point, and why they are written up at
+> length. They are numbered #19–#38 in the Testing Guide.
 
 **It worked, and it found four defects no test could have caught, each hidden behind the one
 before it.** That is the shape of a capability that has never run: the first defect stops you
@@ -2173,3 +2178,89 @@ was unreachable too, right up until it was on screen saying "0 of 126".
 - **`A11yRoute.Source.ONBOARDING` is defined and has never been written by anything.** It is the
   label a page would carry if onboarding had discovered it — a slot held open for **OP-06**, not
   a feature that exists and fails. Removing it would only mean putting it back.
+
+### 9.14 Elements WCAG puts in scope that we never looked at — 24 August ⭐ (BUILT)
+
+**How it was found.** The team asked, before committing to more accuracy work: *are we capturing
+and checking everything WCAG says we should?* Twelve textbook failures were run through the
+platform's own selection function. **Eleven were handed to no check at all.** Several of those
+are the rule scanner's job and correctly excluded; after allowing for that, roughly eight were
+reported by nobody.
+
+**The one that had already happened on a real page.** `/loans/current` shows borrowed books in a
+table and tints each **row** to say overdue / due soon / on loan, with a colour key underneath
+and the status written nowhere else — a plain 1.4.1 failure. The 21 August audit captured eleven
+elements on that page: a heading, two paragraphs, six footer pieces, a header span. Not the
+table, not a tinted row, not the key.
+
+The colour check then looked at nine of those and correctly said colour was carrying nothing.
+So the audit reported **no colour problems**, and the conformance statement recorded the page as
+one where 1.4.1 **had been checked**.
+
+**Two things combined, and neither is wrong on its own.** The capture offers table *cells* but
+not table *rows*. The tint sits on the row. A cell inherits it rather than painting it, so the
+colour rule correctly declines the cells — while the row that owns the colour was never offered.
+The colour falls straight down the gap between the two, and nothing reports a gap.
+
+**Fixed — the capture now offers the containers:** `table`, `tr`, `ul`, `ol`, `fieldset`, `form`,
+`canvas`, `iframe`. The tinted row is claimed by the colour rule the moment it arrives; that rule
+never needed changing and is unchanged.
+
+**Most of the rest are not claimed by any rule yet, and that is deliberate.** An element offered
+and declined is **counted**, and `rules.explain()` can name the rule that declined it. An element
+never offered is a silence nothing can measure. This converts the second into the first, and it
+is the groundwork whichever way §9.16 is decided.
+
+⚠️ **Watch the judgement count on the next audit.** Zebra-striped tables now produce a colour
+question per tinted row, and the dispatch cap is 200 per run. If it bites, the fix is to treat a
+repeated identical row tint as one question — not to un-offer the row.
+
+**Verified:** 2 new tests in `test_a11y_checkers.py` (the tinted row is a colour question; the
+cells inside it are left to the row) and 2 in `test_a11y_baseline.py` reading the capture script
+itself — one asserting the containers are offered, one asserting the list never quietly shrinks.
+The pairing failed silently precisely because each half was fine alone, so both halves are pinned.
+
+### 9.15 A submit button's label could never be read — 24 August (BUILT)
+
+**What was wrong.** The 2.5.3 check compares a control's **visible text** against what a screen
+reader announces. It read visible text as the element's inner text. **An `<input>` has no inner
+text — not usually none, none, ever.** A submit button's face is its `value` attribute.
+
+So the rule found no visible label, concluded from that silence that the criterion did not
+apply, and moved on. Every submit and reset button in every form of every client application was
+permanently out of scope for Label in Name, and nothing anywhere said so.
+`<input type="submit" value="Search">` announced as "Go" is a textbook failure and could not be
+reported.
+
+**Fixed** in the selection rule: for `type` of `submit`, `reset` or `button` — the three HTML
+renders as the button's face — `value` is read as the visible label.
+
+**Named types rather than every `<input>`, deliberately.** On a text field `value` holds what the
+**user typed**. Reading that as a label would compare somebody's own name against the field's
+accessible name and report the difference as a defect — a finding raised against a real person's
+data, on every filled-in form. There is a test pinning that it does not.
+
+**A submit button with no `value` stays out of scope**, also deliberately: the browser draws its
+own word there, in its own language, and it is not in the markup to compare anything against.
+
+**Not fixed, and flagged rather than quietly widened:** the same blindness exists in two
+neighbours — 1.4.1's "is there any text here at all?" test and its marker-character check both
+read inner text, so `<input type="submit" value="Delete">` styled only in red is still out of
+scope for colour. Same family, different criterion, and the team scoped this fix to 2.5.3.
+
+**Verified:** 7 new tests in `test_a11y_checkers.py`, including the three value-bearing types
+parametrised, the typed-in text field that must **not** be selected, the valueless button, and
+the button whose name already contains its label.
+
+### 9.16 The 1.3.1 scope gap — 24 August (OPEN, written up separately)
+
+The third finding from the same investigation, and the only one that is not a fix. The check
+carrying **1.3.1 Info and Relationships** asks *"is this a fake control or a fake heading?"* The
+criterion asks *"is the visible structure real?"* — tables with header cells, lists that are
+lists, grouped fields that are grouped. Those are different questions, and a table with no header
+cells is claimed by nobody while the page is recorded as passing 1.3.1.
+
+It is not a bug: every rule is deliberate, documented and tested. The check was built to answer a
+narrower question than the routing table records it against, and nothing ever compared the two.
+
+**Full write-up, options and the decision needed: `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.**

@@ -217,6 +217,36 @@ def test_color_selects_a_filled_indicator_with_no_text():
     assert "color" in checkers_for(dot)
 
 
+def test_color_selects_a_table_row_tinted_to_carry_a_status():
+    """The shape that went unreported on a real page for a whole audit.
+
+    `/loans/current` tints each row of the loans table to say overdue / due soon / on loan,
+    with a colour key underneath and the status written nowhere else. The rule has always
+    claimed such a row — this test says so — but the capture never offered `tr`, so the one
+    element on that page which fails 1.4.1 was never judged and the page was recorded as
+    checked. The companion side of this pairing is pinned in `test_a11y_baseline.py`; neither
+    half is any use alone, which is exactly how the gap survived.
+    """
+    row = element(
+        tag="tr", selector="#loans-table > tbody > tr:nth-of-type(2)", text="Tidewater 12 Aug",
+        styles={**{k: "" for k in STYLE_KEYS}, "background-color": "rgb(255, 224, 224)"},
+        parent_styles={**{k: "" for k in STYLE_KEYS}, "background-color": "rgb(255, 255, 255)"},
+    )
+    assert "color" in checkers_for(row)
+
+
+def test_color_leaves_the_cells_inside_a_tinted_row_to_the_row_itself():
+    """One question, asked once. A cell inherits the tint rather than painting it, so the rule
+    declines it — correctly, and now harmlessly, since the row that does own the colour is
+    offered. Before that it was the whole failure: everything that arrived was declined."""
+    cell = element(
+        tag="td", selector="#loans-table > tbody > tr:nth-of-type(2) > td", text="Tidewater",
+        styles={**{k: "" for k in STYLE_KEYS}, "background-color": "rgba(0, 0, 0, 0)"},
+        parent_styles={**{k: "" for k in STYLE_KEYS}, "background-color": "rgb(255, 224, 224)"},
+    )
+    assert "color" not in checkers_for(cell)
+
+
 @pytest.mark.parametrize("second_cue", [
     {"styles": {"text-decoration-line": "underline"}},
     {"styles": {"border-style": "solid"}},
@@ -279,6 +309,52 @@ def test_a_link_with_an_href_is_a_control_for_label_purposes():
     link = element(tag="a", attrs={"href": "/buy"}, text="Buy now",
                    accessible_name="Purchase")
     assert "label" in checkers_for(link)
+
+
+def test_a_submit_button_is_labelled_by_its_value_not_by_text_it_can_never_have():
+    """An `<input>` has no inner text — not "usually none", none, ever.
+
+    Reading only inner text meant the rule found no visible label, concluded from that silence
+    that 2.5.3 did not apply, and moved on. That put every submit and reset button in every
+    form permanently out of scope for the criterion, without once saying so.
+    """
+    button = element(tag="input", attrs={"type": "submit", "value": "Search",
+                                         "aria-label": "Go"},
+                     text="", accessible_name="Go",
+                     html='<input type="submit" value="Search" aria-label="Go">')
+    assert "label" in checkers_for(button)
+
+
+@pytest.mark.parametrize("input_type", ["submit", "reset", "button"])
+def test_every_input_type_whose_value_is_its_face_is_read_that_way(input_type):
+    el = element(tag="input", attrs={"type": input_type, "value": "Search"},
+                 text="", accessible_name="Go")
+    assert "label" in checkers_for(el)
+
+
+def test_what_a_person_typed_into_a_field_is_never_read_as_that_fields_label():
+    """The reason the three types are named rather than every `<input>` taken as labelled.
+
+    On a text field `value` is the user's own data. Reading it as a visible label would compare
+    what somebody typed against the field's accessible name and report the difference as a
+    defect — a finding against a real person's name, raised on every filled-in form.
+    """
+    typed_in = element(tag="input", attrs={"type": "text", "value": "Ada Lovelace"},
+                       text="", accessible_name="Full name")
+    assert "label" not in checkers_for(typed_in)
+
+
+def test_a_submit_button_with_no_value_of_its_own_stays_out_of_scope():
+    """The browser draws its own word there, in its own language. It is not in the markup, so
+    there is nothing to compare the accessible name against and nothing honest to report."""
+    bare = element(tag="input", attrs={"type": "submit"}, text="", accessible_name="Go")
+    assert "label" not in checkers_for(bare)
+
+
+def test_a_submit_button_whose_name_already_holds_its_value_is_not_asked_about():
+    met = element(tag="input", attrs={"type": "submit", "value": "Search"},
+                  text="", accessible_name="Search the catalogue")
+    assert "label" not in checkers_for(met)
 
 
 # ── selecting a whole page ───────────────────────────────────────────

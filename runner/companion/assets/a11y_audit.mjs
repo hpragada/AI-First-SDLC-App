@@ -214,6 +214,22 @@ async function collectElements(page) {
         "[role]", "[tabindex]", "[onclick]", "[onkeydown]", "[onkeyup]",
         "h1", "h2", "h3", "h4", "h5", "h6", "label", "summary", "details",
         "p", "li", "td", "th", "span", "div[class]",
+        // The containers, added after a live audit showed what leaving them out costs.
+        // `/loans/current` carries its loan status as a tint on each table ROW, with a colour
+        // key underneath and the status written nowhere. The cells inside were offered and
+        // correctly declined — the colour is not theirs, they inherit it — and the row that
+        // owns the colour was never offered at all, so the one element on that page which
+        // fails 1.4.1 was never judged and the page was recorded as checked. The colour rule
+        // claims that row the moment it arrives; it was only ever missing from this list.
+        //
+        // The rest are here for the same reason in a different form: structure lives on the
+        // container, so a table with no header cells, a list built out of divs and an
+        // ungrouped set of radio buttons are all invisible while only their children are
+        // offered. Most are not claimed by any rule YET — the 1.3.1 scope work is written up
+        // separately — and that is deliberate. An element that is offered and declined is
+        // COUNTED, and `rules.explain()` can say which rule declined it; an element never
+        // offered is a silence nothing can measure. This turns the second into the first.
+        "table", "tr", "ul", "ol", "fieldset", "form", "canvas", "iframe",
       ].join(",");
 
       function cssPath(el) {

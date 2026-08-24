@@ -86,6 +86,12 @@ HEADING_MIN_WEIGHT = 600.0
 #: second cue in the text itself, so colour is not the *only* visual means and 1.4.1 is met.
 TEXT_CUE_MARKERS = ("*", "✓", "✗", "×", "!", "⚠")
 
+#: Input types whose `value` attribute IS the control's visible label, because HTML renders it
+#: as the button's face. For every other type `value` holds what the user typed — that is data,
+#: not a label, and reading it as one would compare a person's own name against a field's
+#: accessible name and call the difference a defect.
+VALUE_LABEL_INPUT_TYPES = frozenset({"submit", "reset", "button"})
+
 _WHITESPACE = re.compile(r"\s+")
 _PX = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*px\s*$", re.IGNORECASE)
 _NAMED_WEIGHTS = {"normal": 400.0, "bold": 700.0, "bolder": 700.0, "lighter": 100.0}
@@ -181,6 +187,28 @@ def _paints(colour: str) -> bool:
 def _has_nested_graphic(element: CapturedElement) -> bool:
     lowered = element.html.lower()
     return "<img" in lowered or "<svg" in lowered
+
+
+def _visible_text(element: CapturedElement) -> str:
+    """The words a sighted person reads on this control, normalised.
+
+    Almost always the element's own text. The exception is `<input>`, which has **no inner
+    text, ever** — a submit button's face is its `value` attribute. Reading only inner text put
+    every submit and reset button in every form permanently out of scope for 2.5.3: the rule
+    found no visible label, concluded from that silence that the criterion did not apply, and
+    moved on. `<input type="submit" value="Search">` announced as "Go" is a textbook Label in
+    Name failure, and it could not be reported.
+
+    A submit button with no `value` at all is still out of scope, and that skip is deliberate:
+    the browser draws its own default word, that word is chosen by the user agent and its
+    language, and it is not in the markup for us to compare anything against.
+    """
+    text = _normalise(element.text)
+    if text or element.tag != "input":
+        return text
+    if element.attrs.get("type", "").strip().lower() in VALUE_LABEL_INPUT_TYPES:
+        return _normalise(element.attrs.get("value", ""))
+    return ""
 
 
 def _is_control(element: CapturedElement) -> bool:
@@ -308,7 +336,7 @@ def _applies_label(element: CapturedElement) -> bool:
     """
     if not element.rendered or not _is_control(element):
         return False
-    visible = _normalise(element.text)
+    visible = _visible_text(element)
     if not visible:
         return False
     name = _normalise(element.accessible_name)
@@ -373,7 +401,9 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
     SelectionRule(
         checker="label",
         criteria=A11Y_CHECKER_CRITERIA["label"],
-        covers="controls whose visible text does not appear in their accessible name",
+        covers="controls whose visible text does not appear in their accessible name — "
+               "including a submit, reset or button <input>, whose visible text is its "
+               "`value` attribute rather than inner text it can never have",
         skips="controls with no visible text (2.5.3 does not apply to them), controls with no "
               "accessible name at all (that is 4.1.2), and controls whose name already "
               "contains the visible text — the criterion is met as a matter of fact",

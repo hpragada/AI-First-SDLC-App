@@ -2,7 +2,8 @@
 
 **For the Edvensoft team · 21 August 2026 · branch `web-accessibility-build`**
 **Covers QA‑01 … QA‑24 (31 tasks), the ten gap-fix tasks G1 … G6c, the eighteen
-user-experience fixes of 20 August, and the seventeen that five live runs found on 20–21 August (§9)**
+user-experience fixes of 20 August, the seventeen that five live runs found on 20–21 August,
+and the three that came out of the capture-scope question on 24 August (§9)**
 
 ---
 
@@ -936,7 +937,7 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The thirty-five findings, and what was done about each
+## 9. The thirty-eight findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
@@ -954,6 +955,13 @@ Library on 20–21 August by people watching the product work — the last of th
 conformance statement those audits produced. **Every one of them had a green test
 suite standing over it** — which is why they are written up at length rather than ticked off. The
 list is now longer than the walkthrough that started it.
+
+**#36–#38 came from a question, not a run.** Before committing to more accuracy work the team
+asked: *as per WCAG, are we capturing and checking every element we should be?* Twelve textbook
+failures were put through the platform's own selection code. **Eleven were handed to no check at
+all** — several correctly, because they are the rule scanner's job; roughly eight were reported
+by nobody. Two of the three below are fixed. The third is a scope decision, still open, and
+written up on its own in `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.
 
 | # | What was wrong | Status |
 |---|---|---|
@@ -992,6 +1000,9 @@ list is now longer than the walkthrough that started it.
 | 33 | **The second pass was described in the first pass's words** | ✅ fixed |
 | 34 | The baseline never said when a check was incomplete | ✅ fixed |
 | 35 | **A criterion checked on eleven pages was reported on one** | ✅ fixed |
+| 36 | **Table rows, lists and form groups were never captured at all** | ✅ fixed |
+| 37 | A submit button's visible label could never be read | ✅ fixed |
+| 38 | **The 1.3.1 check is narrower than the criterion it is recorded against** | ⬜ open |
 
 **#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
 Those came from *reading* the screens. These came from *running* them, and five of the six are
@@ -1700,6 +1711,107 @@ is written when a run is recorded, so the 21 August statement will keep saying "
 another audit runs. Verified before any test was written by re-computing from the stored capture:
 2.5.3 goes from 1 page to 11, and 1.1.1 from 6 to 11 — the same defect a second time, which the
 scanner had been hiding.
+
+---
+
+### #36 — Table rows, lists and form groups were never captured at all ⭐ ✅
+
+**What it is.** Before any check can look at something on a page, the audit has to pick it up. It
+works from a fixed list of which kinds of page furniture to collect.
+
+**What was wrong.** That list included table **cells** but not table **rows** — and not tables,
+lists, form groups, embedded frames or charts either. Across the whole 21 August audit, 196
+elements were collected from 11 pages, and every single one was a paragraph, a heading, an image,
+a link, a button, a span or a plain container. Not one table. Not one form field group.
+
+**What it meant.** `/loans/current` lists borrowed books in a table and **tints each row** to say
+overdue, due soon or on loan, with a colour key underneath and the status written nowhere in
+words. Someone who cannot tell those colours apart cannot tell which book is overdue — a
+textbook Use of Colour failure.
+
+Here is everything the AI was shown on that page: the heading, two paragraphs, six pieces of the
+footer, one span in the site header. **The table is not in that list.** Neither are the tinted
+rows, nor the key.
+
+So the colour check looked at nine ordinary bits of text, correctly said colour was carrying
+nothing, and the audit reported **no colour problems**. The conformance statement then recorded
+the page as one where Use of Colour **had been checked**. A confident silence over the one thing
+on the page that fails.
+
+**Two innocent halves.** The tint sits on the row. A cell inside it *inherits* that colour rather
+than painting it, so the colour rule correctly declines the cells — while the row that owns the
+colour was never offered. Neither half is wrong on its own, and nothing anywhere reported a gap.
+
+**Now:** the capture collects the containers too — tables, rows, lists, form groups, frames and
+charts. The colour rule claims a tinted row the moment it arrives; that rule never needed
+changing and was not changed.
+
+Most of the other containers are **not claimed by any check yet**, and that is deliberate rather
+than half-done. Something collected and then declined is **counted**, and the platform can say
+which rule declined it and why. Something never collected is a silence nothing can measure. This
+turns the second into the first.
+
+**How to check it:** run an audit including `/loans/current`, open the report, and look for a
+colour finding against the loans table. Before this fix there could never be one.
+
+⚠️ **Watch the judgement count on the next run.** Striped tables now raise a colour question
+per tinted row, and there is a ceiling of 200 judgements per audit. If it starts biting, the
+answer is to treat a repeated identical row tint as one question — not to stop collecting rows.
+
+### #37 — A submit button's visible label could never be read ✅
+
+**What it is.** The Label in Name check compares the words you can **see** on a button against the
+words a screen reader **says**. When a voice-control user says "click Search" and the button is
+secretly named "Go", nothing happens — that is the failure it exists to catch.
+
+**What was wrong.** It read the visible words as the text sitting inside the element. That works
+for `<button>Search</button>`. It can never work for a form's submit button, which is written
+`<input type="submit" value="Search">` — there is nothing inside it. The words are in the
+`value`.
+
+So the check found no visible words, concluded from that silence that the criterion did not
+apply, and moved on. **Every submit and reset button in every form of every client application
+was permanently out of scope**, and nothing anywhere said so.
+
+**Now:** for the three button-like input types, the `value` is read as the visible label.
+
+**Why only those three, and not every field.** On an ordinary text box, `value` holds **what the
+user typed**. Treating that as a label would compare somebody's own name against the field's name
+and report the difference as an accessibility defect — a finding raised against a real person's
+data, on every filled-in form. There is a test making sure it does not.
+
+A submit button with **no** `value` stays out of scope, also on purpose: the browser draws its own
+word there, in its own language, and it is not in the page for us to compare anything against.
+
+**How to check it:** on a page with a real form, give the submit button a `value` of "Search" and
+an `aria-label` of "Go". It should now be reported against 2.5.3. Before this it could not be.
+
+**Flagged, not fixed:** the same blindness exists in two neighbours — the colour check's "is
+there any text here?" test reads inner text the same way, so a submit button styled only in red is
+still out of scope for Use of Colour. Same family, different criterion; this fix was scoped to
+2.5.3 and widening it is a separate decision.
+
+### #38 — The 1.3.1 check is narrower than the criterion it is recorded against ⬜ OPEN
+
+**What it is.** WCAG 1.3.1 *Info and Relationships* says: anything a sighted person can work out
+by **looking** at the page must also be written into the markup. Table headings must be marked as
+headings. A list must be a list. Radio buttons that belong together must be grouped.
+
+**What is wrong.** Our check for it asks one question — *"is this thing pretending to be a button
+or a heading without being one?"* That is a real and useful question, and we do find those. But it
+is not the question 1.3.1 asks. A table with no header cells is claimed by no check, by the rule
+scanner or by us, and the page is recorded as **passing 1.3.1**.
+
+**Why it is not a bug.** Every rule in that code is deliberate, documented and individually
+tested. The check was built to answer a narrower question than the routing table records it
+against, and nothing in between ever compared the two.
+
+**Why it is open rather than fixed.** Closing it means either widening an existing check into two
+different jobs, or building a fifth check whose unit of work is a whole table rather than one
+element. Both are real design decisions with real cost, and both are the team's call.
+
+**Full write-up, the options, and the decision needed:**
+`SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.
 
 ---
 
