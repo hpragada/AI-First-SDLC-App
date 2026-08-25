@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from apps.gates.models import Approval
+from apps.ledger.models import Event
 from apps.projects.models import Project, ProjectProfile
 from apps.registry.models import AgentSpec, Artifact
 from apps.runs.models import Run
@@ -132,6 +133,76 @@ def test_publish_artifacts_core(wired, store, run_input):
     assert store.get(snap) == store.get(artifact.s3_key)
     assert Run.objects.get(id=run_input.run_id).status == Run.Status.COMPLETED
     # The Approval decision is recorded by the gate service (T9), not publish.
+
+
+# ══ what a run may NOT publish on its own ══════════════════════════════════════
+#
+# Published means a named human approved this and it is the project's answer. A run started with
+# `auto_approve` has no gate and this activity runs anyway — right for document vision, where the
+# human had already adopted the source document, and wrong for the accessibility runs, which set
+# the same flag for an unrelated reason (nobody watches their carrier work item, so a gate there
+# would hang the audit for ever). They inherited the publishing without the justification.
+#
+# Measured 25 August across two tenants before this was fixed: every artifact of every judging
+# run, published, approved by nobody.
+
+def test_accessibility_run_artifacts_are_left_as_drafts(wired, store, run_input):
+    a11y = Artifact.objects.create(
+        tenant_id=run_input.tenant_id, project_id=run_input.project_id, run_id=run_input.run_id,
+        phase="a11y_judge", type="a11y_judge", sor=Artifact.SoR.INTERNAL,
+        status=Artifact.Status.DRAFT, title="Accessibility judging", content_hash="h1",
+    )
+    notes = Artifact.objects.create(
+        tenant_id=run_input.tenant_id, project_id=run_input.project_id, run_id=run_input.run_id,
+        phase="a11y_judge", type="assumption", sor=Artifact.SoR.INTERNAL,
+        status=Artifact.Status.DRAFT, title="Assumptions", content_hash="h2",
+    )
+
+    result = activities.publish_artifacts_core(run_input)
+
+    a11y.refresh_from_db()
+    notes.refresh_from_db()
+    assert a11y.status == Artifact.Status.DRAFT
+    # The `assumption` row is the one a person notices in the registry; the judging document is
+    # shown as run output and so wore a disguise. Both were published, and both are covered.
+    assert notes.status == Artifact.Status.DRAFT
+    assert {str(a11y.id), str(notes.id)} <= set(result["left_draft"])
+    assert str(a11y.id) not in result["published"]
+
+
+def test_it_says_what_it_left_rather_than_passing_over_it_in_silence(wired, run_input):
+    """A run that quietly did less than its name says is the shape of failure this codebase
+    keeps meeting — most recently a cleanup migration that deleted nothing and recorded itself
+    as applied. What was skipped is returned AND put on the event."""
+    Artifact.objects.create(
+        tenant_id=run_input.tenant_id, project_id=run_input.project_id, run_id=run_input.run_id,
+        phase="a11y_journey", type="a11y_judge", sor=Artifact.SoR.INTERNAL,
+        status=Artifact.Status.DRAFT, title="Keyboard journey", content_hash="h3",
+    )
+    result = activities.publish_artifacts_core(run_input)
+
+    assert len(result["left_draft"]) == 1
+    event = Event.objects.filter(tenant_id=run_input.tenant_id,
+                                 action="artifacts.published").latest("ts")
+    assert event.payload["left_draft"] == result["left_draft"]
+
+
+def test_every_other_phase_publishes_exactly_as_before(wired, store, run_input):
+    """The whole platform runs through this activity. Nothing but the two accessibility phases
+    may change behaviour — including `assumption`, which is a real deliverable everywhere else
+    and IS published on the build path."""
+    activities.execute_agent_core(run_input, manifest="# Project\nx")
+    assumption = Artifact.objects.create(
+        tenant_id=run_input.tenant_id, project_id=run_input.project_id, run_id=run_input.run_id,
+        phase="implementation", type="assumption", sor=Artifact.SoR.INTERNAL,
+        status=Artifact.Status.DRAFT, title="Assumptions", content_hash="h4",
+    )
+    result = activities.publish_artifacts_core(run_input)
+
+    assumption.refresh_from_db()
+    assert assumption.status == Artifact.Status.PUBLISHED
+    assert result["left_draft"] == []
+    assert Run.objects.get(id=run_input.run_id).status == Run.Status.COMPLETED
 
 
 class _FakeDocStore:

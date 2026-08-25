@@ -335,18 +335,52 @@ def open_gate_core(inp: AgentRunInput) -> str:
     return str(approval.id)
 
 
+#: Phases whose artifacts are NEVER marked published by this activity, however the run ended.
+#:
+#: **What went wrong.** Publishing happens on gate APPROVAL, which is the platform’s whole
+#: story: published means a named human approved this and it is the project’s answer. A run
+#: started with `auto_approve` has no gate, and this activity runs anyway — which is correct for
+#: the one case it was built for (document vision, 00e: the human had already adopted the
+#: document those pages came from, so a second gate would ask them the same question twice).
+#:
+#: The accessibility judging and keyboard-journey runs set `auto_approve` for a different and
+#: good reason — nobody is watching their carrier work item, and a gate there would hang the
+#: audit forever waiting on an approval nobody knows to give — and inherited the publishing with
+#: it, without inheriting the justification. Measured on 25 August across two tenants: **every**
+#: artifact of every judging run, marked published, approved by nobody. The `assumption` rows are
+#: the ones a person notices; the judging documents are marked as run output on screen and so
+#: wore a disguise.
+#:
+#: They stay DRAFT, which is what they are: kept, readable, previewable, still handed to later
+#: phases (`get_context` excludes only rejected work), and awaiting the human step. For
+#: accessibility that step is signing the conformance statement, which sets APPROVED on its own
+#: document and is the only signature in this capability that means anything.
+NEVER_AUTO_PUBLISHED_PHASES = frozenset({"a11y_judge", "a11y_journey"})
+
+
 def publish_artifacts_core(inp: AgentRunInput) -> dict:
     """On APPROVED: snapshot to S3 and mark every artifact published-INTERNAL. External
     export is user-triggered (team flow decision, 2026-07-07) via POST
     /artifacts/{id}/publish/, governed by the project's phase-scoped export policy
     (integrations.export_policy) — gate approval never auto-pushes to a SoR. Idempotent —
-    already-published artifacts are skipped."""
+    already-published artifacts are skipped.
+
+    Except for `NEVER_AUTO_PUBLISHED_PHASES`, which are left as they are and named in the event
+    rather than passed over in silence — see that constant for what publishing them cost.
+    """
     store = get_object_store()
     with tenant_context(inp.tenant_id):
         artifacts = list(Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id))
 
     published: list[str] = []
+    left_draft: list[str] = []
     for artifact in artifacts:
+        if artifact.phase in NEVER_AUTO_PUBLISHED_PHASES:
+            # Not a skip-if-already-done: this is a decision, and it is recorded as one. A run
+            # that quietly did less than its name says is the shape of failure this codebase
+            # keeps meeting.
+            left_draft.append(str(artifact.id))
+            continue
         if artifact.status == Artifact.Status.PUBLISHED:
             published.append(str(artifact.id))
             continue
@@ -377,12 +411,12 @@ def publish_artifacts_core(inp: AgentRunInput) -> dict:
         # not here — that path owns the approver + decided_at.
         tools.log_event(
             inp.tenant_id, "orchestrator", "artifacts.published", "run", inp.run_id,
-            {"artifact_ids": published},
+            {"artifact_ids": published, "left_draft": left_draft},
         )
     # A vision run's artifact IS the document's artifact — link it back, or the document would
     # stay pointing at nothing (see link_vision_artifact_core).
     link_vision_artifact_core(inp)
-    return {"published": published}
+    return {"published": published, "left_draft": left_draft}
 
 
 def transition_work_item_core(inp: AgentRunInput, to_state: str) -> dict:
