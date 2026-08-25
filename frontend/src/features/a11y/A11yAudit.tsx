@@ -1057,9 +1057,10 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
             )}
 
             {/* A different sentence from the one above, and a worse one: that says part of what
-                was captured went unasked, this says one of the four checks could not run at all.
+                was captured went unasked, this says one of the checks could not run at all.
                 Named separately so it can never be read as "the application has no label
-                problems" — nothing looked for any. */}
+                problems" — nothing looked for any. (No count here, matching the visible copy
+                and the backend prose: it said "four" from the day `structure` made it five.) */}
             {audit.summary?.names?.reason && (
               <Banner variant="warning" title="One of the checks could not run">
                 {audit.summary.names.reason}

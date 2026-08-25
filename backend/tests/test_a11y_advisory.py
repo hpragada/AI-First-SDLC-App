@@ -137,9 +137,14 @@ def _a11y_defects(world):
 # ── which checks are advisory, and how that is decided ───────────────────────
 
 def test_exactly_the_journey_checks_are_advisory_and_nothing_else():
-    """The four element checks judge a captured page, the same way the scanner reads one, and
+    """The element checks judge a captured page, the same way the scanner reads one, and
     they are not what this task holds back. If a future check joins either group, this fails
-    first — which makes it a decision rather than a side effect."""
+    first — which makes it a decision rather than a side effect.
+
+    Deliberately not counted here: the assertion is that the two GROUPS do not overlap, which is
+    true at any size, and a number in this docstring would only be one more copy to go stale (it
+    said "four" from 24 to 25 August, after `structure` made it five). `test_a11y_wcag` is where
+    the count is pinned."""
     assert ADVISORY_CHECKERS == frozenset(A11Y_JOURNEY_CRITERIA)
     assert not ADVISORY_CHECKERS & set(A11Y_CHECKER_CRITERIA)
     assert all(is_advisory(checker) for checker in A11Y_JOURNEY_CRITERIA)

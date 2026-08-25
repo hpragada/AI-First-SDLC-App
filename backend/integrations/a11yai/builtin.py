@@ -7,7 +7,7 @@ a vendor: which engine actually runs is the driver's business, and naming one he
 be a lie the day the driver is switched. A third-party accessibility-AI service would be a
 *different* connector slug behind this same capability, and no caller would change.
 
-**What these four methods do** (D-A11Y-4, QA-03). They answer from what has already been
+**What these per-element methods do** (D-A11Y-4, QA-03). They answer from what has already been
 judged, and say so plainly when nothing has. They do **not** start a run.
 
 That is not a shortcut, it is the shape of the thing. Judging happens in batches — one agent
@@ -15,7 +15,7 @@ run per dispatch, carrying a page at a time (`apps.a11y.dispatch`) — for two r
 still hold when you ask about a single element: the platform refuses to start a second run
 while one is live for the same work item, so a per-element run would be refused as soon as a
 second element came along; and a run per element is precisely the cost that made QA-02 batch
-in the first place. So the batch path stays the way work gets done, and these four stay the
+in the first place. So the batch path stays the way work gets done, and these stay the
 way a caller *asks about one element* — answering from the stored verdict, keyed by a hash of
 everything the judge looked at, which is why the answer cannot be stale.
 

@@ -239,12 +239,18 @@ A11Y_VERDICTS = frozenset({A11Y_PASS, A11Y_FAIL, A11Y_UNCERTAIN})
 #: is reported against; `check_semantics` legitimately spans two, which is why this is a
 #: tuple per checker rather than a single string.
 #:
-#: **These four are the POC ELEMENT checkers and this map stays exactly four** (QA-20). They
+#: **These five are the POC ELEMENT checkers, and widening the map is a decision** (QA-20). They
 #: answer a question about one element of a page standing still, `checkers/rules.py` selects
 #: candidates for them, and `test_a11y_ownership` pins them to the criteria the registry marks
 #: `owner=ai, tier=in_poc`. The journey checks below are a different shape with a different
 #: tier, so they get their own map rather than widening this one — merging them would silently
 #: break that drift test, which exists precisely so extending AI coverage is a decision.
+#:
+#: It said "exactly four" until 25 August, and had done since `structure` was added on the 24th
+#: to close the 1.3.1 scope gap — a rule about the map, printed directly above the map, saying
+#: something the map itself contradicted. The count is the thing that keeps going stale here, so
+#: what is written down now is the RULE (a change is a decision somebody takes) rather than a
+#: number that has to be remembered a second time. `test_a11y_wcag` holds the number.
 A11Y_CHECKER_CRITERIA: dict[str, tuple[str, ...]] = {
     "alt": ("1.1.1",),                  # Non-text Content — is the alt text meaningful?
     "semantics": ("1.3.1", "4.1.2"),    # Info and Relationships / Name, Role, Value

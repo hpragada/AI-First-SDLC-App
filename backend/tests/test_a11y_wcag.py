@@ -1010,15 +1010,19 @@ def test_sections_handles_nesting_and_an_unclosed_tag():
     assert list(wcag_build.sections("<section id='a'>A")) != []
 
 
-# ── What the three checkers actually cover, pinned ──────────────────────────
+# ── What the element checkers actually cover, pinned ────────────────────────
 #
 # Not a behaviour test — a guard on a number people quote. The build was described for weeks as
 # "the AI half covers 11 of 55", which is what the ownership REGISTRY classifies as AI-owned.
-# Four checkers are built and they cover five criteria; the other six are Phase 2. The gap
+# Five checkers are built and they cover five criteria; the other six are Phase 2. The gap
 # between the two numbers reached a testing guide and could as easily have reached a proposal.
 #
 # So: change either list and this test fails, and whoever changes it has to restate the coverage
 # rather than leave a stale figure standing somewhere nobody is looking.
+#
+# This heading said "three" and this paragraph said "four" while the assertion below said five —
+# the count going stale in the prose OF THE TEST THAT GUARDS THE COUNT. The heading no longer
+# carries a number at all; the one number that matters is asserted, where it cannot rot quietly.
 
 def test_built_coverage_is_what_the_documents_claim():
     from apps.a11y.checkers.rules import CHECKERS
