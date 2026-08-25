@@ -451,7 +451,7 @@ def test_the_title_describes_the_element_instead_of_pasting_the_selector(world):
     _reconcile(world, run)
 
     defect = _a11y_defects(world)[0]
-    assert "row 2 of the loans table" in defect.title, defect.title
+    assert "row 2 in the loans table" in defect.title, defect.title
     assert "tbody" not in defect.title
     # And the exact selector is NOT lost — it is on the ticket, verbatim, where somebody fixing
     # it goes looking. The title is a summary; the description is the record.
@@ -474,10 +474,16 @@ def test_a_title_still_says_which_page_and_which_rule_without_the_standard_loade
 @pytest.mark.parametrize("selector,expected", [
     # An id is the name its own developer chose: short, precise, and a downgrade to describe.
     ("#photo-interior", "#photo-interior"),
-    ("#loans-table > tbody > tr:nth-of-type(2)", "row 2 of the loans table"),
-    ("nav > ul > li:nth-of-type(3) > a", "link"),
-    ("main > div.card > button", "button"),
-    ("form#signup > input.email", "field of the signup"),
+    ("#loans-table > tbody > tr:nth-of-type(2)", "row 2 in the loans table"),
+    ("form#signup > input.email", "field in the signup"),
+    # A named thing beats a region — "in the loans table" says more than "in the main content".
+    ("#main > #loans-table > tr:nth-of-type(1)", "row 1 in the loans table"),
+    # A landmark is a region, never a name: "of the main" told nobody anything.
+    ("#main > p:nth-of-type(1)", "paragraph 1 in the main content"),
+    # The link has no position of its own; the list item it sits in does, and carrying it
+    # is what tells the third nav link from the first.
+    ("nav > ul > li:nth-of-type(3) > a", "link (list item 3) in the navigation"),
+    ("main > div.card > button", "button in the main content"),
     # A tag with no word for it falls back to the selector rather than to nothing. A gap in the
     # list is a gap in the list; a title that says less than the old one is not an improvement.
     ("div.wrapper > span", "div.wrapper > span"),
@@ -485,3 +491,45 @@ def test_a_title_still_says_which_page_and_which_rule_without_the_standard_loade
 ])
 def test_the_element_is_put_into_words_or_left_exactly_as_it_was(selector, expected):
     assert _element_words(selector) == expected
+
+
+# ══ and it has to tell siblings apart ═════════════════════════════════════════════
+#
+# The first version of this named the nearest ancestor with an id and threw away the number that
+# distinguished one element from its siblings. Three labels in three rows of one form all came
+# out "label of the main" — three tickets on one board wearing one title, which is worse than
+# the unreadable selector it replaced. Found by checking the real data after a migration, not by
+# a test, which is why these exist.
+
+@pytest.mark.parametrize("selectors", [
+    # Same element, different repeat of the same block: the position has to survive.
+    ["#main > form > div:nth-of-type(1) > label",
+     "#main > form > div:nth-of-type(2) > label",
+     "#main > form > div:nth-of-type(5) > label"],
+    # Same element, same position, different REGION of the page.
+    ["#main > p:nth-of-type(1)",
+     "html > body > footer > div:nth-of-type(1) > p:nth-of-type(1)"],
+    # Two headings of different levels in one region. Both used to be "heading"; a screen reader
+    # says "heading level 2", and so do we.
+    ["#main > div > h1", "#main > h2"],
+])
+def test_siblings_never_come_out_reading_the_same(selectors):
+    phrases = [_element_words(s) for s in selectors]
+    assert len(set(phrases)) == len(selectors), phrases
+
+
+def test_the_position_is_kept_even_when_the_element_has_none_of_its_own(world):
+    """The exact three that collided, as tickets, end to end."""
+    run = _run(world)
+    _record(world, run, [
+        _row(criteria=("1.4.1",), checker="color", source=SOURCE_RULE, confidence=None,
+             verdict="", route="/account/join",
+             selector=f"#main > form > div:nth-of-type({n}) > label")
+        for n in (1, 2, 5)
+    ], routes=("/account/join",))
+    _reconcile(world, run)
+
+    titles = [d.title for d in _a11y_defects(world)]
+    assert len(titles) == 3
+    assert len(set(titles)) == 3, titles
+    assert all("(group " in t for t in titles), titles
