@@ -340,17 +340,24 @@ def test_a_batch_over_the_cap_stops_and_hands_back_the_remainder(world):
     assert result.complete is False
 
 
-def test_the_stopped_pass_counts_elements_and_not_request_slots(world):
-    """The number a person is given has to be work that exists.
+def test_the_cap_counts_distinct_questions_and_not_request_slots(world):
+    """A repeat of a question already in this pass must not occupy a place in the cap.
 
-    Duplicates are not collapsed before the cap, so the tail of a stopped pass is usually markup
-    already handed over earlier in the same run — one verdict answers every copy. Counting raw
-    slots told a reader "12 item(s) still need judging" next to a button offering 6.
+    **Rewritten 24 Aug, and the old shape is the bug.** Duplicates used to reach the cap
+    uncollapsed, so a site's footer — the same markup on every page — took one place per page.
+    Measured on a real seventeen-page audit: 371 requests holding 192 different questions, a cap
+    of 200, and the pass stopped having bought 128 answers. Seventy-two places went to questions
+    already asked in the same pass, and nine whole pages were never reached at all. Counted
+    properly that site finishes in one pass with room to spare.
+
+    The concern the old test was written for still holds and is still asserted: the number a
+    person is given has to be work that exists. It is now true by construction rather than by
+    subtracting afterwards.
     """
     _set_caps(world, judgments=2)
     same = "<img src='chrome.png'>"
-    # Two distinct elements are dispatched; of the three deferred, two repeat what was already
-    # sent and one is genuinely new.
+    # Three different questions in five requests. The cap is two, so two are asked and the
+    # third — genuinely new — is what remains. The repeats cost nothing and wait for nothing.
     requests = [
         _request(html=same), _request(html="<img src='a.png'>"),
         _request(html=same), _request(html=same), _request(html="<img src='new.png'>"),
@@ -358,13 +365,19 @@ def test_the_stopped_pass_counts_elements_and_not_request_slots(world):
 
     result = _dispatch(world, requests, FakeTrigger(world))
 
-    assert len(result.deferred) == 3, "three slots really were deferred"
+    assert len(result.dispatched) == 2, "two questions asked, not two slots consumed"
+    assert [r.candidate.html for r in result.dispatched] == [same, "<img src='a.png'>"]
+    assert len(result.deferred) == 1, "only the genuinely new question is outstanding"
     assert "1 element(s) were left for a second pass" in result.unavailable_reason
 
 
-def test_a_pass_whose_whole_remainder_was_already_asked_says_nothing(world):
-    """The case that put work on somebody's list that did not exist. Every deferred request
-    repeats markup already dispatched, so nothing is waiting on anything."""
+def test_a_pass_whose_repeats_would_have_overflowed_the_cap_now_finishes(world):
+    """The case that used to stop a pass that had nothing left to do.
+
+    Four requests, two questions, a cap of two. Before, the repeats filled the cap and two
+    requests were handed back — a pass reported as incomplete with every question answered.
+    Now it simply finishes, which is what actually happened.
+    """
     _set_caps(world, judgments=2)
     same = "<img src='chrome.png'>"
     requests = [_request(html=same), _request(html="<img src='a.png'>"),
@@ -372,11 +385,10 @@ def test_a_pass_whose_whole_remainder_was_already_asked_says_nothing(world):
 
     result = _dispatch(world, requests, FakeTrigger(world))
 
-    assert len(result.deferred) == 2
+    assert len(result.dispatched) == 2
+    assert result.deferred == [], "nothing was left unasked"
     assert result.unavailable_reason == "", "nothing is outstanding, so nothing is claimed"
-    # Still not "complete": requests were deferred and a re-run does continue from here. What
-    # changed is that nobody is told to act on it.
-    assert result.complete is False
+    assert result.complete is True, "every question in this capture has an answer"
 
 
 def test_the_remainder_has_one_definition(world):
@@ -393,12 +405,23 @@ def test_the_remainder_has_one_definition(world):
 
 def test_the_cap_can_be_expressed_in_screens_instead_of_elements(world):
     """The team asked to be able to switch to a 10-screens cap without a code change. Both
-    limits are read from config; whichever is reached first stops the run."""
+    limits are read from config; whichever is reached first stops the run.
+
+    **Each route needs its own markup, and that is not test-fixture housekeeping** (24 Aug). A
+    fingerprint is a hash of what the judge is shown, and the route is deliberately not part of
+    it: identical markup in identical surroundings is one question wherever it appears, which is
+    the whole reason a site's footer no longer costs one judgment per page. This test used the
+    same default image on `/one`, `/two` and `/three`, so with de-duplication in front of the
+    cap they collapse to a single question and the screen cap never gets to bite. Giving each
+    page a genuinely different element is what puts the screen cap back under test.
+    """
     _set_caps(world, judgments=1000, screens=2)
     trigger = FakeTrigger(world)
     requests = [
-        _request(route="/one"), _request(route="/one", html="<img src='b'>"),
-        _request(route="/two"), _request(route="/three"),
+        _request(route="/one", html="<img src='one-a.png'>"),
+        _request(route="/one", html="<img src='one-b.png'>"),
+        _request(route="/two", html="<img src='two.png'>"),
+        _request(route="/three", html="<img src='three.png'>"),
     ]
 
     result = _dispatch(world, requests, trigger)
@@ -521,3 +544,60 @@ def test_rls_hides_one_tenants_cached_verdicts_from_another():
             assert cur.fetchone()[0] == 0        # no tenant context -> fail closed
     finally:
         raw.close()
+
+
+def test_a_site_wide_element_is_asked_about_once_however_many_pages_carry_it(world):
+    """The measured case, in miniature: one footer, seventeen pages, one question.
+
+    This is the whole of Fix 1 in one assertion. Every page of a real site carries the same
+    header, footer and nav, and the fingerprint is a hash of exactly what the judge is shown —
+    so seventeen copies are seventeen requests and ONE question. They were all being asked.
+    """
+    _set_caps(world, judgments=200)
+    footer = "<ul><li>Contact</li><li>Opening hours</li></ul>"
+    requests = [_request(checker="semantics", route=f"/page-{i}", html=footer)
+                for i in range(17)]
+
+    result = _dispatch(world, requests, FakeTrigger(world))
+
+    assert len(result.dispatched) == 1, "one question, asked once"
+    assert result.deferred == []
+    assert result.complete is True
+
+
+def test_dropping_a_repeat_still_leaves_every_page_its_own_row(world):
+    """Asking once must not mean reporting once — that would be trading one bug for another.
+
+    The verdict is stored against the fingerprint, and `report.merge_run` walks every request
+    the CAPTURE holds rather than the ones dispatched, looking each up by fingerprint. So the
+    footer on page nine still gets its own row, on page nine, with page nine's selector. This
+    pins the property that makes de-duplication safe rather than lossy.
+    """
+    from apps.a11y.dispatch import _distinct
+
+    footer = "<ul><li>Contact</li></ul>"
+    requests = [_request(checker="semantics", route=f"/page-{i}", html=footer)
+                for i in range(3)]
+
+    asked = _distinct(requests)
+
+    assert len(asked) == 1
+    assert asked[0] is requests[0], "first occurrence wins, so the order is stable"
+    # The one answer is keyed on something all three share, which is why it reaches all three.
+    assert len({r.content_hash for r in requests}) == 1
+
+
+def test_two_different_questions_about_one_element_are_both_asked(world):
+    """De-duplication is by QUESTION, never by element.
+
+    A `<div role="button">` styled only in colour is both a semantics question and a colour
+    question with different answers. The fingerprint includes the checker, so this is already
+    true — pinned because a "de-duplicate the elements" refactor would silently halve the
+    coverage of every multi-checker element and nothing else would notice.
+    """
+    from apps.a11y.dispatch import _distinct
+
+    html = '<div role="button" style="color:red">Delete</div>'
+    requests = [_request(checker="semantics", html=html), _request(checker="color", html=html)]
+
+    assert len(_distinct(requests)) == 2

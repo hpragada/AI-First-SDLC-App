@@ -42,10 +42,18 @@ from integrations.types import (
 #: for real rather than with a mock.
 JUDGE_AGENT_KEY = "09c_a11y_judge"
 
-#: How many elements one run may judge before it stops and defers the rest. Chosen to sit
-#: comfortably above ten ordinary screens (the team's sizing assumption) while still bounding
-#: what a single runaway page can cost. Override per tenant with `max_judgments_per_run` in
-#: the a11yai connection's scopes.
+#: How many DISTINCT elements one run may judge before it stops and defers the rest. Chosen to
+#: sit comfortably above ten ordinary screens (the team's sizing assumption) while still
+#: bounding what a single runaway page can cost. Override per tenant with
+#: `max_judgments_per_run` in the a11yai connection's scopes.
+#:
+#: **Distinct, and it has to be** (24 Aug). A site's header, footer and nav are the same markup
+#: on every page, so one footer on seventeen pages is seventeen requests and one question. The
+#: cap used to be applied to the requests: a 17-page audit selecting 371 elements held only 192
+#: different questions, and stopping at 200 requests bought 128 answers — 72 of the 200 places
+#: went to questions already asked in the same pass, and nine whole pages were never reached.
+#: Counted properly, that site fits in one pass with room to spare. `_distinct` below is what
+#: makes the number mean what this comment says.
 DEFAULT_MAX_JUDGMENTS_PER_RUN = 200
 
 #: A screen cap, off by default. Set `max_screens_per_run` in the same scopes to cap by
@@ -244,13 +252,41 @@ def distinct_remainder(dispatched: list, deferred: list) -> int:
     was the raw slot count, so a single audit could say "12 items still need judging" beside a
     button offering 6 — two numbers for one fact, on one card.
 
-    Duplicates are not collapsed before the cap, and the tail of a stopped pass is usually
-    markup already handed over earlier in the same run: one verdict answers every copy of it,
-    so those elements are not waiting on anything. Subtracting what was dispatched is what turns
-    request slots into work that genuinely remains — and it can be **zero** on a pass that
-    deferred a dozen requests, which is a pass with nothing left to do.
+    Duplicates are collapsed by `_distinct` before the cap is applied, so on the ordinary path
+    the two lists no longer overlap and this is simply how many are left. The subtraction stays
+    because it is the definition rather than an optimisation: a caller holding lists from
+    somewhere else — a test, a future path that splits differently — still gets the true answer,
+    and a pass whose whole deferred tail was markup already handed over still reports **zero**
+    left, which is a pass with nothing outstanding.
     """
     return len({r.content_hash for r in deferred} - {r.content_hash for r in dispatched})
+
+
+def _distinct(requests: list[A11yRequest]) -> list[A11yRequest]:
+    """One request per distinct question, in the order they were first asked.
+
+    A site's furniture — header, footer, nav — is the same markup on every page, and the
+    fingerprint is a hash of exactly what the judge is shown, so seventeen copies of one footer
+    are seventeen requests carrying ONE question. Asking it seventeen times costs seventeen
+    judgments and returns the same answer; `record_verdict` then stores it once, which is why
+    the waste was invisible.
+
+    **Dropping a copy loses nothing.** `report.merge_run` walks every request the capture holds
+    — not the ones dispatched — and looks each up by fingerprint, so every copy still gets its
+    own row on its own page with its own selector. That fan-out already existed; this only stops
+    us paying for the same answer more than once.
+
+    First occurrence wins so the order is stable: two runs over an unchanged capture dispatch
+    the same list, and the judge reads pages in the order the capture visited them.
+    """
+    seen: set[str] = set()
+    out: list[A11yRequest] = []
+    for request in requests:
+        if request.content_hash in seen:
+            continue
+        seen.add(request.content_hash)
+        out.append(request)
+    return out
 
 
 def _split_at_cap(
@@ -366,7 +402,12 @@ def dispatch_judgments(
     if not pending:
         return result
 
-    # 2) Stop at the cap rather than truncating silently — the remainder is handed back.
+    # 2) One request per distinct question FIRST, then the cap — in that order, because the
+    #    other order is what let a site's footer occupy seventeen of the two hundred places and
+    #    push nine whole pages past the end of the pass. The cap is a limit on how much judging
+    #    a run may cost, and a repeat costs nothing.
+    pending = _distinct(pending)
+    #    Stop at the cap rather than truncating silently — the remainder is handed back.
     max_judgments, max_screens = caps_for(tenant_id)
     pending, result.deferred = _split_at_cap(pending, max_judgments, max_screens)
     # Only when something is genuinely left. A pass whose whole deferred tail is markup already
