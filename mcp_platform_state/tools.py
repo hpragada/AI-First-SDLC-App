@@ -422,6 +422,44 @@ def register_artifact(
         return _artifact(artifact)
 
 
+#: Artifact types that are a RESULT, never knowledge — kept out of the Knowledge Index.
+#:
+#: **What this prevents, measured** (24 Aug). Every artifact with a body is indexed when it is
+#: registered, and the index is then searched for whatever a run is about. So an accessibility
+#: judging run searched for accessibility judging knowledge, and the closest match in the whole
+#: project was **the previous accessibility judgement**. Its full body — findings table, gate
+#: outcome, per-element verdicts — was pasted into the briefing of the run whose entire job was
+#: to produce that document. Retrieval returned, among the top eight:
+#:
+#:     '**31. `#loans-table > tbody > tr:nth-of-type(3)` on `/loans/history`** — 1.4.1 …'
+#:
+#: which is one of the very elements that run had been asked to judge, with last time's answer
+#: attached. That run recorded **zero** verdicts and reported "Gate outcome: PASS — 33 elements,
+#: all pass", every word of it lifted from the document it had been handed. The platform's
+#: completeness check caught it and refused to call the audit complete, but a check that catches
+#: a fabricated answer is a worse position than never inviting one.
+#:
+#: It looked like the model being unreliable and it was not: the same agent judged 128 elements
+#: correctly an hour later on another tenant, whose retrieval happened to return summaries
+#: instead of a verdict table. Which of the eight you get is chance. Removing the source is not.
+#:
+#: **Why exclusion rather than a rule telling the agent to ignore it.** An agent cannot be
+#: relied on to disregard a plausible, authoritative, on-topic answer sitting in its own
+#: context — and it should not have to. These documents are also the wrong shape for an index:
+#: each one is a statement about a single capture, superseded by the next run, so a project
+#: accumulates contradictory copies of "the answer" that get retrieved by recency-blind search.
+#:
+#: They remain fully reachable on purpose — `list_artifacts(type=…)` then `get_artifact_body`,
+#: which the manifest tells every agent about. An agent that has a REASON to read last week's
+#: report can still ask for it by name. What it can no longer do is find it in its own pocket.
+_NOT_KNOWLEDGE_TYPES = frozenset({
+    "a11y_judge",        # the judge's own verdicts — the document that caused this
+    "a11y_report",       # the merged findings for one capture
+    "a11y_baseline",     # where the application stood after one audit
+    "a11y_conformance",  # the signed statement; a claim, and never an input to making one
+})
+
+
 def _index_into_knowledge(tenant_id, project, artifact, repo) -> None:
     """Chunk the newly-registered body into the Knowledge Index so downstream phases can
     retrieve it (B1).
@@ -444,6 +482,8 @@ def _index_into_knowledge(tenant_id, project, artifact, repo) -> None:
     where we were before."""
     if not artifact.s3_key:
         return  # pointer-only artifact (external SoR) — nothing local to chunk
+    if artifact.type in _NOT_KNOWLEDGE_TYPES:
+        return  # a result, not knowledge — see the list's own note for what this cost us
     try:
         from apps.knowledge.index import index_artifact
 

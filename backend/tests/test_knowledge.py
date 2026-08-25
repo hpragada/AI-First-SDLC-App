@@ -158,3 +158,65 @@ def test_rls_isolates_knowledge_chunks():
             assert cur.fetchone()[0] == 0          # no tenant context -> fail closed
     finally:
         raw.close()
+
+
+# ── a result is not knowledge ────────────────────────────────────────
+def test_an_accessibility_verdict_is_never_indexed_as_knowledge(world, monkeypatch):
+    """The judge must not be able to find its own previous answer in its own briefing.
+
+    **The live failure, 24 August.** Every artifact with a body is indexed when registered, and
+    each run's briefing is filled by searching that index for what the run is about. So an
+    accessibility judging run searched for accessibility judging knowledge and the best match in
+    the whole project was the PREVIOUS accessibility judgement. Its body — findings table, gate
+    outcome, per-element verdicts — landed in the briefing of the run whose job was to produce
+    that document. Retrieval returned, among the top eight, a verdict about
+    `#loans-table > tbody > tr:nth-of-type(3)` — one of the very elements that run had been
+    asked to judge.
+
+    That run recorded **zero** verdicts and reported "Gate outcome: PASS — 33 elements, all
+    pass", every word lifted from the document it had been handed. The completeness check caught
+    it, but a check that catches a fabricated answer is a worse place to be than never inviting
+    one. It read as an unreliable model and was not: the same agent judged 128 elements
+    correctly an hour later, on a tenant whose retrieval happened to return summaries instead.
+
+    These documents stay fully reachable by name — `list_artifacts` then `get_artifact_body` —
+    which the briefing tells every agent about. What they are not is lying in its pocket.
+    """
+    t, p = world
+    from mcp_platform_state.tools import _NOT_KNOWLEDGE_TYPES
+
+    stored: dict[str, bytes] = {}
+
+    class _Store:
+        def get(self, key):
+            return stored[key]
+
+    monkeypatch.setattr(tools, "_obj_store", lambda: _Store())
+
+    for kind in sorted(_NOT_KNOWLEDGE_TYPES):
+        stored[f"{kind}.md"] = b"## Gate outcome\n\n**PASS** across all 33 judged elements."
+        tools.register_artifact(t.id, p.id, None, "a11y_judge", kind, "internal", "h",
+                                s3_key=f"{kind}.md", title=kind)
+
+    assert KnowledgeChunk.objects.filter(tenant_id=t.id).count() == 0, (
+        "an accessibility verdict was indexed; the judge can now retrieve its own last answer"
+    )
+
+
+def test_an_ordinary_artifact_is_still_indexed(world, monkeypatch):
+    """The exclusion is a short list of results, not a switch that turns retrieval off.
+
+    Without this, deleting the whole indexing call would pass the test above.
+    """
+    t, p = world
+    stored = {"prd.md": b"The payment service handles refunds and chargebacks."}
+
+    class _Store:
+        def get(self, key):
+            return stored[key]
+
+    monkeypatch.setattr(tools, "_obj_store", lambda: _Store())
+    tools.register_artifact(t.id, p.id, None, "requirements", "prd", "internal", "h",
+                            s3_key="prd.md", title="PRD")
+
+    assert KnowledgeChunk.objects.filter(tenant_id=t.id).exists()
