@@ -459,6 +459,46 @@ _NOT_KNOWLEDGE_TYPES = frozenset({
     "a11y_conformance",  # the signed statement; a claim, and never an input to making one
 })
 
+#: The same exclusion applied by PHASE, because a judging run writes TWO documents and the list
+#: above only names one of them.
+#:
+#: Every `a11y_judge` run also registers an `assumption` note on its own reasoning — *"here is
+#: how I mapped this axe rule to this criterion"*. `assumption` is a type most phases write and
+#: most of those are worth retrieving, so it cannot be excluded by type without losing the rest.
+#: When the verdicts were excluded on 25 August these notes were deliberately kept, on the
+#: reasoning that a note about *how* to reason carries no answers.
+#:
+#: **Measured against the only samples that exist, that reasoning does not hold.** Both
+#: `a11y_judge` notes in the shared database were indexed, and both contain this:
+#:
+#:     '4. **1.4.1 vs 1.4.3 independence** — … the `#hours-note` element exhibits exactly this
+#:      combination.'
+#:
+#: — a live element on a page under audit, with its verdict on both criteria. Same class as the
+#: findings table above, in a smaller package, retrieved by the same recency-blind search. Two
+#: of two, so it is the norm and not an edge case.
+#:
+#: **And the channel refills itself.** Every judging run writes another note, so a tenant whose
+#: index is emptied today is exposed again on its second run. That is what made the original
+#: failure look intermittent and like an unreliable model: it is neither, it tracks how much of
+#: its own previous work the project has accumulated.
+#:
+#: By phase rather than by type so it also covers whatever else these runs come to write,
+#: without a third list to keep in step. `a11y_journey` joins it by the same argument rather
+#: than by measurement — it has registered nothing yet anywhere, and waiting for it to bite is
+#: the shape of failure this codebase keeps meeting. The pair matches `NEVER_AUTO_PUBLISHED_
+#: PHASES` for the same underlying reason: run OUTPUT about one capture, superseded by the next
+#: run, never an input to making it.
+#:
+#: **Deliberately narrow.** `a11y_report` and `a11y_baseline` are written under phase `testing`,
+#: so the two lists overlap in nothing and both are load-bearing. Journey DEFINITIONS are
+#: `testing`/`test_case` (`journeys._test_case_artifacts`) and stay indexed — this removes what a
+#: run concluded, never what it was asked to walk.
+_NOT_KNOWLEDGE_PHASES = frozenset({
+    "a11y_judge",        # verdicts (above) plus the run's own reasoning note
+    "a11y_journey",      # the same shape for a walked journey
+})
+
 
 def _index_into_knowledge(tenant_id, project, artifact, repo) -> None:
     """Chunk the newly-registered body into the Knowledge Index so downstream phases can
@@ -484,6 +524,8 @@ def _index_into_knowledge(tenant_id, project, artifact, repo) -> None:
         return  # pointer-only artifact (external SoR) — nothing local to chunk
     if artifact.type in _NOT_KNOWLEDGE_TYPES:
         return  # a result, not knowledge — see the list's own note for what this cost us
+    if artifact.phase in _NOT_KNOWLEDGE_PHASES:
+        return  # run output whatever it is typed as — see `_NOT_KNOWLEDGE_PHASES`
     try:
         from apps.knowledge.index import index_artifact
 
