@@ -11,10 +11,11 @@
 // screen at all — and it must open by saying what the finding IS, because a failure and an
 // unanswered question look identical below that line.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { Route, Routes } from "react-router-dom";
 
 import { renderWithProviders } from "../../test/utils";
+import { api } from "../../api";
 import { A11yFinding } from "./A11yFinding";
 
 const PROJECT = "11111111-1111-1111-1111-111111111111";
@@ -186,5 +187,94 @@ describe("S-39 one accessibility finding", () => {
     show({ detail: "no such finding on this project" }, 404);
 
     await screen.findByText(/This finding could not be loaded/);
+  });
+});
+
+// ── the ring on the capture ─────────────────────────────────────────────────
+//
+// The ring is placed in PERCENTAGES of the capture's own pixels, so it is only right if the box
+// it is positioned inside is exactly the size of the picture. It was not: it sat directly in
+// `.shot__stage`, whose height CSS clamps to 340px while a full-page capture renders several
+// times taller — so every percentage resolved against the clamp instead of the image. Measured
+// on a real 1280x1144 shot in this panel: the ring landed 237.8px down where the element was at
+// 461.3px, drawn 17.8px tall where the element was 34.6px. Every finding, since this shipped.
+//
+// jsdom computes no layout, so none of these can catch the pixels being wrong. What they hold is
+// the ARRANGEMENT the corrected CSS depends on — the picture and the ring alone together inside
+// `.shot__frame` — which is what a later edit would break without meaning to. A note in the
+// stylesheet is not a test.
+describe("the capture's ring", () => {
+  beforeEach(() => {
+    // jsdom implements no object URLs. The capture hook revokes its blob when the screen goes
+    // away, so without this every test in here dies on unmount rather than on its assertion.
+    URL.revokeObjectURL = vi.fn();
+  });
+
+  // The image never really loads here, and the screen deliberately draws no ring until it knows
+  // the capture's true size — a box positioned before that is a guess. So the load is staged:
+  // real dimensions, then the event the browser would have sent.
+  const load = async (w: number, h: number) => {
+    const image = await screen.findByAltText(/Captured screen/);
+    Object.defineProperty(image, "naturalWidth", { value: w, configurable: true });
+    Object.defineProperty(image, "naturalHeight", { value: h, configurable: true });
+    await act(async () => {
+      fireEvent.load(image);
+    });
+    return image as HTMLImageElement;
+  };
+
+  const withCapture = () => {
+    vi.spyOn(api, "getA11yCaptureUrl").mockResolvedValue("blob:capture");
+    return show(finding({
+      page_image: true,
+      box: { x: 320, y: 800, width: 300, height: 60 },
+    }));
+  };
+
+  it("draws the ring inside the frame that wraps the picture, never loose in the stage", async () => {
+    withCapture();
+    const image = await load(1280, 1144);
+    const frame = image.parentElement!;
+    expect(frame.className).toContain("shot__frame");
+    expect(frame.className).not.toContain("shot__stage");
+
+    const ring = document.querySelector(".shot__marker");
+    expect(ring).not.toBeNull();
+    // Being a child of the frame is what makes the frame the box its percentages resolve
+    // against. Being a child of the stage is the defect.
+    expect(ring!.parentElement).toBe(frame);
+  });
+
+  it("puts nothing but the picture and the ring inside the frame", async () => {
+    withCapture();
+    const image = await load(1280, 1144);
+    // Anything else in here has its own height and pushes the picture off the frame's origin,
+    // which shifts every ring by however tall that thing is. The frame is not a layout container
+    // and must never quietly become one.
+    expect([...image.parentElement!.children].map((c) => c.className.split(" ")[0]))
+      .toEqual(["shot__img", "shot__marker"]);
+  });
+
+  it("takes the ring's percentages from the capture's own pixels, not the panel's", async () => {
+    withCapture();
+    await load(1280, 1144);
+    const ring = document.querySelector(".shot__marker") as HTMLElement;
+    // 320/1280 and 300/1280 — exact, because the arithmetic is the picture's width and nothing
+    // on screen is allowed into it.
+    expect(ring.style.left).toBe("25%");
+    expect(ring.style.width).toBe("23.4375%");
+    // 800/1144 and 60/1144. This is the axis that was wrong: the stage's clamped height used to
+    // stand in for 1144 here, and 800 came out at roughly half of where it belonged.
+    expect(ring.style.top.startsWith("69.93")).toBe(true);
+    expect(ring.style.height.startsWith("5.24")).toBe(true);
+  });
+
+  it("draws no ring at all until the capture's real size is known", async () => {
+    withCapture();
+    await screen.findByAltText(/Captured screen/);
+    // Before the load event there is no natural size, and a box placed from a guessed one is
+    // worse than no box — the reviewer would be shown a ring around the wrong element and told
+    // it is evidence.
+    expect(document.querySelector(".shot__marker")).toBeNull();
   });
 });

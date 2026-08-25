@@ -858,12 +858,22 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
    --------------------------------------------------------------------------- */
 .shot { border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; background: var(--bg-surface); }
 .shot__stage { position: relative; background: var(--bg-subtle); max-height: 340px; overflow: auto; }
-/* FIT: the whole capture, scaled to the panel. Nothing scrolls; nothing overflows. */
-.shot__stage--fit { overflow: hidden; }
+/* FIT: the capture scaled to the panel's WIDTH â€” which is what the button says, and all it ever
+   promised. It scrolls vertically. `overflow: hidden` was here instead, and a full-page capture
+   is several times taller than the 340px this stage is clamped to, so roughly 320px of every
+   shot was cropped away with nothing on screen saying so. */
+.shot__stage--fit { overflow-x: hidden; overflow-y: auto; }
+.shot__stage--fit .shot__frame { width: 100%; }
 .shot__stage--fit .shot__img { width: 100%; height: auto; }
 /* ACTUAL: natural size, both axes scroll inside the stage and only inside it. */
 .shot__img { display: block; max-width: none; }
-/* Where the finding is. Absolute inside the stage so it travels with the scroll. */
+/* The marker's containing block, and the only reason this element exists: it shrink-wraps the
+   image, so the marker's percentage coordinates resolve against the PICTURE. They used to
+   resolve against `.shot__stage`, whose height is clamped to 340px while the image renders far
+   taller â€” so every ring was scaled by 340/imageHeight and drawn hundreds of pixels too high.
+   Nothing but the image and the ring may go inside this. */
+.shot__frame { position: relative; display: inline-block; vertical-align: top; }
+/* Where the finding is. Absolute inside the frame so it travels with the scroll. */
 .shot__marker { position: absolute; border: 2px solid var(--brand-orange); border-radius: var(--radius-sm); box-shadow: 0 0 0 3px var(--brand-orange-50); }
 /* The ring is orange (the platform's attention colour); the LABEL is navy, because white on
    --brand-orange is 2.97:1 and this screen is where we sell 4.5:1. Navy gives 13.69:1. */
