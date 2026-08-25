@@ -650,8 +650,19 @@ def test_the_journey_checks_are_one_per_criterion():
 
 def test_the_poc_element_checks_are_untouched():
     """Merging the journey checks into the element map would have silently broken the
-    ownership drift test, whose docstring says extending AI coverage must be a decision."""
-    assert set(A11Y_CHECKER_CRITERIA) == {"alt", "semantics", "color", "label"}
+    ownership drift test, whose docstring says extending AI coverage must be a decision.
+
+    **Five, not four.** `structure` was added on 24 August (§9.16, the 1.3.1 scope gap) and this
+    list was not updated with it, so this test has been red ever since — asserting a fourth
+    element check that the platform had deliberately grown past. The point of the test is that
+    the set only changes when somebody decides to change it; that is served by naming the set
+    it should be, and a stale list serves the opposite.
+
+    `semantics` and `structure` both carry 1.3.1 and are still two checks — one asks whether an
+    element is pretending to be a control, the other whether a container's visible arrangement
+    is in the markup at all. See `A11Y_CHECKER_CRITERIA` for that in full.
+    """
+    assert set(A11Y_CHECKER_CRITERIA) == {"alt", "semantics", "structure", "color", "label"}
     assert set(A11Y_ALL_CHECKER_CRITERIA) == set(A11Y_CHECKER_CRITERIA) | set(
         A11Y_JOURNEY_CRITERIA)
 
