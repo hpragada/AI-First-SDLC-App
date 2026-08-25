@@ -286,6 +286,12 @@ class A11yCriterionCoverage(TenantScopedModel):
         PASSED = "passed", "Checked, nothing wrong"
         NOT_APPLICABLE = "not_applicable", "Rule ran; nothing on the page it applies to"
         NEEDS_HUMAN = "needs_human", "Looked at it and cannot decide"
+        #: Selected for a check that never ran — the pass stopped at its cap before reaching
+        #: this element, or ended without reporting on it. **Not a judgement at all**, and
+        #: deliberately not folded into `NEEDS_HUMAN`: that one says a check looked and could
+        #: not decide, which is a real result belonging to a person. This one says the platform
+        #: has not finished, and the thing to do about it is finish — see `coverage._RANK`.
+        NOT_CHECKED = "not_checked", "Selected for a check that has not run yet"
 
     project = models.ForeignKey(
         "projects.Project", on_delete=models.CASCADE, related_name="a11y_coverage"

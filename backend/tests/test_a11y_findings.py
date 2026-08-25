@@ -550,3 +550,117 @@ def test_no_defect_opens_from_a_finding_yet():
         encoding="utf-8")
     assert "A11yFinding" not in quality
     assert "a11y" not in quality.lower().replace("quality", "")
+
+
+# ══ a page we stopped short of is never written down as clean ══════════════════════
+
+def _coverage(world, *, route, criterion, engine="AI"):
+    from apps.a11y.models import A11yCriterionCoverage
+
+    row = A11yCriterionCoverage.objects.filter(
+        tenant_id=world["t"], route=route, criterion=criterion, engine=engine).first()
+    return row.outcome if row else None
+
+
+def test_a_page_with_an_unasked_element_is_not_recorded_as_passing(world):
+    """The live failure, reduced: borrowed passes plus a silence read as a clean page.
+
+    **What happened on 24 August.** A seventeen-page audit stopped at its cap after eight pages.
+    The other nine still collected passing verdicts, because a site's footer is the same markup
+    everywhere and one verdict is written back against every page that markup appears on. Their
+    own elements — including a table whose column headings are ordinary cells — were never asked
+    about, and produced nothing. Eight passes and no failures is indistinguishable from a clean
+    page, so `1.3.1` was recorded as **passed on all seventeen**, and the audit sat at status
+    `complete` saying so.
+
+    Here that is one page: a pass borrowed from shared markup, and one element of its own that
+    nobody asked about. The page must not read as passed.
+    """
+    run = Run.objects.create(tenant=world["tenant"], work_item=world["story"],
+                             agent_spec=world["spec"])
+
+    _record(world, run, [_row(outcome=TRIAGE_PASS, criteria=("1.3.1",), checker="semantics",
+                              route="/subject-index", selector="footer ul")],
+            routes=("/subject-index",),
+            unjudged=[{"route": "/subject-index", "selector": "#subject-table",
+                       "checker": "structure", "reason": "the pass stopped at its cap"}])
+
+    assert _coverage(world, route="/subject-index", criterion="1.3.1") == "not_checked", (
+        "a page holding an element nobody asked about must not be recorded as passing"
+    )
+
+
+def test_a_page_where_everything_was_asked_still_records_its_passes(world):
+    """The other half, and the one that keeps this fix honest.
+
+    A guard that made every page read `not_checked` would satisfy the test above and destroy the
+    thing coverage exists for. A finished page reports what it found.
+    """
+    run = Run.objects.create(tenant=world["tenant"], work_item=world["story"],
+                             agent_spec=world["spec"])
+
+    _record(world, run, [_row(outcome=TRIAGE_PASS, criteria=("1.3.1",), checker="semantics",
+                              route="/done", selector="footer ul")],
+            routes=("/done",))
+
+    assert _coverage(world, route="/done", criterion="1.3.1") == "passed"
+
+
+def test_a_real_failure_still_outranks_an_unasked_element(world):
+    """Not knowing about one element never softens what we do know about another."""
+    run = Run.objects.create(tenant=world["tenant"], work_item=world["story"],
+                             agent_spec=world["spec"])
+
+    _record(world, run, [_row(outcome=TRIAGE_FAILURE, criteria=("1.3.1",), checker="semantics",
+                              route="/mixed", selector="div.fake-heading")],
+            routes=("/mixed",),
+            unjudged=[{"route": "/mixed", "selector": "#t", "checker": "structure",
+                       "reason": "the pass stopped at its cap"}])
+
+    assert _coverage(world, route="/mixed", criterion="1.3.1") == "failed"
+
+
+def test_an_unasked_element_only_clouds_the_criteria_its_own_check_covers(world):
+    """A deferred colour question says nothing about whether the structure was checked.
+
+    Recording the silence against every criterion would be the same lie in the other direction —
+    a page reported as unchecked for work that was finished.
+    """
+    run = Run.objects.create(tenant=world["tenant"], work_item=world["story"],
+                             agent_spec=world["spec"])
+
+    _record(world, run, [_row(outcome=TRIAGE_PASS, criteria=("1.3.1",), checker="structure",
+                              route="/one-sided", selector="table#t")],
+            routes=("/one-sided",),
+            unjudged=[{"route": "/one-sided", "selector": "tr.tinted", "checker": "color",
+                       "reason": "the pass stopped at its cap"}])
+
+    assert _coverage(world, route="/one-sided", criterion="1.3.1") == "passed"
+    assert _coverage(world, route="/one-sided", criterion="1.4.1") == "not_checked"
+
+
+def test_not_checked_is_not_the_same_fact_as_needs_a_human(world):
+    """The distinction the team insisted on, pinned so it cannot quietly collapse.
+
+    `needs_human` means a check looked and could not decide — settled work belonging to a
+    person, and a legitimate answer. `not_checked` means the platform has not asked yet, which
+    is our own unfinished work and is cheap to finish. Labelling the second as the first hands
+    somebody an element nobody looked at, dressed as a judgement that hesitated.
+    """
+    from apps.a11y.coverage import _RANK
+
+    assert _RANK["not_checked"] < _RANK["passed"], "an unasked element cannot read as clean"
+    assert _RANK["not_checked"] < _RANK["needs_human"], (
+        "finish the pass before handing anyone a judgement to make"
+    )
+    assert _RANK["failed"] < _RANK["not_checked"], "a known failure still wins"
+
+
+def test_a_criterion_still_waiting_on_a_check_claims_no_conformance(world):
+    """The end of the chain: what the document a client reads actually says."""
+    from apps.a11y.conformance import suggest
+
+    assert suggest({"routes": {"/a": "passed", "/b": "not_checked"}}, 0) is None, (
+        "a criterion is a claim about the pages in scope, not about the ones we reached"
+    )
+    assert suggest({"routes": {"/a": "passed", "/b": "passed"}}, 0) is not None

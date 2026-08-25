@@ -129,10 +129,17 @@ def suggest(cover: dict | None, failures: int) -> str | None:
 
       * anything failed on every route it was checked on → **does not support**;
       * anything failed somewhere but not everywhere → **partially supports**;
+      * a page is still waiting to be checked → **no suggestion** (finish the pass first);
       * something could not be decided → **no suggestion** (a human must);
       * checked somewhere with nothing wrong → **supports**;
       * the rule ran everywhere and had nothing to apply to → **not applicable**;
       * nothing looked at all → **not evaluated**.
+
+    **`not_checked` returns `None` for a different reason from `needs_human`, and the document
+    says so** (24 Aug). Both stop a claim being made, but one is waiting on a person and the
+    other is waiting on us. Neither may become "supports" on the strength of the pages that did
+    get checked — a criterion is a claim about the pages in scope, not about the subset we
+    happened to reach before a budget ran out.
 
     Note `failures` outranks the coverage map. An open failure is a fact about the product that
     survives the run that found it, and coverage is a fact about one capture — a criterion with
@@ -151,7 +158,7 @@ def suggest(cover: dict | None, failures: int) -> str | None:
     outcomes = set(routes.values())
     if "failed" in outcomes:
         return DOES_NOT if outcomes == {"failed"} else PARTIALLY
-    if "needs_human" in outcomes:
+    if "not_checked" in outcomes or "needs_human" in outcomes:
         return None
     if "passed" in outcomes:
         return SUPPORTS
@@ -175,6 +182,13 @@ def _evidence_sentence(cover: dict | None, failures: int, adjudicated: int) -> s
         parts.append(f"{failures} open failure{'s' if failures != 1 else ''}")
     if counts.get("failed"):
         parts.append(f"failed on {counts['failed']} of {len(routes)} pages checked")
+    # Said before `needs_human`, matching the order `coverage._RANK` puts them in: an unfinished
+    # pass is the first thing to do something about, and the something is cheap.
+    if counts.get("not_checked"):
+        parts.append(
+            f"{counts['not_checked']} page{'s' if counts['not_checked'] != 1 else ''} still "
+            f"waiting on a check that has not run"
+        )
     if counts.get("needs_human"):
         parts.append(
             f"{counts['needs_human']} page{'s' if counts['needs_human'] != 1 else ''} a check "

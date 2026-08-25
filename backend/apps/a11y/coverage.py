@@ -32,7 +32,22 @@ from apps.tenancy.context import tenant_context
 #: `passed` for the same reason: an unanswered question is not a clean result. `not_applicable`
 #: ranks last because it is the weakest thing that can be said — the rule ran and found nothing
 #: to judge.
-_RANK = {"failed": 0, "needs_human": 1, "passed": 2, "not_applicable": 3}
+#:
+#: **`not_checked` sits between a failure and a person's question, and the position is the
+#: point** (24 Aug). It means the platform selected an element and never asked about it — a
+#: pass that stopped at its cap, or a judge run that ended without reporting. Ranking it above
+#: `passed` is what stops a page we broke off halfway through being written down as clean:
+#: before this, an audit that reached eight of seventeen pages recorded the other nine as
+#: satisfying 1.3.1, because those pages picked up passing verdicts from shared markup — the
+#: same footer, judged elsewhere — while the elements that were actually theirs said nothing.
+#:
+#: Ranking it above `needs_human` too is a choice about **what the reader is asked to do**. A
+#: `needs_human` is settled work waiting for a person. A `not_checked` is our own unfinished
+#: work, it is cheap to finish, and finishing it may well answer the question outright. So the
+#: page says "not checked yet" until the checking is done, and only then does it hand anybody a
+#: judgement to make. Handing a person an element nobody looked at, labelled as though a check
+#: had considered it and hesitated, is the one wording this table must not produce.
+_RANK = {"failed": 0, "not_checked": 1, "needs_human": 2, "passed": 3, "not_applicable": 4}
 
 
 def _worse(a: str, b: str) -> str:

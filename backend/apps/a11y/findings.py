@@ -219,10 +219,51 @@ def _ruling_still_applies(existing, incoming_hash: str) -> bool:
 #: report must mean the same thing by the same words.
 NOTHING_IN_SCOPE = "no element on this page was in scope for this check"
 
+#: What a page gets recorded as for an element that was selected and never asked about. The
+#: wording is the whole distinction: it says nobody looked, not that somebody looked and could
+#: not decide.
+NOT_YET_CHECKED = "selected for this check; the pass has not asked about it yet"
+
 #: Every criterion the AI checks own, flattened. Read once here rather than per route.
 AI_OWNED_CRITERIA: frozenset[str] = frozenset(
     criterion for criteria in A11Y_CHECKER_CRITERIA.values() for criterion in criteria
 )
+
+
+def _record_unchecked(report, by_route: dict[str, list]) -> None:
+    """Every element selected for a check that never ran, as coverage on its own page.
+
+    **The hole this closes.** Coverage was written from the merged report's rows, and an element
+    nothing answered produces no row — so a page the platform stopped short of was described
+    entirely by the elements it *had* reached. That was survivable while every page got some
+    attention. It stopped being survivable the moment a pass ran out of budget part way down the
+    route list: the pages it never opened still collected passing verdicts, because a site's
+    header and footer are the same markup everywhere and one verdict is written back against
+    every page that markup appears on. Nine pages of a seventeen-page audit were recorded as
+    satisfying 1.3.1 with not one of their own elements ever sent to the judge — one of them
+    holding a table whose column headings are ordinary cells, which is exactly what 1.3.1 is.
+
+    Eight borrowed passes and no failures is indistinguishable from a clean page. This is what
+    makes it distinguishable.
+
+    `report.unjudged` already holds precisely the right set and has since it was written —
+    `merge_run` walks every request the capture holds and files the ones with no verdict, so a
+    request deferred at the cap, a run that ended early and a judge that never started all
+    arrive here the same way. Each one is recorded against the criteria ITS OWN check covers,
+    on ITS OWN page, so an unasked colour question never clouds a structural one.
+
+    `coverage.record` collapses these with everything else the page said, worst-first, so a
+    genuine failure still wins and a page with nothing outstanding is untouched.
+    """
+    for item in report.unjudged:
+        route = str(item.get("route") or "")
+        if not route:
+            # A missing route cannot be attributed to a page, and attributing it to the empty
+            # one would invent a screen. The element is still in `unjudged` and still keeps its
+            # finding from being resolved by silence; only the coverage line is skipped.
+            continue
+        for criterion in A11Y_CHECKER_CRITERIA.get(str(item.get("checker") or ""), ()):
+            by_route.setdefault(route, []).append((criterion, "not_checked", NOT_YET_CHECKED))
 
 
 def _fill_in_scope_gaps(report, by_route: dict[str, list]) -> None:
@@ -315,6 +356,10 @@ def record_run_findings(*, tenant_id, project_id, run_id, report) -> dict:
         by_route: dict[str, list] = {}
         for row in report.rows:
             by_route.setdefault(row.route, []).extend(coverage.observations_for_row(row))
+        # Before the gap-filling below, and it matters which order: that step declines to touch
+        # a page with anything unjudged, so it must not be the only thing that knows. This one
+        # says what the unjudged elements mean for the criteria they belong to.
+        _record_unchecked(report, by_route)
         _fill_in_scope_gaps(report, by_route)
         for route, observations in by_route.items():
             coverage.record(
