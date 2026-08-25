@@ -17,9 +17,9 @@ only then do we move on.
 
 > **Status, 2026-08-21.** This line used to read *"nothing in here is built yet"*. **All eleven
 > gaps in §3 and §4 are built**, and the document has since grown a second half nobody planned
-> for: **§9, what running it turned up** — **twenty-three so far across nineteen sections**, all
+> for: **§9, what running it turned up** — **twenty-seven so far across twenty-three sections**, all
 > built. #19–#35 were found by people watching the product work rather than by
-> reading code; #36–#41 came the other way, from the team asking whether we capture every
+> reading code; #36–#41 came the other way, and #42–#45 from tracking a live audit end to end and reconciling it against a second tenant’s. The other way, from the team asking whether we capture every
 > element WCAG puts in scope and the answer being no. §3 is the plan as written; §9 is what
 > reality added to it, and §9 is now the larger and the more useful of the two.
 
@@ -1331,12 +1331,12 @@ Jira and no Confluence — 10 in scope on the first run, 12 on the third, 11 on 
 team took `/staff/shelf-audit` out to stay under the judging cap.
 
 > **This section was appended as an afterthought and is now the larger half of the document.**
-> §3 is the plan as written; §9 is what running it added: **twenty-three findings across nineteen
-> sections** (§9.1–§9.19), all built. #19–#35 were produced by a person
-> watching the product work; #36–#41 by putting twelve textbook WCAG failures through the
+> §3 is the plan as written; §9 is what running it added: **twenty-seven findings across twenty-three
+> sections** (§9.1–§9.23), all built. #19–#35 were produced by a person
+> watching the product work; #36–#45 by putting twelve textbook WCAG failures through the
 > selection code after the team asked what we do and do not capture. **Every built one has a
 > green test suite standing over it** — which is the point, and why they are written up at
-> length. They are numbered #19–#41 in the Testing Guide.
+> length. They are numbered #19–#45 in the Testing Guide.
 
 **It worked, and it found four defects no test could have caught, each hidden behind the one
 before it.** That is the shape of a capability that has never run: the first defect stops you
@@ -2414,3 +2414,185 @@ grouped and ungrouped fields, a card grid, a two-panel layout (correctly `null`)
 across the checker and capture suites, 305 across dispatch, corpus, report and judge. A third
 guard test — the one pinning exactly what the cache key reads — fired and was updated with its
 reasoning rather than loosened.
+
+### 9.20 A pass that stopped short reported the pages it never opened as clean — 24 August ⭐⭐ (BUILT)
+
+**Found by tracking a live seventeen-page audit**, and it is the most serious thing this
+capability has produced. The audit reached its judging limit after **eight** pages. The other
+nine had **not one element** sent to the AI — and were recorded as **passing**.
+
+**Why a page nobody looked at came out clean.** A site's header, footer and nav are the same
+markup on every page, so the platform correctly recognises them as one question and stores one
+answer. That answer is then written back against every page the markup appears on, which is
+right — the footer really is on all of them and really is fine. But `/catalogue/subject-index`
+has eighteen things worth checking and **eight of them are shared furniture**. Those eight
+borrowed a pass from pages the AI had actually visited. Its own ten — including a table whose
+column headings are ordinary cells — were never asked about and said nothing.
+
+**Eight passes and no failures is indistinguishable from a clean page.** For forty minutes the
+audit sat at status **complete** claiming *Info and Relationships: satisfied on all 17 pages*.
+
+```
+subject-index requests answered by a verdict borrowed from another page:  8
+subject-index requests genuinely its own, never asked                  : 10
+```
+
+**The existing guard could not catch it.** `findings._fill_in_scope_gaps` already refuses to
+invent a result for a page with anything unjudged — its docstring says so. But it only stops the
+platform *inventing*; a **real** passing verdict that arrived from somewhere else walks straight
+past it.
+
+**Two fixes, and the second is the one the team insisted on.**
+
+1. **The limit now counts distinct questions** (§9.21). On this site that alone means nothing is
+   deferred, so the situation stops existing rather than being caught.
+2. **An element nobody asked about is recorded as such, on its own page.** A fifth coverage
+   outcome, `not_checked`, ranked above `passed` so a page we broke off halfway through can
+   never be written down as clean — and above `needs_human` too.
+
+**Why `not_checked` rather than reusing `needs_human`.** The team rejected the first proposal
+outright and were right to: *"he needs a solution that can work — if they are really uncertain
+then it would be correct and he will accept."* `needs_human` means a check looked and could not
+decide: settled work belonging to a person. Labelling our own unfinished work that way hands
+somebody an element nobody looked at, dressed as a judgement that hesitated. `not_checked` says
+what is true, and the thing to do about it is the **Check the rest** control that already
+exists — an action, not a judgement.
+
+**Ranked above `needs_human` deliberately:** finish the cheap automated work first, and only
+then hand over what genuinely needs a person. The conformance document makes no claim while a
+criterion has either, and says which in its own words.
+
+**Verified:** the live case reproduced as a test — a borrowed pass plus one unasked element must
+not read as passed — together with the three ways a fix like this goes wrong: a finished page
+must still record its passes, a real failure must still outrank a silence, and an unasked colour
+question must not cloud a structural one. 84 tests across dispatch and findings, 91 across
+knowledge, conformance and scan coverage, 370 across report, judge, baseline and review.
+
+### 9.21 The judging limit counted the same question up to seventeen times — 24 August ⭐ (BUILT)
+
+**The cause behind §9.20, and it was never a big-site problem.** The limit of 200 judgments was
+applied to raw requests, and duplicates are only collapsed when an *answer is stored*. So one
+footer on seventeen pages took seventeen of the 200 places — and was genuinely asked seventeen
+times.
+
+| | selected | actually different |
+|---|---|---|
+| The 17-page audit | 371 | **192** |
+| The dev's 3-page audit | 39 | **28** |
+
+**192 is under 200.** The whole site fitted in one pass. It was never too big; the counting was
+wrong. Instead it took two passes, sent 276 elements to the AI where 192 would do, and reported
+nine untouched pages as passing in between.
+
+**The codebase already did it correctly elsewhere**, which is what made this a small change: the
+"Check the rest" path asked 76 questions to cover 64 distinct elements and deferred nothing. Two
+behaviours, one codebase, one of them right.
+
+**The fix:** collapse duplicates *before* the limit, so it means what its own comment says —
+how many elements one run may judge. Safe because the merged report walks every request the
+**capture** holds rather than the ones dispatched and looks each up by fingerprint, so every
+copy still gets its own row, on its own page, with its own selector. That fan-out already
+existed; it is what produced the borrowed passes in the first place.
+
+**Measured against both real captures after the fix:**
+
+```
+MINE 17 pages:  371 selected -> 192 distinct -> 192 asked, 0 deferred
+DEV   3 pages:   39 selected ->  28 distinct ->  28 asked, 0 deferred
+```
+
+De-duplication is by **question**, never by element: a `<div role="button">` styled only in
+colour is both a semantics question and a colour question, and the fingerprint includes the
+checker. Pinned by a test, because a "de-duplicate the elements" refactor would silently halve
+the coverage of every multi-checker element and nothing else would notice.
+
+**One test fixture had to change, and it is not housekeeping.** The screens-cap test used the
+same default image on three routes. The route is deliberately not part of a fingerprint —
+identical markup in identical surroundings is one question wherever it appears, which is the
+whole reason the footer stopped costing a judgment per page — so those three collapsed and the
+screen cap never got to bite. Giving each page a genuinely different element put the screen cap
+back under test.
+
+### 9.22 The judge was handed its own previous answers — 24 August ⭐⭐ (BUILT)
+
+**Found on the dev's tenant, on current code.** His judging run recorded **zero** verdicts while
+writing a confident summary: *"Gate outcome: PASS — no work blocked. 33 AI-judged elements. All
+pass."* It had judged nothing, and its own count was wrong — there were 32 colour elements, not
+26. "All pass" would have been wrong regardless: the same rows correctly **failed** on the other
+tenant an hour later.
+
+**Every one of those words came out of its own briefing.** The platform indexes every artifact
+as searchable knowledge the moment it is registered, and fills each run's briefing by searching
+that index for what the run is about. So an accessibility judging run searched for accessibility
+judging knowledge, and the best match in the whole project was **the last accessibility
+judgement**. Retrieval returned, among the top eight:
+
+```
+'**31. `#loans-table > tbody > tr:nth-of-type(3)` on `/loans/history`** - 1.4.1 ...'
+```
+
+— one of the very elements it was being asked to judge, with last time's answer attached. The
+previous run's complete verdict document sat in its briefing at character 6233, "Gate outcome:
+PASS" and all.
+
+**This was not an unreliable model, and that matters.** The same agent judged 128 elements
+correctly an hour later on a tenant whose retrieval happened to return summaries instead of a
+verdict table. Which of the eight you get is chance. Measured afterwards: **215 of 221** indexed
+chunks in that project were accessibility verdicts — 97% of its "knowledge" was previous answers.
+
+**The fix: a result is not knowledge.** `a11y_judge`, `a11y_report`, `a11y_baseline` and
+`a11y_conformance` are no longer indexed. They stay fully reachable by name — `list_artifacts`
+then `get_artifact_body`, which the briefing tells every agent about — so an agent with a
+*reason* to read last week's report still can. What it can no longer do is find it in its own
+pocket.
+
+**Not a rule telling the agent to ignore it**, which was the first proposal and was wrong: an
+agent cannot be relied on to disregard a plausible, authoritative, on-topic answer sitting in its
+own context, and should not have to. These documents are also the wrong shape for an index —
+each is a statement about one capture, superseded by the next run, so a project accumulates
+contradictory copies of "the answer" retrieved by recency-blind search.
+
+**A migration removes what is already indexed**, because stopping the indexing does nothing about
+the 52 and 215 chunks already sitting in the two tenants. Deleting them loses nothing: a chunk is
+a retrieval copy, and the artifact, its body and its version history are untouched.
+
+**The safety net stays and earned its place:** the write-completeness check caught the empty run,
+failed it, and refused to call the audit complete.
+
+### 9.23 The container outline never reached the AI — 24 August ⭐ (BUILT)
+
+**§9.19 was built and was inert.** The outline was added to the element contract, the selection
+rules, the cache key, the batch the judge receives and the judge's own instructions — and not to
+`capture._element`, which is the only thing that decides what survives to storage. The browser
+measured every table's shape, the platform received it, and that one function dropped it.
+
+Across 371 captured elements on a seventeen-page audit, elements carrying an outline: **zero**.
+The judge is told *"start with the outline"* and was handed the field name with nothing in it.
+Confirmed on the dev's tenant too.
+
+That function's own docstring said *"Every key `rules.CapturedElement` reads is passed straight
+through"*, which stopped being true the moment the fields were added.
+
+**Nothing failed, because nothing compared the two lists.** That is the defect — not the two
+missing keys, which are a symptom of it. The fix stores them; the *permanent* fix is
+`test_every_field_the_contract_reads_is_actually_stored`, which diffs what the contract reads
+against what is stored and names any field that goes missing. `route` and `screenshot_ref` are
+named exceptions with a reason, so a third one has to be argued for rather than quietly appear.
+
+A second test pins the **value** as well as the key: a normaliser that coerced the outline to
+`{}` would satisfy the contract check and still hand the judge nothing.
+
+### What was deliberately NOT built — 24 August
+
+**An audit that continues itself until nothing is left.** Proposed, and the team rejected it:
+*"that is not the platform's job — what if he adds 30 routes and all his Claude usage burns?"*
+They are right. Continuing costs the user's own subscription, and whether to spend it is theirs
+to decide. §9.21 removes the reason a normal site ever stops; if a genuinely large one does, it
+stops and says so, and the person chooses.
+
+**The dev's missing structure check.** His audit selected zero containers although his capture
+offered them and the live rules select them — verified by running his exact table through the
+code. His platform was on current code and ingest ran 2.4 seconds before dispatch, so no restart
+came between. Every link says it should have worked. The remaining explanations are all about
+his working copy rather than our code, and no fix was invented for a defect that has not been
+shown to exist.

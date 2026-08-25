@@ -937,7 +937,7 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The forty-one findings, and what was done about each
+## 9. The forty-five findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
@@ -1012,6 +1012,10 @@ have happened again on a different rule.
 | 39 | Charts drawn on a canvas, and icons drawn by a font, were checked by nobody | ✅ fixed |
 | 40 | **Nothing checked that a check covers the criterion it claims** | ✅ fixed |
 | 41 | **A big table reached the AI with most of it missing** | ✅ fixed |
+| 42 | **Pages we never opened were reported as passing** | ✅ fixed |
+| 43 | **The judging limit counted the same question seventeen times** | ✅ fixed |
+| 44 | **The AI was handed its own previous answers** | ✅ fixed |
+| 45 | **The table-shape fix was built and never reached the AI** | ✅ fixed |
 
 **#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
 Those came from *reading* the screens. These came from *running* them, and five of the six are
@@ -1976,6 +1980,169 @@ was lost with it. Done later, it would have cleared rulings people had made.
 
 **How to check it:** put a table of more than about fifty rows on a page and audit it. The
 finding should describe the whole table — its real row count — not just the top of it.
+
+### #42 — Pages we never opened were reported as passing ⭐⭐ ✅
+
+**What it is.** When an audit runs, each page is checked against the WCAG rules and the result
+is recorded per page: passed, failed, nothing here to check, or needs a person.
+
+**What was wrong.** On 24 August we audited seventeen pages. The AI ran out of its per-run
+budget after **eight** of them. The remaining nine had **not a single element** looked at — and
+all nine were written down as **passing**.
+
+**Why that happened, because it is not obvious.** Every page of a website shares the same
+header, footer and menu. The platform is clever about this: it notices the footer is identical
+everywhere, asks about it once, and applies that one answer to every page it appears on. Sensible
+— the footer really is on all of them and really is fine.
+
+But a page is more than its furniture. `/catalogue/subject-index` had eighteen things worth
+checking, and **eight of them were the shared header and footer**. Those eight collected a pass
+from pages the AI *had* looked at. The other ten — including a table whose column headings are
+ordinary cells, which is exactly the kind of thing that page was there to test — were never
+asked about, so they said nothing at all.
+
+Eight passes and no failures looks precisely like a clean page.
+
+**What it meant.** For about forty minutes the audit sat marked **complete**, stating *"Info and
+Relationships: satisfied on all 17 pages"*, with a broken table sitting unexamined on one of
+them. Had anyone opened the report in that window, they would have been shown a clean bill of
+health for work nobody had done. For an accessibility product that is the worst thing it can do.
+
+**The fix, in two parts.**
+
+First, the reason we ran out of budget was itself a bug — see #43. Fixing that means a site this
+size now finishes in one go, so the situation stops arising rather than being caught.
+
+Second, and this is the part the team pushed hard on: **an element nobody asked about is now
+recorded as exactly that**, on its own page. The page reads *"still waiting on a check that has
+not run"*, never *"passed"*, and the conformance document refuses to claim anything for that
+criterion until it has.
+
+**Why not just say "a person needs to look at this"?** That was the first proposal and the team
+rejected it, correctly. "A person needs to look" means a check examined something and genuinely
+could not decide — a real result, and something a reviewer can act on. Using those words for
+work *we* had not done would hand somebody an element nobody had looked at, dressed up as a
+judgement that hesitated. What they get instead is a plain statement that the checking is not
+finished, and the **Check the rest** button, which is an action rather than a homework
+assignment.
+
+**How to check it:** run an audit big enough to stop part way. Every page it did not reach must
+say it is still waiting, and the conformance document must make no claim for those criteria.
+Then press Check the rest and watch them resolve.
+
+### #43 — The judging limit counted the same question seventeen times ⭐ ✅
+
+**What it is.** Each audit run will ask the AI at most 200 questions. It is a sensible safety
+limit — it stops one enormous page costing an unbounded amount of money.
+
+**What was wrong.** The limit was counted against the raw list of elements, and identical
+elements were only merged *after* an answer came back. So one footer appearing on seventeen
+pages took **seventeen of the 200 places** — and was genuinely asked seventeen times. You can
+see the AI noticing: *"Same footer structure as element 36. Four columns. Pass."*, over and over.
+
+| | elements selected | actually different questions |
+|---|---|---|
+| Our 17-page audit | 371 | **192** |
+| The dev's 3-page audit | 39 | **28** |
+
+**192 is under 200.** The whole site fitted comfortably in one run. It was never too big — the
+counting was wrong. Instead it took two runs, sent 276 elements to the AI where 192 would have
+done, and reported nine untouched pages as passing in between (#42).
+
+**What it meant.** Wasted money on every audit, a second pass somebody has to notice and press,
+and — far worse — whole pages pushed past the end of the run.
+
+**The fix.** Merge the duplicates *before* applying the limit, so it means what it always said
+it meant: how many elements one run may judge. Nothing is lost — the report is built from every
+element the audit captured, not from the ones we asked about, so each copy still gets its own
+line, on its own page. That was already true; it is what made the duplicates invisible.
+
+Measured against both real audits after the fix:
+
+```
+Ours:      371 selected -> 192 different -> all 192 asked, none left over
+The dev's:  39 selected ->  28 different -> all  28 asked, none left over
+```
+
+**How to check it:** audit a site with a common header and footer. The number of AI questions
+should be close to the number of genuinely different elements, not the number of elements times
+the number of pages.
+
+### #44 — The AI was handed its own previous answers ⭐⭐ ✅
+
+**What happened.** The dev ran an audit on his own machine. The AI recorded **no verdicts at
+all** — and wrote a confident summary saying *"Gate outcome: PASS — no work blocked. 33
+elements judged. All pass."* It had judged nothing. Its own count was wrong too (there were 32
+colour elements, not 26), and "all pass" would have been wrong anyway — the same table rows
+correctly **failed** on our tenant an hour later.
+
+**Where those words came from, and this is the whole story.** The platform saves every document
+it produces into a searchable library, and before each run it searches that library for anything
+relevant and puts it in the AI's briefing. So an accessibility-judging run searched for
+accessibility-judging material — and the best match in the entire project was **the last
+accessibility judgement**. Its full text, "Gate outcome: PASS" and all, was placed in the
+briefing of the run whose only job was to produce that document. One of the items retrieved was
+a verdict about *the very table row it was about to be asked about*.
+
+It was shown a finished, confident, authoritative answer to its own question, and handed it
+back.
+
+**Why it did not happen every time — it was never the AI being unreliable.** The same agent
+judged 128 elements correctly on our tenant an hour later, because that search happened to
+return summaries rather than a verdict table. Which documents come back is chance. Afterwards we
+measured our own project: **215 of 221** saved items were previous accessibility answers. 97% of
+its "knowledge" was its own homework.
+
+**The fix: a result is not knowledge.** Accessibility judgements, reports, baselines and
+conformance statements are no longer put in that library. They remain fully available to any
+agent that asks for them **by name** — which the briefing explicitly tells every agent how to do
+— so anyone with a reason to read last week's report still can. What they can no longer do is
+find it already sitting in their pocket.
+
+**Why not just tell the AI to ignore it?** That was the first proposal and it was the wrong
+shape. You cannot rely on anyone — person or model — to disregard a plausible, authoritative,
+directly-relevant answer placed in front of them, and they should not have to. A cleanup also
+removes the copies already saved, since stopping the saving does nothing about what is already
+there.
+
+**The safety net worked, and stays.** The platform noticed the run had recorded nothing, failed
+it, and refused to call the audit complete — which is why the dev saw a review queue instead of
+a false all-clear. But a check that catches a fabricated answer is a worse place to be than
+never inviting one.
+
+**How to check it:** run two audits on the same project. The second must produce its own
+verdicts, and its summary must match what the platform actually recorded.
+
+### #45 — The table-shape fix was built and never reached the AI ⭐ ✅
+
+**What it is.** Finding #41 added something valuable: instead of sending the AI thousands of
+characters of raw page code for a big table, we measure its **shape** in the browser — how many
+rows and columns, which cells are headings, what the top row says — and send that instead. A few
+hundred characters for a table of any size.
+
+**What was wrong.** It never arrived. The shape was added everywhere it needed to be — except
+the one small function that decides which pieces of a captured element are kept when it is
+saved. That function works from a fixed list, and the list was never updated. So the browser
+measured every table, the platform received the measurement, and it was thrown away one step
+before storage.
+
+Across all 371 elements of the seventeen-page audit, elements that arrived carrying a shape:
+**zero**. The AI is instructed to *"start with the outline"* and was handed the label with
+nothing behind it.
+
+**What it meant.** On our test site, nothing — its tables are small enough that the raw code
+fits, so the answers were sound. On a client's reporting screen it would have mattered on almost
+every table, which is the exact case #41 existed for.
+
+**The fix, and the part that matters more.** Keeping the two pieces is a one-line change. The
+real fix is a new test that compares *what the code expects to read* against *what is actually
+stored*, and fails naming anything missing. Nothing checked that before, which is how an entire
+piece of work could be built, shipped, and do nothing at all without a single test failing. Two
+fields are the symptom; nothing comparing the lists was the defect.
+
+**How to check it:** put a table of more than about fifty rows on a page and audit it. The
+finding should describe the whole table — its real row count — not just the top of it.
+
 
 ---
 
