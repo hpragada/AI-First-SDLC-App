@@ -822,6 +822,16 @@ export function isPhaseReport(a: { external_ref?: { source?: string } | null } |
   return (ref.external_ref?.source ?? ref.source) === PHASE_REPORT_ARTIFACT;
 }
 
+// Feature streams the PLATFORM keys its own containers on: the accessibility backlog, one per
+// judging run, one per keyboard journey, the CI regression bucket. Mirrors `BACKLOG_STREAM` and
+// its siblings in the backend, which all share this shape on purpose. They are lookup keys — no
+// user chose one, nobody can read one, and `__a11y_backlog__` under a heading saying FEATURE
+// STREAM is the platform showing a person its own plumbing. A real stream ("Payments core") is
+// a name somebody typed and is shown as before.
+export function isInternalStream(stream: string | null | undefined): boolean {
+  return (stream ?? "").trim().startsWith("__");
+}
+
 export interface ArtifactState {
   name: string;
   body: string;

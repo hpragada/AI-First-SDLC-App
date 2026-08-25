@@ -71,10 +71,119 @@ A11Y_BLOCKING = set(default_policy()["gate"]["block_severities"])
 DEFECT_KIND = "a11y"
 
 
-def _title(finding) -> str:
-    """A defect title a developer can triage without opening anything else."""
-    where = finding.selector or finding.route or "this page"
-    return f"Accessibility: {finding.criterion} on {finding.route} — {where}"[:512]
+#: A tag, in the word a person would use for it. Only the ones a page scanner actually offers
+#: up — this is not an HTML dictionary, and anything missing falls through to the raw selector,
+#: which is never wrong, only ugly.
+_ELEMENT_WORDS = {
+    "a": "link", "button": "button", "img": "image", "svg": "graphic",
+    "input": "field", "select": "dropdown", "textarea": "text box", "label": "label",
+    "form": "form", "fieldset": "group of fields", "legend": "group heading",
+    "table": "table", "thead": "table head", "tbody": "table body", "tfoot": "table foot",
+    "tr": "row", "td": "cell", "th": "heading cell", "caption": "table caption",
+    "ul": "list", "ol": "numbered list", "li": "list item", "dl": "definition list",
+    "h1": "heading", "h2": "heading", "h3": "heading", "h4": "heading",
+    "h5": "heading", "h6": "heading",
+    "nav": "navigation", "header": "page header", "footer": "page footer",
+    "main": "main content", "aside": "sidebar", "section": "section", "article": "article",
+    "p": "paragraph", "summary": "summary", "details": "expander", "iframe": "embedded frame",
+    "video": "video", "audio": "audio", "canvas": "canvas", "dialog": "dialog",
+}
+
+
+def _id_of(part: str) -> str:
+    """The `#id` in one segment of a selector, if it carries one."""
+    if "#" not in part:
+        return ""
+    tail = part.split("#", 1)[1]
+    for stop in (".", "[", ":", " "):
+        tail = tail.split(stop, 1)[0]
+    return tail.strip()
+
+
+def _readable(ident: str) -> str:
+    """`loans-table` becomes `loans table` — the name a developer chose, read out loud."""
+    return ident.replace("-", " ").replace("_", " ").strip()
+
+
+def _element_words(selector: str) -> str:
+    """The element, in words, for the one line a person reads on a board.
+
+    **Why not just the selector.** `#loans-table > tbody > tr:nth-of-type(2)` is exactly right
+    and completely unreadable, and it was the back half of every accessibility defect title in
+    the platform — truncated on a board card, meaningless to anyone who does not write CSS, and
+    sitting where a summary belongs.
+
+    **The selector is not lost.** It is on the ticket under **Element**, verbatim, which is where
+    somebody fixing it goes. This is the title.
+
+    An element with an id of its own keeps it: `#photo-interior` is short, precise, and the name
+    its own developer chose — calling it "the image" would be a downgrade. Anything else is
+    described by its tag and, where there is one, the container that names it::
+
+        #loans-table > tbody > tr:nth-of-type(2)   ->  row 2 of the loans table
+        #photo-interior                            ->  #photo-interior
+        nav > ul > li:nth-of-type(3) > a           ->  link
+        main > div.card > button                   ->  button
+
+    Falls back to the selector itself rather than to nothing: a tag this does not know is a gap
+    in a list, not a failure, and a title saying less than the old one is not an improvement.
+    """
+    parts = [part.strip() for part in (selector or "").split(">") if part.strip()]
+    if not parts:
+        return ""
+    last = parts[-1]
+    if ident := _id_of(last):
+        return f"#{ident}"
+
+    tag = last.split(":", 1)[0].split(".", 1)[0].split("[", 1)[0].strip().lower()
+    noun = _ELEMENT_WORDS.get(tag, "")
+    if not noun:
+        return selector
+    # `tr:nth-of-type(2)` becomes "row 2". The position is the only thing telling it apart from
+    # its eleven siblings, and it is how somebody finds it again.
+    if ":nth-of-type(" in last:
+        position = last.split(":nth-of-type(", 1)[1].split(")", 1)[0].strip()
+        if position.isdigit():
+            noun = f"{noun} {position}"
+    # The nearest ancestor with a name, so "row 2" is a row OF something rather than a row
+    # somewhere on the page. Only an id: a class is rarely a name and usually a dozen elements.
+    for part in reversed(parts[:-1]):
+        if ident := _id_of(part):
+            return f"{noun} of the {_readable(ident)}"
+    return noun
+
+
+def _criterion_handles(criteria) -> dict[str, str]:
+    """{number: name} for these criteria, or {} when the standard is not loaded here.
+
+    Never raises. A ticket without the rule's name is a far smaller loss than no ticket, and an
+    accessibility defect failing to open because a lookup table is missing would be absurd.
+    """
+    from .review import _handles
+
+    try:
+        return _handles(criteria)
+    except Exception:  # noqa: BLE001 — a missing name must never cost somebody a defect
+        return {}
+
+
+def _title(finding, handles: dict[str, str] | None = None) -> str:
+    """A defect title a person can act on without opening anything else.
+
+    It used to read `Accessibility: 1.4.1 on /loans/current — #loans-table > tbody >
+    tr:nth-of-type(2)`: the rule named by a number nobody has memorised, the element by a CSS
+    path nobody can read. Both halves are now said in words, and both facts somebody navigates
+    by — the criterion number and the page's address — are still in it.
+
+    `handles` is `{number: name}`, passed in so the caller looks the standard up **once** for
+    every defect it is about to open rather than once per defect. Absent, or missing this
+    criterion, the title simply goes without the name: a project whose WCAG set has not been
+    loaded still gets a ticket, and it still says which page and which element.
+    """
+    where = _element_words(finding.selector) or finding.route or "this page"
+    name = (handles or {}).get(finding.criterion, "")
+    rule = f"{name} ({finding.criterion})" if name else finding.criterion
+    return f"Accessibility: {rule} on {finding.route} — {where}"[:512]
 
 
 #: How a finding's source reads on the ticket. One phrase, used wherever the source is named, so
@@ -300,6 +409,11 @@ def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
         for finding in blocking.values():
             groups.setdefault(_group_key(finding), []).append(finding)
         owners = {key: _owner(members) for key, members in groups.items()}
+        # One lookup for every ticket this reconciliation might open, rather than one
+        # per ticket. `review._handles` is the same query the review queue uses to put
+        # a name beside a criterion number — reused rather than copied, so a ticket and
+        # the queue can never end up calling 1.4.1 two different things.
+        handles = _criterion_handles(owner.criterion for owner in owners.values())
 
         existing = [
             item for item in WorkItem.objects.filter(
@@ -367,7 +481,8 @@ def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
                     container = backlog_container(tenant_id, project_id)
                 created = WorkItem.objects.create(
                     tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.DEFECT,
-                    parent=_parent_for(first, container), title=_title(finding),
+                    parent=_parent_for(first, container),
+                    title=_title(finding, handles),
                     description=_description(finding, others), state=WorkItem.State.IN_PROGRESS,
                     external_ref=_external_ref(finding, rank.get(fingerprint), others),
                 )

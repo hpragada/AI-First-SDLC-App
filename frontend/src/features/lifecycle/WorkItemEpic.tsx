@@ -11,7 +11,7 @@ import {
   Panel,
   Spinner,
 } from "../../components/ui";
-import { ClarificationHistory } from "./Clarifications";
+import { isInternalStream } from "../../types";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useClarifications, useDecideApproval, useLifecycle, useRuns, useWorkItem } from "./hooks";
@@ -108,7 +108,13 @@ function WorkItemEpicLive() {
             ) : (
               <p className="t-body u-muted">No description yet.</p>
             )}
-            <Kv rows={[["Feature stream", workItem.data.feature_stream || "—"]]} />
+            {/* Hidden for the platform's own containers. The accessibility backlog is keyed
+                on `__a11y_backlog__` so the platform can find it again; it is not a feature, not
+                a stream, and printing it under a heading reading FEATURE STREAM is us showing a
+                person our plumbing and asking them to make sense of it. */}
+            {!isInternalStream(workItem.data.feature_stream) && (
+              <Kv rows={[["Feature stream", workItem.data.feature_stream || "—"]]} />
+            )}
           </Panel>
 
           {latestRun && (
@@ -192,17 +198,12 @@ function WorkItemEpicLive() {
         </div>
       </div>
 
-      {/* What this item's agents asked, and what a human told them — the decisions behind the
-          artifacts above. Pinned to this work item, so no work-item filter is shown. */}
-      <Card style={{ marginTop: "var(--space-5)" }}>
-        <CardBody>
-          <h3 className="t-h3">Answered questions</h3>
-          <ClarificationHistory
-            projectId={workItem.data.project}
-            workItemId={workItem.data.id}
-          />
-        </CardBody>
-      </Card>
+      {/* No "Answered questions" panel here (team decision, 25 August). It was a full search
+          box, phase filter and paging control, rendered whether or not the item had a single
+          answered question — and on anything the platform created for itself (an accessibility
+          defect, the accessibility backlog) there never are any, so it could only ever be an
+          empty card. Nothing became unreachable: the same history, with the same search plus a
+          work-item filter, is the History tab of Clarifications. */}
     </div>
   );
 }

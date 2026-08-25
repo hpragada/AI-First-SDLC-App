@@ -22,7 +22,12 @@ from __future__ import annotations
 
 import pytest
 
-from apps.a11y.defects import A11Y_BLOCKING, DEFECT_KIND, record_a11y_findings
+from apps.a11y.defects import (
+    A11Y_BLOCKING,
+    DEFECT_KIND,
+    _element_words,
+    record_a11y_findings,
+)
 from apps.a11y.findings import record_run_findings, review_queue
 from apps.a11y.models import A11yFinding, WcagCriterion
 from apps.a11y.report import SOURCE_AI, SOURCE_RULE, MergedReport, ReportRow
@@ -419,3 +424,64 @@ def test_exactly_one_gate_reads_these_defects(world):
     hits = {p.name for p in gates.glob("*.py")
             if "a11y_finding" in p.read_text(encoding="utf-8")}
     assert hits == {"a11ygate.py"}
+
+
+# ══ the title a person actually reads ═══════════════════════════════════════════
+#
+# It used to read `Accessibility: 1.4.1 on /loans/current — #loans-table > tbody >
+# tr:nth-of-type(2)`: a rule named by a number nobody has memorised, an element named by a CSS
+# path nobody can read, and the whole thing truncated on a board card. Both halves now say what
+# they mean, and both facts somebody navigates by — the number and the address — are still there.
+
+def test_the_title_names_the_rule_rather_than_only_numbering_it(world):
+    run = _run(world)
+    _record(world, run, [_row()])
+    _reconcile(world, run)
+
+    title = _a11y_defects(world)[0].title
+    assert "Non-text Content (1.1.1)" in title, title
+    # The number stays. A developer looking a criterion up searches for 1.1.1, and the name
+    # without it would cost them that.
+    assert "1.1.1" in title and "/checkout" in title
+
+
+def test_the_title_describes_the_element_instead_of_pasting_the_selector(world):
+    run = _run(world)
+    _record(world, run, [_row(selector="#loans-table > tbody > tr:nth-of-type(2)")])
+    _reconcile(world, run)
+
+    defect = _a11y_defects(world)[0]
+    assert "row 2 of the loans table" in defect.title, defect.title
+    assert "tbody" not in defect.title
+    # And the exact selector is NOT lost — it is on the ticket, verbatim, where somebody fixing
+    # it goes looking. The title is a summary; the description is the record.
+    assert "#loans-table > tbody > tr:nth-of-type(2)" in defect.description
+
+
+def test_a_title_still_says_which_page_and_which_rule_without_the_standard_loaded(world):
+    # A project whose WCAG set has not been loaded still gets tickets. Losing the rule's NAME is
+    # a small cost; failing to open a defect because a lookup table is missing would be absurd.
+    WcagCriterion.objects.filter(version="2.2").delete()
+    run = _run(world)
+    _record(world, run, [_row()])
+    _reconcile(world, run)
+
+    title = _a11y_defects(world)[0].title
+    assert "1.1.1" in title and "/checkout" in title
+    assert "(1.1.1)" not in title, "no empty brackets where the name would have been"
+
+
+@pytest.mark.parametrize("selector,expected", [
+    # An id is the name its own developer chose: short, precise, and a downgrade to describe.
+    ("#photo-interior", "#photo-interior"),
+    ("#loans-table > tbody > tr:nth-of-type(2)", "row 2 of the loans table"),
+    ("nav > ul > li:nth-of-type(3) > a", "link"),
+    ("main > div.card > button", "button"),
+    ("form#signup > input.email", "field of the signup"),
+    # A tag with no word for it falls back to the selector rather than to nothing. A gap in the
+    # list is a gap in the list; a title that says less than the old one is not an improvement.
+    ("div.wrapper > span", "div.wrapper > span"),
+    ("", ""),
+])
+def test_the_element_is_put_into_words_or_left_exactly_as_it_was(selector, expected):
+    assert _element_words(selector) == expected

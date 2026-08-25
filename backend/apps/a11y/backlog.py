@@ -43,6 +43,30 @@ SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 BACKLOG_STREAM = "__a11y_backlog__"
 BACKLOG_TITLE = "Accessibility backlog"
 
+#: What this epic IS, for the person who opens it. On an application that was imported rather
+#: than built here it is the most important item on their board — every accessibility problem in
+#: the application hangs off it — and it used to introduce itself in two sentences.
+#:
+#: Written here rather than on the screen because it is the work item's own description: it
+#: travels to a task tracker with the epic, where no screen of ours can add to it.
+BACKLOG_DESCRIPTION = """**Every accessibility problem found in this application, as tracked work.**
+
+Each child is one problem on one element of one page, worst first: what breaks, which WCAG
+success criterion it breaches, how sure the platform is, and a suggested fix.
+
+**They close and reopen themselves.** A child closes when a later audit looks at that element
+and no longer finds the problem — never because an audit did not visit the page, which would
+close problems nobody had fixed. If it comes back it reopens as the same item, keeping its
+history rather than arriving as a new ticket.
+
+**What to do with it.** Work down from the top. The order is severity first, then how many pages
+share the same breach — one criterion broken on twelve pages is usually one component fixed
+once. Nothing here blocks a release on its own; the project's own accessibility policy decides
+that, and the Conformance statement is what somebody signs at the end.
+
+Problems the checks could not decide on their own are not here — they are waiting for a person
+in the accessibility review queue."""
+
 
 def open_findings(tenant_id, project_id) -> list:
     """Every accessibility problem this project currently has open, whatever found it.
@@ -180,11 +204,7 @@ def backlog_container(tenant_id, project_id):
             feature_stream=BACKLOG_STREAM, type=WorkItem.Type.EPIC,
             defaults={
                 "title": BACKLOG_TITLE,
-                "description": (
-                    "Accessibility problems found by auditing this application, as tracked "
-                    "work. Each child closes itself when a later check no longer finds it, "
-                    "and reopens as the same item if it comes back."
-                ),
+                "description": BACKLOG_DESCRIPTION,
                 "state": WorkItem.State.IN_PROGRESS,
                 "external_ref": {"kind": "a11y_backlog"},
             },
