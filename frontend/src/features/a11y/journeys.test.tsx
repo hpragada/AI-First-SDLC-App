@@ -111,8 +111,42 @@ describe("Keyboard journeys (G6c)", () => {
     expect(address.value).toBe("http://127.0.0.1:5173");
     expect(screen.getByText(/Pre-filled from the repository acme\/web/)).toBeDefined();
     expect(screen.getByText("Never walked")).toBeDefined();
-    // Said before the button, because it is the one thing the platform cannot do for them.
-    expect(screen.getByText("Start your application first")).toBeDefined();
+    // Still said before the button, because it is the one thing the platform cannot do for
+    // them — but folded into the panel's expander rather than standing as a full-width banner
+    // on every visit. It is in the document either way, which is what a screen reader and a
+    // find-in-page both go by; `<details>` hides its contents visually, not from the tree.
+    expect(screen.getByText(/Start your application first/)).toBeDefined();
+  });
+
+  // ── the explanation, folded ────────────────────────────────────────────────
+  //
+  // A third of this panel used to be prose above the table people come here for. It is now one
+  // sentence and an expander. What must not happen is the detail being quietly deleted along
+  // with the space it took, so these hold both halves: the summary states the point, and
+  // everything that was there before is still reachable and still in the accessibility tree.
+
+  it("opens with one sentence and keeps the rest behind an expander", async () => {
+    vi.stubGlobal("fetch", stubRoutes([...base(), [/a11y-journeys\/$/, list()]]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("TC-031");
+    // A real control to assistive technology — a native <summary>, not a div with a click
+    // handler. This platform does not get to ship the defect it sells finding.
+    const summary = screen.getByText("What this means");
+    expect(summary.tagName).toBe("SUMMARY");
+    expect(summary.closest("details")).not.toBeNull();
+    // Closed by default: that is the space this was meant to give back.
+    expect(summary.closest("details")!.hasAttribute("open")).toBe(false);
+  });
+
+  it("keeps every fact the long version carried", async () => {
+    vi.stubGlobal("fetch", stubRoutes([...base(), [/a11y-journeys\/$/, list()]]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("TC-031");
+    expect(screen.getByText(/focus can get out of a menu/)).toBeDefined();
+    expect(screen.getByText(/covers one of the eight/)).toBeDefined();
+    expect(screen.getByText(/records no steps/)).toBeDefined();
   });
 
   it("shows the E2E cases it could NOT walk, and why", async () => {
@@ -262,8 +296,12 @@ describe("Keyboard journeys (G6c)", () => {
     ]));
     renderWithProviders(<A11yAudit />);
 
+    // The banner, which is the one that says what to do about it. There used to be a badge in
+    // the panel corner saying the same three words with no advice attached; it was removed, and
+    // this asserts the half that was worth keeping is the half that survived.
     await screen.findByText("You have no machine connected");
-    expect(screen.getAllByText("No machine connected").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Connect it first/)).toBeTruthy();
+    expect(screen.queryByText("No machine connected")).toBeNull();
   });
 
   it("a dispatched journey no machine has taken says so, not \"Walking now\"", async () => {

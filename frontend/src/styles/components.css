@@ -848,6 +848,51 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .trow__main { min-width: 0; flex: 1 1 auto; }
 
 /* ---------------------------------------------------------------------------
+   Disclosure — one line, with the rest folded behind it
+   Native <details>/<summary>, so focus, Enter/Space and the announced expanded
+   state all come from the browser. The only thing styled here is the marker:
+   the default triangle is replaced with one that rotates, because the built-in
+   one differs between browsers and this sits inside body copy.
+   --------------------------------------------------------------------------- */
+.disclosure { margin-top: var(--space-2); }
+/* Grey, not blue and NOT `--brand-orange` (team decision, 25 August). This opens something on
+   the same page; it does not navigate, so wearing the product's link colour overstated it and
+   two of these on one screen read as loud. `--text-body` is 10.03:1 on a panel and 9.26:1 on the
+   app background — well past the 4.5:1 this capability sells, and darker than the muted body
+   copy around it, which is what marks it as the control rather than more prose. What says it is
+   interactive is the marker, the pointer and the underline on hover, none of which is colour. */
+.disclosure__summary {
+  display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer;
+  font-size: var(--fs-sm); line-height: var(--lh-sm); font-weight: 600;
+  color: var(--text-body); border-radius: var(--radius-sm); padding: 2px 4px; margin-left: -4px;
+  list-style: none;                 /* Firefox */
+}
+.disclosure__summary::-webkit-details-marker { display: none; }   /* Safari/Chrome */
+.disclosure__summary::before {
+  /* Drawn with borders, not written as a character. This was `content: "\\25B8"` and the file
+     ended up holding a raw control byte instead of the triangle — an escape mangled on its way
+     through a script, rendering as a tofu box and the text "B8" on the live screen. A shape with
+     no glyph in it cannot be mis-encoded, needs no font to be installed, and takes its colour
+     from the text it sits beside, so the two can never drift apart. */
+  content: ""; display: inline-block; width: 0; height: 0;
+  border-style: solid; border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent currentColor;
+  transition: transform 120ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) { .disclosure__summary::before { transition: none; } }
+.disclosure[open] > .disclosure__summary::before { transform: rotate(90deg); }
+/* No focus rule of its own. The design system already gives every focusable thing the same
+   ring (`:focus-visible` in design-system.css), and a second, different focus style on the one
+   control added this week is how a product ends up with two of them. */
+.disclosure__summary:hover { text-decoration: underline; }
+.disclosure__body {
+  margin-top: var(--space-2); padding-left: var(--space-4);
+  border-left: 2px solid var(--border);
+  font-size: var(--fs-sm); line-height: var(--lh-sm); color: var(--text-muted);
+}
+.disclosure__body > * + * { margin-top: var(--space-2); }
+
+/* ---------------------------------------------------------------------------
    Captured-page screenshot (S-36 accessibility review, QA-23)
    `.diagram-frame` is a centred *placeholder* for an embed — fixed minimum height
    and no overflow handling at all, so a real capture (routinely 2560px wide and
@@ -858,7 +903,7 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
    --------------------------------------------------------------------------- */
 .shot { border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; background: var(--bg-surface); }
 .shot__stage { position: relative; background: var(--bg-subtle); max-height: 340px; overflow: auto; }
-/* FIT: the capture scaled to the panel's WIDTH â€” which is what the button says, and all it ever
+/* FIT: the capture scaled to the panel's WIDTH — which is what the button says, and all it ever
    promised. It scrolls vertically. `overflow: hidden` was here instead, and a full-page capture
    is several times taller than the 340px this stage is clamped to, so roughly 320px of every
    shot was cropped away with nothing on screen saying so. */
@@ -870,7 +915,7 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 /* The marker's containing block, and the only reason this element exists: it shrink-wraps the
    image, so the marker's percentage coordinates resolve against the PICTURE. They used to
    resolve against `.shot__stage`, whose height is clamped to 340px while the image renders far
-   taller â€” so every ring was scaled by 340/imageHeight and drawn hundreds of pixels too high.
+   taller — so every ring was scaled by 340/imageHeight and drawn hundreds of pixels too high.
    Nothing but the image and the ring may go inside this. */
 .shot__frame { position: relative; display: inline-block; vertical-align: top; }
 /* Where the finding is. Absolute inside the frame so it travels with the scroll. */

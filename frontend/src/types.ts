@@ -962,6 +962,13 @@ export interface A11yRoutesResponse {
   // Whether THIS reader may change the page list or start an audit (QA Lead / Tech Lead /
   // Admin). Everyone on the project reads the same screen; only these three operate it.
   can_manage: boolean;
+  // Where the platform believes this application answers, and how it knows. The SAME resolver
+  // the keyboard-journeys panel reads, so the two panels on one screen cannot disagree about
+  // it. `base_url_reason` says what to go and set when there is no address at all. Optional
+  // because an older API response does not carry them.
+  base_url?: string;
+  base_url_source?: string;
+  base_url_reason?: string;
   changed?: {
     added: string[];
     updated: string[];

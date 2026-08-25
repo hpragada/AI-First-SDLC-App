@@ -652,6 +652,33 @@ export function Banner({ children, variant = "info", title }: { children: ReactN
   );
 }
 
+/** One line on screen; the rest a click away.
+ *
+ * **Why it exists.** Several panels open with three or four lines of explanation that is worth
+ * reading exactly once and is then re-read past on every visit, pushing the controls somebody
+ * came for below the fold. This is the middle ground between keeping all of it and deleting it:
+ * the sentence that matters stays visible, the detail stays reachable.
+ *
+ * **Why `<details>` and not a hover tooltip.** A tooltip cannot be opened from a keyboard and
+ * does not exist on a touch screen — this platform's whole job is to find that defect on other
+ * people's sites, and shipping one in its own UI would be indefensible. The browser's own
+ * disclosure element is focusable, operable with Enter and Space, and announced with its
+ * expanded state by a screen reader, with nothing added here. `summary` is a real button to
+ * assistive technology; do not put another one inside it.
+ */
+export function Disclosure({ summary, children, className }: {
+  summary: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <details className={cx("disclosure", className)}>
+      <summary className="disclosure__summary">{summary}</summary>
+      <div className="disclosure__body">{children}</div>
+    </details>
+  );
+}
+
 export function Tile({ num, label, sub }: { num: ReactNode; label: ReactNode; sub?: ReactNode }) {
   return (
     <div className="tile">

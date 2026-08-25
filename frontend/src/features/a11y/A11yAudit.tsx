@@ -21,6 +21,7 @@ import {
   Badge,
   Banner,
   Button,
+  Disclosure,
   EmptyState,
   Modal,
   Panel,
@@ -124,14 +125,44 @@ function passStartedAt(audit: A11yAuditRow): string {
 
 /** The status word, in the words of the pass actually running. `judging` on a re-judge is not
  *  "Checking what was found" — everything was found an hour ago; this is checking the rest. */
+/** Did this audit finish with part of what it captured never looked at?
+ *
+ * `unanswered` is elements **nothing ever checked** — not elements a check reached and could not
+ * decide, which are somebody's job in the review queue. It is what the Check-the-rest button
+ * counts, and the API only sends it for a closed audit.
+ */
+function leftUnchecked(audit: A11yAuditRow): number {
+  return AUDIT_IN_FLIGHT.includes(audit.status) ? 0 : audit.unanswered ?? 0;
+}
+
+/** The status word — from the audit's state AND from how much of it was never done.
+ *
+ * **Both facts were already on this screen and they contradicted each other.** The row said
+ * `complete` because the RUN finished and nothing crashed, which is true of the run and not of
+ * the work: directly underneath, its own warning said six elements were left for a second pass
+ * and offered a button to do them. So the strongest signal on the row — a green badge and the
+ * word Complete — told somebody scanning a list of past audits that an application had been
+ * fully checked when part of it was never looked at. A quiet success is this capability's worst
+ * failure, and it was sitting between two things that said otherwise.
+ *
+ * Derived rather than stored, so the moment Check the rest covers the remainder the count drops
+ * to zero and this turns green on its own. Nothing to keep in step.
+ *
+ * **Not "In progress"** (team decision, 25 August): nothing is running at this point, and this
+ * same screen shows a genuine "Audit running" panel for work actually in flight. Two different
+ * things reading as in-flight sends somebody looking for a run that is not happening.
+ */
 function statusLabel(audit: A11yAuditRow): string {
   if (audit.status === "judging" && isRejudge(audit)) return "Checking the rest";
+  if (audit.status === "complete" && leftUnchecked(audit) > 0) return "Not fully checked";
   return STATUS_LABEL[audit.status] ?? audit.status;
 }
 
-function auditBadge(status: string): "done" | "failed" | "waiting" {
-  if (status === "complete") return "done";
-  if (status === "failed") return "failed";
+function auditBadge(audit: A11yAuditRow): "done" | "failed" | "waiting" {
+  if (audit.status === "failed") return "failed";
+  // Amber, not green, and this is the whole point: green is the one thing a person reads without
+  // reading. An audit that never asked about part of its own capture has not earned it.
+  if (audit.status === "complete") return leftUnchecked(audit) > 0 ? "waiting" : "done";
   return "waiting";
 }
 
@@ -292,13 +323,11 @@ function AddPages({
         </>
       }
     >
-      <Banner variant="info" title="The platform cannot discover your pages">
-        It has no access to your application — that is deliberate. Tell it which addresses to
-        visit and it will visit exactly those, and report on anything it was asked for and could
-        not open.
-      </Banner>
-
-      <label className="field" style={{ marginTop: "var(--space-4)" }}>
+      {/* No "the platform cannot discover your pages" banner. It was here and on the empty
+          state behind it, so the same explanation was read twice on the way to one action, and
+          the field help below already says what to paste and in which formats — which is what
+          somebody who has just opened this box actually needs (team decision, 25 August). */}
+      <label className="field">
         <span className="field__label" id="pages-box">
           Your pages
         </span>
@@ -494,49 +523,55 @@ function RunStrip({
   projectId,
   routes,
   scopeChange,
+  address: suggested,
   hasMachine,
   canManage,
 }: {
   projectId: string;
   routes: A11yRoute[];
   scopeChange: { added?: string[]; removed?: string[]; before?: number; now?: number };
+  address: { url?: string; source?: string; reason?: string };
   hasMachine: boolean;
   canManage: boolean;
 }) {
-  const [address, setAddress] = useState("");
+  // `undefined` until the person types, so the resolved address arrives without an effect and
+  // without overwriting what they typed on the next poll. Same shape as the journeys panel
+  // below, on purpose — two address boxes on one screen behaving differently is its own bug.
+  const [address, setAddress] = useState<string | undefined>();
+  const value = address ?? suggested.url ?? "";
   const start = useStartA11yAudit(projectId);
   const inScope = routes.filter((r) => r.enabled);
   const passes = Math.max(1, Math.ceil(inScope.length / PAGES_PER_PASS));
   const moved = (scopeChange.added?.length ?? 0) + (scopeChange.removed?.length ?? 0) > 0;
 
+  // No machine badge in the corner (team decision, 25 August). The navigation bar already
+  // carries `Companion: Ready` at all times, and the absence of a machine is stated below in a
+  // banner that also says what to do about it — which is the half that was ever worth the space.
   return (
-    <Panel
-      title="Run an audit"
-      actions={
-        hasMachine ? (
-          <Badge variant="done">Machine connected</Badge>
-        ) : (
-          <Badge variant="failed">No machine connected</Badge>
-        )
-      }
-    >
+    <Panel title="Run an audit">
+      {/* One sentence, then the detail behind a click (team decision, 25 August). Two dense
+          paragraphs stood between the panel title and the button, and the second of them — what
+          the machine needs installed — is worth reading once, on the day an audit fails because
+          the browser is missing. Kept rather than deleted for exactly that day: it is still the
+          only place that says an audit and a keyboard journey resolve their tooling differently,
+          which is otherwise discovered from a failed run several minutes later. */}
       <p className="t-sm u-muted">
-        The scan runs on your connected machine, not on our servers — your application is at an
-        address only your machine can reach. Nothing about it is ever sent to us except what the
-        scan writes down.
+        The scan runs on your connected machine, not on our servers.
       </p>
-      {/* Said here rather than discovered from a failed audit several minutes later. The two
-          things on this screen genuinely need different setups, and the difference used to be
-          invisible: an audit resolves its browser and scanner out of the audited project, a
-          keyboard journey below fetches its own. */}
-      <p className="t-sm u-muted" style={{ marginTop: "var(--space-2)" }}>
-        Your machine needs a browser and the <span className="t-mono">axe</span> scanner. If the
-        application's own repository is checked out there and ships them, the audit uses that
-        copy — and the report names the version your application actually uses. Otherwise it
-        falls back to the companion's own, and every scan says{" "}
-        <span className="t-mono">(companion)</span> beside the version so the two are never
-        confused.
-      </p>
+      <Disclosure summary="What this means, and what your machine needs">
+        <p>
+          Your application is at an address only your machine can reach. Nothing about it is ever
+          sent to us except what the scan writes down.
+        </p>
+        <p>
+          Your machine needs a browser and the <span className="t-mono">axe</span> scanner. If the
+          application's own repository is checked out there and ships them, the audit uses that
+          copy — and the report names the version your application actually uses. Otherwise it
+          falls back to the companion's own, and every scan says{" "}
+          <span className="t-mono">(companion)</span> beside the version so the two are never
+          confused.
+        </p>
+      </Disclosure>
 
       {/* Scope moved since the last audit. The report's own Movement section compares findings
           between audits and reads as progress; if the page list shrank, the numbers improve on
@@ -578,17 +613,27 @@ function RunStrip({
           <span className="field__label" id="app-address">
             Address of the running application
           </span>
+          {/* The address the audit will actually use, shown rather than described. The
+              placeholder used to read "taken from your repository's Preview URL" — a sentence
+              about where the default comes from, sitting where an example of what to type
+              belongs, above a box that was empty. So the one thing a person wanted to know
+              (which address is this about to scan?) was the one thing not on screen, and the
+              grey text read like something to copy. The journeys panel below has always done
+              this properly; this is the same resolver and the same shape. */}
           <input
             className="input"
             type="text"
             aria-labelledby="app-address"
-            placeholder="taken from your repository's Preview URL"
-            value={address}
+            placeholder="http://localhost:3000"
+            value={value}
             onChange={(e) => setAddress(e.target.value)}
           />
           <span className="field__help">
-            Leave it blank to use the address the platform already holds for this project. Typing
-            one here scans a different environment for this run only — it is not saved back.
+            {suggested.source
+              ? `Pre-filled from ${suggested.source}. `
+              : `${suggested.reason || "Where the running application answers."} `}
+            Typing a different one scans another environment for this run only — it is not saved
+            back.
           </span>
         </label>
         <div className="field">
@@ -619,7 +664,7 @@ function RunStrip({
           variant="primary"
           disabled={!canManage || inScope.length === 0 || start.isPending}
           onClick={() =>
-            start.mutateAsync({ base_url: address.trim() || undefined }).catch(() => undefined)
+            start.mutateAsync({ base_url: value.trim() || undefined }).catch(() => undefined)
           }
         >
           Run audit
@@ -707,26 +752,36 @@ function KeyboardJourneys({ projectId, hasMachine }: { projectId: string; hasMac
       return next;
     });
 
+  // No badges in the corner (team decision, 25 August). "Machine connected" repeated
+  // `Companion: Ready` in the navigation bar, permanently on screen a few inches away — and when
+  // there is NO machine this panel already says so in a full banner below, with what to do about
+  // it, which is the version worth reading. "Reported, never blocking" is a policy about what
+  // happens to results rather than a state, and it is stated in full at the foot of this panel.
+  // Neither badge was the only place anything was said.
   return (
-    <Panel
-      title="Keyboard journeys"
-      actions={
-        <>
-          <Badge variant="outline" dot={false}>Reported, never blocking</Badge>
-          {hasMachine ? (
-            <Badge variant="done">Machine connected</Badge>
-          ) : (
-            <Badge variant="failed">No machine connected</Badge>
-          )}
-        </>
-      }
-    >
+    <Panel title="Keyboard journeys">
+      {/* One sentence, then the rest behind a click (team decision, 25 August). This paragraph
+          and the "Start your application first" banner below it were about a third of the
+          panel's height, above the table people come here for — read once and re-read past on
+          every visit after. Both are folded in together because they are the same subject; see
+          the note where the banner used to be. */}
       <p className="t-sm u-muted">
-        Eight things cannot be judged from a page standing still — whether focus can get out of a
-        menu, whether you can see where you are, whether a screen reader is told when something
-        changes. They can only be answered by <em>operating</em> the application with a keyboard.
-        The industry scanner covers one of the eight.
+        Eight WCAG checks can only be answered by <em>operating</em> the application with a
+        keyboard — the industry scanner covers one of the eight.
       </p>
+      <Disclosure summary="What this means">
+        <p>
+          The eight are things no page can be judged on standing still: whether focus can get out
+          of a menu, whether you can see where you are, whether a screen reader is told when
+          something changes.
+        </p>
+        <p>
+          <strong>Start your application first.</strong> A journey walks the live application,
+          step by step. Make sure it is running at the address below before you start — if
+          nothing answers there the run stops immediately and records no steps, rather than
+          reporting on steps it never walked.
+        </p>
+      </Disclosure>
 
       {rows.length === 0 ? (
         <EmptyState
@@ -746,12 +801,10 @@ function KeyboardJourneys({ projectId, hasMachine }: { projectId: string; hasMac
             </Banner>
           )}
 
-          <Banner variant="info" title="Start your application first">
-            A journey walks the live application, step by step. Make sure it is running at the
-            address below before you start — if nothing answers there the run stops immediately
-            and records no steps, rather than reporting on steps it never walked.
-          </Banner>
-
+          {/* "Start your application first" moved up into the expander at the top of this
+              panel, beside the rest of the explanation. It was a full-width banner in the same
+              blue the platform uses for things that need doing, for a fact that is true on every
+              visit — so it read as an alert and was one on no particular occasion. */}
           <label className="field" style={{ marginTop: "var(--space-5)", maxWidth: 520 }}>
             <span className="field__label" id="journey-address">
               Address to walk
@@ -924,7 +977,7 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
   const running = AUDIT_IN_FLIGHT.includes(audit.status);
   const asked = audit.summary?.asked ?? audit.routes.length;
   const badge = (
-    <Badge variant={auditBadge(audit.status)}>
+    <Badge variant={auditBadge(audit)}>
       {statusLabel(audit)}
     </Badge>
   );
@@ -938,14 +991,18 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
     // hour later. Both are said, in that order, so the row is still recognisable as the audit
     // it is.
     const rechecked = isRejudge(audit) ? when(passStartedAt(audit)) : "";
+    // The heading says the same thing as the badge, for the same reason. "Audit complete" above
+    // a warning that six elements were never checked is the contradiction this fix is about, and
+    // leaving it in the title while correcting the badge would only move it.
+    const done = leftUnchecked(audit) > 0 ? "Audit finished, not fully checked" : "Audit complete";
     return (
       <Panel
         title={
           failed
             ? "Audit could not run"
             : rechecked
-              ? `Audit complete · ${when(audit.created_at)}, rechecked ${rechecked}`
-              : `Audit complete · ${when(audit.created_at)}`
+              ? `${done} · ${when(audit.created_at)}, rechecked ${rechecked}`
+              : `${done} · ${when(audit.created_at)}`
         }
         actions={badge}
       >
@@ -1182,7 +1239,7 @@ function PastAudits({
                 </div>
               )}
               <div className="u-row" style={{ marginTop: 6 }}>
-                <Badge variant={auditBadge(audit.status)}>
+                <Badge variant={auditBadge(audit)}>
                   {statusLabel(audit)}
                 </Badge>
                 {(audit.summary?.never_reported?.length ?? 0) > 0 && (
@@ -1384,10 +1441,12 @@ export function A11yAudit() {
         <Panel>
           <EmptyState
             title="No pages are registered yet"
-            // The last sentence names which button to press. Without it the two buttons are a
-            // choice with nothing to make it on: both add pages, and the difference — do you
-            // already have the list, or are you building it up — was never stated anywhere.
-            text="The platform has no access to your application, so it cannot discover its pages — somebody has to say what they are. Nothing is audited until you do. If you already have the list — a routes file, a sitemap, a page inventory — import it. Otherwise add them one page at a time."
+            // Names which button to press, and nothing else. It used to open with why the
+            // platform cannot discover the pages itself — three sentences of architecture
+            // standing between somebody and the only two things they can do here. The
+            // difference that actually needs stating is do you already have the list, or are
+            // you building it up, and that is all this says now (team decision, 25 August).
+            text="If you already have the list — a routes file, a sitemap, a page inventory — import it. Otherwise add them one page at a time."
             action={
               canManage ? (
                 <div className="gate-panel__actions" style={{ justifyContent: "center" }}>
@@ -1413,6 +1472,11 @@ export function A11yAudit() {
               projectId={projectId as string}
               routes={rows}
               scopeChange={routes.data?.scope_change ?? {}}
+              address={{
+                url: routes.data?.base_url,
+                source: routes.data?.base_url_source,
+                reason: routes.data?.base_url_reason,
+              }}
               hasMachine={hasMachine}
               canManage={canManage}
             />

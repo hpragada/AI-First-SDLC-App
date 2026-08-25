@@ -92,7 +92,7 @@ afterEach(() => {
 });
 
 describe("S-38 pages and audit", () => {
-  it("empty · says the platform cannot discover the pages, rather than showing none", async () => {
+  it("empty · names the two ways in, and explains nothing else", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...authed(),
       [/a11y-routes/, routesBody({ routes: [], summary: "no routes are registered" })],
@@ -100,16 +100,87 @@ describe("S-38 pages and audit", () => {
     ]));
     renderWithProviders(<A11yAudit />);
 
-    // The distinction this screen exists to make. "No pages" could mean an application with no
-    // pages; it means nobody has said what they are, and the reason is deliberate.
+    // The title carries the fact — nobody has registered any pages yet — and the body carries
+    // the only decision there is to make here. It used to open with three sentences on why the
+    // platform cannot discover them itself, which is a fact about our architecture offered to
+    // somebody who wants to know which button to press (team decision, 25 August).
     expect(await screen.findByText("No pages are registered yet")).toBeTruthy();
-    expect(screen.getByText(/cannot discover its pages/)).toBeTruthy();
+    expect(screen.queryByText(/cannot discover its pages/)).toBeNull();
+    expect(screen.queryByText(/no access to your application/)).toBeNull();
+    expect(screen.getByText(/a routes file, a sitemap, a page inventory/)).toBeTruthy();
     // No run strip at all — running an audit over nothing would report no problems, which
     // reads exactly like an application with none.
     expect(screen.queryByRole("button", { name: "Run audit" })).toBeNull();
     // Both ways in are offered from empty: import a list, or add one page (task 8b).
     expect(screen.getByRole("button", { name: "Import a list" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Add a page" })).toBeTruthy();
+  });
+
+  // ── the address the audit will actually use ───────────────────────────────
+  //
+  // The box was empty with the grey hint "taken from your repository's Preview URL" — a sentence
+  // about where the default comes from, standing where an example of what to type belongs. So a
+  // person could not see which address was about to be scanned, and the hint read like something
+  // to copy in. The panel below it has always pre-filled properly; this is the same resolver.
+
+  it("shows the address it would use, and where that came from", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({
+        base_url: "http://localhost:4180",
+        base_url_source: "the default repository meridian-web",
+      })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    const box = await screen.findByLabelText("Address of the running application");
+    expect((box as HTMLInputElement).value).toBe("http://localhost:4180");
+    expect(screen.getByText(/Pre-filled from the default repository meridian-web/)).toBeTruthy();
+    // The old hint is gone, and the placeholder is now an example rather than a description.
+    expect(screen.queryByPlaceholderText(/taken from your repository/)).toBeNull();
+  });
+
+  it("says what to go and set when there is no address at all", async () => {
+    // An empty box with nothing said about it reads as optional. It is not — it is the one
+    // thing the platform cannot work out for itself, and the resolver's own reason says why.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({
+        base_url: "",
+        base_url_source: "",
+        base_url_reason: "no repository on this project has a Preview URL",
+      })],
+      [/a11y-audits/, { audits: [] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByLabelText("Address of the running application");
+    expect(screen.getByText(/no repository on this project has a Preview URL/)).toBeTruthy();
+  });
+
+  it("what a person types wins over the pre-filled address", async () => {
+    // And is used for THIS run only — the help line says so, and nothing writes it back.
+    const fetchStub = stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody({ base_url: "http://localhost:4180", base_url_source: "x" })],
+      [/a11y-audits\/$/, { audits: [] }],
+      [/a11y-audits/, { id: "a9", status: "pending" }],
+    ]);
+    vi.stubGlobal("fetch", fetchStub);
+    renderWithProviders(<A11yAudit />);
+
+    const box = await screen.findByLabelText("Address of the running application");
+    await userEvent.clear(box);
+    await userEvent.type(box, "http://staging.local");
+    await userEvent.click(screen.getByRole("button", { name: "Run audit" }));
+
+    await waitFor(() => {
+      const post = fetchStub.mock.calls.find(([, init]) =>
+        (init as RequestInit | undefined)?.method === "POST");
+      expect(JSON.parse(String((post?.[1] as RequestInit).body)).base_url)
+        .toBe("http://staging.local");
+    });
   });
 
   it("default · shows the pages, the passes, and what will be visited", async () => {
@@ -124,7 +195,10 @@ describe("S-38 pages and audit", () => {
 
     expect(await screen.findByText("/catalogue")).toBeTruthy();
     expect(screen.getByText("Excluded")).toBeTruthy();
-    expect(screen.getByText("Machine connected")).toBeTruthy();
+    // No machine badge on the panel: the navigation bar carries `Companion: Ready` permanently
+    // and this only ever repeated it. What matters is that the ABSENCE of a machine is still
+    // stated — asserted by its own test below, where it is the fact under examination.
+    expect(screen.queryByText("Machine connected")).toBeNull();
     // One in scope of two registered — the arithmetic is the platform's, not a number the
     // reader has to take on trust.
     expect(screen.getByText("Pages in scope").nextElementSibling?.textContent).toBe("1 of 2");
@@ -1286,6 +1360,59 @@ describe("S-38 registering pages — the two ways in", () => {
     await screen.findByText("Past audits");
     expect(screen.queryByRole("button", { name: "Check the rest" })).toBeNull();
     expect(screen.queryByText(/never looked at/)).toBeNull();
+  });
+
+  // ── and it does not call itself complete while it is at it ────────────────
+  //
+  // The run finished, so the row said `complete` and wore a green badge — directly above its own
+  // warning that six elements were never checked and a button offering to do them. Both facts
+  // were already on screen, contradicting each other, and the green badge is the one a person
+  // reads without reading. On a list of past audits it says an application was fully checked
+  // when part of it was never looked at, which is the quietest way this capability can fail.
+
+  it("an audit that never checked part of its capture does not read as complete", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [closed({ unanswered: 6 })] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    // The heading over the numbers, and the badge on the row, both say it.
+    expect(await screen.findByText(/Audit finished, not fully checked/)).toBeTruthy();
+    expect(screen.getAllByText("Not fully checked").length).toBeGreaterThan(0);
+    // Never the word on its own — that is the claim being corrected.
+    expect(screen.queryByText("Complete")).toBeNull();
+  });
+
+  it("and reads as complete again once nothing is left", async () => {
+    // Derived from the same count the button uses, so Check the rest turns this green by itself.
+    // Nothing separate to keep in step, which is why it is derived rather than stored.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [closed({ unanswered: 0 })] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText(/Audit complete/)).toBeTruthy();
+    expect(screen.getAllByText("Complete").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Not fully checked")).toBeNull();
+  });
+
+  it("says nothing of the sort about an audit that is still running", async () => {
+    // `unanswered` is only counted for a CLOSED audit, and a pass still working through its
+    // elements has not left them unchecked — it is checking them.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [audit({ status: "judging", unanswered: 6 })] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("Past audits");
+    expect(screen.queryByText("Not fully checked")).toBeNull();
+    expect(screen.getAllByText("Checking what was found").length).toBeGreaterThan(0);
   });
 
   it("a reader sees it, cannot press it, and is told whose call it is", async () => {

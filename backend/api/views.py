@@ -452,6 +452,7 @@ class ProjectViewSet(
         Onboarding (OP-06) will write the same table with `source: onboarding`. Everything here
         is `manual`, because a person is the one typing it.
         """
+        from apps.a11y.journey import suggested_address
         from apps.a11y.review import can_manage_pages
         from apps.a11y.routes import (
             RouteError,
@@ -504,6 +505,7 @@ class ProjectViewSet(
         # editing, because the warning it powers — "renaming leaves this page's problems at the
         # old address" — has to be there the moment the path field is touched.
         history = history_for(self.tenant_id, str(project.id))
+        address = suggested_address(self.tenant_id, str(project.id))
         payload = {
             "routes": [
                 {"id": str(row.id), "path": row.path, "label": row.label,
@@ -523,6 +525,13 @@ class ProjectViewSet(
             # So the screen renders read-only rather than showing controls that 403 on click —
             # the ninth state S-36 established and the one this tab did not have.
             "can_manage": may_manage,
+            # Where this application answers, so the run strip can SHOW the address it would use
+            # instead of describing where the address comes from. `suggested_address` is the same
+            # resolver the keyboard-journeys panel on this screen already reads, deliberately:
+            # one answer to "where is this application", never two panels that can disagree.
+            "base_url": address.url,
+            "base_url_source": address.source,
+            "base_url_reason": address.reason,
         }
         if result is not None:
             payload["changed"] = result
