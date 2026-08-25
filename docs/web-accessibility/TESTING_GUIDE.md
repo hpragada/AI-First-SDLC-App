@@ -2113,6 +2113,23 @@ never inviting one.
 **How to check it:** run two audits on the same project. The second must produce its own
 verdicts, and its summary must match what the platform actually recorded.
 
+**⚠️ One small piece was left in, on purpose — a decision, not an oversight.**
+
+At the end of every audit the AI writes two things: its verdicts, and a short note on how it
+reasoned. We removed the verdicts from the library it searches. We kept the reasoning notes,
+because knowing *how* to weigh a rule is useful next time and carries no answers.
+
+One of the five kept notes slipped an answer in. It names a specific element on a specific
+page — `#hours-note` — and says which rules it failed and passed.
+
+**What that could look like if it ever bites:** somebody fixes that element, re-runs the audit,
+and the report says it is **still broken**. If a defect that was genuinely fixed comes back
+reported as unfixed, this is the first thing to check.
+
+The team weighed it and chose to leave it: one sentence about one element, on one page, in one
+project. Closing it is a small change if it ever proves worth doing — see §9.22 of
+`GAP_FIX_BUILD_PLAN.md`.
+
 ### #45 — The table-shape fix was built and never reached the AI ⭐ ✅
 
 **What it is.** Finding #41 added something valuable: instead of sending the AI thousands of

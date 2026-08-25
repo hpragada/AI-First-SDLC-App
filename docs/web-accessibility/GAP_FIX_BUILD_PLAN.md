@@ -2559,6 +2559,38 @@ a retrieval copy, and the artifact, its body and its version history are untouch
 **The safety net stays and earned its place:** the write-completeness check caught the empty run,
 failed it, and refused to call the audit complete.
 
+**⚠️ A residue was found and deliberately left — team decision, 25 August.**
+
+Each judging run writes two documents: its verdicts, and a short note on its own reasoning
+(*"here is how I mapped this axe rule to this criterion"*). Only the verdicts are a result, so
+only the verdicts were excluded — a note about *how* to reason carries no answers and is worth
+having next time.
+
+**One of the five surviving notes has an answer in it.** From the dev's tenant:
+
+> *"1.4.1 vs 1.4.3 independence — An element can simultaneously fail 1.4.3 and pass 1.4.1 … the
+> `#hours-note` element exhibits exactly this combination."*
+
+That names a live element on a page under audit and states its verdicts. It is the same class as
+what §9.22 removed — one sentence about one element rather than a findings table, and a nudge
+rather than a finished answer to copy, but the same class.
+
+**How it would bite, and it is worth recognising the symptom.** `#hours-note` is a real open
+defect. If somebody fixes it and re-audits, the judge starts the run holding a note that says it
+fails 1.4.3 — and may report a **fixed defect as still broken**. If that is ever seen, this is
+the first place to look.
+
+**Why it was left.** One sentence about one element is a long way from a findings table, it may
+never bite, and the methodology in those notes is genuinely useful. The counter-argument, which
+did not win but should be recorded: "the judge mostly does not put answers in its reasoning
+notes" is not something it can be held to, and one note in five already did.
+
+**If it is ever built**, the fix is narrow and the same two pieces as §9.22 — stop indexing
+`assumption` artifacts whose phase is `a11y_judge` or `a11y_journey`, and clean up the five
+already stored. Assumption records from every other phase (onboarding, document vision, testing)
+carry no verdicts about pages under test and stay indexed. Counted at the time: 2 in the dev's
+project, 3 in ours.
+
 ### 9.23 The container outline never reached the AI — 24 August ⭐ (BUILT)
 
 **§9.19 was built and was inert.** The outline was added to the element contract, the selection
