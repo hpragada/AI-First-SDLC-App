@@ -1,20 +1,21 @@
-"""Remove Knowledge Index chunks made from accessibility verdicts.
+"""Remove Knowledge Index chunks made from accessibility verdicts. ⚠️ THIS ONE DID NOTHING.
 
-`mcp_platform_state.tools._NOT_KNOWLEDGE_TYPES` stops these being indexed from now on, and its
-note carries the whole story: an accessibility judging run retrieved the PREVIOUS accessibility
-judgement into its own briefing and reported it back as its own work, having recorded nothing.
+**Kept because it is applied, corrected because it was wrong.** Superseded by
+`0004_drop_verdict_chunks_for_real`, which is the cleanup that actually runs; that file
+explains why in full. In short: this filtered with the ORM and no tenant scope, on the strength
+of the convention in `registry/0006_seed_a11y_judge` that the migration role *"sees across
+tenants despite FORCE ROW LEVEL SECURITY"*. True of `postgres`, which is `BYPASSRLS`. Not true
+of `sdlc_migrator`, which only OWNS the tables — and FORCE applies to the owner too. So the
+filter matched nothing, the delete removed nothing, and this recorded itself as applied.
+Measured after: 87 and 221 chunks, unchanged, every one older than this migration.
 
-Stopping the indexing does nothing about what is already indexed, and every project that has
-ever run an audit is already carrying these. So they go, here, once.
+The operation is left exactly as it ran. Editing an applied migration to make it look correct
+would leave the next reader with no way to understand why 0004 exists.
 
-**Deleting them loses nothing.** A chunk is a retrieval copy of an artifact body; the artifact,
-its body in the object store and its version history are all untouched, and any agent that
-needs one still fetches it by name with `list_artifacts` + `get_artifact_body`. Re-registering
-an artifact of one of these types re-indexes it under the old code and does not under the new,
-so this is not a cleanup that has to be repeated.
-
-Reverse is a no-op rather than a restore: re-indexing on the way back would put the verdicts
-straight back into the context they were removed from, which is the bug, not the rollback.
+**The lesson, for the next data migration in this codebase:** never assume the role. If a
+migration must reach across tenants, it has to arrange that for itself, and it has to say out
+loud how many rows it touched. A cleanup that silently does nothing and can never run again is
+the worst shape available.
 """
 from django.db import migrations
 

@@ -220,3 +220,72 @@ def test_an_ordinary_artifact_is_still_indexed(world, monkeypatch):
                             s3_key="prd.md", title="PRD")
 
     assert KnowledgeChunk.objects.filter(tenant_id=t.id).exists()
+
+
+# ── the cleanup, and the way it silently failed the first time ───────
+@pytest.mark.django_db(transaction=True)
+def test_the_verdict_cleanup_reaches_rows_it_cannot_see_by_default():
+    """Migration 0004 removes verdict chunks across every tenant. 0003 removed none.
+
+    **The failure this is written against.** `0003_drop_verdict_chunks` filtered with the ORM
+    and no tenant scope, on the strength of a convention stated elsewhere in the codebase: the
+    migration role *"sees across tenants despite FORCE ROW LEVEL SECURITY"*. True of `postgres`,
+    which is `BYPASSRLS`. Not true of `sdlc_migrator`, which merely OWNS the tables — and FORCE
+    applies to the owner too. The filter matched nothing, the delete removed nothing, and the
+    migration recorded itself as applied and can never run again. 87 and 221 chunks in the
+    shared database, unchanged, every one of them older than the migration that claimed to
+    remove them.
+
+    Two tenants here, because one tenant would pass under the broken version as easily as the
+    fixed one — a scope bug only shows itself across a boundary.
+    """
+    import importlib
+
+    _mod = importlib.import_module(
+        "apps.knowledge.migrations.0004_drop_verdict_chunks_for_real")
+
+    a = Tenant.objects.create(name="A")
+    b = Tenant.objects.create(name="B")
+    pa = Project.objects.create(tenant=a, name="A")
+    pb = Project.objects.create(tenant=b, name="B")
+    for tenant, project, kind in ((a, pa, "a11y_judge"), (b, pb, "a11y_report"),
+                                  (a, pa, "code_intel")):
+        art = tools.register_artifact(tenant.id, project.id, None, "x", kind, "internal", "h")
+        index.index_artifact(tenant_id=tenant.id, project_id=project.id,
+                             artifact_id=art["id"], text=f"{kind} body",
+                             provider=NullEmbeddings())
+
+    assert KnowledgeChunk.objects.count() == 3
+
+    class _SchemaEditor:
+        pass
+
+    editor = _SchemaEditor()
+    editor.connection = connection
+    _mod.drop_verdict_chunks(None, editor)
+
+    remaining = list(KnowledgeChunk.objects.all())
+    assert len(remaining) == 1, "both tenants' verdict chunks must go, not just one"
+    assert remaining[0].text == "code_intel body", "ordinary knowledge must survive"
+
+
+def test_the_cleanup_does_not_assume_the_role_it_runs_as():
+    """It must lift FORCE itself rather than trusting whoever runs it — and put it back.
+
+    This is the assertion that would have caught 0003. The functional test above passes under a
+    superuser connection whether or not the migration handles row-level security, because a
+    superuser bypasses it; every local test database is exactly that. Only reading the code
+    distinguishes "works here" from "works where it will be run".
+    """
+    import importlib
+    import inspect
+
+    _mod = importlib.import_module(
+        "apps.knowledge.migrations.0004_drop_verdict_chunks_for_real")
+
+    source = inspect.getsource(_mod.drop_verdict_chunks)
+    assert source.count("NO FORCE ROW LEVEL SECURITY") == 1
+    assert source.count("FORCE ROW LEVEL SECURITY") == 2, "lifted once, restored once"
+    assert "finally:" in source, "restored even if the delete raises"
+    # And it says what it did. 0003 failed by being silent about doing nothing.
+    assert "print(" in source
