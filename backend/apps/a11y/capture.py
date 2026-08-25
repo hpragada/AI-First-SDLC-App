@@ -109,6 +109,18 @@ def _element(raw) -> dict:
     what is present, only what is too big. A missing key is the capture's problem to answer for
     (`rules.STYLE_KEYS` says why a missing style is dangerous), and inventing a default here
     would hide exactly that.
+
+    ⚠️ **That sentence is a promise, and it was broken silently** (24 Aug). `structure` and
+    `markup_truncated` were added to the element contract, to the selection rules, to the cache
+    key, to the batch the judge receives and to the judge's own instructions — and not to the
+    list below, which is the only thing that decides what survives to storage. The browser
+    measured every table's shape, the platform received it, and this function dropped it.
+    Across 371 captured elements on a seventeen-page audit, elements carrying an outline: zero.
+    The judge is told "start with the outline" and was handed the field name with nothing in it.
+
+    Nothing failed, because nothing compared the two lists.
+    `test_a11y_capture.test_every_field_the_contract_reads_is_actually_stored` does now, and it
+    is the reason this can only go wrong once.
     """
     data = _mapping(raw)
     return {
@@ -128,6 +140,20 @@ def _element(raw) -> dict:
             for k, v in _mapping(data.get("parent_styles")).items()
         },
         "html": _text(data.get("html"), MAX_HTML_CHARS),
+        # True when `html` above is only the beginning of the element's markup. A backstop for
+        # detail further down a long container, not the answer to a question about its shape —
+        # `structure` is that, and it is whole however large the container is.
+        "markup_truncated": bool(data.get("markup_truncated")),
+        # The container's shape as the browser measured it: rows, columns, which cells are
+        # headers and what they are scoped to, whether a group of fields is grouped. Bounded by
+        # how WIDE a container is rather than how long, so a 401-row table costs 906 characters
+        # where its markup costs 31,985 and would be cut at 8,000.
+        #
+        # Absent for anything that is not a container, and that absence is meaningful: an empty
+        # outline must never be readable as an empty table. A container the capture could not
+        # describe arrives as `{"kind": "unreadable"}` with a reason instead — "we could not
+        # look" and "there is no structure here" are different answers.
+        "structure": _mapping(data.get("structure")),
         "context": _text(data.get("context"), MAX_CONTEXT_CHARS),
         "box": _box(data.get("box")),
         "axe": _mapping(data.get("axe")),

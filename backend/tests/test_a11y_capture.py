@@ -1123,3 +1123,59 @@ def test_rls_hides_one_tenants_captured_screens_from_another():
             assert cur.fetchone()[0] == 0        # no tenant context -> fail closed
     finally:
         raw.close()
+
+
+def test_every_field_the_contract_reads_is_actually_stored(world):
+    """The list of fields `capture._element` keeps must cover what `CapturedElement` reads.
+
+    **Why this test exists, and it is not hypothetical.** `structure` and `markup_truncated`
+    were added to the element contract, the selection rules, the cache key, the judge's batch
+    and the judge's instructions — and not to `_element`, which is the only thing that decides
+    what reaches storage. So the browser measured every table's shape, the platform received
+    it, and it was dropped one step before it was saved. On a seventeen-page audit, elements
+    that arrived carrying an outline: zero. The judge is told to start with the outline and was
+    handed the name of the field with nothing in it.
+
+    Not one test failed, because the two lists had never been compared. That is the defect this
+    guards — not the two missing keys, which are a symptom of it.
+
+    `route` and `screenshot_ref` are the deliberate exceptions: they are facts about WHERE an
+    element was found, held on the bundle row itself, and `to_candidate` reads them from there.
+    Naming them here means a third exception has to be argued for rather than appearing.
+    """
+    import dataclasses
+
+    from apps.a11y.capture import _element
+    from apps.a11y.checkers.rules import CapturedElement
+
+    read = {f.name for f in dataclasses.fields(CapturedElement)}
+    stored = set(_element({}).keys())
+    held_on_the_row = {"route", "screenshot_ref"}
+
+    assert not (read - stored - held_on_the_row), (
+        "capture._element drops fields the checker contract reads: "
+        f"{sorted(read - stored - held_on_the_row)}. Add them to `_element`, or — if the field "
+        "genuinely lives on the bundle row rather than in the element — add it to "
+        "`held_on_the_row` above with a reason."
+    )
+
+
+def test_a_containers_outline_survives_being_stored(world):
+    """The shape the browser measured is what comes back out, not an empty dict.
+
+    The test above proves the KEY is kept. This proves the VALUE is, which is a different
+    failure: a normaliser that coerced the outline to `{}` would satisfy the contract check and
+    still hand the judge nothing.
+    """
+    from apps.a11y.capture import _element
+
+    outline = {"kind": "table", "rows": 401, "columns": 2, "header_cells": 0,
+               "first_row": [{"text": "Title", "header": False},
+                             {"text": "Status", "header": False}]}
+    stored = _element({"tag": "table", "structure": outline, "markup_truncated": True})
+
+    assert stored["structure"] == outline
+    assert stored["markup_truncated"] is True
+    # A non-container carries no outline, and an empty one must never read as an empty table.
+    assert _element({"tag": "button"})["structure"] == {}
+    assert _element({"tag": "button"})["markup_truncated"] is False
