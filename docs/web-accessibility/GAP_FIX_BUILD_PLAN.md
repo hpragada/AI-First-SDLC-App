@@ -17,7 +17,7 @@ only then do we move on.
 
 > **Status, 2026-08-21.** This line used to read *"nothing in here is built yet"*. **All eleven
 > gaps in §3 and §4 are built**, and the document has since grown a second half nobody planned
-> for: **§9, what running it turned up** — **twenty-seven so far across twenty-three sections**, all
+> for: **§9, what running it turned up** — **thirty-five so far across twenty-four sections**, all
 > built. #19–#35 were found by people watching the product work rather than by
 > reading code; #36–#41 came the other way, and #42–#45 from tracking a live audit end to end and reconciling it against a second tenant’s. The other way, from the team asking whether we capture every
 > element WCAG puts in scope and the answer being no. §3 is the plan as written; §9 is what
@@ -1331,12 +1331,12 @@ Jira and no Confluence — 10 in scope on the first run, 12 on the third, 11 on 
 team took `/staff/shelf-audit` out to stay under the judging cap.
 
 > **This section was appended as an afterthought and is now the larger half of the document.**
-> §3 is the plan as written; §9 is what running it added: **twenty-seven findings across twenty-three
+> §3 is the plan as written; §9 is what running it added: **thirty-five findings across twenty-four
 > sections** (§9.1–§9.23), all built. #19–#35 were produced by a person
 > watching the product work; #36–#45 by putting twelve textbook WCAG failures through the
 > selection code after the team asked what we do and do not capture. **Every built one has a
 > green test suite standing over it** — which is the point, and why they are written up at
-> length. They are numbered #19–#45 in the Testing Guide.
+> length. They are numbered #19–#53 in the Testing Guide.
 
 **It worked, and it found four defects no test could have caught, each hidden behind the one
 before it.** That is the shape of a capability that has never run: the first defect stops you
@@ -2613,6 +2613,103 @@ named exceptions with a reason, so a third one has to be argued for rather than 
 
 A second test pins the **value** as well as the key: a normaliser that coerced the outline to
 `{}` would satisfy the contract check and still hand the judge nothing.
+
+### 9.24 Eight UI observations from reading the screens — 25 August ⭐⭐ (BUILT)
+
+The team walked the three accessibility screens and the work items an audit creates, and wrote up
+eight groups of problems. **Four were exactly what the screenshots showed. Four had a cause nobody
+would have guessed from the symptom**, and those are the ones worth reading:
+
+| The symptom | What was actually causing it |
+|---|---|
+| An audit says "Complete" when it isn't | The screen read the audit's state machine and never the "how much was left" number sitting beside it |
+| Only `assumptions` is auto-published | **Every** artifact of a judging run is. The other one is tagged as run output, so it wore a disguise |
+| Bounding boxes in the wrong place | Not the capture, not the arithmetic. One line: `max-height: 340px` |
+| A defect description looks like a warning | The text was already correct markdown. One screen printed it raw inside a red alert |
+
+Written up per observation, in the team's own numbering, as **#46–#53 in the Testing Guide**. Only
+the parts with a design consequence are recorded here.
+
+#### The ring was off by exactly the clamp ratio, and that is what proved it
+
+The ring is placed in percentages of the capture's own pixels. A percentage on an absolutely
+positioned element resolves against its **containing block** — which was `.shot__stage`, whose
+height CSS clamps to 340px while a full-page capture renders several times taller. Measured on a
+1280 × 1144 shot in this panel: the ring landed 237.8px down where the element was at 461.3px, and
+17.8px tall where it was 34.6px. Both are 340 ÷ 659.6 of where they belonged — the same factor,
+twice, which is what turns a plausible explanation into the explanation.
+
+The ring now sits inside `.shot__frame`, which shrink-wraps the image, so the percentages resolve
+against the picture in both display modes. Verified against the shipped stylesheet, exact in both.
+The same line was also cropping ~319px off every tall capture in *Fit to width*, which now scrolls.
+
+**No test could have caught it and none can now.** It lives entirely in CSS and the test
+environment computes no layout. What is pinned instead is the arrangement the fix depends on — the
+image and the ring alone together inside the frame. That is the honest boundary of what a test can
+hold here, and it is stated rather than papered over.
+
+#### `auto_approve` published two things it was never meant to
+
+`publish_artifacts_core` runs on gate approval, and **published** in this platform means a named
+human approved this. A run started with `auto_approve` has no gate and the activity runs anyway —
+correct for document vision (00e), where the human had already adopted the source document, and
+the reason that exception was argued for.
+
+The accessibility judging and journey runs set the same flag for a **different** reason: nobody
+watches their carrier work item, so a gate there would hang the audit for ever. They inherited the
+publishing without inheriting the justification. Measured 25 August across two tenants: every
+artifact of every judging run, published, approved by nobody.
+
+`NEVER_AUTO_PUBLISHED_PHASES` in `orchestration.activities` now names the two phases, and what was
+left as a draft is returned by the activity **and** put on the event — a step that quietly does
+less than its name says is the shape of failure this file keeps meeting.
+
+#### A derived status cannot drift; a stored one can
+
+The audit badge is now computed from the audit's state **and** its outstanding count, rather than
+from the state alone. That is why pressing *Check the rest* turns it green with nothing else to
+update. The team asked for "In progress" and chose **"Not fully checked"** once it was pointed out
+that the same screen has a real *Audit running* panel, and two things reading as in-flight sends
+somebody looking for a run that is not happening.
+
+#### A generated title is only fixed for the next one
+
+`_title` is called when a defect opens and never again — `record_a11y_findings` deliberately does
+not restamp it, because somebody may have renamed the ticket. So improving the wording fixes
+nothing already on a board. Migration `a11y/0029` retitles the 35 existing ones, matching **only**
+titles still in the exact shape the platform generated, so a hand-edited title is left alone.
+
+#### Two migrations, and what the last round taught them
+
+`0029` (titles + the epic's description) and `0030` (artifacts back to draft) both reach across
+tenants, so both **arrange their own access** rather than trusting the role — the lesson from
+`knowledge/0003`, which trusted it, deleted nothing, and recorded itself as applied. Both print
+what they found and what they changed.
+
+They also **read `FORCE ROW LEVEL SECURITY` before lifting it and restore what they found**, rather
+than switching it on the way out. `knowledge/0004` restored unconditionally; on a database where
+FORCE happened to be off, that would have been a migration quietly tightening a table it was only
+passing through.
+
+And a dependency has to name the state a migration actually needs: `0029` first declared
+`workitems 0001_initial` and failed on a database built from scratch with `column "title" does not
+exist` — from a data migration whose whole job is titles. It now names the migration that adds the
+column.
+
+#### One thing chosen over a cheaper alternative
+
+The long copy on two panels folds behind a **native disclosure**, not a hover tooltip. A tooltip
+cannot be opened with a keyboard and does not exist on a touch screen; this product exists to find
+that defect on client sites. Its label is **grey** (`--text-body`, 10.03:1) rather than a link
+colour: it opens something on the same page, it does not navigate, and two blue lines on one
+screen read as loud. Brand orange was never available — **2.97:1** on white, below the 4.5:1 this
+capability sells.
+
+And the marker is **drawn with borders, not written as a character**. It shipped as
+`content: "\25B8"`, the escape was mangled on its way through the script that wrote it, and the
+file ended up holding a raw control byte — rendering live as a tofu box followed by the text
+"B8". A shape with no glyph in it cannot be mis-encoded and needs no font installed. Every file
+this change touched is now scanned for stray control bytes.
 
 ### What was deliberately NOT built — 24 August
 

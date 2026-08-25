@@ -937,7 +937,7 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The forty-five findings, and what was done about each
+## 9. The fifty-three findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
@@ -955,6 +955,8 @@ Library on 20–21 August by people watching the product work — the last of th
 conformance statement those audits produced. **Every one of them had a green test
 suite standing over it** — which is why they are written up at length rather than ticked off. The
 list is now longer than the walkthrough that started it.
+
+**#46–#53 came from the team reading the screens, not from a run.** Eight groups of UI observations written up against Meridian Library on 25 August and fixed together. Four were exactly what the screenshots showed. Four were not: the audit status and the bounding boxes each had a single cause nobody would have guessed from the symptom, the defect description was already correct and was being rendered wrongly, and the artifact that looked over-published was one of several.
 
 **#36–#38 came from a question, not a run.** Before committing to more accuracy work the team
 asked: *as per WCAG, are we capturing and checking every element we should be?* Twelve textbook
@@ -2159,6 +2161,204 @@ fields are the symptom; nothing comparing the lists was the defect.
 
 **How to check it:** put a table of more than about fifty rows on a page and audit it. The
 finding should describe the whole table — its real row count — not just the top of it.
+
+
+### #46 — The empty page list explained our architecture instead of naming the next step ✅
+
+**What it is.** Pages & audit, before anybody has registered a page.
+
+**What was wrong.** It opened with *"The platform has no access to your application, so it cannot
+discover its pages — somebody has to say what they are. Nothing is audited until you do."* Three
+sentences about why we are built the way we are, in front of somebody who wants to know which of
+two buttons to press. The same explanation appeared a second time inside the **Import a list**
+dialog, so it was read twice on the way to one action.
+
+**What it meant.** The sentence that helps — do you already have the list, or are you building it
+up — came last, after the reasoning nobody asked for.
+
+**The fix.** Both are gone. The empty state now says only which button to press and when, and the
+dialog goes straight to the box with the format help underneath it.
+
+**How to check it:** open Accessibility on a project with no pages registered.
+
+### #47 — Two panels announced a machine the navigation bar already announces ✅
+
+**What it is.** The corners of **Run an audit** and **Keyboard journeys**.
+
+**What was wrong.** Both carried a `Machine connected` badge while the navigation bar says
+*Companion: Ready* permanently, a few inches away. Keyboard journeys also carried
+`Reported, never blocking` — a policy about what happens to results, sitting where a status
+indicator goes, and already stated in full at the foot of the same panel.
+
+**What it meant.** The place the eye goes first was spent on something it had already read.
+
+**The fix.** All three removed. **Nothing was lost**, and that is why it was safe: when there is
+*no* machine, each panel still shows a full banner saying so and what to do about it — which was
+always the half worth the space.
+
+### #48 — A third of two panels was prose read once and skipped forever after ✅
+
+**What it is.** *"Eight things cannot be judged from a page standing still…"* and
+*"Start your application first"* on Keyboard journeys; the two paragraphs above the address box on
+Run an audit.
+
+**What was wrong.** Roughly a third of each panel's height was explanation, above the controls the
+person came for. Useful on the first visit; re-read past on every visit after.
+
+**The fix.** One sentence stays visible, and the rest folds behind a **What this means** line that
+opens on a click. Nothing was deleted — the detail about what your machine needs installed still
+earns its place on the day an audit fails because the browser is missing.
+
+**Why an expander rather than a hover tooltip.** A tooltip cannot be opened with a keyboard and
+does not exist on a touch screen. This product's whole job is finding that defect on other
+people's sites. The expander is the browser's own, so it is focusable, works with Enter and Space,
+and announces its open state to a screen reader with nothing added. **The label is grey**, not the
+product's link blue and not the brand orange: this opens something on the same page rather than
+navigating, so a link colour overstated it and two of them on one screen read as loud. What says
+it is interactive is the marker, the pointer and the underline on hover — none of which is
+colour. Brand orange was never an option here: it measures **2.97:1** on white, below the 4.5:1
+this capability sells. The grey used measures **10.03:1**.
+
+### #49 — An audit that stopped at its limit called itself complete ⭐ ✅
+
+**What it is.** Past audits, and the panel above it.
+
+**What was wrong.** An audit that hit the 200-element limit showed a green **Complete** badge and
+the heading *"Audit complete"* — directly above its own amber warning that six elements were never
+checked, and a button offering to check them. The screen read the audit's internal state, which
+really is `complete` because the run finished and nothing crashed, and never looked at the number
+beside it saying how much of the work was never done.
+
+**What it meant.** The strongest signal on the row said the job was done. On a list of past audits
+somebody scanning badges concludes an application has been fully checked when part of it was never
+looked at. That is the quietest way this capability can fail.
+
+**The fix.** The badge and the heading are now derived from both facts. Closed with nothing
+outstanding reads **Complete** in green, exactly as before; closed with elements never looked at
+reads **Not fully checked** in amber. Because it is derived from the same count the button uses,
+pressing **Check the rest** turns it green by itself — there is no second piece of state to keep
+in step.
+
+**On the word.** The team first asked for *"In progress"*. It was raised that the same screen shows
+a real **Audit running** panel for work actually in flight, so two different things reading as
+in-flight would send somebody looking for a run that is not happening. The team chose
+**Not fully checked**.
+
+**How to check it:** the 21 August audit with six elements outstanding.
+
+### #50 — Every artifact of an accessibility run was published, approved by nobody ⭐ ✅
+
+**What it is.** Artifacts & Traceability, after an audit.
+
+**What was wrong — and it is twice what the screenshot showed.** The team spotted the
+`Assumptions` row marked **Published**. Checking the database directly: **every** artifact of
+every judging run is published, in both tenants — the judge's own document as well. It does not
+look wrong in the list only because it is separately tagged as run output, which the screen shows
+instead of a status. The one row anybody noticed was the one not wearing a disguise.
+
+**Why it happened.** The judging run is started with a flag meaning *no human gate on this one*,
+which is right: nobody is watching that machine step and a gate there would hang the audit waiting
+on an approval nobody knows to give. But that flag also runs the publish step. It was built for a
+different feature — document vision, where a human really had already adopted the source document
+— and the accessibility runs inherited the behaviour without inheriting the reason.
+
+**What it meant.** In this platform **published** means a named human approved this and it is the
+project's answer. Nobody approved these, which contradicts the platform's own rule that nothing is
+published without an approved gate.
+
+**The fix.** The two accessibility phases no longer mark anything published; their artifacts stay
+**Draft**, which is what they are — kept, readable, previewable, and still handed to later phases.
+Signing the conformance statement remains the one signature in this capability that means
+something, and it still sets its own document to Approved. Document vision is untouched.
+
+**How to check it:** every accessibility row in the registry reads Draft.
+
+### #51 — The bounding boxes were drawn in the wrong place, by exactly half ⭐⭐ ✅
+
+**What it is.** The orange ring around the failing element, on the review queue and on every
+finding opened from a report.
+
+**What was wrong, measured.** Reproduced in a browser with the numbers from the team's own
+screenshot — a 1280 × 1144 capture in the panel width the app uses:
+
+| | Where the ring was drawn | Where it belonged |
+|---|---|---|
+| Distance down the picture | **237.8 px** | **461.3 px** |
+| Height of the ring | **17.8 px** | **34.6 px** |
+
+**223 pixels too high, and squashed to half height.** That is why `#photo-interior`, a photo well
+down the page, was ringed around the "Visit us" heading near the top.
+
+**The cause is one line of styling**, not the capture and not the arithmetic. The browser records
+the element's position correctly and the screen places the ring as a percentage of the picture,
+which is right. But the frame the picture sits in is capped at 340 pixels tall while the picture
+renders 659.6 — and percentages resolve against **the frame**, not the picture. Every ring was
+compressed by 340 ÷ 659.6, a factor of 0.515. Both numbers above are exactly that factor off,
+which is what confirmed the diagnosis rather than merely fitting it.
+
+**A second problem fell out of the same line.** In *Fit to width* the frame hid what did not fit,
+so **319 pixels of every tall capture were silently cropped** — a reviewer could not scroll to the
+bottom half of the page they were judging.
+
+**The fix, verified rather than proposed.** The ring now lives in a wrapper that hugs the picture
+exactly, and *Fit to width* scrolls instead of hiding. Measured against the shipped stylesheet:
+
+| | Fit to width | Actual size |
+|---|---|---|
+| Ring position | 452.0 px — **correct: 452.0** | 800 px — **correct: 800** |
+| Ring height | 33.9 px — **correct: 33.9** | 60 px — **correct: 60** |
+| Whole capture reachable | yes | yes |
+
+Exact in both modes. The picture also scrolls itself so the ringed element is in view when the
+panel opens — a correct ring three screens down still reads as "there is no ring on this one".
+
+**The part that matters more.** No test could see this, because it lives entirely in CSS and the
+test environment computes no layout. What is pinned now is the *arrangement* the fix depends on:
+the picture and the ring alone together inside their wrapper. A stylesheet comment is not a test.
+
+### #52 — The work items an audit creates could not be read ✅
+
+**(a) Titles.** They read `Accessibility: 1.4.1 on /loans/current — #loans-table > tbody >
+tr:nth-of-type(2)`: a rule named by a number nobody has memorised, an element named by a CSS path
+nobody can read, and the whole thing truncated on a board card. They now read
+**`Accessibility: Use of Color (1.4.1) on /loans/current — row 2 of the loans table`**. The exact
+selector is not lost — it is on the ticket under **Element**, where somebody fixing it looks.
+
+An element with an id of its own keeps it (`#photo-interior`): that is the name its own developer
+chose, and describing it as "the image" would be a downgrade.
+
+**The part that is easy to miss.** A defect's title is written once and never touched again, so
+changing how titles are generated fixes nothing already on a board — 35 defects across the two
+tenants. A one-off migration retitles them, and matches only titles still in the exact shape the
+platform generated, so anything renamed by hand is left alone.
+
+**(b) The description was printed as a warning.** A defect's description is already well-structured
+— what was found, the screen, the element, the confidence, the evidence, a suggested fix. The
+defect screen dropped the whole thing into a red alert box as raw text, so it arrived as one
+unbroken paragraph with its formatting marks showing, and the most useful line on the ticket was
+buried in the middle. Every other work item in the platform renders its description properly; this
+screen was the one that did not. The state is now a badge beside the panel title, where a state
+belongs, and the description is rendered as the document it is.
+
+**(c) The Accessibility backlog epic.** It introduced itself in two sentences and then printed
+**FEATURE STREAM: `__a11y_backlog__`** — an internal key the platform uses to find the epic again,
+shown to a person under a heading and left to make sense of. The field is now hidden for the
+platform's own containers (a real stream like "Payments core" still shows), and the epic explains
+what it is, where its children come from, what closes and reopens them, and what order to work in.
+
+### #53 — "Answered questions" on work items ✅
+
+**The recon before the removal.** It is a full search panel — search box, phase filter, expandable
+question-and-answer rows, paging — shown on Epic and Task detail pages, and rendered whether or
+not there is anything to show. On anything the platform created for itself, a defect or the
+accessibility backlog, there never are any answered questions, so on exactly the screens in the
+team's screenshots it could only ever be an empty card.
+
+**Nothing became unreachable.** The identical history, with the same search plus a work-item
+filter, is the **History** tab of Clarifications. No data was deleted and no endpoint removed; it
+is one click further away.
+
+**The fix.** Removed from Epic and Task detail.
 
 
 ---

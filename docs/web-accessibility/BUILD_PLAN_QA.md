@@ -61,7 +61,7 @@ Tasks: **QA‑23a**, QA‑23, QA‑24.
 
 **Status markers are deliberately not changed here.** Which of these is now 🟢 is the team's call, not mine — this note records what the runs did so that call can be made on evidence. The per‑task blocks in `TASK_BACKLOG_QA.md` still read 🟡.
 
-**What is also true, and is not in the 24 tasks at all:** **twenty-seven further findings** — seventeen out of those five runs, six more on 24 August, and four from tracking a live seventeen-page audit from asking whether we capture every element WCAG puts in scope. **All twenty-seven are built** — the last of them, the 1.3.1 scope gap, was a design decision rather than a defect and is written up on its own in `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`. They live in `GAP_FIX_BUILD_PLAN.md` §9 (twenty-three sections) and are numbered #19–#45 in `TESTING_GUIDE.md` §9 — a section nobody planned for, now larger than the plan it was appended to.
+**What is also true, and is not in the 24 tasks at all:** **thirty-five further findings** — seventeen out of those five runs, six more on 24 August, four from tracking a live seventeen-page audit from asking whether we capture every element WCAG puts in scope, and eight on 25 August from the team reading the screens as a user meets them. **All thirty-five are built** — one of them, the 1.3.1 scope gap, was a design decision rather than a defect and is written up on its own in `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`. They live in `GAP_FIX_BUILD_PLAN.md` §9 (twenty-four sections) and are numbered #19–#53 in `TESTING_GUIDE.md` §9 — a section nobody planned for, now larger than the plan it was appended to.
 
 ---
 
