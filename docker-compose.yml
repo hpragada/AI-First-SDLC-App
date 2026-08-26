@@ -101,6 +101,9 @@ services:
     profiles: ["app"]
     build:
       context: ./backend
+      # Same args as the worker, so both services resolve to one image.
+      args:
+        SDLC_BUILD_STAMP: "${SDLC_BUILD_STAMP:-}"
     env_file: [.env]
     environment:
       # Repo root on the path so the API can import mcp_platform_state (the gate /
@@ -120,6 +123,11 @@ services:
     profiles: ["app"]
     build:
       context: ./backend
+      # Dates the image so a worker can say which build it came from. Leave it
+      # unset and the image dates itself at build time; either way the worker
+      # falls back to dating the mounted code below, which is what it runs.
+      args:
+        SDLC_BUILD_STAMP: "${SDLC_BUILD_STAMP:-}"
     env_file: [.env]
     environment:
       # Repo root on the path so the worker can import mcp_platform_state.
