@@ -123,6 +123,23 @@ sudo docker compose -f docker-compose.temporal.yml ps            # both "Up" (te
 sudo docker compose -f docker-compose.temporal.yml logs --tail 20 temporal      # matching-engine polling = healthy
 sudo docker compose -f docker-compose.temporal.yml logs --tail 10 temporal-ui   # namespaces/cluster-info → 200
 ```
+
+**4g) REQUIRED — turn on worker versioning.** Temporal ships this switched off, and without it a
+worker running stale code can still take work off the queue, do less than the current code would
+and report success (this is exactly what `docs/INCIDENT_2026-08-26_stale_worker.md` is about).
+The repo's `docker/temporal/dynamicconfig/development-sql.yaml` already carries both flags, so
+copying it in Step 4b is enough — verify they arrived:
+
+```bash
+grep workerVersioning ~/temporal/dynamicconfig/development-sql.yaml
+#   frontend.workerVersioningDataAPIs:       <- the build-ID registry APIs
+#   frontend.workerVersioningWorkflowAPIs:   <- lets task dispatch honour a build ID
+```
+
+Both are needed; one alone does nothing. **No restart** — Temporal re-reads that file on its own
+(measured: ~12s), so this is a zero-downtime change you can make with work in flight. Until the
+flags are on, workers log that versioning is off and behave exactly as they did before.
+
 Open **7233** (workers) and **8080** (UI) in the security group to the devs' IPs. UI at
 `http://<ec2-public-ip>:8080` (shows the `default` namespace). Each dev sets
 `TEMPORAL_HOST=<ec2-public-ip>:7233` in `.env` — AWS NAT forwards that to the private IP
@@ -158,8 +175,14 @@ Both devs now read/write the same DB, S3 bucket, and Temporal — live.
   the migration created.
 - **Only the repo-root `.env` is used.** `backend/.env` is a leftover the code never reads
   (settings loads `BASE_DIR.parent/.env`; compose uses the root `.env`). Edit the root one.
-- **Two workers, one task queue** is fine (Temporal load-balances), but a workflow may run
-  on either dev's worker — keep code roughly in sync, or run a single designated worker.
+- **Two workers, one task queue** is fine, and since worker versioning (Step 4g) the platform
+  *enforces* what used to be an instruction to "keep code roughly in sync": only the newest code
+  may serve a queue. Two devs on the **same commit** both keep serving — they are recognised as
+  one build by content, not by file dates, so neither evicts the other. A worker on **older** code
+  logs `STANDING DOWN` and exits without taking a single task; work already in its hands finishes
+  first. So a stale worker can no longer quietly do the older thing to somebody's run — but it
+  also means that if your worker exits on startup, the queue is owned by newer code and the fix
+  is `git pull`, not a restart.
 - **Secrets**: the real `.env` must stay out of git (already `.gitignore`d). Rotate the
   dev-default passwords; scope the IAM policy to the one bucket.
 
