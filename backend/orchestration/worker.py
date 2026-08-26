@@ -1,11 +1,16 @@
 """Temporal worker entrypoint: registers AgentRunWorkflow + activities on the task queue.
 
 Run as: `python -m orchestration.worker` (from backend/, with Django configured).
+
+Before it polls for anything, the worker stamps itself with a badge for the code
+it is actually running and asks whether a newer worker already owns the queue —
+see `worker_election`. A worker running older code stands down instead of
+quietly serving work with stale behaviour. Deploying is therefore just "start
+the new worker": the old one finishes what it holds and exits on its own.
 """
 import asyncio
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -20,15 +25,21 @@ def _bootstrap_django() -> None:
     django.setup()
 
 
+def _log(message: str) -> None:
+    """Worker lifecycle goes to stdout, where the container logs already are."""
+    print(f"[worker] {message}", flush=True)
+
+
 async def _run() -> None:
     from django.conf import settings
     from temporalio.client import Client
     from temporalio.worker import Worker
 
-    from . import activities
+    from . import activities, worker_election
     from .build_activities import BUILD_ACTIVITIES, set_review_provider
     from .build_workflow import BuildWorkflow
     from .review_provider import build_companion_provider
+    from .version import build_badge
     from .workflows import AgentRunWorkflow
 
     # Wire the migrated Code Review agent (08) into the 07<->08 remediation loop (§6), run on
@@ -37,15 +48,54 @@ async def _run() -> None:
     set_review_provider(build_companion_provider())
 
     client = await Client.connect(settings.TEMPORAL_HOST, namespace=settings.TEMPORAL_NAMESPACE)
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    task_queue = settings.TEMPORAL_TASK_QUEUE
+
+    badge, badge_source = build_badge()
+    decision = worker_election.UNVERSIONED
+    if settings.WORKER_VERSIONING_ENABLED:
+        _log(f"build badge {badge} (from {badge_source})")
+        decision = await worker_election.elect(client, task_queue, badge, log=_log)
+        if decision == worker_election.STAND_DOWN:
+            return
+    else:
+        _log("WORKER_VERSIONING_ENABLED is off; running unversioned")
+
+    versioned = decision == worker_election.VERSIONED
+    with worker_election.TrackingExecutor(max_workers=8) as executor:
         worker = Worker(
             client,
-            task_queue=settings.TEMPORAL_TASK_QUEUE,
+            task_queue=task_queue,
             workflows=[AgentRunWorkflow, BuildWorkflow],
             activities=activities.ALL_ACTIVITIES + BUILD_ACTIVITIES,
             activity_executor=executor,
+            **({"build_id": badge, "use_worker_versioning": True} if versioned else {}),
         )
-        await worker.run()
+        if not versioned:
+            await worker.run()
+            return
+
+        # Serve work and watch for a successor at the same time. Whichever
+        # finishes first ends the process: the worker stopping on its own (a
+        # signal, a crash), or the drain deciding a newer build has taken over.
+        serving = asyncio.ensure_future(worker.run())
+        draining = asyncio.ensure_future(
+            worker_election.drain_when_superseded(
+                client,
+                task_queue,
+                badge,
+                executor=executor,
+                on_drained=worker.shutdown,
+                log=_log,
+                idle_seconds=settings.WORKER_DRAIN_IDLE_SECONDS,
+                max_seconds=settings.WORKER_DRAIN_MAX_SECONDS,
+                poll_seconds=settings.WORKER_DRAIN_POLL_SECONDS,
+                sleep=asyncio.sleep,
+            )
+        )
+        try:
+            await serving
+        finally:
+            draining.cancel()
 
 
 def main() -> None:

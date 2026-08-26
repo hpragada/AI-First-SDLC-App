@@ -178,6 +178,18 @@ TEMPORAL_HOST = env("TEMPORAL_HOST", default="localhost:7233")
 TEMPORAL_NAMESPACE = env("TEMPORAL_NAMESPACE", default="default")
 TEMPORAL_TASK_QUEUE = env("TEMPORAL_TASK_QUEUE", default="sdlc-planning")
 
+# Worker versioning: a worker stamps itself with a badge for the code it is
+# actually running, and stands down if a newer worker already owns the queue.
+# Needs `frontend.workerVersioningDataAPIs` + `frontend.workerVersioningWorkflowAPIs`
+# on the Temporal server; where those are off, the worker logs it and runs
+# unversioned exactly as before. Set to False to opt out entirely.
+WORKER_VERSIONING_ENABLED = env.bool("WORKER_VERSIONING_ENABLED", default=True)
+# A superseded worker keeps its in-flight work and exits once it has been idle
+# this long; the max is a backstop so it can never linger indefinitely.
+WORKER_DRAIN_IDLE_SECONDS = env.int("WORKER_DRAIN_IDLE_SECONDS", default=300)
+WORKER_DRAIN_MAX_SECONDS = env.int("WORKER_DRAIN_MAX_SECONDS", default=86400)
+WORKER_DRAIN_POLL_SECONDS = env.int("WORKER_DRAIN_POLL_SECONDS", default=60)
+
 # ─── CORS (React Experience plane → API) ────────────────────────────
 # The Vite dev server is a different origin than the API; allow it to call /api/
 # and to send the X-Tenant-ID scoping header. Tighten/extend via env in prod.
