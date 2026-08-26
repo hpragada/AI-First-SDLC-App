@@ -72,6 +72,13 @@ def test_newer_badges_sort_after_older_ones():
     assert not version.is_newer(old, old)
 
 
+def test_badges_are_compared_on_code_not_on_clocks():
+    same = ("20260601T090000Z-abcabcabcabc", "20260601T170000Z-abcabcabcabc")
+    different = ("20260601T090000Z-abcabcabcabc", "20260601T090000Z-zzzzzzzzzzzz")
+    assert version.same_code(*same)
+    assert not version.same_code(*different)
+
+
 def test_two_builds_stamped_the_same_second_still_get_one_winner():
     """Whatever the tie-break is, both workers must reach the SAME verdict —
     otherwise each thinks it is newer and they take turns evicting each other."""
@@ -148,19 +155,19 @@ class FakeClient:
 
 def _elect(client, badge="20260601T000000Z-abcabcabcabc"):
     logs: list[str] = []
-    decision = asyncio.run(
+    election = asyncio.run(
         worker_election.elect(client, "q", badge, log=logs.append)
     )
-    return decision, logs
+    return election, logs
 
 
 def test_an_older_worker_stands_down_and_never_polls():
     """The whole point: old code must not serve the queue at all."""
     client = FakeClient(default="20260801T000000Z-newnewnewnew")
 
-    decision, logs = _elect(client, "20260101T000000Z-oldoldoldold")
+    election, logs = _elect(client, "20260101T000000Z-oldoldoldold")
 
-    assert decision == worker_election.STAND_DOWN
+    assert election.outcome == worker_election.STAND_DOWN
     assert client.claimed == []
     assert "STANDING DOWN" in "\n".join(logs)
 
@@ -168,18 +175,18 @@ def test_an_older_worker_stands_down_and_never_polls():
 def test_a_newer_worker_takes_ownership():
     client = FakeClient(default="20260101T000000Z-oldoldoldold")
 
-    decision, _ = _elect(client, "20260801T000000Z-newnewnewnew")
+    election, _ = _elect(client, "20260801T000000Z-newnewnewnew")
 
-    assert decision == worker_election.VERSIONED
+    assert election.outcome == worker_election.VERSIONED
     assert client.claimed == ["20260801T000000Z-newnewnewnew"]
 
 
 def test_the_first_worker_on_an_unowned_queue_claims_it():
     client = FakeClient(default=None)
 
-    decision, _ = _elect(client)
+    election, _ = _elect(client)
 
-    assert decision == worker_election.VERSIONED
+    assert election.outcome == worker_election.VERSIONED
     assert client.claimed == ["20260601T000000Z-abcabcabcabc"]
 
 
@@ -187,10 +194,53 @@ def test_a_restart_of_the_same_build_does_not_re_register():
     badge = "20260601T000000Z-abcabcabcabc"
     client = FakeClient(default=badge)
 
-    decision, _ = _elect(client, badge)
+    election, _ = _elect(client, badge)
 
-    assert decision == worker_election.VERSIONED
+    assert election.outcome == worker_election.VERSIONED
     assert client.claimed == []
+
+
+def test_two_developers_on_one_commit_both_keep_serving():
+    """The runbook has two devs sharing a queue on purpose.
+
+    Their machines date the same files differently, so the same commit produces
+    two different badges. Reading that as "newer" would evict a healthy worker
+    and quietly halve the team's capacity for no safety gain — identical code is
+    the same build, not a later one.
+    """
+    incumbent = "20260601T090000Z-abcabcabcabc"
+    mine_same_code = "20260601T170000Z-abcabcabcabc"   # pulled later, same commit
+    client = FakeClient(default=incumbent)
+
+    election, logs = _elect(client, mine_same_code)
+
+    assert election.outcome == worker_election.VERSIONED
+    # Polls under the build already serving, so the two share one build ID.
+    assert election.build_id == incumbent
+    assert client.claimed == []          # nothing re-registered, nobody evicted
+    assert "joining it" in "\n".join(logs)
+
+
+def test_an_older_clock_with_identical_code_is_also_fine():
+    """The same case with the clocks the other way round — a dev who pulled
+    EARLIER must not stand down either, since the code is the same."""
+    incumbent = "20260601T170000Z-abcabcabcabc"
+    mine_same_code = "20260601T090000Z-abcabcabcabc"
+    client = FakeClient(default=incumbent)
+
+    election, _ = _elect(client, mine_same_code)
+
+    assert election.outcome == worker_election.VERSIONED
+    assert election.build_id == incumbent
+
+
+def test_genuinely_different_code_is_still_kept_off_the_queue():
+    """The guard above must not become a way for old code to sneak back on."""
+    client = FakeClient(default="20260801T000000Z-newnewnewnew")
+
+    election, _ = _elect(client, "20260101T000000Z-oldoldoldold")
+
+    assert election.outcome == worker_election.STAND_DOWN
 
 
 @pytest.mark.parametrize(
@@ -201,18 +251,18 @@ def test_a_server_without_versioning_still_gets_a_working_worker(status):
     flags are set. Shipping this must not take every worker offline until then."""
     client = FakeClient(read_error=_rpc(status))
 
-    decision, logs = _elect(client)
+    election, logs = _elect(client)
 
-    assert decision == worker_election.UNVERSIONED
+    assert election.outcome == worker_election.UNVERSIONED
     assert "workerVersioningDataAPIs" in "\n".join(logs)
 
 
 def test_versioning_switched_off_between_read_and_write_still_degrades():
     client = FakeClient(default=None, write_error=_rpc(RPCStatusCode.PERMISSION_DENIED))
 
-    decision, _ = _elect(client)
+    election, _ = _elect(client)
 
-    assert decision == worker_election.UNVERSIONED
+    assert election.outcome == worker_election.UNVERSIONED
 
 
 def test_a_real_server_fault_is_not_mistaken_for_versioning_being_off():

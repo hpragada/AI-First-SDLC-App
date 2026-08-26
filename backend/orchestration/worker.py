@@ -51,16 +51,21 @@ async def _run() -> None:
     task_queue = settings.TEMPORAL_TASK_QUEUE
 
     badge, badge_source = build_badge()
-    decision = worker_election.UNVERSIONED
+    outcome, serving_as = worker_election.UNVERSIONED, badge
     if settings.WORKER_VERSIONING_ENABLED:
         _log(f"build badge {badge} (from {badge_source})")
-        decision = await worker_election.elect(client, task_queue, badge, log=_log)
-        if decision == worker_election.STAND_DOWN:
+        outcome, serving_as = await worker_election.elect(
+            client, task_queue, badge, log=_log
+        )
+        if outcome == worker_election.STAND_DOWN:
             return
     else:
         _log("WORKER_VERSIONING_ENABLED is off; running unversioned")
 
-    versioned = decision == worker_election.VERSIONED
+    # Not always our own badge: a worker whose code is identical to the build
+    # already serving joins that build rather than replacing it.
+    badge = serving_as
+    versioned = outcome == worker_election.VERSIONED
     with worker_election.TrackingExecutor(max_workers=8) as executor:
         worker = Worker(
             client,

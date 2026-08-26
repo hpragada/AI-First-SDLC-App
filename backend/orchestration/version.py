@@ -167,6 +167,23 @@ def build_badge() -> tuple[str, str]:
     return f"{stamp}-{short}", reason
 
 
+def fingerprint_of(badge: str) -> str:
+    """The code-identity half of a badge (the timestamp half has no dashes)."""
+    return badge.rpartition("-")[2]
+
+
+def same_code(one: str, other: str) -> bool:
+    """Do these two badges describe byte-identical code?
+
+    Two developers who pull the same commit at different times get different
+    timestamps for the same files, so their badges differ while their code does
+    not. Without this, one of them would stand down for no reason and the team
+    would silently lose a worker — the runbook has them sharing a queue on
+    purpose. Identical code is not a newer or older build; it is the same build.
+    """
+    return fingerprint_of(one) == fingerprint_of(other)
+
+
 def is_newer(candidate: str, incumbent: str) -> bool:
     """Is `candidate` strictly newer than `incumbent`?
 

@@ -32,11 +32,11 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, NamedTuple
 
 from temporalio.service import RPCError, RPCStatusCode
 
-from .version import is_newer
+from .version import is_newer, same_code
 
 VERSIONED = "versioned"
 UNVERSIONED = "unversioned"
@@ -106,7 +106,20 @@ async def _current_default(client: Any, task_queue: str) -> str | None:
     return default or None
 
 
-async def elect(client: Any, task_queue: str, badge: str, *, log: Callable[[str], None]) -> str:
+class Election(NamedTuple):
+    """The verdict, plus the build ID the worker should actually poll under.
+
+    These are two different things whenever a worker joins a build that is
+    already serving — see the identical-code case in `elect`.
+    """
+
+    outcome: str
+    build_id: str
+
+
+async def elect(
+    client: Any, task_queue: str, badge: str, *, log: Callable[[str], None]
+) -> Election:
     """Decide whether this worker may serve `task_queue`, before it polls."""
     try:
         current = await _current_default(client, task_queue)
@@ -119,7 +132,7 @@ async def elect(client: Any, task_queue: str, badge: str, *, log: Callable[[str]
                 "frontend.workerVersioningDataAPIs and "
                 "frontend.workerVersioningWorkflowAPIs to the server's dynamic config."
             )
-            return UNVERSIONED
+            return Election(UNVERSIONED, badge)
         if exc.status is RPCStatusCode.NOT_FOUND:
             current = None
         else:
@@ -127,7 +140,20 @@ async def elect(client: Any, task_queue: str, badge: str, *, log: Callable[[str]
 
     if current is not None and current == badge:
         log(f"build {badge} already owns queue {task_queue}; serving it")
-        return VERSIONED
+        return Election(VERSIONED, badge)
+
+    if current is not None and same_code(badge, current):
+        # Same code, different clock. Two developers who pulled the same commit
+        # at different times date their files differently, and the runbook has
+        # them sharing this queue deliberately. Treating that as a newer build
+        # would evict a perfectly good worker and quietly halve the team's
+        # capacity, so join the build that is already serving instead.
+        log(
+            f"my code is identical to build {current} already serving "
+            f"{task_queue} (only the file dates differ); joining it rather than "
+            "replacing it, so both workers keep serving"
+        )
+        return Election(VERSIONED, current)
 
     if current is not None and not is_newer(badge, current):
         log(
@@ -135,7 +161,7 @@ async def elect(client: Any, task_queue: str, badge: str, *, log: Callable[[str]
             f"which is newer than mine ({badge}). This worker is running older "
             "code and will not poll for work."
         )
-        return STAND_DOWN
+        return Election(STAND_DOWN, badge)
 
     try:
         await _claim(client, task_queue, badge)
@@ -145,14 +171,14 @@ async def elect(client: Any, task_queue: str, badge: str, *, log: Callable[[str]
                 f"could not register build {badge} ({exc.status.name}); "
                 "running UNVERSIONED"
             )
-            return UNVERSIONED
+            return Election(UNVERSIONED, badge)
         raise
 
     if current is None:
         log(f"queue {task_queue} had no owner; registered build {badge} as default")
     else:
         log(f"build {badge} is newer than {current}; took ownership of {task_queue}")
-    return VERSIONED
+    return Election(VERSIONED, badge)
 
 
 async def _claim(client: Any, task_queue: str, badge: str) -> None:
