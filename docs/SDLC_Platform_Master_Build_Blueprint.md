@@ -73,6 +73,7 @@ Transform the existing local/Git-coupled SDLC command suite (17 agents + rules +
 | PG23 | Responsive / multi-brand | Responsive wireframes; per-tenant theming | UX agent | Ph3 |
 | PG24 | Eval / quality harness | Golden datasets + regression evals; gate agent promotion | Observability / Quality | Ph5 |
 | PG25 | Migration of existing 17 agents | 75/15/10 buckets: ~75% reasoning verbatim, ~15% data references rerouted (**anywhere in the agent**), ~10% glue + reference-sweep gate | Agent Migration (Part D) | Ph0 |
+| PG26 | A worker running **stale code** takes work, does less than current code would, and reports success — PG6's durable engine cannot see this (the workflow genuinely succeeded) | Build badge = content fingerprint + orderable date; only the newest code may serve a queue, identical code joins it, older code stands down without polling; reconcile-on-read as the second line. See `docs/INCIDENT_2026-08-26_stale_worker.md` | Execution / Orchestration | Ph4.7 |
 
 ---
 
