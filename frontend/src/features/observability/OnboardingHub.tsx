@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Spinner } from "../../components/ui";
+import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Spinner, Tooltip } from "../../components/ui";
 import type { Capability, OnboardingRegister, OnboardingRepoIndex } from "../../types";
 import { useRunners } from "../identity/hooks";
 import { ConnectCapability } from "../setup/ConnectCapability";
@@ -21,6 +21,33 @@ import {
 // S-24 view states: nothing-done (resume=Ideation) · in-progress (extracting/
 // indexing) · gap-ready (resume=Architecture).
 export type OnboardingView = "nothing-done" | "in-progress" | "gap-ready";
+
+/** What "connect your machine" means, said once.
+ *
+ * The old wording opened with "Some of this work runs on your own machine…" — forty-one words
+ * whose subject was "some of this work", with the reason buried in the middle and a second idea
+ * (what you give up by not connecting) added on the end. Users read past it.
+ *
+ * Now the visible line is one short sentence and the rest is a tooltip, so nobody has to read
+ * the detail to get on with the step — but it is one keypress away for anyone who wants to know
+ * where their files go, which is a fair question to ask of a platform.
+ *
+ * **These live in one place because there are four of them.** The same explanation appears on
+ * the prerequisite card and on the live step, each in a connected and a not-connected state, and
+ * before this they had drifted into three different sentences saying the same thing.
+ */
+const MACHINE_COPY = {
+  // One line for both connected and not — because it states a fact about where the work happens,
+  // and that does not change once you connect. Two near-identical sentences is how the four
+  // variants drifted apart in the first place; the heading beside it already says which state
+  // you are in.
+  line: "Your documents and code are read on your own computer — nothing is uploaded.",
+  offline: "Start your companion again to carry on reading your documents on your computer.",
+  detail:
+    "Connecting lets the platform read the diagrams and screenshots inside your documents and " +
+    "analyse your code — all on your machine. You can upload documents without connecting, but " +
+    "the pictures inside them won't be read.",
+} as const;
 
 function Vstep({
   num,
@@ -56,7 +83,9 @@ export function OnboardingHub({ forceView }: { forceView?: OnboardingView }) {
 // A per-tool state machine driven by the connection status the hub already returns:
 //   not connected → Connect pop-up (reuses ConnectCapability, no page hop);
 //   connected     → Jira: "Import backlog" (bulk); Confluence: the "bring in docs" form.
-function RegisterToolsStep({
+// Exported for its own tests: what it says depends entirely on the `register` payload, and
+// driving that through the whole live hub would test the plumbing rather than the labels.
+export function RegisterToolsStep({
   projectId,
   register,
 }: {
@@ -82,14 +111,19 @@ function RegisterToolsStep({
     <Vstep
       num="2"
       title="Register existing tools"
-      desc="Bring your existing Jira backlog and Confluence docs in — register, don't recreate."
+      desc="Bring your existing backlog and documentation in — register, don't recreate."
       state={registerDone ? "done" : undefined}
     >
       <div className="u-stack" style={{ marginTop: "var(--space-2)", gap: "var(--space-3)" }}>
-        {/* Jira — a backlog is meant to arrive whole, so it's a bulk import. */}
+        {/* Task tracker — a backlog is meant to arrive whole, so it's a bulk import.
+            The heading and the connect button name the CAPABILITY, not a vendor (#9): the
+            pop-up behind them is "Connect Task tracker" and asks which vendor, so a button
+            saying "Connect Jira" promised a choice the user had not made yet. Once something IS
+            connected the vendor is known and gets named, because "Import task tracker backlog"
+            would be worse for someone who plainly connected Jira. */}
         <div>
           <div className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
-            <span className="u-strong">Jira</span>
+            <span className="u-strong">{register.tasktracker_vendor ?? "Task tracker"}</span>
             {register.tasktracker_connected ? <Badge variant="done">Connected</Badge> : <Badge>Not connected</Badge>}
             {register.tasktracker_connected && (
               <span className="t-sm u-muted">
@@ -102,10 +136,12 @@ function RegisterToolsStep({
               <Button variant="secondary" onClick={() => onboardAtlassian.mutate()} disabled={onboardAtlassian.isPending}>
                 {onboardAtlassian.isPending
                   ? <Spinner />
-                  : register.issues_registered > 0 ? "Re-import backlog" : "Import Jira backlog"}
+                  : register.issues_registered > 0
+                    ? "Re-import backlog"
+                    : `Import ${register.tasktracker_vendor ?? "task tracker"} backlog`}
               </Button>
             ) : (
-              <Button variant="secondary" onClick={() => setConnectCap("tasktracker")}>Connect Jira</Button>
+              <Button variant="secondary" onClick={() => setConnectCap("tasktracker")}>Connect task tracker</Button>
             )}
           </div>
           {/* S3-15: say what the import actually covered. The old screen showed only the count it
@@ -117,7 +153,7 @@ function RegisterToolsStep({
                  color: onboardAtlassian.data.truncated ? "var(--warning)" : "var(--success)" }}>
               {onboardAtlassian.data.truncated
                 ? `Imported ${onboardAtlassian.data.issues_seen} of ${onboardAtlassian.data.issues_available} issues — this project is larger than one import can take. Re-import to bring in the rest.`
-                : `Brought in ${onboardAtlassian.data.registered_issues.length} new issue${onboardAtlassian.data.registered_issues.length === 1 ? "" : "s"}${(onboardAtlassian.data.issues_available ?? -1) >= 0 ? ` · ${onboardAtlassian.data.issues_available} in Jira` : ""}.`}
+                : `Brought in ${onboardAtlassian.data.registered_issues.length} new issue${onboardAtlassian.data.registered_issues.length === 1 ? "" : "s"}${(onboardAtlassian.data.issues_available ?? -1) >= 0 ? ` · ${onboardAtlassian.data.issues_available} in ${register.tasktracker_vendor ?? "the tracker"}` : ""}.`}
             </p>
           )}
         </div>
@@ -125,7 +161,7 @@ function RegisterToolsStep({
         {/* Confluence — the user provides the specific typed page links (B3-4), no space crawl. */}
         <div>
           <div className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
-            <span className="u-strong">Confluence</span>
+            <span className="u-strong">{register.docstore_vendor ?? "Documentation store"}</span>
             {register.docstore_connected ? <Badge variant="done">Connected</Badge> : <Badge>Not connected</Badge>}
             {register.docstore_connected && (
               <span className="t-sm u-muted">
@@ -137,7 +173,7 @@ function RegisterToolsStep({
             <ConfluenceLinkForm projectId={projectId} />
           ) : (
             <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
-              <Button variant="secondary" onClick={() => setConnectCap("docstore")}>Connect Confluence</Button>
+              <Button variant="secondary" onClick={() => setConnectCap("docstore")}>Connect documentation store</Button>
             </div>
           )}
         </div>
@@ -146,16 +182,16 @@ function RegisterToolsStep({
             can import screens instead of uploading them as PDFs (connect only here). */}
         <div>
           <div className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
-            <span className="u-strong">Figma</span>
+            <span className="u-strong">{register.designsource_vendor ?? "Design source"}</span>
             {register.designsource_connected ? <Badge variant="done">Connected</Badge> : <Badge>Not connected</Badge>}
           </div>
           <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
             {register.designsource_connected ? (
               <span className="t-sm u-muted">
-                Connected — design screens can come from Figma instead of uploaded PDFs.
+                Connected — design screens can come from {register.designsource_vendor ?? "your design tool"} instead of uploaded PDFs.
               </span>
             ) : (
-              <Button variant="secondary" onClick={() => setConnectCap("designsource")}>Connect Figma</Button>
+              <Button variant="secondary" onClick={() => setConnectCap("designsource")}>Connect design source</Button>
             )}
           </div>
         </div>
@@ -446,9 +482,8 @@ function ConnectMachineStep() {
             {everConnected ? "Your machine isn't running right now" : "Connect your machine first"}
           </div>
           <div className="t-sm u-muted">
-            {everConnected
-              ? "Start your companion again to have the diagrams and screenshots in your documents read into text. You can still upload documents — their diagrams just won't be read until it's back."
-              : "Some of this work runs on your own machine so nothing leaves it — reading the diagrams and screenshots inside your documents, and analysing your code. You can upload documents without it, but their diagrams won't be read."}
+            {everConnected ? MACHINE_COPY.offline : MACHINE_COPY.line}
+            <Tooltip placement="below">{MACHINE_COPY.detail}</Tooltip>
           </div>
         </div>
         <Link to="/connect" className="btn btn--primary">
@@ -749,9 +784,8 @@ function GalleryConnect({ connected }: { connected: boolean }) {
             {connected ? "Your machine is connected" : "Connect your machine first"}
           </div>
           <div className="t-sm u-muted">
-            {connected
-              ? "Diagrams in your documents get read into text, and your code is analysed locally."
-              : "Some of this work runs on your own machine so nothing leaves it — reading the diagrams and screenshots inside your documents, and analysing your code."}
+            {MACHINE_COPY.line}
+            <Tooltip>{MACHINE_COPY.detail}</Tooltip>
           </div>
         </div>
         <Badge variant={connected ? "done" : undefined}>
@@ -795,7 +829,7 @@ function OnboardingHubGallery({ view }: { view: OnboardingView }) {
                   </div>
                 </div>
               </Vstep>
-              <Vstep num="2" title="Register existing tools" desc="Bring your existing Jira backlog and Confluence docs in — register, don't recreate." />
+              <Vstep num="2" title="Register existing tools" desc="Bring your existing backlog and documentation in — register, don't recreate." />
               <Vstep num="3" title="Register repositories" desc="Add the repositories the platform should analyse — code indexing and the gap report need at least one." />
               <Vstep num="4" title="Index code" desc="Point at a repo; built-in code intelligence indexes it." />
               <Vstep num="5" title="Gap report" desc="What exists, what's missing, and where to resume." />

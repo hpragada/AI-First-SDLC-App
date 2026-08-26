@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { Route, Routes } from "react-router-dom";
 
 import { renderWithProviders, stubFetchJson } from "../../test/utils";
@@ -11,10 +11,10 @@ import { Dashboard } from "./Dashboard";
 import { ExportPublish } from "./ExportPublish";
 import { GapReportScreen } from "./GapReportScreen";
 import { OfflineTakeover } from "./OfflineTakeover";
-import { OnboardingHub } from "./OnboardingHub";
+import { OnboardingHub, RegisterToolsStep } from "./OnboardingHub";
 import { RunTranscriptScreen } from "./RunTranscriptScreen";
 import { badgeFor, fileKindLabel, guessAdoptType, SourceDocuments } from "./SourceDocuments";
-import type { SourceDocument } from "../../types";
+import type { OnboardingRegister, SourceDocument } from "../../types";
 import { TraceabilityView } from "./TraceabilityView";
 
 beforeEach(() => {
@@ -63,6 +63,124 @@ describe("S-25 source doc — honest status badge (A4)", () => {
     expect(badgeFor({ ...base, fidelity: "images_only" }).label).toBe("Needs AI read");
     expect(badgeFor({ ...base, fidelity: "empty" }).label).toBe("No text found");
     expect(badgeFor({ ...base, status: "adopted" }).label).toBe("Adopted");
+  });
+
+  // Reported from live testing: pressing Adopt said "Adopted" straight away while the document
+  // was plainly still being worked on. It was not only early — for a document with pages the
+  // vision run is what registers the artifact, so the row offered "View artifact" for an
+  // artifact that did not exist yet, directly above its own notice saying it was still reading.
+  it("says 'Adopting…' while the document is still being read", () => {
+    const doc: SourceDocument = {
+      ...base, status: "adopted",
+      vision: { state: "running", message: "Reading the diagrams…" },
+    };
+    expect(badgeFor(doc).label).toBe("Adopting…");
+    expect(badgeFor(doc).variant).toBe("running");
+  });
+
+  it("says 'Adopted' once the reading has finished", () => {
+    const done: SourceDocument = {
+      ...base, status: "adopted", vision: { state: "done", message: "" },
+    };
+    expect(badgeFor(done).label).toBe("Adopted");
+    expect(badgeFor(done).variant).toBe("done");
+  });
+
+  it("still says 'Adopted' for a document that never needed reading", () => {
+    // A .docx with no pictures dispatches no vision run at all, so `vision` stays null. If that
+    // read as "Adopting…" the badge would hang there for ever on the commonest document of all.
+    expect(badgeFor({ ...base, status: "adopted", vision: null }).label).toBe("Adopted");
+    expect(badgeFor({
+      ...base, status: "adopted", vision: { state: "no_visuals", message: "" },
+    }).label).toBe("Adopted");
+  });
+
+  it("does not let a stalled reading hide a failure", () => {
+    // `failed` is checked before `adopted`, and a vision run that failed must not read as
+    // in-progress — the user has to know the reading is over and did not work.
+    expect(badgeFor({
+      ...base, status: "adopted", vision: { state: "failed", message: "no companion" },
+    }).label).toBe("Adopted");
+  });
+});
+
+// Reported from live testing: the step offered "Connect Jira", and the pop-up behind it said
+// "Connect Task tracker — choose a vendor". The button was promising a choice the user had not
+// made. CLAUDE.md's ninth non-negotiable is "capabilities, not vendors"; this step was the one
+// screen breaking it.
+describe("Register existing tools — capabilities before connecting, vendors after", () => {
+  // render() queries bind to document.body, so without this each test also sees the previous
+  // test's markup and every getByText finds two of everything.
+  afterEach(cleanup);
+
+  const nothingConnected: OnboardingRegister = {
+    docstore_connected: false, tasktracker_connected: false, designsource_connected: false,
+    docstore_vendor: null, tasktracker_vendor: null, designsource_vendor: null,
+    pages_registered: 0, issues_registered: 0,
+  };
+
+  it("offers to connect a CAPABILITY, matching the pop-up it opens", () => {
+    renderWithProviders(<RegisterToolsStep projectId="p1" register={nothingConnected} />);
+    expect(screen.getByRole("button", { name: "Connect task tracker" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Connect documentation store" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Connect design source" })).toBeDefined();
+  });
+
+  it("names no vendor while nothing is connected", () => {
+    renderWithProviders(<RegisterToolsStep projectId="p1" register={nothingConnected} />);
+    expect(screen.queryByText("Jira")).toBeNull();
+    expect(screen.queryByText("Confluence")).toBeNull();
+    expect(screen.queryByText("Figma")).toBeNull();
+    expect(screen.getByText("Task tracker")).toBeDefined();
+    expect(screen.getByText("Documentation store")).toBeDefined();
+    expect(screen.getByText("Design source")).toBeDefined();
+  });
+
+  it("names the real tool once one is connected", () => {
+    // "Import task tracker backlog" would be worse for somebody who plainly connected Jira. The
+    // vendor comes from the server, so the day a second tracker exists this says its name
+    // instead of a hardcoded one.
+    renderWithProviders(
+      <RegisterToolsStep
+        projectId="p1"
+        register={{
+          ...nothingConnected,
+          tasktracker_connected: true, tasktracker_vendor: "Jira",
+          designsource_connected: true, designsource_vendor: "Figma",
+        }}
+      />,
+    );
+    expect(screen.getByText("Jira")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Import Jira backlog" })).toBeDefined();
+    expect(screen.getByText("Figma")).toBeDefined();
+  });
+});
+
+// Reported from live testing: the connect-your-machine card opened with forty-one words
+// beginning "Some of this work runs…", and users read past it. The sentence people must read is
+// now short; the detail moved into the platform's first tooltip.
+describe("Connect your machine — one short line, the rest a keypress away", () => {
+  afterEach(cleanup);
+
+  it("leads with where the files go, in one sentence", () => {
+    renderWithProviders(<OnboardingHub forceView="nothing-done" />);
+    expect(
+      screen.getByText(/Your documents and code are read on your own computer/),
+    ).toBeDefined();
+  });
+
+  it("no longer opens with the wall of text", () => {
+    renderWithProviders(<OnboardingHub forceView="nothing-done" />);
+    expect(screen.queryByText(/Some of this work runs on your own machine/)).toBeNull();
+  });
+
+  it("keeps the detail reachable, and not only by mouse", () => {
+    renderWithProviders(<OnboardingHub forceView="nothing-done" />);
+    const tip = screen.getByRole("button", { name: "More information" });
+    fireEvent.focus(tip);
+    expect(
+      screen.getByRole("tooltip").textContent,
+    ).toContain("read the diagrams and screenshots inside your documents");
   });
 });
 

@@ -650,6 +650,13 @@ export interface OnboardingRegister {
   docstore_connected: boolean;
   tasktracker_connected: boolean;
   designsource_connected: boolean;
+  // The tool actually behind each capability ("Jira", "Confluence"), or null while nothing is
+  // connected. The step offers to connect a CAPABILITY — naming a vendor before the user has
+  // chosen one is what made the buttons and the pop-up disagree — and names the real tool only
+  // once there is one to name.
+  docstore_vendor: string | null;
+  tasktracker_vendor: string | null;
+  designsource_vendor: string | null;
   pages_registered: number;
   issues_registered: number;
 }

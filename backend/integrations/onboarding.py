@@ -1749,6 +1749,19 @@ def _render_code_intel_summary(repo_name: str, index: dict, summary: str) -> str
     return "\n".join(lines) + "\n"
 
 
+def _vendor_of(connection, capability: str) -> str | None:
+    """The human name of the tool behind a capability — None until one is really connected.
+
+    None is the important half: it is what stops a screen naming Jira to somebody who has not
+    connected anything, which is the whole reason the onboarding step read wrong.
+    """
+    if connection is None or not connection.is_configured:
+        return None
+    from apps.integrations.catalog import vendor_label
+
+    return vendor_label(capability, connection.connector)
+
+
 def onboarding_hub(*, tenant_id, project_id) -> dict:
     """Hub state across upload/adopt/register/index/gap (S-24) — the one read the onboarding
     screen needs; every step's action already exists as its own endpoint."""
@@ -1838,6 +1851,16 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
                 connected["tasktracker"] and connected["tasktracker"].is_configured),
             "designsource_connected": bool(
                 connected["designsource"] and connected["designsource"].is_configured),
+            # Which vendor is actually behind each capability, once one is. The step offers to
+            # connect a *capability* (#9 — capabilities, not vendors), because before anything is
+            # connected the platform has no business assuming Jira. Afterwards it does know, and
+            # "Import task tracker backlog" would be worse than naming the tool the user just
+            # connected — so the step says "Import Jira backlog" because it was told, not because
+            # it was hardcoded, and it will say the right thing on the day a second vendor exists.
+            # None when nothing is connected, which is exactly when the UI must not name a vendor.
+            "docstore_vendor": _vendor_of(connected["docstore"], "docstore"),
+            "tasktracker_vendor": _vendor_of(connected["tasktracker"], "tasktracker"),
+            "designsource_vendor": _vendor_of(connected["designsource"], "designsource"),
             "pages_registered": pages_registered, "issues_registered": issues_registered,
         },
         "adopt_types": adoptable_type_choices(),

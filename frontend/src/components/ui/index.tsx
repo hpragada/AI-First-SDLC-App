@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type {
   ButtonHTMLAttributes,
   CSSProperties,
@@ -659,12 +659,18 @@ export function Banner({ children, variant = "info", title }: { children: ReactN
  * came for below the fold. This is the middle ground between keeping all of it and deleting it:
  * the sentence that matters stays visible, the detail stays reachable.
  *
- * **Why `<details>` and not a hover tooltip.** A tooltip cannot be opened from a keyboard and
- * does not exist on a touch screen — this platform's whole job is to find that defect on other
- * people's sites, and shipping one in its own UI would be indefensible. The browser's own
- * disclosure element is focusable, operable with Enter and Space, and announced with its
- * expanded state by a screen reader, with nothing added here. `summary` is a real button to
- * assistive technology; do not put another one inside it.
+ * **Why `<details>` and not a hover tooltip.** A *hover-only* tooltip cannot be opened from a
+ * keyboard and does not exist on a touch screen — this platform's whole job is to find that
+ * defect on other people's sites, and shipping one in its own UI would be indefensible. The
+ * browser's own disclosure element is focusable, operable with Enter and Space, and announced
+ * with its expanded state by a screen reader, with nothing added here. `summary` is a real
+ * button to assistive technology; do not put another one inside it.
+ *
+ * **Which of the two to reach for.** `Tooltip` below is the accessible tooltip that objection
+ * asks for — it opens on focus and tap as well as hover. Use it for a short aside about one
+ * control or phrase. Use `Disclosure` when the hidden part is more than a sentence or two, or
+ * contains anything interactive: a tooltip is a *description*, and a description a reader has to
+ * navigate into is the wrong container.
  */
 export function Disclosure({ summary, children, className }: {
   summary: ReactNode;
@@ -676,6 +682,75 @@ export function Disclosure({ summary, children, className }: {
       <summary className="disclosure__summary">{summary}</summary>
       <div className="disclosure__body">{children}</div>
     </details>
+  );
+}
+
+/** A short aside about one control or phrase — the platform's first tooltip.
+ *
+ * **The objection this had to answer.** `Disclosure` above exists partly because the usual
+ * hover tooltip is unreachable by keyboard and absent on touch, and a product that sells finding
+ * that defect cannot ship it. So this is not the usual hover tooltip:
+ *
+ *   * the trigger is a real `<button>`, so Tab reaches it and Enter/Space work;
+ *   * it opens on **focus** and on **tap**, not only on hover;
+ *   * **Escape** closes it while the trigger keeps focus;
+ *   * the pointer can travel from the trigger *into* the bubble without it vanishing, and it
+ *     never times out — WCAG 2.2 §1.4.13 (Content on Hover or Focus) asks for exactly these
+ *     three: dismissible, hoverable, persistent;
+ *   * `aria-describedby` ties it to its trigger, so a screen reader reads it as that control's
+ *     description rather than as loose text floating in the page.
+ *
+ * **Never put anything interactive inside it.** A link or button in a tooltip cannot be reached
+ * — the tooltip closes when focus leaves the trigger. That content wants `Disclosure`.
+ *
+ * **Never hide anything here that the user must read.** It is a description; treat the visible
+ * sentence as the whole message and this as the part someone may never open.
+ */
+export function Tooltip({ children, label = "More information", trigger, placement = "above" }: {
+  children: ReactNode;
+  label?: string;
+  trigger?: ReactNode;
+  /** `below` for a trigger near the top of the page, where an upward bubble is off-screen. */
+  placement?: "above" | "below";
+}) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  // Only while open: a description that is always present is announced on every visit to the
+  // trigger, which is how one helpful sentence turns into noise on a screen full of them.
+  useEscapeToClose(open ? () => setOpen(false) : undefined);
+
+  return (
+    <span
+      className="tip"
+      // On the WRAPPER, not the trigger — the bubble is inside it, so moving the pointer onto
+      // the bubble to read a long sentence does not count as leaving (§1.4.13 "hoverable").
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        className={trigger ? "tip__trigger tip__trigger--bare" : "tip__trigger"}
+        aria-label={trigger ? undefined : label}
+        aria-describedby={open ? id : undefined}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={() => setOpen((was) => !was)}
+      >
+        {/* The marker is a letter, not a symbol: an earlier icon in this file was written as an
+            escape, arrived as a raw control byte and shipped as a tofu box. "i" cannot be
+            mis-encoded and needs no font installed. The circle around it is drawn in CSS. */}
+        {trigger ?? <span aria-hidden="true">i</span>}
+      </button>
+      {open && (
+        <span
+          role="tooltip"
+          id={id}
+          className={cx("tip__bubble", placement === "below" && "tip__bubble--below")}
+        >
+          {children}
+        </span>
+      )}
+    </span>
   );
 }
 

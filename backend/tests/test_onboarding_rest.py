@@ -366,11 +366,60 @@ def test_onboarding_hub_shape_before_anything(client, project, member):
     assert resp.data["gap"]["running"] is False
     assert resp.data["gap"]["run_id"] is None and resp.data["gap"]["question"] is None
     assert resp.data["register"]["pages_registered"] == 0
+    # Nothing connected yet, so there is no vendor to name. The onboarding step used to say
+    # "Connect Jira" here while the pop-up behind it asked which vendor to use — the button was
+    # offering a choice the user had not made. None is what keeps the screen honest.
+    assert resp.data["register"]["tasktracker_vendor"] is None
+    assert resp.data["register"]["docstore_vendor"] is None
+    assert resp.data["register"]["designsource_vendor"] is None
     # Served adopt vocabulary: humanized "Type (Phase)", full lifecycle minus implementation.
     types = resp.data["adopt_types"]
     assert {"value", "label", "phase", "phase_label"} <= set(types[0].keys())
     assert any(t["label"] == "Wireframe (UX Design)" for t in types)
     assert all(t["value"] != "code" for t in types)
+
+
+def test_onboarding_hub_names_the_vendor_once_one_is_connected(client, project, member):
+    """Before connecting, the step offers a capability; after, it names the real tool.
+
+    Both halves matter. "Connect Jira" before the user chose a vendor was the reported bug, but
+    "Import task tracker backlog" after they plainly connected Jira would be its own kind of
+    unhelpful. The screen can only tell them apart if the server says which vendor it is, so
+    this is the field that lets the label be right on the day a second tracker exists rather
+    than hardcoded to the only one that exists today.
+    """
+    from apps.integrations.models import IntegrationConnection
+
+    IntegrationConnection.objects.create(
+        tenant=project.tenant, capability="tasktracker", connector="jira",
+        token_ref="vault://x", secret_encrypted="enc",
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    register = client.get(_hub_url(project)).data["register"]
+
+    assert register["tasktracker_connected"] is True
+    assert register["tasktracker_vendor"] == "Jira"      # the catalog's label, not the slug
+    # The other two are untouched — one connection must not make the whole step claim vendors.
+    assert register["docstore_vendor"] is None
+    assert register["designsource_vendor"] is None
+
+
+def test_onboarding_hub_does_not_name_a_half_finished_connection(client, project, member):
+    """A row with no secret stored is not a connection. `is_configured` already governs the
+    `*_connected` flags; the vendor name has to follow the same rule or the step would name a
+    tool it cannot actually reach."""
+    from apps.integrations.models import IntegrationConnection
+
+    IntegrationConnection.objects.create(
+        tenant=project.tenant, capability="tasktracker", connector="jira", token_ref="",
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    register = client.get(_hub_url(project)).data["register"]
+
+    assert register["tasktracker_connected"] is False
+    assert register["tasktracker_vendor"] is None
 
 
 def test_onboarding_hub_reflects_uploads_index_and_gap(client, project, repo, tech_lead):

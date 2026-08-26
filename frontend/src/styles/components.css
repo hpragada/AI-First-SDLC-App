@@ -893,6 +893,51 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .disclosure__body > * + * { margin-top: var(--space-2); }
 
 /* ---------------------------------------------------------------------------
+   Tooltip — the short aside (`Tooltip` in components/ui)
+   Sits beside a sentence, so it must not disturb the line it is on: inline, and
+   the bubble is absolutely positioned so opening it never reflows the text.
+   --------------------------------------------------------------------------- */
+.tip { position: relative; display: inline-flex; vertical-align: middle; margin-left: 4px; }
+.tip__trigger {
+  /* An 18px circle, which is under the 24px minimum for a standalone target — allowed here
+     because this is inline within a sentence (WCAG 2.2 §2.5.8 "inline" exception), and making
+     it bigger would push the text apart. It is never the only way to reach anything. */
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0; border-radius: 50%; cursor: pointer;
+  border: 1px solid var(--border-strong);
+  background: transparent; color: var(--text-body);
+  font-size: 11px; line-height: 1; font-weight: 700; font-style: italic;
+  /* `--text-body` on the app background is 9.26:1 — the marker is the smallest text in the
+     product, so it gets the darkest body colour rather than the muted one around it. */
+}
+.tip__trigger:hover { background: var(--bg-subtle); }
+/* No focus rule: design-system.css already rings every focusable thing, and a second focus
+   style invented for one new control is how a product ends up with two of them. */
+.tip__trigger--bare {
+  width: auto; height: auto; border: 0; border-radius: var(--radius-sm);
+  font-size: inherit; font-style: inherit; font-weight: inherit;
+  text-decoration: underline dotted; text-underline-offset: 2px;
+}
+.tip__bubble {
+  position: absolute; z-index: 40; bottom: calc(100% + 6px); left: 50%;
+  transform: translateX(-50%);
+  /* Wide enough for a sentence, capped so it never runs off a narrow screen. `max-width` in
+     `vw` as well as `px` because this can open near either edge of a phone. */
+  width: max-content; max-width: min(320px, 78vw);
+  padding: var(--space-2) var(--space-3);
+  /* The product's existing dark pairing rather than a new one invented here: `--text-on-navy`
+     on `--text-strong` is 12.94:1, nearly three times the 4.5:1 this platform sells. A tooltip is small
+     text on a coloured ground, which is precisely where products fail the check they ship. */
+  background: var(--text-strong); color: var(--text-on-navy);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
+  font-size: var(--fs-sm); line-height: var(--lh-sm); font-weight: 400;
+  text-align: left; white-space: normal;
+}
+/* A tooltip that opens above its trigger is off-screen when the trigger is at the top of the
+   viewport. Anything inside the first rows of a page opts into opening downwards instead. */
+.tip__bubble--below { bottom: auto; top: calc(100% + 6px); }
+
+/* ---------------------------------------------------------------------------
    Captured-page screenshot (S-36 accessibility review, QA-23)
    `.diagram-frame` is a centred *placeholder* for an embed — fixed minimum height
    and no overflow handling at all, so a real capture (routinely 2560px wide and
