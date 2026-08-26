@@ -2032,6 +2032,25 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(work_item__project_id=project)
         return qs
 
+    def list(self, request, *args, **kwargs):
+        """Before listing, check whether anything here is stuck and quietly unstick it.
+
+        This is the platform's second line behind worker versioning: a run the UI
+        still shows as live whose workflow has already ended cannot move itself,
+        and nothing else would ever notice. The check hangs off a read rather
+        than a timer because row-level security stops a background job from
+        enumerating tenants at all — see `apps.runs.reconcile` for the full
+        reasoning. It is bounded (only long-untouched runs, a handful per call)
+        and swallows its own errors, so it can never break the list it rides on.
+        """
+        from apps.runs.reconcile import reconcile_tenant
+
+        reconcile_tenant(
+            tenant_id=self.tenant_id,
+            project_id=request.query_params.get("project"),
+        )
+        return super().list(request, *args, **kwargs)
+
     @action(detail=True, methods=["get"])
     def transcript(self, request, pk=None):
         """S-33 run transcript: read-only replay of the agent conversation stored in
