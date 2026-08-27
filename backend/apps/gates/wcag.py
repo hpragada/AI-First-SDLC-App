@@ -224,8 +224,14 @@ OPTIONAL_DESIGN_CHECKS: tuple[DesignCheck, ...] = (
 #: reason is written once and every criterion in it inherits the same, checkable claim.
 NOT_ASKED_REASONS: dict[str, str] = {
     "checked_on_the_built_page": (
-        "a rule scanner or the AI pass decides this on the built page (QA-05 records one of "
-        "them as its owner); the design cannot demonstrate it either way"
+        "a rule scanner or the AI pass decides this on the built page and one of them is "
+        "BUILT AND RUNNING today; the design cannot demonstrate it either way"
+    ),
+    "deferred_to_a_later_phase": (
+        "the registry gives this to an engine that has not been built yet, so nothing checks it "
+        "at any stage right now — it is left off the design list because it is a question about "
+        "the built page rather than about a drawing, and it will be answered when that engine "
+        "ships rather than by adding it here"
     ),
     "needs_media_that_does_not_exist_yet": (
         "it is a question about recorded audio or video, which is produced after the design — "
@@ -245,11 +251,37 @@ NOT_ASKED_REASONS: dict[str, str] = {
 
 #: The other 33 criteria, each in exactly one bucket above. A criterion in no bucket and on no
 #: check is a gap, and `verify_complete()` fails on it.
+#:
+#: **A bucket is a claim, and a claim can go stale.** `verify_complete()` proves every criterion
+#: is in exactly one of them; it has never proved that the bucket's stated reason is TRUE. That
+#: gap is what let 1.4.10 sit in `checked_on_the_built_page` for four tasks while nothing checked
+#: it on the built page or anywhere else. `test_a11y_owner_capability` closes it by checking the
+#: two machine buckets against the engines that exist.
 NOT_ASKED: dict[str, tuple[str, ...]] = {
+    # Something built and running answers each of these on the built page. Proven, not asserted:
+    # `test_a11y_owner_capability` checks every number here against the engines that actually
+    # exist. That assertion did not exist while this bucket was skipping 1.4.10 on the strength
+    # of a scanner rule nobody had written, and it is the reason that cannot recur.
+    #
+    # 1.4.11 is deliberately NOT here even though the platform now measures it: it is asked of
+    # the designer as well, because a palette that fails 3:1 is cheaper to change in the design
+    # system than on every screen it was already used on.
     "checked_on_the_built_page": (
-        "1.3.1", "1.3.2", "1.3.3", "1.3.4", "1.3.5", "1.4.2", "1.4.4", "1.4.5", "1.4.10",
-        "1.4.12", "2.4.1", "2.4.2", "2.4.4", "2.5.3", "3.1.1", "3.1.2", "4.1.2",
+        "1.3.1", "1.3.4", "1.3.5", "1.4.2", "1.4.4", "1.4.10", "1.4.12", "2.4.1",
+        "2.4.2", "2.4.4", "2.5.3", "3.1.1", "3.1.2", "4.1.2",
     ),
+    # **Split out of the bucket above on 27 August, because that bucket's reason had become a
+    # false statement about three of its members** (#3). It said a scanner or the AI pass decides
+    # these on the built page. For 1.3.2 Meaningful Sequence, 1.3.3 Sensory Characteristics and
+    # 1.4.5 Images of Text, the registry names an owner and defers the work to Phase 2 — so
+    # nothing checks them at any stage today, and the design gate was skipping them on the
+    # strength of a check that does not exist. That is the same shape of error as 1.4.10, caught
+    # by looking for others of its kind rather than by waiting for one to surface.
+    #
+    # Less severe than 1.4.10 was, and the difference is worth keeping: these are honestly
+    # recorded as `tier=phase_2`, so no report claims them as covered. 1.4.10 was recorded as
+    # shipping in the POC.
+    "deferred_to_a_later_phase": ("1.3.2", "1.3.3", "1.4.5"),
     "needs_media_that_does_not_exist_yet": ("1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5"),
     "only_visible_when_the_app_runs": (
         "2.1.2", "2.1.4", "2.5.2", "3.2.1", "3.2.2", "4.1.3",
