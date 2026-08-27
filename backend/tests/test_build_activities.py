@@ -9,6 +9,7 @@ import pytest
 from temporalio.exceptions import ApplicationError
 
 from apps.gates.models import Approval
+from apps.ledger.models import Event
 from apps.projects.models import Project, ProjectProfile
 from apps.registry.models import AgentSpec, Artifact, TraceEdge
 from apps.runs.models import Run
@@ -744,6 +745,98 @@ def test_dispatch_remediation_briefs_the_open_items(world, monkeypatch):
     world.run.refresh_from_db()
     assert world.run.inputs["remediation"]["items"][0]["rem"] == "REM-W1"
     assert world.run.status == Run.Status.RUNNING
+
+
+def test_a_reused_rem_id_rebriefs_07_with_the_finding_it_now_means(world, monkeypatch):
+    """The WI-87 deadlock, reproduced end to end.
+
+    A `rem` id is a POSITION in one review's output, not an identity: the reviewer numbers from 1
+    each cycle, so REM-W1 can mean a different problem next time. The board entry used to be
+    frozen at creation (state flipped, nothing else), and `dispatch_remediation_core` briefs
+    agent 07 from exactly those frozen fields — so 07 kept re-fixing cycle 1's finding while the
+    reviewer blocked on one 07 was never told about. Unwinnable: 20 cycles, 15 rebuilds, 0
+    progress. The brief must describe the finding the reviewer raised THIS cycle."""
+    _open_pr(world, monkeypatch)
+    reviewer = _ScriptedReviewer([
+        [ba.Finding(rem="REM-W1", severity="warning",
+                    title="COMPOFF_EXPIRED has no user-friendly message",
+                    file="ApplyLeavePage.tsx", line=131,
+                    problem="The error code falls through to the generic message.",
+                    fix="Add a COMPOFF_EXPIRED case to mapApiErrorToMessage.")],
+        # Cycle 2: 07 fixed that one, so the reviewer moved on — and reused REM-W1 for something
+        # entirely different, in a different file.
+        [ba.Finding(rem="REM-W1", severity="warning",
+                    title="duration-preview accepts reversed date ranges",
+                    file="leave-application.service.ts", line=280,
+                    problem="previewWorkingDays never calls validateDateRange.",
+                    fix="Call validateDateRange before computing working days.")],
+    ])
+    monkeypatch.setattr(ba, "get_review_provider", lambda: reviewer)
+
+    ba.run_code_review_core(_inp(world))
+    ba.run_code_review_core(_inp(world))
+
+    child = WorkItem.objects.get(parent_id=world.wi.id, type=WorkItem.Type.TASK)
+    assert child.external_ref["rem"] == "REM-W1"          # same id, deliberately
+    assert child.state == WorkItem.State.IN_PROGRESS
+    assert "reversed date ranges" in child.title           # …now pointing at the real finding
+    assert child.external_ref["file"] == "leave-application.service.ts"
+    assert child.external_ref["line"] == 280
+
+    ba.dispatch_remediation_core(_inp(world))
+    world.run.refresh_from_db()
+    brief = world.run.inputs["remediation"]["items"][0]
+    assert "reversed date ranges" in brief["title"]
+    assert "validateDateRange" in brief["description"]
+    # The decisive assertion: the stale finding must be gone from what 07 is asked to do.
+    assert "COMPOFF" not in brief["title"] and "COMPOFF" not in brief["description"]
+    assert Event.objects.filter(action="remediation.retargeted").exists()
+
+
+def test_a_reused_rem_id_that_still_means_the_same_thing_is_not_flagged(world, monkeypatch):
+    """The ordinary case — the finding is genuinely still open and the reviewer reused its id.
+    That is the contract working, not a collision, so no `remediation.retargeted` noise. The
+    entry is still refreshed (the line may have moved as the file changed around it)."""
+    _open_pr(world, monkeypatch)
+    reviewer = _ScriptedReviewer([
+        [ba.Finding(rem="REM-W1", severity="warning", title="naming is unclear",
+                    file="a.py", line=10)],
+        [ba.Finding(rem="REM-W1", severity="warning", title="naming is unclear",
+                    file="a.py", line=14)],
+    ])
+    monkeypatch.setattr(ba, "get_review_provider", lambda: reviewer)
+    ba.run_code_review_core(_inp(world))
+    ba.run_code_review_core(_inp(world))
+
+    child = WorkItem.objects.get(parent_id=world.wi.id, type=WorkItem.Type.TASK)
+    assert child.external_ref["line"] == 14
+    assert not Event.objects.filter(action="remediation.retargeted").exists()
+
+
+def test_a_fresh_attempt_does_not_inherit_the_previous_attempts_board(world, monkeypatch):
+    """Remediation children hang off the WorkItem, not the run, so an auto-retry used to start
+    with the last attempt's open items still on the board — mis-briefed on cycle 1, before its
+    reviewer had said anything. They are CLOSED, not deleted: they are the previous attempt's
+    record, and `prior_attempt_context` already carries their substance to the new agent."""
+    from orchestration import trigger as trigger_mod
+
+    _open_pr(world, monkeypatch)
+    monkeypatch.setattr(ba, "get_review_provider", lambda: _ScriptedReviewer([
+        [ba.Finding(rem="REM-W1", severity="warning", title="COMPOFF_EXPIRED unmapped",
+                    file="ApplyLeavePage.tsx", line=131)],
+    ]))
+    ba.run_code_review_core(_inp(world))
+    child = WorkItem.objects.get(parent_id=world.wi.id, type=WorkItem.Type.TASK)
+    assert child.state == WorkItem.State.IN_PROGRESS
+
+    monkeypatch.setattr(trigger_mod, "_default_build_starter", lambda workflow_id, inp: None)
+    out = ba.handle_remediation_exhausted_core(_inp(world, attempt=1))
+
+    assert out["action"] == "retried"
+    child.refresh_from_db()
+    assert child.state == WorkItem.State.DONE
+    assert Event.objects.filter(action="remediation.closed").exists()
+    assert WorkItem.objects.filter(id=child.id).exists()      # closed, never deleted
 
 
 def test_review_survives_duplicate_pre_pr_code_pointer(world, monkeypatch):

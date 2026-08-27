@@ -220,7 +220,11 @@ class AgentReviewProvider:
             work_item_id=inp.work_item_id, agent_spec_id=inp.agent_spec_id, phase=_REVIEW_PHASE,
         )
         base = self._compose_manifest(review_inp)
-        return f"{base}\n\n{self._render_pr_section(inp, pr_ref)}"
+        parts = [base, self._render_pr_section(inp, pr_ref)]
+        open_section = _render_open_findings(inp)
+        if open_section:
+            parts.append(open_section)
+        return "\n\n".join(parts)
 
     def _render_pr_section(self, inp: BuildInput, pr_ref: str) -> str:
         """Read the PR's changed files **through** the CodeHost capability (never copied as a
@@ -252,6 +256,44 @@ class AgentReviewProvider:
         except Exception:  # noqa: BLE001 — degrade to ref-only; the reviewer can fetch via tools
             lines.append("(diff unavailable — fetch the PR via the platform tools)")
         return "\n".join(lines)
+
+
+def _render_open_findings(inp: BuildInput) -> str:
+    """The REM ids this review already has open, so the agent can honour its own id contract.
+
+    The 08 body is told: *"On a re-review, reuse the same `rem` id for a finding that is still
+    open, and omit any finding that is now resolved"* — the platform keys the remediation board
+    off `rem`. But the review manifest never carried the previous cycle's ids, so the agent had
+    nothing to reuse and simply renumbered from 1 each time. `REM-W1` then meant a different
+    problem every cycle, and the board tracked the label instead of the finding.
+
+    Empty string on the first cycle (nothing open yet) so the section only appears when it says
+    something, and on any error — a missing section must never fail a review."""
+    try:
+        with tenant_context(inp.tenant_id):
+            children = WorkItem.objects.filter(
+                tenant_id=inp.tenant_id, parent_id=inp.work_item_id,
+                type=WorkItem.Type.TASK, state=WorkItem.State.IN_PROGRESS)
+            open_items = [(c.external_ref or {}, c.title) for c in children
+                          if (c.external_ref or {}).get("rem")]
+    except Exception:  # noqa: BLE001 — context for the reviewer, never a reason to fail one
+        return ""
+    if not open_items:
+        return ""
+    lines = [
+        "# Findings Already Open From Your Previous Review",
+        "",
+        "These ids are live on the remediation board. Re-use the SAME `rem` id for any finding "
+        "below that is still not fixed, and simply OMIT the ones the latest commits resolved — "
+        "omitting one is how you mark it resolved. Give a genuinely NEW problem a new id that "
+        "does not appear in this list. Do not renumber from 1: these ids are what the "
+        "implementation agent is briefed from, so a reused id must still mean the same problem.",
+        "",
+    ]
+    for ref, title in sorted(open_items, key=lambda it: str(it[0].get("rem") or "")):
+        loc = f"{ref.get('file') or '?'}:{ref.get('line') or 0}"
+        lines.append(f"- **{ref.get('rem')}** ({ref.get('severity')}) — {title}  [{loc}]")
+    return "\n".join(lines)
 
 
 def _default_get_capability(tenant_id: str, capability: str):
