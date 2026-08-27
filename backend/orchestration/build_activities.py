@@ -638,6 +638,29 @@ def mark_build_failed_core(inp: BuildInput, reason: str) -> dict:
     return {"status": "build_failed", "reason": reason}
 
 
+def _close_remediation_board(inp: BuildInput, why: str) -> int:
+    """Close every open remediation child of this WorkItem, and say why in the ledger.
+
+    Used when an attempt ends and the next one must not inherit its board. Closes rather than
+    deletes: the items are the previous attempt's record (#3 — the registry and ledger are
+    provenance). Returns how many were closed."""
+    closed = 0
+    with tenant_context(inp.tenant_id):
+        open_items = WorkItem.objects.filter(
+            tenant_id=inp.tenant_id, parent_id=inp.work_item_id, type=WorkItem.Type.TASK,
+            state=WorkItem.State.IN_PROGRESS)
+        for child in open_items:
+            rem = (child.external_ref or {}).get("rem")
+            if not rem:                       # not a remediation item — leave it alone
+                continue
+            child.state = WorkItem.State.DONE
+            child.save(update_fields=["state", "updated_at"])
+            tools.log_event(inp.tenant_id, "code_review", "remediation.closed",
+                            "work_item", str(child.id), {"rem": rem, "reason": why})
+            closed += 1
+    return closed
+
+
 def handle_remediation_exhausted_core(inp: BuildInput) -> dict:
     """Bugs S.No 161: remediation exhausting its cycles used to be a dead end — hard-fail, no
     diagnostics, no recourse; the only path forward was a blind re-trigger with a brand-new
@@ -675,6 +698,15 @@ def handle_remediation_exhausted_core(inp: BuildInput) -> dict:
               f"remediation cycles. Blocking findings on the last cycle:\n{findings_summary}\n"
               "Avoid repeating these specific issues."
         )
+        # A fresh attempt starts with a fresh board. The remediation children hang off the
+        # WorkItem, not the run, so without this the retry inherits THIS attempt's items — and
+        # since a stale item is only ever refreshed when the new reviewer happens to reuse its
+        # id, the retry can open mis-briefed on its very first cycle. That is exactly how WI-87's
+        # second run was doomed before it began: it inherited "COMPOFF_EXPIRED" from run 1 and
+        # never once saw the finding it was actually being blocked on. The items are CLOSED, not
+        # deleted — they are the previous attempt's record, and `prior_context` above already
+        # carries their substance forward to the new agent.
+        _close_remediation_board(inp, "attempt_exhausted")
         with tenant_context(inp.tenant_id):
             run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
             triggered_by_id = str(run.triggered_by_id) if run.triggered_by_id else None
@@ -686,7 +718,8 @@ def handle_remediation_exhausted_core(inp: BuildInput) -> dict:
             }
             run.save(update_fields=["status", "outputs", "updated_at"])
             tools.log_event(inp.tenant_id, "orchestrator", "build.remediation_exhausted_retry",
-                            "run", inp.run_id, {"attempt": inp.attempt, "next_attempt": inp.attempt + 1})
+                            "run", inp.run_id,
+                            {"attempt": inp.attempt, "next_attempt": inp.attempt + 1})
         # Carry the original trigger's user forward so the retry resolves the SAME companion
         # (req #1) instead of dispatching with a null enrollment. A null-enrollment retry was the
         # main way a build got stuck RUNNING+unclaimable (the broadcast-claim fix in
@@ -948,9 +981,37 @@ def run_code_review_core(inp: BuildInput) -> dict:
                 tools.log_event(inp.tenant_id, "code_review", "remediation.opened",
                                 "work_item", str(child.id),
                                 {"rem": rem, "severity": finding.severity})
-            elif child.state == WorkItem.State.DONE:
+            else:
+                # REFRESH IT. A `rem` id is a POSITION in one review's output ("the first
+                # warning this round"), not a stable identity — the reviewer renumbers from 1
+                # every cycle and is never shown the ids it used last time, so the moment the
+                # finding set changes shape, REM-W1 silently means a different problem.
+                # This branch used to flip `state` only, freezing title/description/file/line at
+                # whatever cycle 1 said. `dispatch_remediation_core` briefs agent 07 from exactly
+                # those fields, so the loop then spent every remaining cycle asking 07 to re-fix
+                # something it had already fixed while the reviewer blocked on something 07 was
+                # never told about — unwinnable by construction, and the cause of every
+                # remediation-exhausted build (8/8 across both tenants; WI-87 burned 20 review
+                # cycles and 15 rebuilds over 26 hours against a board last written in minute 20).
+                # Rewriting from the CURRENT finding makes the brief true of this cycle whatever
+                # the id happens to mean, which is what actually breaks the deadlock.
+                retargeted = (child.title != (finding.title or rem)
+                              or (child.external_ref or {}).get("file") != finding.file)
+                child.title = finding.title or rem
+                child.description = _remediation_description(finding)
+                child.external_ref = {**(child.external_ref or {}), "rem": rem,
+                                      "severity": finding.severity,
+                                      "file": finding.file, "line": finding.line}
                 child.state = WorkItem.State.IN_PROGRESS
-                child.save(update_fields=["state", "updated_at"])
+                child.save(update_fields=["title", "description", "external_ref",
+                                          "state", "updated_at"])
+                if retargeted:
+                    # Say so in the ledger: "same id, different finding" is the signature of the
+                    # collision above, and it was invisible while the console showed only counts.
+                    tools.log_event(inp.tenant_id, "code_review", "remediation.retargeted",
+                                    "work_item", str(child.id),
+                                    {"rem": rem, "severity": finding.severity,
+                                     "file": finding.file, "title": finding.title})
         tools.log_event(inp.tenant_id, "orchestrator", "build.reviewed", "run", inp.run_id,
                         {"findings": len(findings), "blocking": len(blocking)})
         # Bugs S.No 161: persist the actual blocking-finding text (not just counts) so a

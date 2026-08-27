@@ -129,6 +129,54 @@ def test_render_pr_section_omits_binary_files():
     assert "binary" not in manifest.split("shot.png")[1]   # png bytes not inlined
 
 
+class _PlainCodeHost:
+    def list_pr_files(self, *, pr_ref):
+        return ["src/app.py"]
+
+    def get_pull_request(self, *, pr_ref):
+        return PullRequest(repo="acme/api", number=7, title="t", state="open",
+                           head="feature/ST-1", base="main", url="u", sha="abc")
+
+    def get_file(self, *, repo, path, ref):
+        return "print('hi')"
+
+
+def _provider():
+    return rp.AgentReviewProvider(get_capability=lambda t, c: _PlainCodeHost(),
+                                  compose_manifest=lambda inp: "# base manifest")
+
+
+def test_the_reviewer_is_shown_the_rem_ids_it_already_has_open(world):
+    """The 08 body is told to reuse a still-open finding's `rem` id on a re-review — but the
+    manifest never carried the previous cycle's ids, so the agent had nothing to reuse and
+    renumbered from 1 every time. REM-W1 then meant a different problem each cycle while the
+    remediation board tracked the label instead of the finding."""
+    WorkItem.objects.create(
+        tenant=world.t, project=world.p, type=WorkItem.Type.TASK, parent=world.wi,
+        title="duration-preview accepts reversed date ranges",
+        state=WorkItem.State.IN_PROGRESS,
+        external_ref={"rem": "REM-W1", "severity": "warning",
+                      "file": "leave-application.service.ts", "line": 280})
+    WorkItem.objects.create(
+        tenant=world.t, project=world.p, type=WorkItem.Type.TASK, parent=world.wi,
+        title="already fixed last cycle", state=WorkItem.State.DONE,
+        external_ref={"rem": "REM-W9", "severity": "warning", "file": "old.ts", "line": 1})
+
+    manifest = _provider()._build_review_manifest(_inp(world), "acme/api#7")
+
+    assert "Findings Already Open From Your Previous Review" in manifest
+    assert "REM-W1" in manifest
+    assert "leave-application.service.ts:280" in manifest
+    assert "REM-W9" not in manifest        # closed items are not open findings
+
+
+def test_no_open_findings_section_on_the_first_review(world):
+    """Nothing open yet — the section must not appear at all rather than as an empty heading
+    the reviewer has to interpret."""
+    manifest = _provider()._build_review_manifest(_inp(world), "acme/api#7")
+    assert "Findings Already Open" not in manifest
+
+
 def test_poll_returns_body_else_none(world):
     inp = _inp(world)
     assert poll_review_body(inp, sleep=lambda _s: None, poll_interval=1, timeout=0) is None
