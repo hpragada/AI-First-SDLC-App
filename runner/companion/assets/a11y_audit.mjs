@@ -90,9 +90,15 @@ const NAV_TIMEOUT_MS = 30_000;
  *  analytics beacon never goes idle, and that must not cost the capture. */
 const SETTLE_TIMEOUT_MS = 5_000;
 
-/** The six computed-style properties every check downstream reads. Keep in step with
+/** The computed-style properties every check downstream reads. Keep in step with
  *  `apps.a11y.checkers.rules.STYLE_KEYS` — a missing key is not an error anywhere, it is a
- *  silent loss of coverage, which is why both ends spell the list out. */
+ *  silent loss of coverage, which is why both ends spell the list out.
+ *
+ *  `background-image` joined the list for 1.4.11 (QA-25) and earns its place twice: it is how a
+ *  CSS-drawn icon is found at all — a `<span>` whose entire content is a background image is a
+ *  graphic no tag can identify — and it is what tells the contrast rules to stop. A colour read
+ *  from behind a gradient or a photograph is a number about one pixel we did not sample, so the
+ *  measurement is declined rather than taken. */
 const STYLE_KEYS = [
   "color",
   "background-color",
@@ -100,7 +106,40 @@ const STYLE_KEYS = [
   "font-size",
   "font-weight",
   "border-style",
+  "background-image",
 ];
+
+/** The viewport 1.4.10 Reflow is written against: 320 CSS pixels wide, 256 tall.
+ *
+ *  Not a round number somebody liked — it is 1280×1024 at 400% zoom, which is what the criterion
+ *  actually says, and it is also roughly the narrowest phone still in use. Both readings land on
+ *  the same box, which is why the standard picked it. */
+const REFLOW_WIDTH = 320;
+const REFLOW_HEIGHT = 256;
+
+/** How much horizontal overflow is measurement noise rather than a defect.
+ *
+ *  Sub-pixel layout means a page that fits exactly can report a scroll width a fraction over its
+ *  client width. One pixel of grace costs nothing real — a page that genuinely overflows does so
+ *  by tens or hundreds — and without it the check would fail honest pages, which is the failure
+ *  mode that gets a check switched off. */
+const REFLOW_TOLERANCE_PX = 1;
+
+/** How long the page gets to re-lay-out after the viewport narrows. A responsive layout settles
+ *  in a frame or two; a JS-driven one may listen for `resize` and re-render. Short, because this
+ *  runs once per route and the cost is paid on every page. */
+const REFLOW_SETTLE_MS = 400;
+
+/** How many components one page reports contrast readings for. A real screen has tens; a design
+ *  system's kitchen-sink page can have hundreds, and past this the readings stop telling anyone
+ *  anything new. Truncation is REPORTED (`capped`) rather than silent — an unreported cap reads
+ *  as "we measured everything". */
+const MAX_CONTRAST_COMPONENTS = 200;
+
+/** How far up the tree to look for what is actually painted behind an element. Twelve is past
+ *  any real wrapper stack; the depth is bounded so a pathological DOM cannot make one element's
+ *  reading cost the page. */
+const MAX_BACKGROUND_DEPTH = 12;
 
 /** WCAG tags axe attaches to a rule, mapped to the criterion number. `wcag143` → `1.4.3`. */
 function criteriaFromTags(tags) {
@@ -533,6 +572,274 @@ function attachElementFindings(elements, violations) {
   }
 }
 
+/** 1.4.10 Reflow — does this page need sideways scrolling at phone width? (QA-25)
+ *
+ *  **axe has no rule for this, and that is why this exists.** The criterion ownership registry
+ *  records 1.4.10 as decided by a deterministic engine, the platform's deterministic engine is
+ *  axe-core, and axe-core 4.13.0 ships nothing tagged `wcag1410` — so from the day the scanner
+ *  was wired until this function, Reflow was checked by nobody at any stage. The design gate
+ *  skips it too, on the written grounds that "a rule scanner decides this on the built page".
+ *
+ *  **A reading, not a ruling.** This narrows the window, writes down two numbers and the
+ *  elements that stick out, and puts the window back. Whether those numbers are a failure is
+ *  `apps.a11y.page_rules`, deterministically — the same boundary `journey_rules` keeps for the
+ *  keyboard walk, and for the same reason: what is measured here has to be re-checkable there.
+ *
+ *  **The viewport is always restored**, including when the measurement throws. A page left at
+ *  320px would hand every later route a mobile layout and quietly change what was audited. */
+async function measureReflow(page) {
+  let restore = null;
+  try {
+    restore = page.viewportSize();
+    await page.setViewportSize({ width: REFLOW_WIDTH, height: REFLOW_HEIGHT });
+    await page.waitForTimeout(REFLOW_SETTLE_MS);
+    return await page.evaluate(
+      ({ tolerance, width }) => {
+        // A compact selector builder. Deliberately its own copy rather than shared with
+        // `collectElements` — these run inside the page, in separate evaluations, with no
+        // scope between them. Kept short: this names an element for a developer to find,
+        // it is not the key anything is matched on.
+        function pathOf(node) {
+          const parts = [];
+          let el = node;
+          while (el && el.nodeType === 1 && parts.length < 6) {
+            let part = el.tagName.toLowerCase();
+            if (el.id) { parts.unshift(`${part}#${el.id}`); break; }
+            const parent = el.parentElement;
+            if (parent) {
+              const same = [...parent.children].filter((c) => c.tagName === el.tagName);
+              if (same.length > 1) part += `:nth-of-type(${same.indexOf(el) + 1})`;
+            }
+            parts.unshift(part);
+            el = el.parentElement;
+          }
+          return parts.join(" > ");
+        }
+
+        // The standard's own exception: "except for parts of the content which require
+        // two-dimensional layout for usage or meaning". A data table, a code block, a map and
+        // a drawing surface are the things that genuinely do. Recorded per offender rather
+        // than applied here, so the platform decides and a reviewer can see why.
+        const TWO_D = "table, pre, code, canvas, svg, iframe, [role=img], [role=table], " +
+          "[role=grid], [role=treegrid], [role=application], [role=document]";
+
+        function insideTwoD(node) {
+          let el = node;
+          for (let depth = 0; el && depth < 20; depth += 1) {
+            if (el.matches && el.matches(TWO_D)) return el.tagName.toLowerCase();
+            // A region the author deliberately made scrollable is a two-dimensional part the
+            // user can operate, not a page that overflows. Read from the computed style
+            // rather than guessed from a class name.
+            if (el.parentElement) {
+              const overflowX = getComputedStyle(el).overflowX;
+              if (overflowX === "auto" || overflowX === "scroll") return "scrollable region";
+            }
+            el = el.parentElement;
+          }
+          return "";
+        }
+
+        const doc = document.documentElement;
+        const viewport = doc.clientWidth;
+        const content = Math.max(doc.scrollWidth, document.body ? document.body.scrollWidth : 0);
+        const offenders = [];
+        if (content > viewport + tolerance) {
+          for (const el of document.querySelectorAll("body *")) {
+            if (offenders.length >= 20) break;
+            const box = el.getBoundingClientRect();
+            if (box.width <= 0 || box.height <= 0) continue;
+            const right = box.left + box.width + window.scrollX;
+            if (right <= viewport + tolerance) continue;
+            // Only the outermost offender in a chain is worth reporting: a wide table makes
+            // every cell inside it overflow too, and twenty rows of the same fact is noise.
+            if (offenders.some((o) => o.node && o.node.contains(el))) continue;
+            offenders.push({
+              node: el,
+              selector: pathOf(el),
+              tag: el.tagName.toLowerCase(),
+              overflow_px: Math.round(right - viewport),
+              two_d_reason: insideTwoD(el),
+            });
+          }
+        }
+        return {
+          measured: true,
+          viewport_width: viewport,
+          requested_width: width,
+          content_width: content,
+          overflow_px: Math.max(0, Math.round(content - viewport)),
+          // `node` is a live element and cannot cross the bridge — stripped here rather than
+          // left to serialise as `{}` and look like a field that failed to fill.
+          offenders: offenders.map(({ node, ...rest }) => rest),
+        };
+      },
+      { tolerance: REFLOW_TOLERANCE_PX, width: REFLOW_WIDTH },
+    );
+  } catch (err) {
+    // A measurement that did not happen is NOT a page that reflowed cleanly. The reason
+    // travels, and `page_rules` produces nothing at all from it.
+    return { measured: false, error: `the narrow-viewport pass did not run (${err.message})` };
+  } finally {
+    if (restore) {
+      try {
+        await page.setViewportSize(restore);
+        await page.waitForTimeout(REFLOW_SETTLE_MS);
+      } catch {
+        // Nothing useful is left to do — the next route calls `page.goto`, which re-lays out
+        // whatever viewport survived. Swallowed rather than raised so one page's failure to
+        // restore does not end an audit that is otherwise fine.
+      }
+    }
+  }
+}
+
+/** 1.4.11 Non-text Contrast — the colours a component's boundary is actually drawn in (QA-25).
+ *
+ *  **Half of a criterion, on purpose, and the other half is the `graphics` AI check.** 1.4.11
+ *  asks two questions. *Can you see where the controls are?* is arithmetic over colours, and it
+ *  is this. *Are the meaningful parts of the icons and diagrams visible?* requires knowing which
+ *  parts of a picture carry meaning, which is judgment and belongs to the judge. Splitting them
+ *  is what lets the measurable half be measured properly instead of estimated.
+ *
+ *  **Why the readings are taken here rather than from the stored elements.** `ingest` only keeps
+ *  an element that at least one AI check applies to; an ordinary bordered button that no checker
+ *  wants is discarded. The components this criterion is about are therefore mostly not in the
+ *  database, and the only place they all still exist is the page.
+ *
+ *  **Nothing is decided here.** No ratio is computed and no threshold is applied — that is
+ *  `page_rules`, so the arithmetic lives somewhere it can be unit-tested against known colours
+ *  rather than inside a string sent from a browser. What travels is what the browser reported:
+ *  the component's own paint, every visible border side, the outline, and the stack of ancestor
+ *  backgrounds that says what is really behind it. */
+async function measureNonTextContrast(page) {
+  try {
+    return await page.evaluate(
+      ({ maxComponents, maxDepth }) => {
+        function pathOf(node) {
+          const parts = [];
+          let el = node;
+          while (el && el.nodeType === 1 && parts.length < 6) {
+            let part = el.tagName.toLowerCase();
+            if (el.id) { parts.unshift(`${part}#${el.id}`); break; }
+            const parent = el.parentElement;
+            if (parent) {
+              const same = [...parent.children].filter((c) => c.tagName === el.tagName);
+              if (same.length > 1) part += `:nth-of-type(${same.indexOf(el) + 1})`;
+            }
+            parts.unshift(part);
+            el = el.parentElement;
+          }
+          return parts.join(" > ");
+        }
+
+        // What 1.4.11 calls a user interface component. Native controls and the ARIA roles
+        // that stand in for them — the same scope `rules.CONTROL_ROLES` uses, spelled as a
+        // selector because this side has no import.
+        const COMPONENTS = [
+          "button", "input", "select", "textarea", "a[href]", "summary",
+          "[role=button]", "[role=link]", "[role=checkbox]", "[role=radio]", "[role=switch]",
+          "[role=tab]", "[role=slider]", "[role=spinbutton]", "[role=combobox]",
+          "[role=textbox]", "[role=searchbox]", "[role=menuitem]", "[role=option]",
+        ].join(", ");
+
+        // Fields a person has to find before they can type in one. Their boundary is not
+        // decoration — it is the only thing saying "put your answer here" — which is why the
+        // platform rules on these more strictly than on a control with a text face.
+        const FIELD_TYPES = new Set([
+          "text", "email", "password", "search", "tel", "url", "number", "date",
+          "datetime-local", "month", "week", "time", "file", "",
+        ]);
+
+        function sides(computed) {
+          const out = [];
+          for (const side of ["top", "right", "bottom", "left"]) {
+            const style = computed.getPropertyValue(`border-${side}-style`);
+            const width = computed.getPropertyValue(`border-${side}-width`);
+            if (!style || style === "none" || style === "hidden") continue;
+            if (parseFloat(width) === 0) continue;
+            out.push({
+              side,
+              style,
+              width,
+              color: computed.getPropertyValue(`border-${side}-color`),
+            });
+          }
+          return out;
+        }
+
+        // Everything painted between this element and the root, nearest first. Returned as a
+        // stack rather than composited here: compositing is arithmetic, arithmetic is the
+        // platform's job, and a stack can be re-checked while a single blended colour cannot.
+        function behind(el) {
+          const stack = [];
+          let images = false;
+          let node = el.parentElement;
+          for (let depth = 0; node && depth < maxDepth; depth += 1) {
+            const computed = getComputedStyle(node);
+            if (computed.backgroundImage && computed.backgroundImage !== "none") images = true;
+            stack.push(computed.backgroundColor);
+            node = node.parentElement;
+          }
+          return { stack, images };
+        }
+
+        const rows = [];
+        let seen = 0;
+        for (const el of document.querySelectorAll(COMPONENTS)) {
+          seen += 1;
+          if (rows.length >= maxComponents) continue;
+          const box = el.getBoundingClientRect();
+          const computed = getComputedStyle(el);
+          if (box.width <= 0 || box.height <= 0) continue;
+          if (computed.visibility === "hidden") continue;
+          const tag = el.tagName.toLowerCase();
+          const type = (el.getAttribute("type") || "").toLowerCase();
+          const role = (el.getAttribute("role") || "").toLowerCase();
+          const context = behind(el);
+          rows.push({
+            selector: pathOf(el),
+            tag,
+            type,
+            role,
+            // A control identified by its own words does not need a drawn boundary at all —
+            // 1.4.3 governs that text. Reported so the platform can apply the criterion's
+            // scope rather than inferring it from an empty string.
+            has_text: Boolean((el.innerText || "").trim()),
+            // True for the controls whose boundary IS the affordance: an empty box nobody can
+            // see is a field nobody can find, whatever its text says elsewhere.
+            is_field: tag === "textarea" || tag === "select"
+              || (tag === "input" && FIELD_TYPES.has(type))
+              || ["textbox", "searchbox", "combobox", "spinbutton"].includes(role),
+            background: computed.backgroundColor,
+            background_image: computed.backgroundImage,
+            borders: sides(computed),
+            outline: {
+              style: computed.outlineStyle,
+              width: computed.outlineWidth,
+              color: computed.outlineColor,
+            },
+            box_shadow: computed.boxShadow,
+            behind_stack: context.stack,
+            behind_images: context.images,
+          });
+        }
+        return {
+          measured: true,
+          components: rows,
+          counted: seen,
+          capped: seen > rows.length,
+        };
+      },
+      { maxComponents: MAX_CONTRAST_COMPONENTS, maxDepth: MAX_BACKGROUND_DEPTH },
+    );
+  } catch (err) {
+    return {
+      measured: false,
+      error: `the non-text contrast pass did not run (${err.message})`,
+    };
+  }
+}
+
 /** Capture one route.
  *
  *  `visitPath` is where the browser actually goes and `route` is what the screen is recorded
@@ -605,6 +912,16 @@ async function captureRoute(page, axe, baseUrl, route, visitPath) {
     // "could not be seen" rather than guessed.
     screen.screenshot_error = `the page screenshot could not be taken (${err.message})`;
   }
+
+  // The two page-level measurements the rule scanner has no rule for (QA-25). Taken LAST, and
+  // in this order, because both facts depend on the page still being the page that was
+  // captured: the contrast readings must be taken at the width everything above was measured
+  // at, and reflow deliberately changes that width. The screenshot is already taken, so the
+  // picture in the report is the desktop one a reviewer expects.
+  screen.page_measurements = {
+    non_text_contrast: await measureNonTextContrast(page),
+    reflow: await measureReflow(page),
+  };
   return screen;
 }
 

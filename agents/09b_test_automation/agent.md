@@ -496,8 +496,9 @@ So every script writes **`test-results/a11y-candidates.json`** — the same dire
       "rendered": true,
       "styles": {"color": "rgb(255, 255, 255)", "background-color": "rgb(0, 90, 200)",
                  "text-decoration-line": "none", "font-size": "16px",
-                 "font-weight": "600", "border-style": "none"},
-      "parent_styles": {"…the same six keys, on the parent element…": ""},
+                 "font-weight": "600", "border-style": "none",
+                 "background-image": "none"},
+      "parent_styles": {"…the same keys, on the parent element…": ""},
       "html": "<button class=\"pay\" aria-label=\"Purchase\">Buy now</button>",
       "context": "the visible text immediately around it",
       "box": {"x": 412, "y": 980, "width": 160, "height": 44},
@@ -510,9 +511,9 @@ So every script writes **`test-results/a11y-candidates.json`** — the same dire
 **Every field matters, and two of them are traps:**
 
 - **`accessible_name` must be the browser's computed name**, from Playwright's accessibility API — `page.accessibility.snapshot({ root: handle })` and take its `name` (use `locator.ariaSnapshot()` where your Playwright version has removed that). **Never approximate it** from `aria-label`, the text content, or a `<label>` you found yourself. The whole point of the `label` check is the case where the computed name and the visible text disagree; an approximation makes them agree by construction and the check silently stops working.
-- **`styles` and `parent_styles` must carry all six keys** — `color`, `background-color`, `text-decoration-line`, `font-size`, `font-weight`, `border-style` — from `getComputedStyle`. A missing key does not raise anything: it reads as "no", and every element it would have selected quietly stops being judged.
+- **`styles` and `parent_styles` must carry all seven keys** — `color`, `background-color`, `text-decoration-line`, `font-size`, `font-weight`, `border-style`, `background-image` — from `getComputedStyle`. A missing key does not raise anything: it reads as "no", and every element it would have selected quietly stops being judged. `background-image` is the newest and the easiest to leave out: it is how an icon painted by CSS is found at all, and without it a `<span>` whose entire content is a picture is invisible to every check the platform has.
 
-**What to offer.** Capture the elements the four questions could apply to, and no more: images, `<svg>`, `<area>`, `input[type=image]`, anything with `role="img"`; every native control and link; anything carrying a `role` or a `tabindex`; anything with a click or key handler bound to it; and text or filled areas whose colour differs from their surroundings. Over-offering is safe — the platform runs the selection rules and discards the rest — but a screen may not exceed **600** elements, and the whole file may not exceed **60** screens. If a page is bigger than that, capture the region under test rather than the entire document, and say so when you report.
+**What to offer.** Capture the elements the checks could apply to, and no more: images, `<svg>`, `<canvas>`, `<area>`, `input[type=image]`, anything with `role="img"`; every native control and link; anything carrying a `role` or a `tabindex`; anything with a click or key handler bound to it; text or filled areas whose colour differs from their surroundings; and **any element whose `background-image` is a `url(…)`**, which is how a great many icons are drawn and which no tag or attribute reveals. Over-offering is safe — the platform runs the selection rules and discards the rest — but a screen may not exceed **600** elements, and the whole file may not exceed **60** screens. If a page is bigger than that, capture the region under test rather than the entire document, and say so when you report.
 
 **`axe` is what the scan you just ran said about that element**, if anything: its rule id, impact, and the WCAG criteria from the rule's own `wcag…` tags. Take it from the violation's `nodes[].target` — matching by selector — so the rule finding and the AI finding can later be shown side by side without running axe twice. Leave it out for an element axe said nothing about; an empty object is not a claim that it passed.
 
