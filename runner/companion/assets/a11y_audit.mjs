@@ -991,7 +991,22 @@ async function main() {
 
   let chromium;
   try {
-    ({ chromium } = await importFromProject("playwright"));
+    const pw = await importFromProject("playwright");
+    // **Both shapes, exactly as `check()` has always read them — and the difference between the
+    // two was fatal.** `importFromProject` resolves a path and imports it as a file URL, so a
+    // CJS package arrives with its exports under `default` and Node's named-export detection
+    // does not find `chromium` on the module itself. `check()` read both and reported the
+    // browser as fine; this line read only the first and then crashed on `chromium.launch` with
+    // "Cannot read properties of undefined" — a stack trace naming neither playwright nor the
+    // real problem.
+    //
+    // **It fires exactly when the audited project ships its own Playwright**, which is the
+    // resolution branch `importFromProject` prefers. A project without one falls back to a bare
+    // import of the companion's copy, where named exports do work — which is why audits have
+    // run at all, and why this went unseen. One module, two ways of reading it: the same shape
+    // of bug as the two ends of `STYLE_KEYS`, and the reason both ends spell things out.
+    chromium = pw.chromium || (pw.default && pw.default.chromium);
+    if (!chromium) throw new Error("playwright is installed but exposes no chromium");
   } catch (err) {
     console.error(`[a11y-audit] ${browserMissingMessage(err)} Nothing was written.`);
     process.exit(3);
