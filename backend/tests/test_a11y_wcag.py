@@ -1033,13 +1033,22 @@ def test_built_coverage_is_what_the_documents_claim():
     )
     ai = {c for pair in A11Y_CHECKER_CRITERIA.values() for c in pair}
     journey = {c for pair in A11Y_JOURNEY_CRITERIA.values() for c in pair}
-    # Five checkers over five criteria, not one each: `semantics` covers two, and 1.3.1 is
-    # covered twice over because it is two different questions. `semantics` asks whether one
-    # element is pretending to be a control or a heading; `structure` asks whether a
-    # container's visible arrangement exists in the markup at all. Adding the second did not
-    # widen what the POC claims to cover - the criteria set below is unchanged - it closed a
-    # hole inside a criterion already claimed (SCOPE_GAP_INFO_AND_RELATIONSHIPS.md).
-    assert len(CHECKERS) == 5 and ai == {"1.1.1", "1.3.1", "1.4.1", "2.5.3", "4.1.2"}
+    # Six checkers over six criteria, and NOT one each - the numbers matching is a coincidence
+    # that has misled this team twice, so read the map rather than the count.
+    #
+    # `semantics` covers two criteria. 1.3.1 is covered twice over, by `semantics` and by
+    # `structure`, because it is two different questions: one asks whether an element is
+    # pretending to be a control or a heading, the other whether a container's visible
+    # arrangement exists in the markup at all. Adding `structure` (24 Aug) did not widen what
+    # the POC claims - it closed a hole inside a criterion already claimed
+    # (SCOPE_GAP_INFO_AND_RELATIONSHIPS.md).
+    #
+    # `graphics` (QA-25) DID widen it, and deliberately: 1.4.11 Non-text Contrast was recorded
+    # as rule-decided and checked by nothing at all, because axe-core ships no rule tagged
+    # `wcag1411`. It is covered by this checker AND by `apps.a11y.page_rules` together - the
+    # rule measures the controls, the judge looks at the pictures - and by neither alone.
+    assert len(CHECKERS) == 6
+    assert ai == {"1.1.1", "1.3.1", "1.4.1", "1.4.11", "2.5.3", "4.1.2"}
     assert journey == {"2.1.1", "2.1.2", "2.4.3", "2.4.7", "2.4.11", "3.2.1", "3.2.2", "4.1.3"}
 
 

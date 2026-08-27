@@ -37,10 +37,10 @@ LIVE = "live"
 PASS, FAIL, UNCERTAIN = "pass", "fail", "uncertain"
 VERDICTS = frozenset({PASS, FAIL, UNCERTAIN})
 
-#: The dataset spec and the platform call the same four checks by different names, and nobody
-#: noticed until a label was joined to a verdict for the first time. GOLDEN_DATASET_SPEC §2
-#: says `meaningful-alt` / `fake-semantics` / `colour-only` / `label`; the platform's own
-#: `CHECKERS` are `alt` / `semantics` / `color` / `label`.
+#: The dataset spec and the platform call the same checks by different names, and nobody noticed
+#: until a label was joined to a verdict for the first time. GOLDEN_DATASET_SPEC §2 says
+#: `meaningful-alt` / `fake-semantics` / `colour-only` / `label`; the platform's own names are
+#: `checkers.rules.CHECKERS`.
 #:
 #: Translated here rather than by correcting one side, because both are already written down —
 #: the spec is what an expert labelling by hand reads, and the platform's names are in stored
@@ -56,6 +56,14 @@ CHECKER_ALIASES: dict[str, str] = {
     "colour-only": "color",
     "color-only": "color",
     "label-in-name": "label",
+    # `structure` (24 Aug) and `graphics` (27 Aug) arrived after the dataset spec was written,
+    # so they have no spec name to translate FROM — these are the phrasings a person labelling
+    # by hand actually reaches for. Harmless if unused: anything absent from this table passes
+    # through unchanged, so a dataset already using the platform's own names still works.
+    "fake-structure": "structure",
+    "real-structure": "structure",
+    "non-text-contrast": "graphics",
+    "graphic-contrast": "graphics",
 }
 
 #: Difficulty bands, so a flat accuracy figure can be broken apart. A checker at 95% on clear

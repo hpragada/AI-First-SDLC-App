@@ -1,4 +1,4 @@
-"""Candidate selection — which elements each of the five checkers applies to (QA-03).
+"""Candidate selection — which elements each element checker applies to (QA-03).
 
 Every rule here is a decision that an element **will** or **will not** be judged, and the
 second half of that is the dangerous one: a skip rule is a promise that nothing this checker
@@ -28,19 +28,28 @@ from dataclasses import dataclass, field
 
 from integrations.types import A11Y_CHECKER_CRITERIA, A11yCandidate
 
-#: The five checkers, in the order a page's requests are emitted. Fixed so that two runs over
+#: The element checkers, in the order a page's requests are emitted. Fixed so that two runs over
 #: the same page produce the same batch in the same order — a judgment run that is not
 #: reproducible cannot be compared against the golden set (QA-09).
 #:
 #: `structure` sits beside `semantics` because they are the two halves of one criterion: one
 #: asks whether an element is pretending to be something, the other whether a container's
 #: visible arrangement exists in the markup at all.
-CHECKERS: tuple[str, ...] = ("alt", "semantics", "structure", "color", "label")
+#:
+#: `graphics` (QA-25) is the second half of a criterion in the same way, and its other half is
+#: not a checker at all — it is `apps.a11y.page_rules`, which measures the controls while this
+#: judges the pictures. 1.4.11 is covered by both together and by neither alone.
+CHECKERS: tuple[str, ...] = ("alt", "semantics", "structure", "color", "label", "graphics")
 
 #: The computed style properties the rules read. Named here because this is also the list the
 #: companion has to capture (QA-11b): a property missing from the capture silently turns every
 #: rule that reads it into "no". Keep the list short — each entry is a per-element cost in the
 #: browser.
+#:
+#: `background-image` was added for `graphics` (QA-25) and is the only key here that earns its
+#: place by what it makes VISIBLE rather than by what it measures: a `<span>` whose entire
+#: content is a CSS background image is a graphic that no tag, role or attribute can identify,
+#: and without this key it was invisible to every check the platform has.
 STYLE_KEYS: tuple[str, ...] = (
     "color",
     "background-color",
@@ -48,6 +57,7 @@ STYLE_KEYS: tuple[str, ...] = (
     "font-size",
     "font-weight",
     "border-style",
+    "background-image",
 )
 
 #: Elements that are already controls. Their semantics are real, so `semantics` skips them
@@ -381,6 +391,56 @@ def _applies_alt(element: CapturedElement) -> bool:
     return False
 
 
+def _has_background_graphic(element: CapturedElement) -> bool:
+    """A picture painted by CSS rather than placed in the markup.
+
+    `background-image` covers gradients too, and a gradient is not a graphic — it is decoration
+    behind something else. `url(` is what separates a picture somebody chose from a colour ramp
+    a stylesheet computed, and it is the only form that means an image file was loaded.
+    """
+    value = str(element.styles.get("background-image", "")).strip().lower()
+    return bool(value) and value != "none" and "url(" in value
+
+
+def _applies_graphics(element: CapturedElement) -> bool:
+    """A graphic whose meaningful parts must be visible enough to make out — 1.4.11.
+
+    **This is the half of 1.4.11 no rule can decide**, and its scope is drawn from what a person
+    can SEE rather than from what assistive technology is told. That makes it deliberately wider
+    than `_applies_alt` in the two places the difference matters:
+
+      * **A bare `<svg>` with no role, no name and no `<title>` IS selected here.** `alt` skips
+        it because it is never announced, so there is no text alternative to judge — but it is
+        drawn on the screen, a sighted user reads meaning off it, and whether those parts are
+        distinguishable is exactly this criterion's question. The two checks disagree about this
+        element on purpose.
+      * **A CSS background image is selected**, which no other check can see at all.
+
+    **What is skipped, and it is the standard's own exception rather than ours.** 1.4.11 exempts
+    graphics where "a particular presentation is essential to the information being conveyed" —
+    a photograph is the textbook case, because you cannot restyle a photograph to have more
+    contrast without destroying what it is a photograph of. A rule cannot tell a photograph from
+    a diagram, so this does NOT try: every raster image is still selected, and the judge is told
+    in as many words that "this is a photograph" is a complete and correct answer of *not
+    applicable*. Deciding it here would be the platform pre-judging an image it never looked at,
+    which is the same mistake `_applies_color` refuses to make about a missing screenshot.
+
+    **The cost is understood and accepted.** Most images on a page are now judged twice, once for
+    1.1.1 and once for 1.4.11. They are different questions with different answers — an accurate
+    alt text on an invisible icon passes one and fails the other — and merging them to save a
+    call would produce a single verdict that is wrong about one of the two criteria.
+    """
+    if not element.rendered:
+        return False
+    if element.tag in {"img", "svg", "canvas"} or element.role == "img":
+        return True
+    if element.tag == "input":
+        return element.attrs.get("type", "").strip().lower() == "image"
+    if _is_icon_glyph(element):
+        return True
+    return _has_background_graphic(element)
+
+
 def _applies_semantics(element: CapturedElement) -> bool:
     """Structure or a control that may be drawn rather than real — 1.3.1 and 4.1.2."""
     if not element.rendered:
@@ -584,17 +644,38 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
               "contains the visible text — the criterion is met as a matter of fact",
         applies=_applies_label,
     ),
+    SelectionRule(
+        checker="graphics",
+        criteria=A11Y_CHECKER_CRITERIA["graphics"],
+        covers="every graphic a sighted person reads meaning from — images, SVGs, drawing "
+               "surfaces, anything with role=img, icons drawn by a font, and icons painted as "
+               "a CSS background image; the question is whether the parts that carry the "
+               "meaning stand out enough from what is around them to be made out",
+        skips="graphics with no rendered box, and nothing else. A bare <svg> that assistive "
+              "technology never announces is NOT skipped — 1.4.11 is about what can be seen, "
+              "not about what is announced, which is why this scope is wider than `alt`'s. A "
+              "photograph is not skipped either: the criterion exempts graphics whose exact "
+              "presentation is essential, and whether an image is one of those is a judgment "
+              "the judge makes and reports as not applicable.",
+        applies=_applies_graphics,
+    ),
 )
 
 _RULES_BY_CHECKER: dict[str, SelectionRule] = {rule.checker: rule for rule in SELECTION_RULES}
 
 
 def checkers_for(element: CapturedElement) -> tuple[str, ...]:
-    """Which of the five checks this element should be judged by, in `CHECKERS` order.
+    """Which checks this element should be judged by, in `CHECKERS` order.
 
     An element can legitimately be selected by more than one: a `<div role="button">` styled
     only in colour is both a semantics question and a colour question, and they are different
-    questions with different answers.
+    questions with different answers. An icon is routinely selected by both `alt` and
+    `graphics` — *does it say what it means?* and *can you see it?* — and an icon can very
+    easily pass one and fail the other.
+
+    Deliberately not "the five checks" any more. That sentence was written when there were four,
+    survived a fifth being added on 24 August, and would have survived a sixth: a count in prose
+    is a fact nobody updates. `CHECKERS` is the count, and `test_a11y_wcag` holds it.
     """
     return tuple(
         checker for checker in CHECKERS if _RULES_BY_CHECKER[checker].matches(element)

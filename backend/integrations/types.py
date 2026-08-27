@@ -257,7 +257,25 @@ A11Y_CHECKER_CRITERIA: dict[str, tuple[str, ...]] = {
     "structure": ("1.3.1",),            # Info and Relationships — is the visible structure real?
     "color": ("1.4.1",),                # Use of Color — is meaning carried by colour alone?
     "label": ("2.5.3",),                # Label in Name — does the visible label match the AN?
+    "graphics": ("1.4.11",),            # Non-text Contrast — can you SEE the meaningful parts?
 }
+
+#: **Why `graphics` exists, and why it is an AI check when 1.4.11 is recorded as rule-owned.**
+#: 1.4.11 is a criterion in two halves. *Can you see where the controls are?* is colours and a
+#: threshold, and `apps.a11y.page_rules` decides it deterministically. *Are the meaningful parts
+#: of the icons, charts and diagrams visible enough?* requires knowing which parts of a picture
+#: carry meaning before any ratio can be computed, and nothing deterministic knows that.
+#:
+#: The registry said so itself, in its own rationale for this criterion — *"computable, but
+#: 'which graphics matter' needs some review"* — and then recorded the owner as `rule` anyway.
+#: That is how the second half went unbuilt for four tasks while the criterion was reported as
+#: covered. Both halves ship together or the criterion is not covered; see QA-25.
+#:
+#: **Its scope is deliberately wider than `alt`'s, and the difference is the point.** `alt` asks
+#: what assistive technology is told, so it skips a graphic that is never announced. This asks
+#: what a person can SEE, so a decorative-to-a-screen-reader icon carrying visible meaning is
+#: still in scope. The two checks look at many of the same elements and are asking genuinely
+#: different questions about them.
 
 #: **Why `semantics` and `structure` both carry 1.3.1, and are still two checks.**
 #: They ask different questions about it. `semantics` looks at ONE element and asks whether it

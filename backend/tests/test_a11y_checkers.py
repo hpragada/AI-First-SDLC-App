@@ -84,11 +84,19 @@ def test_the_rule_set_can_be_read_by_someone_who_does_not_read_python():
         assert rule.covers in described and rule.skips in described
 
 
-def test_the_poc_judges_five_criteria_and_no_others():
-    """R7 / team decision D5: the POC ships 1.1.1, 1.3.1, 4.1.2, 1.4.1 and 2.5.3. 2.4.6 is
-    Phase 2 — a rule quietly claiming it would put a Phase-2 criterion in a POC report."""
+def test_the_element_checkers_judge_these_criteria_and_no_others():
+    """R7 / team decision D5: 1.1.1, 1.3.1, 4.1.2, 1.4.1 and 2.5.3 shipped in the POC, and 2.4.6
+    is Phase 2 — a rule quietly claiming it would put a Phase-2 criterion in a POC report.
+
+    **1.4.11 joined the set in QA-25, and it is the one entry here that is only half a
+    criterion.** The other half is `apps.a11y.page_rules`, which measures whether a control's
+    edge reaches 3:1 deterministically; `graphics` judges the part no rule can — which parts of
+    an icon or a chart carry the meaning, and whether they can be made out. Neither half covers
+    1.4.11 alone, and this test says nothing about whether the other half exists;
+    `test_a11y_owner_capability` is what proves that.
+    """
     covered = {c for rule in SELECTION_RULES for c in rule.criteria}
-    assert covered == {"1.1.1", "1.3.1", "4.1.2", "1.4.1", "2.5.3"}
+    assert covered == {"1.1.1", "1.3.1", "4.1.2", "1.4.1", "2.5.3", "1.4.11"}
 
 
 # ── alt: WCAG 1.1.1 ──────────────────────────────────────────────────
@@ -588,13 +596,19 @@ def test_selection_is_stable_and_in_page_then_checker_order():
         _coloured(tag="div", role="button", text="Overdue", selector="div.b"),
     ]
     once = [(r.checker, r.candidate.selector) for r in select(page)]
-    assert once == [("alt", "img.a"), ("semantics", "div.b"), ("color", "div.b")]
+    # The image is queued twice, and that is the design rather than a duplicate: `alt` asks
+    # whether it SAYS what it means (1.1.1), `graphics` asks whether it can be SEEN (1.4.11).
+    # An icon passes one and fails the other routinely.
+    assert once == [
+        ("alt", "img.a"), ("graphics", "img.a"),
+        ("semantics", "div.b"), ("color", "div.b"),
+    ]
     assert once == [(r.checker, r.candidate.selector) for r in select(page)]
 
 
 def test_selection_accepts_the_companion_json_as_well_as_objects():
     raw = [{"tag": "img", "attrs": {"alt": "chart"}, "selector": "img.a", "route": "/home"}]
-    assert [r.checker for r in select(raw)] == ["alt"]
+    assert [r.checker for r in select(raw)] == ["alt", "graphics"]
 
 
 def test_an_unknown_capture_field_never_breaks_selection():
@@ -647,7 +661,9 @@ def test_the_rules_import_and_run_with_no_django_settings():
         cwd=backend, env=env, capture_output=True, text=True,
     )
     assert proof.returncode == 0, proof.stderr
-    assert proof.stdout.strip() == "1"
+    # Two, not one: an <img> is queued for `alt` and for `graphics`. The number is incidental —
+    # what this proves is that the rules ran at all with no Django on the path.
+    assert proof.stdout.strip() == "2"
 
 
 # ── what a complete answer has to contain (D-A11Y-5) ─────────────────

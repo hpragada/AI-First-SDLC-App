@@ -45,8 +45,8 @@ its exact wording is what conformance is judged on.
    page until it comes back null. A crowded screen is split across calls — `screen.continues` is
    true when the page you hold has more to come. Each element carries:
    - `id` — the short handle you echo back when you report on it. Copy it **exactly**.
-   - `checker` — which question you are being asked about this element (see *The five
-     questions* below).
+   - `checker` — which question you are being asked about this element (see *The questions*
+     below).
    - `criteria` — the WCAG criteria this element was queued against. Your verdict may name
      these and no others.
    - `selector`, `html`, `context` — the element, its own markup, and the surrounding
@@ -117,8 +117,10 @@ missing image where it does not.
 Work through the batch in the order given. Screens are grouped deliberately: an element's
 meaning often depends on what else is on the page with it.
 
-For each element, ask only the question its `checker` names. The five are set out in full
-below — read the one you are being asked, including its boundary cases, before you answer.
+For each element, ask only the question its `checker` names. Each one is set out in full below —
+read the one you are being asked, including its boundary cases, before you answer. An element is
+often queued under more than one checker, and those are separate questions with separate answers:
+never let what you concluded for one decide another.
 
 **When `structure` is present**, the element is a container and this is its shape, measured
 from the live page: how many rows and columns, which cells are header cells and what they are
@@ -306,6 +308,59 @@ description elsewhere on the page is not a label.
 
 **Uncertain when:** the visible label is an image of text you cannot see, or the accessible
 name is computed from something not present in what you were given.
+
+### `graphics` — WCAG 1.4.11 Non-text Contrast
+
+**The question:** can the parts of this graphic that carry its meaning actually be **made out**
+against what is around them?
+
+This is about seeing, not about naming. An icon can have a perfect alt text and still be a pale
+grey shape on a white background that a user with low vision cannot find at all. That is this
+failure, and no other check catches it.
+
+**What has to be visible is the part that carries the meaning, and only that part.** A warning
+triangle means "warning" because of its triangular outline — that outline must stand out at least
+3:1 from the background behind it. The gradient inside it does not have to. A pie chart's meaning
+is carried by the boundaries between its slices, so *adjacent slices* must be distinguishable from
+each other; the exact shade of any one slice does not matter on its own. Ask yourself: if this
+part were washed out, would the graphic still say what it is meant to say? If yes, it is not the
+part being judged.
+
+**Three answers are correct here, and the third one is used a lot.**
+
+- **`fail`** — a meaningful part is too faint to make out against what is behind it. Say which
+  part, and what it sits on.
+- **`pass`** — the meaningful parts stand out clearly.
+- **`not applicable`, reported as `pass` with the reason stated in your evidence** — for the two
+  cases the criterion itself exempts:
+  - **The exact presentation is essential.** A photograph, a screenshot, a logo, a piece of
+    artwork, a medical or scientific image. You cannot restyle a photograph for contrast without
+    destroying what makes it that photograph, and the standard says so. **"This is a photograph"
+    is a complete and correct answer** — say it plainly and move on.
+  - **The graphic is purely decorative** and carries no information at all: a background flourish,
+    a divider, a texture. Say why you concluded it carries nothing.
+
+**Do not confuse this with three checks that look similar.**
+
+- **1.4.3 Contrast (Minimum)** is about *text*, and the scanner measures it. If what you are
+  looking at is words, this is not your question.
+- **1.1.1 Non-text Content** — which you may be asked about the same element — is whether it has
+  a meaningful text alternative. Different question, different answer, and an icon regularly
+  passes one and fails the other. Answer each on its own terms.
+- **The controls themselves are already measured.** Whether a button's border or a text field's
+  edge reaches 3:1 is arithmetic the platform does deterministically, and it has already done it
+  before you were asked. You are being asked about the **pictures** — icons, charts, diagrams,
+  drawn indicators. If the element in front of you is a plain bordered control with no graphic in
+  it, say so and record `pass` with that reason.
+
+**This question is settled by looking, so look.** `get_a11y_screenshots` gives you the picture of
+this element in its surroundings. If the summary listed this element as having no captured image,
+record `uncertain` saying it could not be seen — **never** infer from a class name, a file name,
+an SVG's markup, or what the component is probably called. An `<svg>` whose `fill` attribute says
+`#ccc` may be sitting on a dark panel, where it is perfectly visible.
+
+**Uncertain when:** there is no image of the element, the image is too small to resolve the part
+you would need to judge, or the graphic is animated and what you were given is one frame of it.
 
 ### Step 5: Report each element as you finish it
 

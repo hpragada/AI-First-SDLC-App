@@ -105,6 +105,18 @@ REQUIREMENTS: dict[str, AnswerRequirement] = {
             "Overdue next to the red dot' or 'underline links inside body text'"
         ),
     ),
+    "graphics": _NeedsFix(
+        checker="graphics",
+        needs="which part of the graphic is too faint, and what to change",
+        message=(
+            "a failing `graphics` finding must say what to change in suggested_fix — 1.4.11 is "
+            "breached by a specific part of the picture being too faint against a specific "
+            "background, and 'the icon has low contrast' tells a designer nothing about which "
+            "part or how much. Name the part and the target. e.g. suggested_fix='darken the "
+            "warning triangle's outline from #d9d9d9 to at least #767676 so it reaches 3:1 "
+            "against the white card behind it'"
+        ),
+    ),
     "label": _NeedsTwoQuotedStrings(
         checker="label",
         needs="both strings — the visible label and the accessible name",
