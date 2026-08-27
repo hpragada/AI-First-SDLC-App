@@ -54,6 +54,25 @@ def _worse(a: str, b: str) -> str:
     return a if _RANK.get(a, 9) <= _RANK.get(b, 9) else b
 
 
+def _audited_criteria(version: str = "2.2") -> frozenset[str]:
+    """The criterion numbers this platform audits — Level A and AA, from the loaded standard.
+
+    Read rather than listed. A hardcoded set of 55 numbers here would be a second copy of the
+    standard, in the layer least likely to be revisited when a version changes.
+
+    **An empty answer disables the filter rather than dropping everything.** A database where the
+    standard has not been loaded yet must not silently discard every observation an audit makes;
+    a stray AAA row is a tidiness problem, and losing a real one is not.
+    """
+    from .models import WcagCriterion
+
+    return frozenset(
+        WcagCriterion.objects
+        .filter(version=version, level__in=["A", "AA"])
+        .values_list("number", flat=True)
+    )
+
+
 def record(*, tenant_id, project_id, run_key, route, engine, observations, run_id=None) -> int:
     """Write one engine's observations for one page. Returns how many criterion rows resulted.
 
@@ -82,6 +101,20 @@ def record(*, tenant_id, project_id, run_key, route, engine, observations, run_i
 
     if not best:
         return 0
+    # Only criteria this audit is actually about (#9). axe tags `scrollable-region-focusable` to
+    # **2.1.3**, which is Level AAA and not one of the 55 — so every scanned page was writing a
+    # coverage row for a criterion no report reads, no registry owns and nobody could explain.
+    #
+    # Filtered HERE rather than in `from_scan`, and the layer is the point: what axe said is
+    # axe's statement and is kept whole where it is read (`capture`, `scanner_coverage`), while
+    # what the audit is *about* is a fact only the platform knows. Narrowing a vendor's statement
+    # inside the reader of it is how a difference between two lists stops being visible — which
+    # is the same mistake that hid 1.4.10 for four tasks.
+    known = _audited_criteria()
+    if known:
+        best = {number: value for number, value in best.items() if number in known}
+        if not best:
+            return 0
     with tenant_context(tenant_id):
         for criterion, (outcome, detail) in best.items():
             A11yCriterionCoverage.objects.update_or_create(
