@@ -1031,7 +1031,11 @@ def test_09b_tells_the_suite_where_to_write_the_capture():
 
 def test_09b_names_every_style_key_the_rules_read():
     """A style key missing from the capture reads as "no" and silently stops a whole rule —
-    so the body has to name all six, not "the relevant computed styles"."""
+    so the body has to name every one of them, not "the relevant computed styles".
+
+    Deliberately iterates `STYLE_KEYS` rather than a list written out here: this is the test
+    that has to keep working when the list grows, and it would be no use at all if adding a key
+    meant editing the check that catches a key going missing."""
     from apps.a11y.checkers.rules import STYLE_KEYS
 
     body = (_AGENTS / "09b_test_automation/agent.md").read_text(encoding="utf-8")

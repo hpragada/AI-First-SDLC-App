@@ -71,6 +71,13 @@ MAX_AXE_NODES = 500
 #: refusing out loud rather than storing a document nobody meant to produce.
 MAX_AXE_RULES = 400
 
+#: What one screen's page-level measurements may carry (QA-25). Both are small by construction —
+#: the companion already stops at these numbers and says so — so a document over the limit did
+#: not come from our companion, and is refused rather than trimmed for the same reason every
+#: other bound here is.
+MAX_REFLOW_OFFENDERS = 20
+MAX_CONTRAST_COMPONENTS = 200
+
 
 class CaptureError(ValueError):
     """A capture document could not be read. Carries what was wrong, for a human."""
@@ -248,6 +255,119 @@ def _rule_list(data, key: str, route: str) -> list:
     return [_rule_outcome(row) for row in rows]
 
 
+def _page_measurements(raw, route: str) -> dict:
+    """The two page-level readings axe has no rule for, bounded (QA-25).
+
+    **`measured` is the only field this function will invent, and it invents it as `False`.** A
+    capture from a companion that predates these passes carries nothing here, and the whole
+    contract of `page_rules` is that an absent measurement produces no ruling at all — so the
+    absence has to survive parsing intact. Defaulting it the other way would turn every screen
+    ever captured before today into a page that reflowed cleanly.
+
+    Everything else is passed through with its types checked rather than interpreted. What the
+    numbers mean is `page_rules`, on purpose and in one place: a parser that started deciding
+    what an overflow was would be a second copy of the rule, in the layer least able to test it.
+    """
+    data = _mapping(raw)
+    if not data:
+        return {}
+
+    reflow = _mapping(data.get("reflow"))
+    offenders = reflow.get("offenders")
+    offenders = offenders if isinstance(offenders, list) else []
+    if len(offenders) > MAX_REFLOW_OFFENDERS:
+        raise CaptureError(
+            f"screen {route!r} reports {len(offenders)} elements overflowing at 320px, over "
+            f"the limit of {MAX_REFLOW_OFFENDERS}. Nothing was stored for it."
+        )
+
+    contrast = _mapping(data.get("non_text_contrast"))
+    components = contrast.get("components")
+    components = components if isinstance(components, list) else []
+    if len(components) > MAX_CONTRAST_COMPONENTS:
+        raise CaptureError(
+            f"screen {route!r} reports contrast readings for {len(components)} components, "
+            f"over the limit of {MAX_CONTRAST_COMPONENTS}. Nothing was stored for it."
+        )
+
+    def _number(value) -> int:
+        try:
+            return int(float(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        "reflow": {
+            "measured": bool(reflow.get("measured")),
+            "error": _text(reflow.get("error"), 1_000),
+            "requested_width": _number(reflow.get("requested_width")),
+            "viewport_width": _number(reflow.get("viewport_width")),
+            "content_width": _number(reflow.get("content_width")),
+            "overflow_px": _number(reflow.get("overflow_px")),
+            "offenders": [
+                {
+                    "selector": _text(_mapping(o).get("selector"), MAX_SELECTOR_CHARS),
+                    "tag": _text(_mapping(o).get("tag"), 64).strip().lower(),
+                    "overflow_px": _number(_mapping(o).get("overflow_px")),
+                    # Why the criterion allows THIS element to scroll sideways, in the
+                    # companion's words — blank when it does not. Kept verbatim: it is the
+                    # difference between a defect and a data table, and paraphrasing it here
+                    # would put half the exception in one file and half in another.
+                    "two_d_reason": _text(_mapping(o).get("two_d_reason"), 128),
+                }
+                for o in offenders
+            ],
+        } if reflow else {},
+        "non_text_contrast": {
+            "measured": bool(contrast.get("measured")),
+            "error": _text(contrast.get("error"), 1_000),
+            "counted": _number(contrast.get("counted")),
+            "capped": bool(contrast.get("capped")),
+            "components": [_contrast_component(c) for c in components],
+        } if contrast else {},
+    }
+
+
+def _contrast_component(raw) -> dict:
+    """One component's colour readings, unblended and unjudged.
+
+    Colours travel as the browser's own strings (`rgb(…)`, `rgba(…)`) rather than as numbers.
+    That is deliberate: `page_rules.parse_color` is the single place a colour is turned into
+    channels, and a parser that pre-converted here would be a second implementation of the one
+    piece of arithmetic a contrast claim rests on.
+    """
+    data = _mapping(raw)
+    borders = data.get("borders")
+    stack = data.get("behind_stack")
+    return {
+        "selector": _text(data.get("selector"), MAX_SELECTOR_CHARS),
+        "tag": _text(data.get("tag"), 64).strip().lower(),
+        "type": _text(data.get("type"), 64).strip().lower(),
+        "role": _text(data.get("role"), 64).strip().lower(),
+        "has_text": bool(data.get("has_text")),
+        "is_field": bool(data.get("is_field")),
+        "background": _text(data.get("background"), 64),
+        "background_image": _text(data.get("background_image"), 256),
+        "borders": [
+            {
+                "side": _text(_mapping(b).get("side"), 16),
+                "style": _text(_mapping(b).get("style"), 32),
+                "width": _text(_mapping(b).get("width"), 32),
+                "color": _text(_mapping(b).get("color"), 64),
+            }
+            for b in (borders if isinstance(borders, list) else [])[:4]
+        ],
+        "outline": {
+            "style": _text(_mapping(data.get("outline")).get("style"), 32),
+            "width": _text(_mapping(data.get("outline")).get("width"), 32),
+            "color": _text(_mapping(data.get("outline")).get("color"), 64),
+        },
+        "box_shadow": _text(data.get("box_shadow"), 256),
+        "behind_stack": [_text(s, 64) for s in (stack if isinstance(stack, list) else [])[:12]],
+        "behind_images": bool(data.get("behind_images")),
+    }
+
+
 def _screen(raw) -> dict:
     data = _mapping(raw)
     route = _text(data.get("route") or data.get("url"), 512)
@@ -321,6 +441,12 @@ def _screen(raw) -> dict:
         # Why there is no picture, in the capture's own words. Carried through to the judge, so
         # "could not be seen" is a reported fact rather than an absence someone has to infer.
         "screenshot_error": _text(data.get("screenshot_error"), 1_000),
+        # The two things the rule scanner has no rule for, measured in the browser and ruled on
+        # by `page_rules` (QA-25): whether the page needs sideways scrolling at 320px, and what
+        # colour every control's edge is actually drawn in. `{}` for a capture that carries
+        # neither, which is what an older companion sends and what every reader must read as
+        # "not measured" rather than as "nothing wrong".
+        "page_measurements": _page_measurements(data.get("page_measurements"), route),
         "elements": [_element(e) for e in elements],
     }
 
@@ -451,6 +577,15 @@ def fingerprint(screen: Mapping) -> str:
             json.dumps(list(screen.get(part) or []), sort_keys=True,
                        separators=(",", ":"), default=str).encode("utf-8")
         )
+    # The page-level measurements, for exactly the reason the scanner channels are hashed
+    # (QA-25). A screen carried forward keeps the readings it was carried forward with, so a
+    # layout fix that stops a page overflowing at 320px — or a palette change that lifts a
+    # button's border past 3:1 — has to change this screen's identity, or the merged report
+    # would keep quoting a measurement that is no longer true of the page.
+    digest.update(
+        json.dumps(dict(screen.get("page_measurements") or {}), sort_keys=True,
+                   separators=(",", ":"), default=str).encode("utf-8")
+    )
     # Whether the scanner ran at all changes what the merged report may claim about this
     # screen, so it changes the identity too (QA-16) — same reasoning as the violations above.
     # A screen carried forward from a scanned run must not silently inherit "scanned" when

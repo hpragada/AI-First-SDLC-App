@@ -6,13 +6,19 @@ unit-tested against hand-made objects because structured scanner output did not 
 module is where it starts existing. Everything here reads what the capture stored and turns it
 into the type `triage()` compares AI verdicts against.
 
-**Two sources, and both are needed.**
+**Three sources, and all three are needed.**
 
   * `A11yScreenScan.violations` — the scan of the whole page. Complete, because it does not
     depend on which elements the AI was going to be asked about.
   * `A11yCandidateBundle.axe` — what the scan said about one element the AI *is* being asked
     about. Narrow, but its selector is the same string the candidate carries, which is what
     makes `triage`'s `(route, selector, criterion)` match land.
+  * `A11yScreenScan.page_measurements` — the two criteria axe has no rule for at all, proved
+    from the platform's own browser measurements (QA-25). "The deterministic engine" and
+    "axe-core" were treated as the same thing for four tasks, and 1.4.10 Reflow and 1.4.11
+    Non-text Contrast fell through the gap: recorded as rule-decided, checked by nothing. They
+    arrive here as ordinary `A11yRuleFailure`s so that nothing downstream needs to know they
+    came from somewhere else.
 
 The element-level entry wins where both describe the same thing, for exactly that reason: the
 scan reports axe's own `nodes[].target`, and a selector that is textually different from the
@@ -31,6 +37,7 @@ from dataclasses import dataclass, field
 from apps.tenancy.context import tenant_context
 from integrations.types import A11yRuleFailure
 
+from . import page_rules
 from .selectors import normalise as _norm
 
 #: How the scanner's own severity words read in the report. Kept as a mapping rather than
@@ -142,6 +149,21 @@ def rule_findings_for(tenant_id, project_id, run_id=None) -> RuleScan:
                         evidence=_evidence(rule, impact, help_text, selector),
                     )
                     failures.setdefault(failure.key, failure)
+
+        # The two criteria axe has no rule for, proved from this screen's own measurements
+        # (QA-25). Merged here rather than in a path of their own precisely so they need no
+        # special handling anywhere downstream: they are `A11yRuleFailure`s, they carry a
+        # criterion and a selector, and triage, the ledger, the defect loop and the merged
+        # report all treat them exactly as they treat a scanner violation.
+        #
+        # `setdefault` puts them LAST for a reason. If a future axe ships a reflow rule, or a
+        # client's project pins a scanner that has one, the scanner's own finding is already in
+        # the map under the same `(route, selector, criterion)` key and wins — so the day this
+        # stops being our job, it stops being our job without anyone editing this file.
+        for failure in page_rules.failures_for(
+            route=scan.route, measurements=scan.page_measurements,
+        ):
+            failures.setdefault(failure.key, failure)
 
     # A route that never opened is not a route we looked at (QA-17). `routes` is read by
     # `findings.record_run_findings` as this run's coverage — the set of screens whose absent

@@ -90,7 +90,9 @@ OVER_CAP = (
 class A11yRequest:
     """One thing to judge, and which check should judge it."""
 
-    checker: str                 # alt | semantics | color | label
+    checker: str                 # one of `checkers.rules.CHECKERS` — never restated here,
+                                 # because this comment had said "four" since `structure` was
+                                 # added and would have gone on saying it
     candidate: A11yCandidate
 
     @property

@@ -32,7 +32,7 @@ class A11yJudgmentCache(TenantScopedModel):
     project = models.ForeignKey(
         "projects.Project", on_delete=models.CASCADE, related_name="a11y_judgments"
     )
-    checker = models.CharField(max_length=16)        # alt | semantics | color | label
+    checker = models.CharField(max_length=16)        # one of `checkers.rules.CHECKERS`
     content_hash = models.CharField(max_length=64, db_index=True)
 
     # The judgment itself — the same shape `integrations.types.A11yJudgment` carries.
@@ -219,6 +219,22 @@ class A11yScreenScan(TenantScopedModel):
     #: Recorded on the export and never shown to the tenant — without it a signed statement
     #: can never be traced back to what produced it.
     scanner_version = models.CharField(max_length=64, blank=True, default="")
+
+    #: The page-level measurements the rule scanner has no rule for (QA-25):
+    #: `{"reflow": {...}, "non_text_contrast": {...}}` as `capture._page_measurements`
+    #: normalises them.
+    #:
+    #: **Raw readings, never verdicts.** How wide the content was at a 320px window, and what
+    #: colour every control's edge is drawn in — with nothing blended, nothing compared and no
+    #: threshold applied. `page_rules` is the only place those become a ruling, which is what
+    #: lets a defect raised months ago be re-checked against the numbers that raised it: a
+    #: stored verdict could only ever be re-read, while a stored measurement can be re-argued.
+    #:
+    #: **`{}` means not measured, and it must never be read as measured-and-clean.** Every
+    #: capture taken before this field existed carries `{}`, as does one from a companion too
+    #: old to run the passes — and `page_rules` produces nothing at all from it, so those
+    #: screens report 1.4.10 and 1.4.11 as *not evaluated* rather than as pages that were fine.
+    page_measurements = models.JSONField(default=dict, blank=True)
 
     #: Object-store key of the WHOLE page as it looked, never the image (#1/#3).
     #:

@@ -30,7 +30,7 @@ from hashlib import sha256
 
 from apps.tenancy.context import tenant_context
 
-from . import coverage
+from . import coverage, page_rules
 from .capture import fingerprint, screenshot_bytes
 
 #: Long edge a stored crop is reduced to. Element crops are small already; this only catches a
@@ -232,15 +232,27 @@ def _record_scan(tenant_id, project_id, run_key: str, run_id, screen: dict,
                 "scan_error": str(screen.get("axe_error") or "")[:1_000],
                 "load_error": str(screen.get("load_error") or "")[:1_000],
                 "page_image_ref": inherited,
+                # The narrow-viewport and control-edge readings (QA-25). Stored as they were
+                # taken; `page_rules` is what turns them into failures and coverage, below.
+                "page_measurements": dict(screen.get("page_measurements") or {}),
             },
         )
     # What the scan says about each CRITERION, not just what it failed (QA-24). Written on the
     # same path and for the same reason the scan row is: it costs nothing, and coverage recorded
     # only where the expensive work happens is coverage that silently disappears the second time
     # a screen is captured.
+    # The scanner's own four channels, and — since QA-25 — the two criteria it has no rule for.
+    # Recorded under the SAME `rule` engine, because that is what they are: a deterministic
+    # measurement the platform took because axe does not take it. Giving them an engine of their
+    # own would make a conformance statement read as though a third kind of tool had been
+    # involved, and `_RANK` already collapses several engines' views of one criterion correctly.
     coverage.record(
         tenant_id=tenant_id, project_id=project_id, run_key=run_key, run_id=run_id,
-        route=route, engine="rule", observations=coverage.from_scan(screen),
+        route=route, engine="rule",
+        observations=[
+            *coverage.from_scan(screen),
+            *page_rules.observations_for(screen.get("page_measurements")),
+        ],
     )
     return len(violations)
 
