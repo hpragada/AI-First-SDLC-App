@@ -17,6 +17,14 @@ scale of a whole document.
 supports, and it returns `None` wherever the evidence cannot settle it. The reviewer's own
 verdict always wins, and what they did not change is stated at signing rather than hidden.
 
+**And it only suggests a POSITIVE level where the engine that can settle the criterion actually
+looked** (#6, QA-25). That guard was missing until 27 August, and its absence had a name: axe's
+`video-caption` rule proves a `<video>` has a caption *track*, that pass was recorded as coverage
+for 1.2.2, and this module returned **"Supports"** — a statement telling a buyer the captions met
+Level A when nobody had watched a second of the video. `does_not_support` and
+`partially_supports` are deliberately NOT guarded: a proven failure is a fact about the product
+whichever engine proved it. See `_can_claim_positive`.
+
 **"Risk reduction, not certification."** That sentence is in the drafted body and in
 `DISCLAIMER`, and it is not decoration: automated and AI checks cover part of WCAG, this
 document says what was checked and what was found, and the conformance claim belongs to the
@@ -87,6 +95,28 @@ def _criteria(version: str = "2.2") -> list:
     return sorted(rows, key=lambda r: [int(p) for p in r["number"].split(".")])
 
 
+def _ownership_by_criterion(version: str = "2.2") -> dict[str, tuple[str, bool]]:
+    """{criterion: (owner, must_a_person_always_settle_it)} from the routing registry.
+
+    Platform-wide and tenant-independent — the registry is a committed file loaded under the
+    `0006_wcag_platform_wide` carve-out, so this needs no tenant context and returns the same
+    answer for every client.
+
+    **An empty map is a safe map.** A criterion with no row here gets no owner, and
+    `_can_claim_positive` refuses every positive claim for an owner it does not recognise. So a
+    database where the registry was never loaded produces a statement full of rows waiting for a
+    person — visible, countable and obviously wrong to whoever opens it — rather than a statement
+    full of claims made without knowing who was entitled to make them.
+    """
+    from .models import CriterionOwnership, Tier
+
+    return {
+        row["number"]: (str(row["owner"]), row["tier"] == Tier.HUMAN)
+        for row in CriterionOwnership.objects.filter(version=version).values("number", "owner",
+                                                                            "tier")
+    }
+
+
 def _open_by_criterion(tenant_id, project_id) -> dict[str, list]:
     from .models import A11yFinding
 
@@ -118,7 +148,66 @@ def _adjudicated_by_criterion(tenant_id, project_id) -> dict[str, int]:
     return out
 
 
-def suggest(cover: dict | None, failures: int) -> str | None:
+#: Which coverage engine is capable of SETTLING a criterion the ownership registry gives to this
+#: owner. Read only when a positive claim is about to be made — see `_can_claim_positive`.
+#:
+#: `human` maps to the agentic pass rather than to nothing, because fifteen of the thirty
+#: human-owned criteria are the ones Phase 2's keyboard walk reaches (2.1.1 Keyboard, 2.4.3 Focus
+#: Order, 3.3.1 Error Identification …). The other fifteen are `tier=human` and never reach a
+#: positive suggestion at all, whatever looked at them.
+OWNER_ENGINES: dict[str, frozenset[str]] = {
+    "rule": frozenset({"rule"}),
+    "ai": frozenset({"AI"}),
+    "human": frozenset({"agentic"}),
+}
+
+
+def _can_claim_positive(owner: str | None, always_human: bool, engines) -> bool:
+    """May the evidence in hand support a positive claim about this criterion at all?
+
+    **The check this module was missing, and the bug it caused was not theoretical** (#6, QA-25).
+    axe ships `video-caption`, which proves a `<video>` has a caption *track*. That pass was
+    recorded as coverage for 1.2.2 Captions, no failure existed, and `suggest` returned
+    **"Supports"** — a conformance statement telling a buyer that a product's captions meet
+    Level A when nobody had watched a second of the video. The same shape applied to 1.2.1, and
+    to 2.2.1 Timing Adjustable on the strength of a `meta refresh` rule, and to 2.4.4 Link
+    Purpose on the strength of a link having *any* accessible name.
+    `ownership.partially_flaggable`'s own docstring had promised for months that a partial flag
+    "never licenses reporting a pass" — and nothing in the platform read it. It and
+    `needs_human_always` were imported by the test suite and by nothing else.
+
+    Two questions, in this order:
+
+      * **Is this a criterion a person must always settle?** The fifteen `tier=human` criteria
+        turn on things no machine observes — whether captions are *accurate*, whether a flash is
+        under the seizure threshold, whether an irreversible action is properly confirmed. For
+        those the platform makes no positive suggestion at all, and the reviewer's own verdict is
+        the only thing that can fill the row.
+      * **Did the engine that can decide this actually look?** A criterion whose decider never
+        ran has been touched, not checked. axe firing one narrow rule on a criterion the AI owns
+        is a contribution, and `criteria_touched_by` exists precisely to name contributions as
+        contributions. It is not grounds for a claim.
+
+    **Only the POSITIVE direction is guarded, and that asymmetry is deliberate.** A proven
+    failure is a fact about the product no matter which engine proved it, so `does_not_support`
+    and `partially_supports` are unaffected — a rule scanner that catches a missing caption track
+    has found a real Level A defect, and nothing here may soften it. This is the same one-way
+    rule `journey_rules` and `page_rules` follow: a measurement can prove something wrong and can
+    never, on its own, prove something right.
+    """
+    if always_human:
+        return False
+    allowed = OWNER_ENGINES.get(str(owner or ""))
+    if allowed is None:
+        # An owner we do not recognise — a registry that has grown a value this code has not
+        # heard of. Claim nothing rather than guess; the row goes to the reviewer, which is the
+        # safe direction and is visible in `awaiting_a_person`.
+        return False
+    return bool(allowed & set(engines or ()))
+
+
+def suggest(cover: dict | None, failures: int, *, owner: str | None = None,
+            always_human: bool = False) -> str | None:
     """What the evidence supports, or `None` when it cannot settle it.
 
     `None` is a first-class answer here and the most important one: it is the platform declining
@@ -131,6 +220,7 @@ def suggest(cover: dict | None, failures: int) -> str | None:
       * anything failed somewhere but not everywhere → **partially supports**;
       * a page is still waiting to be checked → **no suggestion** (finish the pass first);
       * something could not be decided → **no suggestion** (a human must);
+      * **the engine that can decide this criterion never looked → no suggestion** (QA-25);
       * checked somewhere with nothing wrong → **supports**;
       * the rule ran everywhere and had nothing to apply to → **not applicable**;
       * nothing looked at all → **not evaluated**.
@@ -140,6 +230,10 @@ def suggest(cover: dict | None, failures: int) -> str | None:
     other is waiting on us. Neither may become "supports" on the strength of the pages that did
     get checked — a criterion is a claim about the pages in scope, not about the subset we
     happened to reach before a budget ran out.
+
+    **`owner` and `always_human` come from the ownership registry and default to the safe
+    values.** A caller that passes neither gets the old behaviour for failures and silence for
+    positive claims, which is the direction an omission should fail in.
 
     Note `failures` outranks the coverage map. An open failure is a fact about the product that
     survives the run that found it, and coverage is a fact about one capture — a criterion with
@@ -159,6 +253,11 @@ def suggest(cover: dict | None, failures: int) -> str | None:
     if "failed" in outcomes:
         return DOES_NOT if outcomes == {"failed"} else PARTIALLY
     if "not_checked" in outcomes or "needs_human" in outcomes:
+        return None
+    # Everything below this line is a POSITIVE claim — "supports" or "not applicable" — and both
+    # are claims a client's procurement team will read as an assurance. Neither may be made on
+    # evidence from an engine that cannot settle this criterion.
+    if not _can_claim_positive(owner, always_human, (cover or {}).get("engines") or ()):
         return None
     if "passed" in outcomes:
         return SUPPORTS
@@ -222,6 +321,7 @@ def criterion_rows(tenant_id, project_id, *, verdicts: dict | None = None) -> li
         cover = coverage.summary(tenant_id, project_id)
     failures = _open_by_criterion(tenant_id, project_id)
     adjudged = _adjudicated_by_criterion(tenant_id, project_id)
+    owners = _ownership_by_criterion()
 
     rows = []
     for crit in _criteria():
@@ -232,7 +332,11 @@ def criterion_rows(tenant_id, project_id, *, verdicts: dict | None = None) -> li
         engines = sorted((cov or {}).get("engines") or set())
         if ruled:
             engines = [*engines, "human"]
-        suggested = suggest(cov, open_count)
+        # Who the registry says decides this criterion, and whether a person must always be the
+        # one to settle it (QA-25, #6). Unknown for a criterion with no registry row, which
+        # `suggest` treats as grounds to claim nothing rather than as grounds to claim anything.
+        owner, always_human = owners.get(number, (None, False))
+        suggested = suggest(cov, open_count, owner=owner, always_human=always_human)
         chosen = (verdicts.get(number) or {}).get("level")
         rows.append({
             "criterion": number,

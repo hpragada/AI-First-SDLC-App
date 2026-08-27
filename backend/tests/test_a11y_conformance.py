@@ -381,8 +381,17 @@ def test_the_platform_declines_to_suggest_when_a_check_could_not_decide(world):
 
 
 def test_the_suggestion_follows_the_evidence(world):
-    assert suggest({"routes": {"/a": "passed"}}, 0) == SUPPORTS
-    assert suggest({"routes": {"/a": "not_applicable"}}, 0) == NOT_APPLICABLE
+    """The evidence-to-verdict mapping, on a criterion whose own decider did the looking.
+
+    `owner` and `engines` are supplied on the positive cases and omitted on the rest, and that
+    asymmetry is the point of QA-25's guard: a failure is a fact whoever proved it, while a
+    positive claim may only be made by the engine the registry says can settle the criterion.
+    See `test_a11y_conformance_guard` for the whole rule.
+    """
+    rule_looked = {"routes": {"/a": "passed"}, "engines": {"rule"}}
+    assert suggest(rule_looked, 0, owner="rule") == SUPPORTS
+    assert suggest({"routes": {"/a": "not_applicable"}, "engines": {"rule"}},
+                   0, owner="rule") == NOT_APPLICABLE
     assert suggest({"routes": {"/a": "failed"}}, 0) == DOES_NOT
     assert suggest({"routes": {"/a": "failed", "/b": "passed"}}, 0) == PARTIALLY
     assert suggest({}, 0) == NOT_EVALUATED
