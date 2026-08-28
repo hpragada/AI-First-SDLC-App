@@ -225,6 +225,65 @@ def test_color_selects_a_filled_indicator_with_no_text():
     assert "color" in checkers_for(dot)
 
 
+def test_color_selects_a_chart_series_drawn_in_a_stroke_colour():
+    """The same shape as the tinted-row case, one level further in.
+
+    `/reports/branch-comparison` draws three branches as three `<polyline>` elements told apart
+    by stroke colour and nothing else. Two things had to be true before that could ever be
+    judged and neither was: the shapes were not offered by the capture, and `stroke` was not a
+    style key, so even offered they carried no colour any rule could read. A `<polyline>` has no
+    text and no background, so both earlier tests here would have passed while the page's only
+    1.4.1 failure went unreported and the page was recorded as checked.
+    """
+    series = element(
+        selector="#chart-branches polyline:nth-of-type(2)",
+        tag="polyline",
+        styles={**{k: "" for k in STYLE_KEYS}, "stroke": "rgb(214, 69, 65)"},
+        parent_styles={**{k: "" for k in STYLE_KEYS}, "stroke": "none"},
+    )
+    assert "color" in checkers_for(series)
+
+
+def test_color_selects_an_area_series_drawn_in_a_fill_colour():
+    """A filled area chart carries its series colour in `fill` rather than `stroke`."""
+    band = element(
+        selector="#chart-branches polygon:nth-of-type(1)",
+        tag="polygon",
+        styles={**{k: "" for k in STYLE_KEYS}, "fill": "rgb(31, 119, 180)"},
+        parent_styles={**{k: "" for k in STYLE_KEYS}, "fill": "none"},
+    )
+    assert "color" in checkers_for(band)
+
+
+def test_color_does_not_claim_every_icon_because_fill_has_a_default():
+    """**The reason `fill` is read for two tags and not for all of them.**
+
+    `getComputedStyle` reports `fill` as opaque black on any SVG element that never set it, so a
+    rule treating a painted fill as meaningful in general would claim every icon on every page,
+    spend the run's judgment budget on decoration, and push real candidates out of the pass. An
+    `<svg>` with the default fill and nothing else is not a colour question.
+    """
+    icon = element(
+        selector="span.bookmark svg",
+        tag="svg",
+        styles={**{k: "" for k in STYLE_KEYS}, "fill": "rgb(0, 0, 0)"},
+        parent_styles={**{k: "" for k in STYLE_KEYS}, "fill": "rgb(0, 0, 0)"},
+    )
+    assert "color" not in checkers_for(icon)
+
+
+def test_a_series_shape_with_no_colour_of_its_own_is_not_claimed():
+    """A shape inheriting its parent's stroke is not singled out by colour, so there is nothing
+    for 1.4.1 to be about."""
+    plain = element(
+        selector="#chart-branches polyline",
+        tag="polyline",
+        styles={**{k: "" for k in STYLE_KEYS}, "stroke": "rgb(0, 0, 0)"},
+        parent_styles={**{k: "" for k in STYLE_KEYS}, "stroke": "rgb(0, 0, 0)"},
+    )
+    assert "color" not in checkers_for(plain)
+
+
 def test_color_selects_a_table_row_tinted_to_carry_a_status():
     """The shape that went unreported on a real page for a whole audit.
 

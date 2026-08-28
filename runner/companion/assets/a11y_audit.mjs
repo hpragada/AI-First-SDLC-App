@@ -107,6 +107,11 @@ const STYLE_KEYS = [
   "font-weight",
   "border-style",
   "background-image",
+  // How a chart series is drawn. A <polyline> has no background-color and no text, so without
+  // these two the one element on a line-chart page that fails 1.4.1 carries no colour at all as
+  // far as the rules can see. The rules read them only for the shapes that draw a series.
+  "stroke",
+  "fill",
 ];
 
 /** The viewport 1.4.10 Reflow is written against: 320 CSS pixels wide, 256 tall.
@@ -292,6 +297,17 @@ async function collectElements(page) {
         // COUNTED, and `rules.explain()` can say which rule declined it; an element never
         // offered is a silence nothing can measure. This turns the second into the first.
         "table", "tr", "ul", "ol", "fieldset", "form", "canvas", "iframe",
+        // The series inside a chart. `svg` is offered and its shapes were not, so a line chart
+        // arrived as one element with no way to say that three lines are told apart by stroke
+        // colour and nothing else — `/reports/branch-comparison` in the fixture, whose only
+        // 1.4.1 defect was never sent to any check while the page was recorded as checked. Same
+        // shape as the `tr` gap above, one level further in.
+        //
+        // Two shapes, not five. `path`, `rect` and `circle` build every icon in an app, and
+        // offering those would spend the run's element budget on decoration and push real
+        // candidates out — a worse bug than the one being fixed. Measured across the fixture's
+        // 78 routes: polyline and polygon add 6 candidates in total, all 6 on the chart pair.
+        "polyline", "polygon",
       ].join(",");
 
       // ── the structural outline ──────────────────────────────────────────────

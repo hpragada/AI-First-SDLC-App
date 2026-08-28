@@ -58,7 +58,23 @@ STYLE_KEYS: tuple[str, ...] = (
     "font-weight",
     "border-style",
     "background-image",
+    # A shape inside a chart is not coloured by `background-color` — it is drawn in `stroke` or
+    # filled with `fill`, and neither was captured. So a line chart whose three series are told
+    # apart by colour alone arrived with every colour it uses invisible to the one rule that
+    # asks about colour. Read only for `SERIES_SHAPES`; see `_series_colour` for why.
+    "stroke",
+    "fill",
 )
+
+#: The SVG shapes that draw a data series. Their colour IS their identity — that is the whole
+#: reason `a11y_audit.mjs` offers them — so unlike an icon they are never decorative.
+#:
+#: **Read for these tags and no others, deliberately.** `fill` computes to opaque black on any
+#: SVG element that never set it, so treating a painted `fill` as meaningful in general would
+#: make every icon on every page a colour candidate and spend the run's judgment budget on
+#: decoration. Restricting it to the two shapes offered for exactly this reason keeps the fix
+#: the size of the bug.
+SERIES_SHAPES = frozenset({"polyline", "polygon"})
 
 #: Elements that are already controls. Their semantics are real, so `semantics` skips them
 #: unless something overrides those semantics (an explicit contradictory `role`, or an `<a>`
@@ -308,10 +324,28 @@ def _looks_like_heading(element: CapturedElement) -> bool:
     )
 
 
+def _series_colour(element: CapturedElement) -> tuple[str, str]:
+    """The property and value a chart series is drawn in, or a pair of blanks.
+
+    Blank for anything that is not a `SERIES_SHAPES` tag, which is what keeps `fill` from
+    claiming every icon in the application — see the note on that constant.
+    """
+    if element.tag not in SERIES_SHAPES:
+        return "", ""
+    for key in ("stroke", "fill"):
+        value = str(element.styles.get(key, "") or "")
+        if _paints(value):
+            return key, value
+    return "", ""
+
+
 def _colour_differs_from_surroundings(element: CapturedElement) -> bool:
     """Something about this element's colour singles it out from what is around it."""
     styles, parent = element.styles, element.parent_styles
     if styles.get("color", "") and styles.get("color") != parent.get("color", ""):
+        return True
+    key, value = _series_colour(element)
+    if key and value != str(parent.get(key, "") or ""):
         return True
     background = styles.get("background-color", "")
     return _paints(background) and background != parent.get("background-color", "")
@@ -533,8 +567,10 @@ def _applies_color(element: CapturedElement) -> bool:
     """
     if not element.rendered:
         return False
-    if not element.text.strip() and not _paints(element.styles.get("background-color", "")):
-        return False        # no text and no fill: there is no colour carrying anything
+    if (not element.text.strip()
+            and not _paints(element.styles.get("background-color", ""))
+            and not _series_colour(element)[0]):
+        return False        # no text, no fill, no series colour: nothing here carries colour
     if _has_second_cue(element):
         return False
     return _colour_differs_from_surroundings(element)

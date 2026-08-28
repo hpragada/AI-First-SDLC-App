@@ -99,16 +99,34 @@ Every selector in this set was produced by running `cssPath()` against the fixtu
 
 ---
 
-## Two coverage gaps this set already exposes
+## Two coverage gaps this set already exposes — one now closed
 
 Both were found while labelling, before any scoring run. They are recorded as normal `fail`
-records, so the harness will report them as never-captured misses against recall.
+records, so the harness reports them as never-captured misses against recall. **The set earning
+its keep before it scored anything is the point worth noticing here.**
 
-**1. The chart series on `/reports/branch-comparison` are never captured.** Three `<polyline>`
-elements distinguished by stroke colour alone. `polyline` is not in the companion's `OFFER`
-list, so these elements are never sent to any check — the page's only 1.4.1 defect cannot be
-found, and the page would be recorded as checked. This is the same shape as the `tr` gap that
-`5af4c53` fixed for `/loans/current`. **3 records: `g-141-0013/0015/0017`.**
+**1. The chart series on `/reports/branch-comparison` are never captured.** — **FIXED
+2026‑08‑28.** Three `<polyline>` elements distinguished by stroke colour alone. `polyline`
+was not in the companion's `OFFER` list, so they were never sent to any check — the page's only
+1.4.1 defect could not be found, and the page was still recorded as checked. Same shape as the
+`tr` gap `5af4c53` fixed for `/loans/current`. **3 records: `g-141-0013/0015/0017`.**
+
+> **Closing it took two changes, not one, and the second was not obvious.** Offering the shapes
+> is necessary and does nothing on its own: a `<polyline>` has no text and no `background-color`,
+> and `stroke` was not a captured style, so every rule would have looked at it, found no colour
+> at all, and correctly declined. The elements would have moved from *never captured* to
+> *captured and claimed by nobody* — which reads better on a coverage report and finds exactly
+> as many defects.
+>
+> So `stroke` and `fill` are now captured, and the colour rule reads them **for `polyline` and
+> `polygon` only**. `fill` computes to opaque black on any SVG element that never set it, so
+> reading it everywhere would make every icon in an application a colour candidate and spend the
+> run's judgment budget on decoration.
+>
+> Verified against the running fixture: all three series report distinct painted strokes against
+> a parent stroke of `none`, and the real rule claims all three. The parent `<svg>`, carrying the
+> default black fill, is not claimed — it goes to `graphics`, which is the right question for
+> it.
 
 **2. The tab strip on `/staff/reports` is never captured for `semantics`.** The container is a
 `<div>` with no role and no handler, and the three tabs are `<a href="#panel-…">`. The semantics
