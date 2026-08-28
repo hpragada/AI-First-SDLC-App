@@ -132,8 +132,33 @@ was not in the companion's `OFFER` list, so they were never sent to any check �
 `<div>` with no role and no handler, and the three tabs are `<a href="#panel-…">`. The semantics
 rule deliberately skips an `<a>` that has an href, on the reasoning that a real link with real
 semantics needs no judgment. That is right in general and may be wrong when the link is dressed
-as a tab. **4 records: `g-412-0005` through `g-412-0008`.** Needs an expert ruling before
-anyone changes the rule — see below.
+as a tab. **4 records: `g-412-0005` through `g-412-0008`**, and the related `/staff/exports`
+case `g-412-0021`. Needs an expert ruling before anyone changes the rule — see below.
+
+> **Still open, and wider than this paragraph says.** Checked on 2026‑08‑28 against the real
+> markup, on the theory that `structure` might be reaching the container even though `semantics`
+> is not — it claims a `<div>` whose children repeat a class, which is what a tab strip usually
+> looks like. It is not reaching it. Both the container and every tab come back claimed by
+> **nothing at all**:
+>
+> ```
+> #report-tabs        (the <div class="tabstrip">)   ->  ()
+> #report-tabs a      (one tab, an <a href>)         ->  ()
+> ```
+>
+> The container escapes `structure` on a detail: the rule looks for a **repeated** child class,
+> and only one of the three tabs carries one (`is-current`). So the elements are captured, every
+> rule declines them, and the page is recorded as checked.
+>
+> **The decision to make is which end to fix, and they are not equivalent.** Narrowing the
+> `<a href>` skip in `semantics` changes how every link in every tenant's application is treated,
+> on the evidence of five records. Teaching `structure` to claim a container whose children are
+> uniform in role rather than in class is narrower and does not touch links at all — but it
+> answers 1.3.1, and the question these records ask is 4.1.2.
+>
+> **Nothing has been changed.** The right first question is not for the code: *is a link dressed
+> as a tab a 4.1.2 failure at all?* If the answer is no, these five records are mislabelled and
+> the fix is in the answer key rather than the platform.
 
 A pass-side label on an element the platform correctly declines to select is **not** a problem:
 `accuracy.py` counts it as `never_looked` and excludes it from every other figure, so the
