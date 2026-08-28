@@ -73,5 +73,10 @@ fmt:  ## Auto-format (ruff format)
 a11y-eval:  ## Internal: score the accessibility checks against the golden set
 	docker compose --profile app run --rm backend sh -c 'python ../docs/web-accessibility/evaluation/scorer/run.py $(ARGS)'
 
+# `env -u DJANGO_SETTINGS_MODULE` is load-bearing. The image exports that variable for the
+# application, and pytest-django reads it on start-up, decides a Django project is expected, and
+# fails collection hunting for a manage.py that is deliberately not there. These tests are
+# standalone on purpose — no Django, no database — so the variable has to be absent for this one
+# command. Without it the whole suite dies before a single test runs.
 a11y-eval-test:  ## Internal: unit-test the scorer (no database, no platform)
-	docker compose --profile app run --rm backend sh -c 'cd ../docs/web-accessibility/evaluation/scorer && python -m pytest tests -q'
+	docker compose --profile app run --rm backend sh -c 'cd ../docs/web-accessibility/evaluation/scorer && env -u DJANGO_SETTINGS_MODULE python -m pytest tests -q'
