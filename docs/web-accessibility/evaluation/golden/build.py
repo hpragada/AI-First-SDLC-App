@@ -26,9 +26,30 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-APP_VERSION = "1.3.0"
-DATASET_VERSION = "0.1.0"
-GENERATED_ON = "2026-08-26"
+#: The fixture these labels were written against. v1.4.0 added sixteen pages and changed
+#: none, so every v0.1.0 record still names the element it named at v1.3.0 — provable with
+#: `git diff --stat`, which shows no existing view modified.
+APP_VERSION = "1.4.0"
+DATASET_VERSION = "0.2.0"
+
+#: When these files were last written. Not the same thing as when a record was labelled.
+GENERATED_ON = "2026-08-28"
+
+#: The two authoring passes. Kept apart because `labelled_on` is provenance: rewriting the
+#: first pass's date to today would quietly claim 99 records were reviewed on a day nobody
+#: looked at them, and provenance that moves when a file is regenerated is not provenance.
+FIRST_PASS_ON = "2026-08-26"        # the 99 records of v0.1.0
+SECOND_PASS_ON = "2026-08-28"       # the 74 added for v0.2.0
+
+#: Which pass the records below belong to. Flipped once, immediately before the v0.2.0 block.
+#:
+#: `LABELLED_AGAINST` is the app version a record was actually authored against, and it is NOT
+#: the manifest's `app_version`. Only the manifest's is read — `labels.check_app_version` gates
+#: on it — so the per-record field is free to stay truthful. The 99 records of v0.1.0 were
+#: written against v1.3.0 and re-verified against v1.4.0; they did not become v1.4.0 records
+#: because a later pass regenerated the file.
+LABELLED_ON = FIRST_PASS_ON
+LABELLED_AGAINST = "1.3.0"
 
 #: Honest provenance. QA-09 wants an expert-adjudicated verdict per record; these are a first
 #: pass drafted from the fixture source for that expert to review, and the field says so rather
@@ -66,6 +87,32 @@ EXPECTED_CANDIDATES = {
     "/account/full-profile": 15,     # labelled form controls
     "/branches": 8,                  # colour-coded indicators
     "/about/terms": 0,               # text only — a clean no-op, not an error
+
+    # The sixteen pages added for v0.2.0, counted by hand from what was placed on each one.
+    #
+    # **These are lower bounds, and the check they feed is coarser than it looks.**
+    # `completeness.py` compares this number against how many (element, checker) claims the run
+    # produced for the route — which counts everything on the page, not only what was planted.
+    # So a page holding five photographs will report a surplus, that surplus is documented as
+    # not a failure, and the number only ever fires when capture on the route collapses.
+    # The sharp per-element version of this check is `harness/verify-selectable.js`, which
+    # asserts that each individual labelled element is still claimed by its own checker.
+    "/about/reading-rooms": 5,          # photographs
+    "/about/our-buildings": 5,
+    "/account/charges": 6,              # colour-coded amounts
+    "/account/statement-of-fees": 6,
+    "/account/membership-tools": 11,    # controls with an accessible name
+    "/help/membership-actions": 11,
+    "/catalogue/saved-searches": 3,     # controls built from spans
+    "/catalogue/my-searches": 3,
+    "/reports/stock-levels": 3,         # containers
+    "/reports/holdings-by-branch": 3,
+    "/reports/issue-figures": 3,
+    "/reports/loan-figures": 3,
+    "/staff/rota": 3,
+    "/staff/staffing-plan": 3,
+    "/events/workshops": 3,
+    "/events/classes": 3,
 }
 
 
@@ -77,6 +124,8 @@ def rec(criterion, route, selector, checker, truth, expected, difficulty,
         "rationale": " ".join(rationale.split()),
         "expected_fix_mentions": fix or [],
         "anchor": anchor,
+        "labelled_on": LABELLED_ON,
+        "labelled_against": LABELLED_AGAINST,
     })
 
 
@@ -477,6 +526,287 @@ rec("2.5.3", "/account/my-loans", "#renew-all", "label", "pass", "uncertain", "a
            "with, the visible text")
 
 
+LABELLED_ON = SECOND_PASS_ON
+LABELLED_AGAINST = "1.4.0"
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# v0.2.0 — 74 records added 2026-08-28, so that every checker reaches a scored sample
+# ══════════════════════════════════════════════════════════════════════════════════
+#
+# **Why these exist.** At v0.1.0 not one checker could produce a number. `accuracy.py` refuses
+# to call a checker measured below 30 scored records, and the ceilings were: alt 20, color 19,
+# label 9, semantics 25, structure 6. More audits would not have moved any of them — the answer
+# key simply did not hold enough records.
+#
+# **The ceiling is not the record count, and that is the trap.** A record only reaches
+# `Score.sample` if `accuracy._record` puts it there, and the rules are asymmetric:
+#
+#     expected `fail`       always counts — as a true positive if found, a false negative if not
+#     expected `pass`       counts ONLY if the checker actually SELECTS the element
+#     expected `uncertain`  never counts; it is scored on calibration instead
+#
+# So a `pass` twin the selection rules skip is a record that can never score. That is why
+# `label` sat at 9 rather than 19: all ten of its pass twins name a control whose accessible
+# name already contains its visible text, and `_applies_label` skips exactly those, correctly —
+# the criterion is met as a matter of fact and there is nothing left to judge. A balanced answer
+# key was producing a completely unbalanced scored sample and nothing said so.
+#
+# **Every one of the 74 elements below was checked against the platform's real selection rules
+# before its label was written** — captured from the running fixture in the companion's own
+# shape, then run through `rules.checkers_for()`. All 74 are claimed by the checker named here,
+# including all 37 pass records. `harness/verify-selectable.js` re-runs that check.
+#
+# **What is deliberately not here.** No `uncertain` records and no `ambiguous` tier: those are
+# where a single labeller's judgment is worth least, and the spec says to author them with the
+# expert present. Nothing for `graphics` / 1.4.11 — see "Not covered, and how to add it" in
+# README.md; the short version is that whoever wrote that checker must not write its answer key.
+#
+# **Citations.** Every defect below names a published WCAG technique, checked against the live
+# W3C document on 2026-08-28 rather than recalled. Where no failure technique covers the case —
+# there is none for "built a table out of divs" — the record cites the sufficient technique it
+# fails to meet and says so in as many words. The 99 records above mostly carry the default
+# anchor; that is the dev's convention and the README's item 3 asks the expert to strengthen
+# them, so the newer records simply start where that request points.
+
+F30 = ("F30: Failure of Success Criterion 1.1.1 and 1.2.1 due to using text alternatives that "
+       "are not alternatives (e.g., filenames or placeholder text)")
+F59 = ("F59: Failure of Success Criterion 4.1.2 due to using script to make div or span a user "
+       "interface control in HTML without providing a role for the control")
+F91 = "F91: Failure of Success Criterion 1.3.1 for not correctly marking up table headers"
+F92 = ("F92: Failure of Success Criterion 1.3.1 due to the use of role presentation on content "
+       "which conveys semantic information")
+F96 = "F96: Failure due to the accessible name not containing the visible label text"
+G14 = ("G14: Ensuring that information conveyed by color differences is also available in text "
+       "(sufficient technique for SC 1.4.1)")
+H48 = ("H48: Using ol, ul and dl for lists or groups of links (sufficient technique for "
+       "SC 1.3.1)")
+H51 = ("H51: Using table markup to present tabular information (sufficient technique for "
+       "SC 1.3.1)")
+ACT_LABEL = ("ACT rule 2ee8b8 'Visible label is part of accessible name' — its label-in-name "
+             "algorithm normalises case and whitespace and treats punctuation as a separator")
+
+
+# ── 1.1.1 Non-text Content · checker `alt` · +10 ──────────────────────────────────
+#
+# Five photographs of rooms, each given a word that names the format instead of describing the
+# picture. The page's prose gives the floor and the staffed hours and never says what any room
+# looks like, so the image is the only place that information exists — which is what makes the
+# placeholder a clear failure rather than a thin-but-survivable name.
+
+ROOMS = [
+    ("#room-local-history", "local history room", "photo",
+     "wide oak map cabinets along two walls, a framed county map above them and a globe on a "
+     "wooden stand"),
+    ("#room-childrens", "children's corner", "image",
+     "a round patterned rug with floor cushions on it, shelves at child height on either side "
+     "and paper bunting across the ceiling"),
+    ("#room-carrels", "study carrels", "picture",
+     "four desks divided by shoulder-height partitions, each with its own reading lamp"),
+    ("#room-newspapers", "newspaper lounge", "graphic",
+     "two armchairs facing a low table, with a tall rack of newspapers on poles beside them"),
+    ("#room-terrace", "garden terrace", "photograph",
+     "a paved terrace with two wooden benches, planters at either end and a low brick wall "
+     "behind"),
+]
+for sel, room, placeholder, shows in ROOMS:
+    rec("1.1.1", "/about/reading-rooms", sel, "alt", "fail", "fail", "clear",
+        f"""The photograph of the {room} is named "{placeholder}". That names the format and
+        withholds everything else: a listener learns an image is present and nothing about what
+        is in it. The picture shows {shows}, and none of that appears anywhere else — the
+        surrounding text gives the floor and the staffed hours only. All five photographs on
+        this page follow the same pattern, so the page is a list of five rooms that cannot be
+        told apart by ear. An alt attribute is present and non-empty, so nothing that only
+        checks for presence has anything to report.""",
+        fix=[room, "describe"], anchor=F30)
+    rec("1.1.1", "/about/our-buildings", sel, "alt", "pass", "pass", "clear",
+        f"""The same photograph of the {room}, named by what it shows: {shows}. A listener
+        learns what the room is like without seeing it, which is what the image is on the page
+        to convey.""")
+
+
+# ── 1.4.1 Use of Color · checker `color` · +12 ─────────────────────────────────────
+#
+# Whether a charge is still owed or already settled is carried by the colour of the amount and
+# by nothing else. Measured on the rendered page: the red is 5.44:1 on white and the green
+# 5.13:1, so both are comfortably legible and 1.4.3 is not in play — but their relative
+# luminances are 0.143 and 0.155, near enough identical, so a reader who cannot separate red
+# from green sees six amounts in the same grey.
+#
+# No failure technique fits. F81 covers required and error fields; F73 covers links. Neither is
+# an amount in a statement, so the citation is the sufficient technique this fails to meet.
+
+FEES = [("#fee-1", "4.20", "still owed", "red"), ("#fee-2", "3.00", "settled", "green"),
+        ("#fee-3", "1.80", "still owed", "red"), ("#fee-4", "2.50", "settled", "green"),
+        ("#fee-5", "0.90", "still owed", "red"), ("#fee-6", "1.20", "settled", "green")]
+for sel, amount, state, colour in FEES:
+    rec("1.4.1", "/account/charges", sel, "color", "fail", "fail", "clear",
+        f"""This charge of GBP {amount} is {state}, and the only thing on the page that says so
+        is that the amount is printed in {colour}. The line carries the date, the title and the
+        reason; it does not carry the state. A key beneath the list explains that red means
+        owed and green means settled, which helps only a reader who can already tell the two
+        apart — a colour key is still colour. Measured as rendered: the two colours differ in
+        hue and are all but identical in lightness, so they do not separate in greyscale
+        either.""",
+        fix=["text", "owed", "settled"], anchor=G14 + " — not met")
+    rec("1.4.1", "/account/statement-of-fees", sel, "color", "pass", "pass", "clear",
+        f"""The same GBP {amount} in the same {colour}, with the word "{state.split()[-1]}"
+        written beside it. The colour still distinguishes the lines and is no longer the only
+        thing that does, which is all 1.4.1 asks.""",
+        anchor=G14 + " — met")
+
+
+# ── 2.5.3 Label in Name · checker `label` · +22 ────────────────────────────────────
+#
+# Eleven controls whose visible text is identical on both pages; only the accessible name
+# differs. On the defect page each name is a well-meant rewrite that drops the words printed on
+# the control, so a speech-input user reading the button aloud activates nothing.
+#
+# **The pass side needed care, and the first attempt was wrong.** For a pass record to score at
+# all, `_applies_label` has to select the element — and it only selects when the visible text is
+# NOT already contained in the name. So a pass twin has to be a case where the two strings
+# genuinely differ and the criterion is still met. The first design used a parenthetical
+# ("Pay (3 charges)" named "Pay"): the ACT rule's algorithm strips parenthesised text and passes
+# it, and axe-core 4.13.0 does not strip it and flags it. Two authoritative implementations
+# disagreeing is the definition of an unclear case, so it was replaced.
+#
+# What is here instead is the family both agree on: the visible label carries a typographic
+# mark — a trailing ellipsis, or a spaced em dash — and the name is the same words without it.
+# Verified in both directions: axe reports all eleven controls on the defect page and none on
+# the twin, and the ACT algorithm agrees on all twenty-two.
+
+ACTIONS = [
+    ("#act-pay", "Pay charges...", "Settle outstanding balance", "Pay charges"),
+    ("#act-renew", "Renew - all items", "Extend the loan period", "Renew all items"),
+    ("#act-collect", "Collect holds...", "Pick up reservations", "Collect holds"),
+    ("#act-return", "Return an item...", "Bring something back", "Return an item"),
+    ("#act-transfer", "Transfer - to another branch", "Move titles between sites",
+     "Transfer to another branch"),
+    ("#act-cancel", "Cancel - outstanding requests", "Withdraw what is queued",
+     "Cancel outstanding requests"),
+    ("#act-receipt", "Print receipt...", "Send a copy of the statement", "Print receipt"),
+    ("#act-update", "Update details...", "Change your contact information", "Update details"),
+    ("#act-remind", "Set reminders...", "Configure notification settings", "Set reminders"),
+    ("#act-replace", "Order a replacement card...", "Request a new membership card",
+     "Order a replacement card"),
+    ("#act-holds", "Manage holds...", "Review your reservations", "Manage holds"),
+]
+for sel, visible, bad_name, good_name in ACTIONS:
+    rec("2.5.3", "/account/membership-tools", sel, "label", "fail", "fail", "clear",
+        f"""The control reads "{visible}" and its accessible name is "{bad_name}", which
+        contains none of the words printed on it. Somebody saying "click {visible.rstrip('.')}"
+        — reading the control aloud, which is the whole way speech input is used — matches
+        nothing, because the name the software compares against never contains what is on
+        screen. All eleven controls on this page are rewritten the same way, so no control on
+        the page can be operated by voice. The rewrites are more descriptive than the labels,
+        which is what makes this worth testing: nothing about the page looks like a mistake.""",
+        fix=[good_name.split()[0]], anchor=F96)
+    rec("2.5.3", "/help/membership-actions", sel, "label", "pass", "pass", "clear",
+        f"""The same control reading "{visible}", named "{good_name}" — the same words without
+        the typographic mark. The two strings are not equal, which is why this element is still
+        offered for judgment, but the criterion is met: the label-in-name comparison treats
+        punctuation as a separator, so the visible text is present in the name as whole words
+        and speaking the label activates the control. Confirmed against axe-core 4.13.0, which
+        reports nothing on this page and all eleven on its twin.""",
+        anchor=ACT_LABEL)
+
+
+# ── 4.1.2 Name, Role, Value · checker `semantics` · +6 ─────────────────────────────
+
+SEARCHES = [("#drop-search-1", "crime fiction"), ("#drop-search-2", "local history"),
+            ("#drop-search-3", "picture books")]
+for sel, which in SEARCHES:
+    rec("4.1.2", "/catalogue/saved-searches", sel, "semantics", "fail", "fail", "clear",
+        f"""The control that removes the saved {which} search is a <span> with a click handler
+        and nothing else. It has no role, so it is announced as ordinary text rather than as a
+        control; it has no tabindex, so it is not in the tab order and cannot be reached from
+        the keyboard at all. Three of them sit on this page, one per saved search, and as far
+        as the accessibility tree is concerned not one of them exists. The only way to delete a
+        saved search is with a mouse.""",
+        fix=["role", "button", "tabindex"], anchor=F59)
+    rec("4.1.2", "/catalogue/my-searches", sel, "semantics", "pass", "pass", "clear",
+        f"""The same control for the {which} search, built as a <span role="button"
+        tabindex="0"> with a key handler for Enter and Space. The role is announced, its visible
+        text supplies the name, and it can be operated without a mouse. Note the role is what
+        keeps this element in scope: a native <button> here would have real semantics, the rule
+        would correctly decline to judge it, and the record could never score.""")
+
+
+# ── 1.3.1 Info and Relationships · checker `structure` · +24 ───────────────────────
+#
+# `structure` was the thinnest checker in the set — six records against twenty-plus for the
+# others — because it shares 1.3.1 with `semantics` and got what was left. It judges containers,
+# so its records come from tables and lists rather than from single controls. Four kinds of
+# container failure, three instances of each.
+
+STOCK = [("#stock-fiction", "literary fiction"), ("#stock-reference", "reference"),
+         ("#stock-childrens", "children's")]
+for sel, subject in STOCK:
+    rec("1.3.1", "/reports/stock-levels", sel, "structure", "fail", "fail", "clear",
+        f"""The {subject} stock figures are a three-column table built out of <div> elements. A
+        sighted reader sees a heading row and five branch rows; a screen reader gets an
+        undifferentiated run of text with no column headers, no row boundaries and no count of
+        rows. "412" is announced as a bare number with nothing to say whether it is copies held
+        or copies on loan, and the reader has no way to know how far down the table they are.
+        Nothing in the markup contradicts itself, so no rule engine has anything to report —
+        the structure is simply absent.""",
+        fix=["table", "th", "scope"], anchor=H51 + " — not met")
+    rec("1.3.1", "/reports/holdings-by-branch", sel, "structure", "pass", "pass", "clear",
+        f"""The same {subject} figures as a real <table> with three <th scope="col"> header
+        cells and the same five body rows. Every value is programmatically associated with its
+        column, so a cell is announced as "On loan, 96" rather than as "96".""",
+        anchor=H51 + " — met")
+
+QUARTERS = [("#issues-q1", "January to March"), ("#issues-q2", "April to June"),
+            ("#issues-q3", "July to September")]
+for sel, quarter in QUARTERS:
+    rec("1.3.1", "/reports/issue-figures", sel, "structure", "fail", "fail", "clear",
+        f"""The {quarter} table is a real four-column <table> whose heading cells are <td>
+        styled to look like headings — uppercase, bold, tinted background. It has three body
+        rows and four columns, so a figure in the third column is announced as a bare number
+        with nothing to say it means "Renewals". This is the shape of failure the `structure`
+        checker was added for: the table is not pretending to be anything else, so `semantics`
+        never reaches it, and the page would otherwise be recorded as satisfying 1.3.1 with its
+        tables unexamined.""",
+        fix=["th", "scope"], anchor=F91)
+    rec("1.3.1", "/reports/loan-figures", sel, "structure", "pass", "pass", "clear",
+        f"""The same {quarter} table with four <th scope="col"> header cells and the same three
+        body rows. Identical to the eye, correct in the tree.""",
+        anchor=H51 + " — met")
+
+ROTA = [("#rota-week-1", "3 August"), ("#rota-week-2", "10 August"),
+        ("#rota-week-3", "17 August")]
+for sel, week in ROTA:
+    rec("1.3.1", "/staff/rota", sel, "structure", "fail", "fail", "clear",
+        f"""The rota for the week beginning {week} is marked up correctly — a <table> with four
+        <th scope="col"> header cells — and then carries role="presentation", which throws all
+        of it away. The role propagates to the rows and cells, so a screen reader announces a
+        run of names with no shifts, no branches and no table at all. This is the case where
+        the author did the work and cancelled it in one attribute, and it is deliberately not
+        skipped: role="presentation" is a claim that the content carries no structure, and
+        whether that claim is true is the whole question 1.3.1 asks.""",
+        fix=["presentation", "role", "remove"], anchor=F92)
+    rec("1.3.1", "/staff/staffing-plan", sel, "structure", "pass", "pass", "clear",
+        f"""The same rota for the week beginning {week}, without the role. The header cells it
+        already carried are exposed, and each name is announced with its shift and its
+        branch.""")
+
+TERMS = [("#workshops-spring", "spring"), ("#workshops-summer", "summer"),
+         ("#workshops-autumn", "autumn")]
+for sel, term in TERMS:
+    rec("1.3.1", "/events/workshops", sel, "structure", "fail", "fail", "clear",
+        f"""The {term} workshops are a list built out of <div> elements, each line beginning
+        with a bullet character. The bullet is text, not list markup, so a screen reader
+        announces five separate runs of text with no count, no start and no end. "List, five
+        items" is what is missing, and it is what a listener uses to decide whether to skip the
+        section or read it — a decision a sighted reader makes in a glance from the shape of
+        the page.""",
+        fix=["ul", "li", "list"], anchor=H48 + " — not met")
+    rec("1.3.1", "/events/classes", sel, "structure", "pass", "pass", "clear",
+        f"""The same five {term} workshops as a real <ul> with five <li>. The count and the
+        boundaries come free from the markup.""",
+        anchor=H48 + " — met")
+
+
 # ══════════════════════════════════════════════════════════════════════════════════
 # emit
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -492,7 +822,7 @@ def main() -> None:
         flat = criterion.replace(".", "")
         by_criterion[criterion].append({
             "id": f"g-{flat}-{number:04d}",
-            "app_version": APP_VERSION,
+            "app_version": record["labelled_against"],
             "route": record["route"],
             "selector": record["selector"],
             "checker": record["checker"],
@@ -503,7 +833,7 @@ def main() -> None:
             "rationale": record["rationale"],
             "expected_fix_mentions": record["expected_fix_mentions"],
             "labelled_by": LABELLED_BY,
-            "labelled_on": GENERATED_ON,
+            "labelled_on": record["labelled_on"],
             "relabel_verdict": None,
             "relabel_on": None,
             "adjudication": None,
@@ -529,11 +859,15 @@ def main() -> None:
         "notes": (
             "INTERNAL — Edvensoft accessibility evaluation data. Not a tenant feature. Must "
             "never be read by tenant-facing code or written to tenant tables. "
-            "v0.1 is for proving the harness only — DO NOT PUBLISH THESE NUMBERS and do not "
+            "v0.2 is still for proving the harness — DO NOT PUBLISH THESE NUMBERS and do not "
             "gate on them (GOLDEN_DATASET_SPEC §5). Every verdict is an unadjudicated draft "
             "awaiting expert review; `labelled_by` says so on every record. No blind re-label "
             "round has been run, so `relabel_agreement` is null. Single-labeller dataset — see "
-            "GOLDEN_DATASET_SPEC §6 for the limitation that inherits."
+            "GOLDEN_DATASET_SPEC §6 for the limitation that inherits. "
+            "Five of the platform's six AI checkers are covered; `graphics` (1.4.11 Non-text "
+            "Contrast) has no records, deliberately and not by oversight — see 'Not covered, "
+            "and how to add it' in README.md, which names what a future author needs and the "
+            "one constraint on who may write them."
         ),
     }
     (HERE / "manifest.json").write_text(
