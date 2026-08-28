@@ -47,6 +47,27 @@ FILES = {
 
 records: list[dict] = []
 
+#: How many candidates each completeness page is known to hold, counted by hand from the page
+#: source (PROVING_GROUND_APP_SPEC §9). `scorer/run.py` reads this to check the FIRST of the two
+#: transitions a run makes — expected -> captured -> judged. Without it only the second half is
+#: checked, and the report says so.
+#:
+#: **It lives here and not in the app**, for the same reason no route names its own defect: a
+#: page that advertises how many problems it holds tells the judge the answer. It is also not
+#: derived from the DOM by the same selector list the companion uses — a count produced by the
+#: capturing code could never disagree with it, so the check would always pass and prove
+#: nothing. A person counts them; that is the whole point.
+#:
+#: `harness/count-candidates.js` asserts the same five numbers against the running app. The two
+#: agreeing is itself a check, so keep them in step.
+EXPECTED_CANDIDATES = {
+    "/catalogue/browse-all": 12,     # images
+    "/staff/bulk-actions": 20,       # interactive controls
+    "/account/full-profile": 15,     # labelled form controls
+    "/branches": 8,                  # colour-coded indicators
+    "/about/terms": 0,               # text only — a clean no-op, not an error
+}
+
 
 def rec(criterion, route, selector, checker, truth, expected, difficulty,
         rationale, fix=None, anchor="none — judgment call, see rationale"):
@@ -491,9 +512,11 @@ def main() -> None:
 
     for criterion, filename in FILES.items():
         path = HERE / filename
+        # newline="\n" so a run on Windows does not rewrite all five files with CRLF and
+        # show every record as changed when not one label moved.
         path.write_text(
             json.dumps(by_criterion[criterion], indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8")
+            encoding="utf-8", newline="\n")
         print(f"  {filename:38} {len(by_criterion[criterion]):3} records")
 
     manifest = {
@@ -501,6 +524,7 @@ def main() -> None:
         "app_version": APP_VERSION,
         "generated_on": GENERATED_ON,
         "counts": counts,
+        "expected_candidates": EXPECTED_CANDIDATES,
         "relabel_agreement": None,
         "notes": (
             "INTERNAL — Edvensoft accessibility evaluation data. Not a tenant feature. Must "
@@ -513,7 +537,7 @@ def main() -> None:
         ),
     }
     (HERE / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
 
     total = sum(counts.values())
     print(f"  {'manifest.json':38} {total:3} records total")

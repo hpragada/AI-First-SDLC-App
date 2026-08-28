@@ -9,6 +9,13 @@
     "1.4.1": 23,
     "2.5.3": 20
   },
+  "expected_candidates": {
+    "/catalogue/browse-all": 12,
+    "/staff/bulk-actions": 20,
+    "/account/full-profile": 15,
+    "/branches": 8,
+    "/about/terms": 0
+  },
   "relabel_agreement": null,
   "notes": "INTERNAL — Edvensoft accessibility evaluation data. Not a tenant feature. Must never be read by tenant-facing code or written to tenant tables. v0.1 is for proving the harness only — DO NOT PUBLISH THESE NUMBERS and do not gate on them (GOLDEN_DATASET_SPEC §5). Every verdict is an unadjudicated draft awaiting expert review; `labelled_by` says so on every record. No blind re-label round has been run, so `relabel_agreement` is null. Single-labeller dataset — see GOLDEN_DATASET_SPEC §6 for the limitation that inherits."
 }
