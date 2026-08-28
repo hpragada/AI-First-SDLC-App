@@ -680,6 +680,23 @@ for sel, amount, state, colour in FEES:
 # mark — a trailing ellipsis, or a spaced em dash — and the name is the same words without it.
 # Verified in both directions: axe reports all eleven controls on the defect page and none on
 # the twin, and the ACT algorithm agrees on all twenty-two.
+#
+# **These eleven pass records no longer score, and that is the correct outcome.** Building them
+# exposed why: `_applies_label` was comparing the two strings letter by letter, so a trailing
+# ellipsis was enough to make it think the strings differed and ask the judge. Compared the way
+# the criterion is actually written — whole words, punctuation as a separator — these controls
+# are provably fine and there is nothing to judge, so the rule now skips them.
+#
+# The same comparison was also hiding real failures: a button reading "Search" named "Research
+# tools" was treated as satisfying the criterion, because the letters of *search* sit inside
+# *research*. Fixed on 2026-08-28 (RESEARCH_CORRECTIONS R21), which cost `label` ten of the
+# thirty records it needs and bought back every failure of that shape.
+#
+# **The records are kept rather than deleted.** They are honest pass labels on elements the
+# platform correctly declines, `accuracy.py` excludes them from every figure, and they document
+# why 2.5.3 cannot have a balanced sample. If someone ever reverts the comparison to letters,
+# `verify-selectable.js` will show `label` climbing back to 31 and these eleven leaving the
+# inert list — which is the signal that something went backwards.
 
 ACTIONS = [
     ("#act-pay", "Pay charges...", "Settle outstanding balance", "Pay charges"),

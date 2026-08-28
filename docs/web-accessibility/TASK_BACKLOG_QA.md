@@ -374,17 +374,39 @@ Before we trust these checks in front of tenants, *we* need to measure how often
 
 | ID | Title | Type | Depends On | Status |
 |----|-------|------|-----------|--------|
-| QA‑09 | Build the internal golden set (team‑only) | Internal | QA‑03 | ⏸ |
+| QA‑09 | Build the internal golden set (team‑only) | Internal | QA‑03 | 🟡 |
 | QA‑10a | Create the local accuracy-harness entry point | Internal | — | 🟢 |
 | QA‑10 | Build the internal accuracy harness (team‑only) | Internal | QA‑10a | 🟢 |
 
-**QA‑09 — Build the internal golden set (team‑only)** — **⏸ PARKED (2026‑08‑17)**
-- **Epic:** E‑EVAL · **Story:** US‑G1 · **Type:** Internal (not a tenant feature) · **Status:** ⏸ Parked (2026‑08‑17) · **Depends On:** QA‑03 · **Blocks:** — *(was QA‑10; see D‑A11Y‑63)*
-  > **D‑A11Y‑62 — Parked, not cancelled (team, 2026‑08‑17).** This task is **people work, not code**: an accessibility expert hand-labelling ~250 judgements, then a second blind pass three weeks later, against screens that are still being prepared. Nothing can be built to make that go faster. It is parked until the screens exist and the QA Lead's time is scheduled as a named piece of work.
+**QA‑09 — Build the internal golden set (team‑only)** — **🟡 IN PROGRESS — v0.2.0 drafted, awaiting expert adjudication**
+- **Epic:** E‑EVAL · **Story:** US‑G1 · **Type:** Internal (not a tenant feature) · **Status:** 🟡 In Progress (un‑parked 2026‑08‑26) · **Depends On:** QA‑03 · **Blocks:** — *(was QA‑10; see D‑A11Y‑63)*
+  > **UN‑PARKED 2026‑08‑26, and the reason it was parked no longer holds.** D‑A11Y‑62
+  > below parked this because the screens to label did not exist. They do now: the Meridian
+  > Library fixture was built for exactly this, and the answer key has been written against it.
+  >
+  > | | |
+  > |---|---|
+  > | v0.1.0, 2026‑08‑26 | 99 records over 5 criteria, app v1.3.0 |
+  > | v0.2.0, 2026‑08‑28 | 173 records, app v1.4.0 — 16 pages added so every checker could reach a scored sample |
+  >
+  > **What is done:** the dataset exists, is versioned, is generated from one authored table, and
+  > is asserted by five harness checks. Five of the platform's six AI checkers can produce a
+  > number; `graphics` (1.4.11) deliberately has none — see "Not covered, and how to add it" in
+  > `evaluation/golden/README.md`.
+  >
+  > **What is NOT done, and it is the acceptance criterion:** every record still reads
+  > `"labelled_by": "draft-unadjudicated"`. These are a first pass for the QA Lead to review, not
+  > expert verdicts. **The blind second pass (spec §6) has not happened either.** Until both do,
+  > scoring against this set measures how often the checkers agree with a careful draft — not how
+  > often they are right — and no number from it may be published. **That is the remaining work
+  > on this task, and it is still people work.**
+  >
+  > **D‑A11Y‑62 — Parked, not cancelled (team, 2026‑08‑17).** *(Superseded above; kept because the
+  > costs it lists are the reason the remaining adjudication work matters.)* This task is **people work, not code**: an accessibility expert hand-labelling ~250 judgements, then a second blind pass three weeks later, against screens that are still being prepared. Nothing can be built to make that go faster. It is parked until the screens exist and the QA Lead's time is scheduled as a named piece of work.
   > **What parking costs, stated so it is a decision and not a surprise.** (1) **Recall stays unmeasurable.** Live review verdicts tell us *of the findings we reported, how many were real* (precision); they can never tell us *of the real problems on the page, how many we stayed silent about*, because nobody reviews an element the checkers never flagged. Only the golden set answers that. (2) The **0.80 triage threshold stays an unmeasured placeholder** (see QA‑06) — the golden set was the thing D8 said would settle it, and it now has no date. (3) *Not* a cost, recorded here so nobody re-parks the wrong task: **"is the review queue noisy?" remains answerable** without the golden set, because the confirmed/rejected split among reviewed findings is exactly that measurement (`RESEARCH_CORRECTIONS.md` R11 / D7).
   > **The stated accuracy bar survives parking.** The one number in the research — *"≥ 85% on high-confidence findings"* — is a **precision** target, and precision is exactly what live adjudications measure. ~~So QA‑22 can be satisfied without this task.~~ **Superseded 2026‑08‑18 (D‑A11Y‑82): QA‑22 does not read this number at all, so there is nothing for it to satisfy.** The bar is still worth measuring — it is what tells us, and a client, how good these checks are. "We don't know what it misses" remains true, and must be said out loud to any client, until this is un-parked.
 - **Description:** Before we put these AI checks in front of tenants, we (Edvensoft) need an answer‑key to measure how often they're right — a set of real screens we've labelled by hand against WCAG 2.2. This is our internal quality control and must never ship to tenants. In build terms: assemble a labelled dataset of screens/components with the correct WCAG 2.2 verdict per relevant criterion, adjudicated by an accessibility expert; store it inside Edvensoft's own repo/CI, versioned; keep it entirely out of tenant databases and the platform UI. Edge case: any disagreement between two labellers is resolved by a third adjudication and the final call recorded — the golden set must be trustworthy or the numbers it produces are meaningless.
-  > **Status (2026‑08‑12).** The SME is a **QA Lead team member**; the screens to label are **not ready yet (in progress)**. This does **not** block the critical path — ~~QA‑09 and QA‑10 gate only **QA‑22** (Phase 2)~~ **superseded 2026‑08‑17: QA‑09 now gates nothing at all; QA‑10 alone gates QA‑22 (D‑A11Y‑63)**. M0 and M1 proceed without them. Start this task when the screens exist.
+  > **Status (2026‑08‑12, superseded 2026‑08‑26 — the screens now exist).** The SME is a **QA Lead team member**; the screens to label were **not ready yet (in progress)**. This does **not** block the critical path — ~~QA‑09 and QA‑10 gate only **QA‑22** (Phase 2)~~ **superseded 2026‑08‑17: QA‑09 now gates nothing at all; QA‑10 alone gates QA‑22 (D‑A11Y‑63)**. M0 and M1 proceed without them. Start this task when the screens exist.
 - **Acceptance Criteria:**
   - [ ] Given the dataset, when inspected, then each item has an expert‑adjudicated verdict per relevant criterion and a version tag.
   - [ ] Given the platform code, when searched, then the golden set is never referenced by tenant‑facing code or stored in tenant data.

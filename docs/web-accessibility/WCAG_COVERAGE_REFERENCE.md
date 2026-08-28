@@ -299,11 +299,18 @@ As of today it can produce a number for **five of the six AI checkers**:
 | Checker | Criteria | Records that can score | Measurable? |
 |---|---|---|---|
 | `alt` | 1.1.1 | 30 | yes |
-| `color` | 1.4.1 | 31 | yes |
-| `label` | 2.5.3 | 31 | yes |
+| `color` | 1.4.1 | 32 | yes |
+| `label` | 2.5.3 | 20 | **recall only** — see below |
 | `semantics` | 1.3.1, 4.1.2 | 31 | yes |
 | `structure` | 1.3.1 | 30 | yes |
 | **`graphics`** | **1.4.11** | **0** | **no — none, ever** |
+
+**`label` is short by ten and cannot be made otherwise.** The rule correctly skips any control
+whose accessible name already contains its visible label, so the only controls that reach the
+judge are ones where the words genuinely differ — and those are either real failures or
+genuinely arguable. A clearly-correct example is, by definition, one the check skips. **Recall
+for 2.5.3 is meaningful; precision is not**, because no correct examples remain that it could
+get wrong. Recorded in `evaluation/scorer/selectable.py`; see `RESEARCH_CORRECTIONS.md` R21.
 
 **`graphics` has no accuracy evidence of any kind and this is deliberate.** The checker and the
 answer key would have the same author, which measures self-consistency rather than correctness.

@@ -93,10 +93,22 @@ and every check in the harness was green.** Written up as `RESEARCH_CORRECTIONS.
 | Checker | Could score at v0.1.0 | Added | Can score now |
 |---|---|---|---|
 | `alt` | 20 | +10 | 30 |
-| `color` | 19 | +12 | 31 |
-| `label` | 9 | +22 | 31 |
+| `color` | 19 | +12 | **32** |
+| `label` | 9 | +22 | **20** — see below |
 | `semantics` | 25 | +6 | 31 |
 | `structure` | 6 | +24 | 30 |
+
+Three selection rules were corrected on the same day, after the records were written, and two of
+those numbers moved because of it. `color` gained one when a border stopped counting as a
+non-colour cue (R19). `label` **lost eleven** when the comparison behind it was corrected from
+letters to words (R21) — the records became provably-fine controls the checker rightly skips.
+
+**`label` is short by ten and cannot be made otherwise.** After the correction, the only controls
+that reach the judge are ones where the words genuinely differ, and those are either real
+failures or genuinely arguable. A clearly-correct example is, by definition, one the check skips.
+So 2.5.3 has no balanced sample to be had: **recall for it is meaningful, precision is not.**
+Recorded in `scorer/selectable.py` under `KNOWN_SHORTFALL`, which reports it and does not fail —
+while any shortfall that is *not* recorded there still fails.
 
 **Every one of the 74 elements was checked against the platform's real selection rules before
 its label was written** — captured from the running fixture in the companion's own shape, then
@@ -236,12 +248,16 @@ Every selector in this set was produced by running `cssPath()` against the fixtu
 
 ---
 
-## Three coverage gaps this set exposed — one closed, two open
+## Three coverage gaps this set exposed — all three now closed
 
-All three were found while labelling, before any scoring run. Each is recorded as a normal
-`fail` record, so the harness reports it as a never-captured miss against recall rather than as a
-special case. **The set earning its keep before it scored anything is the point worth noticing
-here** — and it has now done so three times, on three different checkers.
+All three were found while labelling, before any scoring run, and all three were closed on
+2026‑08‑28 once the team had ruled on the two that changed platform behaviour. Each is recorded
+as a normal `fail` record, so the harness reported it as a never-captured miss against recall
+rather than as a special case.
+
+**The set earning its keep before it scored anything is the point worth noticing here** — three
+real defects on three different checkers, found by writing down what the right answer was and
+checking whether the platform could even be asked the question.
 
 **1. The chart series on `/reports/branch-comparison` are never captured.** — **FIXED
 2026‑08‑28.** Three `<polyline>` elements distinguished by stroke colour alone. `polyline`
@@ -288,15 +304,25 @@ case `g-412-0021`. Needs an expert ruling before anyone changes the rule — see
 > and only one of the three tabs carries one (`is-current`). So the elements are captured, every
 > rule declines them, and the page is recorded as checked.
 >
-> **The decision to make is which end to fix, and they are not equivalent.** Narrowing the
-> `<a href>` skip in `semantics` changes how every link in every tenant's application is treated,
-> on the evidence of five records. Teaching `structure` to claim a container whose children are
-> uniform in role rather than in class is narrower and does not touch links at all — but it
-> answers 1.3.1, and the question these records ask is 4.1.2.
+> **FIXED 2026‑08‑28**, on the team's ruling that a link dressed as a tab is a 4.1.2 failure.
 >
-> **Nothing has been changed.** The right first question is not for the code: *is a link dressed
-> as a tab a 4.1.2 failure at all?* If the answer is no, these five records are mislabelled and
-> the fix is in the answer key rather than the platform.
+> The worry about narrowing the `<a href>` skip was that it changes how every link in every
+> tenant's application is treated. So the narrowing was made on a fact about behaviour rather
+> than about styling: **an in-page link does not navigate.** "A real link with real semantics
+> needs no judgment" holds for a link that goes somewhere; it is not safely true of one that
+> stays on the page, which may be a tab, a disclosure or a toggle wearing an anchor.
+>
+> Measured before it was written, so the blast radius is known rather than hoped for: the whole
+> fixture holds **four in-page links against 228 ordinary ones**, so this asks about 1.7% of the
+> anchors on the site and leaves every real navigation link exactly where it was.
+>
+> The container is claimed too, by the same measure — a `div` holding three or more in-page
+> links. One tab cannot tell you whether it is part of a tab list, and the relationship between
+> the strip and the panels below it lives on the container or nowhere. Exactly **one** container
+> in the fixture matches.
+>
+> All four records now reach the checker they name, so they can be found rather than only
+> missed.
 
 **3. A field whose error state is a red border is invisible to the colour check — because it has
 a border.** Found 2026‑08‑28 while planting 1.4.1 material for v0.2.0. `_has_second_cue` treats
@@ -311,11 +337,20 @@ too and cannot score.
 > and it is about links in prose. So the commonest way on the web to mark a field invalid is
 > decided by no engine the platform runs.
 >
-> **Nothing has been changed.** The obvious fix — ask whether the border *differs from its
-> surroundings* rather than whether one exists — is one line and widens what the colour check
-> judges on every page of every tenant's application, against a per-run budget of 200 elements.
-> Same shape of decision as gap 2: a person rules, then it gets built. Full write-up in
-> `../RESEARCH_CORRECTIONS.md` R19.
+> **FIXED 2026‑08‑28**, on the team's ruling, by removing the border from the second-cue test
+> entirely.
+>
+> Every narrower option was measured first and none of them work. Comparing the border's colour
+> against the parent's saves four candidates out of three hundred, because a parent almost never
+> has a border to compare against; comparing it against the element's own text colour saves
+> none. There is no way to tell a decorative border from a signalling one from what a single
+> element carries, so the judge decides — the same trade `_repeats_a_child_class` already makes
+> and states: it costs a judgment on things that turn out to be fine, and that is the direction
+> worth being wrong in.
+>
+> Cost: **+300 colour candidates across 94 routes**, against the 901 already selected. Both
+> records on this pair now score, and `color`'s reachable sample went from 31 to 32. Full
+> write-up in `../RESEARCH_CORRECTIONS.md` R19.
 
 A pass-side label on an element the platform correctly declines to select is **not** a problem in
 itself: `accuracy.py` counts it as `never_looked` and excludes it from every other figure, so the

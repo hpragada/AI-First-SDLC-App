@@ -347,9 +347,8 @@ those criteria was never evidence of anything.
 
 ## R19 — An element with a border is invisible to the colour check, and a coloured border is the commonest error cue there is
 
-**Found 2026‑08‑28**, while planting 1.4.1 material for the accuracy dataset. **Not fixed** — the
-fix is a platform-wide behaviour change and needs a ruling first. Recorded so the ruling can be
-made on evidence.
+**Found 2026‑08‑28**, while planting 1.4.1 material for the accuracy dataset.
+**Fixed the same day**, once the team had ruled on it — see the end of this entry.
 
 **What is true.** `_applies_color` skips any element `_has_second_cue` returns true for, and one
 of the things that returns true is a `border-style` other than `none`:
@@ -397,17 +396,31 @@ its value.** A border, an underline and an icon are cues only when they distingu
 from its neighbours — which is what `_colour_differs_from_surroundings` already does for colour,
 and what `_has_second_cue` does not do for anything.
 
-**The ruling needed, and why it is not being made here.** The obvious change is to ask whether
-the border differs from the surrounding elements' border rather than whether one exists. That is
-one line, and it widens what the colour check judges on **every page of every tenant's
-application** — 219 more candidates on a fixture of 78 pages, against a per-run judgment budget
-of 200 elements. Narrowing a skip is cheap to write and expensive to be wrong about, so it wants
-the same treatment as the tab-strip question in `golden/README.md`: decided by a person, then
-built.
+**Every narrower option was measured and none of them work.** The obvious idea is to compare
+the border against something rather than merely noticing it exists. Measured across 94 routes,
+against the 901 elements the colour check already selects:
 
-**What it changes for a client today.** An audit will not report a field whose only error
-indication is a red border. That is the single most common way applications signal an invalid
-field, and a clean 1.4.1 result should not be read as evidence about it.
+| Option | Extra candidates |
+|---|---|
+| drop the border test entirely | **+300** |
+| a cue unless the border's colour differs from the parent's | +296 |
+| a cue unless the border's colour differs from the element's own text colour | +300 |
+| a cue only when the border's *style* differs and its colour matches | +0 — never fires |
+
+The middle two save four candidates out of three hundred and cost a new captured property,
+because a parent almost never has a border to compare against. There is no way to tell a
+decorative border from a signalling one from what a single element carries.
+
+**Fixed 2026‑08‑28 by removing the border from the second-cue test**, on the team's ruling. The
+judge now decides, which is the trade `_repeats_a_child_class` already makes and states in as
+many words: it costs a judgment on things that turn out to be fine, and that is the direction
+worth being wrong in. The two golden records on `/help/report-a-problem` and its twin are now
+both selected, and `color`'s reachable sample went from 31 to 32.
+
+**What it changed for a client.** Audits from this date report a field whose only error
+indication is a red border. Before it, they could not — and that is the single most common way
+applications signal an invalid field, so a clean 1.4.1 result from an earlier audit is not
+evidence about it.
 
 ---
 
@@ -470,6 +483,52 @@ which every one of ours does, deliberately — reshapes the distribution it is m
 key balanced before that filter can be lopsided after it. Any evaluation set for a component
 that selects its own work needs to be balanced **downstream** of the selection, and needs a check
 that says so.
+
+---
+
+## R21 — The label check compared letters where the standard compares words
+
+**Found 2026‑08‑28**, while building pass examples for 2.5.3. **Fixed the same day.**
+
+**What was true.** Before asking the AI about a control, `_applies_label` checked whether the
+accessible name already contained the visible label — and did it with a plain substring test.
+
+A button reading **"Search"** whose accessible name is **"Research tools"** passed that test,
+because the letters of *search* sit inside *research*. The rule concluded the criterion was
+already satisfied and never asked anybody. It is not satisfied: a speech-input user looks at the
+button, says "Search", and nothing happens, because there is no such **word** in the name.
+
+Both the criterion's own ACT rule (`2ee8b8`) and axe-core compare **whole words**, treating
+punctuation as a separator. We compared characters.
+
+**Two opposite errors that cancelled out on a scoreboard.** The same test also asked about
+controls it should have left alone. A button reading "Update details…" named "Update details"
+differs by one character, so the rule sent it to the judge — when by the standard it is
+provably fine and there is nothing to judge.
+
+**Fixed** by comparing word sequences after replacing punctuation with spaces, Unicode-aware so
+that accented and non-Latin labels survive (a naive `[a-z0-9]` filter would empty every label in
+any language but English and make every control look like a mismatch).
+
+**What it cost, and why the cost was accepted.** Eleven of the golden set's `label` pass records
+were exactly the "differs by a typographic mark" shape. Under the corrected rule they are
+provably-fine controls the checker rightly skips, so they stopped scoring and `label` fell from
+31 reachable records to **20** — below the 30 the scorer requires.
+
+**That gap cannot be closed by writing more records, and the reason is worth understanding.**
+After the fix, the only controls that reach the judge are ones where the words genuinely differ
+— and those are either real failures or genuinely arguable cases. **A clearly-correct example
+is, by definition, one the check skips.** So 2.5.3 cannot have a balanced scored sample at all.
+Recall for that checker is meaningful; precision is not, because no correct examples remain that
+it could get wrong. Recorded in `scorer/selectable.py`'s `KNOWN_SHORTFALL` with that reasoning,
+so the harness reports it rather than failing, and an *unrecorded* shortfall still fails.
+
+**The general shape, and it is the same as R20's.** A component that filters its own inputs
+decides what it can be measured on. Fixing the filter changed the measurable population — and
+keeping the defect to protect a number would have been exactly backwards.
+
+**What it changes for a client.** Audits from this date report controls whose accessible name
+merely contains the visible label's letters rather than its words. Earlier audits could not.
 
 ---
 
