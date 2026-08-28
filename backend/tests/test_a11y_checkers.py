@@ -316,14 +316,32 @@ def test_color_leaves_the_cells_inside_a_tinted_row_to_the_row_itself():
 
 @pytest.mark.parametrize("second_cue", [
     {"styles": {"text-decoration-line": "underline"}},
-    {"styles": {"border-style": "solid"}},
     {"html": "<span><svg aria-hidden='true'/>Overdue</span>"},
     {"text": "Overdue *"},
 ])
 def test_color_skips_anything_that_already_carries_a_second_visual_cue(second_cue):
-    """1.4.1 is breached only when colour is the ONLY visual means. An underline, a border, an
-    icon or a marker character is that second means, and the criterion is met."""
+    """1.4.1 is breached only when colour is the ONLY visual means. An underline, an icon or a
+    marker character is that second means, and the criterion is met."""
     assert "color" not in checkers_for(_coloured(**second_cue))
+
+
+def test_color_does_not_treat_a_border_as_a_second_cue():
+    """**A border used to be on that list and had to come off** (RESEARCH_CORRECTIONS R19).
+
+    The reasoning was that a border is visual and is not colour, which is true in general and
+    wrong in the case that matters most. A field marked invalid by turning its border red
+    **already had a border** — every field on the page has one — and only its colour changed.
+    Treating the border as a second cue meant the rule read the presence of the thing being
+    coloured as proof that colour was not the only cue, and declined to look. That is the
+    commonest way on the web to mark a field invalid, and nothing else covers it: 1.4.1 has one
+    scanner rule and it is about links in prose.
+
+    Nothing narrower was available, and that was measured rather than assumed. Comparing the
+    border's colour against the parent's saves four candidates out of three hundred, because a
+    parent almost never has a border to compare against.
+    """
+    invalid_field = _coloured(styles={"border-style": "solid"})
+    assert "color" in checkers_for(invalid_field)
 
 
 @pytest.mark.parametrize("el", [
@@ -342,6 +360,52 @@ def test_a_missing_screenshot_does_not_remove_an_element_from_the_colour_check()
 
 
 # ── label: WCAG 2.5.3 ────────────────────────────────────────────────
+def test_semantics_selects_an_in_page_link_because_it_does_not_navigate():
+    """**The tab strip case** (golden/README gap 2). The rule skips an `<a>` that has an href,
+    on the reasoning that a real link with real semantics needs no judgment. That holds for a
+    link that goes somewhere. An in-page link does not navigate — it may be a tab, a disclosure
+    or a toggle wearing an anchor — and the case this was found on is three of them styled as a
+    tab strip, announced as links, with nothing saying which one is showing.
+
+    Measured before it was widened: the whole fixture holds four in-page links against 228
+    ordinary ones, so this asks about 1.7% of the anchors and leaves real navigation alone.
+    """
+    tab = element(tag="a", text="Loans", attrs={"href": "#panel-loans"}, interactive=True,
+                  html='<a href="#panel-loans">Loans</a>')
+    assert "semantics" in checkers_for(tab)
+
+
+def test_semantics_still_skips_a_link_that_actually_goes_somewhere():
+    ordinary = element(tag="a", text="Borrowing guide", attrs={"href": "/help/borrowing-guide"},
+                       interactive=True, html='<a href="/help/borrowing-guide">Borrowing guide</a>')
+    assert "semantics" not in checkers_for(ordinary)
+
+
+def test_semantics_selects_the_container_holding_a_row_of_in_page_links():
+    """One tab cannot tell you whether it is part of a tab list, and the relationship between
+    the strip and the panels below it lives on the container or nowhere. So the strip is asked
+    about as well as the tabs in it."""
+    strip = element(
+        tag="div", text="Loans Members Stock",
+        html=('<div class="tabstrip" id="report-tabs">'
+              '<a class="is-current" href="#panel-loans">Loans</a>'
+              '<a href="#panel-members">Members</a>'
+              '<a href="#panel-stock">Stock</a></div>'),
+    )
+    assert "semantics" in checkers_for(strip)
+
+
+def test_semantics_leaves_prose_that_happens_to_contain_an_anchor_alone():
+    """Two of anything is a pair. A paragraph with a couple of in-page references is prose, and
+    claiming it would spend a judgment on every footnote in the application."""
+    prose = element(
+        tag="div", text="See the notes and the summary.",
+        html=('<div class="panel"><p>See the <a href="#notes">notes</a> and the '
+              '<a href="#summary">summary</a>.</p></div>'),
+    )
+    assert "semantics" not in checkers_for(prose)
+
+
 def test_label_selects_a_control_whose_name_does_not_contain_its_visible_text():
     mismatch = element(tag="button", text="Buy now", accessible_name="Purchase",
                        html="<button aria-label='Purchase'>Buy now</button>")
@@ -353,6 +417,38 @@ def test_label_skips_a_control_whose_name_already_contains_the_visible_text():
     the visible label satisfies it as a matter of fact, so there is nothing left to judge."""
     fine = element(tag="button", text="Buy now",
                    accessible_name="Buy now — opens in a new window")
+    assert "label" not in checkers_for(fine)
+
+
+def test_label_compares_whole_words_and_not_letters():
+    """**The bug this replaced was silent and it lost real failures** (RESEARCH_CORRECTIONS
+    R20b). The rule asked whether the visible label appeared inside the accessible name as a run
+    of characters. The letters of *search* sit inside *research*, so a button reading "Search"
+    announced as "Research tools" was read as already satisfying the criterion and never
+    reached anybody.
+
+    It is not satisfied. A speech-input user looks at the button, says "Search", and nothing
+    happens, because the name the software matches against contains no such word. Both the
+    criterion's ACT rule and axe compare whole words; so does this now.
+    """
+    hidden_failure = element(tag="button", text="Search", accessible_name="Research tools",
+                             html="<button aria-label='Research tools'>Search</button>")
+    assert "label" in checkers_for(hidden_failure)
+
+
+def test_label_treats_punctuation_as_a_separator_rather_than_as_a_character():
+    """A trailing ellipsis is the standard way to say a control opens a dialog, and it is not
+    part of the label. Both implementations of this comparison ignore punctuation, so a name
+    that is the visible words without the mark satisfies the criterion and needs no judgment."""
+    settled = element(tag="button", text="Update details…", accessible_name="Update details")
+    assert "label" not in checkers_for(settled)
+
+
+def test_label_keeps_letters_that_are_not_english():
+    """`str.isalnum()` rather than a naive a-z filter. Stripping accented and non-Latin letters
+    would empty the label of any application not written in English, and every control on the
+    page would then look like a mismatch."""
+    fine = element(tag="button", text="Caf\u00e9", accessible_name="Caf\u00e9 list")
     assert "label" not in checkers_for(fine)
 
 

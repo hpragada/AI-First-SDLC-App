@@ -91,6 +91,11 @@ HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 #: has headers is a fact about the table.
 STRUCTURE_TAGS = frozenset({"table", "ul", "ol", "dl", "fieldset"})
 
+#: How many in-page links sitting side by side in one container make it read as a set of
+#: controls rather than as prose with anchors in it. Same number and same reasoning as
+#: `REPEATED_CHILD_MINIMUM`: two of anything is a pair.
+IN_PAGE_LINK_MINIMUM = 3
+
 #: How many identically-classed children make a run of `div`s read as a list to the eye. Three
 #: rather than two because two of anything is a pair, and a two-panel layout is far more often
 #: a layout than a list. Named so the team can raise it if it turns out to cost more judgments
@@ -148,6 +153,7 @@ VALUE_LABEL_INPUT_TYPES = frozenset({"submit", "reset", "button"})
 
 _WHITESPACE = re.compile(r"\s+")
 _CLASS_ATTR = re.compile(r'class="([^"]*)"')
+_IN_PAGE_HREF = re.compile(r'<a[^>]+href="#[^"]*"', re.IGNORECASE)
 #: A grouping the markup already carries, so a set of related fields is not ungrouped.
 _GROUPING = re.compile(r'<fieldset|role="(?:group|radiogroup)"', re.IGNORECASE)
 #: Fields that only mean anything as a set — one radio button on its own answers nothing.
@@ -245,6 +251,32 @@ class CapturedElement:
 def _normalise(text: str) -> str:
     """Lowercased, whitespace-collapsed — how two labels are compared for "the same words"."""
     return _WHITESPACE.sub(" ", str(text or "")).strip().lower()
+
+
+def _label_words(text: str) -> str:
+    """A label reduced to its words, with punctuation acting as a separator rather than a
+    character.
+
+    **This is how 2.5.3 is actually compared**, by the criterion's own ACT rule and by axe, and
+    the difference is not cosmetic. Comparing raw characters says the visible label "Search" is
+    contained in the accessible name "Research tools" — because the letters of *search* sit
+    inside *research* — so the rule concluded the criterion was already met and never asked
+    anybody. A speech-input user saying "Search" activates nothing.
+
+    Unicode-aware on purpose: `str.isalnum()` keeps accented and non-Latin letters, where a
+    naive `[a-z0-9]` filter would shred every label in a language other than English and make
+    every control on the page look like a mismatch.
+    """
+    lowered = _normalise(text)
+    return " ".join("".join(c if c.isalnum() else " " for c in lowered).split())
+
+
+def _name_contains_label(name: str, visible: str) -> bool:
+    """Does the accessible name contain the visible label as a run of whole words?"""
+    words, target = _label_words(name), _label_words(visible)
+    if not target:
+        return True         # nothing textual on the control, so nothing to contain
+    return f" {target} " in f" {words} "
 
 
 def _px(value: str) -> float:
@@ -356,11 +388,26 @@ def _has_second_cue(element: CapturedElement) -> bool:
 
     Only *visual* cues count. An `aria-label` is not one: 1.4.1 is about what a person who
     cannot distinguish the colours can still see, not about what assistive tech is told.
+
+    **A border is not on this list, and used to be.** The reasoning was that a border is a
+    visual cue and is not colour, which is true in general and wrong in the case that matters
+    most: a field marked invalid by turning its border red **already had a border**. Only its
+    colour changed. The rule was reading the presence of the thing being coloured as proof that
+    colour was not the only cue, and declining to look — so the commonest way on the web to mark
+    a field invalid was skipped by the one check built to catch it, and nothing else covers it
+    (1.4.1 has a single scanner rule and it is about links in prose).
+
+    **Nothing narrower works, and that was measured rather than assumed.** Comparing the
+    border's colour against the parent's saves four candidates out of three hundred, because
+    parents almost never have a border to compare with; comparing it against the element's own
+    text colour saves none. There is no way to tell a decorative border from a signalling one
+    from what a single element carries, so the honest move is to stop pretending and let the
+    judge decide. That is the same trade `_repeats_a_child_class` already makes and states: it
+    costs a judgment on things that turn out to be fine, which is the direction worth being
+    wrong in.
     """
     decoration = str(element.styles.get("text-decoration-line", "")).lower()
     if "underline" in decoration or "line-through" in decoration:
-        return True
-    if str(element.styles.get("border-style", "")).strip().lower() not in {"", "none"}:
         return True
     if _has_nested_graphic(element):
         return True
@@ -483,13 +530,33 @@ def _applies_semantics(element: CapturedElement) -> bool:
         return True
     if element.tag == "a" and not element.attrs.get("href"):
         return True         # an <a> without href is not a link, whatever it looks like
+    if element.tag == "a" and str(element.attrs.get("href", "")).startswith("#"):
+        # **An in-page link does not navigate**, so "a real link with real semantics needs no
+        # judgment" is not safely true of it. It may be a tab, a disclosure or a toggle wearing
+        # an anchor, and the tab case is the one this was found on: three <a href="#panel-…">
+        # styled as a tab strip, announced as links, with nothing saying which is selected.
+        #
+        # Narrow by measurement, not by hope: the whole fixture holds four in-page links and
+        # 228 ordinary ones, so this asks about 1.7% of the anchors on the site and leaves
+        # every real navigation link exactly where it was.
+        return True
     if element.tag in NATIVE_CONTROL_TAGS:
         return False        # a real control with no overriding role: the semantics are real
     if element.interactive:
         return True         # something non-native is behaving like a control
     if "tabindex" in element.attrs:
         return True         # put in the tab order without being a control
+    if element.tag == "div" and _holds_in_page_links(element.html):
+        # The strip itself, not just the tabs in it. Whether a row of anchors is a tab list is a
+        # question about the container — one tab cannot tell you, and the relationship to the
+        # panels below it lives here or nowhere.
+        return True
     return _looks_like_heading(element)
+
+
+def _holds_in_page_links(html: str) -> bool:
+    """Three or more in-page links inside one container — a set of controls, or prose."""
+    return len(_IN_PAGE_HREF.findall(_inside(html))) >= IN_PAGE_LINK_MINIMUM
 
 
 def _inside(html: str) -> str:
@@ -595,7 +662,7 @@ def _applies_label(element: CapturedElement) -> bool:
     name = _normalise(element.accessible_name)
     if not name:
         return False        # no accessible name at all is 4.1.2's problem, not 2.5.3's
-    return visible not in name
+    return not _name_contains_label(name, visible)
 
 
 @dataclass(frozen=True)
@@ -639,9 +706,12 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
         criteria=A11Y_CHECKER_CRITERIA["semantics"],
         covers="anything behaving like a control without being one, anything carrying a role "
                "that overrides its tag, anything put in the tab order, an <a> with no href, "
-               "and text merely styled to look like a heading",
+               "an <a> whose href stays on the page (it does not navigate, so it may be a tab "
+               "or a disclosure wearing an anchor), a container holding three or more such "
+               "links, and text merely styled to look like a heading",
         skips="native controls and native structure with no overriding role — the semantics "
-              "are already real — and a role that only restates the tag it sits on",
+              "are already real — a role that only restates the tag it sits on, and links "
+              "that actually navigate somewhere",
         applies=_applies_semantics,
     ),
     SelectionRule(
@@ -664,9 +734,11 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
         covers="text or filled areas whose colour singles them out from their surroundings "
                "with no other visual cue — status dots, required-field markers, legend keys, "
                "links that are only a different colour",
-        skips="elements that already carry a second visual cue (an underline, a border, an "
-              "icon, a marker character like *) and elements with nothing colour could be "
-              "carrying. A missing screenshot is NOT a skip — it becomes an uncertain verdict.",
+        skips="elements that already carry a second visual cue (an underline, an icon, a "
+              "marker character like *) and elements with nothing colour could be carrying. "
+              "A BORDER is not a second cue: a field marked invalid by turning its border red "
+              "already had a border, and only its colour changed. A missing screenshot is not "
+              "a skip either — it becomes an uncertain verdict.",
         applies=_applies_color,
     ),
     SelectionRule(
@@ -677,7 +749,9 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
                "`value` attribute rather than inner text it can never have",
         skips="controls with no visible text (2.5.3 does not apply to them), controls with no "
               "accessible name at all (that is 4.1.2), and controls whose name already "
-              "contains the visible text — the criterion is met as a matter of fact",
+              "contains the visible text AS WHOLE WORDS — the criterion is then met as a "
+              "matter of fact. Words, not letters: 'Search' is not contained in 'Research "
+              "tools', and comparing characters made that failure invisible.",
         applies=_applies_label,
     ),
     SelectionRule(
