@@ -1,0 +1,143 @@
+"""Could each golden record ever reach the scored sample at all? (QA-09, QA-10)
+
+INTERNAL — Edvensoft accessibility evaluation.
+Not a tenant feature. Must never be read by tenant-facing code or written to tenant tables.
+
+    node ../harness/verify-selectable.js      # captures, then runs this
+
+**The check `verify-golden.js` cannot make.** That one proves every label's `(route, selector)`
+still resolves on the running app, which is necessary and is not enough. A record can resolve
+perfectly and still be incapable of ever scoring, because resolving is about the page and
+scoring is about the selection rules.
+
+`accuracy._record` is not symmetric, and that asymmetry is the whole reason this file exists:
+
+    expected `fail`       always counts — a true positive if found, a false negative if not
+    expected `pass`       counts ONLY if the checker actually selects the element
+    expected `uncertain`  never counts; it is scored on calibration instead
+
+So a `pass` twin that the selection rules skip is a record that can never contribute to a
+number, in either direction, no matter how many audits are run. It is not wrong — it is inert,
+and it looks exactly like a healthy record in every other check.
+
+**This was not hypothetical.** At v0.1.0 the `label` checker had 19 clear records and could
+reach a sample of 9. All ten of its pass twins named a control whose accessible name already
+contained its visible text, and `_applies_label` skips precisely those — correctly, because the
+criterion is met as a matter of fact and there is nothing left to judge. A deliberately balanced
+answer key was producing a completely one-sided scored sample, and every check in the harness
+was green.
+
+**The rules are imported, never restated.** `rules.py` says the platform owns the selection
+table and nobody re-implements it; a copy of it in this file would drift and would then be
+certifying the answer key against the wrong rules, which is worse than not checking. That is
+also why the capture comes from `verify-selectable.js` in the companion's own shape rather than
+from anything invented here.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[3]
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(REPO / "backend"))
+
+import labels as labels_module                                      # noqa: E402
+from apps.a11y.checkers.rules import CapturedElement, checkers_for  # noqa: E402
+
+#: Below this a checker reads "not yet measurable" in the report. Mirrors
+#: `accuracy.DEFAULT_MIN_SAMPLE`; imported rather than repeated would be better, and importing
+#: `accuracy` here would pull in the whole scoring path for one integer.
+MIN_SAMPLE = 30
+
+
+def ceilings(golden_dir: Path, captured_path: Path) -> tuple[dict, list]:
+    """The best sample each checker could reach, and the records that can never score."""
+    label_rows, _ = labels_module.load_golden(golden_dir)
+    captured = {
+        (c["route"], c["selector"]): c
+        for c in json.loads(captured_path.read_text(encoding="utf-8"))
+    }
+
+    ceiling: Counter = Counter()
+    breakdown: dict[str, Counter] = {}
+    inert: list[dict] = []
+
+    for label in label_rows:
+        raw = captured.get((label.route, label.selector))
+        counts = breakdown.setdefault(label.checker, Counter())
+
+        if raw is None or raw.get("missing"):
+            # verify-golden.js owns this failure and says it far better. Counted so the totals
+            # cannot silently drift, and not reported again here.
+            counts["selector does not resolve"] += 1
+            continue
+
+        claimed = checkers_for(CapturedElement.from_dict(raw))
+        selected = label.checker in claimed
+
+        if label.expected == "fail":
+            ceiling[label.checker] += 1
+            counts["fail — always counts"] += 1
+            if not selected:
+                counts["  of those, never captured (scores as a miss)"] += 1
+        elif label.expected == "pass":
+            if selected:
+                ceiling[label.checker] += 1
+                counts["pass — selected, so it counts"] += 1
+            else:
+                counts["pass — NOT selected, so it can never count"] += 1
+                inert.append({"id": label.record_id, "checker": label.checker, "route": label.route,
+                              "selector": label.selector, "claimed": list(claimed)})
+        else:
+            counts["uncertain — scored on calibration, never in the sample"] += 1
+
+    return {"ceiling": ceiling, "breakdown": breakdown}, inert
+
+
+def main() -> int:
+    golden_dir = Path(sys.argv[1]).resolve()
+    captured_path = Path(sys.argv[2]).resolve()
+    result, inert = ceilings(golden_dir, captured_path)
+    ceiling, breakdown = result["ceiling"], result["breakdown"]
+
+    print(f"\n  {'checker':12}{'best sample':>12}{'needs':>7}   verdict")
+    short = 0
+    for checker in sorted(breakdown):
+        best = ceiling[checker]
+        ok = best >= MIN_SAMPLE
+        if not ok:
+            short += 1
+        print(f"  {checker:12}{best:12}{MIN_SAMPLE:7}   "
+              f"{'reachable' if ok else f'SHORT BY {MIN_SAMPLE - best}'}")
+
+    for checker in sorted(breakdown):
+        print(f"\n  {checker}")
+        for reason, n in sorted(breakdown[checker].items()):
+            print(f"    {n:4}  {reason}")
+
+    if inert:
+        # Not automatically an error. A pass label on an element the platform correctly declines
+        # is honest — `accuracy.py` gives no credit and no penalty for it. It is listed because
+        # a checker that is short of a sample is usually short for exactly this reason, and
+        # because a set with many of these is balanced on paper and lopsided in practice.
+        print(f"\n  {len(inert)} pass record(s) name an element their checker does not select.")
+        print("  These can never score. Not an error on its own — see the note in this file.")
+        for row in inert:
+            claimed = ", ".join(row["claimed"]) or "nothing"
+            print(f"    {row['id']:14} {row['checker']:10} {row['route']}{row['selector']}"
+                  f"   (claimed by: {claimed})")
+
+    if short:
+        print(f"\n{short} checker(s) cannot reach {MIN_SAMPLE} scored records from this answer "
+              f"key, so no audit will ever produce a number for them")
+        return 1
+    print(f"\nevery checker can reach {MIN_SAMPLE} scored records")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

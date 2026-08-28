@@ -42,6 +42,21 @@ const C = {
   tintOverdue: "#fdecea",
   tintDueSoon: "#fff8e1",
   tintOnLoan: "#e8f5e9",
+
+  // ── added for the v0.2.0 pages ──────────────────────────────────────────────────
+  // The two colours the charges statement uses to say whether an amount is owed or settled.
+  // `owed` is the existing required-marker red; `settled` is new. Both must stay well above
+  // 4.5:1 so those pages fail 1.4.1 and nothing else — see SAME_LIGHTNESS below for the half
+  // of this that actually protects the plant.
+  settled: "#2e7d32",
+
+  // The border on every form field. Deliberate, kept, and asserted here so it cannot quietly
+  // disappear: it is 3.01:1 on white and 2.74:1 on a panel, below the 3:1 that 1.4.11 asks of
+  // a non-text part you need to see. It is the only 1.4.11 material in the fixture, and the
+  // golden set has no records for that criterion yet — so this assertion is what keeps the
+  // material in place for whoever writes them. See PROVING_GROUND_BUILD_GUIDE and the
+  // "Not covered, and how to add it" section of golden/README.md.
+  fieldBorder: "#9a958c",
 };
 
 // [label, foreground, background, minimum, note]
@@ -64,10 +79,26 @@ const PAIRS = [
   ["body text on the overdue tint", C.ink, C.tintOverdue, 4.5],
   ["body text on the due-soon tint", C.ink, C.tintDueSoon, 4.5],
   ["body text on the on-loan tint", C.ink, C.tintOnLoan, 4.5],
+  ["an amount still owed, on the content surface", C.required, C.surface, 4.5],
+  ["an amount settled, on the content surface", C.settled, C.surface, 4.5],
 ];
 
-// The one pair that is supposed to fail. Named separately so a passing result is an error.
-const DELIBERATE_FAILURE = ["the opening-hours note", C.faint, C.surface, 4.5];
+// Pairs of colours that must stay INDISTINGUISHABLE in lightness. The opposite of everything
+// above, and the reason the charges pages are a 1.4.1 case at all: both colours are legible, so
+// contrast is not the defect — what makes them a failure is that the only thing separating them
+// is hue. Darken one "to be safe" and the two become tellable apart in greyscale, the plant
+// stops being a colour-only cue, and the golden records that depend on it quietly become wrong
+// while every other check here still passes.
+const SAME_LIGHTNESS = [
+  ["owed against settled, on the charges statement", C.required, C.settled, 0.03],
+];
+
+// The pairs that are supposed to fail. Named separately so a passing result is an error.
+const DELIBERATE_FAILURES = [
+  ["the opening-hours note", C.faint, C.surface, 4.5],
+  ["the border on every form field, against the surface", C.fieldBorder, C.surface, 3.0],
+  ["the border on every form field, against a panel", C.fieldBorder, C.surfaceAlt, 3.0],
+];
 
 let wrong = 0;
 
@@ -78,14 +109,26 @@ for (const [label, fg, bg, min] of PAIRS) {
   console.log(`${ok ? "  OK   " : " WRONG "} ${r.toFixed(2).padStart(6)}:1  needs ${min}  ${label}`);
 }
 
-const [label, fg, bg, min] = DELIBERATE_FAILURE;
-const r = ratio(fg, bg);
-const stillFails = r < min;
-if (!stillFails) wrong++;
-console.log(
-  `${stillFails ? "  OK   " : " WRONG "} ${r.toFixed(2).padStart(6)}:1  needs ${min}  ${label}` +
-    (stillFails ? "   — fails on purpose, do not fix" : "   — THIS MUST FAIL and no longer does")
-);
+for (const [label, fg, bg, min] of DELIBERATE_FAILURES) {
+  const r = ratio(fg, bg);
+  const stillFails = r < min;
+  if (!stillFails) wrong++;
+  console.log(
+    `${stillFails ? "  OK   " : " WRONG "} ${r.toFixed(2).padStart(6)}:1  needs ${min}  ${label}` +
+      (stillFails ? "   — fails on purpose, do not fix" : "   — THIS MUST FAIL and no longer does")
+  );
+}
+
+for (const [label, one, two, maxGap] of SAME_LIGHTNESS) {
+  const gap = Math.abs(luminance(one) - luminance(two));
+  const ok = gap <= maxGap;
+  if (!ok) wrong++;
+  console.log(
+    `${ok ? "  OK   " : " WRONG "} ${gap.toFixed(3).padStart(6)}    under ${maxGap}  ${label}` +
+      (ok ? "   — alike on purpose, do not separate them"
+          : "   — THESE MUST BE ALIKE and no longer are")
+  );
+}
 
 console.log(wrong === 0
   ? "\nthe palette is as intended"

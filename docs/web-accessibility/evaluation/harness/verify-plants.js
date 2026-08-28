@@ -156,7 +156,34 @@ const CHECKS = [
   },
 
   // ── 1.3.1 · info and relationships ────────────────────────────────
+ 
   {
+    route: "/about/reading-rooms", criterion: "1.1.1", verdict: "fail",
+    what: "five photographs named by the format instead of by what they show",
+    test: () => {
+      const ids = ["room-local-history", "room-childrens", "room-carrels",
+                   "room-newspapers", "room-terrace"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a photograph is missing";
+      const placeholders = ["photo", "image", "picture", "graphic", "photograph"];
+      const bad = els.filter((e) =>
+        placeholders.includes((e.getAttribute("alt") || "").trim().toLowerCase()));
+      return bad.length === 5 || `${bad.length} of 5 carry a placeholder alt`;
+    },
+  },
+  {
+    route: "/about/our-buildings", criterion: "1.1.1", verdict: "pass",
+    what: "the same five photographs, each described by what it shows",
+    test: () => {
+      const ids = ["room-local-history", "room-childrens", "room-carrels",
+                   "room-newspapers", "room-terrace"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a photograph is missing";
+      const weak = els.filter((e) => (e.getAttribute("alt") || "").trim().length < 60);
+      return weak.length === 0 || `${weak.length} of 5 have thin alt text`;
+    },
+  },
+ {
     route: "/help/borrowing-guide", criterion: "1.3.1", verdict: "fail",
     what: "headings that only look like headings",
     test: () => {
@@ -270,7 +297,116 @@ const CHECKS = [
   },
 
   // ── 4.1.2 · name, role, value ─────────────────────────────────────
+ 
   {
+    route: "/reports/stock-levels", criterion: "1.3.1", verdict: "fail",
+    what: "three stock tables built out of divs",
+    test: () => {
+      const ids = ["stock-fiction", "stock-reference", "stock-childrens"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a stock table is missing";
+      const wrong = els.filter((e) =>
+        e.tagName !== "DIV" || e.querySelector("table, th") ||
+        e.querySelectorAll(".grid-row").length < 6);
+      return wrong.length === 0 ||
+        `${wrong.length} of 3 are not div-built tables of a head plus five rows`;
+    },
+  },
+  {
+    route: "/reports/holdings-by-branch", criterion: "1.3.1", verdict: "pass",
+    what: "the same three as real tables with column headers",
+    test: () => {
+      const ids = ["stock-fiction", "stock-reference", "stock-childrens"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a stock table is missing";
+      const wrong = els.filter((e) =>
+        e.tagName !== "TABLE" ||
+        e.querySelectorAll("th[scope='col']").length !== 3 ||
+        e.querySelectorAll("tbody tr").length !== 5);
+      return wrong.length === 0 ||
+        `${wrong.length} of 3 are not tables with three column headers and five rows`;
+    },
+  },
+  {
+    route: "/reports/issue-figures", criterion: "1.3.1", verdict: "fail",
+    what: "three tables whose heading cells are ordinary data cells",
+    test: () => {
+      const ids = ["issues-q1", "issues-q2", "issues-q3"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a figures table is missing";
+      const wrong = els.filter((e) =>
+        e.querySelectorAll("th").length !== 0 ||
+        e.querySelectorAll("thead td").length !== 4);
+      return wrong.length === 0 ||
+        `${wrong.length} of 3 do not have four td heading cells and no th`;
+    },
+  },
+  {
+    route: "/reports/loan-figures", criterion: "1.3.1", verdict: "pass",
+    what: "the same three with real column headers",
+    test: () => {
+      const ids = ["issues-q1", "issues-q2", "issues-q3"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a figures table is missing";
+      const wrong = els.filter((e) => e.querySelectorAll("th[scope='col']").length !== 4);
+      return wrong.length === 0 || `${wrong.length} of 3 lack four column headers`;
+    },
+  },
+  {
+    route: "/staff/rota", criterion: "1.3.1", verdict: "fail",
+    what: "three rotas marked up correctly and then told to carry no structure",
+    test: () => {
+      const ids = ["rota-week-1", "rota-week-2", "rota-week-3"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a rota is missing";
+      // Both halves matter. The role is the defect; the headers underneath are what make it
+      // the interesting case rather than a table nobody marked up in the first place.
+      const wrong = els.filter((e) =>
+        e.getAttribute("role") !== "presentation" ||
+        e.querySelectorAll("th[scope='col']").length !== 4);
+      return wrong.length === 0 ||
+        `${wrong.length} of 3 are not correctly-headed tables carrying role=presentation`;
+    },
+  },
+  {
+    route: "/staff/staffing-plan", criterion: "1.3.1", verdict: "pass",
+    what: "the same three rotas without the role that cancelled them",
+    test: () => {
+      const ids = ["rota-week-1", "rota-week-2", "rota-week-3"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a rota is missing";
+      const wrong = els.filter((e) =>
+        e.hasAttribute("role") || e.querySelectorAll("th[scope='col']").length !== 4);
+      return wrong.length === 0 || `${wrong.length} of 3 still carry a role or lack headers`;
+    },
+  },
+  {
+    route: "/events/workshops", criterion: "1.3.1", verdict: "fail",
+    what: "three lists built out of divs with bullet characters for markup",
+    test: () => {
+      const ids = ["workshops-spring", "workshops-summer", "workshops-autumn"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a workshop list is missing";
+      const wrong = els.filter((e) =>
+        e.tagName !== "DIV" || e.querySelector("ul, ol, li") ||
+        e.querySelectorAll(".event-line").length !== 5);
+      return wrong.length === 0 ||
+        `${wrong.length} of 3 are not five div lines inside a div`;
+    },
+  },
+  {
+    route: "/events/classes", criterion: "1.3.1", verdict: "pass",
+    what: "the same three as real lists",
+    test: () => {
+      const ids = ["workshops-spring", "workshops-summer", "workshops-autumn"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a workshop list is missing";
+      const wrong = els.filter((e) =>
+        e.tagName !== "UL" || e.querySelectorAll("li").length !== 5);
+      return wrong.length === 0 || `${wrong.length} of 3 are not a ul of five items`;
+    },
+  },
+ {
     route: "/staff/catalogue-entry", criterion: "4.1.2", verdict: "fail",
     what: "a div acting as the save button",
     test: () => {
@@ -399,7 +535,36 @@ const CHECKS = [
   },
 
   // ── 1.4.1 · use of colour ─────────────────────────────────────────
+ 
   {
+    route: "/catalogue/saved-searches", criterion: "4.1.2", verdict: "fail",
+    what: "three remove controls that are spans with a click handler and nothing else",
+    test: () => {
+      const ids = ["drop-search-1", "drop-search-2", "drop-search-3"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a remove control is missing";
+      const wrong = els.filter((e) =>
+        e.tagName !== "SPAN" || e.hasAttribute("role") || e.hasAttribute("tabindex") ||
+        !e.hasAttribute("onclick"));
+      return wrong.length === 0 ||
+        `${wrong.length} of 3 are not bare spans with only a click handler`;
+    },
+  },
+  {
+    route: "/catalogue/my-searches", criterion: "4.1.2", verdict: "pass",
+    what: "the same three with a role, a place in the tab order and a key handler",
+    test: () => {
+      const ids = ["drop-search-1", "drop-search-2", "drop-search-3"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a remove control is missing";
+      const wrong = els.filter((e) =>
+        e.getAttribute("role") !== "button" || e.getAttribute("tabindex") !== "0" ||
+        !e.hasAttribute("onkeydown") || !e.textContent.trim());
+      return wrong.length === 0 ||
+        `${wrong.length} of 3 lack the role, the tabindex, the key handler or a name`;
+    },
+  },
+ {
     route: "/loans/current", criterion: "1.4.1", verdict: "fail",
     what: "loan status carried by row tint, with a legend that maps colour to meaning",
     test: () => {
@@ -536,7 +701,47 @@ const CHECKS = [
   },
 
   // ── 2.5.3 · label in name ─────────────────────────────────────────
+ 
   {
+    route: "/account/charges", criterion: "1.4.1", verdict: "fail",
+    what: "six amounts whose state is carried by colour and by nothing else",
+    test: () => {
+      const ids = ["fee-1", "fee-2", "fee-3", "fee-4", "fee-5", "fee-6"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "an amount is missing";
+      const STATUS = ["rgb(192, 57, 43)", "rgb(46, 125, 50)"];
+      const coloured = els.filter((e) => STATUS.includes(getComputedStyle(e).color));
+      if (coloured.length !== 6) return `${coloured.length} of 6 carry a status colour`;
+      const words = ["owed", "settled", "paid", "outstanding", "due"];
+      const spoken = els.filter((e) =>
+        words.some((w) => e.textContent.toLowerCase().includes(w)));
+      if (spoken.length) return `${spoken.length} of 6 also state it in words`;
+      // A border or an underline would be a second visual cue, and would also take the element
+      // out of the colour rule's scope entirely — see RESEARCH_CORRECTIONS R19.
+      const cued = els.filter((e) => {
+        const s = getComputedStyle(e);
+        return s.borderStyle !== "none" || s.textDecorationLine !== "none";
+      });
+      return cued.length === 0 || `${cued.length} of 6 carry a border or an underline`;
+    },
+  },
+  {
+    route: "/account/statement-of-fees", criterion: "1.4.1", verdict: "pass",
+    what: "the same six amounts, in the same colours, with the state also written out",
+    test: () => {
+      const ids = ["fee-1", "fee-2", "fee-3", "fee-4", "fee-5", "fee-6"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "an amount is missing";
+      const STATUS = ["rgb(192, 57, 43)", "rgb(46, 125, 50)"];
+      const coloured = els.filter((e) => STATUS.includes(getComputedStyle(e).color));
+      if (coloured.length !== 6) return `${coloured.length} of 6 still carry the colour`;
+      const words = ["owed", "settled"];
+      const spoken = els.filter((e) =>
+        words.some((w) => e.textContent.toLowerCase().includes(w)));
+      return spoken.length === 6 || `${spoken.length} of 6 state the status in words`;
+    },
+  },
+ {
     route: "/catalogue/search", criterion: "2.5.3", verdict: "fail",
     what: "visible 'Search', spoken name 'Find books'",
     test: () => {
@@ -643,6 +848,54 @@ const CHECKS = [
       return bad.length === 0 || `${bad.length} of 7 do not contain their visible word`;
     },
   },
+  {
+    route: "/account/membership-tools", criterion: "2.5.3", verdict: "fail",
+    what: "eleven controls whose spoken name drops every word printed on them",
+    test: () => {
+      const ids = ["act-pay", "act-renew", "act-collect", "act-return", "act-transfer",
+                   "act-cancel", "act-receipt", "act-update", "act-remind", "act-replace",
+                   "act-holds"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a control is missing";
+      // Punctuation is treated as a separator, which is how both the W3C rule and axe compare
+      // a label to a name. Written out rather than with a regular expression on purpose.
+      const curate = (s) => Array.from(s.toLowerCase())
+        .map((c) => ((c >= "a" && c <= "z") || (c >= "0" && c <= "9") ? c : " "))
+        .join("").split(" ").filter(Boolean).join(" ");
+      const holds = (name, label) => (" " + name + " ").includes(" " + label + " ");
+      const unnamed = els.filter((e) => !e.getAttribute("aria-label"));
+      if (unnamed.length) return `${unnamed.length} have no name, so there is no mismatch`;
+      const bad = els.filter((e) =>
+        !holds(curate(e.getAttribute("aria-label")), curate(e.textContent)));
+      return bad.length === 11 || `${bad.length} of 11 drop their visible words`;
+    },
+  },
+  {
+    route: "/help/membership-actions", criterion: "2.5.3", verdict: "pass",
+    what: "the same eleven, each spoken name keeping the words on the control",
+    test: () => {
+      const ids = ["act-pay", "act-renew", "act-collect", "act-return", "act-transfer",
+                   "act-cancel", "act-receipt", "act-update", "act-remind", "act-replace",
+                   "act-holds"];
+      const els = ids.map((id) => document.getElementById(id));
+      if (els.some((e) => !e)) return "a control is missing";
+      const curate = (s) => Array.from(s.toLowerCase())
+        .map((c) => ((c >= "a" && c <= "z") || (c >= "0" && c <= "9") ? c : " "))
+        .join("").split(" ").filter(Boolean).join(" ");
+      const holds = (name, label) => (" " + name + " ").includes(" " + label + " ");
+      const bad = els.filter((e) =>
+        !holds(curate(e.getAttribute("aria-label") || e.textContent), curate(e.textContent)));
+      if (bad.length) return `${bad.length} of 11 do not contain their visible words`;
+      // The strings must still DIFFER, or the rule skips the element as settled and the
+      // record can never score. This half of the assertion is the one that protects the
+      // measurement rather than the page.
+      const identical = els.filter((e) =>
+        (e.getAttribute("aria-label") || "").trim().toLowerCase() ===
+        e.textContent.trim().toLowerCase());
+      return identical.length === 0 ||
+        `${identical.length} of 11 have a name equal to their label, so nothing is judged`;
+    },
+  },
 ];
 
 // Pages that must be visually near-identical to their twin, because the demo turns on a
@@ -657,6 +910,14 @@ const LOOKALIKES = [
   ["/staff/shelf-audit", "/staff/shelf-settings"],
   ["/account/card-services", "/account/card-options"],
   ["/help/report-a-problem", "/help/problem-report"],
+  ["/about/reading-rooms", "/about/our-buildings"],
+  ["/account/charges", "/account/statement-of-fees"],
+  ["/account/membership-tools", "/help/membership-actions"],
+  ["/catalogue/saved-searches", "/catalogue/my-searches"],
+  ["/reports/stock-levels", "/reports/holdings-by-branch"],
+  ["/reports/issue-figures", "/reports/loan-figures"],
+  ["/staff/rota", "/staff/staffing-plan"],
+  ["/events/workshops", "/events/classes"],
 ];
 
 (async () => {

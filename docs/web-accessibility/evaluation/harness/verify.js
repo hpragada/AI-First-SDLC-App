@@ -135,6 +135,36 @@ const EXPECTED = {
   "/help/report-a-problem": [],
   "/help/problem-report": [],
 
+  // ── v0.2.0: the sixteen pages added so every checker reaches a scored sample ──
+  // Fourteen of the sixteen are AI-half pages and axe is silent on all of them. The two that
+  // are not are listed with what they trigger, for the same reason /catalogue/subject-index is:
+  // recording the overlap is honest, and the scorer drops rule-scanner rows either way.
+  "/about/reading-rooms": [],
+  "/about/our-buildings": [],
+  "/account/charges": [],
+  "/account/statement-of-fees": [],
+  "/catalogue/saved-searches": [],
+  "/catalogue/my-searches": [],
+  "/reports/stock-levels": [],
+  "/reports/holdings-by-branch": [],
+  "/reports/loan-figures": [],
+  "/staff/rota": [],
+  "/staff/staffing-plan": [],
+  "/events/workshops": [],
+  "/events/classes": [],
+  // Eleven controls whose spoken name drops the words printed on them. `label-content-name-
+  // mismatch` is experimental and only ran from 28 Aug, so this page reports where an identical
+  // one built a week earlier would have been silent.
+  "/account/membership-tools": ["label-content-name-mismatch"],
+  // Its twin must be clean, and that is the sharper half of the pair. The names here differ
+  // from the visible labels by a typographic mark only, and both axe and the W3C rule treat
+  // punctuation as a separator — so a silent page is the evidence that these eleven really are
+  // passes and not a reading nobody else shares.
+  "/help/membership-actions": [],
+  // Three tables whose heading cells are ordinary data cells — the same overlap as
+  // /catalogue/subject-index above.
+  "/reports/issue-figures": ["td-has-header"],
+
   // ── the journeys: nothing here is decidable from static markup ───
   // Focus order, focus return, keyboard traps, focus obscured by a sticky header, a control
   // that acts on change, a message injected with no live region. axe has no rule for any of
