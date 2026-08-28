@@ -19,7 +19,11 @@ const AxeBuilder = require("@axe-core/playwright").default;
 
 // Not optional. Without it axe also runs best-practice rules (region, landmark-one-main,
 // page-has-heading-one) that are not WCAG A/AA, and pages that should be clean will report.
-const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
+// The same six the platform scans with (`runner/companion/assets/a11y_audit.mjs`). `wcag22a`
+// was missing and carries no axe rule at all — measured on 4.13.0, 0 rules tagged wcag22a,
+// 1 tagged wcag22aa. So the omission changed nothing; it is here so the two lists can be
+// compared as identical rather than reasoned about every time somebody notices.
+const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"];
 
 // One of these two genuinely needs naming, and it is not the one it looks like. Measured on
 // axe-core 4.13.0 against a page carrying both defects:
@@ -35,11 +39,18 @@ const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 // tag. Naming it here is the narrow way in; adding "experimental" to TAGS would drag in seven
 // unrelated rules with it.
 //
-// Not a fixture quirk — `runner/companion/assets/a11y_audit.mjs` sends the tags with no rules
-// block, so the platform gets target-size and does not get label-content-name-mismatch.
+// The platform sends the same block. It did not until 28 Aug — `a11y_audit.mjs` sent the tags
+// alone, so it ran target-size and none of the five experimental rules, and two criteria with no
+// other rule (1.3.4 Orientation, 2.5.3 Label in Name) were recorded as machine-checked while
+// nothing checked them. Keep these two lists in step; a fixture checking more than the product
+// does reports defects no client would ever be told about.
 const OPT_IN_RULES = {
-  "target-size": { enabled: true },                 // WCAG 2.5.8 — the only wcag22aa rule axe has
-  "label-content-name-mismatch": { enabled: true }, // WCAG 2.5.3 — flagged "experimental" upstream
+  "target-size": { enabled: true },
+  "label-content-name-mismatch": { enabled: true },
+  "css-orientation-lock": { enabled: true },
+  "p-as-heading": { enabled: true },
+  "table-fake-caption": { enabled: true },
+  "td-has-header": { enabled: true },
 };
 
 // Both settings go in ONE options() call. AxeBuilder.options() assigns over its whole option
@@ -111,7 +122,13 @@ const EXPECTED = {
   "/account/update-details": [],
   "/reports/branch-comparison": [],
   "/reports/monthly-issues": [],
-  "/catalogue/subject-index": [],
+  // Header cells marked up as <td>. Built as an AI-half page and it still is — the `structure`
+  // checker is what the golden set scores here — but `td-has-header` is one of the experimental
+  // rules now opted in, so axe reaches it too. Both engines seeing one defect is the case QA-14's
+  // de-duplication exists for, and it does not disturb the accuracy numbers: the scorer drops
+  // rule-scanner rows entirely (`scorer/platformdata.py`), so axe can never be credited with
+  // what the AI found, or the reverse.
+  "/catalogue/subject-index": ["td-has-header"],
   "/catalogue/subject-list": [],
   "/staff/shelf-audit": [],
   "/staff/shelf-settings": [],

@@ -6,6 +6,7 @@
     "wcag2aa",
     "wcag21a",
     "wcag21aa",
+    "wcag22a",
     "wcag22aa"
   ],
   "report": {
@@ -115,7 +116,15 @@
       }
     ],
     "/catalogue/staff-picks": [],
-    "/catalogue/subject-index": [],
+    "/catalogue/subject-index": [
+      {
+        "id": "td-has-header",
+        "impact": "critical",
+        "nodes": [
+          "#subject-table"
+        ]
+      }
+    ],
     "/catalogue/subject-list": [],
     "/contact": [
       {

@@ -217,6 +217,29 @@ async function scanPage(page, axe) {
           type: "tag",
           values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"],
         },
+        // Five rules match those tags and are still not run by them. axe holds `experimental`
+        // rules out of a tag selection and says nothing about it, so the report comes back
+        // looking complete and is quietly narrower than asked for. Two criteria have no other
+        // rule at all, so without this block they are not machine-checked despite being
+        // recorded as machine-checked: 1.3.4 Orientation and 2.5.3 Label in Name.
+        //
+        // Measured on axe-core 4.13.0 against a page carrying seven violations of one of them:
+        // tags alone ran 63 rules and reported none of the seven; the same tags plus this block
+        // reported all seven.
+        //
+        // Naming them is the narrow way in. Adding "experimental" to the tag list above would
+        // pull in every experimental rule axe ships, including ones outside WCAG A/AA.
+        //
+        // `scanner_inventory.mjs` mirrors this list, and a test asserts the two are identical —
+        // an inventory listing rules the scan does not run would credit the platform with
+        // checks that never fire, which is the exact bug this block fixes.
+        rules: {
+          "css-orientation-lock": { enabled: true },        // 1.3.4 — its only rule
+          "label-content-name-mismatch": { enabled: true }, // 2.5.3 — its only rule
+          "p-as-heading": { enabled: true },                // 1.3.1
+          "table-fake-caption": { enabled: true },          // 1.3.1
+          "td-has-header": { enabled: true },               // 1.3.1
+        },
       });
     });
     const withNodes = (list) =>

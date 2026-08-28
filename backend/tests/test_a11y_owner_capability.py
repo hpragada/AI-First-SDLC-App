@@ -189,6 +189,35 @@ def test_the_inventory_scans_with_exactly_the_tags_the_companion_scans_with():
         sc.inventory()["tags"]
 
 
+def test_the_inventory_opts_in_to_exactly_the_rules_the_companion_opts_in_to():
+    """The second half of the same guarantee, and the half that was missing.
+
+    A tag filter is not the only way an inventory can claim a rule the scan never runs. axe holds
+    `experimental` rules out of a tag selection **silently** — they match the tags, they are
+    enabled, and they do not run. This file counted them, so it reported 24 criteria against a
+    scan that decided 22, and 1.3.4 Orientation sat recorded as machine-checked with nothing
+    checking it. The same shape as 1.4.10 and 1.4.11, found the same way, and missed by the guard
+    above because that guard trusts this data.
+
+    The companion now names them in a `rules` block. The two lists have to stay identical: name a
+    rule here that the scan does not run and the platform is credited with a check that never
+    fires; run one there and omit it here and the inventory understates what we do.
+    """
+    audit = (_REPO / "runner/companion/assets/a11y_audit.mjs").read_text(encoding="utf-8")
+    block = re.search(r"rules:\s*\{(.*?)\n\s*\},", audit, re.S)
+    assert block, "could not find the scan's opt-in rules block in a11y_audit.mjs"
+    in_audit = sorted(re.findall(r'"([^"]+)":\s*\{\s*enabled:\s*true', block.group(1)))
+    in_inventory = sorted(sc.inventory().get("opted_in", []))
+    assert in_audit == in_inventory, (
+        f"the scan opts in to {in_audit} and the inventory records {in_inventory}. "
+        f"Regenerate it with `{sc.REBUILD_COMMAND}`."
+    )
+    assert in_audit, (
+        "the opt-in block is empty. 1.3.4 Orientation and 2.5.3 Label in Name have no other rule, "
+        "so an empty block means neither is machine-checked."
+    )
+
+
 def test_the_inventory_names_the_scanner_and_version_it_was_taken_from():
     """A conformance claim that cannot name what produced it cannot be re-examined."""
     data = sc.inventory()
