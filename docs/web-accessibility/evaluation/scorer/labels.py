@@ -198,13 +198,28 @@ def check_app_version(manifest: dict, running_version: str) -> None:
     of one page; change the page and the label may no longer describe anything. Scoring across
     a mismatch produces numbers that look completely normal and mean nothing at all.
 
-    Skipped when either side does not state a version — an unstated version is a gap to close,
-    not a mismatch to fail on, and failing here would make the harness unbuildable before the
-    fixture starts declaring one.
+    **Skipped only when the ANSWER KEY states no version.** That was the original condition on
+    both sides, and it was right while the fixture declared no version at all — failing then
+    would have made the harness unbuildable. The fixture has declared one since v1.3.0, and it
+    is published in `routes.json`, so the reason for the leniency has expired on the running
+    side.
+
+    Leaving it there was a hole with no floor under it. `run.py` reads the running version from
+    a `--app-version` flag that **defaults to empty**, so the default behaviour of the one hard
+    stop protecting every number this tool produces was to do nothing at all. Point a run at an
+    older checkout of the app and you get a full report, normal-looking figures, and no warning
+    of any kind. An unstated running version is now a refusal that tells you what to pass.
     """
     labelled = str(manifest.get("app_version") or "").strip()
-    if not labelled or not running_version.strip():
+    if not labelled:
         return
+    if not running_version.strip():
+        raise DatasetError(
+            f"the golden set was labelled against app version {labelled}, and this run did not "
+            f"say which version it audited. Pass --app-version (or set MERIDIAN_VERSION) — "
+            f"scoring an answer key against an app it may not describe produces numbers that "
+            f"look completely normal and mean nothing."
+        )
     if labelled != running_version.strip():
         raise DatasetError(
             f"the golden set was labelled against app version {labelled}, but the app reports "

@@ -300,9 +300,20 @@ def test_scoring_against_a_different_version_of_the_app_refuses_to_run():
         labels_module.check_app_version({"app_version": "1.4.0"}, "1.5.0")
 
 
-def test_an_unstated_version_on_either_side_is_a_gap_to_close_not_a_mismatch_to_fail_on():
-    labels_module.check_app_version({"app_version": "1.4.0"}, "")
+def test_an_answer_key_with_no_version_of_its_own_cannot_demand_one():
+    """The original leniency, kept on the side it still applies to. A dataset that never states
+    a version has nothing to compare against, and failing there would make the harness
+    unbuildable before it declares one."""
     labels_module.check_app_version({}, "1.5.0")
+
+
+def test_a_run_that_does_not_say_which_version_it_audited_refuses_to_score():
+    """**This used to pass silently and that was the bug.** `run.py` defaults --app-version to
+    an empty string, so the one hard stop protecting every number this tool produces did
+    nothing unless somebody remembered a flag. Point a run at an older checkout and the report
+    looks entirely normal."""
+    with pytest.raises(DatasetError, match="--app-version"):
+        labels_module.check_app_version({"app_version": "1.4.0"}, "")
 
 
 def _record(**kwargs) -> dict:

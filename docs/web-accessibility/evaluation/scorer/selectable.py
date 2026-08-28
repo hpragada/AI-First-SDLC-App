@@ -53,6 +53,23 @@ from apps.a11y.checkers.rules import CapturedElement, checkers_for  # noqa: E402
 #: `accuracy` here would pull in the whole scoring path for one integer.
 MIN_SAMPLE = 30
 
+#: Checkers that cannot reach `MIN_SAMPLE` for a reason we have looked into and accepted, with
+#: the reason. A shortfall listed here is reported and does not fail the run; a shortfall that
+#: is NOT listed does fail it, which is the whole point — this is a record of what we know,
+#: never a way to turn the check off.
+KNOWN_SHORTFALL = {
+    "label": (
+        "2.5.3 cannot have a balanced sample, and that is a property of the criterion rather "
+        "than a gap in the data. A pass record only scores if the checker selects the element, "
+        "and the rule correctly skips any control whose accessible name already contains its "
+        "visible label as whole words - there is nothing left to judge there. So the only "
+        "controls that reach the judge are ones where the words genuinely differ, and those "
+        "are either real failures or genuinely arguable. A clearly-correct example is, by "
+        "definition, one the check skips. Recall for this checker is meaningful; precision is "
+        "not, because no correct examples remain that it could get wrong. See golden/README.md."
+    ),
+}
+
 
 def ceilings(golden_dir: Path, captured_path: Path) -> tuple[dict, list]:
     """The best sample each checker could reach, and the records that can never score."""
@@ -106,13 +123,18 @@ def main() -> int:
 
     print(f"\n  {'checker':12}{'best sample':>12}{'needs':>7}   verdict")
     short = 0
+    known: list[str] = []
     for checker in sorted(breakdown):
         best = ceiling[checker]
-        ok = best >= MIN_SAMPLE
-        if not ok:
+        if best >= MIN_SAMPLE:
+            verdict = "reachable"
+        elif checker in KNOWN_SHORTFALL:
+            verdict = f"short by {MIN_SAMPLE - best} - known, and the reason is recorded"
+            known.append(checker)
+        else:
+            verdict = f"SHORT BY {MIN_SAMPLE - best}"
             short += 1
-        print(f"  {checker:12}{best:12}{MIN_SAMPLE:7}   "
-              f"{'reachable' if ok else f'SHORT BY {MIN_SAMPLE - best}'}")
+        print(f"  {checker:12}{best:12}{MIN_SAMPLE:7}   {verdict}")
 
     for checker in sorted(breakdown):
         print(f"\n  {checker}")
@@ -131,12 +153,37 @@ def main() -> int:
             print(f"    {row['id']:14} {row['checker']:10} {row['route']}{row['selector']}"
                   f"   (claimed by: {claimed})")
 
+    for checker in known:
+        print(f"\n  {checker} is short on purpose:")
+        for line in _wrap(KNOWN_SHORTFALL[checker]):
+            print(f"    {line}")
+
     if short:
         print(f"\n{short} checker(s) cannot reach {MIN_SAMPLE} scored records from this answer "
-              f"key, so no audit will ever produce a number for them")
+              f"key, so no audit will ever produce a number for them. If that is understood "
+              f"and accepted, record the reason in KNOWN_SHORTFALL rather than deleting this "
+              f"check.")
         return 1
+    if known:
+        print(f"\nevery checker can reach {MIN_SAMPLE} scored records, except the "
+              f"{len(known)} recorded above")
+        return 0
     print(f"\nevery checker can reach {MIN_SAMPLE} scored records")
     return 0
+
+
+def _wrap(text: str, width: int = 92) -> list[str]:
+    """Enough wrapping to keep a paragraph readable in a terminal, without a dependency."""
+    line: list[str] = []
+    out: list[str] = []
+    for word in text.split():
+        if sum(len(w) + 1 for w in line) + len(word) > width:
+            out.append(" ".join(line))
+            line = []
+        line.append(word)
+    if line:
+        out.append(" ".join(line))
+    return out
 
 
 if __name__ == "__main__":
