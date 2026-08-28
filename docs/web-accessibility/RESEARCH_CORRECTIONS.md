@@ -345,6 +345,134 @@ those criteria was never evidence of anything.
 
 ---
 
+## R19 — An element with a border is invisible to the colour check, and a coloured border is the commonest error cue there is
+
+**Found 2026‑08‑28**, while planting 1.4.1 material for the accuracy dataset. **Not fixed** — the
+fix is a platform-wide behaviour change and needs a ruling first. Recorded so the ruling can be
+made on evidence.
+
+**What is true.** `_applies_color` skips any element `_has_second_cue` returns true for, and one
+of the things that returns true is a `border-style` other than `none`:
+
+```python
+if str(element.styles.get("border-style", "")).strip().lower() not in {"", "none"}:
+    return True
+```
+
+The reasoning is sound in general — a border is a visual cue that is not colour — and it is wrong
+in the case it matters most. **A field marked invalid by turning its border red already had a
+border.** The border is not the cue; the border's *colour* is. So the rule reads the presence of
+the thing being coloured as proof that colour is not the only cue, and declines to look.
+
+**The answer key already contained this and it read as a coverage miss.** `g-141-0019`
+(`/help/report-a-problem` `#problem-detail`) is labelled a clear 1.4.1 failure — "a rejected
+field marked by a red border and nothing else, no aria-invalid, no message". The colour rule
+declines it **because it has a border**. Its clean twin `g-141-0020` is declined for the same
+reason. One shows up as a false negative and the other cannot score at all.
+
+**Measured across the whole fixture**, 6,885 captured elements on 78 routes. Elements that would
+be colour candidates but for a second cue:
+
+```
+selected as colour candidates          747
+declined for a second cue              328
+    of those, declined for a border    219   <-- this correction
+    declined for an underline           79   (a real second cue; correct)
+    declined for a nested img or svg    30   (a real second cue; correct)
+```
+
+The 219 by tag: 72 `button`, 49 `input`, 20 `li`, 20 `th`, 13 `select`, 11 `div`, 10 `a`,
+9 `span`, 6 `textarea`, 5 `td`, 4 `ul`. Every form control in the application is in there,
+because the stylesheet gives every form control a border.
+
+**Nothing else covers it either.** 1.4.1 has exactly one axe rule in our tag selection,
+`link-in-text-block`, and it is about links in prose. A red border on an invalid field is
+therefore decided by no engine the platform runs — not the scanner, and not the AI check that
+was built to catch what the scanner cannot.
+
+**Same failure mode as R13 and R18, for the third and fourth time: a guard reading a proxy
+instead of the thing.** R18's lesson was "a guard is only as true as the thing it reads". This
+one is narrower and worth stating on its own: **the presence of a property is not evidence about
+its value.** A border, an underline and an icon are cues only when they distinguish this element
+from its neighbours — which is what `_colour_differs_from_surroundings` already does for colour,
+and what `_has_second_cue` does not do for anything.
+
+**The ruling needed, and why it is not being made here.** The obvious change is to ask whether
+the border differs from the surrounding elements' border rather than whether one exists. That is
+one line, and it widens what the colour check judges on **every page of every tenant's
+application** — 219 more candidates on a fixture of 78 pages, against a per-run judgment budget
+of 200 elements. Narrowing a skip is cheap to write and expensive to be wrong about, so it wants
+the same treatment as the tab-strip question in `golden/README.md`: decided by a person, then
+built.
+
+**What it changes for a client today.** An audit will not report a field whose only error
+indication is a red border. That is the single most common way applications signal an invalid
+field, and a clean 1.4.1 result should not be read as evidence about it.
+
+---
+
+## R20 — A balanced answer key was producing a one-sided scored sample, and every check was green
+
+**Found 2026‑08‑28**, while growing the golden set so the accuracy numbers could be produced at
+all. **Fixed the same day**, in the dataset and with a new check.
+
+**What is true.** The golden set is deliberately balanced — 45 clear failures against 45 clear
+passes at v0.1.0, because "flag everything" is the failure mode a compliance tool falls into
+naturally and an unbalanced key would not catch it. That balance is real in the file and was not
+real in the scoring, because `accuracy._record` does not treat the two sides alike:
+
+```
+expected `fail`       always counts — a true positive if found, a false negative if not
+expected `pass`       counts ONLY if the checker actually SELECTS the element
+expected `uncertain`  never counts; scored on calibration instead
+```
+
+A `pass` record whose element the selection rules skip is **inert**: it can never contribute to
+any figure in either direction, and it looks exactly like a healthy record in every other check.
+
+**Where it bit hardest.** `label` / 2.5.3 had 19 clear records and could reach a scored sample of
+**9**. All ten pass twins name a control whose accessible name already contains its visible text,
+and `_applies_label` skips precisely those — correctly, because the criterion is then met as a
+matter of fact and there is nothing left to judge. So the only 2.5.3 records the checker could
+ever be scored on were failures. Measured ceilings at v0.1.0, against the 30 the scorer requires:
+
+| Checker | Records | Could ever score | Short by |
+|---|---|---|---|
+| `alt` | 22 | 20 | 10 |
+| `color` | 23 | 19 | 11 |
+| `label` | 20 | **9** | 21 |
+| `semantics` | 27 | 25 | 5 |
+| `structure` | 7 | 6 | 24 |
+
+The plan written before this was measured budgeted 60 new records on the assumption that
+"records minus the arguable ones" was the ceiling. The real figure was 74, and `label` needed
+more than three times what the plan allowed for it.
+
+**Why no existing check saw it.** `verify-golden.js` proves every label's `(route, selector)`
+resolves on the running page and re-derives under the companion's own `cssPath()`. That is
+necessary and it is not the same question. Resolving is about the page; scoring is about the
+selection rules, and nothing compared the answer key against them.
+
+**Fixed 2026‑08‑28.**
+1. The 74 records added for v0.2.0 were each checked against the real selection rules **before**
+   their label was written. All 74 are claimed by the checker they name, including all 37 pass
+   records.
+2. Where a checker's pass side is structurally hard to reach, the records are the cases that do
+   reach it. For `label` that meant pass twins whose name differs from the visible label by a
+   typographic mark — which both axe and the W3C rule treat as a separator, so the criterion is
+   met while the strings still differ and the element is still judged.
+3. `harness/verify-selectable.js` + `scorer/selectable.py` now assert this, in `npm run check`.
+   It captures in Node and decides in Python using `rules.py` itself, never a copy.
+
+**The general lesson, and it is not about accessibility.** *An answer key is only balanced with
+respect to the questions the system is actually asked.* A checker that filters its own inputs —
+which every one of ours does, deliberately — reshapes the distribution it is measured on, and a
+key balanced before that filter can be lopsided after it. Any evaluation set for a component
+that selects its own work needs to be balanced **downstream** of the selection, and needs a check
+that says so.
+
+---
+
 ## Two things worth recording that the reports got *right*
 
 - **The core architecture is sound.** "Deterministic core, AI on top; grounded in the real criterion text; confidence-gated; never auto-certify" survives contact with the codebase completely intact. Nothing in this correction touches it.

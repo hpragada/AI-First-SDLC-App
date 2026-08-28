@@ -97,6 +97,13 @@ EXPECTED_CANDIDATES = {
     # not a failure, and the number only ever fires when capture on the route collapses.
     # The sharp per-element version of this check is `harness/verify-selectable.js`, which
     # asserts that each individual labelled element is still claimed by its own checker.
+    #
+    # These sixteen are deliberately NOT added to `harness/count-candidates.js` the way the five
+    # above are. Those five are instrumentation pages with no twin, so a total counted from the
+    # rendered DOM is the only fixture-side check they can have. These sixteen are twin pairs,
+    # and `verify-plants.js` already asserts their exact contents element by element — which is
+    # strictly stronger than a total. A second copy of the totals would be one more thing to keep
+    # in step and would check nothing new.
     "/about/reading-rooms": 5,          # photographs
     "/about/our-buildings": 5,
     "/account/charges": 6,              # colour-coded amounts

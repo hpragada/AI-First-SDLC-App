@@ -287,6 +287,38 @@ All six need a **media pipeline** we do not have. Biggest lift on the board, for
 
 ---
 
+## 8b. Accuracy evidence — which checkers have any, as of 2026‑08‑28
+
+Coverage and accuracy are different claims, and this document is mostly about the first. A
+criterion can be fully covered by a checker that is wrong most of the time, and nothing above
+would show it.
+
+The golden set (`evaluation/golden/`, v0.2.0, 173 records) is what turns coverage into accuracy.
+As of today it can produce a number for **five of the six AI checkers**:
+
+| Checker | Criteria | Records that can score | Measurable? |
+|---|---|---|---|
+| `alt` | 1.1.1 | 30 | yes |
+| `color` | 1.4.1 | 31 | yes |
+| `label` | 2.5.3 | 31 | yes |
+| `semantics` | 1.3.1, 4.1.2 | 31 | yes |
+| `structure` | 1.3.1 | 30 | yes |
+| **`graphics`** | **1.4.11** | **0** | **no — none, ever** |
+
+**`graphics` has no accuracy evidence of any kind and this is deliberate.** The checker and the
+answer key would have the same author, which measures self-consistency rather than correctness.
+The fixture already holds the material to label — the `#9a958c` field border, 2.98:1 on the
+content surface — and it is asserted in the harness so it stays there. The one constraint on
+closing this is that the records must be written by someone who did not write the checker. Full
+note: **"Not covered, and how to add it"** in `evaluation/golden/README.md`.
+
+**Three cautions before anyone quotes a number from that set.** It is unadjudicated — every
+record is a draft awaiting expert sign-off. It has had no blind re-label round. And 30 records
+with ~15 failures means one miss moves recall by 6–7 points. Internally useful; not a client
+figure.
+
+---
+
 ## 9. Three things to know before quoting any of this
 
 ### The audits HAVE run, and counting them wrongly is easy — here is how to count them
