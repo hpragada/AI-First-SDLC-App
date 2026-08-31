@@ -15,13 +15,16 @@ plain words, why it happens underneath, exactly what will change, and how we pro
 We take one task at a time: I surface it in full, the team says go, I build it, we test it, and
 only then do we move on.
 
-> **Status, 2026-08-21.** This line used to read *"nothing in here is built yet"*. **All eleven
+> **Status, 2026-08-31.** This line used to read *"nothing in here is built yet"*. **All eleven
 > gaps in §3 and §4 are built**, and the document has since grown a second half nobody planned
-> for: **§9, what running it turned up** — **thirty-five so far across twenty-four sections**, all
-> built. #19–#35 were found by people watching the product work rather than by
-> reading code; #36–#41 came the other way, and #42–#45 from tracking a live audit end to end and reconciling it against a second tenant’s. The other way, from the team asking whether we capture every
-> element WCAG puts in scope and the answer being no. §3 is the plan as written; §9 is what
-> reality added to it, and §9 is now the larger and the more useful of the two.
+> for: **§9, what running it turned up** — **forty so far across twenty-five sections**, all built
+> bar one that is deliberately recorded and not built (§9.25.5). #19–#35 were found by people
+> watching the product work rather than by reading code; #36–#41 came the other way, from the team
+> asking whether we capture every element WCAG puts in scope and the answer being no; #42–#45 from
+> tracking a live audit end to end and reconciling it against a second tenant’s; and **§9.25 from
+> the first audit at real size — 94 pages, 2,171 elements — which is where four defects nothing
+> smaller could have surfaced came out at once.** §3 is the plan as written; §9 is what reality
+> added to it, and §9 is now the larger and the more useful of the two.
 
 ### How to read a task
 
@@ -2710,6 +2713,200 @@ And the marker is **drawn with borders, not written as a character**. It shipped
 file ended up holding a raw control byte — rendering live as a tofu box followed by the text
 "B8". A shape with no glyph in it cannot be mis-encoded and needs no font installed. Every file
 this change touched is now scanned for stray control bytes.
+
+### 9.25 The first full-scale audit — 31 August ⭐⭐ (BUILT)
+
+**The first run at real size: 94 pages, 2,171 elements, 1,065 questions.** Everything built for
+scale worked — every page visited, every element captured, the judge answering steadily. Then one
+duplicated call destroyed the audit's own account of itself, and every wrong number the team saw
+for the rest of the day came from that one record.
+
+Four defects, all of them **product** defects that would hit any client application identically,
+plus a fifth finding that is recorded rather than fixed.
+
+#### 9.25.1 One audit was closed twice, and the second close wrote off the first ⭐⭐
+
+**The chain, end to end, and none of the links is exotic.**
+
+Closing a 94-route audit is minutes of work: reconcile the route list, hash 2,171 stored
+elements, check each against the cache, file what cannot be asked about, start the judging run,
+write the batches. The companion's platform client had a hard **60-second timeout on every call**
+(`state_client.py`). The socket gave up; the server carried on regardless; the daemon read the
+timeout as *the audit failed* and ran its recovery path — which closes the audit. **The same close
+ran a second time while the first was still going.**
+
+The second close was refused a judge, correctly, by `trigger._guard_no_active_run` — a run was
+already live on that work item. But that refusal arrived at `dispatch` as an ordinary exception,
+so it was reported as *the judge could not be started* and every pending element was filed as
+`uncertain` for a person.
+
+**What that cost, read straight off the audit row before and after:**
+
+```
+started        : true            ->  false
+dispatched     : 800             ->  0
+deferred       : 265             ->  0
+judge_run_id   : dce6c6be…       ->  null
+filed_unjudged : 0               ->  1065
+status         : judging         ->  complete
+```
+
+**1,065 elements written off while 800 of them were being judged at that moment**, the record of
+the pass that *was* running replaced by the record of a pass that did nothing, and the audit
+marked complete with the judge still working. The screen then said *"1065 elements were never
+looked at"* about an audit that had 338 real verdicts in the database and climbing.
+
+**Three fixes, and the first two are independent of each other on purpose.**
+
+1. **A run already in progress is no longer a failure.** `dispatch` catches `ActiveRunError`
+   separately from every other trigger failure and returns `already_running`: nothing filed,
+   nothing deferred away, nothing written off. This is the fix that matters — it protects every
+   caller, not only a baseline audit, and it is stateless, so no crash can leave it half-applied.
+2. **A repeat close returns the audit untouched.** `finish_baseline_audit` sees
+   `already_running` and returns what the call doing the work left — status, summary and baseline
+   all belong to the run that is judging, and it completes them through the ordinary closing step.
+3. **The client stops timing out on a call whose job takes minutes.** `SLOW_TIMEOUT_S` for the
+   three `finish_a11y_audit` call sites. A client that reports a healthy audit as failed is wrong
+   on its own terms, and would have gone on doing it on every large audit.
+
+**Verified:** the live case reproduced as a test that closes one audit twice through the
+platform's **real** `_guard_no_active_run` — only the Temporal start is stubbed — and asserts the
+summary is byte-identical afterwards, the status is still `judging`, `filed_unjudged` is 0, and
+exactly one judge run exists. 238 tests across dispatch and baseline.
+
+#### 9.25.2 A failed dispatch relabelled work that was correctly queued ⭐
+
+**Two facts about two different sets of elements, held in one string and one list.**
+
+Both failure paths in `dispatch` did `unjudged_requests = pending + deferred` and then
+`deferred = []`. So the 265 elements correctly held back at this run's limit were filed carrying
+*"the judge could not be started"* — a sentence that is not true of them. They were queued, not
+unaskable, and the difference is the whole content of the **Check the rest** button.
+
+Client-visible result: the sidebar badge read **1,731 items waiting on a person**, every one of
+them `source='AI'`, `verdict='uncertain'`, and none of them real.
+
+**The fix.** Each path files only what it actually attempted. The deferred tail stays deferred and
+carries its own reason in its own field (`deferred_reason`), so a failure can no longer overwrite
+it. Nothing is lost by leaving them: an element with no verdict row at all is exactly what
+`unanswered_for_capture` looks for, and `unanswered_counts` still adds `filed_unjudged` to
+`deferred_distinct`, so the total a screen shows is unchanged. **What changes is that each half
+now carries the reason that is true of it.**
+
+**And the consequence had to be fixed with it.** `unaskedNote` on the audit screen returned the
+cap sentence *or* the failure sentence. Now that both can be true at once, showing one would have
+hidden the other — and the hidden one would have been the failure, which is the half somebody has
+to act on. It says both, failure first.
+
+#### 9.25.3 A container `<div>` with no class was never captured ⭐
+
+Same shape as the `tr` gap and the `polyline` gap before it, one step further out. The `OFFER`
+list carried `div[class]`; the three season containers on `/events/workshops` are
+`<div id="workshops-spring" style="padding-left:1.5rem">` wrapping five identically classed
+children. `structure` claims that shape on sight — it was simply never shown one.
+
+**Never offered is worse than declined, and this is why.** An element that is offered and turned
+down is *counted*, and `rules.explain()` can say which rule declined it. An element never offered
+produces no row anywhere: nothing declined it, nothing recorded that it existed, and the page is
+written down as checked.
+
+**Measured before it was written**, exactly as the `polyline` change was, and the two candidates
+cost the same on this fixture:
+
+```
+routes measured : 95
+offered today   : 8,385 elements
+div:has(> *:nth-child(3))  -> +3, all 3 claimed   (busiest page 545 of the 600 ceiling)
+div[id], div[style]        -> +3, all 3 claimed
+```
+
+**`div:has(> *:nth-child(3))` was chosen, and not because of the fixture.** It is
+`REPEATED_CHILD_MINIMUM` said in CSS — the same bar the rule that would claim it uses — so it
+offers what that rule can actually want and not a wrapper more. `div[id], div[style]` would have
+fixed Meridian and left every framework's class-less, id-less wrapper exactly as invisible as
+before, and the target is any real application rather than this one.
+
+**Verified live** against the running fixture: that page went from 80 to 83 elements and all three
+containers arrive carrying their structural outline.
+
+#### 9.25.4 Our own check could never have found 9.25.3 ⭐⭐
+
+**The one that should worry us most**, because it is a check that reported green on exactly the
+thing it exists to find.
+
+`verify-selectable.js` asks whether every answer-key record can reach the checker it was labelled
+for. It reached each recorded element with `document.querySelector` — which finds anything on the
+page, offered or not. So it ran the **second** step of selection (do the rules claim it?) and
+never the **first** (would an audit collect it at all?), and the only failure it could not see was
+an element missing from the `OFFER` list.
+
+**What that hid, and the asymmetry is why it stayed hidden.** An expected-`fail` record counts
+toward a checker's ceiling whether or not anything reaches it. So `structure` reported a reachable
+sample of 30 — over the line — while **3 of its 15 failure records could never be found by any
+judge**. Its recall was capped at **12/15 = 80%** and every check was green.
+
+**The fix.** `OFFER` is exported from the companion's audit script and imported by the harness —
+one definition, so it cannot drift, the same rule `selectable.py` already follows by importing
+`rules.py` rather than restating it. The check compares **element identity** rather than selector
+strings, because the companion writes its own `cssPath` and comparing that against a hand-written
+golden selector would call two spellings of one element a miss.
+
+`selectable.py` now reports two different problems instead of one, and only the second fails the
+run:
+
+| | Means | Fix lives in |
+|---|---|---|
+| *collected, then declined* | a rule looked and said no | the answer key, or nowhere |
+| *NEVER COLLECTED* | nothing ever showed it to a rule | the `OFFER` list |
+
+**Proved rather than asserted:** with the 9.25.3 fix temporarily removed, the check names all
+three records by id, says which rule would have claimed each, and exits non-zero.
+
+#### 9.25.5 Terminating a run does not stop the agent — RECORDED, NOT BUILT ⭐⭐
+
+**Found while stopping the audit, and it is a platform-wide fact rather than an accessibility
+one.** The workflow was terminated on Temporal at 06:46:36 and reported `TERMINATED`. Verdicts
+went on arriving until **07:37** — 49 minutes later, one every five to ten seconds, all stamped
+with the terminated run's id.
+
+The agent is a Claude Code process on the companion. It posts each verdict through the runner
+state API, which never asks whether the run it names is still live. So the workflow is the
+platform's control over *orchestration* and not over *work*, and "stop" stops only the former.
+Only killing the companion ended it.
+
+**Nothing is built for this here.** It needs a decision about where the check belongs — the
+runner API refusing writes for a closed run, the companion polling its own run's status, or both
+— and that is a control-plane change well outside this document. What is built is a defence in
+the one place it was about to bite: the tenant clean-up refuses to delete anything if a judgment
+was written in the last five minutes, because "the workflow is stopped" turned out not to be
+evidence that nothing is writing.
+
+#### What this audit produced, and what it could not
+
+**No accuracy number, and the reason is stated rather than worked around.** Only **43 of 173**
+answer-key records received a real verdict — `alt` 12, `color` 9, `label` 19, `semantics` 0,
+`structure` 3. `DEFAULT_MIN_SAMPLE` is 30 and no checker reached it, so every figure reads *not
+yet measurable*, which is correct and is the point of that floor.
+
+**What did stand up, and is worth saying because it is easy to lose in a bad day:** all 94 pages
+visited and 2,171 elements captured with no reconciliation gaps; 335 genuine rule-scanner
+findings; and Friday's fixes confirmed working on real output — 20 `label-content-name-mismatch`
+and 3 `td-has-header` findings that no pre-28-August audit could have produced.
+
+#### One thing found that is not ours to fix here
+
+**14 backend tests were already failing on this branch**, identically with every change above
+stashed. All of them trace to the `graphics` / 1.4.11 checker added on 27 August and never wired
+into `integrations.capabilities.A11yAI`, the selection corpus, or several test expectations that
+enumerate checkers. One may be a real product gap rather than a stale test: there is no
+`check_graphics`, so 1.4.11 cannot be asked through the capability at all. Logged as its own
+task, deliberately not fixed in passing — the corpus entries need writing properly and the
+capability question needs a decision.
+
+One of the fourteen was fixed, because it sat in a file this work was already changing and a red
+test on the branch we build on is a hazard: `test_finishing_produces_findings_for_the_registered_routes`
+asserted the exact list of every finding regardless of source, so a correctly added checker read
+as a broken audit. It now asserts on rule-scanner findings, which is what it was always about.
 
 ### What was deliberately NOT built — 24 August
 

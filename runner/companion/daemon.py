@@ -394,13 +394,18 @@ class CompanionDaemon:
         Best-effort by design: if the platform cannot be reached either, the lease is the
         backstop and this must not be what takes the companion down.
         """
-        from runner.companion.state_client import RemoteStateClient
+        from runner.companion.state_client import SLOW_TIMEOUT_S, RemoteStateClient
 
         reason = ("The machine running this audit stopped before it could visit any pages. "
                   "Nothing here tells you anything about your application. Start a new audit.")
         try:
+            # The same long allowance the ordinary close uses (`SLOW_TIMEOUT_S`). This path
+            # exists to recover an audit whose run raised — and one of the ways it raised was
+            # the ordinary close timing out, so a recovery on the short default would time out
+            # in the same place and report a healthy audit as unrecoverable as well as failed.
             RemoteStateClient(api_url=self._base, tenant_id=self._tenant, token=self._token).call(
-                "finish_a11y_audit", audit_id=claimed["audit_id"], reason=reason)
+                "finish_a11y_audit", _timeout=SLOW_TIMEOUT_S,
+                audit_id=claimed["audit_id"], reason=reason)
         except Exception as close_exc:  # noqa: BLE001 — the lease is the backstop
             print(f"[companion] a11y audit {claimed.get('audit_id')} could not be closed "
                   f"({close_exc!r}); its claim will age out instead. Original: {exc!r}",

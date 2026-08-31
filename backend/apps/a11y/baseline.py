@@ -307,6 +307,33 @@ def finish_baseline_audit(*, tenant_id, audit_id, trigger=None, reason: str = ""
         title=_title(audit), trigger=trigger,
         triggered_by=str(audit.started_by_id) if audit.started_by_id else None,
     )
+    if result.get("already_running"):
+        # **This call is a REPEAT, and the correct thing to do is nothing at all** (31 Aug).
+        #
+        # Closing an audit is not instant: at 94 routes it reconciles the route list, hashes
+        # 2,171 stored elements, checks each against the cache, files the leftovers and starts a
+        # Temporal run — minutes of work. The companion's platform client gives up after 60
+        # seconds (`runner/companion/state_client.py`), the daemon treats that timeout as the
+        # audit having failed, and its recovery path closes the audit — so the SAME close ran a
+        # second time while the first was still going. Nothing about this function stopped it.
+        #
+        # What that cost, measured on the 31 August audit: the second call was refused a judge
+        # (one was already running), wrote off all 1,065 captured elements as unjudgeable while
+        # 800 of them were being judged, replaced the first call's record of the pass with its
+        # own empty one, and marked the audit complete. Every wrong number on screen afterwards
+        # came from that record.
+        #
+        # So a repeat returns the audit exactly as the call that is doing the work left it. The
+        # status is not touched, the summary is not touched, and no baseline is published — the
+        # run that is judging owns all three, and completes them through the ordinary closing
+        # step (`aipass.finish_ai_pass` → `complete_audit`).
+        #
+        # This is deliberately a re-read rather than the row loaded at the top of this function:
+        # that one was fetched before the work started and its `summary` is a snapshot from
+        # before the first call wrote its own.
+        current = _audit(tenant_id, audit_id)
+        return {"audit_id": run_key, "status": current.status, "repeat": True,
+                "reason": result.get("reason", ""), **(current.summary or {})}
     summary["ai_pass"] = {k: v for k, v in result.items() if k != "report"}
     # A pass that dispatched nothing has already published its report (everything was cached, or
     # there was no judge to ask); one that dispatched is still in flight and completes when the

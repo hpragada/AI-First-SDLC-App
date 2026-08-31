@@ -76,6 +76,22 @@ DISPATCH_FAILED = (
     "The accessibility judge could not be started ({detail}). These items were sent for "
     "human review instead of being scored."
 )
+#: A judge is ALREADY judging this work item. **Not a failure, and the difference is the whole
+#: reason this constant exists** (31 Aug).
+#:
+#: `trigger_phase` refuses a second run for a work item that already has a live one, and that
+#: refusal used to arrive here as an ordinary exception — so it was reported as "the judge could
+#: not be started" and every pending element was filed as `uncertain` for a human. On the 31
+#: August audit that wrote off **1,065 elements while 800 of them were being judged at that
+#: moment**, replaced the audit's own record of the pass that WAS running, and marked the audit
+#: complete with the judge still working.
+#:
+#: A run already in progress means the work is happening, so nothing is filed, nothing is
+#: deferred away, and the caller is told plainly. See `DispatchResult.already_running`.
+ALREADY_JUDGING = (
+    "A judgment run is already in progress for these elements ({detail}). Nothing was sent "
+    "again and nothing was written off — the run that is already going will report on them."
+)
 #: Said of the DISPATCHER, not of the audit. "Stopped at this run's limit" was read — correctly
 #: — as "the audit stopped", on a row for an audit that was still judging.
 #:
@@ -119,6 +135,18 @@ class DispatchResult:
     unjudged_requests: list[A11yRequest] = field(default_factory=list)
     run_id: str | None = None
     unavailable_reason: str = ""
+    #: Why the DEFERRED items were deferred, kept apart from `unavailable_reason` so one cannot
+    #: overwrite the other. "We stopped at this run's limit" and "the judge could not be reached"
+    #: are two different facts about two different sets of elements, and they can both be true of
+    #: one dispatch. Held in one string before this, the second to happen erased the first — so a
+    #: pass that reached its limit AND then failed to send reported only the failure, and the
+    #: elements correctly queued for a second pass were labelled as ones nothing could ask about.
+    deferred_reason: str = ""
+    #: A judgment run is ALREADY live for this work item, so this dispatch deliberately did
+    #: nothing. Distinct from `unavailable_reason` because it is not a failure: the elements are
+    #: being judged right now by the run that got there first. Nothing is filed and nothing is
+    #: cleared — see `ALREADY_JUDGING`.
+    already_running: bool = False
 
     @property
     def unjudged(self) -> list[A11yJudgment]:
@@ -417,7 +445,8 @@ def dispatch_judgments(
     # person's list that did not exist. `result.complete` still reads False — requests really
     # were deferred, and a re-run really does continue from here — but nobody is told to act.
     if remaining := distinct_remainder(pending, result.deferred):
-        result.unavailable_reason = OVER_CAP.format(cap=max_judgments, remaining=remaining)
+        result.deferred_reason = OVER_CAP.format(cap=max_judgments, remaining=remaining)
+        result.unavailable_reason = result.deferred_reason
     if not pending:
         return result
 
@@ -426,8 +455,18 @@ def dispatch_judgments(
     unavailable = judge_available(tenant_id, project_id, triggered_by)
     if unavailable:
         result.unavailable_reason = unavailable
-        result.unjudged_requests = pending + result.deferred
-        result.deferred = []
+        # **`pending` only. What was DEFERRED stays deferred** (31 Aug), here and on the failure
+        # path below. Both used to file `pending + deferred` and then clear `deferred`, which
+        # took elements that had been correctly held back at this run's limit and relabelled
+        # them as elements nothing could be asked about. On the 31 August audit that stamped 265
+        # correctly-queued elements with "the judge could not be started" and put them, with 800
+        # others, on a person's review queue as 1,731 items that were never real.
+        #
+        # Nothing is lost by leaving them: an element with no verdict row at all is exactly what
+        # `aipass.unanswered_for_capture` looks for, and `unanswered_counts` adds
+        # `filed_unjudged` to `deferred_distinct`, so the total a screen shows is unchanged.
+        # What changes is that each half now carries the reason that is true of it.
+        result.unjudged_requests = pending
         return result
 
     # 4) One run, through the driver seam. Any refusal to start is a reason for human review,
@@ -435,17 +474,27 @@ def dispatch_judgments(
     if trigger is None:
         from orchestration.trigger import trigger_phase as trigger
 
+    from orchestration.trigger import ActiveRunError
+
     try:
         outcome = trigger(
             tenant_id=tenant_id, project_id=project_id, work_item_id=work_item_id,
             agent_key=JUDGE_AGENT_KEY, triggered_by=triggered_by,
             execution_mode="companion", auto_approve=True,
         )
+    except ActiveRunError as exc:
+        # **Caught before the general handler, because it is not a failure.** A run is already
+        # live for this work item, which means these elements are already being judged — by a
+        # dispatch that got here first, from a caller that was retried, or from a close that was
+        # made twice. Reporting it as "the judge could not be started" and filing every pending
+        # element as `uncertain` writes off work that is happening at that moment, and that is
+        # exactly what it did on the 31 August audit. See `ALREADY_JUDGING`.
+        result.already_running = True
+        result.unavailable_reason = ALREADY_JUDGING.format(detail=exc)
+        return result
     except Exception as exc:  # noqa: BLE001 — every failure mode is "send it to a human"
-        reason = DISPATCH_FAILED.format(detail=exc)
-        result.unavailable_reason = reason
-        result.unjudged_requests = pending + result.deferred
-        result.deferred = []
+        result.unavailable_reason = DISPATCH_FAILED.format(detail=exc)
+        result.unjudged_requests = pending
         return result
 
     result.run_id = outcome.run_id

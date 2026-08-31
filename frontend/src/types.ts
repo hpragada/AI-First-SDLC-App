@@ -1031,8 +1031,17 @@ export interface A11yAudit {
       // duplicates are not collapsed before the cap, so the tail of a stopped pass is often
       // markup already judged earlier in the same run.
       deferred_distinct?: number;
+      // Why those were deferred, kept apart from `reason` so one cannot overwrite the other. A
+      // pass can reach its limit AND then fail to send what it had kept: two facts about two
+      // different sets of elements, and a single string could only hold the last one to happen.
+      deferred_reason?: string;
       dispatched?: number;
       distinct?: number;
+      // A judgment run was ALREADY live for this capture, so this pass deliberately did nothing
+      // — it did not dispatch, and it wrote nothing off. Not a failure: the run that got there
+      // first is judging those elements. A pass carrying this never replaces the record of the
+      // pass that is running.
+      already_running?: boolean;
       // How many elements nothing could be asked about at all — no judge registered, or no
       // machine connected. Tells that case apart from the cap case WITHOUT matching on the
       // wording of `reason`, which would break the moment somebody improved a sentence.

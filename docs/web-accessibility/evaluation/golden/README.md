@@ -248,15 +248,16 @@ Every selector in this set was produced by running `cssPath()` against the fixtu
 
 ---
 
-## Three coverage gaps this set exposed — all three now closed
+## Four coverage gaps this set exposed — all four now closed
 
-All three were found while labelling, before any scoring run, and all three were closed on
-2026‑08‑28 once the team had ruled on the two that changed platform behaviour. Each is recorded
-as a normal `fail` record, so the harness reported it as a never-captured miss against recall
-rather than as a special case.
+The first three were found while labelling, before any scoring run, and were closed on
+2026‑08‑28 once the team had ruled on the two that changed platform behaviour. **The fourth was
+found by a live audit on 2026‑08‑31**, and it is the one worth reading twice: it had been sitting
+inside a set that every harness check called healthy. Each is recorded as a normal `fail` record,
+so the harness reports it as a never-captured miss against recall rather than as a special case.
 
-**The set earning its keep before it scored anything is the point worth noticing here** — three
-real defects on three different checkers, found by writing down what the right answer was and
+**The set earning its keep before it scored anything is the point worth noticing here** — four
+real defects on four different checkers, found by writing down what the right answer was and
 checking whether the platform could even be asked the question.
 
 **1. The chart series on `/reports/branch-comparison` are never captured.** — **FIXED
@@ -352,11 +353,42 @@ too and cannot score.
 > records on this pair now score, and `color`'s reachable sample went from 31 to 32. Full
 > write-up in `../RESEARCH_CORRECTIONS.md` R19.
 
+**4. A container `<div>` with no class on it is never captured — found 2026‑08‑31, FIXED the
+same day.** The three season containers on `/events/workshops` are
+`<div id="workshops-spring" style="padding-left:1.5rem">`, each wrapping five identically classed
+children. `structure` claims that shape on sight; it was simply never shown one, because the
+`OFFER` list carried `div[class]` and these have no class. **3 records: `g-131-0032/0034/0036`.**
+
+> **This one was found by a live audit and not by the harness, and that is the finding.** All
+> three were labelled `fail`, and an expected-`fail` record counts toward a checker's ceiling
+> whether or not anything reaches it — so `structure` read as reaching 30 the whole time, while
+> **3 of its 15 failure records could never be found by any judge.** Its recall was capped at
+> **12/15 = 80%** and nothing said so.
+>
+> `verify-selectable.js` could not have caught it either: it reached each recorded element with
+> `document.querySelector`, which finds anything on the page whether an audit would collect it or
+> not, so it reported all three as perfectly selectable. **Both halves are fixed** — see gap-fix
+> §9.25 and the harness README.
+>
+> The capture now also offers `div:has(> *:nth-child(3))`, which is `REPEATED_CHILD_MINIMUM` said
+> in CSS: the same bar the rule that would claim it uses. Deliberately not `div[id], div[style]`,
+> which would have fixed this fixture and left every framework's class-less, id-less wrapper
+> exactly as invisible as before.
+>
+> Cost, measured across all 95 routes before it was written: **8,385 elements offered today, and
+> this adds three** — the three on this page, all three claimed. The busiest page in the fixture
+> sits at 545 of the 600-per-page ceiling and is unchanged by it.
+
 A pass-side label on an element the platform correctly declines to select is **not** a problem in
 itself: `accuracy.py` counts it as `never_looked` and excludes it from every other figure, so the
 platform gets no credit and no penalty for a right answer it never gave. It becomes a problem
 when there are enough of them to hollow out a checker's sample, which is what `verify-selectable.js`
 now watches for.
+
+**And "declined by a rule" is now told apart from "never collected at all".** They used to read
+the same and they are not the same: the first is a rule's decision, visible and often correct;
+the second is an element nothing ever looked at, which no answer key can compensate for. Only the
+second fails the run.
 
 ---
 

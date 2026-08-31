@@ -213,6 +213,13 @@ are not claimed by any rule yet, and that is deliberate — an element that is o
 declined is *counted*, and the platform can say which rule declined it. An element never offered
 is a silence nothing can measure. So whichever option is chosen, the groundwork is in place.
 
+> ⚠️ **Fix 1 was narrower than this paragraph read, and the shortfall lasted a week.** It offered
+> `div[class]`, so a container styled by `id` or by an inline style — with no class of its own —
+> stayed exactly as invisible as before. Three hand-labelled `structure` failures sat in that
+> state through a whole live audit. **Closed 31 August**: the capture now offers any `<div>` with
+> three or more children, which is the same bar the structure rule itself uses. Measured across
+> 95 routes it adds three elements to 8,385. See gap-fix §9.25.3.
+
 ---
 
 ## 9. Deliberately not covered here

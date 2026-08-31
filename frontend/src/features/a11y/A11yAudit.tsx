@@ -86,23 +86,31 @@ const STATUS_LABEL: Record<string, string> = {
  * shown as written: those are not derivable from a count, and they are told apart by
  * `filed_unjudged` rather than by matching on wording — which would break the moment someone
  * improved a sentence.
+ *
+ * **Both can be true at once, and both are said** (31 Aug). A pass that reached its limit and
+ * then could not send what it had kept is two facts about two different sets of elements. The
+ * dispatcher used to fold the second set into the first — so only one sentence could ever apply
+ * — and now that it correctly keeps them apart, showing one of them would hide the other. The
+ * failure comes first because it is the one somebody has to go and do something about.
  */
 function unaskedNote(audit: A11yAuditRow): string {
   if (AUDIT_IN_FLIGHT.includes(audit.status)) return "";
   const pass = audit.summary?.ai_pass;
   if (!pass) return "";
+  const notes: string[] = [];
+  // Nothing was deferred that anything else did not already answer. An audit recorded before
+  // `deferred_distinct` existed reads as 0 here and says nothing, which is the same choice the
+  // button makes: silence beats a number known to mislead.
+  if ((pass.filed_unjudged ?? 0) > 0 && pass.reason) notes.push(pass.reason);
   const left = pass.deferred_distinct ?? 0;
   if (left > 0) {
-    return (
+    notes.push(
       `This run reached its limit before every element was checked — ${left} ` +
       `${left === 1 ? "element was" : "elements were"} left for a second pass. Run the check ` +
       `again to continue from here; nothing was skipped.`
     );
   }
-  // Nothing was deferred that anything else did not already answer. An audit recorded before
-  // `deferred_distinct` existed reads as 0 here and says nothing, which is the same choice the
-  // button makes: silence beats a number known to mislead.
-  return (pass.filed_unjudged ?? 0) > 0 ? pass.reason ?? "" : "";
+  return notes.join(" ");
 }
 
 /** Is what this audit is doing (or last did) a SECOND judging pass over the same capture?

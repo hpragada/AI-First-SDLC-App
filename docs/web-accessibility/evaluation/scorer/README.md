@@ -98,6 +98,24 @@ The distinction that makes this worth building:
 A silence never earns credit. Where the answer key says an element should have passed and we
 never looked at it, we get no point for a right answer we did not give.
 
+### …and the second silence has two causes, which `selectable.py` now separates
+
+Selection is two steps: the capture **collects** everything matching the companion's `OFFER`
+list, then the platform's rules decide what to **claim**. Something that never reaches a checker
+failed at one of those steps, and which one decides where the fix goes:
+
+| | What it means | Where the fix is | Does it fail the run? |
+|---|---|---|---|
+| **collected, then declined** | a rule looked and said no | the answer key, or nowhere — sometimes it is a property of the criterion (`KNOWN_SHORTFALL`) | no |
+| **never collected** | nothing ever showed it to a rule | the `OFFER` list in `runner/companion/assets/a11y_audit.mjs` | **yes** |
+
+**They read identically until 31 August, and the cost of that was hidden by the asymmetry.** An
+expected-`fail` record counts toward a checker's ceiling whether or not anything reaches it — so
+`structure` reported a reachable sample of 30 while 3 of its 15 failure records could never be
+found by any judge, capping its recall at 80%. Nothing said so, because `verify-selectable.js`
+reached each element with `document.querySelector` and reported all three as selectable. Both
+halves are fixed; the harness README has the detail.
+
 ---
 
 ## The gate
@@ -127,7 +145,8 @@ edit to a decision record rather than a code change nobody sees.
 | `labels.py` | reads the golden set; refuses to run on one that does not add up |
 | `baseline.py` | the stored numbers, the tolerance band, and the gate |
 | `platformdata.py` | **the only module that touches the platform.** Read-only, always |
-| `tests/` | 40 tests, no database, no Django |
+| `selectable.py` | could each record ever *score*? Run from `../harness/verify-selectable.js` |
+| `tests/` | 41 tests, no database, no Django |
 
 The platform is imported, not re-implemented: `merge_run` already returns every element of a
 run with what each check said about it, **including the passes**. A scorer that went looking for

@@ -16,6 +16,22 @@
 // nobody runs, which is worse than not checking at all. So this side does nothing but produce
 // the capture in the shape `a11y_audit.mjs` produces it, and hands it over.
 //
+// **And it collects the way an audit collects, which it did not used to.** Selection happens in
+// two steps, not one: the companion first COLLECTS everything matching its `OFFER` list, and the
+// platform's rules then decide which of those to claim. This file only ever ran the second step
+// — it reached each recorded selector with `document.querySelector`, which finds anything on the
+// page whether an audit would collect it or not. So the one failure it could never see was an
+// element `OFFER` does not reach, which is exactly the failure it exists to find.
+//
+// On the 31 August audit three answer-key records sat on class-less container divs. `OFFER` had
+// `div[class]`, so no audit ever collected them, no rule ever declined them, and nothing
+// recorded that they existed — while this check reported all three as perfectly selectable. It
+// now imports the real `OFFER` from the companion's own audit script and tests element identity
+// against what that list collects, so a record can be reported as reachable only if a real
+// audit would reach it. The two answers it can give are different problems with different
+// fixes: *collected, then declined by a rule* is usually correct and is sometimes a property of
+// the criterion; *never collected at all* is always a gap in the capture.
+//
 // Requires `python` on PATH. The scorer is Python already, so this is not a new dependency —
 // but it is a real one, and a missing interpreter fails loudly here rather than skipping,
 // because a guard that can quietly not run is the thing this whole harness exists to prevent.
@@ -23,6 +39,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { pathToFileURL } = require("url");
 const { spawnSync } = require("child_process");
 const { chromium } = require("playwright");
 
@@ -30,6 +47,14 @@ const { BASE_URL: BASE } = require("./config");
 
 const GOLDEN = path.join(__dirname, "..", "golden");
 const SELECTABLE = path.join(__dirname, "..", "scorer", "selectable.py");
+
+// The companion's audit script, which owns the one definition of what an audit collects.
+// Imported at run time (`await import`) because it is an ES module and this file is CommonJS —
+// and imported rather than copied for the reason the header gives: a second copy of the OFFER
+// list here would drift from the real one, and this check would then certify the answer key
+// against a capture nobody runs.
+const AUDIT_SCRIPT = path.join(
+  __dirname, "..", "..", "..", "..", "runner", "companion", "assets", "a11y_audit.mjs");
 
 // The nine computed properties `rules.STYLE_KEYS` reads. A key missing here turns every rule
 // that reads it into a silent "no", which is exactly the bug that hid the chart series.
@@ -67,6 +92,16 @@ function goldenRecords() {
     byRoute.get(route).add(selector);
   }
 
+  const { OFFER } = await import(pathToFileURL(AUDIT_SCRIPT).href);
+  if (!Array.isArray(OFFER) || !OFFER.length) {
+    console.error(`\n  ${AUDIT_SCRIPT} exported no OFFER list.\n` +
+      "  Without it this check cannot tell an element an audit would skip from one it would\n" +
+      "  collect, which is the whole thing it is for. Refusing to run rather than reporting a\n" +
+      "  green that means nothing.");
+    process.exit(1);
+  }
+  const offerSelector = OFFER.join(",");
+
   const browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
@@ -75,13 +110,19 @@ function goldenRecords() {
   for (const [route, selectors] of byRoute) {
     await page.goto(BASE + route, { waitUntil: "domcontentloaded" });
     const elements = await page.evaluate(
-      ([wanted, styleKeys]) => {
+      ([wanted, styleKeys, offer]) => {
         const styles = (el) => {
           const computed = getComputedStyle(el);
           const out = {};
           for (const key of styleKeys) out[key] = computed.getPropertyValue(key);
           return out;
         };
+        // Exactly what an audit collects on this page. Element identity, not selector strings:
+        // the companion writes its own `cssPath` for every element it keeps, and comparing that
+        // against a hand-written golden selector would compare two spellings of one element and
+        // call a mismatch a miss. `has(el)` asks the only question that matters — is this the
+        // same node?
+        const offered = new Set(document.querySelectorAll(offer));
         return wanted.map((selector) => {
           const el = document.querySelector(selector);
           if (!el) return { selector, missing: true };
@@ -90,6 +131,9 @@ function goldenRecords() {
           for (const a of el.attributes) attrs[a.name.toLowerCase()] = a.value;
           return {
             selector,
+            // Would a real audit ever put this element in front of a rule? Everything below is
+            // what the RULES read; this is the step before them, and it was the missing one.
+            offered: offered.has(el),
             tag: el.tagName.toLowerCase(),
             role: el.getAttribute("role") || "",
             attrs,
@@ -109,7 +153,7 @@ function goldenRecords() {
           };
         });
       },
-      [[...selectors], STYLE_KEYS]
+      [[...selectors], STYLE_KEYS, offerSelector]
     );
 
     for (const element of elements) {

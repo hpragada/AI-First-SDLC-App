@@ -2,8 +2,9 @@
 
 **Edvensoft-internal. This never ships with the app.**
 
-Six checks that the Meridian Library fixture still holds the defects the golden dataset was
-labelled against, and that nothing about it has drifted.
+Eight checks that the Meridian Library fixture still holds the defects the golden dataset was
+labelled against, that nothing about it has drifted, and that every labelled element can actually
+reach the checker it was labelled for.
 
 ## Why this is not in the app repository
 
@@ -35,6 +36,8 @@ and `MERIDIAN_URL` (base URL); the defaults are in `config.js`.
 | `npm run contrast` | Does every colour pair still compute — including the one that has to keep failing? |
 | `npm run axe` | Does each route report the rule it was built to trigger, **and nothing else**? |
 | `npm run plants` | Is each planted case still in the page, and each twin still correct? |
+| `npm run golden` | Does every answer-key record's `(route, selector)` still resolve on the page? |
+| `npm run selectable` | Could each record ever *score*? See below — this is the subtlest of the eight. |
 | `npm run counts` | Do the long pages still hold exactly 12 / 20 / 15 / 8 / 0 candidates? |
 | `npm run journeys` | Do the interaction pages still behave as planted? |
 | `npm run audit` | Leaks, external origins, determinism, duplicate ids, orphan views. |
@@ -45,6 +48,29 @@ Without them, a page could lose its defect and every other check would still pas
 
 `axe` cuts both ways: a rule nobody planted means the page picked up a defect it was not meant to
 have; silence where a failure was expected means the defect is gone. Both are bugs in the fixture.
+
+### `selectable` — and why it is two questions, not one
+
+`golden` proves a record still *resolves*. That is necessary and it is not enough: resolving is
+about the page, and scoring is about the selection rules. A `pass` record only counts if the
+checker actually selects the element, so a record can resolve perfectly and be permanently unable
+to contribute a number in either direction. `scorer/selectable.py` carries the full reasoning.
+
+Selection happens in **two steps**, and this check now reports them separately because they are
+different problems with different fixes:
+
+| What it says | What it means | Where the fix is |
+|---|---|---|
+| *collected, then declined by a rule* | A rule looked at it and said no. Often correct — sometimes a property of the criterion itself, in which case it belongs in `KNOWN_SHORTFALL` with its reason. | The answer key, or nowhere |
+| *NEVER COLLECTED by the capture* | Nothing ever showed it to a rule. No rule declined it; nothing recorded that it existed. **Always a gap, and it fails the run.** | The `OFFER` list in `runner/companion/assets/a11y_audit.mjs` |
+
+**The second answer only became possible on 31 August.** This check used to reach each recorded
+element with `document.querySelector`, which finds anything on the page whether an audit would
+collect it or not — so the one failure it could never see was an element the capture does not
+offer, which is exactly the failure it exists to find. Three `structure` records had been in that
+state for a whole live audit while every check here was green. It now imports the real `OFFER`
+array from the companion's own audit script and compares **element identity**, so it can only ever
+see what an audit would see.
 
 ## When a check disagrees with the build guide
 

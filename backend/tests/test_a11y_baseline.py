@@ -634,7 +634,13 @@ def test_finishing_produces_findings_for_the_registered_routes(world):
         "help": "Images must have alternate text", "nodes": ["img.hero"]}]))
 
     finish_baseline_audit(tenant_id=world["t"], audit_id=str(audit.id))
-    findings = list(A11yFinding.objects.filter(tenant_id=world["t"]))
+    # **Rule-scanner findings only, which is what this test is about.** With no judge to ask,
+    # every element an AI check claims is filed as `uncertain` for a person — real behaviour
+    # (QA-13), and it means the AI half of this list grows whenever a checker is added. It grew
+    # on 27 Aug when `graphics` arrived and started claiming the default screen's element for
+    # 1.4.11, and this assertion had been listing every finding regardless of source, so a
+    # correct new checker read as a broken audit.
+    findings = list(A11yFinding.objects.filter(tenant_id=world["t"], source="rule"))
     assert [f.criterion for f in findings] == ["1.1.1"]
     assert findings[0].route == "/login"
 
@@ -730,6 +736,103 @@ def test_an_audit_completes_when_its_judgment_run_ends(world):
     assert out["published"] is True and out["audit_completed"] is True
     audit.refresh_from_db()
     assert audit.status == A11yBaselineAudit.Status.COMPLETE
+
+
+def _judging_world(world):
+    """A tenant that can really dispatch a judge: agent registered, machine connected, and a
+    user to own both — `_resolve_enrollment` returns nothing without one."""
+    from apps.registry.models import AgentSpec
+    from apps.runs.enrollment import enroll_runner
+    from apps.tenancy.models import User
+
+    user = User.objects.create_user(email="qa@acme.com", name="QA", tenant=world["tenant"],
+                                    password="pw")
+    AgentSpec.objects.create(
+        tenant=world["tenant"], key="09c_a11y_judge", semver="1.0.0",
+        prompt_version="a11y-judge-1", body_ref="agents/09c_a11y_judge/agent.md",
+        recommended_engine="claude", recommended_model="claude-opus-5",
+        phase_label="a11y_judge")
+    enroll_runner(tenant_id=world["t"], project_id=world["p"],
+                  developer_id=str(user.id), label="qa-laptop")
+    return user
+
+
+def _guarded_trigger(world):
+    """`trigger_phase` with Temporal taken out and NOTHING ELSE.
+
+    The platform's own `_guard_no_active_run` is called for real, so the refusal this test is
+    about is the refusal the platform actually raises — not a stand-in exception chosen to
+    match. Only the workflow start is skipped, which is `trigger_phase`'s own tested business.
+    """
+    from apps.registry.models import AgentSpec
+    from apps.runs.models import Run
+    from apps.tenancy.context import tenant_context
+    from orchestration.trigger import _guard_no_active_run
+
+    def trigger(*, tenant_id, project_id, work_item_id, agent_key, **kwargs):
+        with tenant_context(tenant_id):
+            _guard_no_active_run(tenant_id, work_item_id)
+            spec = AgentSpec.objects.get(tenant_id=tenant_id, key=agent_key)
+            run = Run.objects.create(
+                tenant_id=tenant_id, work_item_id=work_item_id, agent_spec=spec,
+                status=Run.Status.RUNNING, engine=spec.recommended_engine,
+                model=spec.recommended_model, prompt_version=spec.prompt_version)
+
+        class _Outcome:
+            run_id = str(run.id)
+            workflow_id = f"agent-run-{run.id}"
+
+        return _Outcome()
+
+    return trigger
+
+
+def test_closing_one_audit_twice_leaves_the_judging_pass_untouched(world):
+    """The 31 August audit, end to end.
+
+    Closing a 94-route audit is minutes of work — reconcile the routes, hash 2,171 elements,
+    check each against the cache, file the rest, start the run. The companion's platform client
+    gave up after 60 seconds, its daemon read that timeout as the audit having failed, and its
+    recovery path closed the SAME audit again while the first close was still going.
+
+    The second close was refused a judge (one was already running), and then: wrote off all
+    1,065 captured elements as unjudgeable while 800 of them were being judged, replaced the
+    first close's record of the pass with its own empty one, and marked the audit complete with
+    the judge still working. Every wrong number the team saw afterwards came from that record.
+
+    A repeat now returns what the first call left and changes nothing.
+    """
+    user = _judging_world(world)
+    _register(world, "/login")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"],
+                                 base_url="http://localhost:5173", started_by=user.id)
+    _post(world, audit, _screen())
+    trigger = _guarded_trigger(world)
+
+    first = finish_baseline_audit(tenant_id=world["t"], audit_id=str(audit.id), trigger=trigger)
+    assert first["ai_pass"]["started"] is True, "the first close really did dispatch a judge"
+    judge_run_id = first["ai_pass"]["judge_run_id"]
+    assert judge_run_id
+
+    audit.refresh_from_db()
+    before = dict(audit.summary)
+    assert audit.status == A11yBaselineAudit.Status.JUDGING
+
+    second = finish_baseline_audit(tenant_id=world["t"], audit_id=str(audit.id), trigger=trigger)
+
+    assert second["repeat"] is True
+    assert "already in progress" in second["reason"]
+    audit.refresh_from_db()
+    assert audit.summary == before, "the record of the pass that IS running must not be replaced"
+    assert audit.status == A11yBaselineAudit.Status.JUDGING, "the audit is not complete yet"
+    assert audit.summary["ai_pass"]["judge_run_id"] == judge_run_id
+    assert audit.summary["ai_pass"]["filed_unjudged"] == 0, "nothing may be written off"
+
+    # And no second run was started for the judging work item either — the guard is what
+    # refused, and this proves the refusal was obeyed rather than worked around.
+    from apps.runs.models import Run
+
+    assert Run.objects.filter(tenant_id=world["t"], agent_spec__key="09c_a11y_judge").count() == 1
 
 
 def test_a_build_runs_judgment_does_not_look_like_an_audit(world):

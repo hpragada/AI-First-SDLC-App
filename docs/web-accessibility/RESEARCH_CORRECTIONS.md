@@ -532,6 +532,68 @@ merely contains the visible label's letters rather than its words. Earlier audit
 
 ---
 
+## R22 — The check that guards the answer key could not see the failure it exists to find
+
+**Found 2026‑08‑31**, by a live audit rather than by the check. **Fixed the same day.** This is
+R20 one level deeper, and it is the more uncomfortable of the two.
+
+**What R20 built.** `verify-selectable.js` + `scorer/selectable.py`, to prove that every
+hand-written record can actually reach the checker it names — because a record can resolve
+perfectly on the page and still be structurally incapable of contributing a number.
+
+**What it could not see.** Selection is **two steps**, and R20's check only ran the second:
+
+```
+the capture COLLECTS what matches its OFFER list   <- never checked
+the rules then CLAIM what they want                <- this is what was checked
+```
+
+The check reached each recorded element with `document.querySelector`, which finds anything on
+the page whether an audit would collect it or not. So the one failure it could never detect was
+**an element the capture does not offer** — and that is the failure a capture-side gap produces.
+
+**What that hid, and the asymmetry is why it stayed hidden.** `accuracy._record` counts an
+expected-`fail` record toward a checker's ceiling **whether or not anything ever reaches it** — a
+miss is still a scored outcome. So three `structure` records on class-less container divs sat
+unreachable while:
+
+| | |
+|---|---|
+| `structure`'s reported reachable sample | **30** — over the floor, healthy |
+| `structure`'s failure records that no judge could ever find | **3 of 15** |
+| Its best achievable recall, therefore | **80%**, and nothing said so |
+
+A ceiling is not a floor. R20's check measured the sample a checker could reach and never asked
+whether the elements in it would arrive.
+
+**Fixed** by making the two steps distinguishable and reporting them as different problems:
+
+1. The `OFFER` list is **exported** from `runner/companion/assets/a11y_audit.mjs` and imported by
+   the harness — one definition, the same discipline R20 already applied by importing `rules.py`
+   rather than restating it.
+2. The check compares **element identity**, not selector strings. The companion writes its own
+   `cssPath`; comparing that against a hand-written golden selector would call two spellings of
+   one element a miss.
+3. `selectable.py` reports *collected then declined* separately from *never collected*, and only
+   the second fails the run. The first is a rule's decision and is sometimes a property of the
+   criterion (that is what `KNOWN_SHORTFALL` is for); the second is a gap no answer key can
+   compensate for.
+
+**Proved rather than asserted:** with the capture-side fix temporarily removed, the check names
+all three records by id and exits non-zero.
+
+**The general lesson, and it is not about accessibility.** *A guard is only as wide as the
+pipeline it models.* R20's guard modelled selection as one step because that is how it is usually
+described; the system does it in two, and the guard was blind to the whole of the first. Any check
+that certifies inputs to a multi-stage pipeline has to run **every** stage, or it certifies the
+stages it happens to know about and stays green about the rest.
+
+**What it changes for a client.** Nothing directly — this is an internal measurement guard. What
+it changes for us is that a capture-side coverage gap can no longer sit behind a green harness,
+which is how this one survived for a week.
+
+---
+
 ## Two things worth recording that the reports got *right*
 
 - **The core architecture is sound.** "Deterministic core, AI on top; grounded in the real criterion text; confidence-gated; never auto-certify" survives contact with the codebase completely intact. Nothing in this correction touches it.

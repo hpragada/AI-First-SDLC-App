@@ -1,9 +1,10 @@
 # Web Accessibility — What Was Built, Where It Sits In The Journey, and How To Test It
 
-**For the Edvensoft team · 21 August 2026 · branch `web-accessibility-build`**
+**For the Edvensoft team · updated 31 August 2026 · branch `Eval-accuracy`**
 **Covers QA‑01 … QA‑24 (31 tasks), the ten gap-fix tasks G1 … G6c, the eighteen
 user-experience fixes of 20 August, the seventeen that five live runs found on 20–21 August,
-and the three that came out of the capture-scope question on 24 August (§9)**
+the three that came out of the capture-scope question on 24 August, the eight from reading the
+screens on 25 August, and the five (#54–#58) from the first audit at real size on 31 August (§9)**
 
 ---
 
@@ -2360,6 +2361,118 @@ is one click further away.
 
 **The fix.** Removed from Epic and Task detail.
 
+### #54 — One audit was closed twice, and the second close wrote off the first ⭐⭐ ✅
+
+**What it is.** The 31 August audit: 94 pages, the first run at real size.
+
+**What you saw.** The audit went to **Complete** while the judge was visibly still working. Under
+*Past audits* it said **"1065 elements were never looked at"** — about an audit that had 338 real
+verdicts in the database at that moment, and 644 by the time it was measured again. The sidebar
+badge climbed into the hundreds. None of the numbers on screen matched the database.
+
+**What was wrong.** Closing an audit this size takes minutes of real work. The companion gave up
+waiting after 60 seconds, decided the audit had failed, and ran its recovery — **which closes the
+audit**. So the same close ran twice, and the second one overlapped the first.
+
+The second close asked for a judge and was refused, correctly, because one was already running.
+But that refusal was reported as *"the judge could not be started"* — so the platform did what it
+does when no judge can be reached: **it wrote off all 1,065 elements as unjudgeable, and replaced
+the audit's record of the pass that was actually running with its own empty one.**
+
+**What it meant.** Every wrong number the team saw for the rest of that day came from that one
+record. Not from the judge, not from the capture, not from the pages — all three were working. The
+audit simply lost its own account of itself.
+
+**The fix — three parts, and the first two work independently.**
+1. A run already in progress is no longer treated as a failure. Nothing is filed and nothing is
+   written off, because those elements are being judged right now.
+2. A repeated close returns the audit exactly as the call doing the work left it, and changes
+   nothing.
+3. The companion no longer times out on a call whose job takes minutes.
+
+**How to check it:** close an audit twice. The second one reports `repeat` and the audit's numbers
+do not move.
+
+### #55 — Work correctly queued for a second pass was reported as unaskable ⭐ ✅
+
+**What it is.** The review queue badge, and the message under a finished audit.
+
+**What you saw.** **1,731 items waiting on a person.** Not one of them was real.
+
+**What was wrong.** The audit correctly held 265 elements back — over its 800-question budget,
+queued for a second pass, exactly as designed. When the dispatch above then failed, those 265 were
+swept in with everything else and stamped *"the judge could not be started"*. That is not true of
+them: they were queued, not unaskable, and the difference is the entire meaning of the **Check the
+rest** button.
+
+**The fix.** Each half now carries the reason that is actually true of it — "N could not be sent"
+and "M left for a second pass" are two facts about two different sets of elements, and both are
+shown. The failure comes first, because it is the half somebody has to act on.
+
+**How to check it:** an audit that reaches its limit and then cannot send says both sentences.
+
+### #56 — Some containers were never looked at, on any page, in any audit ⭐ ✅
+
+**What it is.** What the capture picks up off a page.
+
+**What was wrong.** The capture collected a `<div>` only if it had a `class` on it. A container
+styled by `id` or by an inline style — very common in real applications, and the normal output of
+several page builders — was **never collected at all**. Not declined by a check: never shown to
+one. So nothing recorded that it existed, and the page was written down as checked.
+
+**What it meant.** On the fixture this hid three real failures on one page. On a client site it
+would hide however many of that kind of container the site has, silently, with the page reported
+as fine.
+
+**The fix.** The capture now also offers any `<div>` with three or more children — the same bar the
+structure check itself uses. Measured across all 95 pages before it went in: **8,385 elements
+offered today, and this adds three.** It is not a broadening that costs anything.
+
+**How to check it:** `/events/workshops` goes from 80 elements to 83.
+
+### #57 — Our own check could never have found #56 ⭐⭐ ✅
+
+**What it is.** `verify-selectable` — the check whose whole job is to prove every answer-key record
+can reach the check it was written for.
+
+**What was wrong.** It looked elements up directly on the page, which finds anything that is
+there — whether or not an audit would ever collect it. So it tested *"do the rules want this?"* and
+never *"would we even have picked it up?"*. **The one failure it could not see was #56**, and it
+reported all three affected records as perfectly fine.
+
+**What it meant, and this is the part worth reading twice.** The `structure` check reported a
+reachable sample of 30 — over the line, measurable, healthy — while 3 of its 15 failure records
+could never be found by any judge. Its best possible recall was **80%**, and nothing anywhere said
+so.
+
+**The fix.** The check now uses the capture's real list, imported from the audit script itself so
+the two cannot drift apart, and asks both questions. It reports them separately, because they are
+different problems: *collected then declined by a rule* is often correct and sometimes unavoidable;
+*never collected at all* is always a gap, and now fails the check.
+
+**Proved, not asserted:** with the #56 fix temporarily removed, the check names all three records
+and fails.
+
+### #58 — Stopping a run does not stop the work 🔬 RECORDED, NOT FIXED
+
+**What it is.** Anything the platform runs on your machine, not only accessibility.
+
+**What was observed.** The audit's judge was stopped on the server at **06:46**. It went on writing
+answers into the database until **07:37** — 49 minutes, one every few seconds. Only killing the
+companion actually stopped it.
+
+**Why.** The work runs as a process on your own machine and reports its results straight to the
+platform. Stopping the run stops the platform's *supervision* of it; nothing tells the process
+itself, and nothing refuses its results afterwards.
+
+**What it means.** "Stop" is not a stop today. If you need work to actually end, stop the
+companion.
+
+**Why it is not fixed here.** It needs a decision about where the check belongs — the platform
+refusing results for a stopped run, the companion checking its own run's state, or both — and that
+is a change to how every run on the platform works, not an accessibility one. It is written down
+so nobody discovers it the way we did.
+
 
 ---
 
@@ -2406,6 +2519,39 @@ the moment it lags.
 slot, and those ten pages are **144 slots but 81 distinct elements** — the header and footer are
 the same markup on every page and one verdict answers all ten. Nothing was ever lost.
 
+#### The first run at real size — 31 August
+
+**94 pages, 2,171 elements, 1,065 questions.** Eight times the largest previous run, and the first
+one big enough for the capture and the judging to take long enough to collide.
+
+| | |
+|---|---|
+| Pages | **94 of 94** captured, none unreachable, no reconciliation gaps |
+| Elements | **2,171** |
+| Questions | **1,065** distinct — 800 sent, 265 correctly queued |
+| Real verdicts | **644** before it was stopped (567 pass, 51 fail, 18 uncertain) |
+| Rule-scanner findings | **335**, all genuine |
+| Friday's fixes, confirmed live | 20 `label-content-name-mismatch` + 3 `td-has-header` — findings no audit before 28 August could have produced |
+| Accuracy number | **none, and correctly none** — see below |
+
+**What worked is most of it.** Every page visited, every element captured, the judge answering
+steadily for over an hour. The scale that Friday's dataset work made possible is the scale that
+this run proved the capture holds.
+
+**What broke is one thing, four ways.** A duplicated close destroyed the audit's own record of
+itself: #54 above, with #55 as its consequence, and #56/#57 found in the wreckage while reading
+what had actually been measured. All four are fixed. #58 was found while trying to stop it.
+
+**Why there is no accuracy figure, and why that is the right outcome.** Only **43 of the 173**
+answer-key records received a real verdict — `alt` 12, `color` 9, `label` 19, `semantics` 0,
+`structure` 3 — against a minimum sample of 30. Every checker reads *not yet measurable*. The
+floor did exactly what it exists for: a number built on 43 records would have been quotable,
+wrong, and impossible to withdraw.
+
+The audit was cleared afterwards on the team's decision — a genuinely blank slate, judgments
+included — so the next run proves itself end to end with nothing inherited. The 95 registered
+routes were kept.
+
 ### 10.2 What is still unproven 🔬
 
 Five runs have not touched **any** of these. Ranked by how likely a live run is to surprise us:
@@ -2426,24 +2572,45 @@ Five runs have not touched **any** of these. Ranked by how likely a live run is 
 4. **Signing a conformance statement.** It has been *rendered* from a real audit's findings —
    that part is proven. Nobody has signed one against a live run, and signing is what registers
    and approves the artifact.
-5. **Two passes over 68 pages.** The pass loop is tested; the largest live run is 12 pages
-   against a limit of 60. Ten pages is the small case and we have only ever run the small case.
+5. **An audit that finishes at real size.** ⚠️ **Corrected 31 August, and only half answered.** The
+   multi-pass capture is now proven at 94 pages: two passes, every page visited, nothing
+   reconciled away. What is *not* proven is a run of that size **finishing** — the 31 August audit
+   was stopped by hand after the defects in #54–#55, so no large audit has yet reached
+   `complete` under its own steam and published its documents. That is the next thing a live run
+   settles.
 
 ⚠️ **A real `passes` array is no longer on this list.** The scanner returns positive evidence into
 the platform on every live run — 175 passed on the last one. Answered.
 
+⚠️ **And one item was removed from this list on 31 August without being proven: an accuracy
+number.** It is not unproven-and-pending; it is *not yet measurable*, which is a different and
+more honest state. 43 of 173 records were scored against a floor of 30 per checker. See §10.1.
+
 ### 10.3 What is proven by tests, and how much
 
-Measured on this branch on **21 August**, after §9.11:
+Measured on this branch on **31 August**, after §9.25:
 
 | Ran | Result |
 |---|---|
-| `test_a11y_report.py` · `test_a11y_baseline.py` · `test_a11y_baseline_report.py` · `test_a11y_dispatch.py` · `test_a11y_scope_rest.py` | **390 passed** (6 minutes) |
-| The whole frontend suite | **374 passed across 21 files**, `tsc -b` and `eslint` clean |
-| The a11y frontend suites alone | 114 across 6 files |
+| `test_a11y_dispatch.py` · `test_a11y_baseline.py` | **238 passed**, including the three new regressions for #54 and #55 |
+| `test_a11y_report.py` · `test_a11y_findings.py` · `test_a11y_review.py` · `test_a11y_defects.py` · `test_a11y_judging_carrier.py` · `test_a11y_baseline_report.py` · `test_a11yai_capability.py` | 312 passed, 9 failed — **all 9 pre-existing, see below** |
+| The a11y audit frontend suite | **65 passed**, `tsc --noEmit` clean |
+| The scorer's own tests | **41 passed**, no database, no Django |
+| The fixture harness (`npm run check`) | **all 8 checks green**, 94 routes, 173 records, 0 never-collected |
+| `ruff` on `apps/a11y` | clean. `mypy` reports 3 errors, all pre-existing on the same lines |
 
-Both numbers were **measured on the day this section was written**, not carried forward. The
-previous version of this table quoted 336 frontend tests across 20 files; it had been true once.
+⚠️ **14 tests were already failing on this branch before any of this work started**, and they fail
+identically with every change stashed. All of them trace to the `graphics` / 1.4.11 checker added
+on 27 August and never wired into the capability interface, the selection corpus, or several test
+expectations that enumerate checkers. One may be a real gap rather than a stale test — there is no
+`check_graphics`, so 1.4.11 cannot be asked through the capability at all. **Logged as its own
+task rather than fixed in passing:** the corpus entries need writing properly and the capability
+question needs a decision. One of the fourteen was fixed, because it sat in a file this work was
+already changing.
+
+Every number here was **measured on the day this section was written**, not carried forward. An
+earlier version of this table quoted 390 backend and 374 frontend tests from 21 August; both had
+been true once.
 
 ⚠️ **The backend suite is never run whole** — it is killed by the machine. Only the files a change
 touches are run, which is why the table names files rather than claiming a total.
@@ -2501,10 +2668,20 @@ It does not prove the artefact the person actually opens.
 | Registered pages per project | 200 |
 | Pages per capture document (⇒ per pass) | 60 |
 | Elements per screen | 600 |
-| Element judgments per judging run | 200 |
+| Element judgments per judging run | 200 by default — **set per workspace**; the 31 August audit ran at 800 |
 | Keyboard journeys started at once | 10 |
 | Steps per journey | 40 |
 | Review lock | 15 minutes, self-renewing |
+| How long the companion waits for the platform | 60 seconds — **except closing an audit, which is allowed 15 minutes** (#54) |
+
+⚠️ **The judgment limit counts distinct questions, not elements-times-checks.** The same markup on
+twenty pages is one question and one answer, so a site whose furniture repeats costs far less than
+its element count suggests. It is a limit on what one run may *spend*, and a run that reaches it
+stops and offers the rest back rather than skipping anything.
+
+⚠️ **The 15-minute allowance on closing an audit is not a tuning knob.** Closing a 94-page audit
+is minutes of real work, and the 60-second default caused #54 — the companion decided a healthy
+audit had failed and closed it a second time.
 
 ### 11.4 Severity
 

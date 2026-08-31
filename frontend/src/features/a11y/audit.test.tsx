@@ -590,6 +590,34 @@ describe("S-38 pages and audit", () => {
     expect(screen.getAllByText(/none is connected/).length).toBeGreaterThan(0);
   });
 
+  it("a pass that hit its limit AND then could not send says both things", async () => {
+    // Two facts about two different sets of elements, and one used to hide the other.
+    //
+    // The dispatcher folded the deferred tail into "could not be sent" and cleared it, so only
+    // one sentence could ever apply. Now that it keeps them apart (31 Aug), showing one would
+    // hide the other — and the one it would hide is the failure, which is the half somebody has
+    // to act on. Both appear, failure first.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        ...judgingAudit({
+          deferred: 265, deferred_distinct: 265, dispatched: 0, distinct: 0, filed_unjudged: 800,
+          reason: "The accessibility judge could not be started (no worker answered). These items were sent for human review instead of being scored.",
+          deferred_reason: "This run's limit of 800 was reached, so 265 element(s) were left for a second pass. Run the check again to continue from here; nothing was skipped.",
+        }),
+        status: "complete",
+        outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Not everything captured was checked")).toBeTruthy();
+    expect(screen.getAllByText(/could not be started/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/265 elements were left for a second pass/).length)
+      .toBeGreaterThan(0);
+  });
+
   // ── a SECOND judging pass over one capture ("check the rest") ─────────────────────────────
   //
   // The 21 August live failure. A re-judge deliberately re-uses the audit row rather than

@@ -278,6 +278,59 @@ def test_a_refused_dispatch_returns_uncertain_not_an_exception(world):
     assert result.complete is False
 
 
+def test_a_run_already_judging_this_work_item_files_nothing_and_writes_nothing_off(world):
+    """The 31 August audit, in one test.
+
+    `trigger_phase` refuses a second run for a work item that already has a live one. That
+    refusal used to arrive here as an ordinary exception, so it was reported as "the judge could
+    not be started" and every pending element was filed as `uncertain` for a human — writing off
+    1,065 elements while 800 of them were being judged at that moment.
+
+    A run already in progress is not a failure. Nothing is filed, the deferred tail is left
+    alone, and the caller is told which state it is in rather than being handed work to record.
+    """
+    from orchestration.trigger import ActiveRunError
+
+    trigger = FakeTrigger(world, fail=ActiveRunError(
+        "a run is already in progress for this work item (status: running)."))
+    result = _dispatch(world, [_request(), _request(html="<img src='b'>")], trigger)
+
+    assert result.already_running is True
+    assert result.run_id is None
+    assert result.unjudged_requests == [], "nothing may be written off while a judge is judging"
+    assert result.unjudged == []
+    assert "already in progress" in result.unavailable_reason
+    assert "nothing was written off" in result.unavailable_reason
+    # Still not a complete pass — this dispatch judged nothing. The run that got there first is
+    # what will report, and it is not this call's to claim.
+    assert result.complete is False
+
+
+def test_a_failed_dispatch_leaves_the_deferred_tail_deferred(world):
+    """Over-budget and could-not-send are two facts about two different sets of elements.
+
+    Both used to be folded into one list and one sentence: a dispatch that reached its limit and
+    THEN failed to start reported everything as unaskable, so the elements correctly queued for a
+    second pass were relabelled. On the 31 August audit that stamped 265 correctly-queued
+    elements with "the judge could not be started" and put them on a person's review queue.
+    """
+    _set_caps(world, judgments=2)
+    trigger = FakeTrigger(world, fail=RuntimeError("no worker answered"))
+    requests = [_request(html=f"<img src='{i}.png'>") for i in range(5)]
+
+    result = _dispatch(world, requests, trigger)
+
+    # The two attempted are filed with the failure's own reason…
+    assert len(result.unjudged_requests) == 2
+    assert result.unjudged_requests == requests[:2]
+    assert "no worker answered" in result.unavailable_reason
+    # …and the three held back at the limit stay held back, with the reason that is true of them.
+    assert result.deferred == requests[2:]
+    assert "3 element(s) were left for a second pass" in result.deferred_reason
+    # Nothing is counted twice and nothing is lost: every request is in exactly one of the lists.
+    assert len(result.unjudged_requests) + len(result.deferred) == len(requests)
+
+
 def test_no_judge_agent_is_reported_in_plain_words_and_nothing_is_dispatched(world):
     """The state the platform is genuinely in until QA-02a lands."""
     AgentSpec.objects.filter(tenant=world["tenant"], key=JUDGE_AGENT_KEY).delete()

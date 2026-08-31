@@ -140,6 +140,19 @@ def start_ai_pass(*, tenant_id, project_id, run_id, work_item_id=None, title: st
         triggered_by=triggered_by or _triggering_user(tenant_id, run_id), trigger=trigger,
     )
 
+    if result.already_running:
+        # **Return before anything is recorded, and record nothing** (31 Aug). A judgment run is
+        # live for this work item, so these elements are being judged right now. Filing them, or
+        # writing this pass's numbers over the record of the pass that IS running, would both
+        # describe the audit in terms of a dispatch that deliberately did nothing.
+        #
+        # `filed_unjudged` is stated as 0 rather than left out, because a caller that merges this
+        # into a stored summary must be able to see that this pass filed nothing.
+        return {"started": False, "already_running": True, "judge_run_id": None,
+                "dispatched": 0, "distinct": 0, "from_cache": len(result.from_cache),
+                "deferred": len(result.deferred), "deferred_distinct": 0,
+                "filed_unjudged": 0, "reason": result.unavailable_reason}
+
     out: dict = {
         "started": bool(result.run_id),
         "judge_run_id": result.run_id,
@@ -161,6 +174,10 @@ def start_ai_pass(*, tenant_id, project_id, run_id, work_item_id=None, title: st
         # offering work that did not exist, so this is the number the button counts.
         "deferred_distinct": distinct_remainder(result.dispatched, result.deferred),
         "reason": result.unavailable_reason,
+        # Kept separate from `reason` for the reason `DispatchResult.deferred_reason` gives: a
+        # pass that reached its limit AND then could not send is two facts about two different
+        # sets of elements, and one string could only ever hold the last one to happen.
+        "deferred_reason": result.deferred_reason,
     }
     # Whatever could not be asked about is FILED, not just reported (QA-13). `dispatch` builds
     # a complete `uncertain` for each one carrying the real reason — "no judge is registered in

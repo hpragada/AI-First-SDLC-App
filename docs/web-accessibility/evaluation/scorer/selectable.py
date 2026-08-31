@@ -71,8 +71,25 @@ KNOWN_SHORTFALL = {
 }
 
 
-def ceilings(golden_dir: Path, captured_path: Path) -> tuple[dict, list]:
-    """The best sample each checker could reach, and the records that can never score."""
+def ceilings(golden_dir: Path, captured_path: Path) -> tuple[dict, list, list]:
+    """The best sample each checker could reach, what can never score, and what is never seen.
+
+    **Two ways a record fails to reach a checker, and they are not the same problem.** Selection
+    is two steps: the companion COLLECTS everything matching its `OFFER` list, and only then do
+    the rules decide what to claim.
+
+      * *collected, then declined* — a rule looked at it and said no. Usually correct, sometimes
+        a property of the criterion (see `KNOWN_SHORTFALL`), and always visible: `explain()` can
+        say which rule declined it and why. Returned as `inert`.
+      * *never collected* — the capture never showed it to any rule. Nothing declined it, nothing
+        counted it, nothing anywhere records that it existed. Always a gap in the capture, and
+        for an expected-`fail` record it is a permanent miss no improvement to any judge can
+        recover. Returned as `never_offered`, and it fails the run.
+
+    Until 31 August this file could not tell them apart, because the capture it reads reached
+    each element by `document.querySelector` and so collected everything. Three answer-key
+    records had been in the second state for a whole audit while every check here was green.
+    """
     label_rows, _ = labels_module.load_golden(golden_dir)
     captured = {
         (c["route"], c["selector"]): c
@@ -82,6 +99,7 @@ def ceilings(golden_dir: Path, captured_path: Path) -> tuple[dict, list]:
     ceiling: Counter = Counter()
     breakdown: dict[str, Counter] = {}
     inert: list[dict] = []
+    never_offered: list[dict] = []
 
     for label in label_rows:
         raw = captured.get((label.route, label.selector))
@@ -93,32 +111,50 @@ def ceilings(golden_dir: Path, captured_path: Path) -> tuple[dict, list]:
             counts["selector does not resolve"] += 1
             continue
 
+        # Absent on a capture written before this flag existed. Defaulting to True keeps such a
+        # capture reading exactly as it did rather than declaring every record unreachable — the
+        # honest default, since an old capture genuinely cannot answer the question.
+        offered = bool(raw.get("offered", True))
         claimed = checkers_for(CapturedElement.from_dict(raw))
-        selected = label.checker in claimed
+        # An element no audit collects can never be selected, whatever the rules would have said
+        # about it. The rules are still run, because WHICH rule would have claimed it is exactly
+        # what tells whoever fixes the capture that the record is worth recovering.
+        selected = offered and label.checker in claimed
+
+        if not offered:
+            never_offered.append({
+                "id": label.record_id, "checker": label.checker, "route": label.route,
+                "selector": label.selector, "expected": label.expected,
+                "claimed": list(claimed),
+            })
 
         if label.expected == "fail":
             ceiling[label.checker] += 1
             counts["fail — always counts"] += 1
-            if not selected:
-                counts["  of those, never captured (scores as a miss)"] += 1
+            if not offered:
+                counts["  of those, NEVER COLLECTED by the capture (permanent miss)"] += 1
+            elif not selected:
+                counts["  of those, collected but no rule claimed it (scores as a miss)"] += 1
         elif label.expected == "pass":
             if selected:
                 ceiling[label.checker] += 1
                 counts["pass — selected, so it counts"] += 1
+            elif not offered:
+                counts["pass — NEVER COLLECTED by the capture, so it can never count"] += 1
             else:
-                counts["pass — NOT selected, so it can never count"] += 1
+                counts["pass — collected and declined, so it can never count"] += 1
                 inert.append({"id": label.record_id, "checker": label.checker, "route": label.route,
                               "selector": label.selector, "claimed": list(claimed)})
         else:
             counts["uncertain — scored on calibration, never in the sample"] += 1
 
-    return {"ceiling": ceiling, "breakdown": breakdown}, inert
+    return {"ceiling": ceiling, "breakdown": breakdown}, inert, never_offered
 
 
 def main() -> int:
     golden_dir = Path(sys.argv[1]).resolve()
     captured_path = Path(sys.argv[2]).resolve()
-    result, inert = ceilings(golden_dir, captured_path)
+    result, inert, never_offered = ceilings(golden_dir, captured_path)
     ceiling, breakdown = result["ceiling"], result["breakdown"]
 
     print(f"\n  {'checker':12}{'best sample':>12}{'needs':>7}   verdict")
@@ -146,18 +182,42 @@ def main() -> int:
         # is honest — `accuracy.py` gives no credit and no penalty for it. It is listed because
         # a checker that is short of a sample is usually short for exactly this reason, and
         # because a set with many of these is balanced on paper and lopsided in practice.
-        print(f"\n  {len(inert)} pass record(s) name an element their checker does not select.")
+        print(f"\n  {len(inert)} pass record(s) are collected and then declined by a rule.")
         print("  These can never score. Not an error on its own — see the note in this file.")
         for row in inert:
             claimed = ", ".join(row["claimed"]) or "nothing"
             print(f"    {row['id']:14} {row['checker']:10} {row['route']}{row['selector']}"
                   f"   (claimed by: {claimed})")
 
+    if never_offered:
+        # **Always an error, and reported before the sample table's verdict is believed.** No
+        # rule declined these; nothing collected them. The capture's OFFER list does not reach
+        # them, so no audit of any application will ever put them in front of a checker, and an
+        # expected-`fail` record here is a false negative that no better judge can recover.
+        #
+        # `would have been claimed by` is what makes it actionable: it says the record is real
+        # and the rule wants it, so the fix is in the capture rather than in the answer key.
+        print(f"\n  {len(never_offered)} record(s) name an element NO AUDIT EVER COLLECTS.")
+        print("  The capture's OFFER list does not reach these, so no rule ever sees them and")
+        print("  nothing records that they exist. Fix the OFFER list in")
+        print("  runner/companion/assets/a11y_audit.mjs, or retire the record.")
+        for row in never_offered:
+            claimed = ", ".join(row["claimed"]) or "nothing"
+            print(f"    {row['id']:14} {row['checker']:10} expected {row['expected']:9} "
+                  f"{row['route']}{row['selector']}   (would have been claimed by: {claimed})")
+
     for checker in known:
         print(f"\n  {checker} is short on purpose:")
         for line in _wrap(KNOWN_SHORTFALL[checker]):
             print(f"    {line}")
 
+    if never_offered:
+        # Reported first when both are true: a checker short of a sample BECAUSE its records are
+        # never collected has one problem, not two, and `KNOWN_SHORTFALL` is not the answer to it.
+        print(f"\n{len(never_offered)} record(s) can never reach a checker because nothing "
+              f"collects them. That is a gap in the capture, not a property of the criterion, "
+              f"so it does not belong in KNOWN_SHORTFALL.")
+        return 1
     if short:
         print(f"\n{short} checker(s) cannot reach {MIN_SAMPLE} scored records from this answer "
               f"key, so no audit will ever produce a number for them. If that is understood "
