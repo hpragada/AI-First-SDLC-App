@@ -35,6 +35,9 @@ yarn-error.log*
 # ─── Docker / local volumes ──────────────────────────────────────
 .docker-data/
 *.local
+# …and the shell wrappers that drive them. `watch-loop.local.sh` runs `watch.local`, which is
+# ignored by the line above, so committing the wrapper alone would ship a script that cannot run.
+*.local.sh
 
 # ─── Editor / OS ─────────────────────────────────────────────────
 .idea/

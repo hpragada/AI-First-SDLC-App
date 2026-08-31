@@ -468,19 +468,51 @@ def publish_baseline(*, tenant_id, project_id, audit=None) -> dict:
             .filter(tenant_id=tenant_id, project_id=project_id, type=BASELINE_TYPE)
             .order_by("-version", "-created_at").first()
         )
-    created = tools.register_artifact(
-        tenant_id, project_id, None, "testing", BASELINE_TYPE, "internal",
-        content_hash=(staged or {}).get("content_hash") or digest,
-        s3_key=(staged or {}).get("s3_key"),
-        external_ref=external_ref,
-        title=BASELINE_TITLE,
-        supersedes=str(existing.id) if existing is not None else None,
+    # **One audit, one baseline version.** Versioning is the right default — it is what lets a
+    # client compare where this application stood in August with where it stands in October — but
+    # it makes a NEW row every time it is called, and the closing path is not called exactly once.
+    # On 31 August one audit published four versions inside two minutes (9.26.C): the judging
+    # phase's write-completeness step publishes the report and closes the audit, it was cancelled
+    # on its timeout, and the failure path then published again. The report artifact absorbed that
+    # — it is keyed to its capture and updates in place — and the baseline stacked, so the version
+    # history said this project had been baselined four times when it had been baselined once.
+    #
+    # So: if the newest baseline is already THIS audit's, update it rather than superseding it. A
+    # different audit still produces the next version, which is the behaviour the comparison
+    # depends on. Keyed on the audit id alone and NOT on the content hash: the four versions of
+    # 31 August had different bodies (findings were still being written between them), so a
+    # hash-equality guard would have let every one of them through.
+    same_audit = (
+        existing is not None
+        and bool(external_ref["audit"])
+        and str((existing.external_ref or {}).get("audit") or "") == external_ref["audit"]
     )
+    if same_audit:
+        created = tools.update_artifact(
+            tenant_id, str(existing.id),
+            content_hash=(staged or {}).get("content_hash") or digest,
+            s3_key=(staged or {}).get("s3_key"),
+            external_ref=external_ref,
+            title=BASELINE_TITLE,
+        )
+    else:
+        created = tools.register_artifact(
+            tenant_id, project_id, None, "testing", BASELINE_TYPE, "internal",
+            content_hash=(staged or {}).get("content_hash") or digest,
+            s3_key=(staged or {}).get("s3_key"),
+            external_ref=external_ref,
+            title=BASELINE_TITLE,
+            supersedes=str(existing.id) if existing is not None else None,
+        )
     with tenant_context(tenant_id):
         tools.log_event(
             tenant_id, "a11y", "a11y.baseline_published", "artifact", created["id"],
             {"criteria": len(rows), "version": created.get("version"),
-             "audit": external_ref["audit"]},
+             "audit": external_ref["audit"], "updated": same_audit},
         )
     return {"artifact_id": created["id"], "version": created.get("version"),
-            "criteria": len(rows), "open": sum(open_by_criterion.values())}
+            "criteria": len(rows), "open": sum(open_by_criterion.values()),
+            # True when this REPLACED the same audit's previous baseline rather than adding a
+            # version. The closing path can legitimately run more than once; a caller that wants
+            # to know which of its calls actually created the document can read this.
+            "updated": same_audit}

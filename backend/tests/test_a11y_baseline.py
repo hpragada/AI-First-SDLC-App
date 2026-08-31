@@ -2866,6 +2866,110 @@ def test_a_pending_audit_nobody_has_claimed_is_not_stalled(world):
         world["t"], [audit], stale_before=timezone.now() - timedelta(minutes=15)) == set()
 
 
+# ── a JUDGING pass whose machine went away (9.26.E1) ────────────────────────
+#
+# The capture half of this has been covered since 21 August. The judging half was left out on the
+# reasoning that a judging pass is "closed from the other end" — true only when the RUN fails.
+# When the MACHINE dies the run does not fail: the workflow waits two hours for a report that is
+# never coming. On 31 August that left an audit reading "Checking the rest… in progress" for 25
+# minutes beside a header badge that said `Companion: Offline`.
+
+
+def _judging_audit(world, *, claimed_ago, verdict_ago=None, run_status="running"):
+    """An audit in `judging`, its judge run claimed `claimed_ago` ago, optionally with its newest
+    verdict written `verdict_ago` ago."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.models import A11yJudgmentCache
+    from apps.registry.models import AgentSpec
+    from apps.runs.models import Run
+    from apps.workitems.models import WorkItem
+
+    now = timezone.now()
+    spec = AgentSpec.objects.create(
+        tenant=world["tenant"], key="09c_a11y_judge", semver="1.0.0",
+        prompt_version="a11y-judge-1", body_ref="agents/09c_a11y_judge/agent.md",
+        recommended_engine="claude", recommended_model="claude-opus-5",
+        phase_label="a11y_judge")
+    item = WorkItem.objects.create(tenant=world["tenant"], project=world["project"],
+                                   title="judging", type="chore")
+    run = Run.objects.create(
+        tenant=world["tenant"], work_item=item, agent_spec=spec, status=run_status,
+        inputs={"dispatch": {"kind": "plan", "status": "claimed",
+                             "claimed_at": (now - claimed_ago).isoformat()}})
+    Run.objects.filter(id=run.id).update(started_at=now - claimed_ago - timedelta(minutes=1))
+
+    audit = _audit(world, "/")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        status="judging", summary={"ai_pass": {"judge_run_id": str(run.id)}})
+    audit.refresh_from_db()
+
+    if verdict_ago is not None:
+        row = A11yJudgmentCache.objects.create(
+            tenant=world["tenant"], project=world["project"], checker="alt",
+            content_hash="a" * 64, criteria=["1.1.1"], verdict="pass", confidence=0.9,
+            run=run, engine="claude")
+        # `updated_at` is auto_now, so it can only be set past the ORM.
+        A11yJudgmentCache.objects.filter(id=row.id).update(updated_at=now - verdict_ago)
+    return audit, run
+
+
+def test_a_judging_audit_whose_machine_went_quiet_is_stalled_and_says_when(world):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audits
+
+    quiet_for = timedelta(hours=1)
+    audit, _ = _judging_audit(world, claimed_ago=quiet_for, verdict_ago=quiet_for)
+
+    out = stalled_audits(world["t"], [audit],
+                         stale_before=timezone.now() - timedelta(minutes=15))
+    assert set(out) == {str(audit.id)}, "a judging pass gets the same honesty as a capture"
+    # …and WHEN, because a count with no time beside it reads the same after one second and
+    # after twenty-five minutes. That is the half of E1 that made the screen dangerous.
+    assert (timezone.now() - out[str(audit.id)]) >= quiet_for
+
+
+def test_a_judge_still_writing_verdicts_is_not_stalled_however_old_its_claim_is(world):
+    """**The false alarm this must not raise.** `_renew_claims_for` deliberately STOPS renewing a
+    claim once it has been held for MAX_CLAIM_AGE, so a long healthy judging pass has a frozen
+    claim by design — on 31 August the first pass's claim froze at 10:38 and the judge went on
+    answering until 11:55. Keyed on the claim alone this would have called a working audit dead
+    for well over an hour, which is the same false alarm that nearly had a healthy audit killed."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audits
+
+    audit, _ = _judging_audit(world, claimed_ago=timedelta(hours=2),
+                              verdict_ago=timedelta(seconds=5))
+
+    assert stalled_audits(world["t"], [audit],
+                          stale_before=timezone.now() - timedelta(minutes=15)) == {}
+
+
+def test_a_judging_audit_whose_run_already_failed_is_not_reported_as_gone_quiet(world):
+    """It is being closed through the ordinary path — `close_unfinished_ai_pass` files what was
+    never answered and publishes. Calling that "the machine went away" would put a second, wrong
+    explanation on a screen that is about to show the right one."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audits
+
+    audit, _ = _judging_audit(world, claimed_ago=timedelta(hours=1),
+                              verdict_ago=timedelta(hours=1), run_status="failed")
+
+    assert stalled_audits(world["t"], [audit],
+                          stale_before=timezone.now() - timedelta(minutes=15)) == {}
+
+
 def test_the_sweep_closes_the_dead_one_and_leaves_the_live_one_alone(world):
     from datetime import timedelta
 

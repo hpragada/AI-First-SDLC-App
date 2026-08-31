@@ -593,7 +593,7 @@ class ProjectViewSet(
             audit_manifest,
             audit_outcome,
             audit_progress,
-            stalled_audit_ids,
+            stalled_audits,
             start_baseline_audit,
             unanswered_counts,
         )
@@ -658,7 +658,7 @@ class ProjectViewSet(
         # switched off for good never comes back to be swept, and the screen must not be the one
         # thing still claiming the audit is running. Reading a list has no business closing an
         # audit, so this says so and leaves the row alone.
-        stalled = stalled_audit_ids(
+        stalled = stalled_audits(
             self.tenant_id, audits, stale_before=timezone.now() - CLAIM_LEASE)
         return Response({"audits": [
             {"id": str(a.id), "status": a.status, "base_url": a.base_url,
@@ -666,6 +666,11 @@ class ProjectViewSet(
              "progress": progress.get(str(a.id)),
              # "this says it is running, and nothing has come back from it for a long while".
              "stalled": str(a.id) in stalled,
+             # …and WHEN it last spoke. A count with no time beside it reads the same after one
+             # second and after twenty-five minutes, which is exactly how a dead judging pass
+             # went on describing itself as "in progress" (9.26.E1). Null unless stalled: on a
+             # healthy audit the honest answer is "it is talking to us now".
+             "stalled_since": stalled.get(str(a.id)),
              # Only on the newest, because that is the only one the panel shows — and the
              # numbers are this PROJECT's current standing, not a per-audit tally, which is
              # what a finding can actually be attributed to. See `audit_outcome`.

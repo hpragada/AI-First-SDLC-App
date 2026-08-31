@@ -112,16 +112,23 @@ def batch_for_run(tenant_id, run_id, start: int = 0,
     shrank to the size of the current slice would quietly redefine what "all of them" means.
     """
     batches = _batches(tenant_id, run_id)
+    # A RESUMED run is handed what is left of itself, not the whole dispatch again (9.26.E2).
+    # Empty on every ordinary run, so the normal path is byte-for-byte what it was.
+    skip = already_answered_ids(tenant_id, run_id)
     screens = [
         {
             "route": batch.get("route", ""),
             "elements": [
                 {key: value for key, value in element.items() if key != "content_hash"}
                 for element in batch.get("elements", [])
+                if element.get("id") not in skip
             ],
         }
         for batch in batches
     ]
+    # A screen whose every element was already answered is dropped rather than handed over empty:
+    # `next_start` walks screens, and an empty one reads to the judge as a page with nothing on it.
+    screens = [screen for screen in screens if screen["elements"]]
     total = sum(len(screen["elements"]) for screen in screens)
     start = max(0, int(start or 0))
     cap = max(1, int(max_elements or MAX_BATCH_ELEMENTS))
@@ -159,6 +166,63 @@ def batch_for_run(tenant_id, run_id, start: int = 0,
     }
 
 
+def already_answered_ids(tenant_id, run_id) -> set[str]:
+    """Element handles this run answered in an EARLIER session of ITSELF (9.26.E2).
+
+    **Why a run can have more than one session.** A companion that dies mid-phase stops
+    heartbeating; its claim goes stale after `CLAIM_LEASE`, and the next companion to poll
+    **re-claims this very run** and starts the agent again. That is the recovery, and it is the
+    right one — but the agent starts a fresh session at element 1 with no idea that hundreds of
+    the elements in front of it already have its own verdicts. On 31 August a machine restarted
+    99 elements into a 269-element pass, so the recovery was about to re-decide 99 questions whose
+    answers were already in the database — 37% of a pass, spent out of the user's own Claude
+    subscription, to arrive where it already was.
+
+    **The boundary is `first_claimed_at`, and it must be, or this skips live work.** That field is
+    stamped at every fresh claim and re-claim and never touched by the heartbeat, so it is exactly
+    "when this session began". Filtering on *any* answer this run has given would shrink the list
+    while the agent is paging through it — it asks for elements from a flat index, so a list that
+    got shorter behind it would step straight over elements nobody had judged. Anchored to the
+    session start, the set is fixed for as long as the session lasts.
+
+    Only ever non-empty on a re-claim (`claim_count > 1`), so the ordinary first run of a phase
+    pays one cheap read and gets an empty set.
+
+    **Deliberately not used by `verify_judgment_completeness`.** That check must measure against
+    everything this run was DISPATCHED, not against what is left of it — a contract that shrinks
+    to fit what was done is not a contract.
+    """
+    from django.utils.dateparse import parse_datetime
+
+    from apps.runs.models import Run
+    from apps.tenancy.context import tenant_context
+
+    from .models import A11yJudgmentCache
+
+    with tenant_context(tenant_id):
+        run = Run.objects.filter(id=run_id, tenant_id=tenant_id).first()
+        if run is None:
+            return set()
+        dispatch = (run.inputs or {}).get("dispatch") or {}
+        if int(dispatch.get("claim_count") or 0) <= 1:
+            return set()
+        started = parse_datetime(str(dispatch.get("first_claimed_at") or ""))
+        if started is None:
+            return set()
+        answered = set(
+            A11yJudgmentCache.objects
+            .filter(tenant_id=tenant_id, run_id=run_id, updated_at__lt=started)
+            .values_list("content_hash", flat=True)
+        )
+    if not answered:
+        return set()
+    return {
+        element["id"]
+        for element in _elements(_batches(tenant_id, run_id)).values()
+        if element.get("content_hash") in answered
+    }
+
+
 def screenshot_pointers(tenant_id, run_id) -> tuple[list[dict], list[dict]]:
     """(images to fetch, elements with no image) for this run's batch — the judge's eyes (QA-11b).
 
@@ -168,7 +232,12 @@ def screenshot_pointers(tenant_id, run_id) -> tuple[list[dict], list[dict]]:
     fact the judge is told, so it records `uncertain` naming what was missing, rather than
     quietly judging from markup a question that had to be seen.
     """
-    elements = list(_elements(_batches(tenant_id, run_id)).values())
+    # Same set the batch tool serves, or the judge is shown pictures of elements it is not being
+    # asked about — harmless (every image is labelled with its element's handle) and confusing,
+    # and it would spend the vision budget on questions already answered.
+    skip = already_answered_ids(tenant_id, run_id)
+    elements = [element for element in _elements(_batches(tenant_id, run_id)).values()
+                if element["id"] not in skip]
     pointers: list[dict] = []
     unseen: list[dict] = []
     for index, element in enumerate(elements):
@@ -338,6 +407,19 @@ def _remember_unanswered(tenant_id, run_id, content_hashes: list[str]) -> None:
     Written to `Run.outputs`, which is a JSON field the run already owns, so no schema change and
     no second place to keep in step. Merged rather than replaced: the run's own outputs (the
     error a failed run records, for one) must survive this.
+
+    **The LIST is unioned too, and that is not tidiness (9.26.G).** The closing path is not called
+    once — on 31 August it ran three times over one run, and the attempts overlapped: verdicts
+    were still being filed while a later attempt was already counting what was still missing. So
+    the later attempt saw a SMALLER set (an earlier one had just filed the difference) and its
+    shorter list replaced the true one — 170 elements recorded as never-looked-at became 65, and
+    105 of them silently changed meaning from *work that did not happen* to *somebody's job in
+    the review queue*. That is the exact distinction this function exists to preserve, destroyed
+    by this function.
+    A later, shorter reading is never a correction: an element that was never looked at does not
+    stop having been never looked at because a subsequent pass found it already filed. Anything
+    that IS answered later drops out where it should — `aipass.unanswered_for_capture` removes
+    every hash that has since been decided, so a union here cannot re-offer settled work.
     """
     if not content_hashes:
         return
@@ -348,7 +430,9 @@ def _remember_unanswered(tenant_id, run_id, content_hashes: list[str]) -> None:
         run = Run.objects.filter(id=run_id, tenant_id=tenant_id).first()
         if run is None:
             return
-        run.outputs = {**(run.outputs or {}), UNANSWERED_KEY: sorted(set(content_hashes))}
+        known = set((run.outputs or {}).get(UNANSWERED_KEY) or [])
+        run.outputs = {**(run.outputs or {}),
+                       UNANSWERED_KEY: sorted(known | set(content_hashes))}
         run.save(update_fields=["outputs", "updated_at"])
 
 

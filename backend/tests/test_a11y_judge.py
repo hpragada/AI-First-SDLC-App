@@ -108,6 +108,26 @@ def report(run_fixture, element_id, **kwargs):
         element_id=element_id, **payload)
 
 
+def _resumed(run_fixture, *, answered_ids=()):
+    """Put this run into its SECOND session — as a re-claim after a dead companion does — with
+    `answered_ids` already carrying verdicts from the first one."""
+    from django.utils import timezone
+
+    from apps.runs.models import Run
+
+    tenant, _proj, row, _requests = run_fixture
+    for element_id in answered_ids:
+        report(run_fixture, element_id, verdict="pass")
+    # The re-claim: `first_claimed_at` is stamped afresh and `claim_count` goes up. Everything
+    # answered above belongs to the session BEFORE this line.
+    Run.objects.filter(id=row.id).update(inputs={
+        **(row.inputs or {}),
+        "dispatch": {"kind": "plan", "status": "claimed", "claim_count": 2,
+                     "first_claimed_at": timezone.now().isoformat()},
+    })
+    return tenant, row
+
+
 # ── the element handle ───────────────────────────────────────────────
 def test_the_handle_is_readable_and_a_typo_is_loud():
     """`e1` mistyped is another valid element; this mistyped is almost certainly none."""
@@ -135,6 +155,117 @@ def test_the_batch_hands_over_one_screen_at_a_time(run):
     second = judge.batch_for_run(tenant.id, row.id, start=first["next_start"])
     assert [screen["route"] for screen in second["screens"]] == ["/checkout"]
     assert second["next_start"] is None, "the last page says so"
+
+
+# ── the record of what was never looked at (9.26.G) ──────────────────
+
+
+def test_a_later_shorter_reading_never_shrinks_what_was_never_looked_at(run):
+    """31 August: the closing path ran three times over one run and the attempts overlapped —
+    verdicts were still being filed while a later attempt counted what was still missing. The
+    later attempt saw a SMALLER set and replaced the true one: 170 recorded became 65, and 105
+    elements silently changed meaning from *work that did not happen* to *somebody's job in the
+    review queue*. That is the one distinction this record exists to keep."""
+    tenant, _proj, row, _requests = run
+    everything = ["a" * 64, "b" * 64, "c" * 64]
+
+    judge._remember_unanswered(tenant.id, row.id, everything)
+    judge._remember_unanswered(tenant.id, row.id, everything[:1])   # the partial re-count
+
+    row.refresh_from_db()
+    assert set((row.outputs or {})[judge.UNANSWERED_KEY]) == set(everything)
+
+
+def test_the_record_still_leaves_the_runs_own_outputs_alone(run):
+    """It shares `Run.outputs` with the reason a failed run records, and that must survive."""
+    from apps.runs.models import Run
+
+    tenant, _proj, row, _requests = run
+    Run.objects.filter(id=row.id).update(outputs={"error": "run abandoned by human takeover"})
+
+    judge._remember_unanswered(tenant.id, row.id, ["a" * 64])
+
+    row.refresh_from_db()
+    assert row.outputs["error"] == "run abandoned by human takeover"
+
+
+# The safety the union rests on — that keeping a hash in this record is NOT the same as offering
+# it back — is `unanswered_for_capture`'s own last step: it drops every hash that has since been
+# decided. That needs a real capture to exercise and is proven where the captures live, in
+# tests/test_a11y_report.py (`test_asking_again_and_finding_nothing_left_takes_the_button_away`
+# and its neighbours). Restating it here against a fixture with no stored bundles would prove
+# nothing — the function returns empty before it reaches the step.
+
+
+# ── a run that had to be resumed (9.26.E2) ───────────────────────────
+#
+# A companion that dies mid-phase stops heartbeating; its claim goes stale and the next companion
+# to poll re-claims THIS VERY RUN and starts the agent again. That is the right recovery — but
+# the agent starts a fresh session at element 1, so on 31 August a restart 99 elements into a
+# 269-element pass was about to re-decide 99 questions already answered, out of the user's own
+# subscription, to arrive where it already was.
+
+
+def test_a_resumed_run_is_handed_only_what_it_has_not_answered(run):
+    # Read the ids BEFORE resuming: `ids_of` pages through the batch tool, which is the very
+    # thing this changes.
+    before = ids_of(run)
+    tenant, row = _resumed(run, answered_ids=[before[0]])
+
+    served = [e["id"] for screen in judge.batch_for_run(tenant.id, row.id)["screens"]
+              for e in screen["elements"]]
+    assert before[0] not in served, "already answered by this very run"
+    assert set(ids_of(run)) == set(before[1:]), "and the rest are still asked about"
+
+
+def test_a_resumed_run_counts_its_contract_over_what_is_left(run):
+    """`total_elements` is the judge's own check that it finished — every element it was given
+    gets exactly one verdict. On a resumed run the set it was given IS the remainder, so a total
+    still describing the original dispatch would tell the judge it had failed to finish."""
+    tenant, row = _resumed(run, answered_ids=[ids_of(run)[0]])
+
+    assert judge.batch_for_run(tenant.id, row.id)["total_elements"] == 2, \
+        "three dispatched, one already answered by this run"
+
+
+def test_an_ordinary_first_run_is_not_filtered_at_all(run):
+    """The filter must be reachable only by a re-claim. A first session has `claim_count` 1 and
+    must serve byte-for-byte what it always did — including elements another, EARLIER pass over
+    the same capture already answered, which are dispatched to this run deliberately."""
+    tenant, _proj, row, requests = run
+    report(run, ids_of(run)[0], verdict="pass")
+
+    batch = judge.batch_for_run(tenant.id, row.id)
+    served = [e["id"] for screen in batch["screens"] for e in screen["elements"]]
+    assert ids_of(run)[0] in served
+    assert batch["total_elements"] == len(requests)
+
+
+def test_a_resumed_run_is_shown_pictures_of_only_what_it_is_judging(run):
+    """The pictures and the questions have to be the same set, or the judge spends its vision
+    budget looking at elements it is not being asked about."""
+    before = ids_of(run)
+    tenant, row = _resumed(run, answered_ids=[before[0]])
+
+    pointers, unseen = judge.screenshot_pointers(tenant.id, row.id)
+    named = {p["name"] for p in pointers} | {u["id"] for u in unseen}
+    assert before[0] not in named
+    assert named == set(before[1:]), "and every element it IS judging is still covered"
+
+
+def test_what_the_run_must_account_for_is_never_narrowed_by_a_resume(run):
+    """The completeness check measures against everything the run was DISPATCHED. A contract that
+    shrank to fit what was done is not a contract — and this is the guarantee §9.25 exists over."""
+    from orchestration.activities import WriteCompletenessError
+
+    tenant, proj, row, requests = run
+    _resumed(run, answered_ids=[ids_of(run)[0]])
+
+    # It raises, because two elements really are unanswered — and what it must say is "of 3".
+    with pytest.raises(WriteCompletenessError) as caught:
+        judge.verify_judgment_completeness(
+            tenant_id=tenant.id, project_id=proj.id, run_id=row.id)
+    assert f"of {len(requests)} accessibility element(s)" in str(caught.value)
 
 
 def test_the_contract_is_the_whole_run_on_every_page(run):

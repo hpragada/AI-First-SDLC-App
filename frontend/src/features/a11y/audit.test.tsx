@@ -339,6 +339,61 @@ describe("S-38 pages and audit", () => {
     expect(screen.getByText("1 of 3")).toBeTruthy();
   });
 
+  // 9.26.E1. The operator's machine restarted mid-judging and the panel went on saying
+  // "Checking the rest… in progress — you can leave this page", six inches below its own header
+  // badge reading `Companion: Offline`. Three false statements next to two that said why.
+  it("a judging pass whose machine went away stops claiming to be in progress", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "judging", base_url: "http://localhost:4180",
+        routes: ["/", "/login"],
+        created_at: "2026-08-31T12:45:00Z", summary: { ai_pass: { rejudged: true } },
+        progress: { visited: 94, unreachable: 0, judged: 99, dispatched: 269 },
+        stalled: true, stalled_since: "2026-08-31T13:04:11Z",
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Checking stopped")).toBeTruthy();
+    expect(screen.queryByText("Checking the rest of this audit")).toBeNull();
+    expect(screen.queryByText(/You can leave this page/)).toBeNull();
+    // …and the row for the SAME audit under Past audits, which went on wearing a live blue
+    // "Checking the rest" badge beside the panel that had just been corrected. One audit, one
+    // answer: the list is where somebody scans for what needs attention.
+    expect(screen.queryByText("Checking the rest")).toBeNull();
+    expect(screen.getAllByText("Stopped").length).toBeGreaterThan(1);
+    // What it got to, in the unit this pass works in — elements, not pages.
+    expect(screen.getByText("99 of 269")).toBeTruthy();
+    // …and WHEN, which is the whole point: a count with no time beside it reads identically
+    // one second and twenty-five minutes after the machine died.
+    expect(screen.getByText(/13:04|1:04/)).toBeTruthy();
+  });
+
+  it("a stalled judging pass is not told its work will be thrown away", async () => {
+    // A half-CAPTURE is discarded — a baseline from four of twelve pages states coverage the
+    // audit never had. A half-JUDGED capture is the opposite: every verdict is kept and the
+    // machine carries on from here. Telling it the capture half's story would send somebody to
+    // re-run an hour of judging that is already paid for and already correct.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "judging", base_url: "http://localhost:4180",
+        routes: ["/"], created_at: "2026-08-31T12:45:00Z", summary: {},
+        progress: { visited: 1, unreachable: 0, judged: 99, dispatched: 269 },
+        stalled: true, stalled_since: "2026-08-31T13:04:11Z",
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("Checking stopped");
+    expect(screen.queryByText(/closed as failed/)).toBeNull();
+    expect(screen.queryByText(/start a new audit/)).toBeNull();
+    expect(screen.getByText(/carries on from where it stopped/)).toBeTruthy();
+  });
+
   it("an audit that is genuinely running is not called stopped", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...authed(),

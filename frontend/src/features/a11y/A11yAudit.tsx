@@ -161,12 +161,20 @@ function leftUnchecked(audit: A11yAuditRow): number {
  * things reading as in-flight sends somebody looking for a run that is not happening.
  */
 function statusLabel(audit: A11yAuditRow): string {
+  // **Before the status word, because it contradicts it.** `stalled` means the machine holding
+  // this audit has said nothing for longer than its lease — so "Visiting pages" and "Checking
+  // the rest" are both describing work that is not happening. The panel above the list was
+  // taught this first, and the row underneath went on saying "Checking the rest" beside it: the
+  // same audit, two answers, one screen (9.26.E1). One row of a list is exactly where somebody
+  // scanning for what still needs attention looks, and it must not be the reassuring one.
+  if (audit.stalled) return "Stopped";
   if (audit.status === "judging" && isRejudge(audit)) return "Checking the rest";
   if (audit.status === "complete" && leftUnchecked(audit) > 0) return "Not fully checked";
   return STATUS_LABEL[audit.status] ?? audit.status;
 }
 
 function auditBadge(audit: A11yAuditRow): "done" | "failed" | "waiting" {
+  if (audit.stalled) return "failed";
   if (audit.status === "failed") return "failed";
   // Amber, not green, and this is the whole point: green is the one thing a person reads without
   // reading. An audit that never asked about part of its own capture has not earned it.
@@ -1110,6 +1118,11 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
   }
 
   const progress = audit.progress ?? { visited: 0, unreachable: 0 };
+  // DISTINCT elements, not requests. The same markup on ten pages is one thing to judge, and
+  // counting verdicts against requests made a finished audit read as two-thirds done. Declared
+  // here rather than beside the running tiles because the stalled panel below says the same
+  // number, and it is the same number.
+  const dispatched = progress.dispatched ?? 0;
 
   // Says it is running, and nothing has come back from the machine holding it for a long while.
   // Shown BEFORE the running panel, because everything below this point describes work in
@@ -1117,20 +1130,57 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
   // on this project reports in; until then this is the honest reading of the same row, and if
   // that machine never comes back it is the only one there will ever be.
   if (audit.stalled) {
+    // A stalled CAPTURE and a stalled JUDGING pass are not the same situation and must not be
+    // told in the same words. A half-capture is thrown away — nothing is reported from a partial
+    // pass, because a baseline drawn from four of twelve pages states coverage the audit never
+    // had. A half-judged capture is the opposite: every verdict already written is kept for good,
+    // no page has to be visited again, and starting the machine back up carries on from here.
+    // Telling a judging pass it "will be closed as failed" and offering to start a new audit
+    // would throw away an hour of judging that is already paid for and already correct.
+    const stalledJudging = audit.status === "judging";
+    const quietSince = when(audit.stalled_since);
     return (
-      <Panel title="Audit stopped reporting" actions={<Badge variant="failed">Stopped</Badge>}>
+      <Panel
+        title={stalledJudging ? "Checking stopped" : "Audit stopped reporting"}
+        actions={<Badge variant="failed">Stopped</Badge>}
+      >
         <p className="t-sm u-body">
-          Nothing has come back from the machine running this audit for a long while — it was
-          most likely closed, restarted or disconnected part-way through. It reported{" "}
-          <strong>
-            {progress.visited} of {asked}
-          </strong>{" "}
-          pages before it went quiet.
+          Nothing has come back from the machine {stalledJudging ? "checking" : "running"} this
+          audit for a long while — it was most likely closed, restarted or disconnected part-way
+          through.{" "}
+          {stalledJudging ? (
+            <>
+              It answered{" "}
+              <strong>
+                {progress.judged ?? 0} of {dispatched}
+              </strong>{" "}
+              element(s){quietSince ? <>, last at <strong>{quietSince}</strong></> : null}.
+            </>
+          ) : (
+            <>
+              It reported{" "}
+              <strong>
+                {progress.visited} of {asked}
+              </strong>{" "}
+              pages before it went quiet
+              {quietSince ? <>, last at <strong>{quietSince}</strong></> : null}.
+            </>
+          )}
         </p>
         <p className="t-sm u-muted" style={{ marginTop: "var(--space-3)" }}>
-          Nothing is reported from a partial pass, so this audit will be closed as failed as soon
-          as a companion on this project reports in. You can start a new audit now — what was
-          captured here costs only the minutes it took.
+          {stalledJudging ? (
+            <>
+              Every answer it did give is kept, and no page has to be visited again. Start the
+              machine again and it carries on from where it stopped — nothing here needs to be
+              re-run by hand.
+            </>
+          ) : (
+            <>
+              Nothing is reported from a partial pass, so this audit will be closed as failed as
+              soon as a companion on this project reports in. You can start a new audit now — what
+              was captured here costs only the minutes it took.
+            </>
+          )}
         </p>
       </Panel>
     );
@@ -1142,9 +1192,6 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
   // companion writes one screen at a time and never says which pass it is in, and a number
   // computed from the screens actually posted cannot claim a pass that has not started.
   const pass = Math.min(passes, Math.floor(progress.visited / PAGES_PER_PASS) + 1);
-  // DISTINCT elements, not requests. The same markup on ten pages is one thing to judge, and
-  // counting verdicts against requests made a finished audit read as two-thirds done.
-  const dispatched = progress.dispatched ?? 0;
 
   // A re-judge opens no browser and visits no page: the two capture tiles below are true about
   // the CAPTURE and would read as work happening now. Said once, plainly, rather than left to

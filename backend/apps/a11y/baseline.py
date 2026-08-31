@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from typing import NoReturn
 
+from django.utils.dateparse import parse_datetime
+
 from apps.projects.preview_config import resolve_app_base_url
 from apps.tenancy.context import tenant_context
 
@@ -480,6 +482,22 @@ IN_FLIGHT_STATUSES = ("pending", "claimed", "capturing", "judging")
 #:   * `judging`  — a Temporal run, closed from the other end by `close_unfinished_ai_pass`.
 ABANDONABLE_STATUSES = ("capturing",)
 
+#: The statuses `stalled_audit_ids` DERIVES a "nothing has been heard from this" reading for.
+#:
+#: **Wider than `ABANDONABLE_STATUSES` on purpose, and the difference is the whole point.**
+#: Abandoning WRITES: it fails the audit, and that is only ever right for a capture, whose partial
+#: pages are worthless on their own. Saying "nothing has come back from the machine holding this"
+#: only READS, and it is right for both — a person watching a judging audit whose machine has gone
+#: is owed the same honesty as one watching a capture.
+#:
+#: `judging` was left out of the read as well as the write, on the reasoning recorded above: *a
+#: Temporal run, closed from the other end*. That is true only when the RUN fails. When the
+#: MACHINE dies the run does not fail — the workflow waits for a report that is never coming, for
+#: two hours, and only then raises a takeover flag. On 31 August that left an audit reading
+#: "Checking the rest… in progress" for 25 minutes and counting, on a screen whose own header
+#: badge said `Companion: Offline` (9.26.E1). The platform knew; this function was not asked.
+STALLABLE_STATUSES = ("capturing", "judging")
+
 #: What a person is told when the machine holding their audit went away. In the audit's own
 #: `summary["reason"]`, which is what the "Could not run" panel reads.
 ABANDONED_REASON = (
@@ -511,6 +529,21 @@ def _last_screen_at(tenant_id, audits) -> dict:
 def stalled_audit_ids(tenant_id, audits, *, stale_before) -> set[str]:
     """Which of these audits nothing has been heard from since `stale_before`. **Reads only.**
 
+    Just the ids. `stalled_audits` is the same answer WITH the moment each one last spoke, which
+    is what a screen needs — see its note on why a count without a time is the bug this fixes.
+    """
+    return set(stalled_audits(tenant_id, audits, stale_before=stale_before))
+
+
+def stalled_audits(tenant_id, audits, *, stale_before) -> dict:
+    """Which audits nothing has been heard from, and WHEN each last spoke. **Reads only.**
+
+    **The timestamp is not decoration.** A screen showing "99 of 269 judged, in progress" reads
+    identically whether the last answer landed one second ago or twenty-five minutes ago, and on
+    31 August it went on saying *in progress* for 25 minutes about a machine that had been dead
+    since 13:04 — beside its own header badge reading `Companion: Offline` (9.26.E1). A number
+    with a time beside it cannot lie about being live, and this is that time.
+
     **Why liveness is measured from the work and not only from the claim.** An audit is captured
     by a machine outside the platform, so the only evidence it is still there is that it is still
     talking to us — and it talks in two ways: the companion's heartbeat (which renews
@@ -522,18 +555,94 @@ def stalled_audit_ids(tenant_id, audits, *, stale_before) -> set[str]:
     `stale_before` is passed in rather than read from a constant here, because how long a
     machine may be silent is the runner's lease policy (`api.runner_views.CLAIM_LEASE`) and this
     module has no business deciding it.
+
+    **Both halves of an audit are covered** (`STALLABLE_STATUSES`): a capture, whose evidence is
+    screens and its own claim, and a judging pass, whose evidence is verdicts and its run's claim
+    (`_judging_liveness`). The reading is the same reading; only the evidence differs. Note that
+    this is wider than what may be *abandoned* — see the note on `STALLABLE_STATUSES`.
     """
+    from .models import A11yBaselineAudit
+
     held = [a for a in audits if a.status in ABANDONABLE_STATUSES]
     latest = _last_screen_at(tenant_id, held)
-    out = set()
+    out: dict = {}
     for audit in held:
         spoke = [audit.claimed_at or audit.created_at]
         seen = latest.get(str(audit.id))
         if seen:
             spoke.append(seen)
         if max(spoke) < stale_before:
-            out.add(str(audit.id))
+            out[str(audit.id)] = max(spoke)
+
+    # …and the same reading for an audit that is JUDGING (9.26.E1). Same rule, different
+    # evidence: a judging pass speaks through the companion's heartbeat (which renews the run's
+    # claim) and through the verdicts themselves.
+    judging = [a for a in audits if a.status == A11yBaselineAudit.Status.JUDGING]
+    for audit_id, spoke_at in _judging_liveness(tenant_id, judging).items():
+        if spoke_at < stale_before:
+            out[audit_id] = spoke_at
     return out
+
+
+def _judging_liveness(tenant_id, audits) -> dict:
+    """When each judging audit last gave evidence it is still being worked on. Reads only.
+
+    **The newest VERDICT has to be in here, and leaving it out would be a bug rather than a
+    simplification.** `_renew_claims_for` stops renewing a claim once it has been held for
+    `MAX_CLAIM_AGE` (60 minutes), deliberately, so that a wedged-but-heartbeating companion cannot
+    hold a run for ever. A long HEALTHY judging pass hits that cap too: on 31 August the first
+    pass's claim froze at 10:38 and the judge went on answering until 11:55. Keyed on the claim
+    alone this would have called a working audit stalled for well over an hour — the exact false
+    alarm that nearly had a healthy audit killed, one layer down.
+
+    So liveness is the LATEST of three things, any one of which means somebody is still there:
+    when the run started, when its claim was last renewed, and when its newest verdict landed.
+
+    **Only while the run is still open.** A judging run that has failed or completed is being
+    closed through the ordinary path (`close_unfinished_ai_pass` / `finish_ai_pass`) and has no
+    business being reported as a machine that went quiet.
+    """
+    from django.db.models import Max
+
+    from apps.runs.models import Run
+
+    from .models import A11yJudgmentCache
+
+    runs: dict[str, str] = {}
+    for audit in audits:
+        run_id = str(((audit.summary or {}).get("ai_pass") or {}).get("judge_run_id") or "")
+        if run_id:
+            runs[run_id] = str(audit.id)
+    if not runs:
+        return {}
+
+    open_states = (Run.Status.PENDING, Run.Status.RUNNING, Run.Status.STALLED)
+    spoke: dict[str, list] = {}
+    with tenant_context(tenant_id):
+        rows = Run.objects.filter(
+            tenant_id=tenant_id, id__in=list(runs), status__in=open_states,
+        ).values_list("id", "inputs", "started_at", "created_at")
+        for run_id, inputs, started_at, created_at in rows:
+            audit_id = runs[str(run_id)]
+            times = [started_at or created_at]
+            claimed = ((inputs or {}).get("dispatch") or {}).get("claimed_at")
+            if claimed:
+                parsed = parse_datetime(str(claimed))
+                if parsed is not None:
+                    times.append(parsed)
+            spoke[audit_id] = times
+        if spoke:
+            live = {str(run_id) for run_id, audit_id in runs.items() if audit_id in spoke}
+            verdicts = (
+                A11yJudgmentCache.objects
+                .filter(tenant_id=tenant_id, run_id__in=sorted(live))
+                .values("run_id").annotate(last=Max("updated_at"))
+            )
+            for row in verdicts:
+                audit_id = runs[str(row["run_id"])]
+                if row["last"]:
+                    spoke[audit_id].append(row["last"])
+    return {audit_id: max(times) for audit_id, times in spoke.items() if times}
 
 
 def abandon_audit(*, tenant_id, audit_id, reason: str = "") -> dict:

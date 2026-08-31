@@ -218,10 +218,31 @@ function ItemPanel({
 
       <Capture projectId={projectId} item={item} />
 
-      <Banner variant="warning" title={`The check gave ${verdictLabel(item).toLowerCase()}`}>
-        So the platform did not act on it either way. It is not counted as a failure and it is
-        not counted as a pass.
-      </Banner>
+      {/* **Two different reasons land an element here, and they need different sentences.**
+          An `uncertain` is "a check looked and could not decide". A pass or a fail whose
+          confidence did not clear this check's bar is the opposite: the check DID reach an
+          answer, and the platform declined to act on it alone.
+
+          Until this, both said "The check gave …" with the verdict label pasted in, so a
+          low-confidence pass read "The check gave not sure · 75%" — broken English that also
+          hid the one fact a reviewer needs, which is that the check said the element was fine
+          and how sure it was. On 31 August four of nineteen items in the queue were that shape,
+          all of them passes at 75–80%, all of them described as though nothing had been decided. */}
+      {item.verdict === "uncertain" || item.confidence == null ? (
+        <Banner variant="warning" title="The check gave no verdict">
+          So the platform did not act on it either way. It is not counted as a failure and it is
+          not counted as a pass.
+        </Banner>
+      ) : (
+        <Banner
+          variant="warning"
+          title={`The check said this ${item.verdict === "pass" ? "is fine" : "fails"}, and was ${Math.round(item.confidence * 100)}% sure`}
+        >
+          That is under the confidence this check needs before the platform will act on its own,
+          so it is asking you instead. It is not counted as a failure and it is not counted as a
+          pass until you decide.
+        </Banner>
+      )}
 
       <h3 className="t-h3" style={{ marginTop: "var(--space-5)" }}>
         What the check saw

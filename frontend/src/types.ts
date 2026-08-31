@@ -1076,6 +1076,12 @@ export interface A11yAudit {
   // comes back to be swept, and the screen must not be the last thing still claiming the audit
   // is running.
   stalled?: boolean;
+  // When it last gave any sign of life — the newest screen, the newest verdict, or its last
+  // heartbeat, whichever came last. Only sent when `stalled`; on a healthy audit the honest
+  // answer is "it is talking to us now". A count with no time beside it reads identically after
+  // one second and after twenty-five minutes, which is how a dead judging pass went on calling
+  // itself "in progress".
+  stalled_since?: string | null;
   // How far this audit has got RIGHT NOW. Present only while it is still going somewhere —
   // `summary` above is written when it closes, so until then there was no count of anything
   // anywhere and a screen could only show the status word. `judged`/`dispatched` appear once

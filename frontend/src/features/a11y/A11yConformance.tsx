@@ -469,10 +469,21 @@ export function A11yConformanceScreen() {
           <span className="tile__label">Not evaluated</span>
           <span className="tile__sub">Stated, never assumed</span>
         </div>
+        {/* **Criteria the platform will not put a word in your mouth about** — it has no
+            suggestion and nobody has ruled, so the row cannot say Supports or anything else.
+            Typically a criterion only the rule scanner reached: "axe found nothing" is not
+            evidence that keyboard operation works.
+
+            The sub-line used to read "A check looked and could not decide", which is the REVIEW
+            QUEUE's sentence — a different unit (elements, not criteria) answering a different
+            question (settle this one element, not state a conformance level). The two can never
+            match, and the shared wording made them look as though they should: 4 here beside 19
+            there sent the team looking for a bug in the counting. Neither number was wrong; the
+            caption was. */}
         <div className="tile">
           <span className="tile__num">{data.totals.awaiting_a_person}</span>
-          <span className="tile__label">Awaiting a person</span>
-          <span className="tile__sub">A check looked and could not decide</span>
+          <span className="tile__label">Need your decision</span>
+          <span className="tile__sub">Criteria the platform will not suggest a level for</span>
         </div>
       </div>
 
