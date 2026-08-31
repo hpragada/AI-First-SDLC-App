@@ -148,6 +148,54 @@ def test_dispatch_starts_one_run_through_the_trigger(world):
     assert result.complete is True
 
 
+def test_the_dispatcher_hands_the_run_its_own_deadlines(world):
+    """The two timers that fired on work which was going perfectly well, 31 August.
+
+    The report deadline rang at exactly 7,200 s on a pass that needed 8,193 — on a companion that
+    answered seconds either side of it — and the write-completeness check was cancelled at its
+    flat five minutes on the same pass. Both were constants sized for a planning phase that takes
+    four minutes, and `trigger_phase` never set either field, so every phase inherited them in
+    silence. The dispatcher is the only place that knows how big the pass is, so the dispatcher
+    says.
+
+    Asserted on the CALL rather than on the numbers: `judging_deadlines` owns the arithmetic and
+    is tested against real measurements in `test_a11y_judge.py`. What is at stake here is that
+    the answer travels — the whole failure was a value that was computed nowhere and passed
+    nowhere.
+    """
+    from apps.a11y.dispatch import judging_deadlines
+
+    trigger = FakeTrigger(world)
+    requests = [_request(), _request(html="<img src='b.png'>"), _request(html="<img src='c'>")]
+    _dispatch(world, requests, trigger)
+
+    assert len(trigger.calls) == 1
+    call = trigger.calls[0]
+    assert call["report_timeout_seconds"] == judging_deadlines(3)["report_timeout_seconds"]
+    assert call["verify_timeout_seconds"] == judging_deadlines(3)["verify_timeout_seconds"]
+    # A batch this small sits on the floors, which are the budgets it already had — nothing gets
+    # LESS time than before, which is what makes this safe for every other size of pass.
+    assert call["report_timeout_seconds"] == 7_200
+    assert call["verify_timeout_seconds"] == 300
+
+
+def test_a_big_pass_is_given_more_than_the_two_hours_that_parked_the_real_one(world):
+    """The same call, at the size that actually broke: 800 distinct questions."""
+    trigger = FakeTrigger(world)
+    _dispatch(world, [_request(html=f"<img src='{n}.png'>") for n in range(40)], trigger)
+
+    # 40 distinct questions is still on the floor — the point of the floor. What matters is that
+    # the number now comes from the batch at all, so the 800-element case scales instead of
+    # inheriting a constant.
+    assert trigger.calls[0]["report_timeout_seconds"] >= 7_200
+
+    from apps.a11y.dispatch import judging_deadlines
+
+    assert judging_deadlines(800)["report_timeout_seconds"] > 8_193, (
+        "the real pass took 8,193 s and was parked at 7,200"
+    )
+
+
 def test_the_run_carries_the_candidates_grouped_by_screen(world):
     """The judge should read a page at a time, not a shuffled pile of elements."""
     trigger = FakeTrigger(world)

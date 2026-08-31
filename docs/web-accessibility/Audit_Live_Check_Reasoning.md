@@ -843,10 +843,10 @@ platform's own store. Reaching a system-of-record is a separate, gated step that
 
 ### New defects this run produced
 
-Five, none of them caused by the five fixes, all found because this is the first audit that ran to
-completion at real scale. **All five are written up with their surgical fixes in
-`GAP_FIX_BUILD_PLAN.md` §9.26**, recorded rather than built — the team's decision is to finish the
-audit first.
+Eight, none of them caused by the five fixes, all found because this is the first audit that ran
+to completion at real scale. **All eight are written up with their surgical fixes in
+`GAP_FIX_BUILD_PLAN.md` §9.26**, and all eight are now built — the team's decision was to finish
+the audit first, score it, and then close them together.
 
 | # | What | Where |
 |---|---|---|
@@ -856,13 +856,23 @@ audit first.
 | **D** | the incomplete-audit **banner says 268** while the card beside it says **269** — and the banner is the wrong one | §6.8 |
 | **E** | the operator's machine **restarted mid-judging** and the audit went on saying it was working — no signal for 101 minutes; and the recovery **re-judges the 98 elements already answered** | §6.9 |
 | **F** | once the two-hour deadline parks the run, **nothing can recover it** — and the panel E1 shipped that afternoon tells the user to do the one thing that no longer works | §6.10 |
-
 | **G** | three overlapping closes **overwrote the record of what was never looked at** — 170 became 65, and 105 elements silently changed meaning | §9.26.G |
 | **H** | two screens describing the wrong thing in the right words: **"4 awaiting a person" beside a queue of 19**, and a low-confidence *pass* rendered as *"The check gave not sure · 75%"* | §9.26.H |
 
-**C, E, G and H were fixed the same day**, on the team's instruction, and verified against this
+**C, E, G and H were fixed during the day**, on the team's instruction, and verified against this
 very audit — which was sitting in each failing state and so could prove the fix at no engine cost.
-**A, B, D and F are recorded and wait.**
+**A, B, D, F and the second half of G were fixed after it closed**, once the audit had been scored
+and cross-checked, together with the platform-wide finding recorded on 30 August (§9.25.5: a
+terminated run went on accepting the agent's verdicts for forty-nine minutes). **Every defect
+found today is now closed.**
+
+Two of those departed from the plan as written, and both departures are recorded where the plan
+is rather than only here. **B** sizes the verification budget in the DISPATCHER and passes it to
+the workflow, because the workflow module is deliberately Django-free and cannot read the batch it
+was about to walk — the original note claiming nothing had to be plumbed through was simply wrong.
+**#58** is closed at the three tools the agent calls, and not by refusing every write to every
+closed run: the platform's own closing path runs on terminal runs by design, and it is the thing
+that guarantees nothing dispatched vanishes.
 
 **One pattern runs through D, E1 and H, and it is worth naming rather than counting four times:**
 a number taken from one place and its explanation from another. Every one of them was a *true
@@ -901,7 +911,39 @@ Nothing in the data is inconsistent. **Everything the cross-check found was a ca
 
 ---
 
-*Last updated: 16:55 UTC — **the audit is complete and cross-checked**: all 1,068 distinct
-questions answered across three passes, 410 failures, 19 for a person to decide, nothing
-unlooked-at, and every screen reconciled against the database. The one thing still outstanding is
-the accuracy score.*
+## 12. Everything closed — 18:10
+
+The five defects the team had deferred were built after the audit was scored: **A** (deadlines
+sized to the work, and a park that says a budget expired instead of claiming the machine was
+checked), **B** (the verification budget sized the same way, and a timeout no longer reported as a
+found gap), **D** (the banner counting from the one source the button reads), **F** (the audit
+screen owning its own recovery, with one button), the **second half of G** (what nothing looked at
+now derivable from the verdicts, not only from a field a repeated close can shrink), and **#58**
+(an ended run stops being handed work and stops accepting verdicts).
+
+**What was verified, and how.**
+
+| | |
+|---|---|
+| new backend tests | **17**, across dispatch, judging, the park, the workflow's wording and the two readings of "never looked at" |
+| new frontend tests | **3** — the banner's source of truth, and the parked panel in both directions |
+| frontend suite | **416 / 416 green**, TypeScript clean |
+| backend, the files this touched | green |
+| pre-existing red tests | **14**, confirmed by stashing every change and re-running: 6 in `test_a11y_report.py`, 5 in `test_a11y_capture.py`, 2 in `test_a11y_conformance.py`, 1 in `test_a11y_findings.py`. All trace to the `graphics` / 1.4.11 checker added on 27 August and never wired in. **None is touched by today's work** — and the count is 14, not the 13 recorded earlier, which was an undercount. |
+
+**One thing to know before deploying: the worker goes out before the API.** The verification
+budget travels on the run's Temporal payload as a new field, and an input carrying a field the
+worker does not know about yet fails to deserialize. This is the same rule the "request changes"
+flag already follows; it is not new, but it is easy to forget on a demo morning.
+
+**Two of the fixes cannot be proved live until they next fire**, and this is stated rather than
+implied: the parked-run panel needs a pass that actually gets parked, and the resumed-run fix
+(E2) needs a re-claim. Both are covered by tests and neither has been seen on a real run — the
+whole point of A and F is that this state should now be rare and, when it happens, escapable.
+
+---
+
+*Last updated: 18:10 UTC — **the audit is complete, cross-checked, and every defect it found is
+closed.** All 1,068 distinct questions answered across three passes; 410 failures; 19 for a person
+to decide; nothing unlooked-at; every screen reconciled against the database; eight defects found
+and eight fixed. The one thing still outstanding is the accuracy score.*

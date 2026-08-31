@@ -101,6 +101,51 @@ OVER_CAP = (
     "pass. Run the check again to continue from here; nothing was skipped."
 )
 
+#: **How long this pass is allowed to take, sized to what it is being handed.**
+#:
+#: Every phase used to inherit a flat two hours because nothing ever set the field. On 31 August
+#: the deadline fired at 7,200 s to the second on a judging pass that was working perfectly — a
+#: verdict had landed seconds before and another landed seconds after — and the pass went on to
+#: finish sixteen minutes later. The measured rate on that run was **10.2 s per element** for 800
+#: elements; 25 s is ~2.4× that, generous without being open-ended.
+#:
+#: The floor keeps a small re-judge on the old two hours. The ceiling of eight hours is what stops
+#: a runaway waiting for ever — a deadline that can be made arbitrarily long by making the batch
+#: arbitrarily large is not a deadline.
+JUDGE_SECONDS_PER_ELEMENT = 25
+JUDGE_REPORT_FLOOR = 7_200
+JUDGE_REPORT_CEILING = 28_800
+
+#: And how long the write-completeness check that follows it may take.
+#:
+#: That check is not the one-artifact lookup it is for every other phase: it writes a fallback
+#: verdict for each unanswered element — one database round trip each, against a remote server —
+#: then publishes the merged report and closes the audit. At 60 s it was cancelled part-way and
+#: 63 of 144 elements silently got no fallback at all; it was raised to a flat 5 minutes, and at
+#: 800 elements 5 minutes is the same mistake one size up.
+#:
+#: 2 s per element is ~4× the ~0.4 s/element the 31 August close actually measured. The floor is
+#: the flat five minutes it replaces, so nothing small gets a shorter budget than it has today.
+VERIFY_SECONDS_PER_ELEMENT = 2
+VERIFY_FLOOR = 300
+VERIFY_CEILING = 1_800
+
+
+def judging_deadlines(distinct: int) -> dict:
+    """The two deadlines for a judging pass of this size, in seconds.
+
+    Kept as one function because they are one decision — "how big is this pass" — asked twice,
+    and because a test can then state the sizing rule in one place instead of re-deriving the
+    arithmetic on both sides of it.
+    """
+    count = max(0, int(distinct or 0))
+    return {
+        "report_timeout_seconds": min(
+            JUDGE_REPORT_CEILING, max(JUDGE_REPORT_FLOOR, count * JUDGE_SECONDS_PER_ELEMENT)),
+        "verify_timeout_seconds": min(
+            VERIFY_CEILING, max(VERIFY_FLOOR, count * VERIFY_SECONDS_PER_ELEMENT)),
+    }
+
 
 @dataclass(frozen=True)
 class A11yRequest:
@@ -481,6 +526,11 @@ def dispatch_judgments(
             tenant_id=tenant_id, project_id=project_id, work_item_id=work_item_id,
             agent_key=JUDGE_AGENT_KEY, triggered_by=triggered_by,
             execution_mode="companion", auto_approve=True,
+            # Sized to what is actually being handed over, rather than to the flat constants a
+            # planning phase was measured for. `pending` is the distinct question list at this
+            # point — after de-duplication and after the cap — so it is exactly the work the
+            # companion will do and exactly the work the completeness check will have to walk.
+            **judging_deadlines(len(pending)),
         )
     except ActiveRunError as exc:
         # **Caught before the general handler, because it is not a failure.** A run is already

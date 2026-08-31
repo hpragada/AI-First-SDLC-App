@@ -25,7 +25,31 @@ class AgentRunInput:
     # Which enrolled companion to dispatch to (the triggering user's), when companion mode.
     enrollment_id: str | None = None
     # If the companion never reports within this window, park the run for human takeover.
+    #
+    # **A default, not a rule.** Every phase used to inherit this number silently because
+    # `trigger_phase` never set it, so a planning phase that takes four minutes and an
+    # accessibility judging pass that takes two and a quarter HOURS were given the same two
+    # hours. On 31 August it fired at 7,200 s to the second on a companion that was demonstrably
+    # alive — a verdict had landed seconds earlier and another landed seconds after — and the run
+    # went on to finish normally sixteen minutes later. Nothing broke, but the screen said the
+    # machine was offline, and the obvious response to "offline" is the one click that would have
+    # ended the run fifteen verdicts from the end. A caller that can size its own work now says
+    # so; see `a11y.dispatch` for the only one that currently does.
     report_timeout_seconds: int = 7200
+    # How long the write-completeness check may take. One minute is right for what that check
+    # usually is — look one artifact up and confirm it has a body. For the phases in
+    # LONG_VERIFY_PHASES it is not that check at all: it writes a fallback verdict for every
+    # unanswered element, one database round trip each, then publishes the merged report and
+    # closes the audit. Cancelled part-way it leaves exactly the accounting it exists to
+    # guarantee half-done — 81 of 144 fallbacks written and 63 elements silently given none, the
+    # first time, at sixty seconds. It was raised to a flat five minutes, and at 800 elements
+    # five minutes is the new sixty seconds.
+    #
+    # So the caller sizes it, for the same reason and in the same shape as the field above. The
+    # default is the old flat five minutes, so any caller that does not set it is unchanged.
+    # **Deploy the worker before the API**: an input carrying a field the worker's dataclass does
+    # not have yet fails to deserialize.
+    verify_timeout_seconds: int = 300
     # Repo-scoped PLANNING phases (catalog `reads_code`, e.g. 10_security) carry the target
     # repo + base branch so the companion can check out a READ-ONLY worktree to scan the real
     # source. None for every other planning phase → no worktree, behaviour unchanged. This is

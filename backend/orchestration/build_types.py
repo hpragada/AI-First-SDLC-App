@@ -125,6 +125,28 @@ def failure_reason(exc) -> str:
     return str(getattr(exc, "cause", None) or exc)
 
 
+def is_activity_timeout(exc) -> bool:
+    """True when an ActivityError was the activity RUNNING OUT OF TIME rather than the activity
+    finding something wrong.
+
+    They are different facts and they were producing the same sentence. On 31 August a run that
+    had judged all 800 of its elements and reported `ok` was written up as
+    `write-completeness check failed: activity StartToClose timeout` — which reads, to anyone
+    opening the run console, as "the completeness check found a gap". It found nothing; it never
+    got to the end of looking. On a capability whose whole promise is that nothing dispatched
+    vanishes silently, a false alarm about that promise is expensive.
+
+    Same detection shape as `is_merge_conflict` / `is_empty_build`: prefer the structured cause,
+    fall back to the message. Duck-typed on the cause's class name rather than importing
+    `temporalio.exceptions.TimeoutError`, which shadows the builtin at module scope and would
+    make every other `except TimeoutError` in this file mean something else.
+    """
+    cause = getattr(exc, "cause", None)
+    if type(cause).__name__ == "TimeoutError":
+        return True
+    return "timeout" in failure_reason(exc).lower()
+
+
 def display_name(inp) -> str:
     """What a PERSON should see for this work item (Bugs S.No 151): its title, falling back to the
     key only when there is no title. Artifact names and the PR title used work_item_key, which is a

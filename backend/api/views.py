@@ -593,6 +593,7 @@ class ProjectViewSet(
             audit_manifest,
             audit_outcome,
             audit_progress,
+            parked_judge_runs,
             stalled_audits,
             start_baseline_audit,
             unanswered_counts,
@@ -660,6 +661,11 @@ class ProjectViewSet(
         # audit, so this says so and leaves the row alone.
         stalled = stalled_audits(
             self.tenant_id, audits, stale_before=timezone.now() - CLAIM_LEASE)
+        # …and which of those can no longer recover on their own. A judging pass whose deadline
+        # has fired is PARKED, and the claim lease will never offer it back — so "start the
+        # machine again" stops being true and the screen needs a button instead. See
+        # `parked_judge_runs`; this is the run that button acts on.
+        parked = parked_judge_runs(self.tenant_id, audits)
         return Response({"audits": [
             {"id": str(a.id), "status": a.status, "base_url": a.base_url,
              "routes": list(a.routes or []), "summary": a.summary or {},
@@ -671,6 +677,10 @@ class ProjectViewSet(
              # went on describing itself as "in progress" (9.26.E1). Null unless stalled: on a
              # healthy audit the honest answer is "it is talking to us now".
              "stalled_since": stalled.get(str(a.id)),
+             # The judging run to finish when this audit can no longer recover by itself. Null
+             # on every audit that can — which is the point: its presence is what tells the
+             # screen to stop saying "start the machine again" and offer a way out instead.
+             "parked_run_id": parked.get(str(a.id)),
              # Only on the newest, because that is the only one the panel shows — and the
              # numbers are this PROJECT's current standing, not a per-audit tally, which is
              # what a finding can actually be attributed to. See `audit_outcome`.

@@ -370,8 +370,12 @@ def unanswered_for_capture(*, tenant_id, project_id, run_id) -> list[str]:
         machine connected. `_file_unjudged` files those with no run against them, and nothing
         else in the platform writes a verdict with a null run;
       * **the judge run started and never reported on it** — it ran out of session, context or
-        connection. `judge._remember_unanswered` records those on the run itself, at the one
-        moment they are still distinguishable from an answered `uncertain`;
+        connection. Read from two independent places, because one of them was lost once: the
+        list `judge._remember_unanswered` writes on the run at the one moment the two kinds of
+        `uncertain` are still distinguishable, **and** the verdict rows themselves, where the
+        platform's own `NOT_JUDGED` text marks the fallbacks it filed. A string the platform
+        writes and an agent cannot means this is derivable from the data, not only from a
+        side-record that a repeated close can shrink;
       * **the dispatch stopped at the cap before reaching it** — `deferred`, which is neither
         filed nor handed to a run, and so is invisible to both of the above. Caught by asking
         the direct question instead: an element of this capture with no verdict row at all,
@@ -380,7 +384,10 @@ def unanswered_for_capture(*, tenant_id, project_id, run_id) -> list[str]:
 
     Deliberately **not** "every `uncertain` in this capture". A check that looked and could not
     decide produced a real verdict; it belongs to a person, and handing it back to the machine
-    for another attempt would quietly recycle the review queue's own contents.
+    for another attempt would quietly recycle the review queue's own contents. The `NOT_JUDGED`
+    reading above is the exact opposite of that and stays inside the same rule: it matches only
+    the fallbacks the PLATFORM filed for elements it can see were never reported on, on this
+    run, and never an answer an agent gave.
 
     Everything is intersected with what this capture actually holds, because a judgment row is
     project-wide: without that, re-judging one audit would drag in another audit's leftovers.
@@ -435,6 +442,36 @@ def unanswered_for_capture(*, tenant_id, project_id, run_id) -> list[str]:
             run = Run.objects.filter(id=judge_run_id, tenant_id=tenant_id).first()
         recorded = ((run.outputs or {}).get(UNANSWERED_KEY) or []) if run else []
         hashes |= {str(h) for h in recorded} & captured
+
+        # …and the same answer, taken from the verdicts instead of from the side-record.
+        #
+        # **Why a second source for one fact.** The record above lives in a single JSON field on
+        # the run, and on 31 August a closing path that ran three times overlapping itself had a
+        # later, partial count overwrite the true one: 170 elements nothing had looked at became
+        # 65. `_remember_unanswered` now unions rather than replaces, which stops that write from
+        # shrinking — but the list is still one field that one bad write can lose, and what it
+        # holds is the only thing separating *"a check looked and could not decide"* from
+        # *"nothing ever looked at this"* once the fallback verdicts are stored.
+        #
+        # `NOT_JUDGED` is written by the platform, on this exact path, and never by an agent —
+        # `record_finding` requires evidence the judge itself supplies, so an agent cannot author
+        # this string. That makes it a reliable marker of work that did not happen, and it makes
+        # the answer derivable from the verdict rows themselves. Losing the record no longer
+        # loses the fact.
+        #
+        # Scoped to THIS run, deliberately. A `NOT_JUDGED` uncertain belonging to some earlier
+        # run of the same project is that run's history, and dragging it in here would re-offer
+        # elements this capture has since dealt with.
+        from .judge import NOT_JUDGED
+
+        with tenant_context(tenant_id):
+            hashes |= set(
+                A11yJudgmentCache.objects
+                .filter(tenant_id=tenant_id, project_id=project_id,
+                        verdict=A11Y_UNCERTAIN, run_id=judge_run_id,
+                        evidence=NOT_JUDGED, content_hash__in=sorted(captured))
+                .values_list("content_hash", flat=True)
+            )
 
     if not hashes:
         return []

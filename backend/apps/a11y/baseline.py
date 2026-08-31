@@ -645,6 +645,53 @@ def _judging_liveness(tenant_id, audits) -> dict:
     return {audit_id: max(times) for audit_id, times in spoke.items() if times}
 
 
+def parked_judge_runs(tenant_id, audits) -> dict:
+    """`{audit_id: judge_run_id}` for judging audits whose run is PARKED past its deadline.
+
+    **The distinction this draws is the difference between "wait" and "act", and the screen was
+    getting it wrong in the dangerous direction.**
+
+    A judging run whose machine goes quiet is recoverable *by itself*, for exactly as long as the
+    report deadline has not fired: `RunnerWorkClaimView` offers a stale claim back to a returning
+    companion, and the pass carries on from where it stopped. That is the case the audit screen
+    tells the user about — start the machine again, nothing needs re-running by hand — and it is
+    true.
+
+    It stops being true the moment the deadline fires. The re-claim rule requires the run to be
+    `PENDING` or `RUNNING`; parking sets it `STALLED`, which is not in that tuple, so **from that
+    instant the pass cannot be re-claimed at all, permanently**. Reconnecting the companion does
+    nothing. The only route out is a human takeover from the run-recovery console, which is a
+    page somebody auditing their own website has no reason to have ever opened.
+
+    So the screen was giving an instruction that had quietly become wrong — "start the machine
+    again" sends a person to restart something that will sit there doing nothing — and offering
+    no other route. This is what tells the two states apart, and the run id is what the audit
+    screen's own **Finish this audit** button acts on, so the recovery lives on the page the user
+    already understands rather than on the console they have never seen.
+
+    Reads only, like everything else here: a screen asking what state something is in must not be
+    the thing that changes it.
+    """
+    from apps.runs.models import Run
+
+    from .models import A11yBaselineAudit
+
+    runs: dict[str, str] = {}
+    for audit in audits:
+        if audit.status != A11yBaselineAudit.Status.JUDGING:
+            continue
+        run_id = str(((audit.summary or {}).get("ai_pass") or {}).get("judge_run_id") or "")
+        if run_id:
+            runs[run_id] = str(audit.id)
+    if not runs:
+        return {}
+    with tenant_context(tenant_id):
+        parked = (Run.objects
+                  .filter(tenant_id=tenant_id, id__in=list(runs), status=Run.Status.STALLED)
+                  .values_list("id", flat=True))
+        return {runs[str(run_id)]: str(run_id) for run_id in parked}
+
+
 def abandon_audit(*, tenant_id, audit_id, reason: str = "") -> dict:
     """Close ONE audit whose machine stopped reporting. Returns what it was closed as.
 

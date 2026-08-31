@@ -1058,6 +1058,114 @@ def test_the_count_on_the_button_matches_what_asking_again_would_ask(world):
     assert counted == len(actual) > 0
 
 
+def test_losing_the_record_of_what_was_never_looked_at_no_longer_loses_the_fact(world):
+    """The 31 August failure, reproduced by deleting the record outright.
+
+    `_remember_unanswered` writes the list of never-reported-on elements into one JSON field on
+    the run, and that list is the ONLY thing separating *"a check looked and could not decide"*
+    from *"nothing ever looked at this"* once the fallback verdicts are stored — same verdict,
+    same confidence, same run. On 31 August a closing path that ran three times overlapping
+    itself had a later, partial count overwrite the true one and 170 became 65.
+
+    The union fix stops a shorter write from shrinking it. This is the other half: the same
+    answer read off the verdicts themselves, where the platform's own `NOT_JUDGED` text marks
+    each fallback it filed. Deleting the record entirely is a harsher test than the overwrite
+    that actually happened, and the answer must not move.
+    """
+    from apps.a11y import judge as judge_mod
+    from apps.a11y.aipass import _remember_source_run, start_ai_pass, unanswered_for_capture
+    from apps.a11y.models import A11yBaselineAudit
+    from apps.runs.models import Run
+
+    audit = A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"], routes=["/checkout"],
+        status=A11yBaselineAudit.Status.COMPLETE)
+    _ingest(world)
+    A11yCandidateBundle.objects.filter(
+        tenant=world["tenant"], run_key=world["run_id"]).update(run_key=str(audit.id))
+    started = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id),
+                            trigger=FakeTrigger(world), triggered_by=str(world["user"].id))
+    _remember_source_run(world["t"], started["judge_run_id"], str(audit.id))
+    audit.summary = {"ai_pass": {"judge_run_id": started["judge_run_id"]}}
+    audit.save(update_fields=["summary"])
+    with pytest.raises(WriteCompletenessError):
+        judge_mod.verify_judgment_completeness(tenant_id=world["t"],
+                                               run_id=started["judge_run_id"])
+
+    with_record = unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id))
+    assert with_record, "nothing was dispatched — the fixture proves nothing"
+
+    # Now destroy the side-record, which is what a repeated close did a partial version of.
+    run = Run.objects.get(id=started["judge_run_id"])
+    outputs = dict(run.outputs or {})
+    assert outputs.pop(judge_mod.UNANSWERED_KEY, None), "the record must have been there to lose"
+    run.outputs = outputs
+    run.save(update_fields=["outputs"])
+
+    without_record = unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id))
+    assert without_record == with_record, (
+        "what nothing looked at must be derivable from the verdicts, not only from a field"
+    )
+
+
+def test_an_answer_the_judge_actually_gave_is_still_never_offered_back(world):
+    """The guard on the fix above, and the more important half of it.
+
+    Reading `uncertain` rows to find never-looked-at work is one keystroke away from reading
+    EVERY `uncertain` — which would hand the review queue's own contents back to the machine and
+    quietly recycle a person's job list. What makes it safe is that the match is on the
+    platform's own `NOT_JUDGED` sentence, which `record_finding` cannot produce: it requires
+    evidence the judge itself supplies, and refuses an `uncertain` with none.
+    """
+    from apps.a11y import judge as judge_mod
+    from apps.a11y.aipass import _remember_source_run, start_ai_pass, unanswered_for_capture
+    from apps.a11y.models import A11yBaselineAudit, A11yJudgmentCache
+
+    audit = A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"], routes=["/checkout"],
+        status=A11yBaselineAudit.Status.COMPLETE)
+    _ingest(world)
+    A11yCandidateBundle.objects.filter(
+        tenant=world["tenant"], run_key=world["run_id"]).update(run_key=str(audit.id))
+    started = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id),
+                            trigger=FakeTrigger(world), triggered_by=str(world["user"].id))
+    _remember_source_run(world["t"], started["judge_run_id"], str(audit.id))
+    audit.summary = {"ai_pass": {"judge_run_id": started["judge_run_id"]}}
+    audit.save(update_fields=["summary"])
+    with pytest.raises(WriteCompletenessError):
+        judge_mod.verify_judgment_completeness(tenant_id=world["t"],
+                                               run_id=started["judge_run_id"])
+
+    # Read the verdicts on their own, with the side-record out of the way — otherwise the record
+    # would answer for them and this would prove nothing about the new reading.
+    from apps.runs.models import Run
+
+    run = Run.objects.get(id=started["judge_run_id"])
+    run.outputs = {k: v for k, v in (run.outputs or {}).items() if k != judge_mod.UNANSWERED_KEY}
+    run.save(update_fields=["outputs"])
+
+    # One of them is now a real judgement that happens to also be `uncertain` — the judge looked
+    # and said, in its own words, that it could not decide. That is a person's job, not the
+    # machine's, and the only thing separating it from the row beside it is the evidence text.
+    rows = list(A11yJudgmentCache.objects.filter(
+        tenant=world["tenant"], run_id=started["judge_run_id"]).order_by("content_hash"))
+    assert len(rows) > 1, "need at least two, so the test can tell them apart"
+    answered, untouched = rows[0], rows[1]
+    answered.evidence = "the contrast could not be measured from the crop supplied"
+    answered.save(update_fields=["evidence"])
+
+    offered = unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id))
+    assert answered.content_hash not in offered, (
+        "an answer a person owns must never be handed back to the machine"
+    )
+    assert untouched.content_hash in offered, (
+        "…while the fallbacks beside it, which nothing ever looked at, still are"
+    )
+
+
 def test_a_verdict_with_no_run_against_it_is_only_ever_the_platforms_own(world):
     """The marker this all rests on, asserted rather than assumed. `unanswered_for_capture`
     reads a null run as *"nothing looked at this"*, which is only true while the agent's own

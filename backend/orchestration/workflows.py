@@ -10,7 +10,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
-    from .build_types import LONG_VERIFY_PHASES, failure_reason
+    from .build_types import LONG_VERIFY_PHASES, failure_reason, is_activity_timeout
     from .types import AgentRunInput, GateDecision, PhaseReport
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -155,13 +155,35 @@ class AgentRunWorkflow:
                     # is the same class of work this workflow already gives five minutes to.
                     # Cancelled half-way it leaves the accounting it exists to guarantee
                     # half-done; see the note on the constant.
+                    #
+                    # **Sized by the caller, not fixed here.** A flat five minutes was the same
+                    # mistake as the flat sixty seconds it replaced, one order of magnitude up:
+                    # it is a guess about how much work the check will find, made by the one
+                    # place that cannot know. The dispatcher knows — it counted the elements —
+                    # so it says, and this reads what it said. An input that does not set it
+                    # carries the dataclass default of 300 s, which is the five minutes this
+                    # line used to hard-code.
                     start_to_close_timeout=timedelta(
-                        minutes=5 if inp.phase in LONG_VERIFY_PHASES else 1),
+                        seconds=(getattr(inp, "verify_timeout_seconds", 300) or 300)
+                        if inp.phase in LONG_VERIFY_PHASES else 60),
                     retry_policy=RetryPolicy(maximum_attempts=1),
                 )
                 break
             except ActivityError as exc:
-                reason = f"write-completeness check failed: {failure_reason(exc)}"
+                # **"It could not finish" and "it found a gap" are different facts.** They were
+                # sharing one sentence, and the one they shared was the alarming one: a run whose
+                # work was complete and correct was recorded as having FAILED its completeness
+                # check when all that happened was that the check ran out of its own time. Say
+                # which it was, in words, so the console does not raise a false alarm about the
+                # single guarantee this capability exists to make.
+                reason = (
+                    f"write-completeness check did not finish in time "
+                    f"({failure_reason(exc)}) — it ran out of its own budget rather than "
+                    f"finding anything missing, so what the phase wrote has not been checked "
+                    f"either way"
+                    if is_activity_timeout(exc)
+                    else f"write-completeness check failed: {failure_reason(exc)}"
+                )
                 # Parking waits for a human to fix the run and resume it. That is right for a
                 # gated phase, and wrong for an auto-apply one: nobody is watching a document
                 # vision run — its work item is hidden from the backlog — so parking left the

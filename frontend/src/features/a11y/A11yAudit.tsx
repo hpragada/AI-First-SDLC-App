@@ -47,6 +47,7 @@ import {
   useA11yJourneys,
   useA11yRoutes,
   useDeleteA11yRoute,
+  useFinishStalledA11yAudit,
   usePreviewA11yRoutes,
   useRegisterA11yRoutes,
   useRejudgeA11yAudit,
@@ -92,6 +93,21 @@ const STATUS_LABEL: Record<string, string> = {
  * dispatcher used to fold the second set into the first — so only one sentence could ever apply
  * — and now that it correctly keeps them apart, showing one of them would hide the other. The
  * failure comes first because it is the one somebody has to go and do something about.
+ *
+ * **And the COUNT comes from `audit.unanswered`, which is the one place that knows** (9.26.D).
+ * `deferred_distinct` is what the DISPATCH knew when it stopped — how many elements it held back
+ * at its own limit — and that is a fact about the dispatcher, decided before the judging had
+ * happened. It cannot know that the judge would then fail to report on an element as well, so it
+ * can only ever under-count. On 31 August this said *268 left for a second pass* directly beside
+ * a card reading *269 never looked at*, and the button offered 269: the prominent, reassuring
+ * number was the wrong one and the small print was right.
+ *
+ * `unanswered` is `baseline.unanswered_counts` — the same single source the button, the Past
+ * audits card and the baseline document already read. This function's own note says why that
+ * matters: two counts of one thing is how this capability spent 21 August telling a team six
+ * elements were outstanding while the code that would ask about them said none were. So the
+ * dispatcher's sentence stays as the EXPLANATION of why work was deferred, and never as the
+ * number.
  */
 function unaskedNote(audit: A11yAuditRow): string {
   if (AUDIT_IN_FLIGHT.includes(audit.status)) return "";
@@ -102,12 +118,27 @@ function unaskedNote(audit: A11yAuditRow): string {
   // `deferred_distinct` existed reads as 0 here and says nothing, which is the same choice the
   // button makes: silence beats a number known to mislead.
   if ((pass.filed_unjudged ?? 0) > 0 && pass.reason) notes.push(pass.reason);
-  const left = pass.deferred_distinct ?? 0;
+  // One source, and it is the source the button acts on. `deferred_distinct` is the fallback
+  // only for an audit closed before `unanswered` was ever computed for it — never a second
+  // opinion when both are present.
+  const deferred = pass.deferred_distinct ?? 0;
+  const left = audit.unanswered ?? deferred;
   if (left > 0) {
+    // The two halves are said separately when they differ, because "the run hit its limit" and
+    // "the judge never came back about this one" are different things and only the first is
+    // explained by the limit.
+    const missed = Math.max(0, left - deferred);
     notes.push(
-      `This run reached its limit before every element was checked — ${left} ` +
-      `${left === 1 ? "element was" : "elements were"} left for a second pass. Run the check ` +
-      `again to continue from here; nothing was skipped.`
+      `${left} ${left === 1 ? "element was" : "elements were"} captured and never checked. ` +
+      (deferred > 0
+        ? `This run reached its limit, so ${deferred} ${deferred === 1 ? "was" : "were"} left ` +
+          `for a second pass` +
+          (missed > 0
+            ? `, and ${missed} more ${missed === 1 ? "was" : "were"} sent to the check and never ` +
+              `reported on`
+            : "") + ". "
+        : "") +
+      `Nothing was skipped — asking again is the only thing that answers them.`
     );
   }
   return notes.join(" ");
@@ -989,7 +1020,52 @@ function KeyboardJourneys({ projectId, hasMachine }: { projectId: string; hasMac
  * work — screens are posted one per call with no progress channel to carry per-page lines — and
  * is recorded as a pending enhancement rather than half-built here.
  */
-function LatestAudit({ audit }: { audit: A11yAuditRow }) {
+/** The one way out of a judging pass that was parked past its deadline (9.26.F).
+ *
+ *  **Why a button on this screen and not an automatic retry.** Accepting a parked run back into
+ *  the claim lease would have been fewer moving parts, and it would spend the user's own Claude
+ *  subscription on a decision nobody asked them about. The team has already ruled on this shape
+ *  once, rejecting an audit that continues itself: *"what if he adds 30 routes and all his Claude
+ *  usage burns?"* Offer the button; do not press it for them.
+ *
+ *  It is deliberately not called "take over", "abandon" or anything else the platform calls it
+ *  internally. The person looking at this started an audit and wants it finished.
+ */
+function FinishStalledAudit({
+  runId,
+  projectId,
+}: {
+  runId: string;
+  projectId: string | undefined;
+}) {
+  const finish = useFinishStalledA11yAudit(projectId);
+  return (
+    <div className="u-row" style={{ marginTop: "var(--space-4)" }}>
+      <Button
+        variant="primary"
+        disabled={finish.isPending}
+        onClick={() => finish.mutate(runId)}
+      >
+        {finish.isPending ? "Finishing…" : "Finish this audit"}
+      </Button>
+      {/* A failure here leaves the audit exactly as it was — nothing is half-closed — but the
+          person has to be told, or the button just looks broken. */}
+      {finish.isError && (
+        <span className="t-sm u-danger">
+          Could not finish it just now. Nothing was changed — try again in a moment.
+        </span>
+      )}
+    </div>
+  );
+}
+
+function LatestAudit({
+  audit,
+  projectId,
+}: {
+  audit: A11yAuditRow;
+  projectId: string | undefined;
+}) {
   const running = AUDIT_IN_FLIGHT.includes(audit.status);
   const asked = audit.summary?.asked ?? audit.routes.length;
   const badge = (
@@ -1139,15 +1215,40 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
     // would throw away an hour of judging that is already paid for and already correct.
     const stalledJudging = audit.status === "judging";
     const quietSince = when(audit.stalled_since);
+    // **And within a stopped judging pass, two states that need opposite instructions.**
+    //
+    // For as long as the report deadline has not fired, the pass really does resume by itself:
+    // a returning companion is offered the stale claim back and carries on. Once it fires the
+    // run is PARKED, and the re-claim rule only ever offers PENDING or RUNNING runs — so from
+    // that instant it can never be re-claimed, permanently, and restarting the machine does
+    // nothing at all.
+    //
+    // The panel used to say "start the machine again and it carries on from where it stopped"
+    // in both. That was true when it was written and false the moment the deadline fired, which
+    // is worse than saying nothing: it sends somebody to restart a machine that will sit there
+    // doing nothing, and offers them no other route. The only real way out was a human takeover
+    // from the run-recovery console — a page somebody auditing their own website has no reason
+    // to have ever opened.
+    //
+    // So the audit screen owns the whole recovery, because the audit is the thing the user
+    // understands. One button, on the page they are already on, and they never learn the words
+    // "parked run", "takeover" or "workflow".
+    const parkedRunId = audit.parked_run_id ?? null;
     return (
       <Panel
-        title={stalledJudging ? "Checking stopped" : "Audit stopped reporting"}
+        title={
+          parkedRunId
+            ? "This audit is waiting on you"
+            : stalledJudging
+              ? "Checking stopped"
+              : "Audit stopped reporting"
+        }
         actions={<Badge variant="failed">Stopped</Badge>}
       >
         <p className="t-sm u-body">
-          Nothing has come back from the machine {stalledJudging ? "checking" : "running"} this
-          audit for a long while — it was most likely closed, restarted or disconnected part-way
-          through.{" "}
+          {parkedRunId
+            ? "The machine checking this audit did not come back in time, so the platform has stopped waiting for it. "
+            : `Nothing has come back from the machine ${stalledJudging ? "checking" : "running"} this audit for a long while — it was most likely closed, restarted or disconnected part-way through. `}
           {stalledJudging ? (
             <>
               It answered{" "}
@@ -1168,7 +1269,14 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
           )}
         </p>
         <p className="t-sm u-muted" style={{ marginTop: "var(--space-3)" }}>
-          {stalledJudging ? (
+          {parkedRunId ? (
+            <>
+              Every answer it did give is kept. Finishing writes up what it found, sends
+              everything it never got to for a person to look at, and closes the audit — then
+              you can check the rest whenever a machine is connected again. Restarting the
+              machine on its own will not pick this up.
+            </>
+          ) : stalledJudging ? (
             <>
               Every answer it did give is kept, and no page has to be visited again. Start the
               machine again and it carries on from where it stopped — nothing here needs to be
@@ -1182,6 +1290,7 @@ function LatestAudit({ audit }: { audit: A11yAuditRow }) {
             </>
           )}
         </p>
+        {parkedRunId && <FinishStalledAudit runId={parkedRunId} projectId={projectId} />}
       </Panel>
     );
   }
@@ -1544,7 +1653,7 @@ export function A11yAudit() {
               far a running audit was from the person who had just started it. */}
           {latest && (
             <div style={{ marginBottom: "var(--space-5)" }}>
-              <LatestAudit audit={latest} />
+              <LatestAudit audit={latest} projectId={projectId} />
             </div>
           )}
 

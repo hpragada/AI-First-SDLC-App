@@ -2970,6 +2970,53 @@ def test_a_judging_audit_whose_run_already_failed_is_not_reported_as_gone_quiet(
                           stale_before=timezone.now() - timedelta(minutes=15)) == {}
 
 
+def test_a_judging_pass_past_its_deadline_is_reported_as_needing_a_person(world):
+    """**The difference between "wait" and "act", which the screen was getting wrong.**
+
+    A quiet judging pass recovers by itself for exactly as long as the report deadline has not
+    fired: the claim lease offers the stale claim back and the pass carries on. Parking sets the
+    run STALLED, and the re-claim rule requires PENDING or RUNNING — so from that instant it can
+    never be re-claimed, permanently. Reconnecting the machine does nothing.
+
+    The screen was still saying "start the machine again and it carries on from where it
+    stopped", which was true when it was written and false the moment the deadline fired. A
+    wrong instruction is worse than none: it sends a person to restart something that will sit
+    there doing nothing, and offers no other route. This is what tells the two apart.
+    """
+    from datetime import timedelta
+
+    from apps.a11y.baseline import parked_judge_runs
+
+    audit, run = _judging_audit(world, claimed_ago=timedelta(hours=3), run_status="stalled")
+
+    assert parked_judge_runs(world["t"], [audit]) == {str(audit.id): str(run.id)}
+
+
+def test_a_judging_pass_that_can_still_recover_by_itself_offers_no_button(world):
+    """The other side, and the one that keeps the button honest. Offering "finish this audit" on
+    a pass that a returning companion would resume is asking somebody to end work that is about
+    to continue on its own."""
+    from datetime import timedelta
+
+    from apps.a11y.baseline import parked_judge_runs
+
+    audit, _ = _judging_audit(world, claimed_ago=timedelta(hours=3), run_status="running")
+
+    assert parked_judge_runs(world["t"], [audit]) == {}
+
+
+def test_a_finished_audit_is_never_offered_a_recovery(world):
+    """A capture that failed, or an audit already complete, has no judging pass to finish. Its
+    route back is "check the rest", which is a different button meaning a different thing."""
+    from apps.a11y.baseline import parked_judge_runs
+
+    audit = _audit(world, "/")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(status="complete")
+    audit.refresh_from_db()
+
+    assert parked_judge_runs(world["t"], [audit]) == {}
+
+
 def test_the_sweep_closes_the_dead_one_and_leaves_the_live_one_alone(world):
     from datetime import timedelta
 

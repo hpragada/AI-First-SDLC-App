@@ -201,6 +201,34 @@ def test_mark_phase_takeover_core_parks_run_non_terminally(world):
     assert WorkItem.objects.get(id=world["inp"].work_item_id).takeover_flag is True
 
 
+def test_the_park_says_a_deadline_passed_and_not_that_the_machine_was_checked(world):
+    """**The wording is the fix, and the old wording was dangerous.**
+
+    The event said "companion offline", which is a DETECTION — a claim that the machine was
+    looked at and found gone. Nothing here looks at the machine; a deadline expired, and on
+    31 August it expired on a companion that was demonstrably alive, with a verdict landing
+    seconds before it fired and another seconds after. The natural response to "offline" is to
+    press *take over*, which is the one signal that turns this soft park into a terminal failure
+    — it would have ended that run fifteen verdicts from the end.
+
+    So it must say what happened (a budget ran out), what was NOT established (that the machine
+    is gone), and what the code already does (keeps waiting, and completes on a late report).
+    """
+    from apps.ledger.models import Event
+
+    world["inp"].report_timeout_seconds = 20_000
+    activities.mark_phase_takeover_core(world["inp"])
+
+    event = Event.objects.get(tenant_id=world["tenant_id"], action="phase.takeover")
+    reason = event.payload["reason"]
+    assert "offline" not in reason.lower(), "this never checked whether the machine is there"
+    assert "333 minute(s)" in reason, "the budget it was measured against has to be named"
+    assert "still waiting" in reason
+    assert event.payload["report_timeout_seconds"] == 20_000
+    # Still a soft park, which is the behaviour the wording exists to protect.
+    assert Run.objects.get(id=world["run_id"]).status == Run.Status.STALLED
+
+
 def test_late_report_reconciles_a_parked_run(monkeypatch, world):
     """Bugs S.No 89: a companion that went offline (STALLED + takeover_flag) then returned and
     reported OK must reconcile — the draft is staged and the takeover flag is cleared so the

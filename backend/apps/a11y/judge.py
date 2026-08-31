@@ -78,6 +78,59 @@ def _elements(batches: list[dict]) -> dict[str, dict]:
     }
 
 
+#: Statuses in which a judgment run has FINISHED, one way or another, and must not be given or
+#: accept any more work.
+#:
+#: `STALLED` is deliberately absent, and that is the whole subtlety. A parked run is not over —
+#: it is a run whose report deadline passed while the machine was still working, and the platform
+#: keeps waiting on purpose so a late report still reconciles it (Bugs S.No 89). Refusing its
+#: verdicts would break the exact recovery the park exists to allow, and would have thrown away
+#: the last fifteen answers of the 31 August pass.
+ENDED_RUN_STATUSES = ("failed", "completed", "rejected", "approved")
+
+#: What the agent is told when it keeps working on a run that has ended. Written for a model to
+#: act on, because that is who reads it: it says the work is over, that nothing was stored, and
+#: what to do — stop — rather than describing a state and leaving the next move to be guessed.
+RUN_HAS_ENDED = (
+    "Run {run_id} has already ended ({status}), so this was not stored and there is no more "
+    "work to do on it. Stop now and do not call this or any other accessibility tool for this "
+    "run again — anything you report from here would be filed against a finished audit."
+)
+
+
+def _refuse_if_ended(tenant_id, run_id) -> None:
+    """Stop an agent still working on a run the platform has finished with.
+
+    **This is not hypothetical.** On 31 August a judgment workflow was terminated on Temporal at
+    06:46:36 and reported `TERMINATED` — and verdicts went on arriving until **07:37**, one every
+    five to ten seconds for forty-nine minutes, every one of them stamped with the terminated
+    run's id. Nothing was wrong with the agent: it is a Claude Code process on a machine this
+    server cannot see, holding a task it was given, and no tool it called ever asked whether the
+    run it named was still alive. Killing the companion was the only thing that stopped it.
+
+    So "stop" stopped the ORCHESTRATION and not the WORK, and the gap between those two is a
+    hole a client-facing conformance report can be written through: verdicts landing in the
+    project's judgment cache, after the audit they belong to was closed, from a run whose own
+    history says it never finished.
+
+    Applied at the three tools the AGENT calls and nowhere else. The platform's own closing path
+    — `verify_judgment_completeness` filing fallbacks, `close_unfinished_ai_pass` republishing —
+    runs on runs that are already terminal by design, and must go on working: it is the thing
+    that accounts for what the agent did not answer. A guard that could not tell those apart
+    would break the recovery that saved this audit twice.
+    """
+    from apps.runs.models import Run
+    from apps.tenancy.context import tenant_context
+
+    if not run_id:
+        return
+    with tenant_context(tenant_id):
+        status = (Run.objects.filter(id=run_id, tenant_id=tenant_id)
+                  .values_list("status", flat=True).first())
+    if status in ENDED_RUN_STATUSES:
+        raise ValueError(RUN_HAS_ENDED.format(run_id=run_id, status=status))
+
+
 #: Most elements handed over in one call. A cap counted in ELEMENTS rather than characters,
 #: because that is the unit the judge reasons in and the number it can check itself against —
 #: but the two are only loosely related, and saying so matters: on our own reference application
@@ -111,6 +164,7 @@ def batch_for_run(tenant_id, run_id, start: int = 0,
     the judge's contract — every dispatched element gets exactly one verdict — and a number that
     shrank to the size of the current slice would quietly redefine what "all of them" means.
     """
+    _refuse_if_ended(tenant_id, run_id)
     batches = _batches(tenant_id, run_id)
     # A RESUMED run is handed what is left of itself, not the whole dispatch again (9.26.E2).
     # Empty on every ordinary run, so the normal path is byte-for-byte what it was.
@@ -232,6 +286,7 @@ def screenshot_pointers(tenant_id, run_id) -> tuple[list[dict], list[dict]]:
     fact the judge is told, so it records `uncertain` naming what was missing, rather than
     quietly judging from markup a question that had to be seen.
     """
+    _refuse_if_ended(tenant_id, run_id)
     # Same set the batch tool serves, or the judge is shown pictures of elements it is not being
     # asked about — harmless (every image is labelled with its element's handle) and confusing,
     # and it would spend the vision budget on questions already answered.
@@ -301,7 +356,13 @@ def record_finding(*, tenant_id, run_id, element_id, criteria, verdict, confiden
 
     Idempotent, so the retry after a rejection (or a resumed run) updates the element's row
     rather than failing on it.
+
+    **Refused outright once the run has ended.** Checked first, before anything is validated:
+    the answer is the same whatever the verdict says, and a run that is over is a fact about the
+    platform rather than about this call. See `_refuse_if_ended` — a terminated run went on
+    accepting verdicts for forty-nine minutes.
     """
+    _refuse_if_ended(tenant_id, run_id)
     elements = _elements(_batches(tenant_id, run_id))
     if not elements:
         raise ValueError(f"run {run_id} has no accessibility elements to judge")

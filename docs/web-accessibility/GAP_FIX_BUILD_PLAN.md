@@ -2862,7 +2862,7 @@ run:
 **Proved rather than asserted:** with the 9.25.3 fix temporarily removed, the check names all
 three records by id, says which rule would have claimed each, and exits non-zero.
 
-#### 9.25.5 Terminating a run does not stop the agent — RECORDED, NOT BUILT ⭐⭐
+#### 9.25.5 Terminating a run does not stop the agent — BUILT, 31 August ⭐⭐
 
 **Found while stopping the audit, and it is a platform-wide fact rather than an accessibility
 one.** The workflow was terminated on Temporal at 06:46:36 and reported `TERMINATED`. Verdicts
@@ -2874,12 +2874,36 @@ state API, which never asks whether the run it names is still live. So the workf
 platform's control over *orchestration* and not over *work*, and "stop" stops only the former.
 Only killing the companion ended it.
 
-**Nothing is built for this here.** It needs a decision about where the check belongs — the
-runner API refusing writes for a closed run, the companion polling its own run's status, or both
-— and that is a control-plane change well outside this document. What is built is a defence in
-the one place it was about to bite: the tenant clean-up refuses to delete anything if a judgment
-was written in the last five minutes, because "the workflow is stopped" turned out not to be
-evidence that nothing is writing.
+**BUILT, 31 August, at the agent surface — and the choice of surface IS the fix.**
+
+The three tools the agent calls — `batch_for_run`, `record_finding`, `screenshot_pointers` — now
+refuse a run whose status is `failed`, `completed`, `rejected` or `approved`. Refusing the write
+alone would not have been enough: most of those forty-nine minutes were an agent reading batches
+and reasoning about elements, so it is refused work as well as refused writes.
+
+**`STALLED` is deliberately absent from that list, and it is the whole subtlety.** A parked run is
+not over — its deadline passed while the machine was still working, and the platform keeps waiting
+on purpose so a late report reconciles it (S.No 89). On 31 August that is exactly what happened:
+the deadline fired at two hours and the pass reported normally sixteen minutes later. Refusing a
+parked run's verdicts would have thrown away the last fifteen answers of that pass.
+
+**And the platform's own accounting is not the agent.** `verify_judgment_completeness` files a
+fallback for every element the judge never answered, and `close_unfinished_ai_pass` calls it on
+runs that are ALREADY terminal by design — it is the recovery that saved this audit twice. A guard
+that could not tell the platform from the agent would have silenced the thing that guarantees
+nothing dispatched vanishes. Tested explicitly, in both directions.
+
+**The message is written for a model to act on**, because that is who reads it: it says the work is
+over, that nothing was stored, and to stop — rather than describing a state and leaving the next
+move to be guessed. A rejection an agent cannot act on is a rejection it repeats.
+
+**What is still open, and named rather than implied.** This closes the surface where the leak was
+observed and where it corrupts a client-facing conformance report. It does not make the runner
+state API refuse every write for every closed run of every phase, and it does not have the
+companion poll its own run's status and exit — both are control-plane changes with their own
+blast radius, and neither is a11y's to make unilaterally. The earlier defence still stands too:
+tenant clean-up refuses to delete anything if a judgment was written in the last five minutes,
+because "the workflow is stopped" turned out not to be evidence that nothing is writing.
 
 #### What this audit produced, and what it could not
 
@@ -2908,7 +2932,7 @@ test on the branch we build on is a hazard: `test_finishing_produces_findings_fo
 asserted the exact list of every finding regardless of source, so a correctly added checker read
 as a broken audit. It now asserts on rule-scanner findings, which is what it was always about.
 
-### 9.26 The first audit that RAN TO COMPLETION — 31 August ⭐⭐ (RECORDED, not built)
+### 9.26 The first audit that RAN TO COMPLETION — 31 August ⭐⭐ (ALL BUILT)
 
 **The second attempt of 31 August finished.** 94 pages, 2,174 elements, 1,068 distinct questions;
 800 judged in the first pass, 268 deliberately left for a second; **358 findings** (75 critical,
@@ -2938,7 +2962,7 @@ Timeline of the close, straight from the ledger:
 
 ---
 
-#### 9.26.A The phase report deadline is one fixed number for every kind of work ⭐⭐
+#### 9.26.A The phase report deadline is one fixed number for every kind of work ⭐⭐ — BUILT, 31 August
 
 **What it is.** When the platform hands a phase to the user's machine it starts a timer. If no
 report has come back when it rings, the platform raises a *human takeover* flag saying the
@@ -2989,9 +3013,20 @@ from the end**. On this run the only thing that saved it was somebody deciding n
 **Proof it works:** a test that a11y dispatch passes a timeout scaled to `distinct`, and that a
 small batch keeps the floor.
 
----
+**BUILT, 31 August — as specified, both halves.** `trigger_phase` takes an optional
+`report_timeout_seconds` (and B's `verify_timeout_seconds`); `None` keeps the dataclass default,
+so every caller but one is byte-identical. The one is `dispatch_judgments`, which passes
+`judging_deadlines(len(pending))` — `pending` being the distinct list *after* de-duplication and
+*after* the cap, which is exactly the work handed over. The constants are named and carry their
+measurement: 25 s/element against the 10.2 s/element measured, a 2-hour floor, an 8-hour ceiling.
 
-#### 9.26.B A successful run is marked FAILED by its own verification step ⭐
+`mark_phase_takeover_core` no longer says "companion offline" anywhere. It names the budget in
+minutes, states in the same breath that **the machine has not been checked and may still be
+working**, that the run is still waiting and completes on its own if the report arrives, and that
+taking over is only for stopping it. Nothing in the codebase matched on the old string.
+
+**Three tests**, one of them asserting the words that are absent — `"offline" not in reason` —
+because the danger was never a missing fact, it was a present and wrong one.
 
 **What it is.** After a phase reports, the platform runs a separate step that checks everything
 the agent claimed to write was actually written. That step is deliberately strict.
@@ -3050,6 +3085,25 @@ the same run state. A check that could not finish should say so in those words.
 **Not on the table: weakening the check.** It is the thing that guarantees nothing dispatched
 vanishes silently, and §9.25 is what happens when that guarantee slips.
 
+**BUILT, 31 August — with one deliberate departure from the sketch above.** The budget is sized
+by the DISPATCHER and read by the workflow, rather than computed inside the workflow. The
+workflow module is Django-free on purpose — it cannot read `run.inputs.a11y_batches`, so the
+line above ("nothing new has to be plumbed through") was wrong when it was written. It travels as
+`AgentRunInput.verify_timeout_seconds`, defaulting to the 300 s the workflow used to hard-code.
+`min(30 min, max(5 min, elements × 2 s))`, so 800 elements get 26 minutes against the ~5 they
+needed, and no size of pass gets less than it has today.
+
+**One deploy consequence, and it is the usual one: worker before API.** An input carrying a field
+the worker's dataclass does not have yet fails to deserialize. Same rule as the `revise` flag.
+
+The second half is built too, and it is the half a person actually sees. A cancelled check and a
+check that found a gap were producing one sentence, and it was the alarming one — a run whose work
+was complete and correct read as having FAILED its completeness check. `is_activity_timeout` tells
+them apart (structured cause first, message fallback — the same shape as `is_merge_conflict`), and
+the timeout wording now says in words that it ran out of its own budget **rather than finding
+anything missing**. On a capability whose entire promise is that nothing dispatched vanishes
+silently, a false alarm about that promise is the most expensive one available.
+
 ---
 
 #### 9.26.C The baseline document published four times for one audit — BUILT, 31 August
@@ -3085,7 +3139,7 @@ regardless, because "the closing path ran twice" is a recurring shape (§9.25.1)
 
 ---
 
-#### 9.26.D The incomplete-audit banner under-reports what was never checked ⭐
+#### 9.26.D The incomplete-audit banner under-reports what was never checked ⭐ — BUILT, 31 August
 
 **What it is.** Two places on the audit screen say how much was left unchecked. The team spotted
 them disagreeing:
@@ -3128,6 +3182,18 @@ count, one source, two sentences:
 
 **Proof it works:** a test with a non-empty `a11y_unanswered` on the judge run asserting the
 banner count equals `unanswered_counts`, not `deferred_distinct`.
+
+**BUILT, 31 August.** `unaskedNote` takes its count from `audit.unanswered` — the field the row
+already carried, computed by `baseline.unanswered_counts`, which is what the button, the Past
+audits card and the baseline document all read. `deferred_distinct` survives only as the fallback
+for an audit closed before `unanswered` was ever computed for it, never as a second opinion when
+both are present.
+
+**And the two halves are now said separately when they differ**, which the sketch above already
+had right: "269 elements were captured and never checked. This run reached its limit, so 268 were
+left for a second pass, and 1 more was sent to the check and never reported on." The limit
+explains the 268 it explains and does not pretend to explain the one it does not. Tested with the
+real 31 August numbers.
 
 ---
 
@@ -3252,7 +3318,7 @@ minutes, against a platform that would not have said anything for another hour a
 
 ---
 
-#### 9.26.F A parked judging run cannot be recovered, and the screen tells the user the wrong thing ⭐⭐
+#### 9.26.F A parked judging run cannot be recovered, and the screen tells the user the wrong thing ⭐⭐ — BUILT, 31 August
 
 **The team's question, and it is the right one:** *the run had to be taken over by hand — but in
 real time a user does not know that. Does Fix A close it?*
@@ -3317,9 +3383,28 @@ The team has already ruled on this shape once, rejecting an audit that continues
 not the platform's job — what if he adds 30 routes and all his Claude usage burns?"* The same
 reasoning applies here. **Offer the button; do not press it for them.**
 
+**BUILT, 31 August — exactly as specified, including the alternative that was rejected.**
+`baseline.parked_judge_runs` returns `{audit_id: judge_run_id}` for judging audits whose run is
+`STALLED`, and the audits payload carries it as `parked_run_id` — null on every audit that can
+still recover, which is what makes its presence the signal. The re-claim rule in
+`runner_views.py` was **not** touched: a parked pass still does not resume itself, and the reason
+is the team's own ruling about somebody's Claude usage, not an implementation limit.
+
+The panel now has three states rather than two, and the parked one replaces the wrong instruction
+instead of merely removing it — "Restarting the machine on its own will not pick this up" — beside
+one button, **Finish this audit**, which makes the same `take-over` call the run console makes.
+One recovery path, two places it is offered. Tested for the wording in both directions and for
+the words the person must never meet: *take over*, *parked*, *workflow* are all asserted absent
+from the screen.
+
+**And this is what makes 9.26.E2 reachable at all.** The "hand a resumed run only what it has not
+answered" fix can only run if the run is re-claimed, which is only possible inside the deadline
+window — so it was unreachable after a park. A's longer, size-scaled deadline is what widens that
+window, and F is what gives the person a way out when it closes anyway.
+
 ---
 
-#### 9.26.G Concurrent closes overwrote the record of what was never looked at ⭐⭐
+#### 9.26.G Concurrent closes overwrote the record of what was never looked at ⭐⭐ — BUILT, 31 August
 
 **Found by watching the takeover close the audit**, 15:32–15:36.
 
@@ -3372,11 +3457,22 @@ still perfectly separable** — just not by the field the code currently reads.
    keeps the full set) and for the thing it shares its field with (a failed run's `error` survives
    the write). The safety it rests on — that keeping a hash is not the same as offering it back —
    is `unanswered_for_capture`'s own last step and is proven where the captures live.
-2. **Do not depend on the record alone.** `unanswered_for_capture` should also recognise an
-   `uncertain` whose evidence is the platform's own `NOT_JUDGED` text — that string is written by
-   the platform and never by an agent, so it is a reliable marker of *work that did not happen*.
-   This makes the answer derivable from the verdicts themselves rather than from a side-record
-   that can be lost.
+2. **Do not depend on the record alone — BUILT, 31 August.** `unanswered_for_capture` now also
+   recognises an `uncertain` whose evidence is the platform's own `NOT_JUDGED` text — that string
+   is written by the platform and never by an agent, so it is a reliable marker of *work that did
+   not happen*. The answer is derivable from the verdicts themselves rather than from a
+   side-record that can be lost.
+
+   **Scoped to this run**, deliberately: a `NOT_JUDGED` uncertain belonging to an earlier run of
+   the same project is that run's history, and dragging it in would re-offer elements this capture
+   has since dealt with.
+
+   **Proved by deleting the record outright** — a harsher test than the partial overwrite that
+   actually happened — and asserting the answer does not move. And guarded in the other direction
+   by the test that matters more: this reading is one keystroke from "every `uncertain`", which
+   would hand the review queue's own contents back to the machine and recycle a person's job list.
+   A judge's own `uncertain`, sitting beside the fallbacks with only its evidence text to tell
+   them apart, is asserted **not** offered while the fallbacks beside it are.
 
 **Recovery for the audit already in this state — DONE, 31 August, on the team's instruction.**
 `a11y_unanswered` on run `c454d5f0` was rewritten to the 170 hashes whose verdict is `uncertain`
