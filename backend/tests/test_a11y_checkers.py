@@ -42,6 +42,7 @@ from apps.a11y.checkers import (
     explain,
     requirements_for,
     select,
+    settled,
     to_candidate,
     verify_answer,
 )
@@ -418,6 +419,78 @@ def test_label_skips_a_control_whose_name_already_contains_the_visible_text():
     fine = element(tag="button", text="Buy now",
                    accessible_name="Buy now — opens in a new window")
     assert "label" not in checkers_for(fine)
+
+
+# ── a criterion ANSWERED by the rules is a decision, not a silence ───────────
+#
+# The skip above used to be the end of the story: the checker was left out of the batch and
+# nothing anywhere recorded that a question had been settled. So a control the platform had
+# correctly cleared was indistinguishable from one nothing had ever looked at — and on the
+# 31 August audit that covered 22 of the 42 labelled 2.5.3 controls. Every one of them right;
+# every one of them reported by the accuracy harness as "never looked at" and counted wrong,
+# with `label` unable to reach its sample floor no matter how much data was added, because the
+# dataset pairs every AI-judged failure with a rule-settled pass and always will.
+
+
+def test_a_criterion_met_as_a_matter_of_fact_is_reported_as_answered():
+    fine = element(tag="button", text="Buy now",
+                   accessible_name="Buy now — opens in a new window")
+    assert settled(fine) == {"label": "pass"}
+
+
+def test_out_of_scope_is_not_the_same_as_satisfied():
+    """The distinction the whole change turns on, and the one a single boolean could not carry.
+
+    2.5.3 applies to "components with labels that include text". A control with no visible text
+    is outside the criterion — nothing was decided about it, and claiming a pass would be
+    inventing a result. A control with no accessible name at all is 4.1.2's problem. Neither is
+    an answer, and neither may be reported as one.
+    """
+    no_visible_text = element(tag="button", text="", accessible_name="Submit")
+    assert settled(no_visible_text) == {}
+    assert "label" not in checkers_for(no_visible_text)
+
+    no_name = element(tag="button", text="Submit", accessible_name="")
+    assert settled(no_name) == {}
+    assert "label" not in checkers_for(no_name)
+
+
+def test_a_real_mismatch_is_never_settled_it_is_dispatched():
+    """The failure case must reach the AI. A rule that quietly passed this would be worse than
+    no rule at all — it would clear the exact thing the check exists to find."""
+    mismatch = element(tag="button", text="Buy now", accessible_name="Purchase")
+    assert settled(mismatch) == {}
+    assert "label" in checkers_for(mismatch)
+
+
+@pytest.mark.parametrize("el", [
+    element(tag="button", text="Buy now", accessible_name="Purchase"),          # dispatched
+    element(tag="button", text="Buy now", accessible_name="Buy now, please"),   # settled
+    element(tag="button", text="", accessible_name="Submit"),                   # out of scope
+    element(tag="div", text="Buy now", accessible_name="Purchase"),             # not a control
+])
+def test_a_checker_never_both_asks_and_answers(el):
+    """**The invariant that keeps the two halves from paying twice.**
+
+    An element the rules have already answered must not also be dispatched: we would spend the
+    engine budget being told what we already know, and then hold two answers to one question
+    with no rule for which wins. Asserted across every checker rather than only `label`, so the
+    next rule that learns to settle something inherits the guarantee instead of re-deriving it.
+    """
+    answered = settled(el)
+    asked = checkers_for(el)
+    assert not (set(answered) & set(asked)), (
+        f"{sorted(set(answered) & set(asked))} both dispatched and settled"
+    )
+
+
+def test_every_settled_verdict_is_one_the_platform_recognises():
+    """A rule may only return a verdict the rest of the platform can store and read. A typo here
+    would travel silently into a conformance report."""
+    from integrations.types import A11Y_VERDICTS
+
+    fine = element(tag="button", text="Buy now", accessible_name="Buy now — new window")
+    assert set(settled(fine).values()) <= A11Y_VERDICTS
 
 
 def test_label_compares_whole_words_and_not_letters():

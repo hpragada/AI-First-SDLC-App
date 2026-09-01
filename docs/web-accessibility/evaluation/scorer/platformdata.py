@@ -42,13 +42,17 @@ def run_answers(*, tenant_id: str, project_id: str, run_id: str) -> dict:
     """What one audit captured, what it judged, and what each check said.
 
     Returns:
-        answers   — {(route, selector, checker): Answer} for everything that got a verdict
+        answers   — {(route, selector, checker): Answer} for everything the platform answered:
+                    what the AI judged, and what the selection rules settled without it
+                    (`Answer.by_rule`). Both are decisions and both are scored; they are told
+                    apart so the printed line can say how the sample was reached.
         captured  — {(route, selector, checker)} for everything offered to a check, judged or
                     not. The difference between this and `answers` is what lets a label with no
                     verdict be told apart into *deferred* and *never captured*, which have
                     nothing to do with each other.
         captured_by_route / judged_by_route — the counts the completeness check compares.
     """
+    from apps.a11y.checkers import rules
     from apps.a11y.models import A11yCandidateBundle
     from apps.a11y.report import merge_run
     from apps.tenancy.context import tenant_context
@@ -57,7 +61,7 @@ def run_answers(*, tenant_id: str, project_id: str, run_id: str) -> dict:
         report = merge_run(tenant_id=tenant_id, project_id=project_id, run_id=run_id)
         bundles = list(A11yCandidateBundle.objects
                        .filter(tenant_id=tenant_id, project_id=project_id, run_key=str(run_id))
-                       .only("route", "selector", "checkers"))
+                       .only("route", "selector", "checkers", "element"))
 
     captured: set[tuple[str, str, str]] = set()
     captured_by_route: dict[str, int] = {}
@@ -67,6 +71,33 @@ def run_answers(*, tenant_id: str, project_id: str, run_id: str) -> dict:
             captured_by_route[bundle.route] = captured_by_route.get(bundle.route, 0) + 1
 
     answers: dict[tuple[str, str, str], Answer] = {}
+
+    # **What the platform decided WITHOUT asking the model** (`rules.settled`).
+    #
+    # A criterion whose own wording makes the answer a matter of fact is answered by the
+    # selection rules and never dispatched — a button whose accessible name provably contains
+    # its visible text meets 2.5.3, and that is a string comparison, not an opinion. It is a
+    # real decision, and until this it left no trace: no dispatch, no verdict row, nothing.
+    # This harness therefore read 22 of the 42 labelled 2.5.3 controls on the 31 August audit
+    # as "never looked at" — every one of them answered, and answered correctly — counted them
+    # as wrong, and left `label` permanently under the sample floor, because the dataset pairs
+    # every AI-judged failure with a rule-settled pass and always will.
+    #
+    # **Read from the platform's own rule module, never re-implemented here.** A second copy of
+    # the rule would agree with the first by construction and the comparison would become
+    # decoration — the same trap `labels.check_app_version` exists to avoid. What keeps this
+    # honest is that the rule's answer is then scored against the answer key like any other: a
+    # rule that ever clears something the key calls a failure is recorded as a miss.
+    #
+    # Written FIRST so a real verdict for the same element always wins — a settled element is
+    # never dispatched, so the two cannot both exist, and if that ever changes the measured
+    # answer is the one to believe.
+    for bundle in bundles:
+        for checker, verdict in rules.settled(bundle.element or {}).items():
+            key = (bundle.route, bundle.selector, checker)
+            captured.add(key)
+            answers[key] = Answer(*key, verdict=verdict, confidence=1.0, by_rule=True)
+
     judged_by_route: dict[str, int] = {}
     for row in report.rows:
         # Rule-scanner rows carry no checker. They are a different engine answering a different

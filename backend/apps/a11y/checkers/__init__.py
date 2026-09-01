@@ -41,6 +41,7 @@ from .rules import (
     describe_rules,
     explain,
     select,
+    settled,
     to_candidate,
 )
 from .schema import AnswerIncomplete, requirements_for, verify_answer
@@ -57,6 +58,7 @@ __all__ = [
     "explain",
     "requirements_for",
     "select",
+    "settled",
     "to_candidate",
     "verify_answer",
 ]

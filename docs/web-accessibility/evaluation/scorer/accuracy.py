@@ -59,6 +59,16 @@ class Answer:
     checker: str
     verdict: str                     # pass | fail | uncertain | NOT_JUDGED | NOT_CAPTURED
     confidence: float | None = None
+    #: True when the platform reached this verdict from the SELECTION RULES alone, without
+    #: asking the AI — the criterion's own wording made the answer a matter of fact (a button
+    #: whose accessible name provably contains its visible text meets 2.5.3, and that is a
+    #: string comparison, not an opinion).
+    #:
+    #: **Scored exactly like any other answer**, and that is the point: the rule is compared
+    #: against the label, so a rule that ever clears something the answer key calls a failure is
+    #: recorded as a miss like any other. It is counted separately only so the printed line can
+    #: say how the sample was reached, and nobody mistakes a rule's work for the model's.
+    by_rule: bool = False
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -99,6 +109,17 @@ class Score:
     #: Captured, never judged. Excluded from every figure above and reported separately, so a
     #: run that hit its ceiling reads as incomplete rather than as inaccurate.
     deferred: int = 0
+
+    #: Of the scored records, how many the platform answered from its selection rules alone.
+    #: Included in every figure — they are decisions, and they are compared against the answer
+    #: key like any other — and counted here so the printed line can say how the sample was
+    #: reached. A number that mixes two kinds of work should say that it does.
+    settled_by_rule: int = 0
+
+    #: Of `over_confident`, how many were the RULE answering a record the key says an expert
+    #: should weigh. Separate from the model's over-confidence because the remedy is different:
+    #: a model can be re-prompted; a rule has to be narrowed, or the criterion re-read.
+    over_confident_by_rule: int = 0
 
     #: Labels naming an element this run never had at all — neither captured nor judged, and
     #: not even present as a candidate. Usually a stale label pointing at a page that changed.
@@ -153,12 +174,22 @@ class Score:
         return None if arguable == 0 else self.over_confident / arguable
 
     def verdict_line(self, min_sample: int) -> str:
-        """One sentence about whether these numbers are allowed to mean anything yet."""
+        """One sentence about whether these numbers are allowed to mean anything yet.
+
+        **The split is printed whenever there is one**, because a sample reached partly by the
+        model and partly by a rule is two kinds of work behind one number, and a reader deciding
+        whether to trust it needs to know the mix. Silent on a sample that is all one kind —
+        a caption that never varies is one nobody reads.
+        """
         if not self.measurable:
             return "nothing to score"
+        split = ""
+        if self.settled_by_rule:
+            asked = self.sample - self.settled_by_rule
+            split = f" — {asked} answered by the check, {self.settled_by_rule} settled by rule"
         if self.sample < min_sample:
-            return f"{NOT_MEASURABLE} — {self.sample} of {min_sample} records needed"
-        return f"scored on {self.sample} records"
+            return f"{NOT_MEASURABLE} — {self.sample} of {min_sample} records needed{split}"
+        return f"scored on {self.sample} records{split}"
 
 
 def _record(score: Score, label: Label, answer: Answer) -> None:
@@ -190,6 +221,13 @@ def _record(score: Score, label: Label, answer: Answer) -> None:
     if label.expected == UNCERTAIN:
         if answer.verdict != UNCERTAIN:
             score.over_confident += 1
+            # …and WHOSE over-confidence it was. A rule that answers a record the answer key
+            # says an expert should weigh is a different problem from a model doing it: a model
+            # can be re-prompted, a rule has to be narrowed or the criterion re-read. Both skip
+            # the human review queue, which is what makes this the report's most dangerous
+            # number either way.
+            if answer.by_rule:
+                score.over_confident_by_rule += 1
             band["wrong"] += 1
         else:
             score.calibrated_uncertain += 1
@@ -206,6 +244,14 @@ def _record(score: Score, label: Label, answer: Answer) -> None:
         else:
             score.true_negative += 1
         return
+
+    # Counted HERE and not at the top, because only what reaches this point enters `sample` —
+    # a rule-settled record that was deferred, never captured, or over-confident is tallied by
+    # the branch that caught it. Counting it at the top made the printed split describe a
+    # different set of records from the one it was splitting, which is the exact class of
+    # mistake this whole change exists to remove.
+    if answer.by_rule:
+        score.settled_by_rule += 1
 
     said_fail = answer.verdict == FAIL          # a silence is never a `fail`
     should_fail = label.expected == FAIL

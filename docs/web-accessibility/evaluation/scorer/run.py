@@ -75,6 +75,13 @@ def _arguments(argv: list[str] | None) -> argparse.Namespace:
                         help="count what was dropped; skip scoring entirely")
     parser.add_argument("--dry-run", action="store_true",
                         help="print everything, write nothing")
+    # A figure can be correct and still not settled — the first baseline locks `structure` at
+    # 0.833 while the three records that put it there are disputed between our checker and the
+    # answer key's author, unadjudicated. A number that outlives the reason for it is read three
+    # months later as a settled fact, so whatever qualifies it travels IN the results file
+    # rather than in somebody's memory of the day it was written.
+    parser.add_argument("--note", default="", metavar="TEXT",
+                        help="a caveat to record alongside this run's figures")
     return parser.parse_args(argv)
 
 
@@ -128,6 +135,12 @@ def _print_scores(scores, min_sample: int) -> None:
             print(f"    over-confident on {score.over_confident} arguable record(s)"
                   + (f" ({rate:.0%})" if rate is not None else "")
                   + " — these skip the human review queue")
+            # Said out loud, because the two have different remedies and the rule's version is
+            # the easier one to miss: a rule answers silently, at no cost, on every run.
+            if score.over_confident_by_rule:
+                n = score.over_confident_by_rule
+                print(f"       of those, {n} {'was' if n == 1 else 'were'} settled by RULE, "
+                      f"not by the check — narrow the rule, do not re-prompt the model")
         if score.under_confident:
             print(f"    said 'not sure' on {score.under_confident} clear-cut record(s) "
                   f"— costs expert time, harms nothing")
@@ -255,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
             for s in scores
         ],
         "blocked": [f"{b.checker}/{b.source}/{b.metric}" for b in blockers],
+        "note": args.note,
     }
 
     if not args.dry_run:

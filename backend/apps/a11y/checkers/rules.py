@@ -26,7 +26,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from integrations.types import A11Y_CHECKER_CRITERIA, A11yCandidate
+from integrations.types import A11Y_CHECKER_CRITERIA, A11Y_PASS, A11yCandidate
 
 #: The element checkers, in the order a page's requests are emitted. Fixed so that two runs over
 #: the same page produce the same batch in the same order — a judgment run that is not
@@ -643,26 +643,61 @@ def _applies_color(element: CapturedElement) -> bool:
     return _colour_differs_from_surroundings(element)
 
 
-def _applies_label(element: CapturedElement) -> bool:
-    """A control whose announced name may not contain its visible label — 2.5.3.
+def _label_in_scope(element: CapturedElement) -> bool:
+    """Is 2.5.3 a question that can be asked about this element at all?
 
-    Two skips, both straight out of the criterion's own wording. It applies to "components
-    with labels that include text", so a control with no visible text is out of scope
-    entirely. And it requires that "the name contains the text that is presented visually" —
-    when the name demonstrably does contain it, the criterion is met as a matter of fact and
-    there is nothing left to judge. What reaches the AI is the remainder: the cases where the
-    strings differ and only a person (or something reading like one) can say whether that
-    difference is a real mismatch or a harmless suffix.
+    Two exclusions, both straight out of the criterion's own wording. It applies to "components
+    with labels that include text", so a control with no visible text is out of scope entirely.
+    And a control with no accessible name at all is 4.1.2's problem, not this one.
+
+    **Out of scope is not the same as satisfied**, and keeping them apart is the whole point of
+    splitting this function — see `_settles_label`.
     """
     if not element.rendered or not _is_control(element):
         return False
-    visible = _visible_text(element)
-    if not visible:
+    if not _visible_text(element):
         return False
-    name = _normalise(element.accessible_name)
-    if not name:
-        return False        # no accessible name at all is 4.1.2's problem, not 2.5.3's
-    return not _name_contains_label(name, visible)
+    return bool(_normalise(element.accessible_name))
+
+
+def _applies_label(element: CapturedElement) -> bool:
+    """A control whose announced name may not contain its visible label — 2.5.3.
+
+    What reaches the AI is the remainder after `_settles_label`: the cases where the strings
+    differ and only a person (or something reading like one) can say whether that difference is
+    a real mismatch or a harmless suffix.
+    """
+    if not _label_in_scope(element):
+        return False
+    return not _name_contains_label(_normalise(element.accessible_name), _visible_text(element))
+
+
+def _settles_label(element: CapturedElement) -> str | None:
+    """2.5.3 answered here and now, by fact rather than by judgement. `"pass"`, or None.
+
+    The criterion requires that "the name contains the text that is presented visually". When
+    the name demonstrably does contain it, the criterion **is met** — that is a string
+    comparison, not an opinion, and asking a model to confirm it would spend money to be told
+    something we already know.
+
+    **Why this had to become its own function.** The skip was previously folded into
+    `_applies_label`, which returned one boolean for two completely different situations:
+    *"this criterion does not apply here"* and *"this criterion applies and is satisfied"*. With
+    both collapsed into `False`, nothing downstream could tell a decision from a silence — so a
+    control the platform had correctly cleared was indistinguishable from one nothing had
+    looked at. On the 31 August audit that was 22 of the 42 labelled 2.5.3 controls: every one
+    of them right, every one of them recorded as though no check had happened, and the accuracy
+    harness reporting them as "never looked at" and counting them wrong.
+
+    Returning the verdict rather than a boolean because a future rule may settle a criterion as
+    `"fail"` — a deterministic breach nobody needs to judge — and the caller should not have to
+    assume which way a settled answer went.
+    """
+    if not _label_in_scope(element):
+        return None
+    if _name_contains_label(_normalise(element.accessible_name), _visible_text(element)):
+        return A11Y_PASS
+    return None
 
 
 @dataclass(frozen=True)
@@ -679,9 +714,26 @@ class SelectionRule:
     covers: str
     skips: str
     applies: object          # Callable[[CapturedElement], bool]
+    #: Optional. Callable[[CapturedElement], str | None] — a verdict this rule can reach on its
+    #: own, without asking the AI, because the criterion's own wording makes the answer a matter
+    #: of fact rather than of judgement. None (the default) means this checker never settles
+    #: anything and every in-scope element goes to the AI.
+    #:
+    #: **`applies` and `settles` are mutually exclusive by construction**: an element the rule
+    #: has already answered must not also be dispatched, or we would pay to be told what we
+    #: know. `settled_verdict` asserts nothing here — the rules themselves are written so that
+    #: `applies` returns False exactly where `settles` returns a verdict, and
+    #: `test_a11y_checkers` holds them to it.
+    settles: object | None = None
 
     def matches(self, element: CapturedElement) -> bool:
         return bool(self.applies(element))       # type: ignore[operator]
+
+    def settled_verdict(self, element: CapturedElement) -> str | None:
+        """The verdict this rule reaches without the AI, or None if it reaches none."""
+        if self.settles is None:
+            return None
+        return self.settles(element)             # type: ignore[operator]
 
 
 #: The whole rule set, one entry per checker. This is the table D-A11Y-6 keeps a single copy
@@ -747,12 +799,14 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
         covers="controls whose visible text does not appear in their accessible name — "
                "including a submit, reset or button <input>, whose visible text is its "
                "`value` attribute rather than inner text it can never have",
-        skips="controls with no visible text (2.5.3 does not apply to them), controls with no "
-              "accessible name at all (that is 4.1.2), and controls whose name already "
-              "contains the visible text AS WHOLE WORDS — the criterion is then met as a "
-              "matter of fact. Words, not letters: 'Search' is not contained in 'Research "
+        skips="controls with no visible text (2.5.3 does not apply to them) and controls with "
+              "no accessible name at all (that is 4.1.2). A control whose name already "
+              "contains the visible text AS WHOLE WORDS is not skipped but SETTLED — the "
+              "criterion is met as a matter of fact, and that is recorded as a pass rather "
+              "than as a silence. Words, not letters: 'Search' is not contained in 'Research "
               "tools', and comparing characters made that failure invisible.",
         applies=_applies_label,
+        settles=_settles_label,
     ),
     SelectionRule(
         checker="graphics",
@@ -836,6 +890,37 @@ def explain(element: CapturedElement) -> dict[str, bool]:
     conformance report who wants to know what the AI pass did and did not look at.
     """
     return {checker: _RULES_BY_CHECKER[checker].matches(element) for checker in CHECKERS}
+
+
+def settled(element: CapturedElement | Mapping) -> dict[str, str]:
+    """Criteria this element ANSWERS on the rules alone, as `{checker: verdict}`.
+
+    The companion piece to `explain`, and the answer to a question that had none. `explain` says
+    which checkers were dispatched; between them they separate the three states an element can
+    be in for a given checker, which used to be two:
+
+        dispatched      — the AI was asked (`explain` says True)
+        settled here    — the criterion was answered by fact (this function)
+        out of scope    — the criterion cannot be asked about this element at all
+
+    **Why the middle one had to become visible.** A settled element carries no verdict row and
+    no dispatch, so it looked exactly like an element nothing had examined. On the 31 August
+    audit that covered 22 of the 42 labelled 2.5.3 controls — all answered correctly, none of
+    them recorded as answered. The accuracy harness read them as "never looked at", counted
+    them as wrong, and `label` could not reach the sample floor no matter how much data was
+    added, because the dataset pairs every AI-judged failure with a rule-settled pass.
+
+    Empty for every checker that settles nothing, which today is every checker but `label`. That
+    is a statement about the rules as they stand, not a limit of this function.
+    """
+    if not isinstance(element, CapturedElement):
+        element = CapturedElement.from_dict(element)
+    out: dict[str, str] = {}
+    for checker in CHECKERS:
+        verdict = _RULES_BY_CHECKER[checker].settled_verdict(element)
+        if verdict is not None:
+            out[checker] = verdict
+    return out
 
 
 def describe_rules() -> str:
