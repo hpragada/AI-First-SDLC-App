@@ -106,6 +106,10 @@ const STYLE_KEYS = [
   "font-size",
   "font-weight",
   "border-style",
+  // ...and the colour it is painted in. `border-style` says a border exists and never what it
+  // looks like, so an element coloured only by its border carried no colour at all downstream.
+  "border-color",
+  "outline-color",
   "background-image",
   // How a chart series is drawn. A <polyline> has no background-color and no text, so without
   // these two the one element on a line-chart page that fails 1.4.1 carries no colour at all as
@@ -509,6 +513,27 @@ async function collectElements(page) {
         return parent ? (parent.innerText || "").trim().slice(0, 4000) : "";
       }
 
+      /** What the element sits inside, as a tag and a role rather than as text.
+       *
+       *  `surroundingText` above is the parent's words, and for an icon-only control there are
+       *  none — an <a> whose entire content is a bookmark icon has empty innerText, correctly
+       *  and uselessly. Both 1.1.1 and 1.4.11 turn on what that parent IS: a link with nothing
+       *  else in it (so alt="" hides the only clue to where it goes) or an already-labelled
+       *  container (so alt="" is right). The judge was asked both questions about the same
+       *  <img> on /events/calendar and told nothing about its parent either time. */
+      function parentOf(el) {
+        const parent = el.parentElement;
+        if (!parent) return {};
+        return {
+          tag: parent.tagName.toLowerCase(),
+          role: parent.getAttribute("role") || "",
+          href: parent.getAttribute("href") || "",
+          // Its own text with this element's contribution left in — what a reader would see if
+          // the element were the only thing naming it.
+          text: (parent.innerText || "").trim().slice(0, 400),
+        };
+      }
+
       // How much of an element's own markup travels to the judge. Ample for a control;
       // reachable by a long table, which is exactly when the judge most needs to know that
       // what it is looking at is a fragment.
@@ -551,6 +576,7 @@ async function collectElements(page) {
           // `uncertain` naming the truncation rather than judging a table it half saw.
           markup_truncated: el.outerHTML.length > MAX_MARKUP,
           context: surroundingText(el),
+          parent: parentOf(el),
           box: {
             x: box.left + window.scrollX,
             y: box.top + window.scrollY,

@@ -740,6 +740,14 @@ def test_the_cache_key_reads_exactly_what_the_judge_looks_at(world):
     Its arrival invalidates every stored verdict once. That is the intended price, and it
     was paid at a moment when no reviewer had ruled on anything, so no human decision went
     with it.
+
+    **`accessible_name` and `parent` were added 2026-09-01, and the same argument applies to
+    both.** Each is computed from the whole page rather than from the element, so each can
+    change while the element's own markup does not: rename the `<label for=…>` beside a
+    dropdown, or move an icon from a link into a figure, and `html` is untouched while the only
+    input the criterion is about has changed underneath it. They invalidated the stored verdicts
+    a second time — deliberately, because those verdicts were reached without ever seeing the
+    fields, and a cache hit is a promise that nothing the judge looks at has moved.
     """
     import inspect
 
@@ -747,7 +755,8 @@ def test_the_cache_key_reads_exactly_what_the_judge_looks_at(world):
 
     source = inspect.getsource(dispatch.content_hash)
     assert ("parts = (checker, candidate.html, candidate.screenshot_ref, candidate.context, "
-            "outline)") in source
+            "outline,") in source
+    assert "candidate.accessible_name, parent)" in source
     # Sorted keys, or two runs over an unchanged page would disagree about the key.
     assert "sort_keys=True" in source
 

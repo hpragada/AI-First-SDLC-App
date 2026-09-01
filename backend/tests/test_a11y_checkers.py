@@ -49,6 +49,8 @@ from apps.a11y.checkers import (
 from integrations.types import A11Y_CHECKER_CRITERIA, A11yCandidate
 
 AGENT_BODY = Path(__file__).resolve().parents[2] / "agents" / "09c_a11y_judge" / "agent.md"
+COMPANION_CAPTURE = (Path(__file__).resolve().parents[2]
+                     / "runner" / "companion" / "assets" / "a11y_audit.mjs")
 
 
 def element(**kwargs) -> CapturedElement:
@@ -224,6 +226,56 @@ def test_color_selects_a_filled_indicator_with_no_text():
         parent_styles={**{k: "" for k in STYLE_KEYS}, "background-color": "transparent"},
     )
     assert "color" in checkers_for(dot)
+
+
+def test_color_selects_an_indicator_drawn_only_as_a_coloured_ring():
+    """The third way to colour a thing, after a background and a series stroke.
+
+    On `/loans/renewals` three status markers sit in adjacent rows of one table. Two carry
+    their colour in `background`; one is a `.ring`, drawn with `border: 3px solid`. The two
+    were offered to the colour rule and the third was not — `border-color` was never captured,
+    so an empty span with no background read as carrying no colour at all.
+    """
+    ring = element(
+        selector="#renew-tidewater",
+        styles={**{k: "" for k in STYLE_KEYS},
+                "border-style": "solid", "border-color": "rgb(196, 106, 20)"},
+        parent_styles={**{k: "" for k in STYLE_KEYS}, "background-color": "rgb(255, 255, 255)"},
+    )
+    assert "color" in checkers_for(ring)
+
+
+def test_a_border_colour_with_no_border_drawn_is_not_colour():
+    """`border-color` computes to the element's own `color` on anything that never set one, so
+    a painted colour with `border-style: none` describes a border that is not there. Counting
+    it would make every element on the page a colour candidate."""
+    plain = element(
+        styles={**{k: "" for k in STYLE_KEYS},
+                "border-style": "none", "border-color": "rgb(196, 106, 20)"},
+    )
+    assert "color" not in checkers_for(plain)
+
+
+def test_the_companion_captures_exactly_the_styles_the_rules_read():
+    """The two `STYLE_KEYS` lists are written out at both ends and nothing compared them.
+
+    A key the rules read and the browser never sends arrives empty, and an empty style is
+    indistinguishable from a style that paints nothing — so the loss is silent everywhere, by
+    design. It has now happened twice: `stroke`/`fill`, which left every chart series colourless
+    to the one rule that asks about colour, and `border-color`, which did the same to anything
+    outlined rather than filled. The companion's own comment says a missing key is not an error
+    anywhere. This is that error.
+    """
+    source = COMPANION_CAPTURE.read_text(encoding="utf-8")
+    block = source.split("const STYLE_KEYS = [", 1)[1].split("];", 1)[0]
+    captured = [line.split('"')[1] for line in block.splitlines()
+                if line.strip().startswith('"')]
+
+    assert captured == list(STYLE_KEYS), (
+        "the browser captures a different set of computed styles than the rules read — "
+        f"only in the capture: {sorted(set(captured) - set(STYLE_KEYS))}; "
+        f"only in the rules: {sorted(set(STYLE_KEYS) - set(captured))}"
+    )
 
 
 def test_color_selects_a_chart_series_drawn_in_a_stroke_colour():
@@ -405,6 +457,32 @@ def test_semantics_leaves_prose_that_happens_to_contain_an_anchor_alone():
               '<a href="#summary">summary</a>.</p></div>'),
     )
     assert "semantics" not in checkers_for(prose)
+
+
+def test_a_dropdown_is_out_of_scope_because_its_options_are_not_its_label():
+    """A `<select>`'s inner text is every option it holds, and a closed one displays none of
+    them. Read as the visible label, this compared the announced name against the option list,
+    found no match, and reported a possible mismatch — on all 13 dropdowns in the 31 August
+    Meridian audit, every one of which then reached the AI and came back "cannot determine".
+
+    There was never anything to compare: a dropdown is named by its `<label for=…>`, so its
+    visible label IS its accessible name. Out of scope, and out of scope is not a pass — the
+    same distinction `test_out_of_scope_is_not_the_same_as_satisfied` turns on.
+    """
+    dropdown = element(
+        tag="select", accessible_name="Home branch",
+        text="Fenner Road\nAshcombe\nNorth Quay",
+        html="<select id='settings-branch'><option>Fenner Road</option></select>",
+    )
+    assert "label" not in checkers_for(dropdown)
+    assert settled(dropdown) == {}
+
+
+def test_a_textarea_is_out_of_scope_for_the_same_reason():
+    """Its inner text is what somebody typed into it, which is content and not a label."""
+    box = element(tag="textarea", accessible_name="Notes for staff",
+                  text="Left at the Fenner Road desk")
+    assert "label" not in checkers_for(box)
 
 
 def test_label_selects_a_control_whose_name_does_not_contain_its_visible_text():

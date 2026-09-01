@@ -261,6 +261,63 @@ def test_the_same_input_under_a_different_checker_is_judged_separately():
     assert content_hash("alt", candidate) != content_hash("semantics", candidate)
 
 
+def test_a_changed_accessible_name_is_a_different_question():
+    """The `<label>` beside a dropdown is renamed. The dropdown's own markup does not move.
+
+    Left out of the key, the old 2.5.3 verdict would outlive the only input it was about — the
+    same argument that put `structure` in the key, and for a field that changes far more often.
+    """
+    before = A11yCandidate(html="<select id='b'></select>", accessible_name="Home branch")
+    after = A11yCandidate(html="<select id='b'></select>", accessible_name="Collection point")
+    assert content_hash("label", before) != content_hash("label", after)
+
+
+def test_a_changed_parent_is_a_different_question():
+    """The same `<img alt="">` inside a link and inside a figure are not the same question:
+    one hides where a link goes, the other is correct."""
+    in_link = A11yCandidate(html='<img alt="">', parent={"tag": "a", "href": "/x"})
+    in_figure = A11yCandidate(html='<img alt="">', parent={"tag": "figure"})
+    assert content_hash("alt", in_link) != content_hash("alt", in_figure)
+
+
+def test_the_batch_carries_every_field_a_check_needs():
+    """The batch handed to the judge must carry every field of the candidate contract.
+
+    **The sibling of `test_a11y_capture.test_every_field_the_contract_reads_is_actually_stored`,
+    and it exists for the same reason that one does.** `accessible_name` was captured from the
+    browser's accessibility tree, normalised, stored on the bundle — and never put in this dict.
+    WCAG 2.5.3 asks one question, *does the announced name contain the visible label*, and the
+    judge was handed the markup, the picture and the surrounding text and not the name.
+
+    For a `<button>` that was survivable: its name is the word printed on it, and `html` carries
+    that word. For a `<select>` it was not, because the `<label for=…>` that names one is a
+    SIBLING and is therefore never inside the element's own markup. Every dropdown in the
+    31 August Meridian audit — 13 of 13 — came back "cannot determine the accessible name",
+    against 1.4% uncertainty everywhere else.
+
+    Nothing failed, because the two lists had never been compared.
+
+    `route` is the deliberate exception: it is the batch's own key, one level up, so restating
+    it on every element would be noise. Naming it here means a second exception has to be argued
+    for rather than quietly appearing.
+    """
+    import dataclasses
+
+    from apps.a11y.dispatch import _group_by_screen
+
+    request = A11yRequest(checker="label", candidate=A11yCandidate(route="/x"))
+    sent = set(_group_by_screen([request])[0]["elements"][0])
+    contract = {f.name for f in dataclasses.fields(A11yCandidate)}
+    keyed_on_the_batch = {"route"}
+
+    assert not (contract - sent - keyed_on_the_batch), (
+        "the judge's batch drops candidate fields: "
+        f"{sorted(contract - sent - keyed_on_the_batch)}. Add them to `_group_by_screen` — and "
+        "if a field genuinely belongs to the screen rather than the element, add it to "
+        "`keyed_on_the_batch` here with the reason."
+    )
+
+
 # ── AC3: the audit trail ─────────────────────────────────────────────
 def test_a_stored_verdict_records_the_engine_model_and_prompt_version(world):
     trigger = FakeTrigger(world)

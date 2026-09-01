@@ -232,9 +232,20 @@ def content_hash(checker: str, candidate: A11yCandidate) -> str:
     the markup and that table keeps its old verdict for ever — the cache would be answering
     about a page that no longer exists. Serialised with sorted keys so two runs over an
     unchanged page produce the same key.
+
+    **`accessible_name` is in here for exactly the same reason** (1 Sep). It is computed from
+    the whole page, so it can change while this element's own markup does not: rename the
+    `<label for=…>` beside a dropdown and the dropdown's own tag is untouched. Left out of the
+    key, a 2.5.3 verdict would outlive the only input it was about.
+
+    Adding it **invalidated every judgment cached before that date**, deliberately and once.
+    Those verdicts were reached without the field, and a cache hit is a promise that nothing the
+    judge looks at has changed — which was not true of them.
     """
     outline = json.dumps(candidate.structure or {}, sort_keys=True, separators=(",", ":"))
-    parts = (checker, candidate.html, candidate.screenshot_ref, candidate.context, outline)
+    parent = json.dumps(candidate.parent or {}, sort_keys=True, separators=(",", ":"))
+    parts = (checker, candidate.html, candidate.screenshot_ref, candidate.context, outline,
+             candidate.accessible_name, parent)
     payload = "\x1f".join(f"{len(p)}:{p}" for p in parts)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -405,6 +416,15 @@ def _group_by_screen(requests: list[A11yRequest]) -> list[dict]:
 
     `content_hash` stays here because the platform needs it to store the verdict; it is
     stripped before the agent ever sees the batch (`judge.batch_for_run`).
+
+    **Everything a checker's question turns on has to be in this dict**, and for `label` that
+    is `accessible_name` — which the browser computes, the capture stores, and this function
+    did not send until 1 September. `tag` and `role` deliberately stay out: the judge reads
+    both off `html`, which is the element's own outerHTML, so restating them would add nothing
+    and change the cache key for no gain. The name is different in kind — it is computed from
+    the whole page and is recoverable from nothing else that travels.
+    `test_a11y_dispatch.test_the_batch_carries_every_field_a_check_needs` is what stops this
+    list drifting from the questions again.
     """
     batches: dict[str, dict] = {}
     for index, request in enumerate(requests, start=1):
@@ -417,6 +437,8 @@ def _group_by_screen(requests: list[A11yRequest]) -> list[dict]:
             "criteria": list(A11Y_CHECKER_CRITERIA[request.checker]),
             "selector": request.candidate.selector,
             "html": request.candidate.html,
+            "accessible_name": request.candidate.accessible_name,
+            "parent": dict(request.candidate.parent or {}),
             "markup_truncated": request.candidate.markup_truncated,
             "structure": dict(request.candidate.structure or {}),
             "screenshot_ref": request.candidate.screenshot_ref,

@@ -51,6 +51,17 @@ its exact wording is what conformance is judged on.
      these and no others.
    - `selector`, `html`, `context` — the element, its own markup, and the surrounding
      content a person would need to answer the same question.
+   - `accessible_name` — **the name a screen reader announces for this element**, computed by
+     the browser from the accessibility tree. This is a measurement, not a guess: it already
+     accounts for a `<label for=…>` elsewhere on the page, an `aria-label`, an `aria-labelledby`
+     chain, or a fallback to the element's own text. **Never re-derive it from the markup** —
+     for a `<select>` or an `<input>` the `<label>` that names it is a *sibling*, so it is not
+     in `html` and never will be. An empty string means the browser computed no name at all,
+     which is itself a finding for 4.1.2 and not a reason to say you could not tell.
+   - `parent` — what the element sits inside: `tag`, `role`, `href` and the parent's own text.
+     For an icon-only control that text is empty, and the tag is the whole answer: an `<img>`
+     inside an `<a>` with nothing else in it is doing the linking, and `alt=""` hides where it
+     goes.
    - `screenshot_ref` — a pointer to a captured image of the element, when one exists. It is a
      pointer, not a picture: `get_a11y_screenshots()` is what opens it.
 2. `get_a11y_screenshots(start=0)` — **your eyes**. The captured picture of each element in
@@ -306,8 +317,14 @@ will not match it. A leading or trailing difference in punctuation or case is no
 itself, including text inside an image of text. Placeholder text is not a label. A separate
 description elsewhere on the page is not a label.
 
-**Uncertain when:** the visible label is an image of text you cannot see, or the accessible
-name is computed from something not present in what you were given.
+**You are given the accessible name — use it, do not reconstruct it.** `accessible_name` is the
+browser's own computed value and already includes any `<label for=…>` that names the control,
+even though that `<label>` is a sibling and so is never inside `html`. "I cannot tell without the
+full surrounding HTML" is not an available answer to this question: the surrounding HTML has
+already been resolved for you into the one string the criterion is about.
+
+**Uncertain when:** the visible label is an image of text you cannot see. That is the only case
+left — this check compares two strings and you have both of them.
 
 ### `graphics` — WCAG 1.4.11 Non-text Contrast
 

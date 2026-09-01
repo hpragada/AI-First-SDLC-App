@@ -57,6 +57,15 @@ STYLE_KEYS: tuple[str, ...] = (
     "font-size",
     "font-weight",
     "border-style",
+    # ...and the colour that border is painted in. `border-style` alone says a border EXISTS
+    # and never what it looks like, so the third way to colour a thing was invisible — after
+    # `background-color` (the first) and `stroke`/`fill` (the second, below). On /loans/renewals
+    # three status markers sit in adjacent rows of one table: two carry their colour in
+    # `background`, one in `border: 3px solid`. The two were offered to the colour rule and the
+    # third was not, because `_applies_color` looked for a painted background, found none on an
+    # empty span, and concluded there was no colour here to ask about.
+    "border-color",
+    "outline-color",
     "background-image",
     # A shape inside a chart is not coloured by `background-color` — it is drawn in `stroke` or
     # filled with `fill`, and neither was captured. So a line chart whose three series are told
@@ -151,6 +160,21 @@ TEXT_CUE_MARKERS = ("*", "✓", "✗", "×", "!", "⚠")
 #: accessible name and call the difference a defect.
 VALUE_LABEL_INPUT_TYPES = frozenset({"submit", "reset", "button"})
 
+#: Controls whose inner text is their CONTENT, not their label — the mirror image of
+#: `VALUE_LABEL_INPUT_TYPES` (1 Sep). A `<select>`'s inner text is every one of its options; a
+#: `<textarea>`'s is whatever is typed into it. Neither is "the words a sighted user reads on
+#: the control", which is what 2.5.3 compares the announced name against, and a closed dropdown
+#: does not display its options at all.
+#:
+#: Read as a label, this sent all 13 dropdowns in the 31 August Meridian audit to the AI: the
+#: rule compared the announced name "Home branch" against the option list
+#: "Fenner Road Ashcombe North Quay", found no match and reported a possible mismatch. There
+#: was never anything to compare — a dropdown is named by its `<label for=…>`, so its visible
+#: label IS its accessible name and 2.5.3 has no two strings to hold against each other. Out of
+#: scope, exactly as `<input type="submit">` with no `value` is out of scope above, and for the
+#: same reason: no visible label we can read means no comparison we can make.
+VALUE_NOT_LABEL_TAGS = frozenset({"select", "textarea"})
+
 _WHITESPACE = re.compile(r"\s+")
 _CLASS_ATTR = re.compile(r'class="([^"]*)"')
 _IN_PAGE_HREF = re.compile(r'<a[^>]+href="#[^"]*"', re.IGNORECASE)
@@ -189,6 +213,10 @@ class CapturedElement:
     rendered: bool = True                           # has a box: not display:none, not zero-size
     styles: Mapping[str, str] = field(default_factory=dict)          # see STYLE_KEYS
     parent_styles: Mapping[str, str] = field(default_factory=dict)   # same keys, on the parent
+    #: What the element sits inside: {tag, role, href, text}. Carried for the judge, not read
+    #: by any rule — an icon-only control's parent has no text, and "what is it inside" is the
+    #: question 1.1.1 and 1.4.11 both actually turn on.
+    parent: Mapping[str, str] = field(default_factory=dict)
     html: str = ""
     #: True when `html` is a fragment because the element's markup was longer than the capture
     #: sends. Never inferred from the length of what arrived — a container that happens to be
@@ -241,6 +269,7 @@ class CapturedElement:
             # `{"kind": "unreadable", ...}` and reaches the judge as such.
             structure=dict(raw.get("structure") or {}),
             context=str(raw.get("context") or ""),
+            parent={str(k): str(v) for k, v in dict(raw.get("parent") or {}).items()},
             screenshot_ref=str(raw.get("screenshot_ref") or ""),
             route=str(raw.get("route") or ""),
         )
@@ -299,6 +328,26 @@ def _paints(colour: str) -> bool:
     return str(colour or "").strip().lower() not in _NO_PAINT
 
 
+#: Border styles that draw nothing, so their colour paints nothing either.
+_NO_BORDER = frozenset({"", "none", "hidden"})
+
+
+def _paints_border(element: CapturedElement) -> bool:
+    """Is this element outlined in a colour you can actually see?
+
+    Both halves are required and neither is enough alone. `border-color` computes to the
+    element's own `color` on anything that never set one, so a painted colour with
+    `border-style: none` describes a border that is not drawn — reading that as colour would
+    make every element on the page a colour candidate.
+    """
+    style = str(element.styles.get("border-style", "")).strip().lower()
+    if style and all(part in _NO_BORDER for part in style.split()):
+        return False
+    if not style:
+        return False
+    return _paints(element.styles.get("border-color", ""))
+
+
 def _has_nested_graphic(element: CapturedElement) -> bool:
     lowered = element.html.lower()
     return "<img" in lowered or "<svg" in lowered
@@ -317,7 +366,13 @@ def _visible_text(element: CapturedElement) -> str:
     A submit button with no `value` at all is still out of scope, and that skip is deliberate:
     the browser draws its own default word, that word is chosen by the user agent and its
     language, and it is not in the markup for us to compare anything against.
+
+    The opposite exception is `VALUE_NOT_LABEL_TAGS`, whose inner text is the control's content
+    rather than its label. That one returns nothing at all: there is no visible label on the
+    control to read, so there is no comparison to make.
     """
+    if element.tag in VALUE_NOT_LABEL_TAGS:
+        return ""
     text = _normalise(element.text)
     if text or element.tag != "input":
         return text
@@ -380,7 +435,19 @@ def _colour_differs_from_surroundings(element: CapturedElement) -> bool:
     if key and value != str(parent.get(key, "") or ""):
         return True
     background = styles.get("background-color", "")
-    return _paints(background) and background != parent.get("background-color", "")
+    if _paints(background) and background != parent.get("background-color", ""):
+        return True
+    # A border is the whole of the colour ONLY when there is nothing else — no text and no
+    # background. Kept that narrow deliberately: `_has_second_cue` measured that comparing a
+    # border against its parent's saves four candidates in three hundred, because parents
+    # almost never have one, so treating any painted border as a difference would make every
+    # bordered input and card on the page a colour candidate and spend the run's judgment
+    # budget on chrome. An element with no text and no fill is the case where it is not chrome
+    # — it is the only thing being drawn.
+    if element.text.strip() or _paints(background):
+        return False
+    return (_paints_border(element)
+            and styles.get("border-color", "") != parent.get("border-color", ""))
 
 
 def _has_second_cue(element: CapturedElement) -> bool:
@@ -636,8 +703,9 @@ def _applies_color(element: CapturedElement) -> bool:
         return False
     if (not element.text.strip()
             and not _paints(element.styles.get("background-color", ""))
+            and not _paints_border(element)
             and not _series_colour(element)[0]):
-        return False        # no text, no fill, no series colour: nothing here carries colour
+        return False        # no text, no fill, no border, no series colour: nothing to ask about
     if _has_second_cue(element):
         return False
     return _colour_differs_from_surroundings(element)
@@ -856,6 +924,8 @@ def to_candidate(element: CapturedElement) -> A11yCandidate:
         screenshot_ref=element.screenshot_ref,
         context=element.context,
         route=element.route,
+        accessible_name=element.accessible_name,
+        parent=dict(element.parent or {}),
     )
 
 

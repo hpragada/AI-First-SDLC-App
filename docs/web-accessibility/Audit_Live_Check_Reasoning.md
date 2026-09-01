@@ -1032,9 +1032,126 @@ card, not a client's.
 
 ---
 
-*Last updated: 1 September, 09:15 UTC — **the audit is complete, cross-checked, and scored.**
-All 1,068 distinct questions answered across three passes; 410 failures; 19 for a person to
-decide; nothing unlooked-at; eight defects found and fixed on the day, two more found in the
-scorecard and fixed the morning after. **Four of five checks report nothing that is not a real
-problem**, and the fifth is contested pending an expert's ruling. Nothing here is a figure to put
-in front of a client.*
+---
+
+## 14. Reading the review queue — 1 September
+
+The audit was scored (§13) and the team then opened the **19 items waiting on a person** and read
+what the judge had actually written on them. On every *Label in Name* item it said the same thing:
+
+> *"this is likely a `<label>` element not provided in this batch… Cannot determine accessible
+> name without the full surrounding HTML."*
+
+### 14.1 What the 19 are
+
+Every one traces to **pass 1** — the run that answered 799 of its 800 elements and was then failed
+by the verification timeout (§6.6). Nothing in the queue came from pass 2, the one we took over by
+hand, or from pass 3.
+
+```
+15  genuine "I could not decide" verdicts   — label 11, colour 2, alt 1, graphics 1
+ 4  passes at or below the confidence bar   — a person is asked BY DESIGN, `triage` uses <=
+──
+19
+```
+
+**The judge is not the problem.** Across the whole audit it was uncertain **15 times in 1,068
+answers — 1.4%**: 953 passes, 100 failures. Colour, the check that has to *see* things, was
+uncertain **twice in 512**. One checker stands apart:
+
+```
+label:  32 judged,  11 uncertain (34%)   — and every single one of them a <select>
+```
+
+Thirteen dropdowns out of thirteen. That is not a model having an off day; it is a defect, and
+`GAP_FIX_BUILD_PLAN.md` §9.28.A/B has both halves of it. The short version: the browser computes
+the accessible name, the platform stores it, and the batch never sent it — while the selection
+rule was separately comparing a dropdown's *option list* against that name and calling the
+mismatch suspicious. **Thirteen of the nineteen leave the queue once both are fixed. The other six
+belong there.**
+
+### 14.2 Errors made by the observer — 1 September
+
+Two of the six things first reported to the team were wrong, and **both were caught by the team
+asking whether our own three-pass interference had manufactured them.** Recorded here for the same
+reason §7 is: a document that keeps only the findings that survived is not evidence of anything.
+
+#### 14.2.1 A 77% failure rate that was 0.4%
+
+Reported: *"62 of 81 colour judgments came back uncertain — the judge cannot reach its
+screenshots."* A rewiring of the screenshot tool was proposed on the strength of it.
+
+**The count came from the findings table, where 60 of those rows were not judgments at all** —
+they were the platform's own *"nothing looked at this"* placeholders, which carry the checker name
+of the check that would have run. The record of what the AI actually said is the judgment cache:
+**512 colour judgments, 2 uncertain.**
+
+Two elements did mention an unreachable screenshot, and they are the same icon covered by §9.28.D.
+The paging mismatch behind the theory is real — the batch is served per screen, the images as one
+run-wide list — but pass 1 worked through 73 screens and 800 elements, so it is survivable. **The
+fix was withdrawn and the item recorded instead.**
+
+The habit that caused it: a checker name on a row was read as *"a check said this"*, when the row
+existed precisely because no check ever ran.
+
+#### 14.2.2 "106 findings were silently closed" — they were answered, and this document said so
+
+Reported as the most serious of the six: 106 elements filed as *"sent for human review"* and then
+resolved 52 minutes later with nobody having ruled on them. A guard was designed for
+`findings.record_run_findings` and written.
+
+**It is not a defect. All 106 were re-judged and passed.** Traced by content hash: **104 distinct
+elements, every one carrying a verdict from pass 3, every verdict a `pass`.** A passing element
+produces no finding, so the old placeholders were correctly closed. The merge record shows it
+plainly — passes 2,007 → 2,174, review queue 133 → 19.
+
+**The error was checking whether those elements had an open *finding* afterwards, finding none,
+and concluding nothing had answered them.** The judgment cache was never consulted, and it is the
+only record of what was answered.
+
+**And §6.11 of this document had it right on the day:** *"114 of those 133 were never work for a
+person at all… they cleared the moment the third pass answered them."* Written six hours after the
+audit closed, and not read before contradicting it. **The guard was reverted** — it fixed nothing,
+and it would have stopped a genuinely deleted element from ever resolving, which is a real
+regression traded for an imaginary fix.
+
+#### 14.2.3 What the pattern is
+
+Both errors, and §7.1's before them, are the same shape: **a number taken from the nearest table
+rather than from the table that means what the sentence claims.** The findings table records what
+is *open against a page*; the judgment cache records what was *answered*. They differ by every
+pass, every placeholder and every element that turned out to be fine — which is most of an audit.
+
+The correction that matters is not either number. It is that **the team's challenge — "did we
+cause this ourselves?" — is what surfaced both**, and it should be the first question asked of any
+finding drawn from a run we intervened in.
+
+### 14.3 What the three passes actually cost
+
+| Pass | Window | Status | Judged | Ended by |
+|---|---|---|---|---|
+| 1 | 09:39–12:02 | **failed** | 799 of 800 | write-completeness verification timed out at 60s |
+| 2 | 12:45–15:34 | **failed** | 99 | `run abandoned by human takeover` — **ours** |
+| 3 | 15:49–16:31 | completed | 170 | clean |
+
+**Pass 1 is the origin of the cascade, and it is a defect already fixed.** It judged 799 elements
+and wrote a full report; the platform then failed it on the step that merely *confirms the writes
+landed*, which had a hard 60-second ceiling. That is exactly what the `verify_timeout_seconds` /
+`LONG_VERIFY_PHASES` work removed — a judging phase now sizes that window by batch (800 elements →
+1,600s). **It is on the branch and not yet deployed.** Deployed, pass 1 would have closed cleanly
+and neither the second pass nor the takeover would have existed.
+
+So the takeover was real, and it was downstream of a platform bug rather than the first cause. It
+also **put nothing into the review queue** and **cost nothing in coverage** — pass 3 answered
+everything pass 2 left.
+
+
+---
+
+*Last updated: 1 September, 16:40 UTC — **the audit is complete, cross-checked, scored, and its
+review queue read.** All 1,068 distinct questions answered across three passes; 410 failures; 19
+for a person to decide; nothing unlooked-at. Of those 19, **thirteen were the platform withholding
+the accessible name from its own judge** — fixed, with two guards so the class of loss cannot
+recur silently. **Two of the six defects first reported were the observer's own analysis errors**
+(§14.2), both surfaced by the team asking whether our three-pass interference had manufactured
+them. Nothing here is a figure to put in front of a client.*

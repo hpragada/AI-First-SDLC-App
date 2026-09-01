@@ -3702,11 +3702,180 @@ travels **in** the results file rather than in somebody's memory of the day it w
 #### 9.27.D Three things this left open
 
 1. **The rota adjudication** — above. Needs a person, not a commit.
-2. **Four elements no rule reaches** — the ones 9.27.B found. Same family as §9.25.3's
-   class-less container `<div>`: the selection rules never offered them to anything. Small (4 of
-   173) and worth its own look.
+2. **Four elements no rule reaches** — the ones 9.27.B found. ~~Same family as §9.25.3's
+   class-less container `<div>`.~~ **That reading was wrong on both counts**, and §9.28.A has
+   the root cause of each: they have four different owners, only one is a platform gap, and it
+   is a gap in what the capture *records* rather than in what the selectors *reach*.
 3. **The containment rule cannot see scope-widening** — 9.27.A's `#renew-all`. Now visible and
    scored, which is the precondition for fixing it.
+
+---
+
+### 9.28 Reading the completed audit's review queue — 1 September ⭐⭐ (BUILT)
+
+The team opened the 19 items waiting on a person and read the judge's own words on the *Label in
+Name* ones:
+
+> *"this is likely a `<label>` element not provided in this batch… Cannot determine accessible
+> name without the full surrounding HTML."*
+
+Then asked the question that decided the outcome: **the audit ran in three passes and we took one
+of them over by hand — did our own interference make these, and are we about to call it a bug?**
+
+**It was the right challenge and it changed the answer twice.** Two of the six things first
+reported were the observer's own analysis errors, not defects. They are written up in
+`Audit_Live_Check_Reasoning.md` §14.2 rather than quietly dropped.
+
+**Where the 19 came from.** Every one traces to pass 1, the run that answered 799 of 800:
+
+```
+15  genuine "I could not decide" verdicts   — label 11, colour 2, alt 1, graphics 1
+ 4  passes at or below the confidence bar   — routed to a person BY DESIGN (triage.py uses <=)
+```
+
+Passes 2 and 3 — including the one we abandoned — produced **not one** uncertain verdict between
+them. **Our disturbance put nothing in this queue.**
+
+**And the judge is not the problem.** Across the whole audit:
+
+```
+953 pass   100 fail   15 uncertain      — 1.4% of 1,068 answers
+colour: 512 judged,  2 uncertain (0.4%)
+label:   32 judged, 11 uncertain (34%)  ← every one of them a <select>
+```
+
+One data-plumbing gap accounts for nearly all the uncertainty there is.
+
+---
+
+#### 9.28.A The judge was never told the accessible name ⭐⭐ — BUILT
+
+**What it is.** WCAG 2.5.3 asks one question: *does the name a screen reader announces contain the
+words printed on the control?* The browser computes that name during the capture, deliberately —
+never approximated from `aria-label` or the text content, because an approximation makes the two
+agree by construction and switches the check off. The platform stores it.
+
+**And then `dispatch._group_by_screen` did not send it.** The judge received the markup, the
+picture, the surrounding text and the container outline, and not the one string the criterion is
+about. `git log -S accessible_name` on that file across every branch returns nothing: **it had
+never been sent, on any run, ever.**
+
+**Why it only shows on dropdowns.** A `<button>`'s name is the word printed on it, and `html`
+carries that word — so the judge could answer. A `<select>` is named by a `<label for=…>` that is
+a **sibling**, so it is never inside the element's own markup and is recoverable from nothing else
+that travels. The split is total:
+
+| | judged | uncertain |
+|---|---|---|
+| `<button>` | 19 | **0** |
+| `<select>` | 13 | **11**, plus 2 low-confidence passes — **none resolved** |
+
+**The fix.** `accessible_name` is carried on `A11yCandidate`, through `to_candidate`, into the
+batch, and named in the judge's instructions — with the "I cannot tell without the surrounding
+HTML" escape removed for this case, because it stops being true.
+
+**`tag` and `role` were deliberately NOT added.** The judge reads both off `html`; restating them
+would change the cache key for no gain. The name is different in kind — computed from the whole
+page, recoverable from nothing else.
+
+#### 9.28.B A dropdown's options were being read as its label ⭐ — BUILT
+
+**The rule that decides what reaches the AI had already got this wrong, one step earlier.**
+`_visible_text` returns the element's inner text; for a `<select>` that is every option it holds.
+So the rule compared
+
+```
+announced name   "Home branch"
+"visible label"  "Fenner Road Ashcombe North Quay"
+```
+
+found no match, concluded *possible mismatch*, and sent it on — to a judge that had not been given
+the name either. **Two faults stacked, and fixing either alone leaves dropdowns broken.**
+
+There was never anything to compare. A closed dropdown displays none of its options, and a
+dropdown's visible label **is** its accessible name. `VALUE_NOT_LABEL_TAGS` (`select`, `textarea`)
+now puts them out of scope — the mirror of the `VALUE_LABEL_INPUT_TYPES` carve-out §9.15 added for
+`<input type=submit>`, and for the same reason: **no visible label we can read means no comparison
+we can make.** Out of scope is not a pass, and `settled()` reports neither.
+
+**Proved against the stored audit, read-only: 13 of the 19 leave the queue. The other 6 stay, and
+every one of them should.**
+
+#### 9.28.C `border-color` was never captured — the same silent loss, a third time ⭐ — BUILT
+
+`STYLE_KEYS` records `border-style`, which says a border **exists** and never what it looks like.
+So the third way to colour a thing was invisible, after `background-color` (the first) and
+`stroke`/`fill` (§9.23's, the second).
+
+On `/loans/renewals` three status markers sit in adjacent rows of one table. Two are `.dot`,
+coloured by `background`; one is a `.ring`, drawn with `border: 3px solid`. **The two were offered
+to the colour rule and the third was not** — `_applies_color` looked for a painted background,
+found none on an empty span, and concluded there was no colour here to ask about.
+
+Both `STYLE_KEYS` lists now carry `border-color` and `outline-color`, and a painted border counts
+as carrying colour — **but only when there is nothing else**, no text and no background. That
+narrowness is measured, not cautious: the reasoning already recorded on `_has_second_cue`
+establishes that parents almost never have a border to compare against, so treating any painted
+border as a difference would make every input and card on the page a colour candidate and spend
+the judgment budget on chrome.
+
+#### 9.28.D An icon's parent was never described ⭐ — BUILT
+
+The bookmark icon on `/events/calendar` is the `alt` uncertain **and** the `graphics` uncertain —
+one element, both of the remaining non-colour uncertains in the entire audit. Both criteria turn
+on **what the icon sits inside**: a link whose only content is this icon (so `alt=""` hides where
+it goes) or an already-labelled container (so `alt=""` is right).
+
+`surroundingText` sends the parent's **words**. An icon-only link has none — correctly, and
+uselessly. The capture now carries the parent's `tag`, `role`, `href` and text.
+
+#### 9.28.E Two guards, because this class of loss is silent by design ⭐⭐ — BUILT
+
+The companion's own comment says it out loud: *a missing style key is not an error anywhere.*
+That is why 9.28.C is the third occurrence and why 9.28.A survived from the first day.
+
+- **`test_the_batch_carries_every_field_a_check_needs`** — every field of the candidate contract
+  must be in the batch the judge receives. The sibling of the test §9.23 added after `structure`
+  was dropped one step before storage, and written for the same reason: *nothing failed, because
+  the two lists had never been compared.*
+- **`test_the_companion_captures_exactly_the_styles_the_rules_read`** — the two `STYLE_KEYS`
+  lists must be **identical**, not merely overlapping.
+
+#### 9.28.F What this costs, and it is not a footnote
+
+**Every judgment cached before today is invalidated.** `accessible_name` and `parent` are inputs
+the judge now reads, so both are in the cache key — the same argument §9.19 made for `structure`.
+A verdict reached without ever seeing a field must not be served as a hit, because a cache hit is
+a promise that nothing the judge looks at has moved.
+
+**The next audit therefore re-judges everything.** Pass 1 of the 31 August run cost **$33.12** for
+800 elements. Recorded here so the number is a decision and not a surprise.
+
+#### 9.28.G Withdrawn — the "106 silently closed findings"
+
+**Reported as a serious defect, investigated, and it is not one.** The full correction is in
+§14.2; in short: 104 distinct elements filed as *"nothing looked at this"* when we abandoned pass
+2 were **all re-judged by pass 3 and all passed**, so the placeholders were correctly closed. The
+guard drafted for `findings.record_run_findings` was written and **reverted** — it fixed nothing
+and would have stopped a genuinely deleted element from ever resolving.
+
+**`Audit_Live_Check_Reasoning.md` §6.11 had recorded this correctly on the day** — *"114 of those
+133 were never work for a person at all"*. The document was right and was not read.
+
+#### 9.28.H Still open after this
+
+1. **Not provable until a fresh capture.** 9.28.A, C and D change what is *collected*; the August
+   bundles cannot carry fields nothing asked for. The rules are covered by tests; the end-to-end
+   proof waits.
+2. **`#open-exports`** — should the `semantics` rule reach a link styled as a button? A judgement
+   call the answer key's own author flags both ways. Needs a decision, not a fix.
+3. **`#newsletter-email`** — marked *"Disputed — flagged for the expert"* by its author. An input
+   labelled only by its placeholder.
+4. **Screenshot paging** — the batch is served per screen (25) while images are served as one
+   run-wide list (4 a call), so a judge on screen 9 must page past screens 1–8. The shape mismatch
+   is real; **the damage first attributed to it was a miscount** (§14.2). Pass 1 worked through 73
+   screens and 800 elements, so it is survivable. Recorded, not fixed.
+5. **The rota adjudication** and **the `#renew-all` containment limit** — unchanged from §9.27.D.
 
 ---
 

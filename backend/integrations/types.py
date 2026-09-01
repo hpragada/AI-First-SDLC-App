@@ -354,6 +354,26 @@ class A11yCandidate:
     screenshot_ref: str = ""    # object-store key of the element/page image (pointer only)
     context: str = ""           # surrounding text/markup the judge needs
     route: str = ""             # the screen/route the element belongs to
+    #: The name assistive technology announces for this element, as the BROWSER computed it
+    #: from the accessibility tree — never approximated from `aria-label` or the text content,
+    #: which would make the name and the visible label agree by construction.
+    #:
+    #: **It was captured, stored, and never sent, from the first day to 1 September.** WCAG
+    #: 2.5.3 asks one question — does the announced name contain the visible label — and the
+    #: judge was handed the markup, the picture and the surrounding text, and not the name. For
+    #: a `<button>` that is survivable, because a button's name is the word printed on it and
+    #: the markup carries that word. For a `<select>` it is not: the name comes from a
+    #: `<label for=…>` that is a SIBLING, so it is never inside the element's own `html` and
+    #: cannot be recovered from anything else that travels. Every `<select>` in the 31 August
+    #: Meridian audit — 13 of 13 — came back "cannot determine the accessible name", against a
+    #: 1.4% uncertainty rate everywhere else.
+    accessible_name: str = ""
+    #: What the element sits inside: {tag, role, href, text}. `context` is the parent's WORDS,
+    #: and an icon-only control's parent has none — so for the one element on /events/calendar
+    #: queued under both 1.1.1 and 1.4.11, the judge was asked what the icon is inside and told
+    #: nothing at all. Both criteria hinge on it: a link whose only content is this icon, or an
+    #: already-labelled container.
+    parent: Mapping = field(default_factory=dict)
 
     @property
     def has_input(self) -> bool:
