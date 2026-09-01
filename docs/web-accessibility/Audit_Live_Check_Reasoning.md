@@ -836,10 +836,16 @@ platform's own store. Reaching a system-of-record is a separate, gated step that
 - [x] the report and baseline documents publishing — **12:00:50 and 12:02–12:04** (§6.5, §6.7)
 - [x] findings written and defects raised — **358 findings, 75 critical / 283 high**
 - [x] the second and third passes over everything the first pass left — **finished 16:31**, see 6.11
-- [ ] **the accuracy score** — the first number this whole exercise exists to produce
+- [x] **the accuracy score** — the first number this whole exercise exists to produce.
+      **Locked 1 September, 09:00 UTC**; four of five checks report nothing that is not a real
+      problem, the fifth is contested pending an expert's ruling. See §13.
 
 > **This section is the honest state of the run.** Nothing above it is a prediction; nothing left
 > unticked has happened yet.
+
+**Everything on this list is now ticked**, which it had never been before: this is the first
+audit in the capability's history to be captured, judged, reported, cross-checked and scored end
+to end.
 
 ### New defects this run produced
 
@@ -943,7 +949,92 @@ whole point of A and F is that this state should now be rare and, when it happen
 
 ---
 
-*Last updated: 18:10 UTC — **the audit is complete, cross-checked, and every defect it found is
-closed.** All 1,068 distinct questions answered across three passes; 410 failures; 19 for a person
-to decide; nothing unlooked-at; every screen reconciled against the database; eight defects found
-and eight fixed. The one thing still outstanding is the accuracy score.*
+---
+
+## 13. The accuracy score — 1 September
+
+The last outstanding item, and the reason the audit was run at all. **How often is this thing
+right?**
+
+| check | precision | recall | F1 | records |
+|---|---|---|---|---|
+| **alt** — image alternatives | 1.000 | 1.000 | 1.000 | 30 |
+| **color** — meaning carried by colour | 1.000 | 0.938 | 0.968 | 32 |
+| **label** — spoken name vs printed name | 1.000 | 1.000 | 1.000 | 40 |
+| **semantics** — things dressed as other things | 1.000 | 0.875 | 0.933 | 31 |
+| **structure** — headings, lists, tables | *0.833* | 1.000 | 0.909 | 30 |
+
+**In plain terms.** *Precision* is: of the problems it reported, how many were real. *Recall* is:
+of the real problems, how many it found. **Four of the five checks reported nothing that was not
+a genuine problem.** The gaps are two missed failures in `semantics`, one in `color`, and three
+false alarms in `structure`.
+
+**All five now have enough records to be measured.** On 31 August none did — only 43 of 173
+answer-key records had received a verdict, against a floor of 30 per check. The difference is
+that the audit finished.
+
+### The two things that had to be fixed first, and neither was a checker
+
+Both were in the **scorecard**, not in the product. Full write-ups in `GAP_FIX_BUILD_PLAN.md`
+§9.27.
+
+**A correct answer was being counted as "nobody looked."** Some questions are settled by a rule
+rather than by the AI — *does this button's spoken name contain the words printed on it* is a
+string comparison, not an opinion, so the platform answers it directly and pays nothing. But
+nothing recorded that an answer had been given, so **22 correctly-cleared buttons looked exactly
+like 22 nobody had examined.** They were counted as wrong, and `label` could never have been
+measured no matter how much test data we wrote, because the data pairs every hard case with an
+easy one and the easy one is always the kind a rule settles.
+
+Fixed by making the platform say which of three things happened — *asked the AI*, *answered here*,
+or *does not apply* — where before there were two. **The rule's answer is now scored against the
+answer key like any other**, and it caught itself on the first run: a button reading **"Renew"**
+announced as **"Renew all loans"** passes the letter of the rule, and the key says a person should
+weigh it, because *"Renew"* alone does not warn you it renews **everything**. The rule compares
+words; it cannot see a name quietly widening what a button promised.
+
+**The completeness check was weighing the bag instead of reading the list.** It compared totals —
+the key says this page should hold eleven particular things, the page offered twenty-nine, and
+twenty-nine is more than eleven, so it passed. It never looked at *which* twenty-nine. On this
+very run it printed `ok` for `/help/membership-actions` while the other half of the same tool
+reported eleven of that page's records as never looked at. **Two halves, one page, opposite
+answers, and nothing noticing.**
+
+Fixed by ticking the list off by name. It found **four elements the key names that no check was
+ever asked about** — on `/loans/renewals`, `/newsletter`, `/staff/exports` and
+`/staff/quick-edit`. Every one on a page the manifest gives no count for, so the old check could
+not have found them even in principle. **The two halves now agree exactly.**
+
+### What the number does, and does not, do
+
+It is locked as a **baseline**: from here, a run that falls more than two points below these
+figures stops **us** shipping a change to a prompt, a model or a selection rule. **It never
+affects a client's work, and nothing in the platform reads it.** The re-run after the second fix
+compared against the figures locked an hour earlier and every one came back *unchanged within
+tolerance* — the gate's first real test, passed.
+
+### The one figure that is not settled
+
+**`structure` 0.833 is contested, and it is written into the results file as contested.** All
+three false alarms are the same widget on one page — three weeks of a staff rota. The tables carry
+correct column headers; the shift names down the first column are ordinary cells rather than row
+headers. Our check calls that a breach of 1.3.1, so a screen-reader user moving across a row hears
+*"R. Ellery, Fenner Road"* without hearing which shift. The answer key's author decided the column
+headers are enough.
+
+**Both readings are defensible, and no code change settles it** — the whole answer key is marked
+*draft, awaiting expert adjudication*. It is a **floor, not a ceiling**: whichever way the ruling
+goes the number can only move up.
+
+**And these numbers are not for publishing.** The key's own README says so: every record is
+unadjudicated, and at 30 records one miss moves recall by six or seven points. They are our report
+card, not a client's.
+
+---
+
+*Last updated: 1 September, 09:15 UTC — **the audit is complete, cross-checked, and scored.**
+All 1,068 distinct questions answered across three passes; 410 failures; 19 for a person to
+decide; nothing unlooked-at; eight defects found and fixed on the day, two more found in the
+scorecard and fixed the morning after. **Four of five checks report nothing that is not a real
+problem**, and the fifth is contested pending an expert's ruling. Nothing here is a figure to put
+in front of a client.*

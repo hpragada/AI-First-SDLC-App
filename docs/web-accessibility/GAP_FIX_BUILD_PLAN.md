@@ -3548,6 +3548,168 @@ and in what unit* — which is what found all four.
 
 ---
 
+### 9.27 Scoring the completed audit — 1 September ⭐⭐ (BUILT)
+
+**The first accuracy baseline this capability has ever had.** Scored against audit `ee977648`
+(Meridian Library v1.4.0, 94 pages, 1,068 distinct questions) and locked. Two defects had to be
+fixed to get there, and **both were in the harness, not in the product** — the checkers were
+already right; the scorecard was describing them wrongly.
+
+| check | precision | recall | F1 | sample |
+|---|---|---|---|---|
+| alt | 1.000 | 1.000 | 1.000 | 30 |
+| color | 1.000 | 0.938 | 0.968 | 32 |
+| label | 1.000 | 1.000 | 1.000 | **40** (20 by the check, 20 by rule) |
+| semantics | 1.000 | 0.875 | 0.933 | 31 |
+| structure | **0.833** *(contested)* | 1.000 | 0.909 | 30 |
+
+**All five cleared the 30-record floor.** On 31 August none did — only 43 of 173 answer-key
+records had received a verdict at all.
+
+---
+
+#### 9.27.A A correct answer, recorded as "nobody looked" ⭐⭐ — BUILT
+
+**What it is.** 2.5.3 asks whether a control's spoken name contains the words printed on it. When
+it demonstrably does, that is a string comparison and not an opinion, so the selection rules
+settle it and the AI is never asked. Right, and free.
+
+**What went wrong.** Nothing recorded that a decision had been made. `_applies_label` returned a
+single boolean for two entirely different situations — *"this criterion does not apply here"* and
+*"it applies and is satisfied"* — so a control the platform had correctly cleared was
+indistinguishable from one nothing had ever examined. No dispatch, no verdict row, no trace.
+
+**Measured on this audit:** 22 of the 42 labelled 2.5.3 controls. Every one right. Every one
+reported by the harness as **NEVER LOOKED AT**, counted as **wrong** in the difficulty band
+(`clear: 20/40` for a checker that was 42/42), and excluded from `sample`.
+
+**And it was structural, not a data shortage.** `sample = TP + FP + FN + TN`; the 22 are true
+negatives. The dataset pairs every AI-judged failure with a rule-settled pass *by construction* —
+that is what makes it a clean pair — so **every new pair adds one to the sample and one to the
+ignored pile.** `label` could never have reached 30 no matter how much data was authored.
+
+**The fork, and the team's ruling.** Two honest readings: score *the AI* (the 22 don't belong;
+the AI never exercised that restraint) or score *the platform* (a client experiences the
+platform's answer, and an answer reached by rule is still correct — and cheaper). **The team
+chose the platform reading, with the split printed.** What does not move either way: precision
+and recall use neither TN, so `label` reads 1.000 / 1.000 before and after. **Nothing was
+inflated** — only whether we are allowed to believe it.
+
+**The fix.** `rules.settled()`, beside the existing `explain()`. Three states where there were
+two: *dispatched* · *settled here* · *out of scope*. The scorer reads it **from the platform's own
+rule module and never re-implements it** — a second copy would agree with the first by
+construction and the comparison would become decoration, the same trap `check_app_version` exists
+to avoid. The rule's answer is then scored against the answer key like any other, which is what
+keeps it falsifiable.
+
+**It proved that on its first run.** `/account/my-loans#renew-all` — a button reading **"Renew"**
+announced as **"Renew all loans"**. The rule says pass: the letter of 2.5.3 is met. The answer key
+says an expert should weigh it, because *"Renew"* alone does not warn a sighted user it renews
+**everything**. **The rule can compare words; it cannot see a name widening what the button
+promised.** Reported as `over-confident … settled by RULE, not by the check — narrow the rule, do
+not re-prompt the model`, because the two have different remedies. **Before this change that
+record was invisible.**
+
+**One bug introduced and caught in the same session:** the first version counted rule-settled
+records *before* the branches that exclude some from the sample, so the printed split described a
+different set from the one it was splitting (`19 / 21` for a sample of 40). Counted at the point
+of scoring instead: **20 / 20.** Ironically the exact class of mistake the change exists to
+remove.
+
+**Proof:** 5 tests, including the invariant `a checker never both asks and answers` — asserted
+across every checker, not only `label`, so the next rule that learns to settle something inherits
+the guarantee instead of re-deriving it.
+
+---
+
+#### 9.27.B The completeness half weighed the bag instead of reading the list ⭐⭐ — BUILT
+
+**What it is.** The half of the harness the spec says to *"build and trust before any accuracy
+figure"*, because it separates *"the check got it wrong"* from *"the check was never shown it"*.
+
+**What went wrong.** It compared **totals**. `RouteCount` held three integers and no identities:
+
+```python
+if self.captured < self.expected:   → dropped before capture
+elif self.captured > self.expected: → surplus (explicitly NOT a failure)
+```
+
+So a page can capture twenty-nine of the wrong things, miss every one of the eleven the answer key
+names, and print `ok`. **A packing list checked by weighing the bag.**
+
+**It was doing exactly that on 1 September.** `/help/membership-actions` printed
+`expected 11 · captured 29 · judged 29 · ok` on the same run where the accuracy half reported
+eleven records on that page as never looked at. **One page, one run, two halves of one tool,
+opposite readings — and nothing anywhere noticing they disagreed.**
+
+**The fix.** The names were already there — the key records route, selector and checker for all
+173 records, and they were read, discarded, and reduced to a count per page. They are now carried
+through and ticked off one at a time; a page reports **which** expected elements never reached
+their check. The counts remain for pages the manifest gives a number for without naming anything,
+and with no answer key at all this still does what it always did — captured against judged, which
+needs no key and works on any run of any application.
+
+**It found four immediately**, and where it found them is the point:
+
+```
+/loans/renewals    #renew-tidewater [color]
+/newsletter        #newsletter-email [label]
+/staff/exports     #open-exports [semantics]
+/staff/quick-edit  #save-entry [semantics]
+```
+
+**Every one sits on a page the manifest gives no expected count for.** The counting check could
+not have found them *even in principle* — there was no number to compare against. And the totals
+match the accuracy half's own `NEVER LOOKED AT` lines exactly (1 colour, 1 label, 2 semantics):
+**the two halves now agree.**
+
+The page that motivated all this, `/help/membership-actions`, now correctly reads `ok` with
+nothing missing — not because the check got weaker but because 9.27.A made it true.
+
+**Consequence to know:** the run now exits **2** (*"something was dropped"*), which was true
+before and merely invisible. It blocks nothing; blocking is exit 1.
+
+**Proof:** 6 tests, one of which reconstructs the 11-vs-29 failure with its real numbers and
+asserts it no longer passes.
+
+---
+
+#### 9.27.C What the baseline commits us to, and the one figure that is not settled
+
+`baseline.json` holds the accepted figure per checker, `min_sample: 30`, `tolerance: 0.02`. A
+later run more than two points below a stored figure prints `SHIPPING IS BLOCKED` and exits 1 —
+and **does not overwrite the baseline**, so a regression cannot be cleared by re-running. There is
+no CI in this repository: the exit code is a signal to a person, for the day there is one.
+
+**What is blocked is OUR release of a changed prompt, model or selection rule. Never a client's
+work, and nothing in the platform reads any of it.**
+
+**`structure` 0.833 is contested and is recorded as such in the results file.** It rests on three
+records — `/staff/staffing-plan#rota-week-1/2/3` — where our checker and the answer key's author
+genuinely disagree: the tables carry correct `<th scope="col">` column headers, and the shift
+names in the first column are `<td>` rather than `<th scope="row">`. Our checker calls that a
+1.3.1 breach; the key says the column headers suffice. **Both are defensible readings**, the
+golden set is `draft-unadjudicated` throughout, and no code change resolves it — it needs an
+expert to rule. It is a **floor, not a ceiling**: whichever way the ruling goes the number can
+only move up, so locking it cannot trap us.
+
+**A `--note` flag was added for exactly this.** A figure can be correct and still not settled, and
+a number that outlives the reason for it is read three months later as a settled fact. The caveat
+travels **in** the results file rather than in somebody's memory of the day it was written.
+
+---
+
+#### 9.27.D Three things this left open
+
+1. **The rota adjudication** — above. Needs a person, not a commit.
+2. **Four elements no rule reaches** — the ones 9.27.B found. Same family as §9.25.3's
+   class-less container `<div>`: the selection rules never offered them to anything. Small (4 of
+   173) and worth its own look.
+3. **The containment rule cannot see scope-widening** — 9.27.A's `#renew-all`. Now visible and
+   scored, which is the precondition for fixing it.
+
+---
+
 ### What was deliberately NOT built — 24 August
 
 **An audit that continues itself until nothing is left.** Proposed, and the team rejected it:

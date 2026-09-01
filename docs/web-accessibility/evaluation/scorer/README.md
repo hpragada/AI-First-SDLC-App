@@ -56,9 +56,77 @@ this before any accuracy figure**, because it tells the difference between *"the
 wrong"* and *"the check was never shown it"* — which look identical on a scorecard and need
 opposite responses.
 
+**It reads the list; it does not weigh the bag.** The manifest gives a count per page, and for a
+long time a count was all this compared — so a page could capture twenty-nine of the wrong things,
+miss every one of the eleven the answer key names, and print `ok`. It did exactly that on
+1 September, on the same run where the accuracy half reported eleven of that page's records as
+never looked at. The key names route, selector and checker for every record it holds, so those
+names are now ticked off one at a time and a page reports **which** expected elements never
+reached their check:
+
+```
+/staff/exports   expected  ?  captured 19  judged 19   named in the answer key and never offered to its check
+     missing: #open-exports [semantics]
+```
+
+The counts remain, for pages the manifest numbers without naming anything. Both comparisons are
+optional and independent: with no answer key at all this is still captured-against-judged, which
+is why it works on any run of any application from day one.
+
 ### Accuracy — needs an answer key.
 
 Per check, per source: precision, recall, F1, and the calibration figures.
+
+---
+
+## Three states, not two — and the sample line says which
+
+A record can reach this harness in three conditions, and for a long time the middle one was
+invisible:
+
+| | What happened | How it scores |
+|---|---|---|
+| **asked** | the question went to the AI | scored |
+| **settled by rule** | the criterion's own wording made the answer a matter of fact, so the platform answered it and paid nothing | **scored, exactly the same way** |
+| **out of scope** | the criterion cannot be asked about this element at all | not an answer; reported as a silence |
+
+The middle row is why the sample line reads:
+
+```
+label (golden) — scored on 40 records — 20 answered by the check, 20 settled by rule
+```
+
+**Both are decisions and both are scored**, because what a client experiences is the platform's
+answer, not the AI's — and an answer reached by rule is still correct and costs nothing. The split
+is printed so nobody mistakes one kind of work for the other.
+
+**This is what keeps a rule honest.** Its answer is compared against the answer key like any
+other, so a rule that ever clears something the key calls a failure is recorded as a miss. On the
+first run it caught itself: a button reading *"Renew"* announced as *"Renew all loans"* passes the
+letter of 2.5.3, and the key says a person should weigh it — the name widens what the visible word
+promised. That is reported as
+
+```
+of those, 1 was settled by RULE, not by the check — narrow the rule, do not re-prompt the model
+```
+
+because the two have different remedies.
+
+**The rule is read from `apps.a11y.checkers.rules`, never re-implemented here.** A second copy
+would agree with the first by construction and the comparison would stop meaning anything — the
+same trap `check_app_version` exists to avoid.
+
+---
+
+## Recording a caveat: `--note`
+
+```
+make a11y-eval APP_VERSION=1.4.0 ARGS="--note 'structure 0.833 is contested, see §9.27.C'"
+```
+
+Whatever you pass is stored in the results file for that run. A figure can be correct and still
+not settled, and **a number that outlives the reason for it gets read months later as a settled
+fact.** The caveat travels in the file rather than in somebody's memory of the day it was written.
 
 ---
 
