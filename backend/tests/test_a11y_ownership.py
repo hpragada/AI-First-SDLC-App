@@ -66,6 +66,17 @@ RULE_PRIMARY_14 = [
     "2.4.1", "2.4.2", "2.5.8", "3.1.1", "3.1.2", "3.3.2",
 ]
 AI_IN_POC_5 = ["1.1.1", "1.3.1", "1.4.1", "2.5.3", "4.1.2"]
+
+# What the platform actually ROUTES, which is the report plus correction R14 and nothing else.
+# Written as the report's list — one criterion rather than as a second hand-typed list, so the
+# departure is one visible line and cannot quietly grow to two.
+#
+# R14 (agreed 2026-08-27): Addendum A gives 1.4.11 to `rule` and its own rationale in the same
+# cell says why it should not — "computable, but 'which graphics matter' needs some review".
+# The judged half decides, so the platform routes it to the AI and records the rule half as a
+# secondary check. See `ownership.ENGINEERING_OVERRIDES` and RESEARCH_CORRECTIONS.md R14.
+ROUTED_RULE_PRIMARY_13 = [c for c in RULE_PRIMARY_14 if c != "1.4.11"]
+ROUTED_AI_IN_POC_6 = [*AI_IN_POC_5, "1.4.11"]
 AI_PHASE_2_6 = ["1.3.2", "1.3.3", "1.4.5", "2.4.4", "2.4.6", "2.4.7"]
 HUMAN_REACHED_BY_PHASE_2_15 = [
     "1.4.13", "2.1.1", "2.1.2", "2.2.2", "2.4.3", "2.4.11", "3.2.1", "3.2.2", "3.2.3",
@@ -583,8 +594,8 @@ def test_an_unloaded_registry_says_so_and_names_the_fix(db):
 
 
 def test_criteria_for_answers_which_engine_owns_what(loaded):
-    assert criteria_for(owner=Owner.RULE) == numerically(RULE_PRIMARY_14)
-    assert criteria_for(owner=Owner.AI, tier=Tier.IN_POC) == numerically(AI_IN_POC_5)
+    assert criteria_for(owner=Owner.RULE) == numerically(ROUTED_RULE_PRIMARY_13)
+    assert criteria_for(owner=Owner.AI, tier=Tier.IN_POC) == numerically(ROUTED_AI_IN_POC_6)
     assert criteria_for(owner=Owner.AI, tier=Tier.PHASE_2) == numerically(AI_PHASE_2_6)
     assert criteria_for(tier=Tier.HUMAN) == numerically(HUMAN_ALWAYS_15)
     assert len(criteria_for()) == 55
@@ -628,9 +639,16 @@ def test_is_in_poc_and_needs_human_always(loaded):
 
 
 def test_decision_d5_is_what_is_loaded(loaded):
-    """2.4.6 is Phase 2, so the POC judges 5 criteria with AI, not 6."""
+    """2.4.6 is Phase 2, so it is not one of the criteria the POC judges with AI.
+
+    The count moved from five to six on 1 September, and NOT because D5 changed: 1.4.11 joined
+    under correction R14. Stated as the routed list rather than a number, because "the POC
+    judges five" was a fact about two independent decisions and reading it as one is how a
+    later change looks like a regression.
+    """
     assert ownership("2.4.6").tier == Tier.PHASE_2
-    assert criteria_for(owner=Owner.AI, tier=Tier.IN_POC) == numerically(AI_IN_POC_5)
+    assert "2.4.6" not in criteria_for(owner=Owner.AI, tier=Tier.IN_POC)
+    assert criteria_for(owner=Owner.AI, tier=Tier.IN_POC) == numerically(ROUTED_AI_IN_POC_6)
 
 
 def test_criteria_touched_by_finds_the_hybrid_contributions(loaded):
@@ -643,9 +661,77 @@ def test_criteria_touched_by_finds_the_hybrid_contributions(loaded):
     assert "3.3.2" in touched_by_ai
     assert "2.4.2" in touched_by_ai
     assert "2.5.3" not in touched_by_ai          # the AI owns it outright, nothing secondary
+    # 1.4.11 is here because correction R14 moved the criterion to the AI and recorded the
+    # measuring half where a contributing engine belongs. The committed file still counts 16
+    # hybrids because the file is the report; the routed view has 17, and the one extra is the
+    # override. Asserted as 16 + 1 so a second override cannot arrive unnoticed.
     assert criteria_touched_by(Owner.RULE) == numerically(
-        ["1.1.1", "1.2.2", "1.3.1", "2.2.2", "2.4.4", "2.4.7", "4.1.2", "4.1.3"])
-    assert len(touched_by_ai) + len(criteria_touched_by(Owner.RULE)) == 16
+        ["1.1.1", "1.2.2", "1.3.1", "1.4.11", "2.2.2", "2.4.4", "2.4.7", "4.1.2", "4.1.3"])
+    assert len(touched_by_ai) + len(criteria_touched_by(Owner.RULE)) == 16 + 1
+
+
+def test_the_committed_file_still_says_what_the_report_says(loaded):
+    """The override is a layer, never an edit — and this is the half that proves it.
+
+    `data/ownership.json` is a *derivation*: `ownership_build` rebuilds it from the committed
+    research PDF and proves it against eight independent cross-checks, including the report's
+    own headline counts. Editing a row there to record a decision would make the file disagree
+    with its own source, and `build_ownership_dataset --check` would fail — correctly, and for
+    a reason nobody would be able to act on six months later.
+
+    So the file keeps saying `rule` for 1.4.11, and the routing table says `ai`. Both are true
+    statements about different things: what the report concluded, and what we decided after it.
+    """
+    from apps.a11y.ownership import dataset
+
+    on_file = {row["number"]: row for row in dataset()["criteria"]}
+    assert on_file["1.4.11"]["owner"] == "rule", (
+        "the committed registry has been edited to record a decision. It is derived from the "
+        "research PDF and must keep matching it — put the decision in ENGINEERING_OVERRIDES "
+        "and record it in RESEARCH_CORRECTIONS.md instead"
+    )
+    assert dataset()["counts"]["by_owner"] == {"ai": 11, "human": 30, "rule": 14}
+    # And the routed view differs from it by exactly the override.
+    assert ownership("1.4.11").owner == Owner.AI
+
+
+def test_every_ownership_override_is_one_the_team_recorded(loaded):
+    """A place to disagree with the research is necessary and is also the most dangerous file
+    in this app: it can make any criterion read as checked by anyone.
+
+    Three things are held here. **The set itself**, so an addition is a decision somebody takes
+    rather than a line that appears. **Its size**, because "one recorded correction" and "a
+    growing list of exceptions" are different objects and only the first is defensible to a
+    client. And **that it is written down in prose a person can argue with** — the whole failure
+    of 27 August to 1 September was a correction agreed in a document and never carried into the
+    data, so an override with no matching entry in RESEARCH_CORRECTIONS.md is the same mistake
+    pointing the other way.
+    """
+    from pathlib import Path
+
+    from apps.a11y import ownership as ownership_module
+
+    assert set(ownership_module.ENGINEERING_OVERRIDES) == {"1.4.11"}
+
+    corrections = (Path(ownership_module.__file__).resolve().parents[3]
+                   / "docs" / "web-accessibility" / "RESEARCH_CORRECTIONS.md")
+    text = corrections.read_text(encoding="utf-8")
+    for number in ownership_module.ENGINEERING_OVERRIDES:
+        assert number in text, (
+            f"{number}'s ownership is overridden in code and RESEARCH_CORRECTIONS.md does not "
+            f"mention it. Write down what was decided and why, or drop the override."
+        )
+
+
+def test_an_override_naming_a_criterion_that_does_not_exist_is_refused():
+    """A typo in a criterion number would otherwise be a silent no-op — the override would
+    simply never apply, and the platform would go on routing the old way while the code read
+    as though it had been changed. That is the failure mode this whole area keeps producing."""
+    from apps.a11y.ownership import UnknownCriterion, applied_overrides
+
+    data = {"criteria": [{"number": "1.1.1", "owner": "ai"}]}
+    with pytest.raises(UnknownCriterion, match="1.4.11"):
+        applied_overrides(data)
 
 
 def test_a_secondary_check_never_claims_the_criterion(loaded):

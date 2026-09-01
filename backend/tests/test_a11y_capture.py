@@ -287,12 +287,25 @@ def test_summarize_says_what_was_taken():
 # ── ingest: select first, then crop ─────────────────────────────────────────────────
 
 def test_only_selected_elements_are_stored(world):
+    """**The one test in this file that pins the exact checker list per element**, and the
+    only one that should.
+
+    Every other test here is about something else — stability, ordering, carry-forward — and
+    used to assert the whole list in passing. When `graphics` was added on 27 August that
+    made five tests fail for a reason none of them was about, and they were still failing
+    five days later. They now assert what they are about. Widening coverage is a deliberate
+    edit HERE, in one place, which is the thing an exact list is worth having for.
+
+    `img.hero` is claimed by two checks and that is the design: `alt` asks whether the alt
+    text SAYS what the image means (1.1.1), `graphics` asks whether the image can be SEEN
+    (1.4.11). An accurate alt on an invisible icon passes one and fails the other.
+    """
     out = ingest_screen(tenant_id=world["t"], project_id=world["p"],
                         screen=parse_capture(json.dumps(_screen()))[0],
                         object_store=InMemoryObjectStore())
     assert out["captured"] == 3 and out["selected"] == 2 and out["skipped"] == 1
     stored = {b.selector: b.checkers for b in A11yCandidateBundle.objects.all()}
-    assert stored == {"img.hero": ["alt"], "div.fake-btn": ["semantics"]}
+    assert stored == {"img.hero": ["alt", "graphics"], "div.fake-btn": ["semantics"]}
 
 
 def test_the_unselected_element_costs_no_crop_and_no_write(world):
@@ -502,7 +515,11 @@ def test_a_carried_forward_screen_keeps_its_coverage(world):
               for r in requests_for(world["t"], world["p"], str(first.id))]
     after = [(r.checker, r.candidate.selector, r.candidate.screenshot_ref)
              for r in requests_for(world["t"], world["p"], str(second.id))]
-    assert after == before and len(after) == 2
+    # Identical, element for element — which is the whole claim. The COUNT is incidental
+    # (it moves whenever a checker is added), so what is asserted is the set of elements
+    # covered rather than how many requests they produced.
+    assert after == before
+    assert {selector for _c, selector, _ref in after} == {"img.hero", "div.fake-btn"}
 
 
 def test_a_changed_screen_is_captured_again(world):
@@ -669,7 +686,12 @@ def test_only_the_changed_screen_reaches_the_ai(world, monkeypatch):
         requests=requests_for(world["t"], world["p"], str(second.id)), trigger=_trigger,
     )
     assert result.screens == ["/checkout"]                  # and nothing from /home
-    assert len(result.from_cache) == 1 and len(result.dispatched) == 1
+    # Everything already answered comes from the cache and everything asked is the changed
+    # element — stated as "all" and "only", not as two counts, because the counts move
+    # with the number of checkers and the claim does not.
+    assert result.from_cache and result.dispatched
+    assert {r.candidate.selector for r in result.dispatched} == {"img.promo"}
+    assert all(j.verdict == "pass" for j in result.from_cache)
 
 
 # ── what dispatch reads back ────────────────────────────────────────────────────────
@@ -767,7 +789,11 @@ def test_requests_are_in_a_stable_order(world):
                   object_store=InMemoryObjectStore())
     first = [(r.checker, r.candidate.selector) for r in requests_for(world["t"], world["p"])]
     second = [(r.checker, r.candidate.selector) for r in requests_for(world["t"], world["p"])]
-    assert first == second == [("alt", "img.hero"), ("semantics", "div.fake-btn")]
+    # Twice the same, which is the claim. The elements are asserted in page order; which
+    # checks apply to them is `test_only_selected_elements_are_stored`'s question.
+    assert first == second
+    assert [selector for _c, selector in first if _c == "alt"] == ["img.hero"]
+    assert ("semantics", "div.fake-btn") in first
 
 
 def test_the_order_is_the_pages_order_not_the_rows_order(world):
@@ -782,7 +808,10 @@ def test_the_order_is_the_pages_order_not_the_rows_order(world):
                   screen=parse_capture(json.dumps(_screen(elements=elements)))[0],
                   object_store=InMemoryObjectStore())
     order = [r.candidate.selector for r in requests_for(world["t"], world["p"])]
-    assert order == [f"img.n{i}" for i in range(6)]
+    # An element appears once per check that applies to it, so the distinct selectors in
+    # first-appearance order are what carries the page-order claim.
+    seen = list(dict.fromkeys(order))
+    assert seen == [f"img.n{i}" for i in range(6)]
 
 
 def test_a_palette_image_is_converted_before_it_is_stored(world):

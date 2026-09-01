@@ -938,7 +938,7 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The sixty-four findings, and what was done about each
+## 9. The sixty-five findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
@@ -972,16 +972,21 @@ twelve-case probe. **#40 is the one that matters most**: nothing anywhere checke
 actually covers the rule it is filed under, which is *why* #38 could happen at all and could
 have happened again on a different rule.
 
-**#59–#64 came from re-reading every fix we have ever made, and then from clearing what that
+**#59–#65 came from re-reading every fix we have ever made, and then from clearing what that
 found.** Before the next full-scale audit the team asked whether every correction since 12 August is
 accurate, surgical and permanent — and, most of all, *true rather than a confident assumption*. All
 149 commits were read and every fix re-checked against the code as it stands: **200 corrections, all
 200 still present**. None of what the review turned up was a product defect, and the team's
 instruction was that everything be cleared before the audit is run rather than carried into it. So
-#59, #61, #62 and #63 are fixed, #60 is a claim withdrawn until it can be supported, and **#64 is
-the one thing here that no code change can close** — it needs a person who did not write the
-checkers. The full account is `GAP_FIX_BUILD_PLAN.md` §9.29 and §9.30 — including §9.29.D, which
-records the one item the review itself got wrong, and §9.30, which records two more.
+#59, #61, #62, #63 and #65 are fixed. #60 ends up in two halves: the corpus rows and the missing
+capability method are built, and the accuracy evidence is **#64** — the one thing here no code
+change can close, because it needs a person who did not write the checkers.
+
+**#65 is the one to read.** It is the single fact underneath #60, #62 and #63: a correction the
+team agreed on 27 August was written into a document and never into the register that actually
+routes checks. Everything else in this group is a consequence of that gap. The full account is
+`GAP_FIX_BUILD_PLAN.md` §9.29 to §9.31 — including §9.29.D and §9.30.D, which record what the
+review itself got wrong.
 
 | # | What was wrong | Status |
 |---|---|---|
@@ -1044,11 +1049,12 @@ records the one item the review itself got wrong, and §9.30, which records two 
 | 57 | **Our own check could never have found #56** | ✅ fixed |
 | 58 | Stopping a run does not stop the work | 🔬 recorded, not fixed |
 | 59 | The failing backend tests are three causes, not one | ✅ fixed |
-| 60 | **1.4.11 has no corpus rows, no capability method and no answer-key records** | ✅ claim withdrawn |
+| 60 | **1.4.11 has no corpus rows, no capability method and no answer-key records** | ✅ corpus + method built |
 | 61 | One frontend test only passes in UTC | ✅ fixed |
 | 62 | **Five more red tests than anyone had counted, all naming the same thing** | ✅ fixed |
 | 63 | **Pausing the judge would have handed 1.4.11 back to the arithmetic** | ✅ fixed |
 | 64 | The answer key still has nobody's signature on it | 🔬 recorded, not fixed |
+| 65 | **A correction agreed on 27 August never reached the data** | ✅ fixed |
 
 **#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
 Those came from *reading* the screens. These came from *running* them, and five of the six are
@@ -2538,7 +2544,7 @@ tests on exactly this rule, from both directions.
 A background of expected red is how #62 hid for five days.
 
 
-### #60 — 1.4.11 was claimed with no evidence of any kind ⭐⭐ ✅ CLAIM WITHDRAWN
+### #60 — 1.4.11 was claimed with no evidence of any kind ⭐⭐ ✅ CORPUS AND METHOD BUILT
 
 **What it is.** `graphics`, the sixth element check, added 27 August. It asks the half of *Non-text
 Contrast* that arithmetic cannot: **are the meaningful parts of the icons, charts and diagrams
@@ -2562,21 +2568,30 @@ the map of what the **AI** owns. Putting 1.4.11 in it made the two disagree, and
 said so — along with four other guards. The case for the widening was argued in a code comment; the
 registry was never changed to agree.
 
-**How it was fixed — the claim withdrawn, the check kept.** `graphics` moved out of the live checker
-list into `HELD_BACK_SELECTION_RULES`, and its criterion into `A11Y_HELD_BACK_CRITERIA`. Nothing was
-deleted: the selection rule, the prompt schema and the `background-image` style key the companion
-captures for it are all still there, and `describe_rules()` prints the check with **HELD BACK, NOT
-RUNNING** beside it so a reviewer can see what is built and idle. Bringing it back is three moves in
-two files, listed in the code.
+**How it was fixed, in two steps on the same day.** The claim was first *withdrawn* — `graphics`
+moved out of the live checker list into `HELD_BACK_SELECTION_RULES`, with nothing deleted. The team
+then asked the right question: **does the checker actually work?**
 
-**What is lost while it is held, stated plainly.** Nothing judges whether the meaningful parts of an
-icon or a chart are visible enough. 1.4.11's measurable half is unaffected — `page_rules` still
-measures every control's edge against 3:1 and still reports failures.
+It does, and the proof was already in the database. On the 31 August Meridian run it selected 59
+pictures, received 59 screenshots and returned 59 verdicts — and it was reading pixels, not markup:
 
-**What has to be true before it returns**, in order: a decision recorded in `ownership.json` rather
-than in a comment arguing against it; selection-corpus rows for 1.4.11; and answer-key records
-labelled by **someone other than the author of the checker**, which no code change can satisfy. See
-**#64**.
+> *"Screenshot shows a flat SVG illustration of a brick building. The meaningful parts — the
+> terracotta building outline against a light grey background, the arched windows (white/light on
+> the dark brown wall)…"*
+
+So the hold was lifted after a few hours and the real blocker was fixed instead — see **#65**.
+
+**Two of the three gaps are now closed.** `check_graphics` exists on the capability, so the
+criterion can be asked about outside an audit run. The selection corpus holds seven rows for
+1.4.11 — five shapes the check must reach and two it must leave alone — every one drawn from the
+rule's own written scope rather than invented, and two of the five reachable by nothing else in the
+platform: a chart drawn as a bare `<svg>`, and an icon painted as a CSS background image.
+
+**The third stays open, and is now #64.** Answer-key records have to be labelled by someone other
+than the author of the checker, and no code change satisfies that. So 1.4.11 ships **judged but not
+measured for accuracy** — which the team has accepted, and which the report should state rather
+than gloss. Worth keeping in view: in 59 verdicts this check has never once returned a failure. It
+runs, and it reasons about the right thing; whether it can say *no* is still unproven.
 
 
 ### #61 — One frontend test only passed in UTC ✅ FIXED
@@ -2624,9 +2639,10 @@ because it was noticing it. The first was a scan rule, the second was 1.4.11 its
 test suite. The pattern is not a test problem — it is what an accepted background of red does to
 every signal inside it.
 
-**How it was fixed.** All five are green, four of them without an assertion being touched. And the
-count is no longer the thing being remembered: **the a11y suite is at 1,747 passing and zero
-failing**, so the next red test is visible on the day it appears.
+**How it was fixed.** All five are green. Four of them were saying one thing — see **#65** —
+and went green when that was fixed. And the count is no longer the thing being remembered:
+**the a11y suite is at 1,765 passing and zero failing across all thirty-three files**, so the
+next red test is visible on the day it appears rather than five days later.
 
 
 ### #63 — Pausing the judge would have handed 1.4.11 back to the arithmetic ✅ FIXED
@@ -2651,12 +2667,16 @@ criterion it cannot prove — recreated by the act of pausing the check built to
 than handing it to the other half. `A11Y_HELD_BACK_CLAIMS` derives the criteria from the held-back
 map, and `suggest()` returns no suggestion for them — placed with the other positive-only guards, so
 **failures are untouched in both directions**: a control edge under 3:1 is still a proven Level AA
-defect and is still reported. The test now holds both ends: that the judged half is *held and not
-deleted*, and that while it is held nothing may claim the criterion.
+defect and is still reported. The test holds both ends: that a held check is *held and not
+deleted*, and that while it is held nothing may claim its criterion.
 
-**What it means.** Withdrawing a claim is not the same as disabling a feature, and doing the first
-by doing the second is how the original bug is rebuilt. 1.4.11 now reads as **measured but not
-judged**, which is what is true.
+**What it means.** Withdrawing a claim is not the same as disabling a feature, and doing the
+first by doing the second is how the original bug gets rebuilt.
+
+**Nothing is held back today** — `graphics` runs again and 1.4.11 is both measured and judged
+(**#65**). The guard is kept and tested anyway, because the day somebody holds a check is
+exactly the day nobody re-derives this, and it cost a near-miss on a client-facing document
+to learn it once.
 
 
 ### #64 — The answer key still has nobody's signature on it 🔬 RECORDED, NOT FIXED
@@ -2674,6 +2694,57 @@ so the number is read for what it is, and because **#60** cannot be reversed wit
 `#open-exports` and `#newsletter-email`, two judgement calls the key's own author flagged both ways;
 screenshot paging; and **#58** — terminating a run still does not stop the agent, so if a run must
 actually end, stop the companion.
+
+
+### #65 — A correction agreed on 27 August never reached the data ⭐⭐ ✅ FIXED
+
+**What it is.** The single fact underneath #60, #62 and #63, and the reason all three existed.
+
+**What was observed.** `RESEARCH_CORRECTIONS.md` **R14**, agreed 27 August, says of WCAG 1.4.11:
+*"the rationale is correct and the owner is not."* The research report gives the criterion to the
+arithmetic; the team decided the judge decides it. Both halves of the check were built the same day.
+
+**And `ownership.json` was never changed.** The register that actually routes every check still said
+`"owner": "rule"`.
+
+So from 27 August the code assumed one thing and the data said another. Five separate self-checks
+reported the disagreement **every day for five days**, and every one was read as background red:
+
+| Guard | What it was saying |
+|---|---|
+| the ownership drift test | the AI's map claims 1.4.11 and the register does not give it to the AI |
+| the register/map equality test | the checker map is not the five the POC shipped |
+| the POC element-check list | the set of checks changed without a decision |
+| the capability-surface check | there is no `check_graphics` method |
+| the selection corpus (both halves) | 1.4.11 is claimed with no example behind it |
+
+**What it means.** *A decision recorded only in prose is not a decision the platform can act on.*
+Every layer above the register had already been changed to match R14 — that is why the checker
+worked. Only the register was left, and the register is what routes.
+
+**How it was fixed — and deliberately not by editing the register.** `data/ownership.json` is a
+**derivation**, not a decision record: it is rebuilt from the committed research PDF and proved
+against eight independent cross-checks, including the report's own headline counts. Editing a row
+there would make the file disagree with its own source, and the rebuild would fail — correctly.
+
+So the decision lives in **`ownership.ENGINEERING_OVERRIDES`**, applied when the register is loaded.
+The committed file keeps saying what the report says; the routing table carries what the team
+decided. Both are true statements about different things. Three guards keep it honest: the file is
+asserted to be unedited, the override set is exactly one criterion, and **every override must name a
+criterion that appears in `RESEARCH_CORRECTIONS.md`** — because a correction in code with none in
+prose is this same failure pointing the other way.
+
+**Also completed, both missing since 27 August:** `check_graphics` on the capability, and seven
+selection-corpus rows for 1.4.11 — five shapes the check must catch and two it must leave alone,
+every one taken from the rule's own written scope rather than invented. Two of the five can be seen
+by nothing else in the platform: a chart drawn as a bare `<svg>` (never announced, so the alt check
+skips it on purpose) and an icon painted as a CSS background image (no tag or attribute says it is a
+picture).
+
+**What it leaves.** Six element checks, all six exposed, register and code agreeing for the first
+time since 27 August, and 1.4.11 both measured and judged. The conformance statement is now
+*stricter* than before any of this: the criterion cannot read as supported unless the judge has
+actually looked.
 
 ---
 

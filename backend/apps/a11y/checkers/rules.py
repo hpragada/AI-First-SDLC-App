@@ -26,12 +26,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from integrations.types import (
-    A11Y_CHECKER_CRITERIA,
-    A11Y_HELD_BACK_CRITERIA,
-    A11Y_PASS,
-    A11yCandidate,
-)
+from integrations.types import A11Y_CHECKER_CRITERIA, A11Y_PASS, A11yCandidate
 
 #: The element checkers, in the order a page's requests are emitted. Fixed so that two runs over
 #: the same page produce the same batch in the same order — a judgment run that is not
@@ -41,12 +36,14 @@ from integrations.types import (
 #: asks whether an element is pretending to be something, the other whether a container's
 #: visible arrangement exists in the markup at all.
 #:
-#: `graphics` (QA-25) is built and is deliberately NOT in this list — see
-#: `HELD_BACK_SELECTION_RULES` below and `integrations.types.A11Y_HELD_BACK_CRITERIA` for why,
-#: what is lost while it is held, and what has to be true before it comes back. Held rather than
-#: deleted: nothing about it was wrong except the claim that it covers a criterion the ownership
-#: registry gives to `rule`.
-CHECKERS: tuple[str, ...] = ("alt", "semantics", "structure", "color", "label")
+#: `graphics` (QA-25) is the second half of a criterion in the same way, and its other half is
+#: not a checker at all — it is `apps.a11y.page_rules`, which measures the controls while this
+#: judges the pictures. 1.4.11 is covered by both together and by neither alone: correction R14
+#: settled that on 27 August, and `ownership.ENGINEERING_OVERRIDES` carries it into routing.
+#:
+#: It sat in `HELD_BACK_SELECTION_RULES` for part of 1 September while that last step was taken.
+#: Nothing about the check was wrong; what was missing was the registry agreeing with it.
+CHECKERS: tuple[str, ...] = ("alt", "semantics", "structure", "color", "label", "graphics")
 
 #: The computed style properties the rules read. Named here because this is also the list the
 #: companion has to capture (QA-11b): a property missing from the capture silently turns every
@@ -883,29 +880,9 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
         applies=_applies_label,
         settles=_settles_label,
     ),
-)
-
-
-#: Built, reviewed, and not running. One entry today: `graphics`.
-#:
-#: **Why this is a tuple and not a deletion.** A check that was wrong gets deleted. This one is
-#: not wrong — it selects what its `covers` prose says it selects, its prompt schema is written,
-#: and `background-image` is in `STYLE_KEYS` for it alone. What it lacked was the right to say it
-#: answers 1.4.11, which `apps/a11y/data/ownership.json` gives to `rule`. Keeping the rule here
-#: means the next person reads the scope somebody argued for rather than rebuilding it from a
-#: git log.
-#:
-#: `describe_rules()` prints these separately and says they are held, because a reviewer reading
-#: the rule set has to be able to tell what will run from what will not.
-#:
-#: **To bring it back:** move the entry below into `SELECTION_RULES`, add `"graphics"` to
-#: `CHECKERS`, and move its criteria from `A11Y_HELD_BACK_CRITERIA` into
-#: `A11Y_CHECKER_CRITERIA` — after the ownership registry has been changed to agree, which is
-#: the step that was skipped last time.
-HELD_BACK_SELECTION_RULES: tuple[SelectionRule, ...] = (
     SelectionRule(
         checker="graphics",
-        criteria=A11Y_HELD_BACK_CRITERIA["graphics"],
+        criteria=A11Y_CHECKER_CRITERIA["graphics"],
         covers="every graphic a sighted person reads meaning from — images, SVGs, drawing "
                "surfaces, anything with role=img, icons drawn by a font, and icons painted as "
                "a CSS background image; the question is whether the parts that carry the "
@@ -919,6 +896,23 @@ HELD_BACK_SELECTION_RULES: tuple[SelectionRule, ...] = (
         applies=_applies_graphics,
     ),
 )
+
+
+#: Built, reviewed, and deliberately not running. **Empty today.**
+#:
+#: Kept as a mechanism rather than deleted, because a check belongs here when it is not wrong
+#: but its claim cannot yet be supported — and the alternative, commenting it out, loses the
+#: scope somebody argued for and leaves nothing for `describe_rules()` to show a reviewer.
+#:
+#: `graphics` sat here for part of 1 September, while the ownership registry was brought into
+#: line with correction R14. What that taught is in `A11Y_HELD_BACK_CLAIMS`: a hold must
+#: WITHDRAW its criterion from positive conformance claims, never leave it to whatever else
+#: happens to touch that criterion.
+#:
+#: To hold a check: move its `SelectionRule` here, take its name out of `CHECKERS`, and move
+#: its criteria from `A11Y_CHECKER_CRITERIA` into `A11Y_HELD_BACK_CRITERIA`. Leave it in
+#: `A11Y_ALL_CHECKER_CRITERIA` so verdicts recorded before the hold still read back.
+HELD_BACK_SELECTION_RULES: tuple[SelectionRule, ...] = ()
 
 _RULES_BY_CHECKER: dict[str, SelectionRule] = {rule.checker: rule for rule in SELECTION_RULES}
 

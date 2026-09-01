@@ -663,7 +663,8 @@ def test_the_poc_element_checks_are_untouched():
     element is pretending to be a control, the other whether a container's visible arrangement
     is in the markup at all. See `A11Y_CHECKER_CRITERIA` for that in full.
     """
-    assert set(A11Y_CHECKER_CRITERIA) == {"alt", "semantics", "structure", "color", "label"}
+    assert set(A11Y_CHECKER_CRITERIA) == {"alt", "semantics", "structure", "color", "label",
+                                          "graphics"}
     assert set(A11Y_ALL_CHECKER_CRITERIA) == (set(A11Y_CHECKER_CRITERIA)
                                              | set(A11Y_JOURNEY_CRITERIA)
                                              | set(A11Y_HELD_BACK_CRITERIA))

@@ -92,22 +92,23 @@ def test_the_element_checkers_judge_these_criteria_and_no_others():
     """R7 / team decision D5: 1.1.1, 1.3.1, 4.1.2, 1.4.1 and 2.5.3 shipped in the POC, and 2.4.6
     is Phase 2 — a rule quietly claiming it would put a Phase-2 criterion in a POC report.
 
-    **1.4.11 joined the set in QA-25 and is HELD BACK, so it is not here.** `graphics` judges
-    the part of that criterion no rule can — which parts of an icon or a chart carry the
-    meaning, and whether they can be made out — and the check is written and still selects
-    what its scope says it selects. What it does not have is the registry's agreement:
-    `ownership.json` gives 1.4.11 to `rule`, this map is what the AI owns, and the two
-    disagreeing is what five guards said for five days. The measurable half is unaffected;
-    `apps.a11y.page_rules` still checks every control's edge against 3:1.
+    **1.4.11 joined the set in QA-25, and it is the one entry here that is only half a
+    criterion.** The other half is `apps.a11y.page_rules`, which measures whether a control's
+    edge reaches 3:1 deterministically; `graphics` judges the part no rule can — which parts
+    of an icon or a chart carry the meaning, and whether they can be made out. Neither half
+    covers 1.4.11 alone, and this test says nothing about whether the other half exists;
+    `test_a11y_owner_capability` is what proves that.
 
-    **The criterion is still pinned, one line down.** A held-back check that stopped being
-    named anywhere would be a deleted check with extra steps, and the point of holding it is
-    that somebody comes back to it.
+    It was held back for part of 1 September, while the ownership registry was brought into
+    line with correction R14 — the registry gave 1.4.11 to `rule` and this map is what the AI
+    owns, and the two disagreeing is what five guards reported for five days. Nothing here
+    should be held now, and the second assertion says so rather than leaving it unsaid.
     """
     covered = {c for rule in SELECTION_RULES for c in rule.criteria}
-    assert covered == {"1.1.1", "1.3.1", "4.1.2", "1.4.1", "2.5.3"}
-    held = {c for rule in HELD_BACK_SELECTION_RULES for c in rule.criteria}
-    assert held == {"1.4.11"}
+    assert covered == {"1.1.1", "1.3.1", "4.1.2", "1.4.1", "2.5.3", "1.4.11"}
+    assert HELD_BACK_SELECTION_RULES == (), (
+        "a check is held back and this test has not been told which or why"
+    )
 
 
 # ── alt: WCAG 1.1.1 ──────────────────────────────────────────────────
@@ -910,14 +911,15 @@ def test_selection_is_stable_and_in_page_then_checker_order():
         _coloured(tag="div", role="button", text="Overdue", selector="div.b"),
     ]
     once = [(r.checker, r.candidate.selector) for r in select(page)]
-    # The image is queued ONCE while `graphics` is held back. It was queued twice between 27
-    # August and 1 September, and that was the design rather than a duplicate: `alt` asks
-    # whether it SAYS what it means (1.1.1), `graphics` asks whether it can be SEEN (1.4.11),
-    # and an icon passes one and fails the other routinely. When the hold lifts, the second
-    # row comes back here — and it belongs directly after `alt`, because selection order
-    # follows `CHECKERS` order and a run that is not reproducible cannot be scored.
+    # The image is queued twice, and that is the design rather than a duplicate: `alt` asks
+    # whether it SAYS what it means (1.1.1), `graphics` asks whether it can be SEEN (1.4.11).
+    # An icon passes one and fails the other routinely.
+    #
+    # The order is not incidental either: within one element it follows `CHECKERS` order, so a
+    # second run over the same page produces the same batch and the result stays comparable
+    # against the golden set.
     assert once == [
-        ("alt", "img.a"),
+        ("alt", "img.a"), ("graphics", "img.a"),
         ("semantics", "div.b"), ("color", "div.b"),
     ]
     assert once == [(r.checker, r.candidate.selector) for r in select(page)]
@@ -925,7 +927,7 @@ def test_selection_is_stable_and_in_page_then_checker_order():
 
 def test_selection_accepts_the_companion_json_as_well_as_objects():
     raw = [{"tag": "img", "attrs": {"alt": "chart"}, "selector": "img.a", "route": "/home"}]
-    assert [r.checker for r in select(raw)] == ["alt"]        # + "graphics", once unheld
+    assert [r.checker for r in select(raw)] == ["alt", "graphics"]
 
 
 def test_an_unknown_capture_field_never_breaks_selection():
@@ -978,9 +980,9 @@ def test_the_rules_import_and_run_with_no_django_settings():
         cwd=backend, env=env, capture_output=True, text=True,
     )
     assert proof.returncode == 0, proof.stderr
-    # One while `graphics` is held back; two when it returns. The number is incidental —
+    # Two, not one: an <img> is queued for `alt` and for `graphics`. The number is incidental —
     # what this proves is that the rules ran at all with no Django on the path.
-    assert proof.stdout.strip() == "1"
+    assert proof.stdout.strip() == "2"
 
 
 # ── what a complete answer has to contain (D-A11Y-5) ─────────────────

@@ -1337,9 +1337,9 @@ team took `/staff/shelf-audit` out to stay under the judging cap.
 > §3 is the plan as written; §9 is what running it added: **thirty-five findings across twenty-four
 > sections** (§9.1–§9.23), all built — and it has gone on growing since that was written. **§9.24
 > to §9.28** carry the 25 and 31 August and 1 September findings and are also all built; **§9.29 is
-> the 1 September re-reading of every fix ever made, and built nothing, and §9.30 is what the
-> team asked for in answer to it — everything that review found, cleared, with the a11y suite at
-> 1,747 passing and zero failing.** #19–#35 were produced by a person
+> the 1 September re-reading of every fix ever made, and built nothing; §9.30 and §9.31 are what the
+> team asked for in answer to it — everything that review found, cleared, and the sixth check
+> back in with the registry agreeing, at 1,765 passing and zero failing.** #19–#35 were produced by a person
 > watching the product work; #36–#45 by putting twelve textbook WCAG failures through the
 > selection code after the team asked what we do and do not capture. **Every built one has a
 > green test suite standing over it** — which is the point, and why they are written up at
@@ -4039,6 +4039,12 @@ shown to exist.
 
 ### 9.30 Clearing everything before the next audit — 1 September ✅ (BUILT)
 
+> **Read with §9.30.A. The hold described there lasted part of one day.** The team asked whether
+> the checker actually worked; it does, and the evidence is in §9.31. `graphics` runs
+> again, the ownership registry now agrees it is AI-owned, and the two things missing since
+> 27 August — the capability method and the corpus rows — are built. What stays true from
+> §9.30 is §9.30.C: the guard that stops a future hold handing a criterion to the wrong half.
+
 §9.29 was a review and built nothing. The team's answer to it was short: *before I click Run audit,
 everything has to be fixed and cleared.* This is that work. **Route B was chosen for 1.4.11** — hold
 the claim back rather than complete it — and the investigation that followed showed that choice was
@@ -4167,3 +4173,131 @@ at 04:17 UTC on 1 September and hold 31 August code in memory. Every fix in §9.
 disk only until they are restarted — **worker first, then API** (the deploy order of `b8617a1`,
 because the verify timeout travels on the run's payload and an older worker cannot read it), and the
 companion started fresh so it captures `border-color`, `outline-color` and the parent description.
+
+
+### 9.31 The sixth check goes back in, and the registry finally agrees — 1 September ✅ (BUILT)
+
+§9.30 held `graphics` back because the map of what the AI owns and the ownership registry disagreed
+about 1.4.11, and five guards had been saying so for five days. The team then asked the right
+question: **does the checker actually work?**
+
+**It does, and the evidence was already in the database.** From the 31 August Meridian run:
+
+```
+graphics elements selected     59
+screenshots delivered          59      every one
+verdicts returned              59      every one
+   pass                        58      confidence 0.85-1.00, mean 0.91
+   uncertain                    1      0.50
+routed to a person              5
+background-image captured     yes
+```
+
+Selection → capture → crop → dispatch → judge → verdict → cache → finding: **every stage fired and
+nothing fell through.** And it is reading pixels, not markup — the judge's own words on one page:
+
+> *"Screenshot shows a flat SVG illustration of a brick building. The meaningful parts — the
+> terracotta building outline against a light grey background, the arched windows (white/light on
+> the dark brown wall)…"*
+
+**The caveat, kept in view: 58 pass, 1 uncertain, 0 fail.** It has never returned a failure. So it
+runs, looks at the right thing and answers with high confidence; whether it can say *no* is
+unproven, and only the answer key settles that (§9.30.F, #64).
+
+So the hold was lifted — properly, which took four things rather than one.
+
+#### 9.31.A The decision was made on 27 August and never reached the data
+
+`RESEARCH_CORRECTIONS.md` **R14**, agreed 27 August, says of 1.4.11: *"the rationale is correct and
+the owner is not."* Both halves were built the same day. **`ownership.json` was never changed.**
+
+That is the whole five-day failure in one sentence: a correction agreed in prose, and the registry
+— the thing that actually routes — never told. Everything downstream had already assumed the
+correction; only the data disagreed, and only the guards noticed.
+
+#### 9.31.B Carried into the data as an override, not an edit ⭐
+
+`data/ownership.json` is **not a decision record**. `ownership_build` rebuilds it from the committed
+research PDF and proves it against eight independent cross-checks — the report's headline counts
+(RULE 14 / AI 11 / HUMAN 30), its enumeration of the fourteen rule-primary criteria, its
+per-principle headers, and five more. Editing a row there to record a decision would make the file
+disagree with its own source, and `build_ownership_dataset --check` would fail. Correctly.
+
+So the decision lives in **`ownership.ENGINEERING_OVERRIDES`**, applied at load:
+
+* `dataset()` stays a faithful read of the file, and every test holding it to the report stays green;
+* `CriterionOwnership` — the table every routing and conformance decision actually reads — carries
+  1.4.11 as **`ai`**, with the rule half recorded as a `secondary_check`, exactly the shape 1.1.1
+  already has;
+* the two views are asserted to differ by **exactly the override**, written as
+  `RULE_PRIMARY_14 minus 1.4.11` rather than as a second hand-typed list, so a second departure
+  cannot arrive quietly.
+
+Three guards hold it: the committed file is unedited, the override set is exactly `{1.4.11}`, and
+**every override must name a criterion that appears in `RESEARCH_CORRECTIONS.md`** — a correction in
+code with none in prose is the same failure as R14's, pointing the other way. An override naming a
+criterion that does not exist is refused rather than silently doing nothing.
+
+#### 9.31.C The two things missing since 27 August, now built
+
+* **`check_graphics` on the capability.** Five element checks were exposed, not six. An audit was
+  unaffected — the audit path reads its checker list from the rules — so this was invisible to every
+  run and visible only to the test that had been failing about it since the day the checker landed.
+  What could not be done was asking the capability about 1.4.11 for one element, which is how
+  anything outside an audit reaches the criterion.
+* **Seven selection-corpus rows for 1.4.11** — five failure shapes it must reach, two it must leave
+  alone, every one drawn from the rule's own `covers` and `skips` prose rather than invented. **Two
+  of the five are reachable by nothing else in the platform**, and they are why `graphics` is a
+  separate check rather than folded into `alt`:
+
+  | Shape | Why only this check sees it |
+  |---|---|
+  | a chart drawn as a bare `<svg>` | never announced, so `alt` skips it deliberately — and it is still drawn on the screen |
+  | an icon painted as a CSS background image | no tag, role or attribute says it is a picture; it is visible only because `background-image` is in `STYLE_KEYS` for this check |
+
+  The negative side is deliberately narrow, because the rule's own `skips` says *"graphics with no
+  rendered box, and nothing else"*. A photograph is **not** skipped: no rule can tell a photograph
+  from a diagram, and the standard's "essential presentation" exemption is a judgment the judge
+  makes and reports as not applicable.
+
+#### 9.31.D Eleven tests, fixed for the right reason this time
+
+§9.30 recorded that sixteen of the twenty-one red tests went green when `graphics` was withdrawn.
+Putting it back turned eleven of those red again — which is the correct outcome, because **those
+eleven were never fixed; they were made moot.** They are fixed now:
+
+* **Five in `test_a11y_capture` and six in `test_a11y_report`** asserted an exact checker list, or a
+  literal count of requests, in tests about something else entirely — stability, ordering,
+  carry-forward, "the report is still produced". Each now asserts *its own subject*: sets of
+  elements rather than lists of checks, `len(_selected(world))` rather than `== 2`.
+* **Exactly one test keeps the exact list** — `test_only_selected_elements_are_stored`, whose
+  subject that genuinely is. Widening coverage is now one deliberate edit in one place, which is
+  the only thing an exact list is worth having for.
+* The tempting alternative — deriving the expected set from the rules — was rejected: a test that
+  agrees with the code by construction proves nothing.
+
+Two fixtures also had to change substance rather than arithmetic: `_judge_everything(world)` now
+answers **every selected check** instead of a hand-named `("alt", "semantics")`, because a complete
+run reading as incomplete the moment a sixth check starts selecting elements is not a test problem,
+it is a fixture asserting a fact about August.
+
+#### 9.31.E Where this leaves the run
+
+```
+a11y backend      1,765 passing   0 failing   (33 files)
+adjacent suites     126 passing   0 failing
+scorer               47 passing   0 failing
+frontend            416 passing   0 failing
+migrations          none needed
+```
+
+Six element checks live, all six exposed on the capability, nothing held back, registry and code
+agreeing for the first time since 27 August. 1.4.11 is now **measured and judged**, and the
+conformance guard requires the judge to have looked before the criterion can read as supported —
+which is stricter than it was before any of this started.
+
+**Still open and unchanged:** the answer key is 173 draft-unadjudicated records, so 1.4.11 ships
+with no accuracy figure — accepted by the team, and #64 records it. §9.30.F holds the rest.
+
+**And still the team's to do before the run:** restart the worker, then the API and frontend, then
+start the companion fresh. Everything above is on disk; none of it is in the running processes.

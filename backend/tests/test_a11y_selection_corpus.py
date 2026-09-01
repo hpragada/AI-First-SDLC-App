@@ -168,6 +168,52 @@ CORPUS: list[tuple[str, str, CapturedElement, bool]] = [
         parent_styles={**{k: "" for k in STYLE_KEYS},
                        "background-color": "rgb(255, 224, 224)"}), False),
 
+    # ══ 1.4.11 Non-text Contrast — the judged half ═══════════════════════════════════
+    #
+    # The other half of this criterion is arithmetic and lives in `apps.a11y.page_rules`,
+    # which measures whether a control's edge reaches 3:1. These rows are about the half no
+    # measurement reaches: whether the parts of a picture that carry the meaning can be made
+    # out at all. Somebody has to know which parts matter before any ratio means anything.
+    #
+    # **Two of these are reachable by nothing else in the platform**, and they are the reason
+    # `graphics` has a wider scope than `alt` rather than being folded into it. Both are marked
+    # below.
+    ("1.4.11", "a chart drawn as a bare <svg>: never announced, always seen",
+     # ONLY `graphics` reaches this. `alt` skips it deliberately — with no role, no name and
+     # no <title> it is never announced, so there is no text alternative to judge. It is still
+     # drawn on the screen and a sighted person still reads a trend off it.
+     el(tag="svg", html="<svg><polyline points='0,9 5,4 9,7' stroke='#e8e8e8'/></svg>"), True),
+    ("1.4.11", "an icon painted as a CSS background image, named by no tag or attribute",
+     # ONLY `graphics` reaches this, and only because `background-image` is in STYLE_KEYS for
+     # it. A <span> whose entire content is a picture loaded by a stylesheet has no tag, role
+     # or attribute that says so; without this key it is invisible to every check we have.
+     el(tag="span", attrs={"class": "flag"},
+        styles={**{k: "" for k in STYLE_KEYS}, "background-image": 'url("/i/warn.svg")'}),
+     True),
+    ("1.4.11", "a <canvas> chart whose series are told apart by colour alone",
+     el(tag="canvas", html="<canvas id='trend'></canvas>"), True),
+    ("1.4.11", "an icon drawn by a font at a Private Use codepoint",
+     # Written as an escape rather than as the character, for the reason the 1.1.1 row gives.
+     el(tag="span", text="\ue900", html="<span class=ico>\ue900</span>"), True),
+    ("1.4.11", "a graphical submit button, where the glyph IS the control",
+     el(tag="input", attrs={"type": "image", "src": "go.png"}, html="<input type=image>"),
+     True),
+    # — the same shapes, correctly, and the rule's one documented skip —
+    ("1.4.11", "a graphic with no rendered box: the only thing this rule skips",
+     # `skips` says "graphics with no rendered box, and nothing else", and this is that
+     # sentence made executable. Deliberately the whole of the negative side for selection: a
+     # photograph is NOT skipped here, because a rule cannot tell a photograph from a diagram
+     # and the standard's "essential presentation" exemption is a judgment the judge makes and
+     # reports as not applicable.
+     el(tag="img", attrs={"alt": "x"}, rendered=False), False),
+    ("1.4.11", "a panel with a gradient behind it: a colour ramp is not a graphic",
+     # `background-image` covers gradients too, so the rule looks for `url(` — the form that
+     # means an image file was actually loaded. Without this row, every gradient hero on every
+     # page would be sent to the judge as a picture.
+     el(tag="div", attrs={"class": "hero"}, text="Welcome",
+        styles={**{k: "" for k in STYLE_KEYS},
+                "background-image": "linear-gradient(180deg, #fff, #eee)"}), False),
+
     # ══ 2.5.3 Label in Name ══════════════════════════════════════════════════════════
     ("2.5.3", "a button whose announced name shares nothing with its visible words",
      el(tag="button", text="Buy now", accessible_name="Purchase",

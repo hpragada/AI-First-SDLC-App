@@ -256,6 +256,19 @@ Recording it as rule-only is how the second half went unbuilt for four tasks whi
 
 **Fixed 2026‑08‑27 (QA‑25).** The measurable half is `page_rules.contrast_failures`; the judged half is the sixth element checker, `graphics`, whose scope is deliberately *wider* than `alt`'s — 1.4.11 is about what can be **seen**, not about what assistive technology is **told**, so a graphic that is never announced is still in scope. `test_a11y_owner_capability` asserts both halves exist and would fail if either were removed.
 
+> **Amended 2026‑09‑01 — the correction was agreed, and for five days nothing carried it into the data.**
+> Everything above was written and agreed on 27 August, and both halves were built the same day. What was never done is the step that makes a decision operative: **`ownership.json` still said `"owner": "rule"`.**
+>
+> That mattered more than it sounds. `integrations.types.A11Y_CHECKER_CRITERIA` is the map of what the **AI** owns, and it had 1.4.11 in it from the day `graphics` shipped. The registry did not. Five separate guards reported the disagreement every single day for five days — the ownership drift test, the registry/map equality test, the POC element-check list, the capability-surface check, and both halves of the selection corpus — and were read as background red. On 1 September `graphics` was briefly held back to make the code agree with the registry, which was the wrong half to move.
+>
+> **What that half-day exposed is worth more than the fix.** With the judge paused, 1.4.11's measurable half is recorded under the `rule` engine — the engine the registry named as owner — so the conformance guard would have found an entitled engine had looked and answered **"Supports 1.4.11"** for a page whose buttons all had visible edges and whose icons nothing had judged. Pausing the check would have recreated the exact bug the check was built to fix. Holding a check back now **withdraws its criterion from positive claims** rather than leaving it to whatever else touches the criterion (`A11Y_HELD_BACK_CLAIMS`).
+>
+> **Carried into the data on 1 September**, and deliberately *not* by editing the registry file. `data/ownership.json` is a derivation — `ownership_build` rebuilds it from the committed PDF and proves it against eight cross-checks including the report's own headline counts — so an edit there would make the file disagree with its own source. The decision lives in `ownership.ENGINEERING_OVERRIDES` instead, applied at load, so the file keeps saying what the report says and `CriterionOwnership` carries what we decided. `test_a11y_ownership` holds three things about it: the file is unedited, the override set is exactly `{1.4.11}`, and every override names a criterion that appears in this document.
+>
+> Also completed the same day, both missing since 27 August: **`check_graphics` on the capability** (without it the criterion could be selected, dispatched and judged in an audit but never asked about directly), and **seven selection-corpus rows for 1.4.11** — five failure shapes it must reach and two it must leave alone, drawn from the rule's own `covers` and `skips` prose. Two of the five are reachable by nothing else in the platform: a bare `<svg>` with no name, and an icon painted as a CSS background image.
+>
+> **The lesson, and it is the third time this document has recorded a version of it:** a correction agreed in prose and not carried into the data is not a correction. The registry is what routes; everything else is commentary.
+
 ---
 
 ## R15 — Six rule-owned criteria have thinner scanner coverage than their rationale describes — **real, but not holes**

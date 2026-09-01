@@ -257,23 +257,30 @@ A11Y_CHECKER_CRITERIA: dict[str, tuple[str, ...]] = {
     "structure": ("1.3.1",),            # Info and Relationships — is the visible structure real?
     "color": ("1.4.1",),                # Use of Color — is meaning carried by colour alone?
     "label": ("2.5.3",),                # Label in Name — does the visible label match the AN?
+    "graphics": ("1.4.11",),            # Non-text Contrast — can you SEE the meaningful parts?
 }
 
-#: **Why `graphics` exists, and why it is an AI check when 1.4.11 is recorded as rule-owned.**
+#: **Why `graphics` exists, and why it is the AI that owns 1.4.11.**
 #: 1.4.11 is a criterion in two halves. *Can you see where the controls are?* is colours and a
 #: threshold, and `apps.a11y.page_rules` decides it deterministically. *Are the meaningful parts
 #: of the icons, charts and diagrams visible enough?* requires knowing which parts of a picture
 #: carry meaning before any ratio can be computed, and nothing deterministic knows that.
 #:
-#: The registry said so itself, in its own rationale for this criterion — *"computable, but
-#: 'which graphics matter' needs some review"* — and then recorded the owner as `rule` anyway.
-#: That is how the second half went unbuilt for four tasks while the criterion was reported as
-#: covered. Both halves ship together or the criterion is not covered; see QA-25.
+#: Addendum A gave the criterion to `rule`, and said why it should not have in the same cell —
+#: *"computable, but 'which graphics matter' needs some review"*. That is how the second half
+#: went unbuilt for four tasks while the criterion was reported as covered. **Correction R14
+#: (agreed 27 August) settles it: the rationale is right and the owner is not**, and
+#: `ownership.ENGINEERING_OVERRIDES` carries that into the routing table — `ai` decides, with
+#: `page_rules` recorded as the rule engine's contribution. Both halves ship together or the
+#: criterion is not covered; see QA-25.
 #:
-#: **That argument is recorded, and it did not survive contact with the registry.** It was
-#: made in this comment and nowhere else — `ownership.json` still says `rule`, so the map and
-#: the registry disagreed and five guards said so. The case above is the case for changing
-#: the registry; until somebody does, the entry lives below rather than above.
+#: **The correction was agreed on 27 August and the registry was not changed until 1 September**,
+#: and the gap between those two dates is the whole lesson. For five days this map said the AI
+#: owned 1.4.11 while the registry said `rule`, and five separate guards reported the
+#: disagreement every single day: the ownership drift test, the registry-map equality test, the
+#: POC element-check list, the capability-surface check, and both halves of the selection corpus.
+#: They were read as background red. A decision recorded only in prose is not a decision the
+#: platform can act on.
 #:
 #: **Its scope is deliberately wider than `alt`'s, and the difference is the point.** `alt` asks
 #: what assistive technology is told, so it skips a graphic that is never announced. This asks
@@ -281,57 +288,38 @@ A11Y_CHECKER_CRITERIA: dict[str, tuple[str, ...]] = {
 #: still in scope. The two checks look at many of the same elements and are asking genuinely
 #: different questions about them.
 
-#: Checks that are BUILT and are not running, with the criterion each one is holding.
+#: Checks that are BUILT and are deliberately not running, with the criterion each one holds.
 #:
-#: **This is not a disabled feature. It is a claim withdrawn until it can be supported**, and the
-#: distinction is the reason this map exists instead of a deleted line. Everything `graphics`
-#: needs is still here — its selection rule, its prompt schema, the `background-image` style key
-#: the companion captures for it. What it does not have is permission to say it covers 1.4.11.
+#: **Empty today, and kept anyway** — for `A11Y_HELD_BACK_CLAIMS` below, which is the part that
+#: has to exist before anything is ever put in here again.
 #:
-#: **Why it is held.** `apps/a11y/data/ownership.json` records 1.4.11 as owned by `rule`, and
-#: `A11Y_CHECKER_CRITERIA` is the map of what the **AI** owns in the POC. Putting 1.4.11 in it
-#: made the two disagree, and the platform said so immediately and kept saying it: the ownership
-#: drift guard, the registry-map equality test, the POC element-check list, the capability
-#: surface check and both halves of the selection corpus all went red on 27 August and were read
-#: for five days as background noise. Five guards agreeing is not noise.
+#: A check goes in here when it is not wrong but its claim cannot be supported: the rule, the
+#: prompt schema and the style keys stay exactly where they are, and only the permission to say
+#: it covers a criterion is withdrawn. `checkers.rules.HELD_BACK_SELECTION_RULES` holds the
+#: matching selection rule, `describe_rules()` prints it as **HELD BACK, NOT RUNNING**, and
+#: `A11Y_ALL_CHECKER_CRITERIA` keeps validating it so a verdict recorded before the pause still
+#: reads back.
 #:
-#: **What is lost while it is held, stated plainly.** Nothing judges whether the meaningful parts
-#: of an icon or a chart are visible enough. 1.4.11's measurable half is unaffected —
-#: `apps.a11y.page_rules` still measures every control's edge against 3:1 and still reports
-#: failures — so the criterion is checked, by the engine the registry gives it to, and the
-#: judged half is deferred rather than faked.
-#:
-#: **What has to be true before it comes back**, in the order it has to happen:
-#:   1. a decision on whether 1.4.11 is AI-owned, recorded in `ownership.json` rather than in a
-#:      code comment arguing against it;
-#:   2. selection-corpus rows for 1.4.11 — the shapes it must catch and the shapes it must leave
-#:      alone — so the criterion cannot be claimed with nothing behind it again;
-#:   3. answer-key records labelled by someone other than the author of the checker, so the
-#:      accuracy harness can report how often it is right. Today it holds 0 against alt 32,
-#:      colour 35, label 42, semantics 33 and structure 31.
-#:
-#: **To bring it back**, move the entry from here into `A11Y_CHECKER_CRITERIA` and move
-#: `_GRAPHICS_RULE` in `apps.a11y.checkers.rules` from `HELD_BACK_SELECTION_RULES` into
-#: `SELECTION_RULES`. Two lines, one place each — and the guards above will tell you at once if
-#: step 1 was skipped.
-A11Y_HELD_BACK_CRITERIA: dict[str, tuple[str, ...]] = {
-    "graphics": ("1.4.11",),            # Non-text Contrast — can you SEE the meaningful parts?
-}
+#: `graphics` sat here for part of 1 September while the registry was brought into line with
+#: R14. What that half-day taught is written below, and it is why this is a mechanism rather
+#: than a commented-out line.
+A11Y_HELD_BACK_CRITERIA: dict[str, tuple[str, ...]] = {}
 
-#: The criteria a held-back check was answering part of, flattened — and NO conformance
-#: claim may be made about any of them while it is held.
+#: The criteria a held-back check was answering part of — and NO conformance claim may be made
+#: about any of them while it is held.
 #:
-#: **Without this, holding a check back would recreate the exact bug that built it.** 1.4.11
-#: is a criterion in two halves: `page_rules` measures whether a control's edge reaches 3:1,
-#: and `graphics` judged whether the meaningful parts of an icon or a chart can be made out.
-#: The registry gives the criterion to `rule`, so with `graphics` gone the measurable half
-#: alone would satisfy the conformance guard and a page whose buttons all have visible edges
-#: would read **Supports 1.4.11** — with nothing having looked at a single icon. That is
-#: QA-25 word for word: a narrow pass claiming a criterion it cannot prove.
+#: **This is here because holding a check back nearly recreated the bug that built it.** On
+#: 1 September `graphics` was held for a few hours, and one test refused to go green: 1.4.11's
+#: measurable half is recorded under the `rule` engine, so with the judge paused the conformance
+#: guard would have found an entitled engine had looked and answered **Supports 1.4.11** — for a
+#: page whose buttons all had visible edges and whose icons nothing had judged. That is QA-25
+#: word for word: a narrow pass claiming a criterion it cannot prove.
 #:
-#: So the claim is withdrawn, not handed to the other half. Failures are untouched in both
-#: directions — a control edge under 3:1 is still a proven Level AA defect and still
-#: reported — because only the POSITIVE direction was ever unsafe here.
+#: So a hold **withdraws the claim** rather than handing it to whatever else touches the
+#: criterion. Failures are untouched in both directions — a control edge under 3:1 is still a
+#: proven Level AA defect and is still reported — because only the POSITIVE direction was ever
+#: unsafe here. Guarded whether or not anything is currently held, so the next hold is safe on
+#: the day it is made rather than after somebody rediscovers this.
 A11Y_HELD_BACK_CLAIMS: frozenset[str] = frozenset(
     criterion for criteria in A11Y_HELD_BACK_CRITERIA.values() for criterion in criteria
 )

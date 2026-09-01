@@ -95,6 +95,9 @@ class BuiltinA11yAI:
     def check_label(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
         return self._judge("label", candidate, project_id)
 
+    def check_graphics(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
+        return self._judge("graphics", candidate, project_id)
+
     def check_journey(self, *, journey: A11yJourney, project_id=None) -> list[A11yJudgment]:
         """The eight interaction checks, answered from what a journey pass already found.
 

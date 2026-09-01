@@ -215,6 +215,27 @@ def _by_checker(world, checker):
                 if r.checker == checker)
 
 
+def _selected(world):
+    """Every element-check this page produced — one row per (element, checker) pair.
+
+    **Use this instead of a literal count.** The page below has two selected elements, and
+    the number of REQUESTS they produce is one per check that applies, which moves whenever
+    a checker is added: it was 2 before 27 August and is 3 now, because `img.hero` is asked
+    both whether its alt text SAYS what it means and whether the image can be SEEN. Six
+    tests here hard-coded that 2, none of them was about it, and all six were red for five
+    days as a result.
+    """
+    return requests_for(world["t"], world["p"], world["run_id"])
+
+
+def _judge_everything(world, verdict=A11Y_PASS, confidence=0.97):
+    """Answer every selected check, so "complete" means complete rather than "the two I
+    happened to name". Naming checkers by hand is what made a complete run read as
+    incomplete the moment a sixth check started selecting elements."""
+    for request in _selected(world):
+        _judge(world, request, verdict, confidence, evidence="", fix="")
+
+
 # ══ the capture carries the whole scan, not only what got selected ═════════════════
 
 def test_a_screens_whole_scan_is_read_and_stored(world):
@@ -466,7 +487,10 @@ def test_the_ai_still_stands_where_the_scanner_said_nothing(world):
 def test_an_element_that_was_never_judged_is_named_in_the_report(world):
     _ingest(world)
     report = merge_run(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"])
-    assert len(report.unjudged) == 2, "both captured elements were selected and none judged"
+    assert len(report.unjudged) == len(_selected(world)), "nothing was judged"
+    assert {u["selector"] for u in report.unjudged} == {"img.hero", "div.fake-btn"}, (
+        "both captured elements were selected and both must be named"
+    )
     assert report.complete is False
     body = report_body(report)
     assert "This check is incomplete" in body
@@ -475,8 +499,7 @@ def test_an_element_that_was_never_judged_is_named_in_the_report(world):
 
 def test_a_complete_check_carries_no_incompleteness_warning(world):
     _ingest(world)
-    for checker in ("alt", "semantics"):
-        _judge(world, _by_checker(world, checker), A11Y_PASS, 0.97, evidence="", fix="")
+    _judge_everything(world)
     report = merge_run(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"])
     assert report.complete is True
     assert "This check is incomplete" not in report_body(report)
@@ -606,8 +629,7 @@ def test_when_every_answer_is_already_known_the_report_is_published_at_once(worl
     """No run starts when the cache answers everything — so if the report waited for a run it
     would wait forever, and a re-run of an unchanged screen would produce no report at all."""
     _ingest(world)
-    for checker in ("alt", "semantics"):
-        _judge(world, _by_checker(world, checker), A11Y_PASS, 0.97, evidence="", fix="")
+    _judge_everything(world)
 
     trigger = FakeTrigger(world)
     out = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"],
@@ -635,8 +657,9 @@ def test_a_judge_that_cannot_be_started_still_produces_a_report(world):
     assert out["started"] is False
     assert "temporal is down" in out["reason"]
     assert out["report"]["artifact_id"], "the report exists"
-    assert out["filed_unjudged"] == 2, "and every element it could not ask about was FILED"
-    assert out["report"]["needs_review"] == 2, "each one routed to a person, not lost"
+    asked = len(_selected(world))
+    assert out["filed_unjudged"] == asked, "every check it could not ask about was FILED"
+    assert out["report"]["needs_review"] == asked, "each one routed to a person, not lost"
 
 
 def test_an_uncertain_verdict_is_never_served_back_to_a_later_dispatch(world):
@@ -700,7 +723,7 @@ def test_what_could_not_be_asked_about_reaches_the_review_queue(world):
     start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"],
                   trigger=FakeTrigger(world, fail=RuntimeError("temporal is down")))
     queue = review_queue(world["t"], world["p"])
-    assert len(queue) == 2
+    assert len(queue) == len(_selected(world))
     assert all("could not be started" in f.evidence for f in queue), \
         "and each one says WHY, not just that no verdict was recorded"
 
@@ -782,7 +805,7 @@ def test_the_test_automation_phase_does_run_the_pass(world, monkeypatch):
         work_item_key="wi", repo="o/r", base="main",
     ))
     assert out["started"] is True
-    assert out["dispatched"] == 2
+    assert out["dispatched"] == len(_selected(world))
     assert trigger.calls[0]["agent_key"] == JUDGE_AGENT_KEY
 
 

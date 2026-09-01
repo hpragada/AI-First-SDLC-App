@@ -1048,23 +1048,22 @@ def test_built_coverage_is_what_the_documents_claim():
     # `wcag1411`. It is covered by this checker AND by `apps.a11y.page_rules` together - the
     # rule measures the controls, the judge looks at the pictures - and by neither alone.
     #
-    # And it is HELD BACK as of 1 September, so it is five and not six. The widening above was
-    # never agreed by `ownership.json`, which still gives 1.4.11 to `rule`; this map is what the
-    # AI owns, and the two disagreeing is what the drift guard, the registry-map equality test,
-    # the POC element-check list, the capability-surface check and both halves of the selection
-    # corpus said, in unison, for five days. The claim is withdrawn until the registry agrees.
+    # It was held back for part of 1 September, while the ownership registry was brought into
+    # line with correction R14. The widening had been agreed on 27 August and recorded only in
+    # prose; `ownership.json` still gave 1.4.11 to `rule`, and this map is what the AI owns.
+    # `ownership.ENGINEERING_OVERRIDES` is where that decision now lives, and the count is six.
     #
     # This is the document-facing count, so it is the number a client-facing claim is read
-    # against: while the hold stands, the platform judges FIVE things about a page, and 1.4.11
-    # is measured but not judged. `test_a11y_owner_capability` holds the other end of that -
-    # that the measured half may not claim the criterion on its own while the judge is paused.
-    assert len(CHECKERS) == 5
-    assert ai == {"1.1.1", "1.3.1", "1.4.1", "2.5.3", "4.1.2"}
+    # against: the platform judges SIX things about a page, and 1.4.11 is both measured (by
+    # page_rules) and judged (by graphics). `test_a11y_owner_capability` holds the other end -
+    # that neither half may carry the criterion on its own.
+    assert len(CHECKERS) == 6
+    assert ai == {"1.1.1", "1.3.1", "1.4.1", "1.4.11", "2.5.3", "4.1.2"}
 
     from integrations.types import A11Y_HELD_BACK_CRITERIA
-    assert A11Y_HELD_BACK_CRITERIA == {"graphics": ("1.4.11",)}, (
-        "the sixth checker is neither running nor recorded as held, which is a deletion "
-        "nobody decided to make"
+    assert A11Y_HELD_BACK_CRITERIA == {}, (
+        "a check is held back and this count has not been told which, so the number above is "
+        "a claim about coverage the platform is not making"
     )
     assert journey == {"2.1.1", "2.1.2", "2.4.3", "2.4.7", "2.4.11", "3.2.1", "3.2.2", "4.1.3"}
 

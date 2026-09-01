@@ -47,6 +47,7 @@ CHECKS = [
     ("check_semantics", "semantics", ("1.3.1", "4.1.2")),
     ("check_color", "color", ("1.4.1",)),
     ("check_label", "label", ("2.5.3",)),
+    ("check_graphics", "graphics", ("1.4.11",)),
 ]
 
 
@@ -242,9 +243,15 @@ def test_the_capability_offers_a_check_for_every_checker_in_the_registry():
 
 
 def test_every_checker_maps_to_a_real_wcag_criterion():
-    """The five POC checkers and the criteria they own (research: 1.1.1 / 1.3.1+4.1.2 / 1.3.1 /
-    1.4.1 / 2.5.3). Guards against a checker silently reporting against the wrong criterion,
-    which would corrupt the conformance picture downstream.
+    """The six POC checkers and the criteria they own (research: 1.1.1 / 1.3.1+4.1.2 / 1.3.1 /
+    1.4.1 / 2.5.3 / 1.4.11). Guards against a checker silently reporting against the wrong
+    criterion, which would corrupt the conformance picture downstream.
+
+    **`graphics` is the sixth, and it is here on a correction rather than on the report.**
+    Addendum A gives 1.4.11 to `rule`; R14 (agreed 27 August) says the rationale in its own
+    cell is right and the owner is not, and `ownership.ENGINEERING_OVERRIDES` carries that into
+    routing. This assertion and that override have to agree, and five guards spent five days
+    saying so while they did not.
 
     **`semantics` and `structure` both carry 1.3.1, deliberately.** They ask different
     questions about it: one looks at a single element and asks whether it is pretending to be a
@@ -261,6 +268,7 @@ def test_every_checker_maps_to_a_real_wcag_criterion():
         "structure": ("1.3.1",),
         "color": ("1.4.1",),
         "label": ("2.5.3",),
+        "graphics": ("1.4.11",),
     }
 
 
