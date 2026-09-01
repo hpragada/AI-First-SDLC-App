@@ -938,7 +938,7 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The fifty-three findings, and what was done about each
+## 9. The sixty-one findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
@@ -971,6 +971,15 @@ own in `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.
 twelve-case probe. **#40 is the one that matters most**: nothing anywhere checked that a check
 actually covers the rule it is filed under, which is *why* #38 could happen at all and could
 have happened again on a different rule.
+
+**#59–#61 came from re-reading every fix we have ever made, not from a run.** Before the next
+full-scale audit the team asked whether every correction since 12 August is accurate, surgical and
+permanent — and, most of all, *true rather than a confident assumption*. All 149 commits were read
+and every fix re-checked against the code as it stands: **200 corrections, all 200 still present**.
+These three are the only things that review found which were not already written down. None is a
+product defect and all three are open on purpose; **#60 is the one that needs a decision before the
+next audit rather than after it.** The full account is `GAP_FIX_BUILD_PLAN.md` §9.29 — including
+§9.29.D, which records the one item the review itself got wrong.
 
 | # | What was wrong | Status |
 |---|---|---|
@@ -1019,6 +1028,22 @@ have happened again on a different rule.
 | 43 | **The judging limit counted the same question seventeen times** | ✅ fixed |
 | 44 | **The AI was handed its own previous answers** | ✅ fixed |
 | 45 | **The table-shape fix was built and never reached the AI** | ✅ fixed |
+| 46 | The empty page list explained our architecture instead of naming the next step | ✅ fixed |
+| 47 | Two panels announced a machine the navigation bar already announces | ✅ fixed |
+| 48 | A third of two panels was prose read once and skipped forever after | ✅ fixed |
+| 49 | **An audit that stopped at its limit called itself complete, in green** | ✅ fixed |
+| 50 | **Every artifact of an accessibility run was published, approved by nobody** | ✅ fixed |
+| 51 | **The bounding boxes were drawn in the wrong place, by exactly half** | ✅ fixed |
+| 52 | The work items an audit creates could not be read | ✅ fixed |
+| 53 | "Answered questions" showed an empty card on every platform-created item | ✅ fixed |
+| 54 | **One audit was closed twice, and the second close wrote off the first** | ✅ fixed |
+| 55 | **Work correctly queued for a second pass was reported as unaskable** | ✅ fixed |
+| 56 | **Some containers were never looked at, on any page, in any audit** | ✅ fixed |
+| 57 | **Our own check could never have found #56** | ✅ fixed |
+| 58 | Stopping a run does not stop the work | 🔬 recorded, not fixed |
+| 59 | The failing backend tests are three causes, not one | 🔬 recorded, not fixed |
+| 60 | **1.4.11 has no corpus rows, no capability method and no answer-key records** | 🔬 needs a decision |
+| 61 | One frontend test only passes in UTC | 🔬 recorded, not fixed |
 
 **#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
 Those came from *reading* the screens. These came from *running* them, and five of the six are
@@ -2472,6 +2497,85 @@ companion.
 refusing results for a stopped run, the companion checking its own run's state, or both — and that
 is a change to how every run on the platform works, not an accessibility one. It is written down
 so nobody discovers it the way we did.
+
+### #59 — The failing backend tests are three causes, not one 🔬 RECORDED, NOT FIXED
+
+**What it is.** If you run the accessibility test suites you will see failures. They are expected,
+they are logged, and **none of them is a product defect** — but the record said they were all one
+thing, and they are not.
+
+**What was observed.** Re-measured on 1 September across eleven a11y test files: **623 pass, 16
+fail.** `GAP_FIX_BUILD_PLAN.md` §9.25 recorded 14, all attributed to the `graphics` checker. The
+real split is:
+
+| Count | Where | What it is |
+|---|---|---|
+| 11 | `test_a11y_capture` (5), `test_a11y_report` (6) | The `graphics` widening of 27 August. An image is now claimed by **both** `alt` and `graphics`, deliberately — they are different questions and an accurate alt text on an invisible icon passes one and fails the other. The tests still expect one checker. |
+| 3 | `test_a11y_conformance` (2), `test_a11y_findings` (1) | **Nothing to do with `graphics`.** Stale assertions against the conformance guard of 27 August, which stopped a narrow rule pass claiming a criterion it cannot prove. Their fixtures load no ownership registry, so the guard correctly answers *nothing* where they still expect *supports*. |
+| 2 | `test_a11y_selection_corpus` | The corpus reporting that 1.4.11 owns no failure shape — see **#60**. |
+
+**What it means for you.** A green suite is not the bar to hold this branch to today; the bar is
+that the sixteen are *these* sixteen. If a seventeenth appears, it is new.
+
+**Why it is not fixed here.** The eleven and the three are assertions to update, which belongs with
+whoever settles #60 — writing them off one at a time invites exactly the drift that produced the
+wrong attribution in the first place. The two are a decision, not a patch.
+
+
+### #60 — 1.4.11 has no evidence of any kind ⭐⭐ 🔬 RECORDED, NEEDS A DECISION
+
+**What it is.** `graphics`, the sixth element check, added on 27 August. It asks the half of
+*Non-text Contrast* that arithmetic cannot answer: **are the meaningful parts of the icons, charts
+and diagrams actually visible enough?** Somebody has to know which parts of a picture carry meaning
+before any ratio means anything, which is why it is an AI check and not a rule.
+
+**What was observed.** Three gaps, each checked on 1 September rather than inferred:
+
+1. **No selection-corpus rows.** The corpus that proves a check covers the criterion it is filed
+   under holds 1.1.1, 1.3.1, 1.4.1, 2.5.3 and 4.1.2 — and nothing for 1.4.11. Both of its
+   assertions therefore fail: the criterion owns no recorded failure shape, and no recorded shape
+   it must leave alone. **Red since 27 August.**
+2. **No `check_graphics` on the capability.** Five per-element checks are exposed —
+   `check_alt`, `check_semantics`, `check_structure`, `check_color`, `check_label` — and not a
+   sixth. **An audit is unaffected**: the audit path reads its checker list from the rules, which
+   is why every audit since 27 August has judged graphics normally. What cannot be done is asking
+   the capability directly about that criterion.
+3. **No answer-key records.** The answer key holds alt 32, colour 35, label 42, semantics 33,
+   structure 31 — and graphics **0**. The scorer is already prepared for them; there is nothing to
+   score.
+
+**What it means.** Every other check on this platform can say how often it is right. This one
+cannot, at all. Nothing here says it is *wrong* — it says we have no evidence either way, and
+1.4.11 currently appears in audits with the same standing as five criteria that have been measured.
+
+**Why it is not fixed here.** The corpus exists to stop a check being filed under a criterion it
+does not cover — it is the guard that caught the 1.3.1 gap. Writing rows to make it green without
+first settling what `graphics` is meant to cover would defeat the thing it is for. And the answer
+key has a rule of its own that no code change can satisfy: **the person who labels it must not be
+the person who wrote the checker.**
+
+**The part worth acting on.** This has been reporting the same condition for five days and has been
+read as part of the background red. That is the failure #57 already recorded once, in the other
+direction: *a check whose whole purpose is to notice something, ignored because it was noticing it.*
+
+
+### #61 — One frontend test only passes in UTC 🔬 RECORDED, NOT FIXED
+
+**What it is.** `audit.test.tsx` — *"a judging pass whose machine went away stops claiming to be in
+progress"*.
+
+**What was observed.** It asserts the screen shows `13:04` against a stubbed timestamp of
+`2026-08-31T13:04:11Z`. The screen renders that in the **viewer's own local time**, deliberately,
+so on a machine in India it correctly reads 18:34 and the test fails. 415 of the 416 frontend tests
+pass; this is the one.
+
+**What it means.** The feature is right and is the point of the fix it covers — a count with no
+time beside it reads identically one second and half an hour after the machine died, so the time
+has to be there. Nothing a user sees is wrong. But **the suite is not portable**, and a red test
+that is red only on your machine is one people learn to ignore.
+
+**Why it is not fixed here.** It belongs with #59: one pass over the stale assertions, by whoever
+picks that up, rather than a spot fix that leaves the other sixteen untouched.
 
 
 ---

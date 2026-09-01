@@ -1335,7 +1335,9 @@ team took `/staff/shelf-audit` out to stay under the judging cap.
 
 > **This section was appended as an afterthought and is now the larger half of the document.**
 > §3 is the plan as written; §9 is what running it added: **thirty-five findings across twenty-four
-> sections** (§9.1–§9.23), all built. #19–#35 were produced by a person
+> sections** (§9.1–§9.23), all built — and it has gone on growing since that was written. **§9.24
+> to §9.28** carry the 25 and 31 August and 1 September findings and are also all built; **§9.29 is
+> the 1 September re-reading of every fix ever made, and built nothing.** #19–#35 were produced by a person
 > watching the product work; #36–#45 by putting twelve textbook WCAG failures through the
 > selection code after the team asked what we do and do not capture. **Every built one has a
 > green test suite standing over it** — which is the point, and why they are written up at
@@ -2920,12 +2922,20 @@ and 3 `td-has-header` findings that no pre-28-August audit could have produced.
 #### One thing found that is not ours to fix here
 
 **14 backend tests were already failing on this branch**, identically with every change above
-stashed. All of them trace to the `graphics` / 1.4.11 checker added on 27 August and never wired
+stashed. ~~All of them trace to the `graphics` / 1.4.11 checker added on 27 August~~ and never wired
 into `integrations.capabilities.A11yAI`, the selection corpus, or several test expectations that
 enumerate checkers. One may be a real product gap rather than a stale test: there is no
 `check_graphics`, so 1.4.11 cannot be asked through the capability at all. Logged as its own
 task, deliberately not fixed in passing — the corpus entries need writing properly and the
 capability question needs a decision.
+
+> **Corrected 1 September — see §9.29.A.** The struck clause is wrong, and the count has moved.
+> Re-measured across eleven a11y test files the figure is **16, from three causes**: 11 are the
+> graphics widening described here, **3 are stale assertions against the conformance guard of
+> §9.26 and have nothing to do with `graphics`**, and 2 are the selection corpus reporting that
+> 1.4.11 owns no failure shape. None of the sixteen is a product defect. The suspicion recorded
+> above — that the missing `check_graphics` is real rather than a stale test — **is confirmed**,
+> and is one of the three gaps in §9.29.B.
 
 One of the fourteen was fixed, because it sat in a file this work was already changing and a red
 test on the branch we build on is a hazard: `test_finishing_produces_findings_for_the_registered_routes`
@@ -3876,6 +3886,114 @@ and would have stopped a genuinely deleted element from ever resolving.
    is real; **the damage first attributed to it was a miscount** (§14.2). Pass 1 worked through 73
    screens and 800 elements, so it is survivable. Recorded, not fixed.
 5. **The rota adjudication** and **the `#renew-all` containment limit** — unchanged from §9.27.D.
+
+
+### 9.29 Re-reading every fix, oldest to newest — 1 September 🔬 (REVIEW — NOTHING BUILT)
+
+Before the next full-scale audit the team asked for something this plan has never had: **every
+correction made since 12 August, re-checked against the code as it stands** rather than against
+the commit message written on the day. One straight line of 149 commits from `47578d0` to
+`41458ae` — `web-accessibility-build` turned out to be wholly contained in `Eval-accuracy`, so
+there is no second history to reconcile. 200 corrections catalogued.
+
+**The result is good, and should be read precisely: all 200 are present at HEAD.** None was
+reverted and none was undone by a later change. Eleven needed a second fix; two were withdrawn as
+not defects (§9.28.G, and §14.2 of `Audit_Live_Check_Reasoning.md`).
+
+What follows is only what the review found that this plan did not already say.
+
+#### 9.29.A The red tests are three causes, not one — §9.25's note is corrected
+
+§9.25 records **14 backend tests failing, "all of them" tracing to the `graphics` / 1.4.11 checker
+added on 27 August**. Re-measured today across eleven a11y test files, the figure is **16, and
+they have three separate causes**:
+
+```
+11   the graphics widening (27 Aug)   capture 5, report 6
+ 3   the conformance guard (27 Aug)   conformance 2, findings 1
+ 2   the selection corpus             no 1.4.11 rows — see 9.29.B
+```
+
+The eleven are what §9.25 described, and they are stale assertions rather than defects: an image
+is now legitimately claimed by **both** `alt` and `graphics`, deliberately and for different
+questions (§9.25 and the `graphics` docstring), so an assertion expecting one checker sees two.
+The report failures name the extra row outright — `1.4.11 /checkout img.hero`.
+
+**The three are not the graphics checker at all.** They are stale assertions against the
+conformance guard of §9.26 — the one that stopped a narrow rule pass claiming a criterion it
+cannot prove. Those tests build a fixture with no ownership registry loaded, so `suggest()`
+correctly answers nothing where they still expect `supports`:
+
+```
+AssertionError: assert 'not_evaluated' == 'supports'
+AssertionError: assert None == 'supports'
+```
+
+That is the guard working exactly as designed — *an unknown owner claims nothing, and those rows
+go to a reviewer* — and the tests predate it. **Neither group is a product defect.**
+
+The correction worth having is not the number. It is that **one cause was recorded for a set that
+had three**, which is the habit §14.2.3 names: taking the explanation from the nearest place
+rather than from the place that answers the question.
+
+#### 9.29.B 1.4.11 has no evidence of any kind — the one item to decide before the next audit ⭐⭐
+
+Three separate gaps, all pointing the same way. Each verified today rather than inferred.
+
+1. **No selection-corpus rows.** §9.22's corpus of forty-six failure shapes holds 1.1.1, 1.3.1,
+   1.4.1, 2.5.3 and 4.1.2 — and nothing for 1.4.11. So both of its assertions fail for that
+   criterion: it owns no recorded failure shape, and no recorded shape it must leave alone.
+   **Red since 27 August.**
+2. **No `check_graphics` on the capability.** `integrations.capabilities.A11yAI` and the built-in
+   connector expose `check_alt`, `check_semantics`, `check_structure`, `check_color`,
+   `check_label` and `check_journey` — **five element checks, not six**. An **audit is
+   unaffected**, because the dispatch path reads the checker list from the rules; what cannot be
+   done is asking the capability directly about 1.4.11.
+3. **No answer-key records.** The scorer already carries the aliases — `non-text-contrast` and
+   `graphic-contrast` map to `graphics` — and the golden set holds alt 32, color 35, label 42,
+   semantics 33, structure 31, and graphics **0**. The golden README already says why, and the
+   rule it sets for closing it stands: the labeller must not be the person who wrote the checker.
+
+**Why this needs a decision rather than a patch.** §9.22 exists precisely to stop a check being
+filed under a criterion it does not cover — it is the guard that caught the 1.3.1 gap, and writing
+corpus rows to silence it without settling the scope question would defeat the thing it is for. It
+has now been reporting this condition for five days and has been read as part of the background
+red, which is the exact failure §9.24 recorded once already: *a test whose whole purpose is to
+notice a change, red because of the change it was meant to notice, and passed over.*
+
+**Nothing here says `graphics` is wrong.** It says we have no evidence either way, and two of the
+three gaps are things the platform already knows how to state.
+
+#### 9.29.C One frontend test passes only in UTC
+
+`frontend/src/features/a11y/audit.test.tsx` — *"a judging pass whose machine went away stops
+claiming to be in progress"* — asserts `getByText(/13:04|1:04/)` against a stubbed
+`stalled_since` of `2026-08-31T13:04:11Z`. The component renders that through
+`toLocaleString(undefined, …)`, which is deliberately the **viewer's** local time. So the test
+passes on a machine in UTC and fails everywhere else; on IST the screen correctly reads 18:34.
+
+The feature is right and is the point of §9.26.E — *a count with no time beside it reads
+identically one second and half an hour after the machine died* — and the time is being shown.
+**The test is the defect**, and it is the same class as the harness default fixed in §9.25.5's
+sibling change: a check that only works on the machine of whoever wrote it.
+
+#### 9.29.D One thing the review itself got wrong, recorded rather than dropped
+
+The review's first pass carried a fourth item: that `structure` findings may not be scorable
+against the answer key at all — flagged in the commit that widened the checker count on 25 August,
+and never ruled on. **It is not open. It was closed on 28 August, and nothing recorded that it had
+been closed.**
+
+`CHECKER_ALIASES` carries `fake-structure` and `real-structure` → `structure`; the golden set holds
+31 structure records; and the baseline locked at 09:00 on 1 September scores it — sample 30,
+recall 1.0, precision 0.833, which is the contested figure of §9.27.C.
+
+**The error was checking whether a *ruling* had been recorded, finding none, and concluding the
+question was still open** — without asking whether the situation had changed underneath it. It is
+§14.2.3 one document further along, and it is written here for the same reason that section
+exists: a review that keeps only the findings which survived is not evidence of anything.
+
+---
 
 ---
 
