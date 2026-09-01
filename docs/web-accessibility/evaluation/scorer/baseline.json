@@ -41,7 +41,7 @@
       }
     }
   },
-  "generated_on": "2026-09-01T08:44:51+00:00",
+  "generated_on": "2026-09-01T09:00:49+00:00",
   "min_sample": 30,
   "note": "Edvensoft-internal. Nothing in the platform reads this file. The gate it feeds blocks OUR release of a changed prompt or model, never a client's work \u2014 see TASK_BACKLOG_QA.md D-A11Y-82.",
   "tolerance": 0.02

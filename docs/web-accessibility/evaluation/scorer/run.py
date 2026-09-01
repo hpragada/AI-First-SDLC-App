@@ -98,10 +98,19 @@ def _print_completeness(result) -> None:
     for route in result.routes:
         print(route.line())
     if result.ok:
-        print("\n  Nothing was dropped silently.")
+        # Say WHAT was checked, not just that it passed. "Nothing was dropped" used to mean
+        # "the totals add up", which is a much weaker claim than it sounds and was true on a
+        # page that had missed every element the answer key named.
+        print("\n  Nothing was dropped silently — the counts reconcile on every page, and every"
+              "\n  element the answer key names was offered to the check it belongs to.")
     else:
         print(f"\n  {len(result.failed)} page(s) lost something between being on the page and")
         print("  getting an answer. That is the failure this check exists to make loud.")
+        if result.missing_named:
+            print(f"\n  {result.missing_named} element(s) the answer key names were never "
+                  f"offered to their check.")
+            print("  Named above, per page. These are not scored against the checker: nothing")
+            print("  asked it, so nothing it did or did not say is evidence either way.")
 
 
 def _print_scores(scores, min_sample: int) -> None:
@@ -200,7 +209,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     expected = (manifest.get("expected_candidates") or {}) if manifest else {}
+    # **The names, not just the totals.** The manifest gives a count per page and the labels
+    # give the exact page + element + check for every record they hold, so the completeness
+    # pass can tick the list off by name instead of weighing the bag. Built from `golden_labels`
+    # only — a live adjudication is a reviewer's ruling on a finding that was already reported,
+    # so it can never be "expected but never captured".
+    expected_elements: dict[str, set[tuple[str, str]]] = {}
+    for lab in golden_labels:
+        expected_elements.setdefault(lab.route, set()).add((lab.selector, lab.checker))
     result = completeness_module.check(
+        expected_elements=expected_elements,
+        captured_elements=run["captured"],
         captured_by_route=run["captured_by_route"],
         judged_by_route=run["judged_by_route"],
         expected_by_route={str(k): int(v) for k, v in expected.items()},
