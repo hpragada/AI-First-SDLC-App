@@ -98,6 +98,16 @@ def world(db):
 
 
 def _cover(world, criterion, outcome, *, route="/checkout", engine="rule", detail="a-rule"):
+    """One engine's observation about one criterion on one page.
+
+    **Name the engine that OWNS the criterion whenever the test wants a positive result.**
+    Since 27 August a positive claim also has to come from the engine `ownership.json` gives
+    the criterion to, so a `rule` pass on an AI-owned criterion correctly settles nothing --
+    axe proving an alt attribute EXISTS is not the AI judging it MEANINGFUL, which is the
+    1.2.2 captions bug in miniature. Tests below that are about something else and happen to
+    need a pass therefore say `engine="AI"` for 1.1.1. Whether the guard itself is right is
+    `test_a11y_conformance_guard.py`'s question, not theirs.
+    """
     coverage.record(tenant_id=world["t"], project_id=world["p"], run_key="k1", route=route,
                     engine=engine, observations=[(criterion, outcome, detail)])
 
@@ -313,7 +323,7 @@ def test_every_criterion_in_the_standard_is_listed(world):
 
 def test_a_criterion_nothing_looked_at_is_never_folded_into_a_pass(world):
     """The failure this whole document could die of."""
-    _cover(world, "1.1.1", "passed")
+    _cover(world, "1.1.1", "passed", engine="AI", detail="alt judged meaningful")
     rows = {r["criterion"]: r for r in criterion_rows(world["t"], world["p"])}
     assert rows["1.1.1"]["effective"] == SUPPORTS
     assert rows["3.3.7"]["effective"] == NOT_EVALUATED
@@ -408,7 +418,7 @@ def test_an_open_failure_outranks_a_clean_coverage_map(world):
 
 
 def test_the_reviewers_word_always_wins(world):
-    _cover(world, "1.1.1", "passed")
+    _cover(world, "1.1.1", "passed", engine="AI", detail="alt judged meaningful")
     rows = criterion_rows(world["t"], world["p"],
                           verdicts={"1.1.1": {"level": PARTIALLY, "note": "only on desktop"}})
     row = {r["criterion"]: r for r in rows}["1.1.1"]

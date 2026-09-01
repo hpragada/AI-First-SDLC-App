@@ -37,9 +37,17 @@ def world(db):
     Membership.objects.create(tenant=tenant, project=project, user=aisha, role="qa_lead")
     Membership.objects.create(tenant=tenant, project=project, user=dev, role="engineer")
 
+    # Both engines, because both really do look at 1.1.1 and only one of them can settle it.
+    # axe's `image-alt` proves an alt attribute exists; whether the alt says anything is the
+    # AI's question, and `ownership.json` gives 1.1.1 to `ai`. With only the scanner row here
+    # the criterion correctly reads as not evaluated -- which is the conformance guard doing
+    # its job, not the statement endpoint failing.
     coverage.record(tenant_id=str(tenant.id), project_id=str(project.id), run_key="k1",
                     route="/checkout", engine="rule",
                     observations=[("1.1.1", "passed", "image-alt")])
+    coverage.record(tenant_id=str(tenant.id), project_id=str(project.id), run_key="k1",
+                    route="/checkout", engine="AI",
+                    observations=[("1.1.1", "passed", "alt judged meaningful")])
     return {"tenant": tenant, "project": project, "aisha": aisha, "dev": dev,
             "base": f"/api/projects/{project.id}/a11y-conformance"}
 
@@ -60,7 +68,10 @@ def test_the_statement_arrives_compiled_with_every_criterion(world):
     assert "risk reduction, not certification" in body["disclaimer"]
     assert body["required_role"] == "qa_lead"
     row = next(r for r in body["rows"] if r["criterion"] == "1.1.1")
-    assert row["suggested"] == "supports" and row["established_by"] == ["rule"]
+    # Both engines are named, and the order is the scanner AFTER the judge only because
+    # the list is sorted. What matters is that the judge is in it: it is the presence of
+    # `AI` that entitles 1.1.1 to read as "supports" at all.
+    assert row["suggested"] == "supports" and row["established_by"] == ["AI", "rule"]
     assert "checked on 1 pages with nothing wrong" in row["evidence"].lower()
 
 

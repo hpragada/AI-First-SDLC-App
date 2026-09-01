@@ -660,7 +660,14 @@ def test_a_criterion_still_waiting_on_a_check_claims_no_conformance(world):
     """The end of the chain: what the document a client reads actually says."""
     from apps.a11y.conformance import suggest
 
-    assert suggest({"routes": {"/a": "passed", "/b": "not_checked"}}, 0) is None, (
+    # Owner and engines are named so the pair differs ONLY in whether a page is still
+    # waiting, which is what this test is about. Left unnamed, the second call comes back
+    # None for the unrelated reason that no engine entitled to settle the criterion was
+    # recorded -- see `test_a11y_conformance_guard.py`.
+    settled = {"engines": {"rule"}}
+    assert suggest({"routes": {"/a": "passed", "/b": "not_checked"}, **settled}, 0,
+                   owner="rule") is None, (
         "a criterion is a claim about the pages in scope, not about the ones we reached"
     )
-    assert suggest({"routes": {"/a": "passed", "/b": "passed"}}, 0) is not None
+    assert suggest({"routes": {"/a": "passed", "/b": "passed"}, **settled}, 0,
+                   owner="rule") is not None

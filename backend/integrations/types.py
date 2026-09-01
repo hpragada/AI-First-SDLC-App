@@ -257,7 +257,6 @@ A11Y_CHECKER_CRITERIA: dict[str, tuple[str, ...]] = {
     "structure": ("1.3.1",),            # Info and Relationships — is the visible structure real?
     "color": ("1.4.1",),                # Use of Color — is meaning carried by colour alone?
     "label": ("2.5.3",),                # Label in Name — does the visible label match the AN?
-    "graphics": ("1.4.11",),            # Non-text Contrast — can you SEE the meaningful parts?
 }
 
 #: **Why `graphics` exists, and why it is an AI check when 1.4.11 is recorded as rule-owned.**
@@ -271,11 +270,71 @@ A11Y_CHECKER_CRITERIA: dict[str, tuple[str, ...]] = {
 #: That is how the second half went unbuilt for four tasks while the criterion was reported as
 #: covered. Both halves ship together or the criterion is not covered; see QA-25.
 #:
+#: **That argument is recorded, and it did not survive contact with the registry.** It was
+#: made in this comment and nowhere else — `ownership.json` still says `rule`, so the map and
+#: the registry disagreed and five guards said so. The case above is the case for changing
+#: the registry; until somebody does, the entry lives below rather than above.
+#:
 #: **Its scope is deliberately wider than `alt`'s, and the difference is the point.** `alt` asks
 #: what assistive technology is told, so it skips a graphic that is never announced. This asks
 #: what a person can SEE, so a decorative-to-a-screen-reader icon carrying visible meaning is
 #: still in scope. The two checks look at many of the same elements and are asking genuinely
 #: different questions about them.
+
+#: Checks that are BUILT and are not running, with the criterion each one is holding.
+#:
+#: **This is not a disabled feature. It is a claim withdrawn until it can be supported**, and the
+#: distinction is the reason this map exists instead of a deleted line. Everything `graphics`
+#: needs is still here — its selection rule, its prompt schema, the `background-image` style key
+#: the companion captures for it. What it does not have is permission to say it covers 1.4.11.
+#:
+#: **Why it is held.** `apps/a11y/data/ownership.json` records 1.4.11 as owned by `rule`, and
+#: `A11Y_CHECKER_CRITERIA` is the map of what the **AI** owns in the POC. Putting 1.4.11 in it
+#: made the two disagree, and the platform said so immediately and kept saying it: the ownership
+#: drift guard, the registry-map equality test, the POC element-check list, the capability
+#: surface check and both halves of the selection corpus all went red on 27 August and were read
+#: for five days as background noise. Five guards agreeing is not noise.
+#:
+#: **What is lost while it is held, stated plainly.** Nothing judges whether the meaningful parts
+#: of an icon or a chart are visible enough. 1.4.11's measurable half is unaffected —
+#: `apps.a11y.page_rules` still measures every control's edge against 3:1 and still reports
+#: failures — so the criterion is checked, by the engine the registry gives it to, and the
+#: judged half is deferred rather than faked.
+#:
+#: **What has to be true before it comes back**, in the order it has to happen:
+#:   1. a decision on whether 1.4.11 is AI-owned, recorded in `ownership.json` rather than in a
+#:      code comment arguing against it;
+#:   2. selection-corpus rows for 1.4.11 — the shapes it must catch and the shapes it must leave
+#:      alone — so the criterion cannot be claimed with nothing behind it again;
+#:   3. answer-key records labelled by someone other than the author of the checker, so the
+#:      accuracy harness can report how often it is right. Today it holds 0 against alt 32,
+#:      colour 35, label 42, semantics 33 and structure 31.
+#:
+#: **To bring it back**, move the entry from here into `A11Y_CHECKER_CRITERIA` and move
+#: `_GRAPHICS_RULE` in `apps.a11y.checkers.rules` from `HELD_BACK_SELECTION_RULES` into
+#: `SELECTION_RULES`. Two lines, one place each — and the guards above will tell you at once if
+#: step 1 was skipped.
+A11Y_HELD_BACK_CRITERIA: dict[str, tuple[str, ...]] = {
+    "graphics": ("1.4.11",),            # Non-text Contrast — can you SEE the meaningful parts?
+}
+
+#: The criteria a held-back check was answering part of, flattened — and NO conformance
+#: claim may be made about any of them while it is held.
+#:
+#: **Without this, holding a check back would recreate the exact bug that built it.** 1.4.11
+#: is a criterion in two halves: `page_rules` measures whether a control's edge reaches 3:1,
+#: and `graphics` judged whether the meaningful parts of an icon or a chart can be made out.
+#: The registry gives the criterion to `rule`, so with `graphics` gone the measurable half
+#: alone would satisfy the conformance guard and a page whose buttons all have visible edges
+#: would read **Supports 1.4.11** — with nothing having looked at a single icon. That is
+#: QA-25 word for word: a narrow pass claiming a criterion it cannot prove.
+#:
+#: So the claim is withdrawn, not handed to the other half. Failures are untouched in both
+#: directions — a control edge under 3:1 is still a proven Level AA defect and still
+#: reported — because only the POSITIVE direction was ever unsafe here.
+A11Y_HELD_BACK_CLAIMS: frozenset[str] = frozenset(
+    criterion for criteria in A11Y_HELD_BACK_CRITERIA.values() for criterion in criteria
+)
 
 #: **Why `semantics` and `structure` both carry 1.3.1, and are still two checks.**
 #: They ask different questions about it. `semantics` looks at ONE element and asks whether it
@@ -314,12 +373,21 @@ A11Y_JOURNEY_CRITERIA: dict[str, tuple[str, ...]] = {
     "status": ("4.1.3",),           # Status Messages — is a status announced to assistive tech?
 }
 
-#: Every checker the platform has, of either shape. This is what *validates* a judgment; the
-#: two maps above are what each half of the system iterates. Kept as a derived view so a new
+#: Every checker the platform has, of any shape. This is what *validates* a judgment; the
+#: maps above are what each half of the system iterates. Kept as a derived view so a new
 #: checker can never be added to one without being validated by the other.
+#:
+#: **Held-back checks are in here, and that is not a loophole.** Nothing selects or
+#: dispatches from this map -- selection reads `checkers.rules.CHECKERS`, which a held-back
+#: check is not in. What this map does is answer *is this a real checker?*, and the answer
+#: for a check that is built but paused is yes. Leaving it out would mean a verdict recorded
+#: before the pause could no longer be validated at all (the check is skipped when the
+#: checker is unknown), and a workspace that had tuned its confidence threshold would be
+#: told the check `does not exist` -- the same error QA-20 fixed for the journey checks.
 A11Y_ALL_CHECKER_CRITERIA: dict[str, tuple[str, ...]] = {
     **A11Y_CHECKER_CRITERIA,
     **A11Y_JOURNEY_CRITERIA,
+    **A11Y_HELD_BACK_CRITERIA,
 }
 
 

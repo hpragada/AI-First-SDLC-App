@@ -938,7 +938,7 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The sixty-one findings, and what was done about each
+## 9. The sixty-four findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
@@ -972,14 +972,16 @@ twelve-case probe. **#40 is the one that matters most**: nothing anywhere checke
 actually covers the rule it is filed under, which is *why* #38 could happen at all and could
 have happened again on a different rule.
 
-**#59–#61 came from re-reading every fix we have ever made, not from a run.** Before the next
-full-scale audit the team asked whether every correction since 12 August is accurate, surgical and
-permanent — and, most of all, *true rather than a confident assumption*. All 149 commits were read
-and every fix re-checked against the code as it stands: **200 corrections, all 200 still present**.
-These three are the only things that review found which were not already written down. None is a
-product defect and all three are open on purpose; **#60 is the one that needs a decision before the
-next audit rather than after it.** The full account is `GAP_FIX_BUILD_PLAN.md` §9.29 — including
-§9.29.D, which records the one item the review itself got wrong.
+**#59–#64 came from re-reading every fix we have ever made, and then from clearing what that
+found.** Before the next full-scale audit the team asked whether every correction since 12 August is
+accurate, surgical and permanent — and, most of all, *true rather than a confident assumption*. All
+149 commits were read and every fix re-checked against the code as it stands: **200 corrections, all
+200 still present**. None of what the review turned up was a product defect, and the team's
+instruction was that everything be cleared before the audit is run rather than carried into it. So
+#59, #61, #62 and #63 are fixed, #60 is a claim withdrawn until it can be supported, and **#64 is
+the one thing here that no code change can close** — it needs a person who did not write the
+checkers. The full account is `GAP_FIX_BUILD_PLAN.md` §9.29 and §9.30 — including §9.29.D, which
+records the one item the review itself got wrong, and §9.30, which records two more.
 
 | # | What was wrong | Status |
 |---|---|---|
@@ -1041,9 +1043,12 @@ next audit rather than after it.** The full account is `GAP_FIX_BUILD_PLAN.md` �
 | 56 | **Some containers were never looked at, on any page, in any audit** | ✅ fixed |
 | 57 | **Our own check could never have found #56** | ✅ fixed |
 | 58 | Stopping a run does not stop the work | 🔬 recorded, not fixed |
-| 59 | The failing backend tests are three causes, not one | 🔬 recorded, not fixed |
-| 60 | **1.4.11 has no corpus rows, no capability method and no answer-key records** | 🔬 needs a decision |
-| 61 | One frontend test only passes in UTC | 🔬 recorded, not fixed |
+| 59 | The failing backend tests are three causes, not one | ✅ fixed |
+| 60 | **1.4.11 has no corpus rows, no capability method and no answer-key records** | ✅ claim withdrawn |
+| 61 | One frontend test only passes in UTC | ✅ fixed |
+| 62 | **Five more red tests than anyone had counted, all naming the same thing** | ✅ fixed |
+| 63 | **Pausing the judge would have handed 1.4.11 back to the arithmetic** | ✅ fixed |
+| 64 | The answer key still has nobody's signature on it | 🔬 recorded, not fixed |
 
 **#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
 Those came from *reading* the screens. These came from *running* them, and five of the six are
@@ -2498,85 +2503,177 @@ refusing results for a stopped run, the companion checking its own run's state, 
 is a change to how every run on the platform works, not an accessibility one. It is written down
 so nobody discovers it the way we did.
 
-### #59 — The failing backend tests are three causes, not one 🔬 RECORDED, NOT FIXED
+### #59 — The failing backend tests were three causes, not one ✅ FIXED
 
-**What it is.** If you run the accessibility test suites you will see failures. They are expected,
-they are logged, and **none of them is a product defect** — but the record said they were all one
-thing, and they are not.
+**What it was.** Running the accessibility suites produced failures. They were expected and they
+were logged, and **not one of them was a product defect** — but the record said they were all one
+thing, and they were not.
 
-**What was observed.** Re-measured on 1 September across eleven a11y test files: **623 pass, 16
-fail.** `GAP_FIX_BUILD_PLAN.md` §9.25 recorded 14, all attributed to the `graphics` checker. The
-real split is:
+**What was observed.** `GAP_FIX_BUILD_PLAN.md` §9.25 recorded 14, all attributed to the `graphics`
+checker. Re-measured on 1 September the real figure was **21 backend and 1 frontend**, from four
+causes — and the last five of those are their own finding, **#62**.
 
-| Count | Where | What it is |
+| Count | Where | What it was |
 |---|---|---|
-| 11 | `test_a11y_capture` (5), `test_a11y_report` (6) | The `graphics` widening of 27 August. An image is now claimed by **both** `alt` and `graphics`, deliberately — they are different questions and an accurate alt text on an invisible icon passes one and fails the other. The tests still expect one checker. |
-| 3 | `test_a11y_conformance` (2), `test_a11y_findings` (1) | **Nothing to do with `graphics`.** Stale assertions against the conformance guard of 27 August, which stopped a narrow rule pass claiming a criterion it cannot prove. Their fixtures load no ownership registry, so the guard correctly answers *nothing* where they still expect *supports*. |
-| 2 | `test_a11y_selection_corpus` | The corpus reporting that 1.4.11 owns no failure shape — see **#60**. |
+| 11 | `test_a11y_capture` (5), `test_a11y_report` (6) | The `graphics` widening of 27 August. An image was claimed by **both** `alt` and `graphics`, deliberately — different questions, and an accurate alt text on an invisible icon passes one and fails the other. The tests still expected one checker. |
+| 4 | `test_a11y_conformance` (2), `test_a11y_findings` (1), `test_a11y_conformance_rest` (1) | **Nothing to do with `graphics`.** Stale assertions against the conformance guard of 27 August. |
+| 5 | `test_a11yai_capability` (2), `test_a11y_ownership`, `test_a11y_journey`, `test_a11y_wcag` | Never counted before — see **#62**. |
+| 2 | `test_a11y_selection_corpus` | 1.4.11 owning no failure shape — see **#60**. |
 
-**What it means for you.** A green suite is not the bar to hold this branch to today; the bar is
-that the sixteen are *these* sixteen. If a seventeenth appears, it is new.
+**One diagnosis in the 1 September note was itself wrong, and it is corrected here.** The
+conformance failures were written up as *"their fixtures load no ownership registry"*. They do load
+it. The real cause is sharper: the fixture records a **rule-scanner** pass for **1.1.1**, and
+`ownership.json` gives 1.1.1 to the **AI**. axe's `image-alt` proves an alt attribute *exists*;
+whether it *says* anything is the judge's question. So the guard correctly refused the claim —
+which is the 1.2.2 captions bug in miniature, caught by the very guard built for it.
 
-**Why it is not fixed here.** The eleven and the three are assertions to update, which belongs with
-whoever settles #60 — writing them off one at a time invites exactly the drift that produced the
-wrong attribution in the first place. The two are a decision, not a patch.
+**How it was fixed.** Sixteen of the twenty-one needed **no assertion edited at all**: they went
+green the moment the `graphics` claim was withdrawn (**#60**), because every one of them was
+objecting to that single thing. Of the rest, the four conformance fixtures now name the engine that
+owns the criterion they are covering — each with a comment saying why, so nobody "fixes" them back.
+The guard's own coverage is untouched: `test_a11y_conformance_guard.py` already holds thirteen
+tests on exactly this rule, from both directions.
 
-
-### #60 — 1.4.11 has no evidence of any kind ⭐⭐ 🔬 RECORDED, NEEDS A DECISION
-
-**What it is.** `graphics`, the sixth element check, added on 27 August. It asks the half of
-*Non-text Contrast* that arithmetic cannot answer: **are the meaningful parts of the icons, charts
-and diagrams actually visible enough?** Somebody has to know which parts of a picture carry meaning
-before any ratio means anything, which is why it is an AI check and not a rule.
-
-**What was observed.** Three gaps, each checked on 1 September rather than inferred:
-
-1. **No selection-corpus rows.** The corpus that proves a check covers the criterion it is filed
-   under holds 1.1.1, 1.3.1, 1.4.1, 2.5.3 and 4.1.2 — and nothing for 1.4.11. Both of its
-   assertions therefore fail: the criterion owns no recorded failure shape, and no recorded shape
-   it must leave alone. **Red since 27 August.**
-2. **No `check_graphics` on the capability.** Five per-element checks are exposed —
-   `check_alt`, `check_semantics`, `check_structure`, `check_color`, `check_label` — and not a
-   sixth. **An audit is unaffected**: the audit path reads its checker list from the rules, which
-   is why every audit since 27 August has judged graphics normally. What cannot be done is asking
-   the capability directly about that criterion.
-3. **No answer-key records.** The answer key holds alt 32, colour 35, label 42, semantics 33,
-   structure 31 — and graphics **0**. The scorer is already prepared for them; there is nothing to
-   score.
-
-**What it means.** Every other check on this platform can say how often it is right. This one
-cannot, at all. Nothing here says it is *wrong* — it says we have no evidence either way, and
-1.4.11 currently appears in audits with the same standing as five criteria that have been measured.
-
-**Why it is not fixed here.** The corpus exists to stop a check being filed under a criterion it
-does not cover — it is the guard that caught the 1.3.1 gap. Writing rows to make it green without
-first settling what `graphics` is meant to cover would defeat the thing it is for. And the answer
-key has a rule of its own that no code change can satisfy: **the person who labels it must not be
-the person who wrote the checker.**
-
-**The part worth acting on.** This has been reporting the same condition for five days and has been
-read as part of the background red. That is the failure #57 already recorded once, in the other
-direction: *a check whose whole purpose is to notice something, ignored because it was noticing it.*
+**What it means going forward.** The bar is a **green suite**, not "the sixteen are these sixteen".
+A background of expected red is how #62 hid for five days.
 
 
-### #61 — One frontend test only passes in UTC 🔬 RECORDED, NOT FIXED
+### #60 — 1.4.11 was claimed with no evidence of any kind ⭐⭐ ✅ CLAIM WITHDRAWN
 
-**What it is.** `audit.test.tsx` — *"a judging pass whose machine went away stops claiming to be in
-progress"*.
+**What it is.** `graphics`, the sixth element check, added 27 August. It asks the half of *Non-text
+Contrast* that arithmetic cannot: **are the meaningful parts of the icons, charts and diagrams
+actually visible enough?** Somebody has to know which parts of a picture carry meaning before any
+ratio means anything, which is why it is an AI check and not a rule.
 
-**What was observed.** It asserts the screen shows `13:04` against a stubbed timestamp of
-`2026-08-31T13:04:11Z`. The screen renders that in the **viewer's own local time**, deliberately,
-so on a machine in India it correctly reads 18:34 and the test fails. 415 of the 416 frontend tests
-pass; this is the one.
+**What was observed.** Three gaps: no selection-corpus rows, no `check_graphics` on the capability,
+and **zero answer-key records** where every other checker has 31 to 42. Every other check on this
+platform can say how often it is right. This one could not, at all.
 
-**What it means.** The feature is right and is the point of the fix it covers — a count with no
-time beside it reads identically one second and half an hour after the machine died, so the time
-has to be there. Nothing a user sees is wrong. But **the suite is not portable**, and a red test
-that is red only on your machine is one people learn to ignore.
+**And then the decisive thing, which nobody had read.** The platform had been saying since the day
+the check landed that the claim itself was wrong:
 
-**Why it is not fixed here.** It belongs with #59: one pass over the stale assertions, by whoever
-picks that up, rather than a spot fix that leaves the other sixteen untouched.
+```
+claimed == set(criteria_for(owner=Owner.AI, tier=Tier.IN_POC))
+Extra items in the left set: '1.4.11'
+```
 
+`apps/a11y/data/ownership.json` records 1.4.11 as owned by **`rule`**. `A11Y_CHECKER_CRITERIA` is
+the map of what the **AI** owns. Putting 1.4.11 in it made the two disagree, and the drift guard
+said so — along with four other guards. The case for the widening was argued in a code comment; the
+registry was never changed to agree.
+
+**How it was fixed — the claim withdrawn, the check kept.** `graphics` moved out of the live checker
+list into `HELD_BACK_SELECTION_RULES`, and its criterion into `A11Y_HELD_BACK_CRITERIA`. Nothing was
+deleted: the selection rule, the prompt schema and the `background-image` style key the companion
+captures for it are all still there, and `describe_rules()` prints the check with **HELD BACK, NOT
+RUNNING** beside it so a reviewer can see what is built and idle. Bringing it back is three moves in
+two files, listed in the code.
+
+**What is lost while it is held, stated plainly.** Nothing judges whether the meaningful parts of an
+icon or a chart are visible enough. 1.4.11's measurable half is unaffected — `page_rules` still
+measures every control's edge against 3:1 and still reports failures.
+
+**What has to be true before it returns**, in order: a decision recorded in `ownership.json` rather
+than in a comment arguing against it; selection-corpus rows for 1.4.11; and answer-key records
+labelled by **someone other than the author of the checker**, which no code change can satisfy. See
+**#64**.
+
+
+### #61 — One frontend test only passed in UTC ✅ FIXED
+
+**What it was.** `audit.test.tsx` asserted the screen shows `13:04` for a stubbed
+`2026-08-31T13:04:11Z`. The screen renders that in the **viewer's own local time**, deliberately, so
+on a machine in India it correctly read 18:34 and the test failed. 415 of 416 frontend tests passed;
+this was the one.
+
+**What it meant.** The feature is right and is the point of the fix it covers — a count with no time
+beside it reads identically one second and half an hour after the machine died. Nothing a user sees
+was wrong. But the suite was **not portable**, and a test that is red only on your machine is one
+people learn to ignore.
+
+**How it was fixed.** The **test timezone is pinned to UTC** in `vite.config.ts`, not the one
+assertion — because the next time-rendering test somebody writes would have had the same problem and
+nobody would have connected the two. Set at config load, which happens in the Vitest parent process
+before any worker is forked, so workers inherit it; and cross-platform, unlike a `TZ=UTC` prefix on
+the npm script, which Windows does not understand. **416 of 416 pass.**
+
+
+### #62 — Five more red tests than anyone had counted, all naming the same thing ✅ FIXED
+
+**What it is.** The 1 September review measured the failing tests across eleven a11y test files and
+reported sixteen. There are **thirty-three** a11y test files. Sweeping all of them found
+**twenty-one**.
+
+**What the five were, and why they matter more than their number.**
+
+| Test | What it had been saying since 27 August |
+|---|---|
+| `test_the_capability_offers_a_check_for_every_checker_in_the_registry` | there is no `check_graphics` method — a checker that can be selected and dispatched and has nowhere to put its verdict |
+| `test_every_checker_maps_to_a_real_wcag_criterion` | the checker map is not the five the POC shipped |
+| `test_the_poc_checkers_and_the_registry_cannot_drift_apart` | the map claims 1.4.11 and the registry does not give it to the AI |
+| `test_the_poc_element_checks_are_untouched` | the element-check set changed without a decision |
+| `test_the_statement_arrives_compiled_with_every_criterion` | the conformance guard, as in **#59** |
+
+**What it means.** Four of the five were the platform's own drift guards, and **all four were
+pointing at the same fact** — the one in **#60**. They were not noise around a known problem; they
+*were* the problem, stated four times, for five days, in a suite everybody had been told had "about
+sixteen expected failures".
+
+This is **#57 for the third time**: a check whose whole purpose is to notice something, ignored
+because it was noticing it. The first was a scan rule, the second was 1.4.11 itself, and this is the
+test suite. The pattern is not a test problem — it is what an accepted background of red does to
+every signal inside it.
+
+**How it was fixed.** All five are green, four of them without an assertion being touched. And the
+count is no longer the thing being remembered: **the a11y suite is at 1,747 passing and zero
+failing**, so the next red test is visible on the day it appears.
+
+
+### #63 — Pausing the judge would have handed 1.4.11 back to the arithmetic ✅ FIXED
+
+**What it is.** The most dangerous thing found today, and it was found by a test refusing to go
+green for the wrong reason.
+
+**What was observed.** With `graphics` held back (**#60**), one test stayed red:
+*`test_non_text_contrast_is_covered_by_a_rule_AND_a_judge_and_needs_both`*. Its whole point is that
+1.4.11 has two halves and needs both. Following it through:
+
+* the ownership registry gives 1.4.11 to **`rule`**;
+* `page_rules` records its measurements under the **`rule`** engine;
+* the conformance guard asks *did an engine entitled to settle this criterion look?* — and with
+  `graphics` gone, the answer would have been **yes**.
+
+So a page whose buttons all had visible edges would have been reported as **Supports 1.4.11** with
+**nothing having looked at a single icon**. That is QA-25 word for word — a narrow pass claiming a
+criterion it cannot prove — recreated by the act of pausing the check built to fix it.
+
+**How it was fixed.** A held-back check now **withdraws its criterion from positive claims** rather
+than handing it to the other half. `A11Y_HELD_BACK_CLAIMS` derives the criteria from the held-back
+map, and `suggest()` returns no suggestion for them — placed with the other positive-only guards, so
+**failures are untouched in both directions**: a control edge under 3:1 is still a proven Level AA
+defect and is still reported. The test now holds both ends: that the judged half is *held and not
+deleted*, and that while it is held nothing may claim the criterion.
+
+**What it means.** Withdrawing a claim is not the same as disabling a feature, and doing the first
+by doing the second is how the original bug is rebuilt. 1.4.11 now reads as **measured but not
+judged**, which is what is true.
+
+
+### #64 — The answer key still has nobody's signature on it 🔬 RECORDED, NOT FIXED
+
+**What it is.** The accuracy figures rest on an answer key of **173 records that are all
+draft-unadjudicated**. Until an expert signs them off and the blind second pass runs, those figures
+measure how often our checks agree with a careful draft — not how often they are right.
+
+**Why it is not fixed here.** It cannot be. The golden set's own rule is that the person who labels
+must not be the person who wrote the checker, and no code change satisfies that. It is recorded here
+so the number is read for what it is, and because **#60** cannot be reversed without it.
+
+**What is also still open, and does not block a run:** the contested 0.833 precision on `structure`
+(three tables where our check and the key disagree, needing a ruling, and it can only move up);
+`#open-exports` and `#newsletter-email`, two judgement calls the key's own author flagged both ways;
+screenshot paging; and **#58** — terminating a run still does not stop the agent, so if a run must
+actually end, stop the companion.
 
 ---
 

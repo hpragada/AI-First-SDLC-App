@@ -58,6 +58,7 @@ from apps.workitems.models import WorkItem
 from integrations.types import (
     A11Y_ALL_CHECKER_CRITERIA,
     A11Y_CHECKER_CRITERIA,
+    A11Y_HELD_BACK_CRITERIA,
     A11Y_JOURNEY_CRITERIA,
     A11Y_STEP_BLOCKED,
     A11Y_STEP_NOT_REACHED,
@@ -663,8 +664,9 @@ def test_the_poc_element_checks_are_untouched():
     is in the markup at all. See `A11Y_CHECKER_CRITERIA` for that in full.
     """
     assert set(A11Y_CHECKER_CRITERIA) == {"alt", "semantics", "structure", "color", "label"}
-    assert set(A11Y_ALL_CHECKER_CRITERIA) == set(A11Y_CHECKER_CRITERIA) | set(
-        A11Y_JOURNEY_CRITERIA)
+    assert set(A11Y_ALL_CHECKER_CRITERIA) == (set(A11Y_CHECKER_CRITERIA)
+                                             | set(A11Y_JOURNEY_CRITERIA)
+                                             | set(A11Y_HELD_BACK_CRITERIA))
 
 
 def test_the_journey_checks_match_what_the_registry_calls_phase_2(db):

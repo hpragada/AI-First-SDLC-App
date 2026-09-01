@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from .rules import (
     CHECKERS,
+    HELD_BACK_SELECTION_RULES,
     SELECTION_RULES,
     STYLE_KEYS,
     CapturedElement,
@@ -48,6 +49,7 @@ from .schema import AnswerIncomplete, requirements_for, verify_answer
 
 __all__ = [
     "CHECKERS",
+    "HELD_BACK_SELECTION_RULES",
     "SELECTION_RULES",
     "STYLE_KEYS",
     "AnswerIncomplete",

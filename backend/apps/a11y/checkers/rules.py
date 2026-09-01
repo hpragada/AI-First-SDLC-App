@@ -26,7 +26,12 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from integrations.types import A11Y_CHECKER_CRITERIA, A11Y_PASS, A11yCandidate
+from integrations.types import (
+    A11Y_CHECKER_CRITERIA,
+    A11Y_HELD_BACK_CRITERIA,
+    A11Y_PASS,
+    A11yCandidate,
+)
 
 #: The element checkers, in the order a page's requests are emitted. Fixed so that two runs over
 #: the same page produce the same batch in the same order — a judgment run that is not
@@ -36,10 +41,12 @@ from integrations.types import A11Y_CHECKER_CRITERIA, A11Y_PASS, A11yCandidate
 #: asks whether an element is pretending to be something, the other whether a container's
 #: visible arrangement exists in the markup at all.
 #:
-#: `graphics` (QA-25) is the second half of a criterion in the same way, and its other half is
-#: not a checker at all — it is `apps.a11y.page_rules`, which measures the controls while this
-#: judges the pictures. 1.4.11 is covered by both together and by neither alone.
-CHECKERS: tuple[str, ...] = ("alt", "semantics", "structure", "color", "label", "graphics")
+#: `graphics` (QA-25) is built and is deliberately NOT in this list — see
+#: `HELD_BACK_SELECTION_RULES` below and `integrations.types.A11Y_HELD_BACK_CRITERIA` for why,
+#: what is lost while it is held, and what has to be true before it comes back. Held rather than
+#: deleted: nothing about it was wrong except the claim that it covers a criterion the ownership
+#: registry gives to `rule`.
+CHECKERS: tuple[str, ...] = ("alt", "semantics", "structure", "color", "label")
 
 #: The computed style properties the rules read. Named here because this is also the list the
 #: companion has to capture (QA-11b): a property missing from the capture silently turns every
@@ -876,9 +883,29 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
         applies=_applies_label,
         settles=_settles_label,
     ),
+)
+
+
+#: Built, reviewed, and not running. One entry today: `graphics`.
+#:
+#: **Why this is a tuple and not a deletion.** A check that was wrong gets deleted. This one is
+#: not wrong — it selects what its `covers` prose says it selects, its prompt schema is written,
+#: and `background-image` is in `STYLE_KEYS` for it alone. What it lacked was the right to say it
+#: answers 1.4.11, which `apps/a11y/data/ownership.json` gives to `rule`. Keeping the rule here
+#: means the next person reads the scope somebody argued for rather than rebuilding it from a
+#: git log.
+#:
+#: `describe_rules()` prints these separately and says they are held, because a reviewer reading
+#: the rule set has to be able to tell what will run from what will not.
+#:
+#: **To bring it back:** move the entry below into `SELECTION_RULES`, add `"graphics"` to
+#: `CHECKERS`, and move its criteria from `A11Y_HELD_BACK_CRITERIA` into
+#: `A11Y_CHECKER_CRITERIA` — after the ownership registry has been changed to agree, which is
+#: the step that was skipped last time.
+HELD_BACK_SELECTION_RULES: tuple[SelectionRule, ...] = (
     SelectionRule(
         checker="graphics",
-        criteria=A11Y_CHECKER_CRITERIA["graphics"],
+        criteria=A11Y_HELD_BACK_CRITERIA["graphics"],
         covers="every graphic a sighted person reads meaning from — images, SVGs, drawing "
                "surfaces, anything with role=img, icons drawn by a font, and icons painted as "
                "a CSS background image; the question is whether the parts that carry the "
@@ -994,10 +1021,25 @@ def settled(element: CapturedElement | Mapping) -> dict[str, str]:
 
 
 def describe_rules() -> str:
-    """The rule set in plain words — what each checker covers and what it deliberately skips."""
+    """The rule set in plain words: what each checker covers and what it deliberately skips.
+
+    **Held-back checks are printed too, and labelled.** Leaving them out would make this read
+    as the whole rule set when it is not, and a reviewer comparing it against a conformance
+    statement has to be able to see that something built is not running. Printing them WITHOUT
+    the label would be worse: that is how a check nobody was running came to be described as
+    covering a criterion for five days.
+    """
     lines: list[str] = []
     for rule in SELECTION_RULES:
         lines.append(f"{rule.checker} (WCAG {', '.join(rule.criteria)})")
         lines.append(f"  covers: {rule.covers}")
         lines.append(f"  skips:  {rule.skips}")
+    for rule in HELD_BACK_SELECTION_RULES:
+        lines.append(
+            f"{rule.checker} (WCAG {', '.join(rule.criteria)}) - HELD BACK, NOT RUNNING")
+        lines.append(f"  covers: {rule.covers}")
+        lines.append(f"  skips:  {rule.skips}")
+        lines.append("  held:   this check does not run, and nothing it would have found is "
+                     "reported. See A11Y_HELD_BACK_CRITERIA for why, and for what has to be "
+                     "true before it runs again.")
     return "\n".join(lines)

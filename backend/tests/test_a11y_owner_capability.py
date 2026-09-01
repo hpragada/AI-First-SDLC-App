@@ -159,15 +159,47 @@ def test_non_text_contrast_is_covered_by_a_rule_AND_a_judge_and_needs_both():
     The registry's own rationale said so before either half was built — *"computable, but 'which
     graphics matter' needs some review"* — and then recorded the owner as `rule` anyway. That is
     how the judged half went unbuilt while the criterion was reported as covered.
+
+    **The judged half is built and is currently HELD BACK** (1 September), because the map of
+    what the AI owns and the registry disagreed about this criterion and the registry is the
+    record. So the test that mattered here changes shape but not meaning: it used to say *the
+    judged half must exist*, and it now also says *while it is not deciding, nothing may claim
+    this criterion*. That second assertion is the one guarding the original bug. Without it,
+    pausing the judge would hand 1.4.11 straight back to the arithmetic half — a page whose
+    buttons all have visible edges reading "Supports" with no icon looked at, which is exactly
+    what this file was written about.
     """
+    from apps.a11y.checkers import HELD_BACK_SELECTION_RULES
+    from apps.a11y.conformance import suggest
+    from integrations.types import A11Y_HELD_BACK_CLAIMS
+
     assert _BY_NUMBER["1.4.11"]["rationale"].count("review") >= 1, (
         "the registry's own words are the evidence this criterion is not rule-only; if they "
         "change, this test's reasoning has to be re-argued rather than quietly updated"
     )
     deciders = sc.deciders_for("1.4.11")
     assert sc.ENGINE_PLATFORM in deciders, "the measurable half: control edges, in page_rules"
-    assert sc.ENGINE_AI in deciders, "the judged half: which parts of a graphic carry meaning"
-    assert deciders[sc.ENGINE_AI] == ("graphics",)
+
+    # The judged half exists. Held, not missing, and named where somebody will find it.
+    held = {rule.checker: rule.criteria for rule in HELD_BACK_SELECTION_RULES}
+    assert held.get("graphics") == ("1.4.11",), (
+        "the judged half of 1.4.11 is gone from both the live rules and the held-back ones, "
+        "which is a deletion wearing a pause's clothes"
+    )
+    assert sc.ENGINE_AI not in deciders, "held back, so it is not deciding anything today"
+
+    # And the half that IS deciding may not carry the criterion on its own.
+    assert "1.4.11" in A11Y_HELD_BACK_CLAIMS
+    clean = {"routes": {"/a": "passed"}, "engines": {"rule"}}
+    assert suggest(clean, 0, owner="rule", held_back=True) is None, (
+        "a clean sweep of control edges just claimed 1.4.11 with no icon judged"
+    )
+    assert suggest(clean, 0, owner="rule") is not None, (
+        "and the guard has to be the HOLD doing this, not something else declining anyway"
+    )
+    # Failures are untouched in both directions: an edge under 3:1 is still a proven defect.
+    assert suggest({"routes": {"/a": "failed"}, "engines": {"rule"}}, 0, owner="rule",
+                   held_back=True) == "does_not_support"
 
 
 def test_reflow_is_rule_only_and_deliberately_has_no_judge():

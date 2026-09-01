@@ -25,6 +25,11 @@ Level A when nobody had watched a second of the video. `does_not_support` and
 `partially_supports` are deliberately NOT guarded: a proven failure is a fact about the product
 whichever engine proved it. See `_can_claim_positive`.
 
+**A criterion whose check is held back claims nothing either**, for the same reason and in the
+same direction. 1.4.11 is measured for control edges and JUDGED for icons; with the judged
+half paused, the measured half alone must not carry the criterion. See
+`integrations.types.A11Y_HELD_BACK_CLAIMS`.
+
 **"Risk reduction, not certification."** That sentence is in the drafted body and in
 `DISCLAIMER`, and it is not decoration: automated and AI checks cover part of WCAG, this
 document says what was checked and what was found, and the conformance claim belongs to the
@@ -37,6 +42,7 @@ import hashlib
 from django.utils import timezone
 
 from apps.tenancy.context import tenant_context
+from integrations.types import A11Y_HELD_BACK_CLAIMS
 
 from . import coverage
 from .policy import ACCESSIBILITY_REVIEWER_ROLE
@@ -207,7 +213,7 @@ def _can_claim_positive(owner: str | None, always_human: bool, engines) -> bool:
 
 
 def suggest(cover: dict | None, failures: int, *, owner: str | None = None,
-            always_human: bool = False) -> str | None:
+            always_human: bool = False, held_back: bool = False) -> str | None:
     """What the evidence supports, or `None` when it cannot settle it.
 
     `None` is a first-class answer here and the most important one: it is the platform declining
@@ -221,6 +227,9 @@ def suggest(cover: dict | None, failures: int, *, owner: str | None = None,
       * a page is still waiting to be checked → **no suggestion** (finish the pass first);
       * something could not be decided → **no suggestion** (a human must);
       * **the engine that can decide this criterion never looked → no suggestion** (QA-25);
+      * **a check this criterion needs is held back → no suggestion** (`A11Y_HELD_BACK_CLAIMS`):
+        one half of a two-half criterion answering on its own is the same unsafe claim as the
+        wrong engine answering, and it fails in the same direction;
       * checked somewhere with nothing wrong → **supports**;
       * the rule ran everywhere and had nothing to apply to → **not applicable**;
       * nothing looked at all → **not evaluated**.
@@ -257,6 +266,17 @@ def suggest(cover: dict | None, failures: int, *, owner: str | None = None,
     # Everything below this line is a POSITIVE claim — "supports" or "not applicable" — and both
     # are claims a client's procurement team will read as an assurance. Neither may be made on
     # evidence from an engine that cannot settle this criterion.
+    if held_back:
+        # A criterion one of whose checks is paused (`A11Y_HELD_BACK_CLAIMS`). The evidence in
+        # hand may be perfectly good and still be only part of the question: 1.4.11 is
+        # measured for control edges by `page_rules` and JUDGED for icons and charts by
+        # `graphics`, and with `graphics` held, a page whose buttons all have visible edges
+        # would otherwise read "Supports" with nothing having looked at a single icon. That
+        # is QA-25 word for word.
+        #
+        # Sits with the other positive-only guards, so a proven failure is untouched: an edge
+        # under 3:1 is still a Level AA defect and is still reported.
+        return None
     if not _can_claim_positive(owner, always_human, (cover or {}).get("engines") or ()):
         return None
     if "passed" in outcomes:
@@ -336,7 +356,8 @@ def criterion_rows(tenant_id, project_id, *, verdicts: dict | None = None) -> li
         # one to settle it (QA-25, #6). Unknown for a criterion with no registry row, which
         # `suggest` treats as grounds to claim nothing rather than as grounds to claim anything.
         owner, always_human = owners.get(number, (None, False))
-        suggested = suggest(cov, open_count, owner=owner, always_human=always_human)
+        suggested = suggest(cov, open_count, owner=owner, always_human=always_human,
+                            held_back=number in A11Y_HELD_BACK_CLAIMS)
         chosen = (verdicts.get(number) or {}).get("level")
         rows.append({
             "criterion": number,

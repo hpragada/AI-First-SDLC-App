@@ -1337,11 +1337,13 @@ team took `/staff/shelf-audit` out to stay under the judging cap.
 > §3 is the plan as written; §9 is what running it added: **thirty-five findings across twenty-four
 > sections** (§9.1–§9.23), all built — and it has gone on growing since that was written. **§9.24
 > to §9.28** carry the 25 and 31 August and 1 September findings and are also all built; **§9.29 is
-> the 1 September re-reading of every fix ever made, and built nothing.** #19–#35 were produced by a person
+> the 1 September re-reading of every fix ever made, and built nothing, and §9.30 is what the
+> team asked for in answer to it — everything that review found, cleared, with the a11y suite at
+> 1,747 passing and zero failing.** #19–#35 were produced by a person
 > watching the product work; #36–#45 by putting twelve textbook WCAG failures through the
 > selection code after the team asked what we do and do not capture. **Every built one has a
 > green test suite standing over it** — which is the point, and why they are written up at
-> length. They are numbered #19–#53 in the Testing Guide.
+> length. They are numbered #19–#64 in the Testing Guide.
 
 **It worked, and it found four defects no test could have caught, each hidden behind the one
 before it.** That is the shape of a capability that has never run: the first defect stops you
@@ -2936,6 +2938,14 @@ capability question needs a decision.
 > 1.4.11 owns no failure shape. None of the sixteen is a product defect. The suspicion recorded
 > above — that the missing `check_graphics` is real rather than a stale test — **is confirmed**,
 > and is one of the three gaps in §9.29.B.
+>
+> **And corrected again, the same day — see §9.30.** The figure of 16 was itself short: eleven of
+> thirty-three a11y test files were measured, and a full sweep found **21 backend and 1 frontend**.
+> The three "conformance guard" failures were also mis-explained here — see §9.30.D. **All of them
+> are now green**, sixteen of the twenty-one without an assertion being edited, because they were
+> all objecting to one thing: `graphics` claiming a criterion the ownership registry gives to
+> `rule`. That claim is withdrawn (§9.30.A). The missing `check_graphics` is no longer a gap for
+> the same reason — a held-back check needs no capability method.
 
 One of the fourteen was fixed, because it sat in a file this work was already changing and a red
 test on the branch we build on is a hazard: `test_finishing_produces_findings_for_the_registered_routes`
@@ -3904,6 +3914,14 @@ What follows is only what the review found that this plan did not already say.
 
 #### 9.29.A The red tests are three causes, not one — §9.25's note is corrected
 
+> **Corrected the same day — see §9.30.B and §9.30.D.** Two things below are wrong. The count is
+> **21, not 16**: this was measured across eleven a11y test files and there are thirty-three, and
+> the five that were missed are four drift guards all naming the same fact. And the three
+> conformance failures do **not** come from a fixture with no ownership registry — the registry is
+> loaded; the fixture records a *rule-scanner* pass for a criterion the registry gives to the *AI*,
+> which is the guard working precisely as designed. The shape of the paragraph below is right and
+> its two specifics are not, which is the habit it is itself about.
+
 §9.25 records **14 backend tests failing, "all of them" tracing to the `graphics` / 1.4.11 checker
 added on 27 August**. Re-measured today across eleven a11y test files, the figure is **16, and
 they have three separate causes**:
@@ -3937,6 +3955,12 @@ had three**, which is the habit §14.2.3 names: taking the explanation from the 
 rather than from the place that answers the question.
 
 #### 9.29.B 1.4.11 has no evidence of any kind — the one item to decide before the next audit ⭐⭐
+
+> **Decided and acted on the same day — see §9.30.A.** The team's answer was **hold it back**: the
+> claim on 1.4.11 is withdrawn until the ownership registry, the corpus and the answer key can
+> support it, and the check itself is kept intact and idle rather than deleted. Everything below
+> still stands as the description of the gap; what changed is that the platform no longer claims
+> the criterion while the gap is open. §9.30.C is the part of that which nearly went wrong.
 
 Three separate gaps, all pointing the same way. Each verified today rather than inferred.
 
@@ -4011,3 +4035,135 @@ code. His platform was on current code and ingest ran 2.4 seconds before dispatc
 came between. Every link says it should have worked. The remaining explanations are all about
 his working copy rather than our code, and no fix was invented for a defect that has not been
 shown to exist.
+
+
+### 9.30 Clearing everything before the next audit — 1 September ✅ (BUILT)
+
+§9.29 was a review and built nothing. The team's answer to it was short: *before I click Run audit,
+everything has to be fixed and cleared.* This is that work. **Route B was chosen for 1.4.11** — hold
+the claim back rather than complete it — and the investigation that followed showed that choice was
+better founded than the case put for it.
+
+**The state before: 21 backend tests red and 1 frontend, not 16 and 1.** §9.29.A measured eleven
+a11y test files. There are thirty-three. **Sweeping all of them found five more**, and those five
+are the subject of §9.30.B.
+
+**The state after: 1,747 a11y backend tests passing, 0 failing; 416 of 416 frontend passing.**
+Plus the scorer at 47/47, and 126 tests across the capability, WCAG-gate, integrations-admin,
+phase-4 acceptance and build-activity suites, all green.
+
+#### 9.30.A The claim on 1.4.11 is withdrawn, and the check is kept
+
+`ownership.json` records **1.4.11 as owned by `rule`**. `A11Y_CHECKER_CRITERIA` is the map of what
+the **AI** owns. When `graphics` was added on 27 August it put 1.4.11 into that map, and the case
+for doing so was argued in a code comment — *"the registry said so itself… and then recorded the
+owner as `rule` anyway"* — while the registry itself was never changed to agree. Five guards said so
+immediately and went on saying it (§9.30.B).
+
+So the entry moved rather than being deleted:
+
+* `A11Y_HELD_BACK_CRITERIA` in `integrations/types.py` holds `{"graphics": ("1.4.11",)}`, with the
+  reason, what is lost, and the three things that must be true before it returns;
+* `HELD_BACK_SELECTION_RULES` in `checkers/rules.py` holds the selection rule itself — its `covers`
+  and `skips` prose intact, so the scope somebody argued for is readable rather than reconstructable
+  from a git log;
+* `describe_rules()` prints it with **HELD BACK, NOT RUNNING** and a line saying nothing it would
+  have found is reported, because a reviewer has to be able to tell what runs from what does not;
+* `A11Y_ALL_CHECKER_CRITERIA` — the *validation* union, which nothing selects from — still contains
+  it, so a verdict recorded before the pause can still be validated and a workspace that had tuned
+  its confidence threshold is not told the check "does not exist" (the QA-20 error, avoided).
+
+**Sixteen of the twenty-one red tests went green on this change alone, with no assertion touched.**
+That is the strongest evidence that the hold is the right reading rather than a convenient one:
+sixteen independent guards were objecting to one thing.
+
+Bringing it back is three moves in two files, listed in the code — **after** the registry is changed
+to agree, which is the step that was skipped last time.
+
+#### 9.30.B Five red tests nobody had counted, all saying the same thing
+
+| Test | What it had been saying since 27 August |
+|---|---|
+| `test_the_capability_offers_a_check_for_every_checker_in_the_registry` | there is no `check_graphics` — a checker selectable and dispatchable with nowhere to put its verdict |
+| `test_every_checker_maps_to_a_real_wcag_criterion` | the checker map is not the five the POC shipped |
+| `test_the_poc_checkers_and_the_registry_cannot_drift_apart` | the map claims 1.4.11; the registry does not give it to the AI |
+| `test_the_poc_element_checks_are_untouched` | the element-check set changed without a decision |
+| `test_the_statement_arrives_compiled_with_every_criterion` | the conformance guard, as in §9.29.A |
+
+Four of the five are the platform's own drift guards and **all four were pointing at §9.30.A**. They
+were not noise around a known problem; they *were* the problem, stated four times over, in a suite
+everybody had been told had "about sixteen expected failures".
+
+**This is #57 for the third time** — a check whose whole purpose is to notice something, ignored
+because it was noticing it. First a scan rule, then 1.4.11, now the test suite. The lesson is not
+about tests: **an accepted background of red destroys every signal inside it**, so the bar from here
+is a green suite, not a remembered count.
+
+#### 9.30.C The dangerous one: pausing the judge would have rebuilt the bug it was built to fix ⭐⭐
+
+One test refused to go green after §9.30.A, and it was right to:
+*`test_non_text_contrast_is_covered_by_a_rule_AND_a_judge_and_needs_both`*.
+
+Following it through: the registry gives 1.4.11 to `rule`; `page_rules` records its measurements
+under the `rule` engine; and the §9.26 conformance guard asks *did an engine entitled to settle this
+criterion look?* With `graphics` held back, the answer would have been **yes** — so a page whose
+buttons all had visible edges would have been reported as **Supports 1.4.11** with nothing having
+looked at a single icon.
+
+**That is QA-25 word for word**, recreated by the act of pausing the check built to fix it.
+
+The fix: a held-back check now **withdraws its criterion from positive claims** rather than handing
+it to the other half. `A11Y_HELD_BACK_CLAIMS` derives those criteria, and `suggest()` declines for
+them — placed beside the other positive-only guards, so **failures are untouched in both
+directions**: a control edge under 3:1 is still a proven Level AA defect and is still reported.
+1.4.11 now reads as **measured but not judged**, which is what is true.
+
+The test holds both ends now: that the judged half is *held and not deleted*, and that while it is
+held nothing may claim the criterion.
+
+#### 9.30.D §9.29.A's diagnosis of the conformance failures was wrong
+
+§9.29.A says those tests *"build a fixture with no ownership registry loaded"*. **They load it.**
+
+The real cause is sharper. The fixture records a **rule-scanner** pass for **1.1.1**, and the
+registry gives 1.1.1 to the **AI**. axe's `image-alt` proves an alt attribute *exists*; whether it
+*says* anything is the judge's question. The guard declined — correctly, and for exactly the reason
+it was written.
+
+Fixed by having those four fixtures name the engine that owns the criterion, each with a comment
+saying why so nobody reverses it. The guard's own coverage is untouched:
+`test_a11y_conformance_guard.py` holds thirteen tests on this rule from both directions, including
+`test_a_scanner_pass_cannot_claim_a_criterion_the_ai_decides` — which is the case those four had
+been accidentally re-testing.
+
+**Recorded rather than quietly corrected**, for the same reason as §9.29.D: this is the third time
+in this document that an explanation was taken from the nearest place rather than the place that
+answers the question, and the count matters.
+
+#### 9.30.E The timezone, pinned once for the whole suite
+
+`audit.test.tsx` asserted `13:04` for a `13:04Z` stamp; the screen renders the **viewer's** local
+time, deliberately, so it read 18:34 in India and failed. Pinned `TZ=UTC` in `vite.config.ts` rather
+than patching the assertion — every time-rendering test written from now on inherits it, and it is
+set at config load in the Vitest parent before any worker forks, which is the only cross-platform
+place to do it. **416 of 416.**
+
+#### 9.30.F What is still open going into the run
+
+Unchanged by any of the above, and stated so the numbers are read for what they are:
+
+* **the answer key is 173 draft-unadjudicated records** — the accuracy figures measure agreement
+  with a careful draft, not correctness. Only a person who did not write the checkers can close
+  this, and 1.4.11 cannot come back without it;
+* the contested **0.833** precision on `structure` — three tables, needs a ruling, can only move up;
+* `#open-exports` and `#newsletter-email` — two judgement calls the key's own author flagged both
+  ways;
+* screenshot paging — a real shape mismatch, survivable, recorded not fixed;
+* **§9.28.H / #58 — terminating a run still does not stop the agent.** The writes are refused; the
+  agent keeps going. To actually end a run, stop the companion.
+
+**And one thing that is not a code item at all:** the running worker and API containers were started
+at 04:17 UTC on 1 September and hold 31 August code in memory. Every fix in §9.29 and §9.30 lives on
+disk only until they are restarted — **worker first, then API** (the deploy order of `b8617a1`,
+because the verify timeout travels on the run's payload and an older worker cannot read it), and the
+companion started fresh so it captures `border-color`, `outline-color` and the parent description.
