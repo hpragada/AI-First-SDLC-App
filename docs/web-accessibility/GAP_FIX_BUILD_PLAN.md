@@ -4301,3 +4301,85 @@ with no accuracy figure — accepted by the team, and #64 records it. §9.30.F h
 
 **And still the team's to do before the run:** restart the worker, then the API and frontend, then
 start the companion fresh. Everything above is on disk; none of it is in the running processes.
+
+---
+
+### 9.32 The audit that ran to completion on a fresh tenant — 2 September ✅ (BUILT / 2 RECORDED)
+
+**Audit `f60c8f1a` · fresh tenant `Edvensoft-WCAG-2` · 94 pages · three passes · complete.**
+
+The first full-scale audit run with all six element checks live and the ownership registry agreeing
+with the code. Full reading-by-reading account in `Audit_Live_Check_Reasoning.md` Part II.
+
+**The result.** 2,177 elements captured, 2,283 requests collapsing to **1,068 distinct questions**,
+**1,068 judged, 0 unanswered**. 968 pass, 100 fail. 410 open problems (105 critical, 305 high),
+**2 awaiting a person**. Active work 3 h 31 m; engine cost $37.18 on the subscription.
+
+**What it proved, and none of it was assumed:**
+
+* **The five original checks were untouched by the 1 September work.** The 31 August selection rules
+  were loaded alongside the current ones and all 50 corpus elements walked past both. Identical
+  selection, identical scope prose, identical criteria. Recorded because "we did not change that"
+  is not evidence.
+* **The audit selected the same work as before the changes.** 1,068 distinct questions on both runs,
+  dedup 2.15× vs 2.14×, and `graphics` selecting **59 elements on both**. The single most convincing
+  number of the day.
+* **`graphics` works end to end on real content.** 59 selected, 59 judged, mean confidence 0.938,
+  reading pixels and correctly declining the photograph exemption on a flat illustration.
+* **The 1 September capture fields are live and in use.** `parent` on 800 of 800 dispatched elements,
+  `accessible_name` on 524 — and the judge quotes `accessible_name` in its own evidence, so it is
+  being reasoned with rather than merely delivered.
+* **Interruption costs nothing but time.** Two passes stopped for environmental reasons and the third
+  completed the work. No element was lost, re-judged unnecessarily, or silently marked as passing.
+  Answers already banked were reused at zero cost.
+
+#### 9.32.1 A new tenant silently inherits a judging cap of 200 🔬 RECORDED, NOT FIXED
+
+`caps_for()` reads `max_judgments_per_run` from the `a11yai` connection scopes and falls back to
+`DEFAULT_MAX_JUDGMENTS_PER_RUN = 200`. A freshly created tenant has `scopes = {}`, so it inherits
+200 — where the previous tenant had 800 configured by hand.
+
+**Effect measured on this run:** 1,068 distinct questions at a cap of 200 is roughly five passes
+instead of two. Caught during capture and corrected to 800 before dispatch, so it never bit.
+
+**Why it is worth fixing rather than remembering.** Nothing on any screen states the cap, and the
+first symptom is an audit that stops early saying it reached "this run's limit" — which reads as
+normal behaviour, because it is. The failure mode is a slow day, not an error, so nobody
+investigates. Options: surface the cap at project setup, seed it with the tenant, or state it on the
+audit screen before the run starts.
+
+#### 9.32.2 The ledger write fails silently when a run fails ⭐⭐ 🔬 RECORDED, NOT FIXED
+
+**Symptom.** After pass 2 the screen showed 370 problems and 106 awaiting review. Both were pass 1
+figures, 80 minutes stale. The report document had regenerated; the ledger had not.
+
+**Proof.** All 476 ledger rows were created *and last touched* between 04:13 and 04:16. Pass 2
+finished at 05:39. Not one row moved.
+
+**Diagnosis**, from a dry run inside a rolled-back transaction:
+
+```
+merge_run           :   8.3 s
+record_run_findings : 427.3 s   <- and it SUCCEEDS
+   would open      76
+   would see again 377
+   would resolve   99
+```
+
+`record_run_findings` is not broken — it is **slow**, and `publish_report` calls it inside a
+best-effort handler that stores the failure on the returned dict. That dict travels back on the
+Temporal activity's return value, **which a failed run never persists**. So the one case where the
+ledger write is most likely to be cut short is exactly the case where its error cannot be recorded.
+
+**Confirmed non-permanent:** on pass 3 the same write ran to completion, moving the queue 106 → 2 and
+open problems 370 → 410.
+
+**The write is correct. The silence is the defect.** Two directions, neither urgent: make the failure
+durable (write it to the audit `summary`, which survives a failed run, rather than only to the
+activity result), and reduce the write's cost so it is less likely to be interrupted. The first is
+the one that matters — an 80-minute-wrong screen with no signal anywhere is the same class of failure
+as the accepted background of red in §9.29.
+
+**Cross-check that no new bad behaviour was introduced:** the resolution rules held correctly
+throughout. The 44 elements still unanswered after pass 2 did **not** have their findings closed,
+because "we did not get an answer" is not "the problem is gone".

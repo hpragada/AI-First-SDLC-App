@@ -3002,3 +3002,51 @@ each showed the other's last walk. Keyed on the artifact now.
 | `RESEARCH_CORRECTIONS.md` | where the research reports disagreed with the platform |
 | `USER_JOURNEYS.md` | the nine journeys, rewritten 20 August against what the code does — each marked built, part-built or not built |
 | `docs/design/screens/S-38-a11y-audit.html` | the approved wireframe for Pages & audit |
+
+### #66 — A new tenant silently inherits a judging cap of 200 🔬 RECORDED, NOT FIXED
+
+**What.** `caps_for()` falls back to `DEFAULT_MAX_JUDGMENTS_PER_RUN = 200` when the `a11yai`
+connection has no `max_judgments_per_run` in its scopes. A freshly created tenant has empty scopes.
+
+**Found.** 2 September, during the capture phase of audit `f60c8f1a` on a brand-new tenant — early
+enough to correct before dispatch.
+
+**Why it matters more than the number suggests.** 1,068 distinct questions at 200 per pass is about
+five passes instead of two. But the failure is invisible: the audit stops saying it reached "this
+run's limit", which is exactly what it says when a correctly configured run reaches 800. There is no
+error, nothing is lost, and nothing on screen states the cap — so the symptom is a slow day nobody
+investigates.
+
+**How to reproduce.** Create a tenant, add the `a11yai` connection, read `caps_for(tenant_id)`.
+Returns `(200, None)`.
+
+**Not fixed.** Options are to surface the cap at project setup, seed it with the tenant, or print it
+on the audit screen before the run. The team's call.
+
+---
+
+### #67 — The findings ledger write fails silently when the run fails ⭐⭐ 🔬 RECORDED, NOT FIXED
+
+**What.** `publish_report` calls `merge_run` then `record_run_findings` inside a best-effort handler
+that records any failure onto the returned dict. That dict comes back on the Temporal activity's
+return value — which is never persisted when the run itself fails. `record_run_findings` takes
+**427 seconds** on a 94-page audit. So on precisely the run most likely to cut it short, its error
+cannot be recorded anywhere.
+
+**Found.** 2 September, after pass 2 of audit `f60c8f1a` ended on a subscription session limit. The
+Accessibility screen read 370 problems and 106 awaiting review for **80 minutes**; both were pass 1
+figures. The report document had regenerated at 05:39:38 and the ledger had not.
+
+**How it was proven.** Every one of the 476 ledger rows had `created_at` and `updated_at` between
+04:13 and 04:16, and pass 2 finished at 05:39 — so no row was touched afterwards. A dry run of
+`record_run_findings` inside a rolled-back transaction then showed the function itself succeeds
+(76 opened, 377 seen again, 99 resolved) and takes 7 minutes.
+
+**Confirmed non-permanent.** Pass 3 ran the same write to completion, moving the queue 106 → 2.
+
+**The write is correct; the silence is the defect.** Preferred fix: record the ledger outcome on the
+audit `summary`, which survives a failed run, instead of only on the activity result. Secondary:
+reduce the write cost.
+
+**Watch for it.** If an audit finishes and the two headline counts do not move within about ten
+minutes, the ledger write did not complete. There is currently no other signal.
