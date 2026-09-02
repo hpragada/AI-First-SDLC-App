@@ -3104,3 +3104,31 @@ the live browser.
 **Verified.** 418 of 418 frontend tests pass, including two new ones pinning the row marking and
 the dropdown's class. The rendered page was measured in a real browser for computed colour,
 contrast, control width and stacking direction — not eyeballed.
+
+---
+
+### #69 — The accuracy harness demands an app version and then throws it away 🔬 RECORDED, NOT FIXED
+
+**What.** `run.py` takes `--app-version` and **refuses to score without it**. The Makefile explains
+why in detail: nothing in the platform records which version of the application was audited, so
+the number has to be stated by hand, and taking it from the answer key instead *"would make both
+sides agree by construction and turn the check into decoration"*. All of that reasoning is sound.
+
+**But the value is used for exactly one thing — `labels.check_app_version(manifest, ...)`, a guard
+that the key matches the app — and is then never written to the results file.** Confirmed on the
+2 September run: `1.4.0` was passed on the command line and the string appears **zero times** in
+`results/20260902T140726+0000.json`. There is no `app_version` key in the file at all.
+
+**Why it matters.** The results files are the accuracy record; the whole point of demanding the
+version is that a score is meaningless without knowing what was scored. As it stands, a file from
+six months hence cannot answer *"which build of Meridian produced these numbers?"* — and the two
+1 September files cannot answer it either. The guard runs and the evidence of it is discarded.
+
+**Found.** 2 September, while running the harness for real against audit `f60c8f1a`. Not a
+regression — it has been true since the harness was written.
+
+**The fix is one line**: put `app_version` on the results payload beside `audit`, `project` and
+`generated_on`. Worth doing before the next run rather than after, because the files already
+written cannot be repaired — nobody recorded what they scored.
+
+**Not fixed.** Recorded for the team's decision.

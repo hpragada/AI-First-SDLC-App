@@ -4384,4 +4384,62 @@ as the accepted background of red in §9.29.
 throughout. The 44 elements still unanswered after pass 2 did **not** have their findings closed,
 because "we did not get an answer" is not "the problem is gone".
 
+#### 9.32.3 The accuracy score for the completed audit — 2 September ✅ (RUN, RECORDED)
+
+Scored against the golden set (`--app-version 1.4.0`, confirmed by the team), audit `f60c8f1a`.
+Result file `evaluation/scorer/results/20260902T140726+0000.json`, carrying a stored note that
+explains the colour movement. **`baseline.json` was deliberately left alone** — the run blocked,
+and the harness keeps the baseline untouched on a block so the comparison stays honest.
+
+| Check | Records | Precision | Recall | F1 | Caught | False alarms | Missed |
+|---|---|---|---|---|---|---|---|
+| alt | 30 | 1.000 | 1.000 | 1.000 | 15 | 0 | 0 |
+| label | 40 | 1.000 | 1.000 | 1.000 | 20 | 0 | 0 |
+| semantics | 31 | 1.000 | 1.000 | 1.000 | 16 | 0 | 0 |
+| structure | 30 | 0.833 | 1.000 | 0.909 | 15 | **3** | 0 |
+| colour | 32 | 0.938 | 0.938 | 0.938 | 15 | 1 | 1 |
+
+**`graphics` has no score and that is correct** — the answer key holds zero records for 1.4.11,
+deliberately, as its manifest states. Five of six checks are measurable; the sixth ships judged
+but not measured, unchanged from §9.32.
+
+**Completeness: 2,283 element-checks offered, 2,283 answered, across all 94 routes.** Nothing was
+dropped between being on a page and getting an answer. Three elements the key names were never
+offered to their check — `#newsletter-email [label]`, `#open-exports [semantics]`,
+`#save-entry [semantics]` — all three already recorded at §9.28, and two are the standing
+judgement calls the key's own author flagged both ways. **On 1 September there were four; the
+fourth was `/loans/renewals #renew-tidewater [color]`, and it is now captured.** That is the
+border-colour capture fix proven on live data rather than by test.
+
+**Movement since 1 September.** `semantics` recall improved 0.875 → 1.000. `alt`, `label` and
+`structure` unchanged. `colour` precision fell 1.000 → 0.938 and the run blocked on it.
+
+**The colour movement, root-caused and accepted by the team.** The entire drop is one record:
+`/help/problem-report #problem-detail`. That page and `/help/report-a-problem` are a deliberate
+A/B twin — the same textarea, one carrying `aria-invalid` and an `aria-describedby` note that
+states the error in words, one carrying neither. **The 1 September capture work is what first put
+those attributes in front of the judge**; the 1 September results file mentions `problem-detail`
+nowhere, because the judge could not reason about it at all. Shown them, the judge applied the
+platform's own rule for 1.4.1 as written in `_has_second_cue` — *only visual cues count; an ARIA
+attribute is not one, because 1.4.1 is about what a person who cannot distinguish the colours can
+still see* — and failed the field. The key's record assumes the ARIA makes it a pass.
+
+**The checker did what it is specified to do.** This is a disagreement between a documented
+platform rule and one answer-key record, and it needs an expert's ruling, not a code change. The
+three `ambiguous` `/loans/renewals` markers moved for the same reason and are excluded from
+precision and recall by design.
+
+> **The largest real gap is `structure`, not colour.** Precision 0.833 on three false alarms is
+> the lowest figure on the board, it is **unchanged from the baseline** so it is not new, and
+> nobody has looked at it. Colour got the attention this run because it moved.
+
+**The standing caveat is unchanged and governs every number above.** The dataset's own manifest:
+every verdict is an unadjudicated draft awaiting expert review, single-labeller, no blind
+re-label round (`relabel_agreement: null`). These measure how often the checks agree with a
+careful draft, **not how often they are right**. Internal only; the team has confirmed they will
+not be published or shown to a client.
+
+**One gap found while running it:** the harness demands `--app-version` and never records it —
+see `TESTING_GUIDE.md` #69.
+
 > **Team decision, 2 September.** Both of the above were presented in full with a proposed fix, a size and a risk assessment. **The team weighed them and judged neither urgent**, and chose to spend the time on conformance-tab UI work instead. They are deferred by decision, not by neglect — do not reopen the question without new evidence. The fixes proposed were: for the cap, show it on the audit screen and set it explicitly for new workspaces; for the ledger, record the reconciliation outcome on the audit's own `summary` (which survives a failed run) rather than only on the run's return value, and leave the seven-minute write cost alone — speed is a comfort, the silence is the defect.
