@@ -4383,3 +4383,5 @@ as the accepted background of red in §9.29.
 **Cross-check that no new bad behaviour was introduced:** the resolution rules held correctly
 throughout. The 44 elements still unanswered after pass 2 did **not** have their findings closed,
 because "we did not get an answer" is not "the problem is gone".
+
+> **Team decision, 2 September.** Both of the above were presented in full with a proposed fix, a size and a risk assessment. **The team weighed them and judged neither urgent**, and chose to spend the time on conformance-tab UI work instead. They are deferred by decision, not by neglect — do not reopen the question without new evidence. The fixes proposed were: for the cap, show it on the audit screen and set it explicitly for new workspaces; for the ledger, record the reconciliation outcome on the audit's own `summary` (which survives a failed run) rather than only on the run's return value, and leave the seven-minute write cost alone — speed is a comfort, the silence is the defect.

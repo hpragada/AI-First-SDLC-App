@@ -19,6 +19,12 @@
   /* ---- semantic ---- */
   --success:#1FA971; --success-bg:#E5F5EE;
   --warning:#E0961B; --warning-bg:#FBF1DE;
+  /* Amber INK, for warning-coloured text and figures. `--warning` itself is a fill and a border
+     colour and must not be used as text: it measures 2.19:1 on `--warning-bg` and 2.46:1 under
+     white, both of which fail WCAG AA at any size. This is 6.42:1 on the tint and 7.19:1 on
+     white. Added 2 Sep after the conformance-tab work shipped a 2.46:1 chip — in the
+     accessibility tool, which is the one place that cannot be excused. */
+  --warning-ink:#7A4E06;
   --danger:#DC2626;  --danger-bg:#FCEAEA;
   --info:#2563EB;    --info-bg:#E7EEFD;
   --accent-purple:#7C5CD6; --accent-purple-bg:#EFEAFB;

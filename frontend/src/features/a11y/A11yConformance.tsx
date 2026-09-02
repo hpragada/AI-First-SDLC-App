@@ -29,6 +29,7 @@ import {
   Skeleton,
   Table,
   Textarea,
+  Tile,
 } from "../../components/ui";
 import { roleLabel } from "../identity/roles";
 import type { A11yConformance, A11yConformanceLevel, A11yConformanceRow } from "../../types";
@@ -100,9 +101,15 @@ function LevelCell({
     );
   }
   return (
-    <span className="u-row-tight">
+    // Stacked, not side by side. The chip used to sit BESIDE the control in one flex row, so
+    // the two competed for a narrow column and the control lost — "Partially supports" was
+    // rendering as "Partial". Below it, the control keeps the whole cell width.
+    <span className="conf-level">
       <select
-        className="input"
+        // `select`, not `input`. With the text-field class it never got `appearance: none`
+        // nor the 32px of padding the chevron needs, so the BROWSER's own arrow was drawn on
+        // top of the words and clipped every option longer than a few characters.
+        className="select conf-level__select"
         aria-label={label}
         value={row.effective}
         onChange={(e) => onChange(e.target.value as A11yConformanceLevel)}
@@ -119,6 +126,18 @@ function LevelCell({
         // arrive as a surprise.
         <span className="chip" title="Suggested by the evidence; you have not changed it">
           suggested
+        </span>
+      )}
+      {/* The other side of the same coin, and mutually exclusive with it by construction:
+          `needs_a_person` is true exactly when there is no suggestion and no ruling. Named on
+          the row as well as counted in the tile, because a number with no way to find what it
+          counts is a number a person cannot act on. */}
+      {row.needs_a_person && (
+        <span
+          className="chip chip--attention"
+          title="Nothing suggested a level for this one — it needs your decision"
+        >
+          needs your decision
         </span>
       )}
     </span>
@@ -139,6 +158,10 @@ function Criteria({
       <Table
         headers={["Criterion", "Level", "Conformance", "Established by", "What was checked"]}
         rows={data.rows.map((row) => ({
+          // The tile says four criteria are waiting on a person; this is how those four are
+          // found among fifty-five. Colour is never the only cue — the row also carries a
+          // "needs your decision" chip in the conformance cell.
+          className: row.needs_a_person ? "conf-row--needs-you" : undefined,
           cells: [
             <span className="table__primary">
               {row.criterion} {row.handle}
@@ -458,17 +481,26 @@ export function A11yConformanceScreen() {
         {data.disclaimer}
       </Banner>
 
+      {/* `Tile`, not a hand-rolled copy of it. The copy here used `<span>` for all three parts,
+          and a span is inline: the number, the label and the sentence ran together on one line
+          and the stylesheet's `margin-top` was inert, because top margins do nothing on an
+          inline box. Every other screen used the shared component and stacked correctly, which
+          is why this was the only tab that looked wrong. Use the component; do not restyle. */}
       <div className="grid grid--3" style={{ marginTop: "var(--space-5)" }}>
-        <div className="tile">
-          <span className="tile__num">{data.totals.evaluated}</span>
-          <span className="tile__label">Evaluated</span>
-          <span className="tile__sub">Something actually checked these</span>
-        </div>
-        <div className="tile">
-          <span className="tile__num">{data.totals.not_evaluated}</span>
-          <span className="tile__label">Not evaluated</span>
-          <span className="tile__sub">Stated, never assumed</span>
-        </div>
+        {/* "of 55" on the first two and not the third, deliberately: those two partition the
+            whole standard and sum to it, and the third is a SUBSET OF THE SECOND — a criterion
+            lands there precisely because nothing suggested a level, which drops it into "not
+            evaluated". Printing "4 of 55" would invite the reader to add it to the other two. */}
+        <Tile
+          num={<>{data.totals.evaluated} <span className="tile__of">of {data.totals.total}</span></>}
+          label="Checked"
+          sub="A check examined these and recorded what it found"
+        />
+        <Tile
+          num={<>{data.totals.not_evaluated} <span className="tile__of">of {data.totals.total}</span></>}
+          label="Not checked yet"
+          sub="Recorded as unknown — never assumed to pass"
+        />
         {/* **Criteria the platform will not put a word in your mouth about** — it has no
             suggestion and nobody has ruled, so the row cannot say Supports or anything else.
             Typically a criterion only the rule scanner reached: "axe found nothing" is not
@@ -480,10 +512,14 @@ export function A11yConformanceScreen() {
             match, and the shared wording made them look as though they should: 4 here beside 19
             there sent the team looking for a bug in the counting. Neither number was wrong; the
             caption was. */}
-        <div className="tile">
-          <span className="tile__num">{data.totals.awaiting_a_person}</span>
-          <span className="tile__label">Need your decision</span>
-          <span className="tile__sub">Criteria the platform will not suggest a level for</span>
+        <div className="tile tile--attention">
+          <div className="tile__num">{data.totals.awaiting_a_person}</div>
+          <div className="tile__label">Waiting on you</div>
+          {/* Says which of the other two numbers it comes out of, because it is not a third
+              bucket and the screen used to leave that ambiguous. */}
+          <div className="tile__sub">
+            Of the {data.totals.not_evaluated} — marked in the list below for you to set
+          </div>
         </div>
       </div>
 

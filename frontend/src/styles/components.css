@@ -975,3 +975,53 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
    was the 2.29:1 defect this note used to point at, and it is fixed. This is 8.86:1. */
 .shot--missing .shot__stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); min-height: 180px; color: var(--text-body); padding: var(--space-5); text-align: center; }
 .shot--missing svg { width: 32px; height: 32px; }
+
+/* ── Accessibility conformance tab ─────────────────────────────────────────────
+   Three defects fixed here, all of them in one screen and none of them a design
+   choice anybody made.
+
+   The tiles: the conformance tab hand-rolled its own copy of `Tile` using `<span>`
+   for the number, the label and the sentence. A span is inline, so all three sat on
+   one line ("20EVALUATEDSomething actually checked these") and the `margin-top` on
+   `.tile__label` / `.tile__sub` was inert, because top margins do nothing on an
+   inline box. Every other screen used the component and stacked correctly. The
+   markup now uses the component; nothing in `.tile` itself needed changing. */
+
+/* The "of 55" suffix. Muted and smaller so the count still reads as the figure and
+   the denominator reads as context, not as part of the number. */
+.tile__of { font-size: var(--fs-sm); font-weight: 400; color: var(--text-muted); }
+
+/* The one tile that is asking the reader for something, rather than reporting.
+   A left edge rather than a full amber fill: it has to sit beside two neutral tiles
+   without turning the row into a warning. */
+.tile--attention { border-left: 3px solid var(--warning); background: var(--warning-bg); }
+/* `--warning-ink`, not `--warning`: the fill colour as text measures 2.19:1 on this tint, which
+   fails at any size. This is 6.42:1. */
+.tile--attention .tile__num { color: var(--warning-ink); }
+
+/* The criteria waiting on a person, marked in the list so the tile's count can
+   actually be acted on. Colour is NEVER the only cue — the row also carries a
+   "needs your decision" chip, so this reads the same to someone who cannot see the
+   tint and to anyone printing in black and white. */
+.conf-row--needs-you > td { background: var(--warning-bg); }
+.conf-row--needs-you > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* A white pill with an amber edge, NOT an amber fill. Two reasons, and the first is the one
+   that matters: white on `--warning` is 2.46:1 and amber-on-tint is 2.19:1 — both fail AA, and
+   an accessibility tool shipping unreadable text is the one defect it cannot ship. This is
+   7.19:1. The second is that this chip sits on a row already tinted `--warning-bg`, so an
+   amber fill would have dissolved into its own background. */
+.chip--attention {
+  background: var(--bg-surface); color: var(--warning-ink);
+  border: 1px solid var(--warning);
+}
+
+/* The conformance control, stacked above its chip rather than beside it.
+   Two things were wrong. It carried `.input` rather than `.select`, so it never got
+   `appearance: none` nor the 32px of right padding the chevron needs — the BROWSER's
+   own arrow was painted over the words. And it shared one flex row with the
+   "suggested" chip, so in a narrow column the two competed and the control lost:
+   "Partially supports" rendered as "Partial". Stacking gives the control the whole
+   cell, and the floor keeps every option readable when the window is narrow. */
+.conf-level { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+.conf-level__select { min-width: 168px; }

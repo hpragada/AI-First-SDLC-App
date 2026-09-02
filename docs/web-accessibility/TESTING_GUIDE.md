@@ -3050,3 +3050,57 @@ reduce the write cost.
 
 **Watch for it.** If an audit finishes and the two headline counts do not move within about ten
 minutes, the ledger write did not complete. There is currently no other signal.
+
+> **Team decision, 2 September.** Both of the above were presented in full with a proposed fix, a size and a risk assessment. **The team weighed them and judged neither urgent**, and chose to spend the time on conformance-tab UI work instead. They are deferred by decision, not by neglect — do not reopen the question without new evidence. The fixes proposed were: for the cap, show it on the audit screen and set it explicitly for new workspaces; for the ledger, record the reconciliation outcome on the audit's own `summary` (which survives a failed run) rather than only on the run's return value, and leave the seven-minute write cost alone — speed is a comfort, the silence is the defect.
+
+---
+
+### #68 — Three defects on the conformance tab, and a fourth found while fixing them ✅ FIXED
+
+**Found.** 2 September, from the team reading the screen. All three were bugs rather than design
+choices — nobody decided any of this.
+
+**#68a — The three summary tiles ran together on one line.** The tab hand-rolled its own copy of
+the shared `Tile` component using `<span>` for the number, the label and the sentence. A span is
+inline, so all three sat on one line — `20EVALUATEDSomething actually checked these` — and the
+`margin-top` on `.tile__label` / `.tile__sub` was inert, because top margins do nothing on an
+inline box. Every other screen used the component and stacked correctly, which is why this was
+the only tab that looked wrong. **Fix:** use the component.
+
+The wording was rewritten at the same time, by team decision: `20 of 55 · Checked`,
+`35 of 55 · Not checked yet`, `4 · Waiting on you`. The third deliberately carries no "of 55"
+because **it is a subset of the second** — a criterion lands there precisely because nothing
+suggested a level, which drops it into "not evaluated". Printing "4 of 55" would invite a reader
+to add it to the other two.
+
+**#68b — The count of criteria needing a decision could not be acted on.** The tile said four
+criteria were waiting on a person; nothing in the list of fifty-five said which. **Fix:** those
+rows carry an amber edge, a tint, and a "needs your decision" chip. `needs_a_person` was already
+on every row and already reaching the browser — no backend change was needed, it simply was not
+shown. Colour is never the only cue: the chip says it in words.
+
+**#68c — The conformance dropdown clipped every option longer than a few characters.** It
+carried `.input` rather than `.select`, so it never got `appearance: none` nor the 32px of right
+padding the chevron needs — the **browser's own** arrow was painted over the words, and
+"Partially supports" rendered as "Partial". It also shared one flex row with the "suggested"
+chip, so in a narrow column the two competed and the control lost. **Fix:** the right class, a
+168px floor, and the chip stacked beneath rather than beside.
+
+**#68d — A 2.46:1 chip, introduced by the fix for #68b and caught before it shipped.** The first
+version of the "needs your decision" chip was white on `--warning`, which measures **2.46:1** —
+a hard WCAG AA failure at any size, in the accessibility tool. It was found by measuring the
+rendered page rather than by looking at it.
+
+**The wider finding is the one worth keeping: `--warning` cannot be used as a text colour at
+all.** It measures 2.19:1 on its own `--warning-bg` tint and 2.46:1 under white. The app's
+existing pattern for other roles (`background: var(--x-bg); color: var(--x);`) would therefore
+have failed here too, so copying it was not an option. **Fix:** a new `--warning-ink` (#7A4E06)
+for warning-coloured text and figures — 6.42:1 on the tint, 7.19:1 on white, both measured in
+the live browser.
+
+> **Not checked, and worth someone's time:** whether `--warning` is used as a text colour
+> anywhere else in the app. This entry only fixed the two places the conformance work created.
+
+**Verified.** 418 of 418 frontend tests pass, including two new ones pinning the row marking and
+the dropdown's class. The rendered page was measured in a real browser for computed colour,
+contrast, control width and stacking direction — not eyeballed.
