@@ -14,7 +14,7 @@
 
 | Element | Contents | Notes |
 |---|---|---|
-| **Sidebar** | Logo (edvensoft) · Workspace Dashboard · Work Items · Phases & Runs · Gates (count) · Clarifications (count) · Artifacts & Traceability · — Settings — · Workspace Admin | Active = orange left-bar + lighter navy. Admin section only for tenant-admin. Companion pill pinned bottom. |
+| **Sidebar** | Logo (edvensoft) · Workspace Dashboard · Work Items · Phases & Runs · Gates (count) · Clarifications (count) · Artifacts & Traceability · **Accessibility (count)** · — Settings — · Workspace Admin | Active = orange left-bar + lighter navy. Admin section only for tenant-admin. Companion pill pinned bottom. |
 | **Top bar** | Tenant switcher ("AC Acme Corp ▾") · Project switcher ("⚑ Payment Gateway v2 ▾") · spacer · Companion pill ("● Companion: Ready") · Bell (badge "4") · Avatar menu | Breadcrumb style for tenant/project. |
 | **Sample identities** | Tenant: **Acme Corp**. Projects: **Payment Gateway v2** (greenfield), **Legacy Billing** (brownfield). Users: **Sarah Chen** (product_owner), **Marcus Lee** (architect), **Priya Nair** (designer), **Dan Ortiz** (tech_lead), **Aisha Khan** (qa_lead), **Tom Reyes** (reviewer), **You** (tenant-admin + engineer). | Reuse across all screens for consistency. |
 

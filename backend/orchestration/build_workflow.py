@@ -186,6 +186,20 @@ class BuildWorkflow:
                     "import_build_test_results", args=[inp, report],
                     start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY,
                 )
+                # QA-12: hand what the suite captured to the AI accessibility checks. Runs
+                # AFTER the import above so the rule scanner's own results are already recorded,
+                # and best-effort for the same reason `provision_preview` is — a build whose
+                # branch, tests and defects are all correct must never fail because a judgment
+                # could not be started. A no-op for every phase that captures nothing (07), and
+                # for a build with no accessibility case. The judgment run is NOT waited on: it
+                # publishes its own merged report when it ends.
+                try:
+                    await workflow.execute_activity(
+                        "run_a11y_ai_pass", inp,
+                        start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY,
+                    )
+                except ActivityError:
+                    pass
                 await workflow.execute_activity(
                     "open_build_pr", args=[inp, report],
                     start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,

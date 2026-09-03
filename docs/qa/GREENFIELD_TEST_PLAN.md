@@ -361,26 +361,40 @@ unique, and no scheme that satisfies both is also pretty.
 
 Verified against the code, because several published docs are out of date.
 
-**The 16 triggerable phases and who decides their gate:**
+**The 18 phases in the catalog and who decides their gate:**
 
 | Phase (button label) | `agent_key` | Gate role |
 |---|---|---|
 | Onboarding | `00_onboarding` | Product Owner |
 | Context Bridge | `00b_context_bridge` | Architect |
 | Context Extraction | `00c_intelligent_context_extractor` | Tech Lead |
+| Document Vision | `00e_document_vision` | Product Owner *(platform-native)* |
 | Ideation | `01_ideation` | Product Owner |
 | Requirements | `02_requirements` | Product Owner |
 | PRD | `03_prd` | Product Owner |
 | Architecture | `04_architecture` | Architect |
-| UX Design | `05_ux_design` | Designer *(9 required WCAG criteria)* |
+| UX Design | `05_ux_design` | Designer *(22 required WCAG 2.2 criteria)* |
 | Task Breakdown | `06_task_breakdown` | Tech Lead |
 | Implementation | `07_implementation` | Tech Lead *(build)* |
 | Code Review | `08_code_review` | Reviewer *(dispatched inside the build loop — not triggered directly)* |
 | Testing | `09_testing` | QA Lead *(1 derived condition: no blocking test failures)* |
 | Test Automation | `09b_test_automation` | QA Lead *(build)* |
+| Accessibility Judge | `09c_a11y_judge` | QA Lead *(platform-native; dispatched by the accessibility pass)* |
 | Security | `10_security` | Security Engineer |
 | CI/CD | `11_cicd` | DevOps *(build)* |
 | Deployment | `12_deployment` | DevOps *(7 required readiness criteria)* |
+
+> **Two of these are platform-native and are not meant to be triggered by hand.**
+> `00e_document_vision` and `09c_a11y_judge` have no migrated legacy body — they were authored fresh
+> for the platform. `09c` is dispatched by the accessibility pass, the way `08_code_review` is
+> dispatched inside the build loop. They nevertheless **appear in the phase list**, because the
+> catalog seeds every non-retired agent and the API buckets them by key prefix
+> (`backend/api/views.py:1896`). Seeing them on `/runs` is expected. **Triggering `09c` by hand is
+> not a supported path** — if you do it, treat whatever happens as exploratory, not as a defect,
+> and note it for the team.
+>
+> The old count of 16 in this table was wrong twice over: `00e` was missing before this cycle, and
+> `09c` was added by the accessibility build in August 2026.
 
 **Run statuses:** `pending` · `running` · `awaiting_gate` · `approved` · `rejected` · `failed` ·
 `completed` · `stalled`. Shown in the console as `Dispatched · waiting`, `Running`, `Needs answer`,

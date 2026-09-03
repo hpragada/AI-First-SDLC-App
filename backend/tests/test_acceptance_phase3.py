@@ -136,7 +136,7 @@ def test_acceptance_design_to_published_through_wcag_gate():
         tools.register_artifact(t.id, p.id, run.id, "ux_design", art, "internal", f"h-{art}")
     assert {a.status for a in Artifact.objects.filter(run_id=run.id)} == {Artifact.Status.DRAFT}
 
-    # The design gate carries the WCAG 2.1 AA checklist (control-plane, D6).
+    # The design gate carries the WCAG 2.2 AA checklist (control-plane, D6).
     approval_id = open_gate_core(inp)
     approval = Approval.objects.get(id=approval_id)
     assert len(approval.conditions) == len(wcag_aa_checklist())
@@ -416,9 +416,13 @@ def test_acceptance_design_phase_wcag_gate_live(monkeypatch):
                         decide_gate, tenant_id=str(t.id), approval_id=approval_id,
                         user_id=str(designer.id), decision="approved")
                 # WCAG satisfied → the real gate service signals the workflow to publish.
+                # Built in the worker thread with every other database call in this test:
+                # since QA-11 the checklist is read from the loaded standard, so listing it is
+                # a query, and a query on the event loop is a SynchronousOnlyOperation.
+                satisfied = await asyncio.to_thread(_in_conn, _wcag_all_satisfied)
                 await asyncio.to_thread(
                     decide_gate, tenant_id=str(t.id), approval_id=approval_id,
-                    user_id=str(designer.id), decision="approved", conditions=_wcag_all_satisfied())
+                    user_id=str(designer.id), decision="approved", conditions=satisfied)
                 return await h.result()
 
     result = asyncio.run(_drive())

@@ -16,6 +16,69 @@ import re
 
 _TC_ID = re.compile(r"(?<![A-Za-z0-9])TC[-_ ]?(\d+)", re.IGNORECASE)
 
+#: The two lines agent 09's test-case template writes about a case itself (its Step 5 format):
+#: `**Type:** Functional` and `**Priority:** High`. **This module is the ONE reader of them.**
+#: `apps.a11y.journeys` (which asks "is this an E2E journey?") and this materialiser both come
+#: here, because two parsers for one line is two formats and the second is always the one nobody
+#: remembers to update. `apps.quality.services` keeps its own severity function — that one adds
+#: a fail-safe "unknown means Critical" which is right for a defect and would be a lie on a
+#: screen — but shares the pattern below.
+_TYPE_LINE = re.compile(r"^\s*\*{0,2}Type:?\*{0,2}\s*:?\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+_PRIORITY_LINE = re.compile(
+    r"^\s*\*{0,2}Priority:?\*{0,2}\s*:?\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _declared(pattern, body: str) -> str:
+    """One declared field from a test case body, lowercased, or `""` when it does not say.
+
+    A case that declares nothing is **not** given a default. The template ships placeholders —
+    `[Functional / Integration / E2E / ...]`, `[Critical / High / Medium / Low]` — and a body
+    still carrying one has declared nothing at all; reading it as a value would put the word
+    "Functional" on a case nobody classified. On a compliance screen an invented answer is
+    worse than a blank one.
+    """
+    match = pattern.search(body or "")
+    if match is None:
+        return ""
+    value = match.group(1).strip().strip("*").strip()
+    if value.startswith("[") and "/" in value:
+        return ""
+    return value.lower()
+
+
+def declared_type(body: str) -> str:
+    """The test case's own `**Type:**` value, lowercased, or `""` when it does not say."""
+    return _declared(_TYPE_LINE, body)
+
+
+def declared_priority(body: str) -> str:
+    """The test case's own `**Priority:**` value, lowercased, or `""` when it does not say."""
+    return _declared(_PRIORITY_LINE, body)
+
+
+def declared_fields(artifact) -> dict:
+    """`{type, priority}` for a `test_case` artifact — structured first, body only if needed.
+
+    The same two-step `apps.quality.services._test_case_severity` uses, and in the same order
+    for the same reason: `external_ref` is free and authoritative where the producer filled it
+    in, and the body costs an object-store read. Absent stays absent — see `_declared`.
+    """
+    ref = artifact.external_ref or {}
+    fields = {
+        "type": str(ref.get("type") or "").strip().lower(),
+        "priority": str(ref.get("priority") or "").strip().lower(),
+    }
+    if all(fields.values()):
+        return fields
+
+    from integrations.preview import internal_draft_body
+
+    body = internal_draft_body(artifact) or ""     # best-effort read-through; "" if unreadable
+    fields["type"] = fields["type"] or declared_type(body)
+    fields["priority"] = fields["priority"] or declared_priority(body)
+    return fields
+
 
 def _tc_id_of(artifact) -> str:
     """The stable TC-ID for a `test_case` artifact — from `external_ref` (the keys the Testing
@@ -60,7 +123,14 @@ def materialize_test_cases(*, tenant_id, project_id, run_id, story_id) -> dict:
                 skipped += 1
                 continue
 
+            # `type` and `priority` are what the case says about itself, carried onto the work
+            # item so the platform can SHOW them (G2). Until now only the pointer was copied,
+            # and the Test cases screen read `priority` off the work item where nothing ever
+            # wrote it — while defect severity read the same fact off the artifact, where it
+            # lives. Absent keys are omitted rather than written blank, so an existing item is
+            # never overwritten with nothing by a re-run that could not read the body.
             ref = {"test_case_artifact_id": str(art.id), "tc_id": tc_id}
+            ref.update({k: v for k, v in declared_fields(art).items() if v})
             existing = (
                 WorkItem.objects
                 .filter(tenant_id=tenant_id, project_id=project_id, parent_id=story.id,

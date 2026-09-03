@@ -1088,7 +1088,17 @@ def ensure_onboarding_work_item(*, tenant_id, project_id, repo_id=None):
 # item that only exists to host an onboarding/vision agent run, never a backlog item a human
 # authored. The user-facing work-item list hides these (api WorkItemViewSet) so they never clutter
 # the backlog; the trigger/run machinery still resolves them by their external_ref markers.
-CARRIER_SOURCES = ("onboarding_carrier", "vision_carrier")
+#
+# `a11y_judging_carrier` is not an onboarding object and lives in `apps.a11y.aipass`; it is
+# listed here because this is where the platform keeps the one definition of "carrier", and two
+# lists would be two answers. It hosts the accessibility judge, which cannot run on the story:
+# the story's own run is live for the whole build and `_guard_no_active_run` would refuse it.
+#
+# `a11y_journey_carrier` is the same shape one level along (G6b): one per keyboard journey,
+# because the same rule that stops the judge running on the story stops a second journey
+# running on the first journey's work item — so ticking three would have started one.
+CARRIER_SOURCES = ("onboarding_carrier", "vision_carrier", "a11y_judging_carrier",
+                   "a11y_journey_carrier")
 
 
 def carrier_q(prefix: str = ""):
@@ -1739,6 +1749,19 @@ def _render_code_intel_summary(repo_name: str, index: dict, summary: str) -> str
     return "\n".join(lines) + "\n"
 
 
+def _vendor_of(connection, capability: str) -> str | None:
+    """The human name of the tool behind a capability — None until one is really connected.
+
+    None is the important half: it is what stops a screen naming Jira to somebody who has not
+    connected anything, which is the whole reason the onboarding step read wrong.
+    """
+    if connection is None or not connection.is_configured:
+        return None
+    from apps.integrations.catalog import vendor_label
+
+    return vendor_label(capability, connection.connector)
+
+
 def onboarding_hub(*, tenant_id, project_id) -> dict:
     """Hub state across upload/adopt/register/index/gap (S-24) — the one read the onboarding
     screen needs; every step's action already exists as its own endpoint."""
@@ -1781,6 +1804,24 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
             for cap in ("docstore", "tasktracker", "designsource")
         }
 
+    with tenant_context(tenant_id):
+        from apps.a11y.baseline import IN_FLIGHT_STATUSES
+        from apps.a11y.models import A11yBaselineAudit, A11yRoute
+
+        a11y_routes = A11yRoute.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, enabled=True).count()
+        # Counted apart, because the step used to count `judging` as run and then say "1 audit
+        # run — open the report from Artifacts" while the audit was still going. There is no
+        # report to open until the judging ends: the baseline is published when the judge run
+        # closes, precisely so it never states a position that is still changing. So a finished
+        # audit is what makes this step done, and one still going says that it is going.
+        a11y_audits = A11yBaselineAudit.objects.filter(
+            tenant_id=tenant_id, project_id=project_id,
+            status=A11yBaselineAudit.Status.COMPLETE).count()
+        a11y_running = A11yBaselineAudit.objects.filter(
+            tenant_id=tenant_id, project_id=project_id,
+            status__in=IN_FLIGHT_STATUSES).exists()
+
     gap = read_gap_report(tenant_id=tenant_id, project_id=project_id)
     # Live state of the two headless steps. Outside the block above because each opens its own
     # tenant_context; cheap (one indexed lookup per repo) and only this screen asks for it.
@@ -1810,9 +1851,35 @@ def onboarding_hub(*, tenant_id, project_id) -> dict:
                 connected["tasktracker"] and connected["tasktracker"].is_configured),
             "designsource_connected": bool(
                 connected["designsource"] and connected["designsource"].is_configured),
+            # Which vendor is actually behind each capability, once one is. The step offers to
+            # connect a *capability* (#9 — capabilities, not vendors), because before anything is
+            # connected the platform has no business assuming Jira. Afterwards it does know, and
+            # "Import task tracker backlog" would be worse than naming the tool the user just
+            # connected — so the step says "Import Jira backlog" because it was told, not because
+            # it was hardcoded, and it will say the right thing on the day a second vendor exists.
+            # None when nothing is connected, which is exactly when the UI must not name a vendor.
+            "docstore_vendor": _vendor_of(connected["docstore"], "docstore"),
+            "tasktracker_vendor": _vendor_of(connected["tasktracker"], "tasktracker"),
+            "designsource_vendor": _vendor_of(connected["designsource"], "designsource"),
             "pages_registered": pages_registered, "issues_registered": issues_registered,
         },
         "adopt_types": adoptable_type_choices(),
+        # Where the accessibility step stands (task 8a). A brownfield project's pages are the
+        # one thing the platform cannot discover for itself — it has no access to the running
+        # application, deliberately — so the step is "have they told us, and has an audit run".
+        # Both are counts rather than a stored flag: a flag would be a third thing to keep in
+        # step with two facts that already exist.
+        "a11y": {
+            "routes_registered": a11y_routes,
+            "audits_run": a11y_audits,
+            # Both `running` and `status`, the same shape and the same reason as the Index code
+            # step below: the tick and the button switch on `status`, while the line of text has
+            # to be able to say "and another one is going right now" over the top of it.
+            "running": a11y_running,
+            "status": ("done" if a11y_audits else
+                       "running" if a11y_running else
+                       "ready" if a11y_routes else "not_started"),
+        },
         "index": {
             "status": "indexed" if intel_artifact else "not_started",
             "artifact_id": str(intel_artifact.id) if intel_artifact else None,

@@ -32,7 +32,7 @@ class GateRoleError(GateError):
 
 
 class GateConditionsError(GateError):
-    """A required gate condition (e.g. a WCAG 2.1 AA criterion) is not yet satisfied."""
+    """A required gate condition (e.g. a WCAG 2.2 AA criterion) is not yet satisfied."""
 
 
 def _merge_conditions(existing: list, updates: list | None) -> list:
@@ -96,7 +96,7 @@ def decide_gate(
 ) -> dict:
     """Record a gate decision (after role check + condition check) and signal the workflow
     to resume. `conditions` carries the reviewer's `satisfied` updates for the gate's
-    checklist (e.g. the WCAG 2.1 AA criteria on the design gate); an APPROVED decision is
+    checklist (e.g. the WCAG 2.2 AA criteria on the design gate); an APPROVED decision is
     rejected while any *required* condition is unsatisfied (D6). Derived conditions (e.g. the
     test gate's blocking-test rule, D9) are recomputed from live state here and ignore the
     reviewer's `satisfied` — they are the platform's finding, not the reviewer's.
@@ -142,8 +142,12 @@ def decide_gate(
         # Fold in the reviewer's checklist updates, re-derive the platform-evaluated ones from
         # live state, then enforce required conditions on APPROVE.
         approval.conditions = _merge_conditions(approval.conditions, conditions)
+        # The run and the project travel with the refresh (QA-15a): the blocking-test rule
+        # needs only the work item, but the accessibility gate reads the project's policy and
+        # the run whose findings it is judging, and every evaluator takes the same context.
         approval.conditions = refresh_derived(
             approval.conditions, tenant_id=tenant_id, work_item_id=approval.work_item_id,
+            run_id=approval.run_id, project_id=approval.work_item.project_id,
         )
         if decision == "approved":
             unmet = [

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-37 · Conformance report — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Accessibility conformance <span class="badge badge--gate" style="vertical-align:middle"><span class="status-dot"></span>Draft · unsigned</span></h1>
+        <p class="page-head__sub">WCAG 2.2 Level AA · Payment Gateway v2. The platform compiles the evidence and drafts the wording. <strong>It never signs, and it never calls anything compliant</strong> — a person does that, or nobody does.</p>
+      </div>
+    </div>
+
+    <!-- ============ Per-criterion evidence (default) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Default · per-criterion, showing who established each result</span>
+      <div class="tabs" style="margin-bottom:var(--space-5)">
+        <button class="tab" onclick="location.href='S-36-a11y-review.html'">Review queue (7)</button>
+        <button class="tab tab--active">Conformance statement</button>
+      </div>
+      <div class="banner banner--info" style="margin-bottom:var(--space-4)">
+        <span class="banner__icon">i</span>
+        <div class="banner__body">
+          <div class="banner__title">This is risk reduction, not certification</div>
+          Automated checks cover part of WCAG 2.2. This report says what was checked, by what, and what was found — it does not claim the product conforms. That claim is yours to make and yours to sign.
+        </div>
+      </div>
+
+      <div class="grid grid--3" style="margin-bottom:var(--space-5)">
+        <div class="tile"><span class="tile__num">23</span><span class="tile__label">Measured by rule</span><span class="tile__sub">A scanner proved the result</span></div>
+        <div class="tile"><span class="tile__num">7</span><span class="tile__label">Judged by AI, reviewed by a person</span><span class="tile__sub">Every one adjudicated by Aisha Khan</span></div>
+        <div class="tile"><span class="tile__num">25</span><span class="tile__label">Not covered</span><span class="tile__sub">Needs manual assessment — stated, never assumed</span></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">WCAG 2.2 — 55 Level A &amp; AA criteria</h2></div>
+        <div class="panel__body--flush">
+          <table class="table table--in-panel">
+            <thead><tr><th>Criterion</th><th>Level</th><th>Result</th><th>Established by</th><th>Evidence</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="table__primary">1.1.1 Non-text Content</td><td>A</td>
+                <td><span class="badge badge--failed"><span class="status-dot"></span>Does not support</span></td>
+                <td><span class="chip badge--navy">Rule</span> <span class="chip badge--navy">AI</span> <span class="chip badge--orange">Human</span></td>
+                <td><a href="S-29-artifact-preview.html">3 findings ↗</a></td>
+              </tr>
+              <tr>
+                <td class="table__primary">1.3.1 Info and Relationships</td><td>A</td>
+                <td><span class="badge badge--done"><span class="status-dot"></span>Supports</span></td>
+                <td><span class="chip badge--navy">Rule</span> <span class="chip badge--navy">AI</span></td>
+                <td><a href="S-29-artifact-preview.html">Run 412 ↗</a></td>
+              </tr>
+              <tr>
+                <td class="table__primary">1.4.3 Contrast (Minimum)</td><td>AA</td>
+                <td><span class="badge badge--done"><span class="status-dot"></span>Supports</span></td>
+                <td><span class="chip badge--navy">Rule</span></td>
+                <td><a href="S-29-artifact-preview.html">Run 412 ↗</a></td>
+              </tr>
+              <tr>
+                <td class="table__primary">2.1.2 No Keyboard Trap</td><td>A</td>
+                <td><span class="badge badge--waiting"><span class="status-dot"></span>Partially supports</span></td>
+                <td><span class="chip badge--navy">Keyboard agent</span> <span class="chip badge--orange">Human</span></td>
+                <td><a href="S-36-a11y-review.html">1 confirmed ↗</a></td>
+              </tr>
+              <tr>
+                <td class="table__primary">2.4.11 Focus Not Obscured</td><td>AA</td>
+                <td><span class="badge badge--neutral"><span class="status-dot"></span>Not evaluated</span></td>
+                <td><span class="chip">— nothing checked this</span></td>
+                <td class="u-muted">Needs a manual assessment</td>
+              </tr>
+              <tr>
+                <td class="table__primary">3.3.7 Redundant Entry</td><td>A</td>
+                <td><span class="badge badge--neutral"><span class="status-dot"></span>Not evaluated</span></td>
+                <td><span class="chip">— nothing checked this</span></td>
+                <td class="u-muted">Needs a manual assessment</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="t-sm u-muted" style="margin-top:var(--space-3)">“Not evaluated” is printed as itself and never rolled into “supports”. A criterion nothing looked at is the single easiest way for a report like this to become untrue.</p>
+    </div>
+
+    <!-- ============ Editing the draft ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Draft statement · the SME edits the platform's wording</span>
+      <div class="grid grid--detail">
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Statement</h2><span class="u-spacer"></span><span class="save-state save-state--dirty">Unsaved changes</span></div>
+          <div class="panel__body">
+            <label class="field">
+              <span class="field__label" id="lbl-scope">Scope of this statement</span>
+              <input class="input" aria-labelledby="lbl-scope" value="Payment Gateway v2 — checkout, dashboard and expense-entry journeys">
+            </label>
+            <label class="field" style="margin-top:var(--space-4)">
+              <span class="field__label" id="lbl-body">Conformance statement</span>
+              <textarea class="textarea" aria-labelledby="lbl-body" style="min-height:180px">Payment Gateway v2 was assessed against WCAG 2.2 Level AA on 18 August 2026. Of the 55 Level A and AA success criteria, 30 were evaluated by automated and AI-assisted checks with human review; 25 were not evaluated and require manual assessment. Three Level A failures remain open and are tracked as defects.</textarea>
+              <span class="field__help">The platform drafted this from the evidence above. Edit it freely — what you sign is what you wrote, not what it suggested.</span>
+            </label>
+          </div>
+        </div>
+        <div class="card"><div class="card__body">
+          <h3 class="t-h3">What will be attached</h3>
+          <div class="artifact-row">
+            <span class="artifact-row__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/></svg></span>
+            <div class="artifact-row__main"><div class="artifact-row__title">Accessibility report · Run 412</div><div class="artifact-row__meta">30 criteria evaluated · 18 Aug 2026</div></div>
+          </div>
+          <div class="artifact-row">
+            <span class="artifact-row__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/></svg></span>
+            <div class="artifact-row__main"><div class="artifact-row__title">Review decisions · 7 adjudications</div><div class="artifact-row__meta">Aisha Khan · QA Lead</div></div>
+          </div>
+          <p class="t-xs u-muted" style="margin-top:var(--space-4)">The engine, prompt version and scanner version that produced these results are recorded on the export so the statement can be re-examined later against exactly what produced it. They are deliberately <strong>not shown here</strong> — they are our implementation detail, not a client's business (team decision, 2026-08-18).</p>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Export refused: unsigned ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Export refused · no human signature (the platform never auto-certifies)</span>
+      <div class="panel"><div class="panel__body">
+        <div class="banner banner--danger">
+          <span class="banner__icon">!</span>
+          <div class="banner__body">
+            <div class="banner__title">This cannot be exported unsigned</div>
+            A conformance statement carries someone's professional judgement, and the platform has none to give. Sign it as the accessibility reviewer, or ask someone who holds that role to.
+          </div>
+        </div>
+        <div class="gate-panel__actions" style="margin-top:var(--space-4)">
+          <button class="btn btn--primary" disabled aria-disabled="true">Export</button>
+          <button class="btn btn--secondary">Sign as accessibility reviewer</button>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ============ Signing ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Signing · the reviewer takes responsibility for the wording</span>
+      <div class="card--attention gate-panel"><div class="card__body">
+        <span class="gate-panel__role">▲ Conformance statement · required role: QA Lead (accessibility reviewer)</span>
+        <h3 class="t-h3">Sign the statement for Payment Gateway v2</h3>
+        <label class="check" style="margin-top:var(--space-3)">
+          <input type="checkbox">
+          <span class="check__text">I have read the statement and the evidence behind it, and I am making this assessment in my own professional judgement.</span>
+        </label>
+        <label class="check" style="margin-top:var(--space-2)">
+          <input type="checkbox">
+          <span class="check__text">I understand that 25 criteria were not evaluated, and that the statement says so.</span>
+        </label>
+        <label class="field" style="margin-top:var(--space-3)">
+          <span class="field__label" id="lbl-sign">Your name, as it will appear on the statement</span>
+          <input class="input" aria-labelledby="lbl-sign" value="Aisha Khan">
+        </label>
+        <div class="gate-panel__actions"><button class="btn btn--primary">Sign</button><button class="btn btn--ghost">Cancel</button></div>
+        <span class="gate-reassure">Signing records your name, your role and the exact wording. It does not publish anything — export is a separate step, and it still goes through the publish gate.</span>
+      </div></div>
+    </div>
+
+    <!-- ============ Signed and exported ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Signed · ready to export through the publish gate</span>
+      <div class="panel"><div class="panel__body">
+        <div class="banner banner--success">
+          <span class="banner__icon">✓</span>
+          <div class="banner__body">
+            <div class="banner__title">Signed by Aisha Khan · QA Lead · 18 Aug 2026, 16:20</div>
+            The statement is locked to the wording that was signed. Editing it again clears the signature — a signature on wording nobody signed is worse than no signature.
+          </div>
+        </div>
+        <div class="meta-row" style="margin-top:var(--space-4)">
+          <span class="meta-item">Version <strong>v1.0</strong></span>
+          <span class="meta-item">Artifact <strong>Conformance statement</strong></span>
+          <span class="meta-item">Publish gate <span class="badge badge--gate"><span class="status-dot"></span>Awaiting approval</span></span>
+        </div>
+        <div class="gate-panel__actions" style="margin-top:var(--space-4)">
+          <button class="btn btn--primary">Export…</button>
+          <a href="S-34-export-publish.html" class="btn btn--ghost">Open publish gate ↗</a>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ============ Nothing to report on yet ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Empty · no accessibility run has happened yet</span>
+      <div class="panel">
+        <div class="empty">
+          <svg class="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2h9l5 5v15H6z"/><path d="M9 13h6M9 17h4"/></svg>
+          <div class="empty__title">There is nothing to compile yet</div>
+          <div class="empty__text">A conformance statement is built from accessibility runs. Run the testing phase on this project and the per-criterion evidence will appear here.</div>
+          <a href="S-18-phases-runs.html" class="t-sm" style="margin-top:var(--space-3)">Go to phases &amp; runs ↗</a>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("a11y", { user: "Aisha Khan" });</script>
+</body>
+</html>

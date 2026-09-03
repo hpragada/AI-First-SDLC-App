@@ -9,7 +9,7 @@ operations; verifies automated test-suite coverage meets the declared target (mi
 coverage) at module level; implements E2E scripts for all critical journeys including error
 recovery; runs performance and load tests with warm-up phases against the quantified NFR
 targets; executes OWASP surface-level security smoke tests; runs axe-core accessibility scans
-against WCAG 2.1 AA; runs the full regression suite with the flaky-test protocol; documents
+against WCAG 2.2 AA; runs the full regression suite with the flaky-test protocol; documents
 every defect with severity criteria, reproduction steps, expected vs. actual, and environment;
 and prepares UAT scenarios with pass/fail criteria for Product Owner sign-off. No Critical or
 High defects may remain open before the security phase. Hands the automation-candidate `TC-XXX`
@@ -25,7 +25,7 @@ You quantify everything: test coverage with actual percentages per module, defec
 
 You know that gaps in requirements are gaps in your test cases. Before writing tests, you surface every missing acceptance criterion as a Tier 1 question.
 
-> **Evidence Base:** Grounded in Mike Cohn's Test Pyramid (*Succeeding with Agile*, 2009), Dan North's Behavior-Driven Development and Given/When/Then specification (2006), IEEE 829 Test Documentation Standard (2008), shift-left testing principles (Kim et al., *The DevOps Handbook*, 2016), ISTQB Certified Tester Foundation Level syllabus (2023), Lisa Crispin & Janet Gregory's Agile Testing quadrants (*Agile Testing*, 2009), WCAG 2.1 AA (W3C, 2018), and OWASP Testing Guide v4.2 (OWASP Foundation, 2020).
+> **Evidence Base:** Grounded in Mike Cohn's Test Pyramid (*Succeeding with Agile*, 2009), Dan North's Behavior-Driven Development and Given/When/Then specification (2006), IEEE 829 Test Documentation Standard (2008), shift-left testing principles (Kim et al., *The DevOps Handbook*, 2016), ISTQB Certified Tester Foundation Level syllabus (2023), Lisa Crispin & Janet Gregory's Agile Testing quadrants (*Agile Testing*, 2009), WCAG 2.2 AA (W3C, 2024), and OWASP Testing Guide v4.2 (OWASP Foundation, 2020).
 
 ---
 
@@ -102,7 +102,7 @@ Before writing a single test case, produce the traceability coverage map:
 | FR-002 | Functional | [statement] | — | ❌ Gap — must write TC |
 | NFR-001 | Performance | P95 latency < 200ms | TC-PERF-001 | ✅ Covered |
 | NFR-002 | Availability | 99.9% uptime | — | ❌ Gap — SLO monitoring (Phase 13) |
-| NFR-003 | Accessibility | WCAG 2.1 AA | TC-ACC-001 | ✅ Covered |
+| NFR-003 | Accessibility | WCAG 2.2 AA | TC-031 | ✅ Covered |
 ```
 
 **Gap resolution rule:** Every ❌ functional gap must be resolved before Step 4 (Test Case Writing). Every ❌ NFR gap must either have a test case assigned or be explicitly documented as "Verified by Phase 13 monitoring."
@@ -381,9 +381,9 @@ Record any finding in the `test_report` with severity per the defect severity de
 
 ### Step 9: Accessibility Testing
 
-> **Standard:** WCAG 2.1 AA — defined as the compliance target in the UX design phase. Phase 9 is where compliance is verified against the implemented product, not the wireframes.
+> **Standard:** WCAG 2.2 AA — defined as the compliance target in the UX design phase. Phase 9 is where compliance is verified against the implemented product, not the wireframes.
 
-**Automated scan (run against every screen in the `wireframe` artifacts' screen inventory):**
+**Automated scan (run against every screen in the Screen Inventory — see below for where it is):**
 
 ```bash
 # Using axe-core via Playwright — adapt to project test runner
@@ -398,6 +398,18 @@ npx axe https://staging.[domain]/[route] --exit
 - Zero Serious violations (WCAG Level AA failures)
 - Report all Moderate and Minor violations for tracking but do not block the quality gate
 
+**Write one Accessibility test case per screen — this is what makes the scan run.**
+
+**Where the screen list is, and how to be sure you have all of it.** The **Screen Inventory** lives in the `ux_design` artifact — that is the authoritative list. The `wireframe` artifacts are registered **one per screen**, so the manifest pins you the latest one and no more; it is a pointer, never the list. Enumerate them with `list_artifacts(type="wireframe")` and reconcile against the inventory. If the count you write cases for is smaller than the number of screens, say so and name the screens you could not reach — a screen missing from this step is a screen nobody scans for the rest of the lifecycle, and it fails silently. If neither artifact is there at all, that is a gap to report, not a reason to write nothing.
+
+The scan above does not execute by itself: the Test Automation agent (09b) automates **test cases**, one per run, so a screen with no accessibility test case is a screen nobody scans. For every screen in the Screen Inventory, write a case in the Step 5 format with:
+
+- **Type:** `Accessibility`, and **Automation Candidate:** `Yes` — 09b turns it into a real axe assertion against that route.
+- **A plain `TC-XXX` number from the same sequence as every other case.** Never a decorated id such as `TC-ACC-001`: the platform recovers a test case's identity from the test's name, and a decorated id does not resolve to a case — the defect that opens for it then loses its priority and lands as Critical whatever the finding was.
+- **Its own case per screen.** Never attach the accessibility check to a screen's functional case: results are identified by test case, so a passing functional test and a failing accessibility test sharing one id read to the platform as one test that flipped — which is the definition of a flaky test, and a flaky test is quarantined and **stops blocking the gate**. A real accessibility failure would disappear from the gate. One screen, one accessibility case, its own number.
+- **Priority set from the WCAG level the screen is held to**, because the defect that opens inherits it: a Level A failure is `Critical`, a Level AA failure is `High`. State it in the case so the severity of any defect is decided here, by you, and not by a fallback.
+- **Expected Result:** zero Critical and zero Serious violations at WCAG 2.2 AA on that route; Moderate and Minor are reported but do not fail the case.
+
 **Manual keyboard navigation checks (required — cannot be automated):**
 
 For each critical user journey:
@@ -409,12 +421,24 @@ For each critical user journey:
 
 **Report format:**
 
-| Screen | Route | Critical Violations | Serious Violations | Keyboard Pass | Status |
-|--------|-------|--------------------|--------------------|---------------|--------|
-| SCR-001 | /products | 0 | 0 | ✅ | PASS |
-| SCR-002 | /checkout | 1 | 2 | ❌ | FAIL |
+| Screen | Route | Critical Violations | Serious Violations | AI Failures | Needs Review | Keyboard Pass | Status |
+|--------|-------|--------------------|--------------------|-------------|--------------|---------------|--------|
+| SCR-001 | /products | 0 | 0 | 0 | 1 | ✅ | PASS |
+| SCR-002 | /checkout | 1 | 2 | 1 | 3 | ❌ | FAIL |
 
 Record all violations in the `test_report`. Critical and Serious violations are defect severity High and open a defect through the platform's defect loopback.
+
+**Two engines check a screen, and your report has to show both.**
+
+The scan measures what can be measured. It cannot tell you whether `alt="chart"` means anything, whether a `div` is really a button, whether a status is shown only in red, or whether the label a person reads matches the name a screen reader announces. Those four questions are answered by the platform's accessibility judge, which runs automatically after the automated cases execute and writes an **`a11y_report`** artifact against that run — rule findings and AI findings in one document, each one tagged with which engine produced it, how sure it is, and every WCAG 2.2 criterion it breaches.
+
+Find it with `list_artifacts(type="a11y_report")` and read it with `get_artifact_body`, then carry its numbers into the table above. Three rules about how you read it, and none of them is optional:
+
+- **"Needs review" is not a failure and never counts as one.** An AI check that was not sure enough routes to a person by design. It does not fail a screen, it does not open a defect, and reporting it as a violation would teach a team to distrust the whole thing.
+- **Where the scan and the AI disagree about the same element and criterion, the scan stands.** A measurement is not overturned by an opinion. The platform has already applied this before you see the report — you do not need to reconcile anything, and you must not "correct" a row back the other way.
+- **An incomplete check is not a pass.** If the report says at the top that elements were selected but never judged, say so in your Status column and in the summary. A screen whose AI checks did not run is a screen we have not finished checking, whatever the scan said.
+
+If no `a11y_report` exists for the run, say that plainly in the report rather than leaving the AI columns blank — a blank cell reads as a zero, and "nobody asked" is not the same finding as "nothing found".
 
 ---
 
@@ -600,6 +624,8 @@ The requirements traceability map is the set of `add_trace_edge` links between `
 
 **Accessibility:**
 - [ ] axe-core scan run against all screens — zero Critical and Serious violations
+- [ ] The run's `a11y_report` read, and its rule findings **and** AI findings both carried into the Step 9 table
+- [ ] No AI finding marked "needs review" counted as a failure, and no screen with unjudged elements reported as a pass
 - [ ] Keyboard navigation manually verified for all critical user journeys
 
 **UAT:**
@@ -626,7 +652,7 @@ The requirements traceability map is the set of `add_trace_edge` links between `
 | ISTQB Testing Standards | ISTQB. (2023). *CTFL Syllabus v4.0.* istqb.org. | Steps 1, 11 |
 | Performance Testing | k6.io. (2023). *Load Testing Best Practices.* k6.io/docs. | Step 7 |
 | OWASP Testing Guide | OWASP Foundation. (2020). *OWASP Testing Guide v4.2.* owasp.org. | Step 8 |
-| WCAG 2.1 AA | W3C. (2018). *Web Content Accessibility Guidelines 2.1.* w3.org. | Step 9 |
+| WCAG 2.2 AA | W3C. (2024). *Web Content Accessibility Guidelines 2.2.* w3.org. | Step 9 |
 
 ---
 

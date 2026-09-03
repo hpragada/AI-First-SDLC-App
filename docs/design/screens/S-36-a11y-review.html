@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-36 · Accessibility review — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Accessibility review <span class="badge badge--waiting" style="vertical-align:middle"><span class="status-dot"></span>7 waiting</span></h1>
+        <p class="page-head__sub">Checks that could not reach a verdict on their own. Your call settles each one — and none of these is stopping anybody: a finding only reaches this queue <em>because</em> the platform refused to act on it without a person.</p>
+      </div>
+    </div>
+
+    <!-- ============ Default · queue + the item under review ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Default · queue, worst first, with one item under review</span>
+      <div class="tabs" style="margin-bottom:var(--space-5)">
+        <button class="tab tab--active">Review queue (7)</button>
+        <button class="tab" onclick="location.href='S-37-conformance-report.html'">Conformance statement</button>
+      </div>
+
+      <div class="u-row" style="margin-bottom:var(--space-4)">
+        <span class="chip chip--filter">All screens</span>
+        <span class="chip chip--filter">Level A (3)</span>
+        <span class="chip chip--filter">Level AA (4)</span>
+        <span class="u-spacer"></span>
+        <span class="t-sm u-muted">Sorted worst first</span>
+      </div>
+      <!-- Rail LEFT, item under review RIGHT (`grid--console`), NOT `grid--detail`.
+           `grid--detail` is 1fr + a 320px sidebar, and the panels were the wrong way round:
+           the queue took the wide slot and the panel a person actually WORKS in was squeezed
+           into 320px, which clipped its own decision buttons off the edge (D-A11Y-99). -->
+      <div class="grid grid--console">
+
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Waiting on you</h2></div>
+          <div class="panel__body--flush">
+            <div class="artifact-row" style="background:var(--brand-orange-50)">
+              <div class="artifact-row__main">
+                <div class="artifact-row__title">1.1.1 Non-text Content</div>
+                <div class="artifact-row__meta">/checkout · <span class="t-mono">img.hero</span></div>
+                <div class="u-row" style="margin-top:6px">
+                  <span class="badge badge--outline">Level A</span>
+                  <span class="badge badge--waiting"><span class="status-dot"></span>Not sure · 41%</span>
+                </div>
+              </div>
+            </div>
+            <div class="artifact-row">
+              <div class="artifact-row__main">
+                <div class="artifact-row__title">4.1.2 Name, Role, Value</div>
+                <div class="artifact-row__meta">/checkout · <span class="t-mono">div.pay-btn</span></div>
+                <div class="u-row" style="margin-top:6px">
+                  <span class="badge badge--outline">Level A</span>
+                  <span class="badge badge--waiting"><span class="status-dot"></span>Not sure · 63%</span>
+                </div>
+              </div>
+            </div>
+            <div class="artifact-row">
+              <div class="artifact-row__main">
+                <div class="artifact-row__title">2.4.3 Focus Order</div>
+                <div class="artifact-row__meta">/checkout · <span class="t-mono">whole screen</span></div>
+                <div class="u-row" style="margin-top:6px">
+                  <span class="badge badge--outline">Level A</span>
+                  <span class="badge badge--waiting"><span class="status-dot"></span>No verdict</span>
+                </div>
+              </div>
+            </div>
+            <div class="artifact-row">
+              <div class="artifact-row__main">
+                <div class="artifact-row__title">1.4.1 Use of Color</div>
+                <div class="artifact-row__meta">/dashboard · <span class="t-mono">span.delta-up</span></div>
+                <div class="u-row" style="margin-top:6px">
+                  <span class="badge badge--outline">Level AA</span>
+                  <span class="badge badge--waiting"><span class="status-dot"></span>Not sure · 58%</span>
+                </div>
+              </div>
+            </div>
+            <div class="artifact-row">
+              <div class="artifact-row__main">
+                <div class="artifact-row__title">2.5.3 Label in Name</div>
+                <div class="artifact-row__meta">/expenses/new · <span class="t-mono">button.save</span></div>
+                <div class="u-row" style="margin-top:6px">
+                  <span class="badge badge--outline">Level AA</span>
+                  <span class="badge badge--waiting"><span class="status-dot"></span>Not sure · 72%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel__header">
+            <h2 class="panel__title">1.1.1 Non-text Content</h2>
+            <span class="u-spacer"></span>
+            <span class="badge badge--outline">Level A</span>
+          </div>
+          <div class="panel__body">
+            <div class="meta-row">
+              <span class="meta-item">Screen <strong>/checkout</strong></span>
+              <span class="meta-item">Element <span class="t-mono">img.hero</span></span>
+              <span class="meta-item">Check <strong>alt</strong></span>
+              <span class="meta-item">Found by <a href="S-35-test-cases.html" target="_blank" rel="noreferrer"><strong>TC-031</strong> — Checkout with valid card</a></span>
+              <span class="meta-item"><a href="S-19-run-console.html" target="_blank" rel="noreferrer">View run</a></span>
+              <span class="meta-item">If confirmed <span class="badge badge--failed"><span class="status-dot"></span>Critical</span></span>
+            </div>
+
+            <div class="shot" style="margin-top:var(--space-4)">
+              <div class="shot__stage shot__stage--fit">
+                <div class="shot__img shot__img--sample"></div>
+                <span class="shot__marker" data-label="img.hero" style="top:92px;left:8%;width:210px;height:88px"></span>
+              </div>
+              <div class="shot__bar">
+                <span>Fit to width</span>
+                <button class="btn btn--ghost btn--sm">View actual size</button>
+                <span class="u-spacer"></span>
+                <span class="shot__dims">2560 × 1340</span>
+              </div>
+            </div>
+
+            <div class="banner banner--warning" style="margin-top:var(--space-4)">
+              <span class="banner__icon">?</span>
+              <div class="banner__body">
+                <div class="banner__title">The check was 41% sure — below the 80% this check needs</div>
+                So the platform did not act on it either way. It is not counted as a failure and it is not counted as a pass.
+              </div>
+            </div>
+
+            <h3 class="t-h3" style="margin-top:var(--space-5)">What the check saw</h3>
+            <p class="t-sm u-body">The image has <code>alt="checkout-hero-v2"</code>. That reads like a filename rather than a description, but the image sits next to a heading that already says “Secure checkout”, so it may be decorative.</p>
+
+            <h3 class="t-h3" style="margin-top:var(--space-4)">What it would ask for</h3>
+            <p class="t-sm u-body">Either describe what the image shows, or mark it decorative with <code>alt=""</code> so a screen reader skips it.</p>
+
+            <label class="field" style="margin-top:var(--space-5)">
+              <span class="field__label" id="lbl-note-1">Your note <span class="u-muted">(optional — required when you reject)</span></span>
+              <textarea class="textarea" aria-labelledby="lbl-note-1" placeholder="Why is this a real problem, or why is it fine?"></textarea>
+            </label>
+
+            <div class="gate-panel__actions" style="margin-top:var(--space-4)">
+              <button class="btn btn--primary">Yes — this is a real problem</button>
+              <button class="btn btn--secondary">No — this is fine</button>
+              <span class="u-spacer"></span>
+              <button class="btn btn--ghost">Skip for now</button>
+            </div>
+            <span class="gate-reassure">Recorded against your name and the WCAG criterion. Confirming opens a defect; rejecting closes the finding. Either way it stops appearing here.</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ============ Actual size ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Item under review · actual size (contrast and focus rings are not decidable on a scaled image)</span>
+      <div class="panel"><div class="panel__body">
+        <!-- No "Found by" here on purpose: this one came from a baseline audit of an app the
+             platform did not build, so there is no story, no test case and no run to link to.
+             The line is absent rather than empty — see G3. -->
+        <div class="meta-row">
+          <span class="meta-item">Screen <strong>/dashboard</strong></span>
+          <span class="meta-item">Element <span class="t-mono">span.delta-up</span></span>
+          <span class="meta-item">Check <strong>color</strong></span>
+        </div>
+        <div class="shot" style="margin-top:var(--space-4)">
+          <div class="shot__stage">
+            <div class="shot__img shot__img--sample shot__img--sample-wide"></div>
+            <span class="shot__marker" data-label="span.delta-up" style="top:104px;left:640px;width:96px;height:26px"></span>
+          </div>
+          <div class="shot__bar">
+            <span>Actual size · scroll inside the frame to see the rest</span>
+            <button class="btn btn--ghost btn--sm">Fit to width</button>
+            <span class="u-spacer"></span>
+            <span class="shot__dims">2560 × 1340</span>
+          </div>
+        </div>
+        <p class="t-sm u-body" style="margin-top:var(--space-4)">1.4.1 Use of Colour — the rise and fall indicators differ only by colour. The check could not tell whether the arrow glyph is part of the text or a background image.</p>
+      </div></div>
+    </div>
+
+    <!-- ============ Tall page + no screenshot ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Tall capture, and the case where there is no capture at all</span>
+      <div class="grid grid--2">
+        <div class="shot">
+          <div class="shot__stage">
+            <div class="shot__img shot__img--sample shot__img--sample-tall"></div>
+            <span class="shot__marker" data-label="a.skip-link" style="top:604px;left:6%;width:150px;height:28px"></span>
+          </div>
+          <div class="shot__bar"><span>Long page · the frame scrolls, the panel does not</span><span class="u-spacer"></span><span class="shot__dims">1440 × 8200</span></div>
+        </div>
+        <div class="shot shot--missing">
+          <div class="shot__stage">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 15l5-4 4 3 3-2 6 5"/><path d="M3 3l18 18"/></svg>
+            <span class="t-sm">No screenshot was captured for this finding</span>
+          </div>
+          <div class="shot__bar"><span>Judge from the element and the evidence — say so in your note if you cannot</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Loading ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Loading · the queue is being fetched</span>
+      <div class="grid grid--detail">
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Waiting on you</h2></div>
+          <div class="panel__body">
+            <div class="skeleton skeleton--title"></div>
+            <div class="skeleton skeleton--line" style="margin-top:var(--space-3)"></div>
+            <div class="skeleton skeleton--line" style="margin-top:var(--space-2)"></div>
+            <div class="skeleton skeleton--line" style="margin-top:var(--space-2)"></div>
+            <div class="skeleton skeleton--line" style="margin-top:var(--space-2)"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel__body">
+            <div class="skeleton skeleton--title"></div>
+            <div class="skeleton skeleton--block" style="margin-top:var(--space-4);height:200px"></div>
+            <div class="skeleton skeleton--line" style="margin-top:var(--space-4)"></div>
+            <div class="skeleton skeleton--line" style="margin-top:var(--space-2)"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Decision submitted ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Decision submitted · confirmed as a real problem</span>
+      <div class="toast toast--success" style="margin-bottom:var(--space-4)">
+        <div class="toast__body">
+          <div class="toast__title">Confirmed — 1.1.1 on /checkout</div>
+          A defect has been opened on WI-492 and this finding has left your queue. 6 left.
+        </div>
+      </div>
+      <div class="panel"><div class="panel__body">
+        <div class="meta-row">
+          <span class="meta-item">Screen <strong>/checkout</strong></span>
+          <span class="meta-item">Element <span class="t-mono">img.hero</span></span>
+          <span class="meta-item">Decided by <strong>Aisha Khan</strong> · just now</span>
+        </div>
+        <div class="banner banner--success" style="margin-top:var(--space-4)">
+          <span class="banner__icon">✓</span>
+          <div class="banner__body">
+            <div class="banner__title">Recorded as a real problem</div>
+            Your note: “The heading says ‘Secure checkout’ but the image shows the card brands accepted — that is information, not decoration.”
+          </div>
+        </div>
+        <div class="u-row" style="margin-top:var(--space-4)">
+          <a href="S-17-work-item-defect.html" class="t-sm">Open the defect that was raised ↗</a>
+          <span class="u-spacer"></span>
+          <button class="btn btn--primary btn--sm">Next item</button>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ============ Two reviewers on one item (QA-23 edge case) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Someone else is already on this one · the two-reviewer case</span>
+      <div class="panel"><div class="panel__body">
+        <div class="meta-row">
+          <span class="meta-item">Screen <strong>/checkout</strong></span>
+          <span class="meta-item">Element <span class="t-mono">div.pay-btn</span></span>
+          <span class="meta-item">Criterion <strong>4.1.2</strong></span>
+        </div>
+        <div class="banner banner--info" style="margin-top:var(--space-4)">
+          <span class="banner__icon">🔒</span>
+          <div class="banner__body">
+            <div class="banner__title">Tom Reyes opened this 4 minutes ago</div>
+            Two people deciding the same finding is how a queue ends up with an answer nobody agrees on, so it is read-only for you until he finishes or steps away. You will get it back automatically if he does.
+          </div>
+        </div>
+        <div class="gate-panel__actions" style="margin-top:var(--space-4)">
+          <button class="btn btn--primary" disabled aria-disabled="true">Yes — this is a real problem</button>
+          <button class="btn btn--secondary" disabled aria-disabled="true">No — this is fine</button>
+          <span class="u-spacer"></span>
+          <button class="btn btn--ghost">Skip to the next one</button>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ============ Not the reviewer (mirrors S-21's "cannot decide") ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Read-only · you are not the accessibility reviewer</span>
+      <div class="panel"><div class="panel__body">
+        <div class="meta-row">
+          <span class="meta-item">Screen <strong>/checkout</strong></span>
+          <span class="meta-item">Element <span class="t-mono">img.hero</span></span>
+          <span class="meta-item">Criterion <strong>1.1.1</strong></span>
+        </div>
+        <div class="banner banner--info" style="margin-top:var(--space-4)">
+          <span class="banner__icon">🔒</span>
+          <div class="banner__body">
+            <div class="banner__title">Awaiting the accessibility reviewer</div>
+            You don't hold the <strong>QA Lead</strong> role on this project, so this is read-only for you. <strong>Aisha Khan</strong> can decide it. The finding, the evidence and the screenshot are all here — it is the decision that is hers, not the information.
+          </div>
+        </div>
+        <div class="gate-panel__actions" style="margin-top:var(--space-4)">
+          <button class="btn btn--primary" disabled aria-disabled="true">Yes — this is a real problem</button>
+          <button class="btn btn--secondary" disabled aria-disabled="true">No — this is fine</button>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ============ Error ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Error · the decision could not be saved</span>
+      <div class="panel"><div class="panel__body">
+        <div class="banner banner--danger">
+          <span class="banner__icon">!</span>
+          <div class="banner__body">
+            <div class="banner__title">Your decision was not saved</div>
+            The platform could not be reached. <strong>Nothing was recorded</strong>, and this finding is still in your queue — so nothing has been half-decided. Your note is still in the box below.
+          </div>
+        </div>
+        <div class="gate-panel__actions" style="margin-top:var(--space-4)">
+          <button class="btn btn--primary">Try again</button>
+          <button class="btn btn--ghost">Copy my note</button>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ============ Empty ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Empty · nothing waiting on you</span>
+      <div class="panel">
+        <div class="empty">
+          <svg class="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>
+          <div class="empty__title">Nothing is waiting on you</div>
+          <div class="empty__text">Findings arrive here when a check could not reach a verdict on its own. An empty queue means every check so far was sure enough to answer — not that no problems were found. The full list lives in the accessibility report.</div>
+          <a href="S-28-artifacts.html" class="t-sm" style="margin-top:var(--space-3)">Open the latest accessibility report ↗</a>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("a11y", { user: "Aisha Khan" });</script>
+</body>
+</html>

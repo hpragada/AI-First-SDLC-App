@@ -13,8 +13,9 @@ from .auth_views import (
     ResetView,
     SignupView,
 )
-from .ci_views import CITestResultsView
+from .ci_views import CIA11yCandidatesView, CITestResultsView
 from .runner_views import (
+    RunnerA11yAuditClaimView,
     RunnerBuildFetchView,
     RunnerBuildReportView,
     RunnerClarificationCreateView,
@@ -71,6 +72,10 @@ urlpatterns = [
     # stays isolated from the session-authed project actions.
     path("projects/<uuid:project_id>/test-results/", CITestResultsView.as_view(),
          name="ci-test-results"),
+    # Accessibility capture ingestion (QA-11b): the same CI-token front door, for what a run
+    # saw on each screen. Explicit path before the router include, for the same reason.
+    path("projects/<uuid:project_id>/a11y-candidates/", CIA11yCandidatesView.as_view(),
+         name="ci-a11y-candidates"),
     # Phase catalog (S-18 trigger picker, gap C): tenant-scoped via session / header.
     path("phases/", PhaseCatalogView.as_view(), name="phases"),
     # Server-session auth (P4.7-T1, DECISION-3). Tenant is resolved from the session
@@ -109,6 +114,7 @@ urlpatterns = [
     path("runner/reviews/<uuid:run_id>/report/", RunnerReviewReportView.as_view(),
          name="runner-review-report"),
     # Code-intelligence dispatch (B4): claim a job + report the analysis (companion-token auth).
+    path("runner/a11y-audits/", RunnerA11yAuditClaimView.as_view(), name="runner-a11y-claim"),
     path("runner/code-intel/", RunnerCodeIntelClaimView.as_view(), name="runner-codeintel-claim"),
     path("runner/code-intel/<uuid:job_id>/report/", RunnerCodeIntelReportView.as_view(),
          name="runner-codeintel-report"),

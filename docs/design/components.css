@@ -230,6 +230,12 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .grid--2 { grid-template-columns: 1fr 1fr; }
 .grid--3 { grid-template-columns: repeat(3, 1fr); }
 .grid--detail { grid-template-columns: minmax(0,1fr) 320px; align-items: start; }
+/* Review console: a narrow pick-list rail on the LEFT, the item being worked on filling the
+   rest. The mirror of `--detail`, and a different job: there the 320px column is a sidebar
+   ABOUT the main content, here it is the list you pick FROM and the wide half is where the
+   work happens. Using `--detail` for this puts the working panel in the 320px slot (S-36,
+   D-A11Y-99). */
+.grid--console { grid-template-columns: 320px minmax(0,1fr); align-items: start; }
 
 /* ============================================================================
    7. App shell  (emitted by shell.js — sidebar + top bar)
@@ -395,7 +401,10 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
    ========================================================================== */
 .gate-panel .card__body { display: flex; flex-direction: column; gap: var(--space-3); }
 .gate-panel__role { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--brand-orange-600); }
-.gate-panel__actions { display: flex; gap: var(--space-3); margin-top: var(--space-2); }
+/* Wraps. A decision row is the one place a clipped control is unacceptable — the button that
+   falls off the edge is the one someone needed to press. `.meta-row` already wraps for the
+   same reason; this did not, so S-36 lost "No - this is fine" past the panel edge. */
+.gate-panel__actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-2); }
 .gate-reassure { font-size: var(--fs-xs); color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; }
 
 .criteria-list { display: flex; flex-direction: column; gap: var(--space-1); }
@@ -595,6 +604,43 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 /* diagram / image artifact placeholder */
 .diagram-frame { background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius-md); min-height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); color: var(--text-faint); }
 .diagram-frame svg { width: 40px; height: 40px; }
+
+/* ---------------------------------------------------------------------------
+   screenshot of a captured page (S-36 accessibility review)
+   `.diagram-frame` above is a centred *placeholder* for an embed — it has a fixed
+   minimum height and no overflow handling at all, so a real capture (routinely
+   2560px wide, and taller than the viewport on a long page) breaks the panel it
+   sits in. This contains one instead, and it is a component rather than an inline
+   fix because every future screen that shows a captured page needs the same thing.
+   Two modes, because a reviewer needs both: FIT to judge the layout, ACTUAL to
+   judge the pixels — 4.5:1 contrast and a focus ring are not decidable on a
+   scaled-down image.
+   --------------------------------------------------------------------------- */
+.shot { border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; background: var(--bg-surface); }
+.shot__stage { position: relative; background: var(--bg-subtle); max-height: 340px; overflow: auto; }
+/* FIT: the whole capture, scaled to the panel. Nothing scrolls; nothing overflows. */
+.shot__stage--fit { overflow: hidden; }
+.shot__stage--fit .shot__img { width: 100%; height: auto; }
+/* ACTUAL: natural size, both axes scroll inside the stage and only inside it. */
+.shot__img { display: block; max-width: none; }
+/* Stand-in for the capture itself in a mockup — the real screen renders an <img>. */
+.shot__img--sample { min-width: 100%; height: 300px; background:
+  linear-gradient(180deg, var(--brand-navy-100) 0 44px, var(--bg-surface) 44px 100%); }
+.shot__img--sample-wide { width: 1800px; }
+.shot__img--sample-tall { min-width: 100%; height: 820px; }
+/* Where the finding is. Absolute inside the stage so it travels with the scroll. */
+.shot__marker { position: absolute; border: 2px solid var(--brand-orange); border-radius: var(--radius-sm); box-shadow: 0 0 0 3px var(--brand-orange-50); }
+/* The ring is orange (the platform's attention colour); the LABEL is navy, because white on
+   --brand-orange is 2.97:1 and this screen is where we sell 4.5:1. Navy gives 13.69:1. */
+.shot__marker::after { content: attr(data-label); position: absolute; top: -22px; left: -2px; background: var(--brand-navy); color: var(--text-on-navy); font-size: var(--fs-xs); line-height: 18px; font-weight: 600; padding: 0 var(--space-2); border-radius: var(--radius-sm); white-space: nowrap; }
+/* Caption + mode switch. Text, never an icon alone — this bar states which mode is on. */
+.shot__bar { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-top: 1px solid var(--border); background: var(--bg-surface); font-size: var(--fs-xs); line-height: var(--lh-xs); color: var(--text-muted); }
+.shot__dims { font-family: var(--font-mono); }
+/* `--text-body`, not `--text-faint`. `.diagram-frame` above uses faint on subtle, which is
+   2.29:1 — deliberately not copied here (flagged separately; fixing that component is not
+   this task's to make). This one is 8.86:1. */
+.shot--missing .shot__stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); min-height: 180px; color: var(--text-body); }
+.shot--missing svg { width: 32px; height: 32px; }
 
 /* version-history row */
 .version-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); font-size: var(--fs-sm); }

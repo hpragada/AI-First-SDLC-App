@@ -14,7 +14,6 @@ import {
   Panel,
   Spinner,
 } from "../../components/ui";
-import { ClarificationHistory } from "./Clarifications";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
@@ -273,14 +272,12 @@ function WorkItemTaskLive() {
         </Modal>
       )}
 
-      {/* The questions this task's agents asked and the answers they were given — the decisions
-          behind its code and artifacts. Pinned to this task, so no work-item filter. */}
-      <Card style={{ marginTop: "var(--space-5)" }}>
-        <CardBody>
-          <h3 className="t-h3">Answered questions</h3>
-          <ClarificationHistory projectId={workItem.data.project} workItemId={workItem.data.id} />
-        </CardBody>
-      </Card>
+      {/* No "Answered questions" panel here (team decision, 25 August). It was a full search
+          box, phase filter and paging control, rendered whether or not the item had a single
+          answered question — and on anything the platform created for itself (an accessibility
+          defect, the accessibility backlog) there never are any, so it could only ever be an
+          empty card. Nothing became unreachable: the same history, with the same search plus a
+          work-item filter, is the History tab of Clarifications. */}
     </div>
   );
 }

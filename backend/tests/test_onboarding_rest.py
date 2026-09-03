@@ -346,7 +346,14 @@ def test_onboarding_hub_shape_before_anything(client, project, member):
     _login(client, "dev@acme.com", "dev-pass!")
     resp = client.get(_hub_url(project))
     assert resp.status_code == 200
-    assert set(resp.data.keys()) == {"upload", "adopt", "register", "index", "gap", "adopt_types"}
+    assert set(resp.data.keys()) == {"upload", "adopt", "register", "index", "gap",
+                                     "adopt_types", "a11y"}
+    # A brownfield project has pages the platform cannot discover — it has no access to the
+    # running application, deliberately — so the accessibility step starts at "nobody has told
+    # us yet" rather than at "nothing found" (task 8a).
+    a11y = resp.data["a11y"]
+    assert a11y["routes_registered"] == 0 and a11y["audits_run"] == 0
+    assert a11y["running"] is False and a11y["status"] == "not_started"
     assert resp.data["upload"] == [] and resp.data["adopt"] == []
     # Assert the MEANING, not the exact dict (S5-18): both steps grew keys after this test was
     # written — `index.repos` for the per-repo cards, and `running`/`run_id`/`question` so the hub
@@ -359,11 +366,60 @@ def test_onboarding_hub_shape_before_anything(client, project, member):
     assert resp.data["gap"]["running"] is False
     assert resp.data["gap"]["run_id"] is None and resp.data["gap"]["question"] is None
     assert resp.data["register"]["pages_registered"] == 0
+    # Nothing connected yet, so there is no vendor to name. The onboarding step used to say
+    # "Connect Jira" here while the pop-up behind it asked which vendor to use — the button was
+    # offering a choice the user had not made. None is what keeps the screen honest.
+    assert resp.data["register"]["tasktracker_vendor"] is None
+    assert resp.data["register"]["docstore_vendor"] is None
+    assert resp.data["register"]["designsource_vendor"] is None
     # Served adopt vocabulary: humanized "Type (Phase)", full lifecycle minus implementation.
     types = resp.data["adopt_types"]
     assert {"value", "label", "phase", "phase_label"} <= set(types[0].keys())
     assert any(t["label"] == "Wireframe (UX Design)" for t in types)
     assert all(t["value"] != "code" for t in types)
+
+
+def test_onboarding_hub_names_the_vendor_once_one_is_connected(client, project, member):
+    """Before connecting, the step offers a capability; after, it names the real tool.
+
+    Both halves matter. "Connect Jira" before the user chose a vendor was the reported bug, but
+    "Import task tracker backlog" after they plainly connected Jira would be its own kind of
+    unhelpful. The screen can only tell them apart if the server says which vendor it is, so
+    this is the field that lets the label be right on the day a second tracker exists rather
+    than hardcoded to the only one that exists today.
+    """
+    from apps.integrations.models import IntegrationConnection
+
+    IntegrationConnection.objects.create(
+        tenant=project.tenant, capability="tasktracker", connector="jira",
+        token_ref="vault://x", secret_encrypted="enc",
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    register = client.get(_hub_url(project)).data["register"]
+
+    assert register["tasktracker_connected"] is True
+    assert register["tasktracker_vendor"] == "Jira"      # the catalog's label, not the slug
+    # The other two are untouched — one connection must not make the whole step claim vendors.
+    assert register["docstore_vendor"] is None
+    assert register["designsource_vendor"] is None
+
+
+def test_onboarding_hub_does_not_name_a_half_finished_connection(client, project, member):
+    """A row with no secret stored is not a connection. `is_configured` already governs the
+    `*_connected` flags; the vendor name has to follow the same rule or the step would name a
+    tool it cannot actually reach."""
+    from apps.integrations.models import IntegrationConnection
+
+    IntegrationConnection.objects.create(
+        tenant=project.tenant, capability="tasktracker", connector="jira", token_ref="",
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    register = client.get(_hub_url(project)).data["register"]
+
+    assert register["tasktracker_connected"] is False
+    assert register["tasktracker_vendor"] is None
 
 
 def test_onboarding_hub_reflects_uploads_index_and_gap(client, project, repo, tech_lead):
@@ -404,3 +460,69 @@ def test_onboarding_surfaces_are_tenant_isolated(client, db):
     assert c.get(_hub_url(p1)).status_code == 200
     # cross-tenant project id is invisible under this admin's session (RLS/tenant scoping)
     assert c.get(_hub_url(p2)).status_code == 404
+
+
+# ── the accessibility step, while an audit is actually running ───────────────
+#
+# The step counted a `judging` audit as run, and then said "1 audit run — open the report from
+# Artifacts" while the audit was still going. There is no report to open until the judging ends:
+# the baseline is published when the judge run closes, deliberately, so that it never states a
+# position that is still changing. Seen on the live run of 21 August.
+
+
+def _an_audit(project, status):
+    from apps.a11y.models import A11yBaselineAudit, A11yRoute
+
+    A11yRoute.objects.get_or_create(
+        tenant=project.tenant, project=project, path="/",
+        defaults={"label": "Home", "enabled": True})
+    return A11yBaselineAudit.objects.create(
+        tenant=project.tenant, project=project, base_url="http://localhost:4180",
+        routes=["/"], status=status)
+
+
+def test_an_audit_still_running_is_not_reported_as_a_finished_one(client, project, member):
+    _login(client, "dev@acme.com", "dev-pass!")
+    _an_audit(project, "judging")
+
+    a11y = client.get(_hub_url(project)).data["a11y"]
+
+    assert a11y["status"] == "running", "it is going, not done"
+    assert a11y["running"] is True
+    assert a11y["audits_run"] == 0, "nothing to open from Artifacts yet"
+
+
+def test_a_finished_audit_makes_the_step_done(client, project, member):
+    _login(client, "dev@acme.com", "dev-pass!")
+    _an_audit(project, "complete")
+
+    a11y = client.get(_hub_url(project)).data["a11y"]
+
+    assert a11y["status"] == "done"
+    assert a11y["audits_run"] == 1
+    assert a11y["running"] is False
+
+
+def test_a_finished_audit_stays_finished_while_the_next_one_runs(client, project, member):
+    """Both facts are true at once, so both are carried. The tick does not flicker back off
+    because somebody started another audit."""
+    _login(client, "dev@acme.com", "dev-pass!")
+    _an_audit(project, "complete")
+    _an_audit(project, "capturing")
+
+    a11y = client.get(_hub_url(project)).data["a11y"]
+
+    assert a11y["status"] == "done" and a11y["audits_run"] == 1
+    assert a11y["running"] is True
+
+
+def test_an_audit_that_could_not_run_leaves_the_step_where_it_was(client, project, member):
+    """A failed audit is not a finished one and is not a running one. With pages registered the
+    step is simply ready again, which is the true thing to say."""
+    _login(client, "dev@acme.com", "dev-pass!")
+    _an_audit(project, "failed")
+
+    a11y = client.get(_hub_url(project)).data["a11y"]
+
+    assert a11y["status"] == "ready"
+    assert a11y["audits_run"] == 0 and a11y["running"] is False

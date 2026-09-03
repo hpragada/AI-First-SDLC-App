@@ -178,7 +178,33 @@ class TenantCreateView(APIView):
         return Response(TenantSerializer(tenant).data, status=status.HTTP_201_CREATED)
 
 
+def _a11y_would_ticket(tenant_id, project_id, finding) -> bool:
+    """Will confirming this finding actually raise a defect? (QA-23.)
+
+    Asked rather than assumed, because a project may block on `critical` only — or on nothing
+    at all, which `policy` has supported since QA-08. Telling a reviewer "a defect has been
+    opened" when their project's bar means no ticket will ever exist would be the console
+    lying about its own consequence, which is the one thing it cannot do and remain useful.
+    """
+    from apps.a11y.policy import blocks, policy_or_default
+
+    if finding.outcome != "failure":
+        return False
+    policy, _ = policy_or_default(tenant_id, project_id)
+    return blocks(policy, severity=finding.severity, confidence=finding.confidence,
+                  source=finding.source)
+
+
 # ── Projects + Profile ──────────────────────────────────────────────
+#: Said the same way by all four page/audit endpoints, because a refusal worded three times is
+#: a refusal that will differ.
+PAGE_ROLE_DETAIL = (
+    "You need the QA Lead, Tech Lead or Admin role on this project to change which pages are "
+    "audited or to start an audit. Everything on this screen is readable by anyone on the "
+    "project."
+)
+
+
 class ProjectViewSet(
     TenantScopedMixin,
     mixins.CreateModelMixin,
@@ -209,6 +235,38 @@ class ProjectViewSet(
             return [IsAuthenticatedMember()]
         # Dashboard rollup (S-31): authenticated member.
         if self.action == "dashboard":
+            return [IsAuthenticatedMember()]
+        # Accessibility review console (QA-23): any authenticated member may READ the queue and
+        # the captures — a developer wanting to see what a reviewer is looking at is exactly the
+        # transparency this build is for. Only the accessibility reviewer may ANSWER, and that
+        # is enforced per-project inside `review.adjudicate`, not here, because the role is a
+        # project Membership and this class-level hook has no project in hand.
+        if self.action in {"a11y_review", "a11y_review_item", "a11y_review_screenshot",
+                           # Reading one finding (S-39) — the same read as the console's, minus
+                           # the claim, so it is gated exactly the same way.
+                           "a11y_finding",
+                           "a11y_conformance", "a11y_conformance_sign",
+                           "a11y_conformance_export", "a11y_journeys",
+                           # The page list, the page editor and audits were missing from this
+                           # set, so they fell through to the viewset default — `AllowAny`,
+                           # which does not even require a session. Note what this class does
+                           # and does not do: it gates "is somebody logged in", and tenant
+                           # scoping + RLS do the rest; it is NOT a per-project membership
+                           # check despite the name, and every other project surface uses it
+                           # the same way. WRITING is gated properly, per project and per role,
+                           # inside the action itself (`review.can_manage_pages`) — the same
+                           # shape `repositories` uses.
+                           #
+                           # `a11y_policy` and `a11y_backlog` are deliberately NOT here. They
+                           # are pure reads that leak nothing past the tenant, and their tests
+                           # exercise tenant isolation through the header path with no session
+                           # — which is a property worth keeping testable. Tightening them was
+                           # not part of what the scope fix was asked to do.
+                           "a11y_routes", "a11y_route_item", "a11y_audits",
+                           # Re-judging spends a real engine run, so it is gated here as well as
+                           # by role inside the action — the same pair of checks as starting an
+                           # audit, which it is a second half of.
+                           "a11y_audit_rejudge"}:
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
@@ -349,6 +407,642 @@ class ProjectViewSet(
             "connected": {
                 cap: get_connection(self.tenant_id, cap) is not None
                 for cap in ("docstore", "tasktracker", "testmgmt")
+            },
+        })
+
+    @action(detail=True, methods=["get"], url_path="a11y-policy")
+    def a11y_policy(self, request, pk=None):
+        """The project's accessibility policy (QA-08): what it aims at, and what blocks.
+
+        Read-only, and shaped like `export-policy` on purpose — defaults, the project's own
+        overrides, and the effective result, so a reader never has to merge two dicts in their
+        head. Writes go through `PUT …/profile/`, which validates the block.
+
+        `error` is non-empty only when the stored block cannot be honoured (which the profile
+        endpoint refuses to create): the effective policy is then the documented default, and
+        saying so beats showing a policy that is not the one in force.
+        """
+        from apps.a11y.policy import (
+            DEFAULT_TARGET,
+            default_policy,
+            describe_policy,
+            policy_or_default,
+        )
+
+        project = self.get_object()
+        profile = getattr(project, "profile", None)
+        policy, error = policy_or_default(self.tenant_id, str(project.id))
+        return Response({
+            "defaults": default_policy(DEFAULT_TARGET),
+            "overrides": (profile.a11y if profile else {}) or {},
+            "effective": policy,
+            "summary": describe_policy(policy),
+            "error": error,
+        })
+
+    @action(detail=True, methods=["get", "put"], url_path="a11y-routes")
+    def a11y_routes(self, request, pk=None):
+        """The pages a baseline accessibility audit should visit (QA-17).
+
+        `GET` lists them, disabled ones included — a route that stopped being audited is a fact
+        about the application, and hiding it would make the list look like the whole story.
+        `PUT` registers a list; pass `replace: true` to make it the definitive one, which
+        **disables** anything not named rather than deleting it (see `routes.register_routes`).
+
+        Onboarding (OP-06) will write the same table with `source: onboarding`. Everything here
+        is `manual`, because a person is the one typing it.
+        """
+        from apps.a11y.journey import suggested_address
+        from apps.a11y.review import can_manage_pages
+        from apps.a11y.routes import (
+            RouteError,
+            describe_routes,
+            history_for,
+            last_visited,
+            parse_routes_text,
+            preview_registration,
+            register_routes,
+            scope_change_since,
+        )
+
+        project = self.get_object()
+        user_id = getattr(request.user, "id", None)
+        # Checked HERE rather than inside `register_routes`, matching `repositories`: the same
+        # function is what onboarding (OP-06) will use to write a discovered list with no acting
+        # user at all, and a mandatory check inside it would have no honest answer for that.
+        may_manage = can_manage_pages(tenant_id=self.tenant_id, project_id=str(project.id),
+                                      user_id=user_id)
+        result = None
+        if request.method == "PUT":
+            if not may_manage:
+                return Response({"detail": PAGE_ROLE_DETAIL}, status=status.HTTP_403_FORBIDDEN)
+            # `routes_text` is what the screen sends: the box's contents, read by the platform
+            # so one refusal is worded once and reads the same however the list arrived.
+            # `routes` stays for a caller that already has a list.
+            given = (request.data.get("routes_text")
+                     if request.data.get("routes_text") is not None
+                     else request.data.get("routes", []))
+            try:
+                parsed = parse_routes_text(given)
+                if request.query_params.get("preview") or request.data.get("preview"):
+                    # Nothing is written. What WOULD happen is what a person confirms against
+                    # — see `preview_registration` for why that step exists at all.
+                    return Response({"preview": preview_registration(
+                        tenant_id=self.tenant_id, project_id=str(project.id), routes=parsed)})
+                result = register_routes(
+                    tenant_id=self.tenant_id, project_id=str(project.id), routes=parsed,
+                    replace=bool(request.data.get("replace")),
+                    actor=getattr(request.user, "id", None),
+                )
+            except RouteError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.a11y.models import A11yRoute
+
+        rows = list(A11yRoute.objects.filter(tenant_id=self.tenant_id, project_id=project.id))
+        visited = last_visited(self.tenant_id, str(project.id))
+        # What each page has accumulated. On the row rather than fetched when someone starts
+        # editing, because the warning it powers — "renaming leaves this page's problems at the
+        # old address" — has to be there the moment the path field is touched.
+        history = history_for(self.tenant_id, str(project.id))
+        address = suggested_address(self.tenant_id, str(project.id))
+        payload = {
+            "routes": [
+                {"id": str(row.id), "path": row.path, "label": row.label,
+                 "source": row.source, "enabled": row.enabled, "notes": row.notes,
+                 "example_path": row.example_path,
+                 # None means never opened, which is a fact about the page and not a gap in
+                 # the screen — a pattern route with no example never can be.
+                 "last_visited": visited.get(row.path),
+                 "open_findings": (history.get(row.path) or {}).get("open_findings", 0),
+                 "visits": (history.get(row.path) or {}).get("visits", 0)}
+                for row in rows
+            ],
+            "summary": describe_routes(self.tenant_id, str(project.id)),
+            # Empty when there is nothing to say, so the screen can hide the whole warning
+            # behind one check rather than deciding for itself what counts as a change.
+            "scope_change": scope_change_since(self.tenant_id, str(project.id)),
+            # So the screen renders read-only rather than showing controls that 403 on click —
+            # the ninth state S-36 established and the one this tab did not have.
+            "can_manage": may_manage,
+            # Where this application answers, so the run strip can SHOW the address it would use
+            # instead of describing where the address comes from. `suggested_address` is the same
+            # resolver the keyboard-journeys panel on this screen already reads, deliberately:
+            # one answer to "where is this application", never two panels that can disagree.
+            "base_url": address.url,
+            "base_url_source": address.source,
+            "base_url_reason": address.reason,
+        }
+        if result is not None:
+            payload["changed"] = result
+        return Response(payload)
+
+    @action(detail=True, methods=["patch", "delete"],
+            url_path=r"a11y-routes/(?P<route_id>[^/]+)")
+    def a11y_route_item(self, request, pk=None, route_id=None):
+        """Edit or remove ONE registered page (task 8b).
+
+        `PUT …/a11y-routes/` registers by path, because a pasted list carries no identities —
+        which is exactly why correcting a path there adds a page and leaves the old one in scope.
+        Here the row is named, so an edit is an edit. The ghost page is absent rather than warned
+        about.
+
+        `DELETE` removes a page that was never real — never opened, nothing recorded — and takes
+        any other page out of scope instead, keeping it visible. A page that stopped existing is
+        a fact about the application; a path typed by mistake never was one.
+
+        What neither can do is move a page's history. A finding is keyed on the route it was found
+        at, so a rename leaves the problems at the old address and starts the new one empty. The
+        row carries `open_findings` and `visits` so the screen can say that before it happens.
+        """
+        from apps.a11y.review import can_manage_pages
+        from apps.a11y.routes import RouteError, delete_route, update_route
+
+        project = self.get_object()
+        if not can_manage_pages(tenant_id=self.tenant_id, project_id=str(project.id),
+                                user_id=getattr(request.user, "id", None)):
+            return Response({"detail": PAGE_ROLE_DETAIL}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            if request.method == "DELETE":
+                out = delete_route(
+                    tenant_id=self.tenant_id, project_id=str(project.id), route_id=route_id,
+                    actor=getattr(request.user, "id", None))
+            else:
+                out = {"changed": update_route(
+                    tenant_id=self.tenant_id, project_id=str(project.id), route_id=route_id,
+                    fields={k: v for k, v in (request.data or {}).items()},
+                    actor=getattr(request.user, "id", None))}
+        except RouteError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(out)
+
+    @action(detail=True, methods=["get", "post"], url_path="a11y-audits")
+    def a11y_audits(self, request, pk=None):
+        """Baseline audits of this project (QA-17). `POST` opens one and returns its manifest.
+
+        Opening an audit does not visit anything — it cannot. The manifest is handed to whoever
+        can reach the running application, which is never this server (R2). The audit stays
+        `capturing` until that machine posts what it saw and closes it.
+        """
+        from django.utils import timezone
+
+        from apps.a11y.baseline import (
+            CLOSED_STATUSES,
+            IN_FLIGHT_STATUSES,
+            BaselineError,
+            audit_manifest,
+            audit_outcome,
+            audit_progress,
+            stalled_audit_ids,
+            start_baseline_audit,
+            unanswered_counts,
+        )
+        from apps.a11y.models import A11yBaselineAudit
+        from apps.a11y.review import can_manage_pages
+
+        from .runner_views import CLAIM_LEASE
+
+        project = self.get_object()
+        if request.method == "POST":
+            # An audit spends a real browser on a real application for minutes. Same list as the
+            # page scope it runs over, because they are one decision taken twice.
+            if not can_manage_pages(tenant_id=self.tenant_id, project_id=str(project.id),
+                                    user_id=getattr(request.user, "id", None)):
+                return Response({"detail": PAGE_ROLE_DETAIL}, status=status.HTTP_403_FORBIDDEN)
+            try:
+                audit = start_baseline_audit(
+                    tenant_id=self.tenant_id, project_id=str(project.id),
+                    base_url=request.data.get("base_url", ""),
+                    routes=request.data.get("routes"),
+                    started_by=getattr(request.user, "id", None),
+                    # Opened from the app, so NOBODY is standing at the machine yet: it has to
+                    # wait as `pending` until a companion claims it. Without this it defaulted
+                    # to `capturing` — "a machine is already visiting" — and the claim endpoint
+                    # only offers `pending` (or a stale `claimed`), so no companion could ever
+                    # see it. The audit sat forever while the screen showed "Visiting pages",
+                    # which is this capability's own worst failure: a confident report of work
+                    # that was not happening. The companion's own `audit` subcommand is the
+                    # other caller and correctly leaves the default, because there the machine
+                    # that opened the audit is already about to visit.
+                    claimable=True,
+                )
+            except BaselineError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"audit_id": str(audit.id), "status": audit.status,
+                             "manifest": audit_manifest(audit)},
+                            status=status.HTTP_201_CREATED)
+
+        audits = list(A11yBaselineAudit.objects.filter(
+            tenant_id=self.tenant_id, project_id=project.id)[:50])
+        # Live progress, for the audits that still have somewhere to get to. A finished audit's
+        # numbers are frozen on its own `summary`; asking again would be a second source for one
+        # answer. Two grouped queries for the whole set, however many are in flight — normally
+        # one, and this list polls every 5 seconds while anything is running.
+        progress = audit_progress(
+            self.tenant_id,
+            [str(a.id) for a in audits if a.status in IN_FLIGHT_STATUSES],
+        )
+        # What the newest audit CAME TO, if it has finished. The panel that showed it running
+        # does not disappear when it stops — it changes what it says — so the numbers a person
+        # was watching for have to be there when they arrive. Only the newest, because that is
+        # the only one the panel shows; every other finished audit is a row under Past audits.
+        outcome = (audit_outcome(self.tenant_id, str(project.id))
+                   if audits and audits[0].status in CLOSED_STATUSES else None)
+        # How many elements of each CLOSED audit nothing ever looked at — what the "Check the
+        # rest" button counts. Only for closed ones: while a pass is running the answer is still
+        # changing, and offering to re-ask about elements the judge is at that moment working
+        # through would start a second pass over the same work.
+        unanswered = unanswered_counts(
+            self.tenant_id, [a for a in audits if a.status in CLOSED_STATUSES])
+        # Which in-flight audits nothing has been heard from. DERIVED, never written: a machine
+        # switched off for good never comes back to be swept, and the screen must not be the one
+        # thing still claiming the audit is running. Reading a list has no business closing an
+        # audit, so this says so and leaves the row alone.
+        stalled = stalled_audit_ids(
+            self.tenant_id, audits, stale_before=timezone.now() - CLAIM_LEASE)
+        return Response({"audits": [
+            {"id": str(a.id), "status": a.status, "base_url": a.base_url,
+             "routes": list(a.routes or []), "summary": a.summary or {},
+             "progress": progress.get(str(a.id)),
+             # "this says it is running, and nothing has come back from it for a long while".
+             "stalled": str(a.id) in stalled,
+             # Only on the newest, because that is the only one the panel shows — and the
+             # numbers are this PROJECT's current standing, not a per-audit tally, which is
+             # what a finding can actually be attributed to. See `audit_outcome`.
+             "outcome": outcome if a is audits[0] else None,
+             "unanswered": unanswered.get(str(a.id), 0),
+             "created_at": a.created_at,
+             # When the audit last moved, which is NOT `created_at` once a second judging pass
+             # has run over the same capture: a re-judge re-uses the audit row deliberately
+             # (see `rejudge_capture`), so without this the only time on screen was the audit's
+             # own start — an hour older than the work being watched.
+             "updated_at": a.updated_at}
+            for a in audits
+        ]})
+
+    @action(detail=True, methods=["post"],
+            url_path=r"a11y-audits/(?P<audit_id>[^/.]+)/rejudge")
+    def a11y_audit_rejudge(self, request, pk=None, audit_id=None):
+        """Ask the machine again about the elements of one audit that nothing ever looked at.
+
+        **Not a second audit.** No page is visited and no browser is opened: everything the judge
+        needs was stored when the pages were captured, so this is a second pass over one capture.
+        Re-running the audit instead would re-visit every page to re-ask about a handful of
+        elements, and would then compare a fresh capture against a report drawn from the old one.
+
+        **It never re-asks about an answered `uncertain`.** "A check looked at this and could not
+        decide" is a real verdict and it belongs to the person in the review queue; only elements
+        nothing ever looked at are offered back to the machine. See
+        `aipass.unanswered_for_capture` for how the two are told apart.
+
+        Same role as starting an audit, and for the same reason: it spends a real engine run.
+        """
+        from apps.a11y.aipass import rejudge_capture
+        from apps.a11y.baseline import CLOSED_STATUSES
+        from apps.a11y.models import A11yBaselineAudit
+        from apps.a11y.review import can_manage_pages
+
+        project = self.get_object()
+        if not can_manage_pages(tenant_id=self.tenant_id, project_id=str(project.id),
+                                user_id=getattr(request.user, "id", None)):
+            return Response({"detail": PAGE_ROLE_DETAIL}, status=status.HTTP_403_FORBIDDEN)
+        audit = A11yBaselineAudit.objects.filter(
+            tenant_id=self.tenant_id, project_id=project.id, id=audit_id).first()
+        if audit is None:
+            return Response({"detail": "no such audit in this project"},
+                            status=status.HTTP_404_NOT_FOUND)
+        if audit.status not in CLOSED_STATUSES:
+            return Response(
+                {"detail": "this audit has not finished yet, so what it has not looked at is "
+                           "still changing. Wait for it to close."},
+                status=status.HTTP_409_CONFLICT)
+        out = rejudge_capture(
+            tenant_id=self.tenant_id, project_id=str(project.id), run_id=str(audit.id),
+            title=audit.base_url or "", triggered_by=str(getattr(request.user, "id", "")) or None,
+        )
+        return Response(out)
+
+    @action(detail=True, methods=["get", "post"], url_path="a11y-journeys")
+    def a11y_journeys(self, request, pk=None):
+        """Keyboard journeys for this project (G6b). `GET` lists, `POST` starts.
+
+        Eight WCAG criteria cannot be answered by reading a page standing still — whether tabbing
+        ever traps you, whether focus stays visible, whether a status message is announced. The
+        only way to answer them is to operate the application, which is what these start.
+
+        **`GET` carries the address to pre-fill**, from the last audit or the repository, so the
+        panel reads one payload rather than two. `POST` never starts more than the cap and never
+        drops the excess: what it did not start comes back named, with a reason for each.
+
+        **Anyone may look; only the accessibility reviewer may start one.** Enforced inside
+        `queue_journeys` rather than here, the same way `conformance.sign` does it, because the
+        role is a project Membership and this class-level hook has no project in hand.
+        """
+        from apps.a11y.journey import (
+            JourneyRoleError,
+            queue_journeys,
+            walkable_journeys,
+        )
+
+        project = self.get_object()
+        if request.method == "POST":
+            refs = request.data.get("test_refs")
+            if refs is not None and not isinstance(refs, list | tuple):
+                return Response({"detail": "test_refs must be a list of test case ids"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            try:
+                out = queue_journeys(
+                    tenant_id=self.tenant_id, project_id=str(project.id),
+                    base_url=request.data.get("base_url", ""), test_refs=refs,
+                    user_id=getattr(request.user, "id", None),
+                )
+            except JourneyRoleError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+            # 200, not 201: a queue call can legitimately start nothing (everything already
+            # walking, nothing walkable) and reporting that as "created" would be a lie the
+            # screen then has to unpick.
+            return Response(out)
+
+        from apps.a11y.review import can_review
+
+        return Response({
+            **walkable_journeys(self.tenant_id, str(project.id)),
+            "can_start": can_review(tenant_id=self.tenant_id, project_id=str(project.id),
+                                    user_id=getattr(request.user, "id", None)),
+        })
+
+    @action(detail=True, methods=["get"], url_path="a11y-review")
+    def a11y_review(self, request, pk=None):
+        """The findings waiting on a person, worst first, with the evidence to judge them (QA-23).
+
+        This is the queue `findings.review_queue` has always described and nothing has ever
+        been able to open. Every row carries the element, the criterion, what the check saw and
+        whether a picture exists — and, when one does not, the reason, because an empty frame
+        with no explanation is the silence this build exists against.
+
+        `can_review` says whether THIS user may answer. A reader without the role still sees
+        everything; the console renders read-only rather than showing controls that fail on
+        click (S-36's ninth state).
+        """
+        from apps.a11y.review import LOCK_MINUTES, can_review, ever_checked, queue
+
+        project = self.get_object()
+        user_id = getattr(request.user, "id", None)
+        rows = queue(tenant_id=self.tenant_id, project_id=str(project.id), user_id=user_id)
+        return Response({
+            "queue": rows,
+            "can_review": can_review(tenant_id=self.tenant_id, project_id=str(project.id),
+                                     user_id=user_id),
+            "lock_minutes": LOCK_MINUTES,
+            # Which of the two empty states the screen should show. Only asked when the queue is
+            # empty, because that is the only time the answer changes anything — and asking it
+            # unconditionally would put two more queries on the busiest accessibility screen.
+            "ever_checked": (True if rows else
+                             ever_checked(tenant_id=self.tenant_id, project_id=str(project.id))),
+        })
+
+    @action(detail=True, methods=["get", "post"], url_path=r"a11y-review/(?P<finding_id>[^/]+)")
+    def a11y_review_item(self, request, pk=None, finding_id=None):
+        """`GET` opens one item (which claims it); `POST` records the reviewer's answer.
+
+        Opening is what takes and renews the claim, so the lock follows what the reviewer is
+        actually doing rather than needing a button nobody remembers to press. A `GET` that
+        cannot claim still returns the item — `locked_out` carries the sentence to show, and
+        the screen goes read-only. That is a state, not an error, and a 409 here would make an
+        ordinary second reviewer look like a failure.
+
+        `POST` refuses on three grounds and says which: wrong role, someone else holds it, or
+        it was already decided. Each refusal states that nothing was changed, because the one
+        thing a reviewer must never wonder is whether their answer half-landed.
+        """
+        from apps.a11y.review import (
+            ReviewError,
+            ReviewLockError,
+            ReviewRoleError,
+            adjudicate,
+            open_item,
+        )
+
+        project = self.get_object()
+        user_id = getattr(request.user, "id", None)
+        if request.method == "POST":
+            try:
+                finding = adjudicate(
+                    tenant_id=self.tenant_id, project_id=str(project.id),
+                    finding_id=finding_id, user_id=user_id,
+                    decision=request.data.get("decision", ""),
+                    note=request.data.get("note", ""),
+                )
+            except ReviewRoleError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+            except ReviewLockError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+            except ReviewError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                "id": str(finding.id),
+                "adjudication": finding.adjudication,
+                "outcome": finding.outcome,
+                "status": finding.status,
+                "severity": finding.severity,
+                # True only when this will actually raise a ticket, so the screen never promises
+                # "a defect has been opened" for a finding under the project's blocking bar.
+                "opens_defect": _a11y_would_ticket(self.tenant_id, str(project.id), finding),
+            })
+
+        try:
+            return Response(open_item(
+                tenant_id=self.tenant_id, project_id=str(project.id),
+                finding_id=finding_id, user_id=user_id,
+            ))
+        except ReviewError as exc:
+            raise NotFound(str(exc)) from exc
+
+    @action(detail=True, methods=["get"], url_path=r"a11y-finding/(?P<finding_id>[^/]+)")
+    def a11y_finding(self, request, pk=None, finding_id=None):
+        """One finding, opened to be READ — no claim taken, no lock renewed (S-39).
+
+        Every finding in an audit's report says "screenshot shows…", and until this endpoint
+        there was nowhere to go and see that screenshot unless the finding happened to be
+        awaiting a person. The queue holds only `needs_review`; a confirmed failure — which is
+        what a report is mostly made of — could not be opened at all.
+
+        **Deliberately not `a11y-review/<id>`.** That one claims the item as a side effect,
+        which is right for a reviewer working the queue and wrong for anyone following a link
+        out of a document: a failure nobody is reviewing must not acquire a reviewer's name
+        because somebody looked at it. Same evidence, same picture, no side effect.
+        """
+        from apps.a11y.review import ReviewError, read_finding
+
+        project = self.get_object()
+        try:
+            return Response(read_finding(
+                tenant_id=self.tenant_id, project_id=str(project.id),
+                finding_id=finding_id, user_id=getattr(request.user, "id", None),
+            ))
+        except ReviewError as exc:
+            raise NotFound(str(exc)) from exc
+
+    @action(detail=True, methods=["get"],
+            url_path=r"a11y-review/(?P<finding_id>[^/]+)/screenshot")
+    def a11y_review_screenshot(self, request, pk=None, finding_id=None):
+        """Stream the page (or element) picture behind one finding — read-through (QA-23).
+
+        `screenshot_ref` has always been an object-store key with nothing able to turn it into
+        something a browser can show. A reviewer cannot judge what they cannot see, so this is
+        the endpoint that makes the console possible at all. The key is validated against this
+        project's own prefix before it is fetched, never trusted because it came out of a row.
+        """
+        from django.http import HttpResponse
+
+        from apps.a11y.review import ReviewError, screenshot
+
+        project = self.get_object()
+        try:
+            data, mime = screenshot(
+                tenant_id=self.tenant_id, project_id=str(project.id), finding_id=finding_id,
+                kind=request.query_params.get("kind", "page"),
+            )
+        except ReviewError as exc:
+            raise NotFound(str(exc)) from exc
+        resp = HttpResponse(data, content_type=mime)
+        resp["Content-Disposition"] = 'inline; filename="a11y-capture.png"'
+        return resp
+
+    @action(detail=True, methods=["get", "put"], url_path="a11y-conformance")
+    def a11y_conformance(self, request, pk=None):
+        """The WCAG conformance statement: all 55 criteria, the draft, and the signature (QA-24).
+
+        `GET` compiles it. Every Level A and AA criterion is listed — including the ones nothing
+        looked at, printed as **not evaluated** and never folded into a supporting result, which
+        is the single easiest way for a document like this to become untrue.
+
+        `PUT` saves the reviewer's scope, wording and per-criterion levels. **Any edit clears the
+        signature**, because a signature on wording nobody signed is worse than none.
+
+        The engine, model, prompt and scanner versions are deliberately NOT in this payload
+        (D-A11Y-96). They are recorded on the signature's audit entry, where a statement can be
+        traced back to what produced it without putting our implementation detail on a client's
+        screen.
+        """
+        from apps.a11y.conformance import (
+            ConformanceError,
+            ConformanceRoleError,
+            can_sign,
+            save_draft,
+            state,
+        )
+
+        project = self.get_object()
+        user_id = getattr(request.user, "id", None)
+        if request.method == "PUT":
+            try:
+                payload = save_draft(
+                    tenant_id=self.tenant_id, project_id=str(project.id), user_id=user_id,
+                    scope=request.data.get("scope"), body=request.data.get("body"),
+                    verdicts=request.data.get("verdicts"),
+                )
+            except ConformanceRoleError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+            except ConformanceError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            payload = state(tenant_id=self.tenant_id, project_id=str(project.id))
+        payload["can_sign"] = can_sign(tenant_id=self.tenant_id, project_id=str(project.id),
+                                       user_id=user_id)
+        return Response(payload)
+
+    @action(detail=True, methods=["post"], url_path="a11y-conformance/sign")
+    def a11y_conformance_sign(self, request, pk=None):
+        """Sign the statement — which is also what unlocks export (team decision B1).
+
+        The ordinary `Approval` model cannot carry this document: it requires a `Run` and
+        `gates.services.decide` signals that run's Temporal workflow, and a statement compiled
+        from the ledger across many runs has neither. So the signature does a gate's job — a
+        role-checked person, named, timestamped, bound to the exact wording, audit-logged — and
+        flips the artifact to `approved`, which is the state the existing publish endpoint
+        already demands. Nothing reaches a system of record without a named human approval.
+        """
+        from apps.a11y.conformance import ConformanceError, ConformanceRoleError, sign
+
+        project = self.get_object()
+        try:
+            payload = sign(
+                tenant_id=self.tenant_id, project_id=str(project.id),
+                user_id=getattr(request.user, "id", None),
+                name=request.data.get("name", ""),
+                acknowledged=bool(request.data.get("acknowledged")),
+            )
+        except ConformanceRoleError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        except ConformanceError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(payload)
+
+    @action(detail=True, methods=["post"], url_path="a11y-conformance/export")
+    def a11y_conformance_export(self, request, pk=None):
+        """Export the signed statement. Refused unsigned, and refused stale (AC3, C1).
+
+        Checked here as well as by the publish endpoint's gate, deliberately: that endpoint
+        knows only that an artifact is approved, and the sentence a refused reviewer needs to
+        read is about a signature, not a status.
+        """
+        from apps.a11y.conformance import ConformanceError, check_export, state
+
+        project = self.get_object()
+        try:
+            check_export(tenant_id=self.tenant_id, project_id=str(project.id))
+        except ConformanceError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        payload = state(tenant_id=self.tenant_id, project_id=str(project.id))
+        return Response({
+            "artifact_id": payload["artifact_id"],
+            # The export itself goes through the ordinary artifact publish flow, which is where
+            # the project's export policy lives (#5/#9). This endpoint's job is the signature.
+            "publish_via": f"/api/artifacts/{payload['artifact_id']}/publish/",
+            "signed_by": payload["signed_name"],
+            "signed_at": payload["signed_at"],
+        })
+
+    @action(detail=True, methods=["get"], url_path="a11y-backlog")
+    def a11y_backlog(self, request, pk=None):
+        """What to fix first, worst first (QA-18), with where the project stands by criterion.
+
+        `?all=1` widens it from the items that clear the project's blocking bar to every open
+        finding, including the ones waiting on a reviewer. Narrow by default so the list a
+        person opens is the list their tracker holds — the same items, the same order.
+
+        Read-only. Deciding a finding's fate is the reviewer console's job (QA-23); this is the
+        queue of work, not the queue of decisions.
+        """
+        from apps.a11y.backlog import backlog_container, prioritised
+        from apps.a11y.baseline_report import BASELINE_TYPE, criterion_rows
+
+        project = self.get_object()
+        include_all = str(request.query_params.get("all", "")).strip().lower() in ("1", "true")
+        items = prioritised(self.tenant_id, str(project.id), blocking_only=not include_all)
+        baseline = (
+            Artifact.objects
+            .filter(tenant_id=self.tenant_id, project_id=project.id, type=BASELINE_TYPE)
+            .order_by("-version", "-created_at").first()
+        )
+        container = backlog_container(self.tenant_id, str(project.id))
+        return Response({
+            "backlog": [
+                {k: v for k, v in item.items() if k != "finding"} | {
+                    "finding_id": str(item["finding"].id),
+                }
+                for item in items
+            ],
+            "by_criterion": [
+                {k: v for k, v in row.items()} for row in
+                criterion_rows(self.tenant_id, str(project.id))
+            ],
+            "container": {"id": str(container.id), "key": container.key,
+                          "title": container.title},
+            "baseline": None if baseline is None else {
+                "artifact_id": str(baseline.id), "version": baseline.version,
+                "updated_at": baseline.updated_at,
             },
         })
 
@@ -536,6 +1230,8 @@ class ProjectViewSet(
     def dashboard(self, request, pk=None):
         """S-31 dashboard rollup: needs-me items (pending gates, clarifications, my runs)
         + health counters + recent publishes — all scoped to this project and current user."""
+        from integrations.onboarding import carrier_q
+
         project = self.get_object()
         user = current_user(request)
         tid = self.tenant_id
@@ -551,8 +1247,6 @@ class ProjectViewSet(
         )
         my_runs = []
         if user:
-            from integrations.onboarding import carrier_q
-
             my_runs = list(
                 Run.objects.filter(
                     tenant_id=tid, work_item__project=project,
@@ -603,10 +1297,21 @@ class ProjectViewSet(
                 ],
             },
             "health": {
-                "work_items": WorkItem.objects.filter(tenant_id=tid, project=project).count(),
+                # Carriers are excluded from BOTH of these, because both have a list beside them
+                # that already excludes carriers and a number that disagrees with the list it
+                # summarises is worse than no number: the board shows 30 items and "Work items"
+                # said 62, Phases & Runs shows nothing running and "Phases in progress" said 1.
+                #
+                # `awaiting_gate` deliberately does NOT exclude them. Gates are not carrier-
+                # filtered anywhere, and the gap report has been gated since 2026-08-03 — its
+                # approval sits on a carrier and is real work a person must do. Excluding it here
+                # would hide a pending gate the Gates screen still lists, which is the same
+                # disagreement pointing the other way.
+                "work_items": WorkItem.objects.filter(tenant_id=tid, project=project)
+                .exclude(carrier_q()).count(),
                 "phases_in_progress": Run.objects.filter(
                     tenant_id=tid, work_item__project=project, status="running"
-                ).count(),
+                ).exclude(carrier_q("work_item__")).count(),
                 "awaiting_gate": Approval.objects.filter(
                     tenant_id=tid, work_item__project=project, decision="pending"
                 ).count(),
@@ -1017,7 +1722,10 @@ class WorkItemViewSet(
     @action(detail=True, methods=["get"], url_path="test-cases")
     def test_cases(self, request, pk=None):
         """The story's child `test_case` work items + each one's automation status (P3-09b) —
-        backs the Test cases coverage screen. `tc_id`/`priority` come from `external_ref`."""
+        backs the Test cases coverage screen. `tc_id`/`priority`/`type` come from `external_ref`,
+        written there when the case was materialised from its artifact (G2) or typed in by hand.
+        Blank means the case never said — never a default, because a guessed type on a screen a
+        QA Lead filters by is worse than an empty cell."""
         from apps.workitems.test_cases import automation_status_for
 
         story = self.get_object()
@@ -1029,6 +1737,7 @@ class WorkItemViewSet(
                 "id": str(w.id), "key": w.key, "title": w.title, "state": w.state,
                 "tc_id": (w.external_ref or {}).get("tc_id", ""),
                 "priority": (w.external_ref or {}).get("priority", ""),
+                "type": (w.external_ref or {}).get("type", ""),
                 "automation_status": automation_status_for(w),
             }
             for w in kids
@@ -1322,6 +2031,25 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         if project:
             qs = qs.filter(work_item__project_id=project)
         return qs
+
+    def list(self, request, *args, **kwargs):
+        """Before listing, check whether anything here is stuck and quietly unstick it.
+
+        This is the platform's second line behind worker versioning: a run the UI
+        still shows as live whose workflow has already ended cannot move itself,
+        and nothing else would ever notice. The check hangs off a read rather
+        than a timer because row-level security stops a background job from
+        enumerating tenants at all — see `apps.runs.reconcile` for the full
+        reasoning. It is bounded (only long-untouched runs, a handful per call)
+        and swallows its own errors, so it can never break the list it rides on.
+        """
+        from apps.runs.reconcile import reconcile_tenant
+
+        reconcile_tenant(
+            tenant_id=self.tenant_id,
+            project_id=request.query_params.get("project"),
+        )
+        return super().list(request, *args, **kwargs)
 
     @action(detail=True, methods=["get"])
     def transcript(self, request, pk=None):

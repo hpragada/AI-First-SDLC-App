@@ -141,7 +141,16 @@ function AdoptControls({
 export function badgeFor(doc: SourceDocument): { label: string; variant: string } {
   if (doc.status === "extracting") return { label: "Extracting…", variant: "running" };
   if (doc.status === "failed") return { label: "Failed", variant: "failed" };
-  if (doc.status === "adopted") return { label: "Adopted", variant: "done" };
+  if (doc.status === "adopted") {
+    // "Adopted" the moment the button was pressed was not merely early — it was wrong about
+    // what exists. For a document with pages, `adopt_source_document` hands the registering of
+    // the artifact to the vision run (`onboarding.py`, "the vision run is what REGISTERS the
+    // artifact"), so while that run is going the row claimed Adopted and offered "View artifact"
+    // for an artifact that had not been created yet. It also sat directly above this screen's
+    // own notice saying the document was still being read, so the row contradicted itself.
+    if (doc.vision?.state === "running") return { label: "Adopting…", variant: "running" };
+    return { label: "Adopted", variant: "done" };
+  }
   if (doc.status === "extracted") {
     if (doc.fidelity === "images_only") return { label: "Needs AI read", variant: "waiting" };
     if (doc.fidelity === "empty") return { label: "No text found", variant: "waiting" };

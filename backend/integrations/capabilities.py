@@ -9,6 +9,9 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from .types import (
+    A11yCandidate,
+    A11yJourney,
+    A11yJudgment,
     BranchRef,
     ComponentRef,
     DesignContext,
@@ -166,3 +169,79 @@ class CodeIntel(Protocol):
     def get_dependency_path(self, *, repo: str, frm: str, to: str) -> list[str]: ...
     def get_dead_code(self, *, repo: str) -> list[dict]: ...
     def get_architecture_diagram(self, *, repo: str, module: str | None = None) -> str: ...
+
+
+@runtime_checkable
+class A11yAI(Protocol):
+    """AI accessibility judgment (model-agnostic, vendor-free) — the WCAG questions a rule
+    scanner like axe genuinely cannot answer: is the alt text *meaningful*, is this really a
+    button, is the arrangement of this table written into the markup, is meaning carried by
+    colour *alone*, does the visible label match the accessible name.
+
+    A capability for its **shape** (#9): callers ask `get_capability(tenant, "a11yai")` and
+    never name a model or vendor, so the judge underneath can be swapped without touching
+    them. It is NOT a model client — the implementation dispatches a constrained agent run
+    through the `ExecutionDriver` (#7); no connector anywhere makes a direct model call, and
+    no API credential is involved (QA-02/QA-02a build the dispatch and the judge agent).
+
+    Two rules bind every implementation:
+      - An AI judgment NEVER overrides a deterministic axe failure — it adds what axe cannot
+        see, it does not overrule what axe proved.
+      - A check that cannot answer returns `uncertain` (see `types.uncertain`) so the item
+        goes to human review. It never guesses, raises, or returns a partial result.
+
+    **These are per-element questions, not a way to start work** (D-A11Y-4, QA-03). The
+    platform's own implementation judges in batches — one agent run per dispatch, so ten
+    screens cost one run and not four hundred — so asking it about a single element answers
+    from what has already been judged, and says `uncertain` ("not judged yet") when nothing
+    has. An outside accessibility-AI service is free to answer synchronously here instead;
+    that is why the shape stays per-element, and why no caller has to care which it is
+    talking to. `project_id` narrows the answer to one project's judgments; without it the
+    answer comes from anything the tenant has judged with the same input.
+    """
+
+    def check_alt(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
+        """WCAG 1.1.1 — is the alt text meaningful *for what this image does here*?"""
+        ...
+
+    def check_semantics(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
+        """WCAG 1.3.1 / 4.1.2 — is a thing that looks and behaves like a control actually
+        exposed as one (real role/name/state), or a styled `div` faking it?"""
+        ...
+
+    def check_structure(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
+        """WCAG 1.3.1 — is the arrangement a sighted person can see written into the markup?
+
+        The container question, and the counterpart to `check_semantics`'s element question: a
+        table whose top row is obviously headings, a list of items, a set of fields that
+        clearly belong together. None of those is *pretending* to be anything, so nothing else
+        here reaches them.
+        """
+        ...
+
+    def check_color(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
+        """WCAG 1.4.1 — is meaning conveyed by colour alone, with no text/shape/icon backup?"""
+        ...
+
+    def check_label(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
+        """WCAG 2.5.3 — does the visible label match the accessible name a screen reader and a
+        voice-control user would say?"""
+        ...
+
+    def check_journey(self, *, journey: A11yJourney, project_id=None) -> list[A11yJudgment]:
+        """WCAG 2.1.1 / 2.1.2 / 2.4.3 / 2.4.7 / 2.4.11 / 3.2.1 / 3.2.2 / 4.1.3 — the eight
+        questions that can only be answered by **operating** the application (QA-20).
+
+        The checks above ask about a page standing still. This one asks what happens while
+        someone uses it: does tabbing ever trap you, does focus stay visible and unobscured,
+        does anything change under you when an element takes focus or a field is typed in, is a
+        status message announced at all. None of it is visible in a captured page, which is why
+        this is the one check whose input is a *journey* rather than an element.
+
+        Returns a list, not one judgment: eight checkers report separately so QA-22 can promote
+        a proven one while a newer one stays advisory. A journey step the agent could not reach
+        produces **no judgment for that step** — it is recorded as a blocked step instead. Never
+        a pass: "I never got there" and "I got there and it was fine" are different answers, and
+        collapsing them is how an untested journey comes back clean.
+        """
+        ...

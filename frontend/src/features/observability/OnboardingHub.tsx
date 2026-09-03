@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Spinner } from "../../components/ui";
+import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Spinner, Tooltip } from "../../components/ui";
 import type { Capability, OnboardingRegister, OnboardingRepoIndex } from "../../types";
 import { useRunners } from "../identity/hooks";
 import { ConnectCapability } from "../setup/ConnectCapability";
@@ -21,6 +21,33 @@ import {
 // S-24 view states: nothing-done (resume=Ideation) · in-progress (extracting/
 // indexing) · gap-ready (resume=Architecture).
 export type OnboardingView = "nothing-done" | "in-progress" | "gap-ready";
+
+/** What "connect your machine" means, said once.
+ *
+ * The old wording opened with "Some of this work runs on your own machine…" — forty-one words
+ * whose subject was "some of this work", with the reason buried in the middle and a second idea
+ * (what you give up by not connecting) added on the end. Users read past it.
+ *
+ * Now the visible line is one short sentence and the rest is a tooltip, so nobody has to read
+ * the detail to get on with the step — but it is one keypress away for anyone who wants to know
+ * where their files go, which is a fair question to ask of a platform.
+ *
+ * **These live in one place because there are four of them.** The same explanation appears on
+ * the prerequisite card and on the live step, each in a connected and a not-connected state, and
+ * before this they had drifted into three different sentences saying the same thing.
+ */
+const MACHINE_COPY = {
+  // One line for both connected and not — because it states a fact about where the work happens,
+  // and that does not change once you connect. Two near-identical sentences is how the four
+  // variants drifted apart in the first place; the heading beside it already says which state
+  // you are in.
+  line: "Your documents and code are read on your own computer — nothing is uploaded.",
+  offline: "Start your companion again to carry on reading your documents on your computer.",
+  detail:
+    "Connecting lets the platform read the diagrams and screenshots inside your documents and " +
+    "analyse your code — all on your machine. You can upload documents without connecting, but " +
+    "the pictures inside them won't be read.",
+} as const;
 
 function Vstep({
   num,
@@ -56,7 +83,9 @@ export function OnboardingHub({ forceView }: { forceView?: OnboardingView }) {
 // A per-tool state machine driven by the connection status the hub already returns:
 //   not connected → Connect pop-up (reuses ConnectCapability, no page hop);
 //   connected     → Jira: "Import backlog" (bulk); Confluence: the "bring in docs" form.
-function RegisterToolsStep({
+// Exported for its own tests: what it says depends entirely on the `register` payload, and
+// driving that through the whole live hub would test the plumbing rather than the labels.
+export function RegisterToolsStep({
   projectId,
   register,
 }: {
@@ -82,14 +111,19 @@ function RegisterToolsStep({
     <Vstep
       num="2"
       title="Register existing tools"
-      desc="Bring your existing Jira backlog and Confluence docs in — register, don't recreate."
+      desc="Bring your existing backlog and documentation in — register, don't recreate."
       state={registerDone ? "done" : undefined}
     >
       <div className="u-stack" style={{ marginTop: "var(--space-2)", gap: "var(--space-3)" }}>
-        {/* Jira — a backlog is meant to arrive whole, so it's a bulk import. */}
+        {/* Task tracker — a backlog is meant to arrive whole, so it's a bulk import.
+            The heading and the connect button name the CAPABILITY, not a vendor (#9): the
+            pop-up behind them is "Connect Task tracker" and asks which vendor, so a button
+            saying "Connect Jira" promised a choice the user had not made yet. Once something IS
+            connected the vendor is known and gets named, because "Import task tracker backlog"
+            would be worse for someone who plainly connected Jira. */}
         <div>
           <div className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
-            <span className="u-strong">Jira</span>
+            <span className="u-strong">{register.tasktracker_vendor ?? "Task tracker"}</span>
             {register.tasktracker_connected ? <Badge variant="done">Connected</Badge> : <Badge>Not connected</Badge>}
             {register.tasktracker_connected && (
               <span className="t-sm u-muted">
@@ -102,10 +136,12 @@ function RegisterToolsStep({
               <Button variant="secondary" onClick={() => onboardAtlassian.mutate()} disabled={onboardAtlassian.isPending}>
                 {onboardAtlassian.isPending
                   ? <Spinner />
-                  : register.issues_registered > 0 ? "Re-import backlog" : "Import Jira backlog"}
+                  : register.issues_registered > 0
+                    ? "Re-import backlog"
+                    : `Import ${register.tasktracker_vendor ?? "task tracker"} backlog`}
               </Button>
             ) : (
-              <Button variant="secondary" onClick={() => setConnectCap("tasktracker")}>Connect Jira</Button>
+              <Button variant="secondary" onClick={() => setConnectCap("tasktracker")}>Connect task tracker</Button>
             )}
           </div>
           {/* S3-15: say what the import actually covered. The old screen showed only the count it
@@ -117,7 +153,7 @@ function RegisterToolsStep({
                  color: onboardAtlassian.data.truncated ? "var(--warning)" : "var(--success)" }}>
               {onboardAtlassian.data.truncated
                 ? `Imported ${onboardAtlassian.data.issues_seen} of ${onboardAtlassian.data.issues_available} issues — this project is larger than one import can take. Re-import to bring in the rest.`
-                : `Brought in ${onboardAtlassian.data.registered_issues.length} new issue${onboardAtlassian.data.registered_issues.length === 1 ? "" : "s"}${(onboardAtlassian.data.issues_available ?? -1) >= 0 ? ` · ${onboardAtlassian.data.issues_available} in Jira` : ""}.`}
+                : `Brought in ${onboardAtlassian.data.registered_issues.length} new issue${onboardAtlassian.data.registered_issues.length === 1 ? "" : "s"}${(onboardAtlassian.data.issues_available ?? -1) >= 0 ? ` · ${onboardAtlassian.data.issues_available} in ${register.tasktracker_vendor ?? "the tracker"}` : ""}.`}
             </p>
           )}
         </div>
@@ -125,7 +161,7 @@ function RegisterToolsStep({
         {/* Confluence — the user provides the specific typed page links (B3-4), no space crawl. */}
         <div>
           <div className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
-            <span className="u-strong">Confluence</span>
+            <span className="u-strong">{register.docstore_vendor ?? "Documentation store"}</span>
             {register.docstore_connected ? <Badge variant="done">Connected</Badge> : <Badge>Not connected</Badge>}
             {register.docstore_connected && (
               <span className="t-sm u-muted">
@@ -137,7 +173,7 @@ function RegisterToolsStep({
             <ConfluenceLinkForm projectId={projectId} />
           ) : (
             <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
-              <Button variant="secondary" onClick={() => setConnectCap("docstore")}>Connect Confluence</Button>
+              <Button variant="secondary" onClick={() => setConnectCap("docstore")}>Connect documentation store</Button>
             </div>
           )}
         </div>
@@ -146,16 +182,16 @@ function RegisterToolsStep({
             can import screens instead of uploading them as PDFs (connect only here). */}
         <div>
           <div className="u-row" style={{ gap: "var(--space-2)", alignItems: "center" }}>
-            <span className="u-strong">Figma</span>
+            <span className="u-strong">{register.designsource_vendor ?? "Design source"}</span>
             {register.designsource_connected ? <Badge variant="done">Connected</Badge> : <Badge>Not connected</Badge>}
           </div>
           <div className="gate-panel__actions" style={{ marginTop: "var(--space-2)" }}>
             {register.designsource_connected ? (
               <span className="t-sm u-muted">
-                Connected — design screens can come from Figma instead of uploaded PDFs.
+                Connected — design screens can come from {register.designsource_vendor ?? "your design tool"} instead of uploaded PDFs.
               </span>
             ) : (
-              <Button variant="secondary" onClick={() => setConnectCap("designsource")}>Connect Figma</Button>
+              <Button variant="secondary" onClick={() => setConnectCap("designsource")}>Connect design source</Button>
             )}
           </div>
         </div>
@@ -437,15 +473,17 @@ function ConnectMachineStep() {
   return (
     <Card>
       <CardBody className="u-row" style={{ gap: "var(--space-3)", alignItems: "center" }}>
-        <span className="vstep__num vstep__num--active">1</span>
+        {/* `!`, not `1`. This card is a PREREQUISITE, not the first step — and rendering a
+            `1` here put two steps numbered 1 in front of every first-time user, because
+            "Upload resources" below is also 1. */}
+        <span className="vstep__num vstep__num--active">!</span>
         <div style={{ flex: "1 1 auto" }}>
           <div className="t-body u-strong">
             {everConnected ? "Your machine isn't running right now" : "Connect your machine first"}
           </div>
           <div className="t-sm u-muted">
-            {everConnected
-              ? "Start your companion again to have the diagrams and screenshots in your documents read into text. You can still upload documents — their diagrams just won't be read until it's back."
-              : "Some of this work runs on your own machine so nothing leaves it — reading the diagrams and screenshots inside your documents, and analysing your code. You can upload documents without it, but their diagrams won't be read."}
+            {everConnected ? MACHINE_COPY.offline : MACHINE_COPY.line}
+            <Tooltip placement="below">{MACHINE_COPY.detail}</Tooltip>
           </div>
         </div>
         <Link to="/connect" className="btn btn--primary">
@@ -507,6 +545,11 @@ function OnboardingHubLive() {
   // The backend serves the human label beside the key (S5-7). The hub used to interpolate the raw
   // key, so a user read "Resume at: task_breakdown". Fall back to prettifying the slug rather than
   // to a lookup table, which is what drifted in the first place.
+  // Defaulted rather than optional-chained at every use: a backend that predates this field
+  // must still render the step, showing it as not started, which is what it is.
+  const a11y = data.a11y ?? {
+    routes_registered: 0, audits_run: 0, running: false, status: "not_started" as const,
+  };
   const gapResumeLabel =
     data.gap.resume_label ||
     (data.gap.resume_phase ?? "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -665,8 +708,45 @@ function OnboardingHubLive() {
             </div>
           </Vstep>
 
+          {/* B4 — the way anyone finds the accessibility work at all. The audit screen existed
+              behind a tab nothing pointed at, which is found only by someone who already knew.
+              It sits before Resume on purpose: the point of a baseline is to know where the
+              application stands BEFORE anything is changed. */}
           <Vstep
             num="6"
+            title="Check accessibility"
+            desc={
+              a11y.status === "done"
+                ? `${a11y.audits_run} audit${a11y.audits_run === 1 ? "" : "s"} run — open the report from Artifacts.` +
+                  // Said over the top of the tick rather than instead of it. A finished audit
+                  // stays finished while the next one runs, and both facts are true at once.
+                  (a11y.running ? " Another audit is running now." : "")
+                : a11y.status === "running"
+                  ? "An audit is running now. It appears here, with its report, once it finishes."
+                  : a11y.status === "ready"
+                    ? `${a11y.routes_registered} page(s) registered. Run a first audit against WCAG 2.2 AA.`
+                    : "Register the pages of the application and run a first audit against WCAG 2.2 AA. This tells you where the application stands before you change anything."
+            }
+            state={
+              a11y.status === "done"
+                ? "done"
+                : a11y.status === "ready" || a11y.status === "running"
+                  ? "active"
+                  : undefined
+            }
+          >
+            <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
+              <Link
+                to="/a11y/pages"
+                className={a11y.status === "done" ? "btn btn--secondary" : "btn btn--primary"}
+              >
+                {a11y.status === "not_started" ? "Set up the audit" : "Pages & audit"}
+              </Link>
+            </div>
+          </Vstep>
+
+          <Vstep
+            num="7"
             title="Resume"
             desc={data.gap.ready ? `Trigger ${gapResumeLabel} on a work item to enter the pipeline.` : "Available after the gap report."}
             state={data.gap.ready ? "active" : undefined}
@@ -686,6 +766,36 @@ function OnboardingHubLive() {
 }
 
 // ── Gallery: fixed demo states for /dev/components + tests ─────────────────
+//
+// These MIRROR the live hub above, step for step. They drifted once — the gallery kept the
+// original five steps while the real screen grew to a prerequisite card plus seven — so every
+// design review and every journey test ran against a screen that no longer existed. If a step
+// is added above, add it here in the same pass.
+
+function GalleryConnect({ connected }: { connected: boolean }) {
+  return (
+    <Card>
+      <CardBody className="u-row" style={{ gap: "var(--space-3)", alignItems: "center" }}>
+        <span className={`vstep__num vstep__num--${connected ? "done" : "active"}`}>
+          {connected ? "✓" : "!"}
+        </span>
+        <div style={{ flex: "1 1 auto" }}>
+          <div className="t-body u-strong">
+            {connected ? "Your machine is connected" : "Connect your machine first"}
+          </div>
+          <div className="t-sm u-muted">
+            {MACHINE_COPY.line}
+            <Tooltip>{MACHINE_COPY.detail}</Tooltip>
+          </div>
+        </div>
+        <Badge variant={connected ? "done" : undefined}>
+          {connected ? "Connected" : "Not connected"}
+        </Badge>
+      </CardBody>
+    </Card>
+  );
+}
+
 function OnboardingHubGallery({ view }: { view: OnboardingView }) {
   return (
     <div className="canvas-pad" style={{ maxWidth: "920px" }}>
@@ -702,11 +812,13 @@ function OnboardingHubGallery({ view }: { view: OnboardingView }) {
         </Badge>
       </div>
 
+      <GalleryConnect connected={view !== "nothing-done"} />
+
       <Card>
         <CardBody>
           {view === "nothing-done" && (
             <>
-              <Vstep num="1" title="Upload resources" desc="Drag in existing specs, PRDs, designs (.docx · .pdf · .xlsx)." state="active">
+              <Vstep num="1" title="Upload resources" desc="Drag in existing specs, PRDs, designs (.docx · .pdf · .xlsx · .txt · .html)." state="active">
                 <div className="dropzone" style={{ marginTop: "var(--space-3)" }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
                     <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
@@ -717,10 +829,12 @@ function OnboardingHubGallery({ view }: { view: OnboardingView }) {
                   </div>
                 </div>
               </Vstep>
-              <Vstep num="2" title="Register existing tools" desc="Link existing Confluence / Jira — register, don't recreate." />
-              <Vstep num="3" title="Index code" desc="Point at a repo; built-in code intelligence indexes it." />
-              <Vstep num="4" title="Gap report" desc="What exists, what's missing, and where to resume." />
-              <Vstep num="5" title="Resume" desc="Trigger the recommended phase and hand into the normal pipeline." />
+              <Vstep num="2" title="Register existing tools" desc="Bring your existing backlog and documentation in — register, don't recreate." />
+              <Vstep num="3" title="Register repositories" desc="Add the repositories the platform should analyse — code indexing and the gap report need at least one." />
+              <Vstep num="4" title="Index code" desc="Point at a repo; built-in code intelligence indexes it." />
+              <Vstep num="5" title="Gap report" desc="What exists, what's missing, and where to resume." />
+              <Vstep num="6" title="Check accessibility" desc="Register the pages of the application and run a first audit against WCAG 2.2 AA — where it stands before you change anything." />
+              <Vstep num="7" title="Resume" desc="Trigger the recommended phase and hand into the normal pipeline." />
             </>
           )}
 
@@ -739,13 +853,15 @@ function OnboardingHubGallery({ view }: { view: OnboardingView }) {
                 desc="Confluence space BILL and Jira project BILL linked — found 32 existing Jira issues, linked (no duplicates created)."
                 state="done"
               />
-              <Vstep num="3" title="Index code" desc="Indexing acme/legacy-billing…" state="running">
+              <Vstep num="3" title="Register repositories" desc="1 repository registered." state="done" />
+              <Vstep num="4" title="Index code" desc="Indexing acme/legacy-billing…" state="running">
                 <ConnStatus state="waiting">
                   <Spinner /> Indexing 1,284 files… 64%
                 </ConnStatus>
               </Vstep>
-              <Vstep num="4" title="Gap report" desc="Runs once indexing completes." />
-              <Vstep num="5" title="Resume" desc="Available after the gap report." />
+              <Vstep num="5" title="Gap report" desc="Runs once indexing completes." />
+              <Vstep num="6" title="Check accessibility" desc="Register the pages of the application and run a first audit against WCAG 2.2 AA." />
+              <Vstep num="7" title="Resume" desc="Available after the gap report." />
             </>
           )}
 
@@ -753,8 +869,9 @@ function OnboardingHubGallery({ view }: { view: OnboardingView }) {
             <>
               <Vstep num="1" title="Upload resources" desc="3 documents adopted as draft artifacts." state="done" />
               <Vstep num="2" title="Register existing tools" desc="32 Jira issues linked." state="done" />
-              <Vstep num="3" title="Index code" desc="1,284 files indexed." state="done" />
-              <Vstep num="4" title="Gap report" desc="Ideation ✓ · Requirements ✓ · PRD ~Partial · Architecture ✗ missing." state="done">
+              <Vstep num="3" title="Register repositories" desc="1 repository registered." state="done" />
+              <Vstep num="4" title="Index code" desc="1,284 files indexed." state="done" />
+              <Vstep num="5" title="Gap report" desc="Ideation ✓ · Requirements ✓ · PRD ~Partial · Architecture ✗ missing." state="done">
                 <Card attention>
                   <CardBody style={{ maxWidth: "520px" }}>
                     <span className="gate-panel__role">Recommended resume point</span>
@@ -771,7 +888,14 @@ function OnboardingHubGallery({ view }: { view: OnboardingView }) {
                   </CardBody>
                 </Card>
               </Vstep>
-              <Vstep num="5" title="Resume" desc="Trigger Architecture on a work item to enter the pipeline." state="active">
+              <Vstep num="6" title="Check accessibility" desc="2 audits run — open the report from Artifacts." state="done">
+                <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
+                  <Link to="/a11y/pages" className="btn btn--secondary">
+                    Pages &amp; audit
+                  </Link>
+                </div>
+              </Vstep>
+              <Vstep num="7" title="Resume" desc="Trigger Architecture on a work item to enter the pipeline." state="active">
                 <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
                   <Button variant="primary">Resume at Architecture</Button>
                   <Button variant="ghost">Re-run gap report</Button>

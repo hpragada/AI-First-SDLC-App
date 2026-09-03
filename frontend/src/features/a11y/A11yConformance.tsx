@@ -1,0 +1,512 @@
+// S-37 — the WCAG conformance statement (QA-24).
+//
+// The platform compiles the evidence and drafts the wording. It never signs, and it never calls
+// anything compliant — a person does that, or nobody does.
+//
+// Two rules run through every line of this screen:
+//
+//   * **"Not evaluated" is printed as itself** and never folded into a supporting result. A
+//     criterion nobody looked at is the single easiest way for a document like this to become
+//     untrue, and it is the reason all 55 rows are listed rather than only the interesting ones.
+//   * **The engine, model, prompt and scanner versions are NOT shown** (D-A11Y-96, team
+//     decision). They ride on the signature's audit entry so a statement can be traced back to
+//     what produced it; they are our implementation detail, not a client's business. The screen
+//     says so in one line, so nobody later reads the absence as an omission.
+import { useState } from "react";
+
+import { Link } from "react-router-dom";
+
+import { useAuth } from "../../auth/AuthContext";
+import {
+  Badge,
+  Banner,
+  Button,
+  Check,
+  EmptyState,
+  Field,
+  Input,
+  Panel,
+  Skeleton,
+  Table,
+  Textarea,
+} from "../../components/ui";
+import { roleLabel } from "../identity/roles";
+import type { A11yConformance, A11yConformanceLevel, A11yConformanceRow } from "../../types";
+import { A11yTabs } from "./A11yTabs";
+import { LoadFailed } from "./LoadFailed";
+import {
+  useA11yConformance,
+  useExportA11yConformance,
+  useSaveA11yConformance,
+  useSignA11yConformance,
+} from "./hooks";
+
+const LEVEL_WORDS: Record<A11yConformanceLevel, string> = {
+  supports: "Supports",
+  partially_supports: "Partially supports",
+  does_not_support: "Does not support",
+  not_applicable: "Not applicable",
+  not_evaluated: "Not evaluated",
+};
+
+// "Not evaluated" is deliberately NEUTRAL rather than a warning colour. It is not a problem with
+// the product — it is a statement about our coverage, and dressing it as a failure would push a
+// reviewer to make it go away rather than to read it.
+const LEVEL_BADGE: Record<A11yConformanceLevel, "done" | "waiting" | "failed" | "neutral"> = {
+  supports: "done",
+  partially_supports: "waiting",
+  does_not_support: "failed",
+  not_applicable: "neutral",
+  not_evaluated: "neutral",
+};
+
+const ENGINE_WORDS: Record<string, string> = {
+  rule: "Rule",
+  AI: "AI",
+  agentic: "Keyboard agent",
+  human: "Human",
+};
+
+function EstablishedBy({ engines }: { engines: string[] }) {
+  if (!engines.length) {
+    // Never a blank cell. "Nothing established this" is a fact and it is the one a reader most
+    // needs; an empty cell reads as an oversight.
+    return <span className="chip">— nothing checked this</span>;
+  }
+  return (
+    <span className="u-row-tight">
+      {engines.map((engine) => (
+        <span key={engine} className={engine === "human" ? "chip badge--orange" : "chip badge--navy"}>
+          {ENGINE_WORDS[engine] ?? engine}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function LevelCell({
+  row,
+  editable,
+  onChange,
+}: {
+  row: A11yConformanceRow;
+  editable: boolean;
+  onChange: (level: A11yConformanceLevel) => void;
+}) {
+  const label = `Conformance level for ${row.criterion} ${row.handle}`;
+  if (!editable) {
+    return (
+      <Badge variant={LEVEL_BADGE[row.effective]}>{LEVEL_WORDS[row.effective]}</Badge>
+    );
+  }
+  return (
+    <span className="u-row-tight">
+      <select
+        className="input"
+        aria-label={label}
+        value={row.effective}
+        onChange={(e) => onChange(e.target.value as A11yConformanceLevel)}
+      >
+        {(Object.keys(LEVEL_WORDS) as A11yConformanceLevel[]).map((level) => (
+          <option key={level} value={level}>
+            {LEVEL_WORDS[level]}
+          </option>
+        ))}
+      </select>
+      {row.verdict === null && row.suggested !== null && (
+        // Marked, because "the platform suggested this and I did not change it" is exactly what
+        // the signature makes someone responsible for. Hiding it would make the count at signing
+        // arrive as a surprise.
+        <span className="chip" title="Suggested by the evidence; you have not changed it">
+          suggested
+        </span>
+      )}
+    </span>
+  );
+}
+
+function Criteria({
+  data,
+  editable,
+  onVerdict,
+}: {
+  data: A11yConformance;
+  editable: boolean;
+  onVerdict: (criterion: string, level: A11yConformanceLevel) => void;
+}) {
+  return (
+    <Panel title={`WCAG 2.2 — all ${data.totals.total} Level A & AA criteria`} flush>
+      <Table
+        headers={["Criterion", "Level", "Conformance", "Established by", "What was checked"]}
+        rows={data.rows.map((row) => ({
+          cells: [
+            <span className="table__primary">
+              {row.criterion} {row.handle}
+            </span>,
+            row.level,
+            <LevelCell row={row} editable={editable} onChange={(l) => onVerdict(row.criterion, l)} />,
+            <EstablishedBy engines={row.established_by} />,
+            <span className={row.routes_checked || row.open_failures ? undefined : "u-muted"}>
+              {row.evidence}
+            </span>,
+          ],
+        }))}
+      />
+    </Panel>
+  );
+}
+
+function Signing({
+  data,
+  projectId,
+  defaultName,
+}: {
+  data: A11yConformance;
+  projectId: string;
+  defaultName: string;
+}) {
+  const sign = useSignA11yConformance(projectId);
+  const [name, setName] = useState(defaultName);
+  const [readIt, setReadIt] = useState(false);
+  const [knowsGaps, setKnowsGaps] = useState(false);
+
+  return (
+    <div className="card--attention gate-panel">
+      <div className="card__body">
+        <span className="gate-panel__role">
+          ▲ Conformance statement · required role: {data.required_role}
+        </span>
+        <h3 className="t-h3">Sign this statement</h3>
+        <Check checked={readIt} onChange={(e) => setReadIt(e.target.checked)}>
+          I have read the statement and the evidence behind it, and I am making this assessment
+          in my own professional judgement.
+        </Check>
+        <Check
+          style={{ marginTop: "var(--space-2)" }}
+          checked={knowsGaps}
+          onChange={(e) => setKnowsGaps(e.target.checked)}
+        >
+          {/* Both numbers are stated rather than implied. The second one is what a reviewer is
+              most likely not to have noticed, and it is the one they are taking on. */}
+          I understand that <strong>{data.totals.not_evaluated}</strong> criteria were not
+          evaluated and say so, and that <strong>{data.totals.platform_suggested}</strong> levels
+          were suggested by the evidence and I have not changed them.
+        </Check>
+        <Field
+          label="Your name, as it will appear on the statement"
+          style={{ marginTop: "var(--space-3)" }}
+        >
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <div className="gate-panel__actions">
+          <Button
+            variant="primary"
+            disabled={!readIt || !knowsGaps || !name.trim() || sign.isPending}
+            onClick={() => sign.mutate({ name, acknowledged: readIt && knowsGaps })}
+          >
+            {sign.isPending ? "Signing…" : "Sign"}
+          </Button>
+        </div>
+        {sign.isError && (
+          <Banner variant="danger" title="This was not signed">
+            {(sign.error as Error).message}
+          </Banner>
+        )}
+        <span className="gate-reassure">
+          Signing records your name, your role and the exact wording. It does not publish
+          anything — export is a separate step.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function basisWhen(value: string | null | undefined): string {
+  if (!value) return "";
+  return new Date(value).toLocaleString(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+// Which accessibility checks this statement was compiled from, and when the most recent of them
+// ran. A signed statement that cannot say what produced it is one nobody can check a year later.
+function Basis({ data }: { data: A11yConformance }) {
+  const basis = data.basis;
+  const latest = basis?.latest;
+  if (!latest) {
+    return (
+      <Banner variant="warning" title="No completed audit is recorded for this project">
+        Nothing here rests on a check this platform ran, so every criterion it would have
+        established is listed as not evaluated.
+      </Banner>
+    );
+  }
+  return (
+    <div className="meta-row" style={{ marginBottom: "var(--space-4)" }}>
+      <span className="meta-item">
+        Compiled from <strong>{latest.label}</strong>
+      </span>
+      <span className="meta-item">
+        Finished <strong>{basisWhen(latest.finished_at)}</strong>
+      </span>
+      <span className="meta-item">
+        Pages{" "}
+        <strong>
+          {latest.opened} of {latest.asked}
+        </strong>
+      </span>
+      {/* Every completed audit, not only the named one: the findings ledger is cumulative, so
+          "this is what was checked" would be untrue the moment a project has had two. */}
+      {basis.audits > 1 && (
+        <span className="meta-item">
+          and <strong>{`${basis.audits - 1} earlier audit(s)`}</strong>
+        </span>
+      )}
+    </div>
+  );
+}
+
+function Draft({ data, projectId }: { data: A11yConformance; projectId: string }) {
+  const save = useSaveA11yConformance(projectId);
+  const [scope, setScope] = useState(data.scope);
+  const [body, setBody] = useState(data.body);
+  const dirty = scope !== data.scope || body !== data.body;
+
+  return (
+    <Panel
+      title="Statement"
+      actions={
+        <span className={dirty ? "save-state save-state--dirty" : "save-state"}>
+          {dirty ? "Unsaved changes" : "Saved"}
+        </span>
+      }
+    >
+      {/* Which pass produced the numbers this statement is made of, said on the screen as well
+          as inside the wording. Both, deliberately: the wording is what gets signed and must
+          carry it, and the wording is also the reviewer's to replace — so the screen keeps its
+          own copy rather than relying on a paragraph somebody may have cut. */}
+      <Basis data={data} />
+
+      <Field label="Scope of this statement">
+        <Input value={scope} onChange={(e) => setScope(e.target.value)} />
+      </Field>
+      <Field
+        label="Conformance statement"
+        style={{ marginTop: "var(--space-4)" }}
+        help="The platform drafted this from the evidence above. Edit it freely — what you sign is what you wrote, not what it suggested."
+      >
+        <Textarea
+          style={{ minHeight: 220 }}
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+        />
+      </Field>
+      {data.signed && dirty && (
+        <Banner variant="warning" title="Saving this will clear the signature">
+          {data.signed_name} signed the wording as it stands. A signature on words nobody signed
+          is worse than no signature, so editing removes it and the statement needs signing again.
+        </Banner>
+      )}
+      <div className="gate-panel__actions">
+        <Button
+          variant="primary"
+          disabled={!dirty || save.isPending}
+          onClick={() => save.mutate({ scope, body })}
+        >
+          {save.isPending ? "Saving…" : "Save draft"}
+        </Button>
+      </div>
+      {save.isError && (
+        <Banner variant="danger" title="The draft could not be saved">
+          {(save.error as Error).message}
+        </Banner>
+      )}
+    </Panel>
+  );
+}
+
+function ExportPanel({ data, projectId }: { data: A11yConformance; projectId: string }) {
+  const doExport = useExportA11yConformance(projectId);
+  if (!data.can_export) {
+    return (
+      <Panel title="Export">
+        <Banner
+          variant="danger"
+          title={data.stale ? "The evidence has changed since this was signed" : "This cannot be exported unsigned"}
+        >
+          {data.export_refused_because}
+        </Banner>
+        <div className="gate-panel__actions">
+          <Button variant="primary" disabled aria-disabled="true">
+            Export
+          </Button>
+        </div>
+      </Panel>
+    );
+  }
+  return (
+    <Panel title="Export">
+      <Banner variant="success" title={`Signed by ${data.signed_name} · ${data.signed_role}`}>
+        The statement is locked to the wording that was signed. Editing it again clears the
+        signature.
+      </Banner>
+      <div className="gate-panel__actions">
+        <Button variant="primary" onClick={() => doExport.mutate()} disabled={doExport.isPending}>
+          {doExport.isPending ? "Preparing…" : "Export…"}
+        </Button>
+        {data.artifact_id && (
+          <a className="btn btn--ghost" href={`/artifacts/${data.artifact_id}/publish`}>
+            Open publish gate ↗
+          </a>
+        )}
+      </div>
+      <p className="t-xs u-muted" style={{ marginTop: "var(--space-4)" }}>
+        The engine, prompt version and scanner version that produced these results are recorded
+        on the export so the statement can be re-examined later against exactly what produced it.
+        They are deliberately not shown here.
+      </p>
+    </Panel>
+  );
+}
+
+export function A11yConformanceScreen() {
+  const { selectedProject, currentUser } = useAuth();
+  const projectId = selectedProject?.project_id;
+  const query = useA11yConformance(projectId);
+  const save = useSaveA11yConformance(projectId);
+
+  if (query.isLoading) {
+    return (
+      <main className="canvas-pad">
+        <A11yTabs active="conformance" />
+        <Panel title="Compiling the evidence">
+          <Skeleton kind="title" />
+          <Skeleton />
+          <Skeleton kind="block" />
+        </Panel>
+      </main>
+    );
+  }
+
+  const data = query.data;
+  // The two were one branch, so a 500 rendered "There is nothing to compile yet" — a statement
+  // about the project, made by a screen that had not managed to ask about it.
+  if (query.isError) {
+    return (
+      <main className="canvas-pad">
+        <A11yTabs active="conformance" />
+        <LoadFailed
+          what="The conformance statement"
+          error={query.error}
+          onRetry={() => void query.refetch()}
+        />
+      </main>
+    );
+  }
+  if (!data) {
+    return (
+      <main className="canvas-pad">
+        <A11yTabs active="conformance" />
+        <Panel title="Accessibility conformance">
+          {/* The route to evidence is an AUDIT, and this used to say "run the testing phase" —
+              right for a project being built here, wrong for the brownfield reader who is the
+              one most likely to arrive with nothing compiled. Both roads start on the same
+              screen, so that is where this points. */}
+          <EmptyState
+            title="There is nothing to compile yet"
+            text="A conformance statement is built from accessibility evidence, and none has been recorded on this project. Register the pages of the application and run an audit — or, on a project built here, run the Testing phase and its suite captures the evidence as it goes."
+            action={
+              <Link to="/a11y/pages" className="btn btn--primary">
+                Go to Pages &amp; audit
+              </Link>
+            }
+          />
+        </Panel>
+      </main>
+    );
+  }
+
+  const editable = data.can_sign && !data.signed;
+  const onVerdict = (criterion: string, level: A11yConformanceLevel) =>
+    save.mutate({ verdicts: { [criterion]: { level } } });
+
+  return (
+    <main className="canvas-pad">
+      <A11yTabs active="conformance" />
+
+      <div className="page-head">
+        <div className="page-head__titles">
+          <h1 className="t-h1">
+            Accessibility conformance{" "}
+            <Badge variant={data.signed ? (data.stale ? "waiting" : "done") : "gate"}>
+              {data.signed ? (data.stale ? "Signed · evidence has changed" : "Signed") : "Draft · unsigned"}
+            </Badge>
+          </h1>
+          <p className="page-head__sub">
+            WCAG 2.2 Level AA. The platform compiles the evidence and drafts the wording.{" "}
+            <strong>It never signs, and it never calls anything compliant</strong> — a person
+            does that, or nobody does.
+          </p>
+        </div>
+      </div>
+
+      <Banner variant="info" title="This is risk reduction, not certification">
+        {data.disclaimer}
+      </Banner>
+
+      <div className="grid grid--3" style={{ marginTop: "var(--space-5)" }}>
+        <div className="tile">
+          <span className="tile__num">{data.totals.evaluated}</span>
+          <span className="tile__label">Evaluated</span>
+          <span className="tile__sub">Something actually checked these</span>
+        </div>
+        <div className="tile">
+          <span className="tile__num">{data.totals.not_evaluated}</span>
+          <span className="tile__label">Not evaluated</span>
+          <span className="tile__sub">Stated, never assumed</span>
+        </div>
+        <div className="tile">
+          <span className="tile__num">{data.totals.awaiting_a_person}</span>
+          <span className="tile__label">Awaiting a person</span>
+          <span className="tile__sub">A check looked and could not decide</span>
+        </div>
+      </div>
+
+      {!data.can_sign && (
+        <Banner variant="info" title="You are not the accessibility reviewer">
+          You can read the statement and every piece of evidence behind it. Editing and signing
+          {/* `roleLabel`, never the raw key: the platform has a standing rule against showing
+              one to a user, and this line was showing "qa_lead". */}
+          need the {roleLabel(data.required_role)} role on this project.
+        </Banner>
+      )}
+
+      <div style={{ marginTop: "var(--space-5)" }}>
+        <Criteria data={data} editable={editable} onVerdict={onVerdict} />
+      </div>
+      <p className="t-sm u-muted" style={{ marginTop: "var(--space-3)" }}>
+        “Not evaluated” is printed as itself and never rolled into “supports”. A criterion nothing
+        looked at is the single easiest way for a report like this to become untrue.
+      </p>
+
+      {data.can_sign && (
+        <div className="grid grid--detail" style={{ marginTop: "var(--space-5)" }}>
+          <Draft data={data} projectId={projectId as string} />
+          {data.signed ? (
+            <ExportPanel data={data} projectId={projectId as string} />
+          ) : (
+            <Signing
+              data={data}
+              projectId={projectId as string}
+              defaultName={currentUser?.user.name ?? ""}
+            />
+          )}
+        </div>
+      )}
+    </main>
+  );
+}

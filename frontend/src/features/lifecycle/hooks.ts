@@ -156,7 +156,14 @@ export function useResumeRun(runId: string | undefined) {
 }
 
 // ── Clarifications (S-20) ──────────────────────────────────────────────────
-export function useClarifications(q: { status?: string; work_item?: string; run?: string } = {}) {
+export function useClarifications(
+  // `project` scopes the whole project's pending questions server-side. The Clarifications
+  // screen used to fetch the tenant's and narrow them to the visible backlog in the browser,
+  // which silently dropped every question asked by a run on a HIDDEN carrier work item —
+  // accessibility judging, code indexing, the gap report. Those runs then waited for ever on
+  // an answer the screen would not let anyone give.
+  q: { status?: string; work_item?: string; run?: string; project?: string } = {},
+) {
   const tenantId = useTenantId();
   return useQuery({
     queryKey: ["clarifications", q],

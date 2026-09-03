@@ -1,6 +1,6 @@
 import { useParams } from "react-router-dom";
 
-import { Badge, Banner, Breadcrumb, Button, Card, CardBody, Kv, LifecycleRail, Panel, Spinner } from "../../components/ui";
+import { Badge, Banner, Breadcrumb, Button, Card, CardBody, Kv, LifecycleRail, Markdown, Panel, Spinner } from "../../components/ui";
 import { railNodeView } from "./railView";
 import { phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
@@ -84,19 +84,35 @@ function WorkItemDefectLive() {
 
       <div className="grid grid--detail" style={{ marginTop: "var(--space-5)" }}>
         <div className="u-stack">
-          <Panel title="Description">
-            {closed ? (
-              <Banner variant="success" title="Defect closed">
-                {workItem.data.description || "This defect was closed by a clean re-run."}
-              </Banner>
-            ) : running ? (
-              <Banner variant="info" title="Fix running on your companion">
-                {workItem.data.description || "Fixing…"}
-              </Banner>
+          {/* The state is a LABEL; the description is a DOCUMENT. This used to put the whole
+              description inside the coloured alert that carried the state — as plain text, so an
+              accessibility defect (which the platform writes as structured markdown: what was
+              found, the screen, the element, the confidence, the evidence, the suggested fix)
+              arrived as one unbroken paragraph with its asterisks and backticks showing. The
+              most useful line on the ticket, the suggested fix, was buried in the middle of it.
+
+              Every other work item in the platform renders its description properly
+              (`WorkItemTask`, `WorkItemEpic`); this screen was the one that did not. So the
+              state moves to a one-line strip beside the panel title, where a state belongs, and
+              the description is rendered as what it is. */}
+          <Panel
+            title="Description"
+            actions={
+              <Badge variant={closed ? "done" : running ? "running" : "failed"}>
+                {closed ? "Closed" : running ? "Fix running on your companion" : "Open"}
+              </Badge>
+            }
+          >
+            {workItem.data.description ? (
+              <Markdown className="prose md-body">{workItem.data.description}</Markdown>
             ) : (
-              <Banner variant="danger" title="Open">
-                {workItem.data.description || "No description yet."}
-              </Banner>
+              <p className="t-body u-muted">
+                {closed
+                  ? "This defect was closed by a clean re-run."
+                  : running
+                    ? "Fixing…"
+                    : "No description yet."}
+              </p>
             )}
           </Panel>
           {latestRun && (

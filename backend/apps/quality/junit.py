@@ -31,7 +31,21 @@ from xml.etree import ElementTree
 # trailing boundary: `TC001LoginTests` must still yield 001.
 _TC_ID = re.compile(r"(?<![A-Za-z0-9])TC[-_ ]?(\d+)", re.IGNORECASE)
 
-_MAX_EVIDENCE = 2000
+# A **safety valve, not a display limit** (QA-11a). Evidence used to be cut to 2000 characters
+# right here — the earliest possible moment — which meant the full text never entered the
+# platform at all and no store downstream could ever hold it. A developer then read four of a
+# screen's eighteen accessibility violations and had no way to see the rest: re-running locally
+# is a *different* execution against different state, so it is not the same evidence.
+#
+# The full text is now parsed and filed as the run's `test_report` artifact body in the object
+# store (`apps.quality.services`), which is where bodies belong (#1/#3); the short summary that
+# stays on the row — and goes to the tracker, which has its own hard field limit — is bounded
+# there, where the limit is actually imposed.
+#
+# What remains here is protection against a runaway log: a single test whose failure text runs
+# past a quarter of a megabyte is emitting a log, not evidence. Raising this number is not how
+# you fix a truncated report — the report body is uncapped by design.
+_MAX_EVIDENCE = 256_000
 
 
 def test_ref_for(classname: str, name: str) -> str:

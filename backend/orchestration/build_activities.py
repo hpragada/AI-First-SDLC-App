@@ -167,6 +167,41 @@ def import_build_test_results_core(inp: BuildInput, report: BuildReport) -> dict
             "flaky": out["flaky"]}
 
 
+def run_a11y_ai_pass_core(inp: BuildInput) -> dict:
+    """Ask the AI accessibility checks about what this build's suite captured (QA-12).
+
+    The join point of the whole accessibility feature: the companion posted the captured screens
+    straight to the platform during the build (QA-11b), and this is where they are handed to the
+    judge. The merged report — rule findings and AI findings in one document — is published when
+    the judgment run ends, not here, because its verdicts are still in flight.
+
+    Three bounds, the first two copied deliberately from `import_build_test_results_core` so the
+    accessibility pass runs exactly where the test loop runs and nowhere else:
+      - **Only phases the catalog marks `imports_test_results`** (09b today). A 07 implementation
+        build captures nothing and must not start a judgment run.
+      - **Nothing captured ⇒ no-op.** `start_ai_pass` returns without dispatching, so a build
+        that ran no accessibility case never starts an empty judgment.
+      - **Never fails the build.** `start_ai_pass` swallows its own failures, and the workflow
+        calls this best-effort besides. The capture is already stored; the pass can be run again
+        against the same run without re-capturing a thing.
+    """
+    from apps.a11y.aipass import start_ai_pass
+    from apps.registry.catalog import imports_test_results as _phase_imports
+    from apps.registry.models import AgentSpec
+
+    with tenant_context(inp.tenant_id):
+        spec = AgentSpec.objects.filter(id=inp.agent_spec_id, tenant_id=inp.tenant_id).first()
+    agent_key = spec.key if spec else ""
+    if not _phase_imports(agent_key):
+        return {"started": False, "reason": f"phase {agent_key!r} does not run accessibility "
+                                            f"checks"}
+
+    return start_ai_pass(
+        tenant_id=inp.tenant_id, project_id=inp.project_id, run_id=inp.run_id,
+        work_item_id=inp.work_item_id, title=inp.work_item_title or inp.work_item_key,
+    )
+
+
 def provision_preview_core(inp: BuildInput, report: BuildReport) -> dict:
     """Record the companion-local preview env the build reported and link it on the PR (D7 /
     P3-09bR-5). No-op unless the build reported a preview URL (only 09b brings an app up).
@@ -1202,6 +1237,11 @@ def import_build_test_results_activity(inp: BuildInput, report: BuildReport) -> 
     return _boundary(import_build_test_results_core, inp, report)
 
 
+@activity.defn(name="run_a11y_ai_pass")
+def run_a11y_ai_pass_activity(inp: BuildInput) -> dict:
+    return _boundary(run_a11y_ai_pass_core, inp)
+
+
 @activity.defn(name="provision_preview")
 def provision_preview_activity(inp: BuildInput, report: BuildReport) -> dict:
     return _boundary(provision_preview_core, inp, report)
@@ -1291,6 +1331,7 @@ BUILD_ACTIVITIES = [
     dispatch_build_activity,
     open_build_pr_activity,
     import_build_test_results_activity,
+    run_a11y_ai_pass_activity,
     provision_preview_activity,
     teardown_preview_activity,
     run_code_review_activity,

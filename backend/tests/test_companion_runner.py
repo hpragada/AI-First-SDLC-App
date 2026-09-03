@@ -931,3 +931,162 @@ def test_an_unwritable_log_location_never_stops_the_companion(tmp_path):
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("x")            # a FILE where the log directory would go
     assert setup_engine_log(path=blocker / "sub" / "engine.log") is None
+
+
+# ── Every granted tool must actually EXIST on the MCP server ────────────────────
+#
+# The gap this closes cost the accessibility judge and the keyboard journey their entire
+# existence: seven tools were granted in `runner.BUILD_STATE_TOOLS` and routed in the platform's
+# `_BUILD_STATE_TOOLS`, and never defined in `state_mcp.py` — the only file that puts a tool in
+# front of an agent. A name in `allowed_tools` is a PERMISSION, not a tool. Both phases were
+# dispatched, claimed, and ran to a standstill against a tool set that did not contain their
+# work, their rulebook, or any way to answer.
+#
+# Nothing caught it because every layer was tested on its own and the seam between them was not.
+# This is that seam, asserted as a set difference so a tool added to one list and forgotten in
+# the other fails here rather than on somebody's first live run.
+
+
+def _exposed_tool_names() -> set:
+    from runner.companion.state_client import RemoteStateClient
+    from runner.companion.state_mcp import build_server
+
+    server = build_server(
+        RemoteStateClient(api_url="http://x", tenant_id="T", token="t"),
+        run_id="R1", phase="a11y_judge", project_id="P1",
+    )
+    return {t.name for t in server._tool_manager.list_tools()}
+
+
+def test_every_granted_tool_is_actually_exposed_by_the_mcp_server():
+    from runner.companion.runner import BUILD_STATE_TOOLS
+
+    granted = set(BUILD_STATE_TOOLS) - {"ask_human"}   # ask_human is wired via clarify_client
+    missing = sorted(granted - _exposed_tool_names())
+    assert not missing, (
+        f"granted in BUILD_STATE_TOOLS but never defined in state_mcp.py: {missing}. "
+        f"The agent cannot call a tool the server does not expose, whatever the allowlist says."
+    )
+
+
+def test_the_judge_and_the_journey_can_reach_every_tool_their_bodies_name():
+    """Named explicitly, not just covered by the set difference above.
+
+    These are the seven that were missing. Spelling them out means a future edit that drops one
+    fails with the phase it breaks in the message, rather than as an anonymous set element.
+    """
+    exposed = _exposed_tool_names()
+    judge = {"get_a11y_batch", "get_wcag_grounding", "record_a11y_finding",
+             "get_a11y_screenshots"}
+    journey = {"get_a11y_journey", "record_a11y_journey_step",
+               "record_a11y_journey_finding", "finish_a11y_journey"}
+    assert judge <= exposed, f"09c_a11y_judge cannot work: {sorted(judge - exposed)}"
+    assert journey <= exposed, f"09d_a11y_journey cannot work: {sorted(journey - exposed)}"
+
+
+def test_the_agent_never_names_its_own_run_the_platform_binds_it():
+    """`run_id` is bound at launch and must never be a parameter the agent supplies.
+
+    Two reasons, and the second is the one that matters. The agent has no way to know its run id
+    — nothing in the manifest carries it — so a tool that demanded it could only ever 400, which
+    is exactly what `get_a11y_screenshots` did: its wrapper dropped `run_id_bound` and the
+    platform rejected the call as `bad arguments`. And if the agent COULD name a run, it could
+    file verdicts against a different one.
+    """
+    from runner.companion.state_client import RemoteStateClient
+    from runner.companion.state_mcp import build_server
+
+    calls = []
+
+    class _Client(RemoteStateClient):
+        def call(self, tool, **kw):
+            calls.append((tool, kw))
+            return {}
+
+    server = build_server(_Client(api_url="http://x", tenant_id="T", token="t"),
+                          run_id="RUN-42", project_id="PROJ-7")
+    by_name = {t.name: t for t in server._tool_manager.list_tools()}
+
+    run_bound = ["get_a11y_batch", "get_a11y_journey", "finish_a11y_journey"]
+    for name in run_bound:
+        params = set((by_name[name].parameters or {}).get("properties", {}))
+        assert "run_id" not in params, f"{name} must not ask the agent for run_id"
+        assert "tenant_id" not in params, f"{name} must not ask the agent for tenant_id"
+
+    # And what it actually sends is the launch-bound run.
+    import asyncio
+    for name in run_bound:
+        asyncio.run(server._tool_manager.call_tool(name, {}))
+    assert [kw.get("run_id") for _, kw in calls] == ["RUN-42"] * len(run_bound)
+
+
+def test_a_recorded_verdict_carries_the_run_and_project_it_belongs_to():
+    """`record_a11y_finding` writes the result. Sent without the run, the platform has no way to
+    attribute a verdict to the batch that asked for it."""
+    from runner.companion.state_client import RemoteStateClient
+    from runner.companion.state_mcp import build_server
+
+    sent = {}
+
+    class _Client(RemoteStateClient):
+        def call(self, tool, **kw):
+            sent[tool] = kw
+            return {"ok": True}
+
+    server = build_server(_Client(api_url="http://x", tenant_id="T", token="t"),
+                          run_id="RUN-42", project_id="PROJ-7")
+    import asyncio
+    asyncio.run(server._tool_manager.call_tool("record_a11y_finding", {
+        "element_id": "e1", "criteria": ["1.1.1"], "verdict": "fail",
+        "confidence": 0.9, "evidence": "img with no alt", "suggested_fix": "add alt",
+    }))
+    kw = sent["record_a11y_finding"]
+    assert kw["run_id"] == "RUN-42" and kw["project_id"] == "PROJ-7"
+    assert kw["element_id"] == "e1" and kw["verdict"] == "fail"
+
+
+def test_the_screenshot_tool_sends_the_run_it_was_launched_for():
+    """The 400 the judge hit: the wrapper called the platform without `run_id`, whose signature
+    is `get_a11y_screenshots(tenant_id, run_id, start=0)`, so every call came back as bad
+    arguments — which the agent reported, accurately, as the run id not being injected."""
+    from runner.companion.state_client import RemoteStateClient
+    from runner.companion.state_mcp import build_server
+
+    sent = {}
+
+    class _Client(RemoteStateClient):
+        def call(self, tool, **kw):
+            sent[tool] = kw
+            return {"images": [], "unseen": [], "total": 0, "returned": 0, "start": 0}
+
+    server = build_server(_Client(api_url="http://x", tenant_id="T", token="t"),
+                          run_id="RUN-42", project_id="PROJ-7")
+    import asyncio
+    asyncio.run(server._tool_manager.call_tool("get_a11y_screenshots", {"start": 0}))
+    assert sent["get_a11y_screenshots"]["run_id"] == "RUN-42"
+
+
+def test_the_batch_tool_pages_and_carries_the_cursor():
+    """`get_a11y_batch` was a single call returning every screen — 80,000 characters on our own
+    reference app's ten pages, which the judge could not hold and correctly refused to judge in
+    part. It pages now, and the wrapper has to actually forward `start` or the judge loops on
+    screen one forever."""
+    from runner.companion.state_client import RemoteStateClient
+    from runner.companion.state_mcp import build_server
+
+    sent = {}
+
+    class _Client(RemoteStateClient):
+        def call(self, tool, **kw):
+            sent[tool] = kw
+            return {"screens": [], "total_elements": 0, "next_start": None}
+
+    server = build_server(_Client(api_url="http://x", tenant_id="T", token="t"),
+                          run_id="RUN-42", project_id="PROJ-7")
+    by_name = {t.name: t for t in server._tool_manager.list_tools()}
+    params = set((by_name["get_a11y_batch"].parameters or {}).get("properties", {}))
+    assert params == {"start"}, f"the judge supplies only its cursor, got {params}"
+
+    import asyncio
+    asyncio.run(server._tool_manager.call_tool("get_a11y_batch", {"start": 25}))
+    assert sent["get_a11y_batch"] == {"run_id": "RUN-42", "start": 25}

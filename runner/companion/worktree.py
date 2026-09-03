@@ -168,7 +168,7 @@ def teardown_worktree(*, repo_path, worktree_path) -> None:
     """
     _git(repo_path, "worktree", "remove", "--force", str(worktree_path), check=False)
     if Path(worktree_path).exists():
-        print(f"[companion] could not remove worktree {worktree_path} — it is left on disk "
+        print(f"[companion] could not remove worktree {worktree_path} - it is left on disk "
               f"without its git link. The next build for this work item will discard and "
               f"re-create it. Something may still be holding files in it (a dev server?)",
               file=sys.stderr, flush=True)

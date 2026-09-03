@@ -5,6 +5,12 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
+[tool.coverage.run]
+# Django auto-generates migrations and the tests are not the subject under test — counting
+# either distorts the number the `make cov` 90% bar is meant to police. Mirrors the ruff
+# migration exclusion below so both tools agree on what "our code" means.
+omit = ["*/migrations/*", "*/tests/*", "*/__init__.py"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

@@ -96,10 +96,38 @@ AGENT_CATALOG: list[AgentDefinition] = [
                     needs_artifacts=("architecture", "adr", "api_spec", "data_model", "wireframe")),
     AgentDefinition("08_code_review", "code-review", "code_review", "08_code_review_agent.md", "P2", "reviewer",
                     needs_artifacts=("architecture", "adr", "api_spec")),
+    # `needs_artifacts` names every type this body actually reads (its "Relevant Artifacts"
+    # header), not a subset. Four of them were missing and the required tier is the only thing
+    # standing between a declared input and the 12-artifact recency tail: on a project with a
+    # dozen documents registered after the UX phase, the screen inventory simply fell out, and
+    # Step 9 writes one accessibility case PER SCREEN — no inventory, no cases, no scan, and
+    # nothing said why. `ux_design` is the load-bearing one: 05 registers the Screen Inventory
+    # there and registers `wireframe` one-per-SCREEN, so the required tier (latest of each type)
+    # pins exactly one wireframe — a pointer to enumerate from, never the list itself.
     AgentDefinition("09_testing", "test", "testing", "09_testing_agent.md", "P3", "qa_lead",
-                    needs_artifacts=("prd", "requirements", "architecture", "api_spec")),
+                    needs_artifacts=("prd", "requirements", "user_stories", "architecture",
+                                     "security_architecture", "api_spec", "ux_design",
+                                     "wireframe", "backlog", "definition_of_done")),
     AgentDefinition("09b_test_automation", "test-automation", "test_automation", "09b_test_automation_agent.md", "P3", "qa_lead", rides_build=True, imports_test_results=True,
                     needs_artifacts=("architecture", "api_spec", "test_case")),
+    # 09c Accessibility Judge — PLATFORM-NATIVE (QA-02a): the legacy suite had no accessibility
+    # capability at all, so there is no v6 body to migrate; it is authored fresh under /agents,
+    # like 00e Document Vision. It judges what a rule scanner cannot decide — whether alt text
+    # is meaningful, whether a div is really a button — against the exact WCAG 2.2 wording the
+    # platform loaded in QA-04. It registers no artifacts: its work product is one verdict per
+    # dispatched element, so `verify_write_completeness_core` checks its COVERAGE instead.
+    # `needs_artifacts` is empty on purpose — its inputs arrive on the run, not from the
+    # registry, so declaring required types would render a gap for documents it never reads.
+    AgentDefinition("09c_a11y_judge", "a11y-judge", "a11y_judge", "", "P4", "qa_lead", native=True),
+    # 09d Accessibility Journey — PLATFORM-NATIVE (QA-20, Phase 2). Also no v6 source: the
+    # legacy suite had no interaction testing of any kind. Where 09c judges a page standing
+    # still, this one OPERATES the application — tabbing through a critical journey and
+    # watching what focus does, what changes under it, and what assistive technology is told.
+    # It registers no artifacts either: its work product is one step outcome and up to eight
+    # verdicts per step, so `verify_journey_completeness` checks its COVERAGE of the frozen
+    # step list instead. `needs_artifacts` is empty for 09c's reason and one more: its input is
+    # a single `test_case` body it is handed by id, not a slice of the registry.
+    AgentDefinition("09d_a11y_journey", "a11y-journey", "a11y_journey", "", "P4", "qa_lead", native=True),
     AgentDefinition("10_security", "security", "security", "10-security-agent.md", "P3", "security_engineer", reads_code=True,
                     needs_artifacts=("architecture", "adr", "security_architecture", "api_spec")),
     AgentDefinition("11_cicd", "cicd", "cicd", "11_cicd_agent.md", "P2", "devops", rides_build=True,

@@ -123,6 +123,10 @@ def seed_demo() -> SeedResult:
              {"project_key": settings.XRAY_PROJECT_KEY}, "settings:xray"),
             # CodeIntel (Phase 4) — built-in SOTA analyzer (no creds); Repowise is optional.
             ("codeintel", "builtin", {}, "builtin"),
+            # A11yAI (accessibility QA) — the platform's own judge; judgment runs through the
+            # ExecutionDriver, so there is no key to resolve. Seeded like codeintel so the
+            # capability is available without an onboarding step nobody could complete.
+            ("a11yai", "builtin", {}, "builtin"),
         ]
         for capability, connector, scopes, token_ref in connections:
             IntegrationConnection.objects.update_or_create(

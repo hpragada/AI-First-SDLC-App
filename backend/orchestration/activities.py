@@ -19,6 +19,8 @@ from django.conf import settings
 from mcp_platform_state import tools
 from temporalio import activity
 
+from apps.a11y.journey import JOURNEY_PHASE as A11Y_JOURNEY_PHASE
+from apps.a11y.judge import JUDGE_PHASE as A11Y_JUDGE_PHASE
 from apps.gates.models import Approval
 from apps.registry.models import AgentSpec, Artifact
 from apps.runs.models import Run
@@ -314,8 +316,11 @@ def open_gate_core(inp: AgentRunInput) -> str:
                 "required_role": inp.required_role,
                 "decision": Approval.Decision.PENDING,
                 # Control-plane gate conditions (#2/#5): the WCAG checklist on the design
-                # gate (D6), the blocking-test rule on the test gate (D9).
-                "conditions": conditions_for_phase(inp.phase),
+                # gate (D6), the blocking-test rule on the test gate (D9). The project is
+                # passed so the design checklist can honour the project's accessibility
+                # policy (QA-08) — without it, every project gets the default questions.
+                "conditions": conditions_for_phase(
+                    inp.phase, tenant_id=inp.tenant_id, project_id=inp.project_id),
             },
         )
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
@@ -330,18 +335,52 @@ def open_gate_core(inp: AgentRunInput) -> str:
     return str(approval.id)
 
 
+#: Phases whose artifacts are NEVER marked published by this activity, however the run ended.
+#:
+#: **What went wrong.** Publishing happens on gate APPROVAL, which is the platform’s whole
+#: story: published means a named human approved this and it is the project’s answer. A run
+#: started with `auto_approve` has no gate, and this activity runs anyway — which is correct for
+#: the one case it was built for (document vision, 00e: the human had already adopted the
+#: document those pages came from, so a second gate would ask them the same question twice).
+#:
+#: The accessibility judging and keyboard-journey runs set `auto_approve` for a different and
+#: good reason — nobody is watching their carrier work item, and a gate there would hang the
+#: audit forever waiting on an approval nobody knows to give — and inherited the publishing with
+#: it, without inheriting the justification. Measured on 25 August across two tenants: **every**
+#: artifact of every judging run, marked published, approved by nobody. The `assumption` rows are
+#: the ones a person notices; the judging documents are marked as run output on screen and so
+#: wore a disguise.
+#:
+#: They stay DRAFT, which is what they are: kept, readable, previewable, still handed to later
+#: phases (`get_context` excludes only rejected work), and awaiting the human step. For
+#: accessibility that step is signing the conformance statement, which sets APPROVED on its own
+#: document and is the only signature in this capability that means anything.
+NEVER_AUTO_PUBLISHED_PHASES = frozenset({"a11y_judge", "a11y_journey"})
+
+
 def publish_artifacts_core(inp: AgentRunInput) -> dict:
     """On APPROVED: snapshot to S3 and mark every artifact published-INTERNAL. External
     export is user-triggered (team flow decision, 2026-07-07) via POST
     /artifacts/{id}/publish/, governed by the project's phase-scoped export policy
     (integrations.export_policy) — gate approval never auto-pushes to a SoR. Idempotent —
-    already-published artifacts are skipped."""
+    already-published artifacts are skipped.
+
+    Except for `NEVER_AUTO_PUBLISHED_PHASES`, which are left as they are and named in the event
+    rather than passed over in silence — see that constant for what publishing them cost.
+    """
     store = get_object_store()
     with tenant_context(inp.tenant_id):
         artifacts = list(Artifact.objects.filter(run_id=inp.run_id, tenant_id=inp.tenant_id))
 
     published: list[str] = []
+    left_draft: list[str] = []
     for artifact in artifacts:
+        if artifact.phase in NEVER_AUTO_PUBLISHED_PHASES:
+            # Not a skip-if-already-done: this is a decision, and it is recorded as one. A run
+            # that quietly did less than its name says is the shape of failure this codebase
+            # keeps meeting.
+            left_draft.append(str(artifact.id))
+            continue
         if artifact.status == Artifact.Status.PUBLISHED:
             published.append(str(artifact.id))
             continue
@@ -372,12 +411,12 @@ def publish_artifacts_core(inp: AgentRunInput) -> dict:
         # not here — that path owns the approver + decided_at.
         tools.log_event(
             inp.tenant_id, "orchestrator", "artifacts.published", "run", inp.run_id,
-            {"artifact_ids": published},
+            {"artifact_ids": published, "left_draft": left_draft},
         )
     # A vision run's artifact IS the document's artifact — link it back, or the document would
     # stay pointing at nothing (see link_vision_artifact_core).
     link_vision_artifact_core(inp)
-    return {"published": published}
+    return {"published": published, "left_draft": left_draft}
 
 
 def transition_work_item_core(inp: AgentRunInput, to_state: str) -> dict:
@@ -675,6 +714,51 @@ def verify_write_completeness_core(
     text's digest, so an empty one is provable. A pointer-only artifact registered with a
     foreign hash makes no claim about its body and is left alone.
     """
+    # The accessibility judge (09c, QA-02a) writes verdicts, not artifacts, so "did it register
+    # a document?" is the wrong question for it entirely — and it runs auto-apply, so without
+    # this branch the check below would fail every judgment run. Its own bar is coverage: every
+    # element dispatched to it must have been reported on. Checked FIRST so the phase is decided
+    # before the artifact-shaped rules get a chance to answer for it.
+    if inp.phase == A11Y_JUDGE_PHASE:
+        from apps.a11y.aipass import finish_ai_pass
+        from apps.a11y.judge import verify_judgment_completeness
+
+        try:
+            counts = verify_judgment_completeness(
+                tenant_id=inp.tenant_id, project_id=inp.project_id, run_id=inp.run_id)
+        finally:
+            # QA-12: the merged report is published whether or not the judging was complete.
+            # `finally`, not "after", because an incomplete run raises above — and that is
+            # precisely the run whose report matters most: its unjudged elements have just been
+            # recorded as `uncertain` for a human, and without a report nobody can see them.
+            # The report itself says the check was incomplete (D-A11Y-3).
+            finish_ai_pass(tenant_id=inp.tenant_id, judge_run_id=inp.run_id)
+        return {"present": [f"{counts['judged']} judged"],
+                "expected": [f"{counts['dispatched']} dispatched"]}
+
+    # The keyboard journey (09d, QA-20/G6a) writes step outcomes and verdicts, not artifacts —
+    # the same shape as the judge above, and it needs its own branch for the same reason: without
+    # one, a journey that walked a whole application perfectly would reach this check, be asked
+    # for an `a11y_journey` document it was never meant to write, and park the run.
+    #
+    # **An incomplete journey is not a failed one, and this branch must never make it look like
+    # one.** A walk blocked at step 3 of 6 has three steps nothing was reported about, and that
+    # is the honest, expected, valuable outcome — the whole point of freezing the step list is
+    # to be able to say it. So the counts are reported and nothing is raised. What the platform
+    # does insist on is that the pass is CLOSED, which is the line below.
+    if inp.phase == A11Y_JOURNEY_PHASE:
+        from apps.a11y.journey import close_unfinished_journey, verify_journey_completeness
+
+        try:
+            counts = verify_journey_completeness(
+                tenant_id=inp.tenant_id, run_id=inp.run_id)
+        finally:
+            # `finally` for the same reason as the judge's: the run whose accounting matters
+            # most is the one that did not finish cleanly.
+            close_unfinished_journey(tenant_id=inp.tenant_id, run_id=inp.run_id)
+        return {"present": [f"{counts['reported']} steps reported"],
+                "expected": [f"{counts['asked']} steps asked"]}
+
     # Auto-apply runs (00e document vision, Part B) don't register a phase-typed artifact — they
     # re-register the TARGET document as a new version carrying its own type, then publish without
     # a gate. So the bar here is "the run actually produced content", not a phase-type match:
@@ -1097,6 +1181,22 @@ def fail_run_core(inp: AgentRunInput, reason: str) -> dict:
         tools.log_event(inp.tenant_id, "orchestrator", "run.failed", "run", inp.run_id,
                         {"error": reason})
     recover_unread_document_core(inp)   # a failed vision pass must not leave a document empty
+    # …and a failed journey pass must not leave a walk saying it is still walking (G6a). This is
+    # the path a crashed agent takes, and it never reaches the write-completeness check above,
+    # so the closure has to be on both. A no-op for every phase that has no journey.
+    from apps.a11y.journey import close_unfinished_journey
+
+    close_unfinished_journey(tenant_id=inp.tenant_id, run_id=inp.run_id, reason=reason)
+    # …and a failed JUDGING pass must not leave an audit saying it is still checking. Same
+    # reasoning as the line above and the same blind spot: this path returns before
+    # `verify_writes`, which is where the judge's accounting lives — file every element the run
+    # never answered as `uncertain`, publish the merged report, complete the audit. Without
+    # this, an engine that lost its session mid-judgment left the audit reading "Checking what
+    # was found" for ever and its unanswered elements recorded nowhere. A no-op for every phase
+    # that judged nothing.
+    from apps.a11y.aipass import close_unfinished_ai_pass
+
+    close_unfinished_ai_pass(tenant_id=inp.tenant_id, run_id=inp.run_id)
     return {"status": "failed"}
 
 

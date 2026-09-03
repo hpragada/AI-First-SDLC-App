@@ -681,6 +681,8 @@ thing, not for the app being slow. A silent console is not evidence of a hang
 5. Read the HTTP response.
 6. Back in the browser, reload `/test-reporting` and read the `CI ingest` row.
 7. Go to `/work-items` and find the work item titled `CI Regression`. Open it and read its children.
+8. Open the `defect` child and read its evidence text to the end.
+9. Go to `/artifacts` and look for a `test_report` artifact created by this import. Preview it.
 
 **Expected**
 - The snippet runs as copied — the project id and tenant id are already substituted, and the token
@@ -692,12 +694,20 @@ thing, not for the app being slow. A silent console is not evidence of a hang
 - A work item titled `CI Regression` exists on the board.
 - Under it, exactly **one** `defect` child exists — for the failing `TC-9002`. The passing
   `TC-9001` opens no defect.
+- The defect's evidence ends with a pointer line reading
+  `Full evidence: this run's test report (artifact <id>).` — the row carries a short summary, and
+  names where the whole thing lives.
+- A **`test_report` artifact exists** in `/artifacts` for this import, and previewing it shows a
+  readable report body listing both tests with the failure message for `TC-9002`.
 
 **Pass / Fail**
-- PASS if the post is accepted, `Last used` flips in the UI, and exactly one defect is opened for
-  the one failing test.
+- PASS if the post is accepted, `Last used` flips in the UI, exactly one defect is opened for the
+  one failing test, and the `test_report` artifact previews with the full evidence in it.
 - FAIL if the post is rejected with a valid active token, `Last used` stays `never`, no
   `CI Regression` container appears, or a defect is opened for the **passing** test.
+- FAIL — **Medium** — if no `test_report` artifact is registered, or if it previews empty while the
+  defect claims the full evidence is there. A pointer to a report that does not exist is worse than
+  no pointer.
 - **Blocked** if the backend is not reachable from your terminal.
 
 **Test data**
@@ -711,6 +721,11 @@ thing, not for the app being slow. A silent console is not evidence of a hang
   condition on any story — that condition is fed only by the build-tier 09b import. Do not expect
   TC-209's gate to change because of this case.
 - Do not paste the token value into the tracker or a defect — record that a token was used.
+- **The report body is new (August 2026).** Failure evidence used to be cut to 2000 characters on
+  the way in, so the full text never entered the platform at all. It is now filed as the run's
+  `test_report` artifact body in the object store, and the defect row keeps only a short summary
+  plus the pointer line above. So a long failure being abbreviated **on the defect row** is correct
+  behaviour, not truncation — check the artifact before raising anything about lost evidence.
 
 ---
 

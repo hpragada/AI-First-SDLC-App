@@ -422,6 +422,84 @@ def register_artifact(
         return _artifact(artifact)
 
 
+#: Artifact types that are a RESULT, never knowledge — kept out of the Knowledge Index.
+#:
+#: **What this prevents, measured** (24 Aug). Every artifact with a body is indexed when it is
+#: registered, and the index is then searched for whatever a run is about. So an accessibility
+#: judging run searched for accessibility judging knowledge, and the closest match in the whole
+#: project was **the previous accessibility judgement**. Its full body — findings table, gate
+#: outcome, per-element verdicts — was pasted into the briefing of the run whose entire job was
+#: to produce that document. Retrieval returned, among the top eight:
+#:
+#:     '**31. `#loans-table > tbody > tr:nth-of-type(3)` on `/loans/history`** — 1.4.1 …'
+#:
+#: which is one of the very elements that run had been asked to judge, with last time's answer
+#: attached. That run recorded **zero** verdicts and reported "Gate outcome: PASS — 33 elements,
+#: all pass", every word of it lifted from the document it had been handed. The platform's
+#: completeness check caught it and refused to call the audit complete, but a check that catches
+#: a fabricated answer is a worse position than never inviting one.
+#:
+#: It looked like the model being unreliable and it was not: the same agent judged 128 elements
+#: correctly an hour later on another tenant, whose retrieval happened to return summaries
+#: instead of a verdict table. Which of the eight you get is chance. Removing the source is not.
+#:
+#: **Why exclusion rather than a rule telling the agent to ignore it.** An agent cannot be
+#: relied on to disregard a plausible, authoritative, on-topic answer sitting in its own
+#: context — and it should not have to. These documents are also the wrong shape for an index:
+#: each one is a statement about a single capture, superseded by the next run, so a project
+#: accumulates contradictory copies of "the answer" that get retrieved by recency-blind search.
+#:
+#: They remain fully reachable on purpose — `list_artifacts(type=…)` then `get_artifact_body`,
+#: which the manifest tells every agent about. An agent that has a REASON to read last week's
+#: report can still ask for it by name. What it can no longer do is find it in its own pocket.
+_NOT_KNOWLEDGE_TYPES = frozenset({
+    "a11y_judge",        # the judge's own verdicts — the document that caused this
+    "a11y_report",       # the merged findings for one capture
+    "a11y_baseline",     # where the application stood after one audit
+    "a11y_conformance",  # the signed statement; a claim, and never an input to making one
+})
+
+#: The same exclusion applied by PHASE, because a judging run writes TWO documents and the list
+#: above only names one of them.
+#:
+#: Every `a11y_judge` run also registers an `assumption` note on its own reasoning — *"here is
+#: how I mapped this axe rule to this criterion"*. `assumption` is a type most phases write and
+#: most of those are worth retrieving, so it cannot be excluded by type without losing the rest.
+#: When the verdicts were excluded on 25 August these notes were deliberately kept, on the
+#: reasoning that a note about *how* to reason carries no answers.
+#:
+#: **Measured against the only samples that exist, that reasoning does not hold.** Both
+#: `a11y_judge` notes in the shared database were indexed, and both contain this:
+#:
+#:     '4. **1.4.1 vs 1.4.3 independence** — … the `#hours-note` element exhibits exactly this
+#:      combination.'
+#:
+#: — a live element on a page under audit, with its verdict on both criteria. Same class as the
+#: findings table above, in a smaller package, retrieved by the same recency-blind search. Two
+#: of two, so it is the norm and not an edge case.
+#:
+#: **And the channel refills itself.** Every judging run writes another note, so a tenant whose
+#: index is emptied today is exposed again on its second run. That is what made the original
+#: failure look intermittent and like an unreliable model: it is neither, it tracks how much of
+#: its own previous work the project has accumulated.
+#:
+#: By phase rather than by type so it also covers whatever else these runs come to write,
+#: without a third list to keep in step. `a11y_journey` joins it by the same argument rather
+#: than by measurement — it has registered nothing yet anywhere, and waiting for it to bite is
+#: the shape of failure this codebase keeps meeting. The pair matches `NEVER_AUTO_PUBLISHED_
+#: PHASES` for the same underlying reason: run OUTPUT about one capture, superseded by the next
+#: run, never an input to making it.
+#:
+#: **Deliberately narrow.** `a11y_report` and `a11y_baseline` are written under phase `testing`,
+#: so the two lists overlap in nothing and both are load-bearing. Journey DEFINITIONS are
+#: `testing`/`test_case` (`journeys._test_case_artifacts`) and stay indexed — this removes what a
+#: run concluded, never what it was asked to walk.
+_NOT_KNOWLEDGE_PHASES = frozenset({
+    "a11y_judge",        # verdicts (above) plus the run's own reasoning note
+    "a11y_journey",      # the same shape for a walked journey
+})
+
+
 def _index_into_knowledge(tenant_id, project, artifact, repo) -> None:
     """Chunk the newly-registered body into the Knowledge Index so downstream phases can
     retrieve it (B1).
@@ -444,6 +522,10 @@ def _index_into_knowledge(tenant_id, project, artifact, repo) -> None:
     where we were before."""
     if not artifact.s3_key:
         return  # pointer-only artifact (external SoR) — nothing local to chunk
+    if artifact.type in _NOT_KNOWLEDGE_TYPES:
+        return  # a result, not knowledge — see the list's own note for what this cost us
+    if artifact.phase in _NOT_KNOWLEDGE_PHASES:
+        return  # run output whatever it is typed as — see `_NOT_KNOWLEDGE_PHASES`
     try:
         from apps.knowledge.index import index_artifact
 
@@ -573,6 +655,251 @@ def submit_gap_report(tenant_id, project_id, phases, resume_phase=None, blockers
         tenant_id=tenant_id, project_id=project_id, phases=phases,
         resume_phase=resume_phase, blockers=blockers, run_id=run_id,
     )
+
+
+def get_a11y_batch(tenant_id, run_id, start=0) -> dict:
+    """The elements this accessibility judgment run must judge (09c_a11y_judge, QA-02a).
+
+    `dispatch` decided what needed judging and attached it to the run; this is that list, one
+    screen at a time. Each element carries the short `id` the judge echoes back to
+    `record_a11y_finding` — the internal content hash never leaves the platform, because a
+    model copying 64 hex characters back is one typo away from filing a verdict against a
+    different element.
+
+    Paged: `start` is a flat element index, and `next_start` carries the next one until it comes
+    back null. `total_elements` is the whole run on every page — that is the contract to check
+    yourself against, not the size of the page in your hand."""
+    from apps.a11y.judge import batch_for_run
+
+    return batch_for_run(tenant_id, run_id, start=start)
+
+
+def get_wcag_grounding(tenant_id, criteria) -> dict:
+    """The exact WCAG 2.2 wording for these criteria, plus the glossary terms they lean on.
+
+    The judge decides against the standard's own words, not its recollection of them — and
+    against W3C's definitions of the terms those words hinge on ("non-text content",
+    "cognitive function test"), which read as ordinary English without them. `tenant_id` is
+    accepted for signature symmetry and unused: the standard is one platform-wide copy that
+    no tenant may amend (QA-04)."""
+    from apps.a11y.judge import grounding_for
+
+    return grounding_for(criteria)
+
+
+def record_a11y_finding(tenant_id, element_id, criteria, verdict, confidence, evidence,
+                        suggested_fix="", run_id=None, project_id=None) -> dict:
+    """Record ONE accessibility verdict for ONE element of the dispatched batch (QA-02a).
+
+    Hands the agent's judgement to the shared validator+writer, which coerces what is safely
+    coercible and rejects the rest with a message the agent can act on — so a model typo can
+    never degrade a conformance report. The checker is read from the batch rather than taken
+    from the agent, so a call cannot mislabel which check it was.
+
+    `criteria` is a LIST (team decision D-A11Y-2): one broken thing can breach more than one
+    requirement — a `div` dressed as a button breaks 1.3.1 *and* 4.1.2 — and one fix repairs
+    both. Report the ones that actually apply, never the whole set by reflex.
+
+    `run_id` is LOAD-BEARING: it is how the element is found and how the verdict is stamped
+    with the model that produced it."""
+    from apps.a11y.judge import record_finding
+
+    return record_finding(
+        tenant_id=tenant_id, run_id=run_id, element_id=element_id, criteria=criteria,
+        verdict=verdict, confidence=confidence, evidence=evidence,
+        suggested_fix=suggested_fix, project_id=project_id,
+    )
+
+
+def get_a11y_screenshots(tenant_id, run_id, start=0, object_store=None) -> dict:
+    """SEE the elements this judgment run must judge (QA-11b).
+
+    The batch carries a `screenshot_ref` per element, which is a pointer and not a picture.
+    This reads those crops from the object store, downscales them to a vision-sane size and
+    hands them back as image data — the same pipe `get_page_images` uses for a document's
+    pages, because it is the same problem.
+
+    Without it the `color` check could never answer: 1.4.1 asks whether meaning is carried by
+    colour alone, which is a question about what a thing looks like. Each image is labelled
+    with the element's own `id`, so a verdict is filed against the element that was seen.
+
+    Paginated — a few elements per call, with `next_start` until the last batch. Elements with
+    no captured image are not returned as blanks; they are listed in `unseen` with the reason,
+    which is what the judge quotes when it records `uncertain`.
+    """
+    from apps.a11y.judge import screenshot_pointers
+
+    pointers, unseen = screenshot_pointers(tenant_id, run_id)
+    window = _build_page_image_window(pointers, _obj_store(object_store), start)
+    window["unseen"] = unseen
+    return window
+
+
+def ingest_a11y_candidates(tenant_id, project_id, screen, run_id=None) -> dict:
+    """Store one captured screen's accessibility candidate bundles (QA-11b).
+
+    Called by the **companion**, not by an agent: the capture is machine truth written by the
+    suite's own run against the live application, and the companion collects it from the
+    worktree before teardown. It is deliberately absent from the companion's engine tool grant
+    — an agent able to write candidate bundles could describe a page instead of one having
+    been captured.
+
+    One screen per call. A screen carries a full-page PNG, and ten of those in one request body
+    is past what the request layer accepts.
+    """
+    from apps.a11y.ingest import ingest_screen
+
+    return ingest_screen(tenant_id=tenant_id, project_id=project_id, screen=screen,
+                         run_id=run_id)
+
+
+def start_a11y_audit(tenant_id, project_id, base_url="", routes=None) -> dict:
+    """Open a baseline accessibility audit and return the manifest to visit (QA-17).
+
+    Called by the **companion**, for the same reason `ingest_a11y_candidates` is: the app under
+    audit runs on a machine the platform cannot reach, so the visiting happens there. The
+    platform decides *what* to visit (the project's registered routes) and reconciles what comes
+    back; it never opens a page itself.
+
+    `routes` overrides the registry for a one-off pass. Omitted — the normal case — the
+    project's enabled routes are used, and an empty registry is refused rather than producing an
+    audit of nothing that would read as an application with nothing wrong.
+    """
+    from apps.a11y.baseline import audit_manifest, start_baseline_audit
+
+    audit = start_baseline_audit(tenant_id=tenant_id, project_id=project_id,
+                                 base_url=base_url, routes=routes)
+    return {"audit_id": str(audit.id), "status": audit.status,
+            "manifest": audit_manifest(audit)}
+
+
+def ingest_a11y_audit_screen(tenant_id, audit_id, screen) -> dict:
+    """Store one screen captured for a baseline audit (QA-17). One screen per call.
+
+    The audit's own bucket, not a run's — see `apps.a11y.models.A11yBaselineAudit`. Companion
+    only, and deliberately absent from the engine tool grant for the same reason its sibling is:
+    an agent able to write a capture could describe a page instead of one having been visited.
+    """
+    from apps.a11y.baseline import ingest_audit_capture
+    import json as _json
+
+    return ingest_audit_capture(tenant_id=tenant_id, audit_id=audit_id,
+                                text=_json.dumps(screen))
+
+
+def get_a11y_audit(tenant_id, audit_id) -> dict:
+    """The manifest for an audit this machine was handed (task 8a).
+
+    The claim already carries one, but a companion that reconnects mid-audit — or retries a
+    pass — must be able to ask again rather than start a second audit to get a manifest. The
+    frozen route list is the audit's own, so asking twice can never widen or narrow what it was
+    asked to visit.
+    """
+    from apps.a11y.baseline import audit_snapshot
+
+    return audit_snapshot(tenant_id=tenant_id, audit_id=audit_id)
+
+
+def finish_a11y_audit(tenant_id, audit_id, reason: str = "") -> dict:
+    """Close a baseline audit: account for every route asked for, then ask the AI checks (QA-17).
+
+    The reconciliation is the part that matters. A route that never reported is recorded as
+    unreachable with that as its reason, so an audit that covered 38 of 50 screens says so
+    instead of reading as a complete pass over an application with fewer problems than it has.
+
+    `reason` is the auditing machine's own account of why nothing came back — no browser
+    installed in the project folder, most often. It replaces the generic explanation, which
+    blames the application and would send someone to check a server nothing ever contacted.
+    Ignored when anything was captured: a stated reason cannot overrule a real result.
+    """
+    from apps.a11y.baseline import finish_baseline_audit
+
+    return finish_baseline_audit(tenant_id=tenant_id, audit_id=audit_id, reason=reason)
+
+
+def get_a11y_journey(tenant_id, run_id) -> dict:
+    """The journey this run must operate with a keyboard (09d_a11y_journey, QA-20).
+
+    Your contract, read once at the start. `steps` are frozen — the numbering here is what you
+    report against, NOT the numbering printed in the test case body, because a body that jumps
+    1, 2, 4 would otherwise leave a step nobody can file against. `total_steps` is the count to
+    check yourself against before you finish.
+
+    `checks` names the eight questions and the WCAG criterion each one owns. A verdict may name
+    only the criteria its own check owns; anything else is rejected.
+    """
+    from apps.a11y.journey import journey_for_run
+
+    return journey_for_run(tenant_id, run_id)
+
+
+def record_a11y_journey_step(tenant_id, run_id, step, outcome, reason="") -> dict:
+    """Record what became of ONE step: `walked` or `blocked` (QA-20).
+
+    Call this for **every** step, including the ones that went fine — the platform cannot tell
+    "I walked it and it was clean" from "I never got there" unless you say which.
+
+    `blocked` means you reached this step and could not go on; `reason` is what stopped you, in
+    your own words ("the login form rejected the seeded account"). Everything after a blocked
+    step is untested and will be recorded as such — that is correct and expected, and far better
+    than a guess. There is no `not_reached` here: the platform writes that itself for steps you
+    never mention, because a run that stopped early cannot report that it stopped.
+    """
+    from apps.a11y.journey import record_step
+
+    return record_step(tenant_id=tenant_id, run_id=run_id, number=step,
+                       outcome=outcome, reason=reason)
+
+
+def record_a11y_journey_finding(tenant_id, run_id, step, checker, verdict, confidence, evidence,
+                                criteria=None, suggested_fix="", route="", selector="",
+                                measurement=None) -> dict:
+    """Record ONE check's answer about ONE step of the journey (QA-20).
+
+    One call per (step, check) you can answer. `checker` is one of the eight from
+    `get_a11y_journey().checks`; leave `criteria` unset and the check's own criterion is used.
+
+    A confident **pass** is recorded as a pass and stored as no finding — its absence next run is
+    how a fixed problem is recognised. A **fail** needs `evidence` a developer can act on. If you
+    could not tell, say `uncertain`: it routes to a person and is a first-class answer here, not
+    a failure to answer. Never report a verdict for a step you did not reach — record the step as
+    `blocked` instead.
+
+    `selector` is optional: some of these checks are about a screen rather than one element
+    ("focus order on this page"), and inventing an element for them would file the finding
+    against something that is not what is wrong.
+
+    **`measurement` — two of these checks have a half that can be read rather than judged.**
+    Run the probe named in your agent body and pass back exactly what it returned:
+
+      * `focus_visible` → `{"outline_style", "outline_width", "box_shadow"}`, read with the
+        element focused. Values come from `getComputedStyle`, verbatim.
+      * `status` → `{"live_region_count"}`, the number of live regions on the screen.
+
+    Report the raw values and nothing else — do not decide what they mean and do not adjust your
+    verdict to match them. The platform applies the rule, and where the reading proves a failure
+    that ruling stands over your verdict; where it proves nothing, your verdict is untouched.
+    Omit `measurement` entirely if you could not run the probe.
+    """
+    from apps.a11y.journey import record_journey_finding
+
+    return record_journey_finding(
+        tenant_id=tenant_id, run_id=run_id, step=step, checker=checker, criteria=criteria,
+        verdict=verdict, confidence=confidence, evidence=evidence,
+        suggested_fix=suggested_fix, route=route, selector=selector, measurement=measurement,
+    )
+
+
+def finish_a11y_journey(tenant_id, run_id) -> dict:
+    """Close the journey pass: account for every step, then report (QA-20).
+
+    The reconciliation is the part that matters, exactly as it is for a baseline audit. Every
+    frozen step you never reported on is recorded as *not reached* — so a journey that walked
+    two of six steps says so, instead of reading as a keyboard-clean journey.
+    """
+    from apps.a11y.journey import finish_journey
+
+    return finish_journey(tenant_id=tenant_id, run_id=run_id)
 
 
 def log_event(tenant_id, actor, action, target_type, target_id, payload=None) -> dict:

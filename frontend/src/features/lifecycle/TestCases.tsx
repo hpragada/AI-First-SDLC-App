@@ -27,10 +27,33 @@ const TEST_AUTOMATION_KEY = "09b_test_automation";
 export type TestCasesView = "populated" | "empty" | "add-form";
 
 const SAMPLE: TestCase[] = [
-  { id: "tc1", key: "WI-014", title: "Checkout with expired card", tc_id: "TC-014", priority: "High", state: "proposed", automation_status: "not_automated" },
-  { id: "tc2", key: "WI-015", title: "Checkout with valid card", tc_id: "TC-015", priority: "High", state: "proposed", automation_status: "generating" },
-  { id: "tc3", key: "WI-016", title: "Empty cart checkout blocked", tc_id: "TC-016", priority: "Medium", state: "proposed", automation_status: "ready" },
+  { id: "tc1", key: "WI-014", title: "Checkout with expired card", tc_id: "TC-014", priority: "High", type: "functional", state: "proposed", automation_status: "not_automated" },
+  { id: "tc2", key: "WI-015", title: "Checkout with valid card", tc_id: "TC-015", priority: "High", type: "e2e", state: "proposed", automation_status: "generating" },
+  { id: "tc3", key: "WI-016", title: "Checkout is operable by keyboard", tc_id: "TC-016", priority: "High", type: "accessibility", state: "proposed", automation_status: "ready" },
 ];
+
+// The types agent 09's template offers, as filters. `all` first, then the kinds a QA Lead
+// actually narrows by; anything else a case declares still shows in its own row and under
+// "All", so an unexpected value is visible rather than filtered into nothing.
+const TYPE_FILTERS = ["all", "accessibility", "functional", "e2e", "integration"] as const;
+type TypeFilter = (typeof TYPE_FILTERS)[number];
+
+const TYPE_LABEL: Record<string, string> = {
+  all: "All types",
+  accessibility: "Accessibility",
+  functional: "Functional",
+  e2e: "E2E",
+  integration: "Integration",
+  performance: "Performance",
+  security: "Security",
+};
+
+// A case's declared type, presentable. Unknown values are shown as written rather than dropped:
+// the platform never invents one, and hiding a value it did read would be the same lie.
+function typeLabel(value: string): string {
+  if (!value) return "";
+  return TYPE_LABEL[value] ?? value.charAt(0).toUpperCase() + value.slice(1);
+}
 
 const STATUS_BADGE: Record<AutomationStatus, { variant: "neutral" | "running" | "done"; label: string }> = {
   not_automated: { variant: "neutral", label: "Not automated" },
@@ -124,9 +147,13 @@ export function TestCases({ forceView }: { forceView?: TestCasesView }) {
   const projectId = selectedProject?.project_id;
   const query = useTestCases(forceView ? undefined : storyId);
   const [showAdd, setShowAdd] = useState(false);
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
 
   const forced = Boolean(forceView);
-  const list: TestCase[] = forced ? (forceView === "empty" ? [] : SAMPLE) : query.data ?? [];
+  const all: TestCase[] = forced ? (forceView === "empty" ? [] : SAMPLE) : query.data ?? [];
+  const list = typeFilter === "all"
+    ? all
+    : all.filter((t) => (t.type || "").toLowerCase() === typeFilter);
   const formOpen = forceView === "add-form" || (!forced && showAdd);
   const automated = list.filter((t) => t.automation_status === "ready").length;
 
@@ -163,10 +190,22 @@ export function TestCases({ forceView }: { forceView?: TestCasesView }) {
       <Breadcrumb items={[{ label: "Work items", href: "/work-items" }, { label: "Story", href: `/work-items/${storyId ?? ""}` }, "Test cases"]} />
       {Head}
 
-      {list.length > 0 && (
+      {all.length > 0 && (
         <div className="u-row" style={{ marginBottom: "var(--space-3)" }}>
           <span className="t-body">
             <strong>{automated}</strong> of {list.length} automated
+          </span>
+          <span className="u-row-tight">
+            {TYPE_FILTERS.map((f) => (
+              <button
+                key={f}
+                className="chip chip--filter"
+                aria-pressed={typeFilter === f}
+                onClick={() => setTypeFilter(f)}
+              >
+                {TYPE_LABEL[f]}
+              </button>
+            ))}
           </span>
         </div>
       )}
@@ -177,7 +216,19 @@ export function TestCases({ forceView }: { forceView?: TestCasesView }) {
         </div>
       )}
 
-      {list.length === 0 && !formOpen ? (
+      {list.length === 0 && !formOpen && all.length > 0 ? (
+        <Panel>
+          <EmptyState
+            title={`No ${TYPE_LABEL[typeFilter].toLowerCase()} test cases`}
+            text="This story has test cases, but none of this kind. Clear the filter to see them all."
+            action={
+              <Button variant="secondary" onClick={() => setTypeFilter("all")}>
+                Show all types
+              </Button>
+            }
+          />
+        </Panel>
+      ) : list.length === 0 && !formOpen ? (
         <Panel>
           <EmptyState
             title="No test cases yet"
@@ -192,13 +243,17 @@ export function TestCases({ forceView }: { forceView?: TestCasesView }) {
       ) : list.length > 0 ? (
         <Panel flush>
           <Table
-            headers={["TC-ID", "Title", "Priority", "Automation", ""]}
+            headers={["TC-ID", "Title", "Type", "Priority", "Automation", ""]}
             rows={list.map((tc) => [
               <span className="table__id" key="tc">
                 {tc.tc_id || tc.key}
               </span>,
               <span className="table__primary" key="t">
                 {tc.title}
+              </span>,
+              // Blank when the case never declared one — an em dash, never a guessed type.
+              <span key="ty">
+                {tc.type ? <span className="chip">{typeLabel(tc.type)}</span> : "—"}
               </span>,
               <span key="p">{tc.priority || "—"}</span>,
               <Badge variant={STATUS_BADGE[tc.automation_status].variant} key="a">

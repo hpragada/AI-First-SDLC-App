@@ -77,6 +77,37 @@ _BUILD_STATE_TOOLS = {
     # Agent-driven onboarding: 00_onboarding writes its gap report through the shared, shape-safe
     # writer (never a raw external_ref).
     "submit_gap_report": tools.submit_gap_report,
+    # Accessibility judging (09c_a11y_judge, QA-02a): read the dispatched elements, read the
+    # exact WCAG wording to judge them against, and report one validated verdict per element.
+    "get_a11y_batch": tools.get_a11y_batch,
+    "get_wcag_grounding": tools.get_wcag_grounding,
+    "record_a11y_finding": tools.record_a11y_finding,
+    # QA-11b: the judge's eyes — the captured crop of each element it must judge.
+    "get_a11y_screenshots": tools.get_a11y_screenshots,
+    # QA-11b: the COMPANION posts what the suite captured from the live application. Reachable
+    # on this route because that is the channel the companion already authenticates on, but
+    # deliberately NOT in the companion's engine tool grant (`runner.BUILD_STATE_TOOLS`) — an
+    # agent able to write candidate bundles could describe a page instead of one having been
+    # captured, and the whole point of a capture is that it is machine truth.
+    "ingest_a11y_candidates": tools.ingest_a11y_candidates,
+    # QA-17: the same channel for a baseline audit of an app the platform never built. The
+    # companion opens the audit, visits the registered routes, posts each screen and closes it;
+    # the platform decides what to visit and accounts for what came back. Companion-only for
+    # the reason above — a capture is machine truth or it is nothing.
+    "start_a11y_audit": tools.start_a11y_audit,
+    # Read back the manifest for an audit the companion was handed, so a machine that
+    # reconnects mid-audit never opens a second one to find out what to visit (task 8a).
+    "get_a11y_audit": tools.get_a11y_audit,
+    "ingest_a11y_audit_screen": tools.ingest_a11y_audit_screen,
+    "finish_a11y_audit": tools.finish_a11y_audit,
+    # Accessibility journeys (09d_a11y_journey, QA-20): read the frozen steps, report what
+    # became of each one, and record up to eight verdicts per step. Unlike the capture tools
+    # above these ARE an agent's grant — a journey result is a judgement about what happened
+    # while operating the app, so it is the agent's to make, exactly like 09c's verdicts.
+    "get_a11y_journey": tools.get_a11y_journey,
+    "record_a11y_journey_step": tools.record_a11y_journey_step,
+    "record_a11y_journey_finding": tools.record_a11y_journey_finding,
+    "finish_a11y_journey": tools.finish_a11y_journey,
 }
 
 # The build agent may move a WorkItem forward through working states (e.g. -> in_progress at
@@ -111,6 +142,9 @@ def _renew_claims_for(runner) -> int:
     from django.db import transaction
     from django.utils import timezone
 
+    from apps.a11y.baseline import ABANDONABLE_STATUSES
+    from apps.a11y.models import A11yBaselineAudit
+
     now_dt = timezone.now()
     now = now_dt.isoformat()
     # Bugs S.No 134: a claim first held before this cutoff has been renewed for too long without
@@ -140,6 +174,31 @@ def _renew_claims_for(runner) -> int:
             inputs["dispatch"] = dispatch
             run.inputs = inputs
             run.save(update_fields=["inputs", "updated_at"])
+            renewed += 1
+
+        # The same lease, for the accessibility audits this companion is holding. Only the ones
+        # it is actively CAPTURING: a `claimed` audit has captured nothing yet and its stale
+        # claim is already handed to the next machine that asks, which beats renewing it.
+        #
+        # Until this,
+        # NOTHING renewed an audit's claim: `claimed_at` was stamped once at claim and never
+        # touched, so an audit's liveness was not actually being tracked at all. That was
+        # survivable only because a claim goes stale unnoticed; it stops being survivable the
+        # moment something acts on staleness, which `abandon_stale_audits` now does.
+        #
+        # Capped off `created_at` rather than a `first_claimed_at` column, which is what runs
+        # use: an audit is claimed within a second of being created, so its own age is the same
+        # measurement — and reaching for a column would mean a migration for a number already
+        # in the row.
+        audits = (
+            A11yBaselineAudit.objects.select_for_update(skip_locked=True)
+            .filter(tenant_id=runner.tenant_id, enrollment_id=runner.id,
+                    status__in=ABANDONABLE_STATUSES,
+                    created_at__gte=now_dt - MAX_CLAIM_AGE)
+        )
+        for audit in audits:
+            audit.claimed_at = now_dt
+            audit.save(update_fields=["claimed_at", "updated_at"])
             renewed += 1
     return renewed
 
@@ -330,6 +389,46 @@ class RunnerClarificationPollView(APIView):
         return Response(result)
 
 
+def _phase_extras(run, payload: dict):
+    """The dispatched task, plus what its phase needs and the generic dispatch could not carry.
+
+    Returns the payload, or **`None` meaning "not ready — do not hand this out yet"**.
+
+    **Why this exists rather than a wider dispatch payload.** `dispatch_phase_core` builds one
+    payload shape for every phase in the platform, from `AgentRunInput`. Growing either of them
+    an accessibility-shaped field would put one feature's vocabulary into the seam every phase
+    crosses — the same objection `aipass._remember_source_run` records for the judging pass, and
+    it applies with more force to a Temporal input, where a signature change is a versioning
+    problem as well as a design one. So the phase-specific fact is read here, once, for the one
+    phase that needs it, and every other phase's payload is byte-identical to before.
+
+    **The keyboard journey (G6a) needs the address of the application it is walking**, and it
+    needs it before the agent starts, not after: the companion passes it to the browser as the
+    only origin that may be opened, which happens while the MCP servers are being wired.
+
+    **`None` closes a real race.** `start_journey_check` triggers the run and writes the journey
+    row immediately afterwards — it cannot write it first, because the row is keyed by the run id
+    the trigger returns. The window is tiny (the run only becomes claimable once a Temporal
+    activity has composed the manifest and dispatched it, which is far slower than one INSERT),
+    but "tiny" is not "closed": a companion that claimed inside it would start an agent whose
+    first tool call fails with "no accessibility journey is attached to this run". Deferring for
+    one poll turns a rare, confusing failure into about a second of waiting.
+    """
+    from apps.a11y.journey import JOURNEY_PHASE
+
+    if payload.get("phase") != JOURNEY_PHASE:
+        return payload
+
+    from apps.a11y.models import A11yJourneyRun
+
+    row = (A11yJourneyRun.objects
+           .filter(tenant_id=run.tenant_id, run_id=run.id)
+           .only("base_url").first())
+    if row is None:
+        return None
+    return {**payload, "app_base_url": row.base_url}
+
+
 class RunnerWorkClaimView(APIView):
     """GET /api/runner/work/ — the companion daemon claims the next phase/build task dispatched
     to its enrollment. Atomically flips the run's dispatch to `claimed` (skip-locked so two
@@ -405,6 +504,17 @@ class RunnerWorkClaimView(APIView):
                 return Response(status=status.HTTP_204_NO_CONTENT)
             inputs = dict(run.inputs or {})
             dispatch = dict(inputs.get("dispatch") or {})
+            kind = dispatch.get("kind", "plan")
+            key = {"plan": "phase_task", "review": "review_task",
+                   "build": "build_task"}.get(kind, "phase_task")
+            payload = _phase_extras(run, inputs.get(key) or {})
+            # Resolved BEFORE the claim is written, so a task that is not ready to run is not
+            # marked claimed. See `_phase_extras`: today the only "not ready" case is a journey
+            # dispatched microseconds before its row was written, and one more poll — about a
+            # second — is all it needs. Nothing has been saved yet, so the run simply stays
+            # pending and the next poll picks it up.
+            if payload is None:
+                return Response(status=status.HTTP_204_NO_CONTENT)
             # Bind a BROADCAST (null-enrollment) dispatch to the claiming runner so it is now
             # OWNED — subsequent polls, heartbeat claim-renewal and lease-reclaim all key off
             # enrollment_id, and only this companion should carry it from here.
@@ -423,10 +533,6 @@ class RunnerWorkClaimView(APIView):
             if reclaimed:
                 tools.log_event(tid, "companion", "phase.reclaimed", "run", str(run.id),
                                 {"claim_count": dispatch["claim_count"]})
-            kind = dispatch.get("kind", "plan")
-            key = {"plan": "phase_task", "review": "review_task",
-                   "build": "build_task"}.get(kind, "phase_task")
-            payload = inputs.get(key) or {}
             return Response({"kind": kind, "run_id": str(run.id), "payload": payload})
 
 
@@ -442,12 +548,26 @@ class RunnerHeartbeatView(APIView):
     permission_classes: list = []
 
     def post(self, request):
+        from django.utils import timezone
+
+        from apps.a11y.baseline import abandon_stale_audits
+
         runner = RunnerStateView._resolve_runner(request)
         if runner is None:
             return Response({"detail": "invalid or missing Runner token"},
                             status=status.HTTP_401_UNAUTHORIZED)
         renewed = _renew_claims_for(runner)
-        return Response({"ok": True, "claims_renewed": renewed,
+        # Renew first, THEN sweep — otherwise a companion could close the very audit it is
+        # holding. An accessibility audit is captured by a machine this server cannot see, so
+        # the machine going away (closed, restarted, laptop shut) left the audit in `capturing`
+        # for ever: the claim lease only ever offered `pending` and stale `claimed` back, so
+        # nothing recovered it, nothing failed it, and the screen went on saying "Visiting
+        # pages" about a machine that no longer existed. Swept here because a rebooted companion
+        # says hello within seconds of coming back, and because a heartbeat is already a write.
+        closed = abandon_stale_audits(
+            tenant_id=str(runner.tenant_id), project_id=str(runner.project_id),
+            stale_before=timezone.now() - CLAIM_LEASE)
+        return Response({"ok": True, "claims_renewed": renewed, "audits_closed": len(closed),
                          "last_seen": runner.last_seen.isoformat() if runner.last_seen else None})
 
 
@@ -470,6 +590,15 @@ class RunnerPhaseFetchView(APIView):
         payload = (run.inputs or {}).get("phase_task")
         if not payload:
             return Response({"detail": "no phase task dispatched"},
+                            status=status.HTTP_409_CONFLICT)
+        with tenant_context(str(runner.tenant_id)):
+            payload = _phase_extras(run, payload)
+        # The re-fetch path, so the same phase extras and the same not-ready answer as the claim
+        # (see `_phase_extras`). 409 rather than a payload missing its address: this endpoint is
+        # asked for one named run, so "come back in a moment" is the honest answer and the
+        # companion's existing retry already handles it.
+        if payload is None:
+            return Response({"detail": "the phase task is not ready yet; retry"},
                             status=status.HTTP_409_CONFLICT)
         return Response(payload)
 
@@ -601,6 +730,94 @@ class RunnerCodeIntelClaimView(APIView):
                 "job_id": str(job.id),
                 "repo": job.repo.name,
                 "base": job.repo.default_base or "main",
+            })
+
+
+class RunnerA11yAuditClaimView(APIView):
+    """GET /api/runner/a11y-audits/ — the companion claims the next audit waiting for a machine
+    (task 8a). Separate from the Run claim path (/work/) and from code intelligence, for the same
+    reason each of those is separate: a baseline audit needs no engine and no work item, it needs
+    a browser and an address only this machine can reach.
+
+    Skip-locked so two companions never take the same audit. A companion that RESTARTS picks
+    its own audit back up once the lease has passed — the common failure — but another machine
+    never takes it over: an audit belongs to the machine that can reach the running application,
+    and a colleague's machine may not have it up at all, so handing it across would produce a
+    report saying every page was unreachable. A stalled audit is visible with the time it was
+    claimed, and running again opens a fresh one.
+
+    Returns `{audit_id, project_id, repo, repo_reason, manifest}` or 204 when idle.
+
+    `repo` is the repository the audit must run FROM — the browser and the scanner are resolved
+    out of that project's own `node_modules`, so without a local clone of it there is nowhere to
+    run. It is the same repository the address came from, deliberately: two rules for "which
+    project is this" could point at different ones and audit an application from inside another's
+    folder.
+    """
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def get(self, request):
+        from django.db import transaction
+        from django.db.models import Q
+        from django.utils import timezone
+
+        from apps.a11y.baseline import abandon_stale_audits, audit_manifest
+        from apps.a11y.models import A11yBaselineAudit
+        from apps.projects.preview_config import resolve_audit_repo
+
+        runner = RunnerStateView._resolve_runner(request)
+        if runner is None:
+            return Response({"detail": "invalid or missing Runner token"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        tid = str(runner.tenant_id)
+        now = timezone.now()
+        stale_before = now - CLAIM_LEASE
+        # Before looking for work, close anything a dead machine left mid-capture. Here as well
+        # as on the heartbeat because a companion started fresh (rather than resumed) asks for
+        # work before it has heartbeated, and because an audit still showing as running is the
+        # first thing its owner sees when they come back to the screen.
+        abandon_stale_audits(tenant_id=tid, project_id=str(runner.project_id),
+                             stale_before=stale_before)
+        with tenant_context(tid), transaction.atomic():
+            owned = Q(enrollment_id=runner.id)
+            broadcast = Q(project_id=runner.project_id) & Q(enrollment__isnull=True)
+            candidates = (
+                A11yBaselineAudit.objects.select_for_update(skip_locked=True)
+                .filter(tenant_id=tid)
+                .filter(owned | broadcast)
+                .filter(Q(status=A11yBaselineAudit.Status.PENDING)
+                        | Q(status=A11yBaselineAudit.Status.CLAIMED))
+                .order_by("created_at")
+            )
+            audit = None
+            for cand in candidates:
+                if cand.status == A11yBaselineAudit.Status.PENDING:
+                    audit = cand
+                    break
+                if (cand.status == A11yBaselineAudit.Status.CLAIMED
+                        and cand.claimed_at is not None and cand.claimed_at < stale_before):
+                    audit = cand   # a dead companion's stale claim -> re-claim
+                    break
+            if audit is None:
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            if audit.enrollment_id is None:
+                audit.enrollment_id = runner.id        # bind broadcast -> owned on claim
+            audit.status = A11yBaselineAudit.Status.CLAIMED
+            audit.claimed_at = now
+            audit.save(update_fields=["enrollment", "status", "claimed_at", "updated_at"])
+            repo = resolve_audit_repo(tenant_id=tid, project_id=str(audit.project_id))
+            return Response({
+                "audit_id": str(audit.id),
+                "project_id": str(audit.project_id),
+                # Handed over WITH its problem rather than withheld. The companion closes the
+                # audit with this as the stated reason, so the failure is on the record and the
+                # screen says what to set — an audit silently never claimed would just sit
+                # there looking like a machine that had not got to it yet.
+                "repo": repo.name,
+                "repo_reason": repo.reason,
+                "manifest": audit_manifest(audit),
             })
 
 

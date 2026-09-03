@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
+import { useA11yReviewQueue } from "../features/a11y/hooks";
 import { useRunners } from "../features/identity/hooks";
 import { useDashboard } from "../features/observability/hooks";
 import { cx, StatusDot } from "./ui";
@@ -13,6 +14,7 @@ type NavId =
   | "gates"
   | "clarifications"
   | "artifacts"
+  | "a11y"
   | "profile"
   | "onboarding"
   | "integrations"
@@ -34,6 +36,7 @@ const ICON = {
   repos: "M5 3h11l3 3v15H5z M9 7h6M9 11h6M9 15h4",
   "test-reporting": "M9 3h6v2H9z M6 5h12v16H6z M9 12l2 2 4-4",
   admin: "M12 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8z M4 21v-1c0-3.3 3.6-5 8-5s8 1.7 8 5v1",
+  a11y: "M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18z M12 6.1a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8z M7 10.5h10 M12 11v4 M12 15l-2.2 3.5 M12 15l2.2 3.5",
   bell: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9 M13.7 21a2 2 0 0 1-3.4 0",
 };
 
@@ -50,6 +53,15 @@ const NAV: Array<{
       { id: "gates", label: "Gates", icon: "gate", href: "/gates" },
       { id: "clarifications", label: "Clarifications", icon: "clar", href: "/clarifications" },
       { id: "artifacts", label: "Artifacts & Traceability", icon: "artifacts", href: "/artifacts" },
+      // Accessibility (QA-23). Its own item rather than buried under Gates or Artifacts: it is a
+      // named job a named role does repeatedly, and the count is how the reviewer learns there is
+      // work without going to look. ALWAYS present, never revealed by a run — "no menu" and
+      // "nothing was ever checked" must not look the same (D-A11Y-94).
+      // `/a11y/pages`, NOT `/a11y`. The tab strip puts Pages & audit first because that is
+      // where the work starts — and the sidebar used to disagree with it, landing every first
+      // visit on the review queue, the one tab with nothing on it until an audit has run. The
+      // queue's count still rides on this item, so a reviewer loses nothing.
+      { id: "a11y", label: "Accessibility", icon: "a11y", href: "/a11y/pages" },
     ],
   },
   {
@@ -97,6 +109,7 @@ function activeNav(pathname: string): NavId {
   if (pathname.startsWith("/gates")) return "gates";
   if (pathname.startsWith("/clarifications")) return "clarifications";
   if (pathname.startsWith("/artifacts") || pathname.startsWith("/traceability")) return "artifacts";
+  if (pathname.startsWith("/a11y")) return "a11y";
   if (pathname.startsWith("/profile")) return "profile";
   if (pathname.startsWith("/onboarding")) return "onboarding";
   if (pathname.startsWith("/integrations")) return "integrations";
@@ -204,7 +217,22 @@ export function AppShell() {
   const dashboard = useDashboard(selectedProject?.project_id);
   const gateCount = dashboard.data?.needs_me.gates.length ?? 0;
   const clarCount = dashboard.data?.needs_me.clarifications.length ?? 0;
-  const navCounts: Partial<Record<NavId, number>> = { gates: gateCount, clarifications: clarCount };
+  // Accessibility findings waiting on THIS person (QA-23, D-A11Y-94). The item is always in the
+  // sidebar; the count is how a reviewer learns there is work without going to look, and it was
+  // missing — the item shipped as a plain link while the mockup and the decision both said
+  // otherwise.
+  //
+  // Gated on `can_review`, and that is the point of the number rather than a detail: the badge
+  // means "waiting on you". Someone without the reviewer role can still open the queue and read
+  // every finding — they simply have no work there, so no badge. A count on their sidebar would
+  // be an alert for something they cannot act on.
+  const a11yQueue = useA11yReviewQueue(selectedProject?.project_id);
+  const a11yCount = a11yQueue.data?.can_review ? a11yQueue.data.queue.length : 0;
+  const navCounts: Partial<Record<NavId, number>> = {
+    gates: gateCount,
+    clarifications: clarCount,
+    a11y: a11yCount,
+  };
   const bellCount = gateCount + clarCount;
 
   // Companion pill reflects the real runner status (Bugs.xlsx row 30) — not a hardcoded "Ready".

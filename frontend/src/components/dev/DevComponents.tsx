@@ -22,6 +22,7 @@ import {
   CriteriaItem,
   CriteriaList,
   DiagramFrame,
+  Disclosure,
   DocPreview,
   Drawer,
   Dropzone,
@@ -47,6 +48,7 @@ import {
   Tile,
   Todo,
   TokenReveal,
+  Tooltip,
   Transcript,
   Turn,
   VersionRow,
@@ -181,6 +183,34 @@ export function DevComponents() {
               <Avatar>SC</Avatar><Avatar>ML</Avatar><Avatar>PN</Avatar>
             </AvatarGroup>
           </div>
+        </Section>
+
+        <Section title="Tooltip and disclosure">
+          <p className="t-sm u-body">
+            Where the files go
+            <Tooltip>
+              Connecting lets the platform read the diagrams and screenshots inside your
+              documents and analyse your code — all on your machine.
+            </Tooltip>
+          </p>
+          <p className="t-sm u-body">
+            Tab to the marker above: this one opens on keyboard focus and on tap, not only on
+            hover, and Escape closes it. Reach for <code>Disclosure</code> instead whenever the
+            hidden part runs past a sentence or two, or contains anything clickable.
+          </p>
+          <p className="t-sm u-body">
+            A custom trigger, for a phrase inside a sentence:{" "}
+            <Tooltip trigger={<span>the companion</span>}>
+              The small program that runs on your own machine and does the work that must not
+              leave it.
+            </Tooltip>
+          </p>
+          <Disclosure summary="What a disclosure looks like next to it">
+            <p className="t-sm u-muted">
+              Longer, and safe to put a <a href="#top">link</a> in — a tooltip closes as soon as
+              focus leaves its trigger, so a link inside one can never be reached.
+            </p>
+          </Disclosure>
         </Section>
 
         <section style={{ marginBottom: "var(--space-6)" }}>

@@ -2,6 +2,17 @@
 // `X-Tenant-ID` header (the pre-auth scoping mechanism); tenant-create is the one
 // call that doesn't. No business logic lives here — it mirrors the server surface.
 import type {
+  A11yFindingDetail,
+  A11yReviewDecision,
+  A11yReviewFinding,
+  A11yConformance,
+  A11yAudit,
+  A11yJourneyList,
+  A11yJourneyQueued,
+  A11yPolicy,
+  A11yRegistrationPreview,
+  A11yReviewQueue,
+  A11yRoutesResponse,
   AcceptInviteRequest,
   AdminUser,
   AdoptResult,
@@ -405,7 +416,7 @@ export const api = {
   // Clarifications (interactive Q&A — req #2): list pending and answer them in the web app.
   listClarifications: (
     tenantId: string,
-    q: { status?: string; work_item?: string; run?: string } = {},
+    q: { status?: string; work_item?: string; run?: string; project?: string } = {},
   ) => req<Clarification[]>("GET", "/clarifications/", { tenantId, query: q }),
   // History: the same endpoint, but paged. Passing `page` is what switches the response to an
   // envelope — callers that omit it (every existing one) still get a bare array.
@@ -462,6 +473,110 @@ export const api = {
     fetchBlobUrl(`/source-documents/${sourceDocumentId}/original/`),
   getSourcePageUrl: (sourceDocumentId: string, name: string) =>
     fetchBlobUrl(`/source-documents/${sourceDocumentId}/page/?name=${encodeURIComponent(name)}`),
+
+  // ── Accessibility review console (QA-23, S-36) ──────────────────────────
+  // Pages & audit (S-38, task 8a). These four endpoints have existed since QA-17/18 and had no
+  // client at all — the only way to reach them was a hand-written HTTP request, which is what
+  // this task exists to replace.
+  a11yRoutes: (tenantId: string, projectId: string) =>
+    req<A11yRoutesResponse>("GET", `/projects/${projectId}/a11y-routes/`, { tenantId }),
+  // `routes_text` is the box's contents, parsed server-side so one refusal is worded once and
+  // reads the same however the list arrived.
+  a11yRoutesPreview: (tenantId: string, projectId: string, routesText: string) =>
+    req<{ preview: A11yRegistrationPreview }>(
+      "PUT", `/projects/${projectId}/a11y-routes/?preview=1`,
+      { tenantId, body: { routes_text: routesText } }),
+  a11yRoutesRegister: (
+    tenantId: string,
+    projectId: string,
+    body: { routes_text?: string; routes?: unknown[]; replace?: boolean },
+  ) => req<A11yRoutesResponse>("PUT", `/projects/${projectId}/a11y-routes/`, { tenantId, body }),
+  // One page at a time (task 8b). Registering works by path and cannot tell a corrected path
+  // from a new page; editing a named row can.
+  a11yRouteUpdate: (
+    tenantId: string,
+    projectId: string,
+    routeId: string,
+    body: Record<string, unknown>,
+  ) => req<{ changed: Record<string, { from: unknown; to: unknown }> }>(
+    "PATCH", `/projects/${projectId}/a11y-routes/${routeId}/`, { tenantId, body }),
+  a11yRouteDelete: (tenantId: string, projectId: string, routeId: string) =>
+    req<{ removed: boolean; excluded: boolean; path: string; reason: string }>(
+      "DELETE", `/projects/${projectId}/a11y-routes/${routeId}/`, { tenantId }),
+  a11yAudits: (tenantId: string, projectId: string) =>
+    req<{ audits: A11yAudit[] }>("GET", `/projects/${projectId}/a11y-audits/`, { tenantId }),
+  a11yAuditStart: (
+    tenantId: string,
+    projectId: string,
+    body: { base_url?: string; routes?: string[] },
+  ) => req<{ audit_id: string; status: string }>(
+    "POST", `/projects/${projectId}/a11y-audits/`, { tenantId, body }),
+  // Ask the machine again about the elements of one audit nothing ever looked at. NOT a second
+  // audit: no page is visited, because everything the judge needs was stored at capture time.
+  a11yAuditRejudge: (tenantId: string, projectId: string, auditId: string) =>
+    req<{ started: boolean; asked: number; dispatched?: number; reason?: string }>(
+      "POST", `/projects/${projectId}/a11y-audits/${auditId}/rejudge/`, { tenantId }),
+  a11yJourneys: (tenantId: string, projectId: string) =>
+    req<A11yJourneyList>("GET", `/projects/${projectId}/a11y-journeys/`, { tenantId }),
+  // `test_refs` omitted starts every walkable journey; the ids come from the list above.
+  a11yJourneyStart: (
+    tenantId: string,
+    projectId: string,
+    body: { base_url: string; test_refs?: string[] },
+  ) =>
+    req<A11yJourneyQueued>("POST", `/projects/${projectId}/a11y-journeys/`, { tenantId, body }),
+  a11yPolicy: (tenantId: string, projectId: string) =>
+    req<A11yPolicy>("GET", `/projects/${projectId}/a11y-policy/`, { tenantId }),
+  a11yBacklog: (tenantId: string, projectId: string) =>
+    req<Record<string, unknown>>("GET", `/projects/${projectId}/a11y-backlog/`, { tenantId }),
+  a11yReviewQueue: (tenantId: string, projectId: string) =>
+    req<A11yReviewQueue>("GET", `/projects/${projectId}/a11y-review/`, { tenantId }),
+  // GET is also what claims the item (and renews the claim), so the lock follows what the
+  // reviewer is doing rather than needing a button nobody remembers to press.
+  a11yReviewItem: (tenantId: string, projectId: string, findingId: string) =>
+    req<A11yReviewFinding>("GET", `/projects/${projectId}/a11y-review/${findingId}/`, {
+      tenantId,
+    }),
+  // Reading one finding (S-39). Deliberately NOT `a11yReviewItem`: that GET claims the item as
+  // a side effect, and a failure nobody is reviewing must not acquire a reviewer's name because
+  // somebody followed a link to it out of a report.
+  a11yFinding: (tenantId: string, projectId: string, findingId: string) =>
+    req<A11yFindingDetail>("GET", `/projects/${projectId}/a11y-finding/${findingId}/`, {
+      tenantId,
+    }),
+  a11yReviewDecide: (
+    tenantId: string,
+    projectId: string,
+    findingId: string,
+    body: { decision: "confirm" | "reject"; note?: string },
+  ) =>
+    req<A11yReviewDecision>("POST", `/projects/${projectId}/a11y-review/${findingId}/`, {
+      tenantId,
+      body,
+    }),
+  // The capture itself. A raw cross-origin <img src> would not carry the session, so this
+  // fetches with credentials and hands back a blob URL — revoke it when the item changes.
+  getA11yCaptureUrl: (projectId: string, findingId: string, kind: "page" | "element") =>
+    fetchBlobUrl(`/projects/${projectId}/a11y-review/${findingId}/screenshot/?kind=${kind}`),
+  a11yConformance: (tenantId: string, projectId: string) =>
+    req<A11yConformance>("GET", `/projects/${projectId}/a11y-conformance/`, { tenantId }),
+  // Any edit clears the signature — a signature on wording nobody signed is worse than none.
+  a11yConformanceSave: (
+    tenantId: string,
+    projectId: string,
+    body: { scope?: string; body?: string; verdicts?: Record<string, { level: string; note?: string }> },
+  ) => req<A11yConformance>("PUT", `/projects/${projectId}/a11y-conformance/`, { tenantId, body }),
+  a11yConformanceSign: (
+    tenantId: string,
+    projectId: string,
+    body: { name: string; acknowledged: boolean },
+  ) => req<A11yConformance>("POST", `/projects/${projectId}/a11y-conformance/sign/`, {
+    tenantId,
+    body,
+  }),
+  a11yConformanceExport: (tenantId: string, projectId: string) =>
+    req<{ artifact_id: string | null; publish_via: string; signed_by: string; signed_at: string | null }>(
+      "POST", `/projects/${projectId}/a11y-conformance/export/`, { tenantId }),
   startCodeIntel: (projectId: string, repoId: string) =>
     // mode "agent" → the 00c agent runs on the companion; "mechanical" → the CodeIntelJob
     // fallback (no companion enrolled for this user).

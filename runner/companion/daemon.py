@@ -28,6 +28,7 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
+from .guardrails import playwright_tools_for
 from .runner import BUILD_STATE_TOOLS, BuildTask, _SpecShim, _WorkItemShim, run_build
 
 # Planning/review expose the platform-state tools (incl. ask_human) over the remote MCP; no
@@ -146,6 +147,45 @@ def codeintel_mcp_servers(*, workspace: str, repo: str, repo_root: str | None = 
             "env": env,
         }
     }
+class NoAddressError(DaemonError):
+    """A phase that needs a browser was dispatched without an address to bound it to (G6a)."""
+
+
+def playwright_servers(*, phase: str, base_url: str) -> dict:
+    """MCP config for a browser on the PLANNING path, scoped to one origin — or `{}`.
+
+    The keyboard journey (09d) is the one planning phase that operates a live application: eight
+    WCAG criteria cannot be answered by reading a page standing still, and the only way to answer
+    them is to tab through the thing. This is where it gets the browser to do that, wired exactly
+    the way `codeintel_mcp_servers` wires the code-intelligence server in below it.
+
+    **`--allowed-origins` is the whole of the bound, so a missing address raises rather than
+    launching.** The build path has the same launch and writes it as `if preview_url:` — which
+    means an unresolved preview URL there quietly starts a browser that may open anything. That
+    is not repeated here. A journey with no address is refused twice over: `start_journey_check`
+    will not dispatch one, and if a payload somehow arrives without it the run fails with a
+    sentence a person can act on instead of silently getting an unbounded browser.
+    """
+    from .runner import _headed_enabled
+
+    if not playwright_tools_for(phase):
+        return {}
+    base_url = str(base_url or "").strip().rstrip("/")
+    if not base_url:
+        raise NoAddressError(
+            f"the {phase} phase needs a browser and was dispatched without an address for the "
+            "application, so there is nothing to scope the browser to and nowhere to go. "
+            "Nothing was run."
+        )
+    # `--headless` unless the operator asked to watch (SDLC_COMPANION_HEADED=1) — the same switch
+    # the build path uses, so a journey can be watched live on an attended local run.
+    args = ["-y", "@playwright/mcp@latest"]
+    if not _headed_enabled():
+        args.append("--headless")
+    args += ["--allowed-origins", base_url]
+    return {"playwright": {"type": "stdio", "command": "npx", "args": args}}
+
+
 def write_mcp_config(servers: dict, *, run_id: str = "") -> str:
     """Write an MCP server config to a temp FILE and return its path, for `mcp_servers`.
 
@@ -262,6 +302,125 @@ class CompanionDaemon:
             return None
         return data
 
+    def claim_a11y_audit(self) -> dict | None:
+        """Claim the next accessibility audit waiting for a machine (task 8a), or None (204).
+
+        Its own endpoint, like code intelligence: an audit needs no engine and no work item —
+        it needs a browser and an address that only this machine can reach. The proven
+        plan/review/build claim path is untouched.
+        """
+        status, data = self._transport(
+            "GET", f"{self._base}/api/runner/a11y-audits/", self._headers(), None)
+        if status == 204 or not data:
+            return None
+        if status >= 500:
+            raise TransientBackendError(f"claim a11y audit -> {status}: {data}")
+        if status >= 400:
+            raise DaemonError(f"claim a11y audit -> {status}: {data}")
+        if not isinstance(data, dict) or "audit_id" not in data:
+            return None
+        return data
+
+    def _run_a11y_audit(self, claimed: dict) -> None:
+        """Visit the claimed audit's pages from the project's own folder, and close it.
+
+        **Every refusal closes the audit with its reason rather than dropping it.** An audit
+        that is claimed and then quietly abandoned looks, from the screen, exactly like one no
+        machine has got to yet — and the person waiting would keep waiting. Whatever goes wrong,
+        the audit ends in a state that says what happened.
+        """
+        # `backend/` on the path BEFORE anything downstream reaches for it. `run_baseline_audit`
+        # imports `apps.a11y.capture.MAX_SCREENS` lazily — one definition of the batch bound
+        # rather than a second copy here — and on this path nothing had put it there. The three
+        # existing callers are the two `__main__` subcommands and the engine driver factory, and
+        # a companion that only ever runs audits reaches none of them: it died on the import with
+        # `No module named 'apps'`. Invisible until now, because `serve` could not claim an audit
+        # at all until the audit it is handed started life as `pending`.
+        ensure_backend_importable()
+
+        from runner.companion.a11yaudit import run_baseline_audit
+        from runner.companion.state_client import RemoteStateClient
+
+        audit_id = claimed["audit_id"]
+        client = RemoteStateClient(api_url=self._base, tenant_id=self._tenant,
+                                   token=self._token)
+
+        # PREFERRED, not required. The audit only ever visits URLs; the folder exists so the
+        # browser and the scanner can be resolved out of the audited project's own
+        # `node_modules` — which is worth having, because the version stamped on every scan is
+        # then the version that application actually ships.
+        #
+        # But it used to be a REFUSAL, and that made a whole class of application unauditable:
+        # a Django, Rails or .NET app has no `node_modules` for anything to be resolved from,
+        # so the only way to audit one was to add npm dev-dependencies to the client's own
+        # repository in order to look at it. Now a missing clone falls through to the
+        # companion's own pinned toolchain (`runner/package.json`) running from a scratch
+        # folder, and the capture records `axe-core X.Y.Z (companion)` so no report ever
+        # implies the client's version when it used ours.
+        workdir, where = "", ""
+        repo = str(claimed.get("repo") or "")
+        if not str(claimed.get("repo_reason") or "").strip() and repo:
+            try:
+                workdir, where = self._resolve_repo_path(repo), f"the {repo} clone"
+            except DaemonError:
+                workdir = ""
+        if not workdir:
+            workdir = self._a11y_scratch(str(claimed.get("project_id") or ""))
+            where = "this companion's own toolchain"
+            print(f"[companion] a11y audit {audit_id}: no local clone of "
+                  f"{repo or 'any repository for this project'}, running from {workdir}",
+                  flush=True)
+
+        # Not pre-checked here: `run_baseline_audit` runs its own preflight and, when no browser
+        # can be resolved from either place, closes the audit carrying that exact reason rather
+        # than the generic "the application did not respond". One authority on that answer.
+        out = run_baseline_audit(client=client, project_id=claimed["project_id"],
+                                 workdir=workdir, audit_id=audit_id)
+        print(f"[companion] a11y audit {audit_id}: {out['posted']} screen(s) posted "
+              f"from {workdir} ({where})", flush=True)
+
+    def _close_failed_a11y_audit(self, claimed: dict, exc: BaseException) -> None:
+        """Close an audit whose run raised, so the screen says what happened to it.
+
+        Without this the audit stays `claimed` until its 15-minute lease ages out, and for those
+        fifteen minutes the screen is indistinguishable from an audit no machine has reached yet
+        — the person waiting has no way to tell "still starting" from "this is never coming".
+
+        **The reason is written for the person reading the screen, not for whoever fixes it.**
+        The exception is already on this machine's log, in full, one line above the call to this.
+        Putting `ModuleNotFoundError("No module named 'apps'")` on an accessibility report tells
+        its reader nothing they can act on and nothing they can understand.
+
+        Best-effort by design: if the platform cannot be reached either, the lease is the
+        backstop and this must not be what takes the companion down.
+        """
+        from runner.companion.state_client import RemoteStateClient
+
+        reason = ("The machine running this audit stopped before it could visit any pages. "
+                  "Nothing here tells you anything about your application. Start a new audit.")
+        try:
+            RemoteStateClient(api_url=self._base, tenant_id=self._tenant, token=self._token).call(
+                "finish_a11y_audit", audit_id=claimed["audit_id"], reason=reason)
+        except Exception as close_exc:  # noqa: BLE001 — the lease is the backstop
+            print(f"[companion] a11y audit {claimed.get('audit_id')} could not be closed "
+                  f"({close_exc!r}); its claim will age out instead. Original: {exc!r}",
+                  file=sys.stderr, flush=True)
+
+    def _a11y_scratch(self, project_id: str) -> str:
+        """A folder to run an audit from when this machine has no clone of the project.
+
+        Under the companion's worktree root when it has one — the operator already chose that
+        location and it is already on a disk they expect us to use — and beside the user's
+        profile otherwise. Per project, because two audits of two applications must not fight
+        over one `test-results/a11y-candidates.json`.
+        """
+        from pathlib import Path as _Path
+
+        root = _Path(self._worktrees_root) if getattr(self, "_worktrees_root", "") else _Path.home() / ".sdlc"
+        path = root / "a11y-audit" / (project_id or "unknown")
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+
     # Transient-outage policy (Bugs S.No 105): a backend/worker restart drops the HTTP
     # connection mid-poll; that surfaces as an OSError (URLError / ConnectionError / timeout),
     # NOT as an HTTP status. Those must be retried with backoff, never treated as fatal —
@@ -326,6 +485,22 @@ class CompanionDaemon:
             manifest=payload.get("manifest", ""), agent_spec=spec,
             allowed_tools=PLAN_ALLOWED_TOOLS, work_item=work_item,
         )
+        # A browser, for the one planning phase that operates a live application (09d, G6a).
+        # Scoped to the address the platform sent with the task and to nothing else; a task that
+        # needs a browser and carries no address is reported failed rather than run, because the
+        # origin list IS the bound (see `playwright_servers`). Every other planning phase gets an
+        # empty dict here and is byte-identical to before.
+        if not review:
+            try:
+                browser = playwright_servers(
+                    phase=phase, base_url=payload.get("app_base_url", ""))
+            except NoAddressError as exc:
+                self._report(report_path, {"status": "failed", "message": str(exc)})
+                return
+            if browser:
+                servers.update(browser)
+                run_kwargs["allowed_tools"] = (
+                    PLAN_ALLOWED_TOOLS + sorted(playwright_tools_for(phase)))
         # Repo-scoped planning (catalog `reads_code`, e.g. 10_security): provision a THROWAWAY
         # git worktree of the target repo so the agent can scan real source (and run scanners).
         # `kind` stays "plan" (this is NOT the build path) — the discriminator is `repo` +
@@ -348,7 +523,10 @@ class CompanionDaemon:
                 from .codeintel_mcp import CODEINTEL_TOOL_NAMES
                 servers.update(codeintel_mcp_servers(
                     workspace=str(scan_worktree), repo=payload["repo"]))
-                run_kwargs["allowed_tools"] = PLAN_ALLOWED_TOOLS + [
+                # Added to whatever this run already has, not set over it: no phase is both
+                # repo-scoped and browser-scoped today, and a future one that was would
+                # otherwise silently lose its browser here.
+                run_kwargs["allowed_tools"] = list(run_kwargs["allowed_tools"]) + [
                     f"mcp__codeintel__{n}" for n in CODEINTEL_TOOL_NAMES]
         # Now that the server set is final, hand it over as a FILE path — never as inline
         # command-line JSON (see `write_mcp_config` for the size ceiling and the token exposure).
@@ -616,6 +794,30 @@ class CompanionDaemon:
                         except DaemonError as exc:
                             print(f"[companion] code-intel job {job.get('job_id')} failed, "
                                   f"continuing: {exc}", file=sys.stderr, flush=True)
+                        continue
+                    # ...then for an accessibility audit (task 8a). Same place, same rules: a
+                    # failed audit must never take the companion down, because every later
+                    # dispatch would then sit unclaimed.
+                    try:
+                        audit = self.claim_a11y_audit()
+                    except (OSError, TransientBackendError):
+                        audit = None
+                    if audit is not None:
+                        try:
+                            self._run_a11y_audit(audit)
+                            processed += 1
+                        # `Exception`, not `DaemonError`. The comment above has always said a
+                        # failed audit must never take the companion down, but only the tidy
+                        # failure was caught — and the one that actually happened was a
+                        # ModuleNotFoundError, which walked straight past this and killed the
+                        # process. The two costs are not comparable: an audit that dies is one
+                        # audit, said on the screen with its reason; a companion that dies is
+                        # every later dispatch sitting unclaimed, and from the app it looks
+                        # identical to a machine nobody has got to yet.
+                        except Exception as exc:  # noqa: BLE001 — see above
+                            print(f"[companion] a11y audit {audit.get('audit_id')} failed, "
+                                  f"continuing: {exc!r}", file=sys.stderr, flush=True)
+                            self._close_failed_a11y_audit(audit, exc)
                         continue
                     self._sleep(self._poll_interval)
                     continue

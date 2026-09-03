@@ -46,3 +46,25 @@ def test_manual_create_stores_priority_and_steps(world):
     assert wi.type == "test_case" and str(wi.parent_id) == str(world["story"].id)
     assert wi.external_ref["priority"] == "Medium"
     assert "saved card" in wi.description       # steps land in description (→ 09b manifest)
+
+
+def test_the_endpoint_says_what_kind_of_case_each_one_is(world):
+    """G2. A QA Lead filtering for the WCAG cases needs the platform to have read the case's own
+    `Type:` line, which until now nothing did."""
+    WorkItem.objects.create(
+        tenant=world["t"], project=world["p"], parent=world["story"],
+        type=WorkItem.Type.TEST_CASE, title="TC-031 keyboard",
+        external_ref={"tc_id": "TC-031", "priority": "high", "type": "accessibility"})
+    WorkItem.objects.create(
+        tenant=world["t"], project=world["p"], parent=world["story"],
+        type=WorkItem.Type.TEST_CASE, title="TC-032 unclassified",
+        external_ref={"tc_id": "TC-032"})
+
+    rows = {r["tc_id"]: r for r in _client(world).get(
+        f"/api/work-items/{world['story'].id}/test-cases/").data}
+    assert rows["TC-031"]["type"] == "accessibility"
+    assert rows["TC-031"]["priority"] == "high"
+    blank = rows["TC-032"]
+    # A case that never said stays blank — never a default.
+    assert blank["type"] == ""
+    assert blank["priority"] == ""

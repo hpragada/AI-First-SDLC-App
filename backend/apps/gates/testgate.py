@@ -31,8 +31,12 @@ _TEST_GATED_PHASES = {"testing"}
 
 def blocking_tests_condition() -> dict:
     """A fresh (unsatisfied) blocking-test condition. `derived` marks it platform-evaluated:
-    `apps.gates.conditions.refresh_derived` recomputes it at decide time and
-    `services._merge_conditions` refuses a reviewer's `satisfied` update on it."""
+    `apps.gates.conditions.refresh_derived` recomputes it at decide time (routing it here by
+    `key`) and `services._merge_conditions` refuses a reviewer's `satisfied` update on it.
+
+    Those two facts together are why a derived condition MUST have a registered evaluator: it
+    is seeded unsatisfied and no human is permitted to satisfy it, so one that never refreshes
+    is a gate that can never be approved."""
     return {
         "key": BLOCKING_TESTS_KEY,
         "label": (
@@ -71,12 +75,22 @@ def open_test_defect_refs(*, tenant_id, work_item_id) -> list[str]:
     return sorted(refs)
 
 
-def evaluate(condition: dict, *, tenant_id, work_item_id) -> dict:
+def evaluate(condition: dict, context) -> dict:
     """Re-evaluate the blocking-test condition from live state; returns an updated copy.
-    `detail` names the tests still holding the gate shut, so the reviewer sees why."""
+    `detail` names the tests still holding the gate shut, so the reviewer sees why.
+
+    `context` is `apps.gates.conditions.ConditionContext` — every derived evaluator takes the
+    same shape (QA-15a) and reads the part it needs; this one needs the work item, because the
+    defect loopback hangs its defects there.
+
+    The key guard below is now redundant — the registry only routes this condition here — and
+    it stays anyway: this decides whether a gate opens, and a belt-and-braces early return
+    costs one comparison.
+    """
     if condition.get("key") != BLOCKING_TESTS_KEY:
         return condition
-    refs = open_test_defect_refs(tenant_id=tenant_id, work_item_id=work_item_id)
+    refs = open_test_defect_refs(tenant_id=context.tenant_id,
+                                 work_item_id=context.work_item_id)
     updated = {**condition, "satisfied": not refs}
     if refs:
         updated["detail"] = "open test defects: " + ", ".join(refs)

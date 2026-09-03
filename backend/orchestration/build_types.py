@@ -66,6 +66,11 @@ class BuildReport:
     # companion stays dumb and the routing rule lives in one place.
     test_results: list = field(default_factory=list)
     test_summary: str = ""      # "12 passed, 1 failed" — for the run console / build message
+    # QA-11b: one line saying what the accessibility capture took ("104 element(s) captured on
+    # 6 screen(s)"), or "" when a phase captured nothing. The capture ITSELF never travels here
+    # — the companion posts it straight to the platform, because a screen carries a full-page
+    # PNG and this payload rides a Temporal signal.
+    a11y_summary: str = ""
     # The companion-local preview URL the app was brought up on for a test-automation build (D7 /
     # P3-09bR): the live target 09b's Playwright explored. The platform records it on a `PreviewEnv`
     # and links it on the PR. "" for phases that bring no app up (07/11) or when no preview ran.
@@ -180,3 +185,21 @@ def is_merge_conflict(exc) -> bool:
     if getattr(cause, "type", "") == "MergeConflict":
         return True
     return "merge conflict" in failure_reason(exc).lower()
+
+
+#: Phases whose write-completeness check does REAL WORK, not a presence check, and so cannot
+#: live inside the one-minute activity timeout the check normally gets.
+#:
+#: `a11y_judge` is the case that proved it. Its branch of `verify_write_completeness_core` does
+#: two things beyond looking an artifact up: it records an `uncertain` verdict for every
+#: dispatched element the judge never answered — up to a full batch of them, one database write
+#: each against a remote server — and then publishes the merged report and closes the audit.
+#: On the first live run that ran past sixty seconds and Temporal cancelled it mid-way: 81 of
+#: 144 fallbacks were written and 63 elements silently got none, which is precisely the
+#: "nothing dispatched may vanish from a conformance report" guarantee the branch exists to
+#: keep. The work is the same class the workflow already gives five minutes to elsewhere
+#: (publish, register_phase_result); one minute was sized for the check it USED to be.
+#:
+#: Kept here rather than imported from `apps.a11y` because the workflow module is deliberately
+#: Django-free — see the note at the top of this file.
+LONG_VERIFY_PHASES = frozenset({"a11y_judge", "a11y_journey"})

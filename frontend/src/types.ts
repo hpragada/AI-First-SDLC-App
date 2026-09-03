@@ -30,6 +30,11 @@ export interface ProjectProfile {
   glossary: Record<string, unknown>;
   // Phase-scoped manual-export overrides (bare phase name -> capability | "internal").
   export_policy?: Record<string, string | null>;
+  // Accessibility policy (QA-08): {target, gate:{block_severities, min_confidence,
+  // block_on_incomplete_run, design_checks}}. Absent = the documented default; the effective
+  // policy is readable at GET /projects/{id}/a11y-policy/. No editor for it yet — the profile
+  // PUT is partial, so a client that never sends this key leaves it untouched.
+  a11y?: Record<string, unknown>;
   important_context: string;
   version: number;
 }
@@ -459,7 +464,10 @@ export interface TestCase {
   key: string;
   title: string;
   tc_id: string;
+  // What the case says about itself, read off its own document when it was materialised (G2).
+  // Empty means the case never said — the platform does not guess one.
   priority: string;
+  type: string;
   state: string;
   automation_status: AutomationStatus;
 }
@@ -642,6 +650,13 @@ export interface OnboardingRegister {
   docstore_connected: boolean;
   tasktracker_connected: boolean;
   designsource_connected: boolean;
+  // The tool actually behind each capability ("Jira", "Confluence"), or null while nothing is
+  // connected. The step offers to connect a CAPABILITY — naming a vendor before the user has
+  // chosen one is what made the buttons and the pop-up disagree — and names the real tool only
+  // once there is one to name.
+  docstore_vendor: string | null;
+  tasktracker_vendor: string | null;
+  designsource_vendor: string | null;
   pages_registered: number;
   issues_registered: number;
 }
@@ -691,6 +706,20 @@ export interface OnboardingHub {
     resume_label?: string;
     report_artifact_id?: string;
   } & OnboardingStepState;
+  // Where the accessibility step stands (task 8a). Optional so an older cached payload — or a
+  // backend that predates this — still renders the hub rather than blanking it.
+  a11y?: {
+    routes_registered: number;
+    // FINISHED audits only. A `judging` audit used to count here, and the step then said "1
+    // audit run — open the report from Artifacts" while it was still going: there is no report
+    // until the judging ends, because the baseline is published only when a position has
+    // settled.
+    audits_run: number;
+    // …so an audit still going is carried separately, and the line can say so over the top of
+    // whatever the tick says. Same pairing as the Index code step.
+    running?: boolean;
+    status: "not_started" | "ready" | "running" | "done";
+  };
   adopt_types: AdoptType[];
 }
 
@@ -800,6 +829,16 @@ export function isPhaseReport(a: { external_ref?: { source?: string } | null } |
   return (ref.external_ref?.source ?? ref.source) === PHASE_REPORT_ARTIFACT;
 }
 
+// Feature streams the PLATFORM keys its own containers on: the accessibility backlog, one per
+// judging run, one per keyboard journey, the CI regression bucket. Mirrors `BACKLOG_STREAM` and
+// its siblings in the backend, which all share this shape on purpose. They are lookup keys — no
+// user chose one, nobody can read one, and `__a11y_backlog__` under a heading saying FEATURE
+// STREAM is the platform showing a person its own plumbing. A real stream ("Payments core") is
+// a name somebody typed and is shown as before.
+export function isInternalStream(stream: string | null | undefined): boolean {
+  return (stream ?? "").trim().startsWith("__");
+}
+
 export interface ArtifactState {
   name: string;
   body: string;
@@ -879,4 +918,441 @@ export interface DashboardRollup {
     published_week: number;
   };
   recent_publishes: { title: string }[];
+}
+
+// ── Accessibility review console (QA-23, S-36) ────────────────────────────
+// One finding a check could not settle, with everything a person needs to settle it.
+export interface A11yReviewLock {
+  held: boolean;
+  by_me: boolean;
+  held_by: string | null;
+  held_by_name: string;
+  expires_at: string | null;
+}
+
+// ── Pages & audit (S-38, task 8a) ────────────────────────────────────────────────────────
+// The brownfield way in: the platform cannot reach a client's application and cannot discover
+// its pages, so somebody says what they are and a machine that CAN reach it does the visiting.
+
+export interface A11yRoute {
+  id: string;
+  path: string;
+  label: string;
+  source: string;
+  enabled: boolean;
+  notes: string;
+  // A real page standing for a pattern route — `/events/:id` is visited as `/events/482`.
+  example_path: string;
+  // When an audit last actually opened it. Null means never — a fact about the page, not a
+  // gap in the screen.
+  last_visited: string | null;
+  // What a rename would leave behind. A finding is identified by the page it was found on, so
+  // changing a path starts that page's history over — these two are what let the screen say so
+  // while the path is still being typed, and what decides whether removing a page deletes the
+  // row or takes it out of scope.
+  open_findings: number;
+  visits: number;
+}
+
+// A key in a pasted list that we could not use, named rather than dropped. The one that
+// matters is the in-scope flag: ignore it silently and we audit pages the client excluded.
+export interface A11yIgnoredKey {
+  key: string;
+  entries: number;
+}
+
+// How today's page list differs from the one the last finished audit used. Empty when there is
+// nothing to say, so the screen hides the whole warning behind one check.
+export interface A11yScopeChange {
+  audit_id?: string;
+  audit_at?: string;
+  added?: string[];
+  removed?: string[];
+  before?: number;
+  now?: number;
+}
+
+export interface A11yRoutesResponse {
+  routes: A11yRoute[];
+  summary: string;
+  scope_change: A11yScopeChange;
+  // Whether THIS reader may change the page list or start an audit (QA Lead / Tech Lead /
+  // Admin). Everyone on the project reads the same screen; only these three operate it.
+  can_manage: boolean;
+  // Where the platform believes this application answers, and how it knows. The SAME resolver
+  // the keyboard-journeys panel reads, so the two panels on one screen cannot disagree about
+  // it. `base_url_reason` says what to go and set when there is no address at all. Optional
+  // because an older API response does not carry them.
+  base_url?: string;
+  base_url_source?: string;
+  base_url_reason?: string;
+  changed?: {
+    added: string[];
+    updated: string[];
+    disabled: string[];
+    ignored_keys: A11yIgnoredKey[];
+    total: number;
+  };
+}
+
+// What a paste WOULD do, before any of it is written. `missing` is the load-bearing half:
+// pages already registered that this list does not mention, with what excluding them costs.
+export interface A11yRegistrationPreview {
+  adding: string[];
+  updating: string[];
+  missing: {
+    path: string;
+    label: string;
+    enabled: boolean;
+    open_findings: number;
+  }[];
+  ignored_keys: A11yIgnoredKey[];
+  total_now: number;
+}
+
+export interface A11yAudit {
+  id: string;
+  status: string;
+  base_url: string;
+  routes: string[];
+  summary: {
+    asked?: number;
+    opened?: number;
+    unreachable?: string[];
+    never_reported?: string[];
+    reason?: string;
+    // What the AI half did. `reason` here is the DISPATCH's own account — most importantly the
+    // one it gives when it stopped at this run's limit, which is the only record that some
+    // elements were never asked about at all.
+    ai_pass?: {
+      reason?: string;
+      deferred?: number;
+      // Distinct ELEMENTS the cap left unanswered, which is not the same as `deferred` above:
+      // duplicates are not collapsed before the cap, so the tail of a stopped pass is often
+      // markup already judged earlier in the same run.
+      deferred_distinct?: number;
+      dispatched?: number;
+      distinct?: number;
+      // How many elements nothing could be asked about at all — no judge registered, or no
+      // machine connected. Tells that case apart from the cap case WITHOUT matching on the
+      // wording of `reason`, which would break the moment somebody improved a sentence.
+      filed_unjudged?: number;
+      // A SECOND judging pass over the same capture ("check the rest"), not the audit's first.
+      // Written by `rejudge_capture`, which re-uses the audit row rather than opening a second
+      // audit — so without this a completed audit appears to vanish and be replaced by a
+      // running one, with nothing on screen explaining why.
+      rejudged?: boolean;
+      // When that second pass started. The audit's own `created_at` is the first pass's, and on
+      // a re-judge it is the wrong time to put next to work that is happening now.
+      rejudged_at?: string;
+      // How many elements that second pass went back for. Not `dispatched` — they differ
+      // whenever an element is answered from cache — and this is the number the button
+      // promised out loud before it was pressed.
+      rejudged_asked?: number;
+      // A re-judge went looking and found nothing of this capture unanswered. Settles the
+      // count outright: the other fields are what each pass recorded about ITSELF at the time,
+      // and this is the authoritative recount from the capture.
+      nothing_left?: boolean;
+    };
+    // Whether the browser answered when the capture asked what each element is called. A whole
+    // capture with no names is a broken toolchain, and it hides: every element still arrives,
+    // three checks run perfectly, and the fourth silently never selects anything.
+    names?: { named?: number; nameable?: number; reason?: string };
+    // Closed by the platform because the machine capturing it went away, rather than by a run
+    // that finished and found nothing openable. Same status, entirely different thing to do.
+    abandoned?: boolean;
+  };
+  // This audit says it is running, and nothing has been heard from the machine holding it for
+  // a long while. DERIVED on read and never written: a machine switched off for good never
+  // comes back to be swept, and the screen must not be the last thing still claiming the audit
+  // is running.
+  stalled?: boolean;
+  // How far this audit has got RIGHT NOW. Present only while it is still going somewhere —
+  // `summary` above is written when it closes, so until then there was no count of anything
+  // anywhere and a screen could only show the status word. `judged`/`dispatched` appear once
+  // the AI pass has been dispatched, and not before, so "none judged yet" stays distinguishable
+  // from "not that stage".
+  progress?: {
+    visited: number;
+    unreachable: number;
+    judged?: number;
+    dispatched?: number;
+  } | null;
+  // How many elements of this audit NOTHING ever looked at — never dispatched, or dispatched to
+  // a judging run that died before reaching them. Not the same as an 'uncertain' a check
+  // actually reached: that one belongs to a person. Only counted for a closed audit, because
+  // while a pass is running the answer is still changing.
+  unanswered?: number;
+  // What a FINISHED audit came to, for the panel that stays on screen after the run ends.
+  // `waiting` is counted apart from `problems` on purpose: a problem the platform is sure
+  // about and a question it is asking a person are not the same thing. Present only on the
+  // newest audit, because that is the only one the panel shows.
+  outcome?: { problems: number; critical: number; high: number; waiting: number } | null;
+  created_at: string;
+  // When the audit last moved. Equal to `created_at` for an audit that ran once; later than it
+  // once a second judging pass has run over the same capture.
+  updated_at?: string;
+}
+
+export interface A11yPolicy {
+  defaults: Record<string, unknown>;
+  overrides: Record<string, unknown>;
+  effective: Record<string, unknown>;
+  summary: string;
+  error: string;
+}
+
+// One row of the review queue: what the rail on the left draws, and nothing else.
+//
+// The capture is deliberately absent (G3b). Working it out costs the server two lookups per
+// finding when the picture exists and four when it does not, and the rail draws no picture —
+// so the list used to pay for evidence it threw away, once per row, on every load. It belongs
+// to `A11yReviewFinding` below, which is the read the detail panel makes for the one item a
+// reviewer actually opened.
+export interface A11yReviewItem {
+  id: string;
+  criterion: string;
+  criterion_handle: string;
+  wcag_level: string;
+  route: string;
+  selector: string;
+  stable_selector: boolean;
+  checker: string;
+  // What the AI SAID (pass/fail/uncertain) — not what the platform decided about it.
+  // `uncertain` means "I looked and cannot tell", and the screen prints that as "No verdict"
+  // rather than 0%, which would read as "the AI was 0% confident" (D-A11Y-95).
+  verdict: string;
+  confidence: number | null;
+  severity_if_confirmed: string;
+  // What the PLATFORM decided, and whether it is still open. Constant across the review queue —
+  // everything in it is `needs_review` and open — and the first thing a reader needs on S-39,
+  // which is reached from a report and is therefore mostly opened on confirmed failures.
+  outcome: string;
+  status: string;
+  evidence: string;
+  suggested_fix: string;
+  // Where the finding came from (G3). All null on a baseline audit — an audit of an existing
+  // application has no story, no test case and no run, so there is genuinely nothing to link
+  // to and the screen shows nothing rather than an empty link.
+  source_run: string | null;
+  work_item_id: string | null;
+  // The test case's own `TC-031` where it has one, else the work item key.
+  work_item_label: string | null;
+  work_item_title: string | null;
+  lock: A11yReviewLock;
+}
+
+// The single-item read: the row, plus the capture the reviewer judges it by and the state of
+// their own permission to answer. Only this call carries them, and only this call pays for them.
+export interface A11yReviewFinding extends A11yReviewItem {
+  page_image: boolean;
+  element_image: boolean;
+  box: { x: number; y: number; width: number; height: number } | null;
+  url: string;
+  // Why there is no picture. Blank when there is one. Never left unsaid.
+  capture_reason: string;
+  // Which capture this evidence came out of — the audit's own id on a brownfield pass, the
+  // run's on a greenfield one. Resolved to `captured_by` on the read-only screen.
+  capture_key: string;
+  can_review: boolean;
+  locked_out: string;
+  adjudication: string;
+  note: string;
+}
+
+// The read-only view of one finding (S-39): the same evidence the console shows, opened without
+// taking a review claim, plus the audit whose pass took the picture.
+//
+// **`captured_by` is null on greenfield and must stay so.** There the capture key names a `Run`
+// and no audit exists — the same rule `work_item_id` follows, and for the same reason: nothing
+// to link to, so nothing shown rather than an empty link.
+export interface A11yFindingDetail extends A11yReviewFinding {
+  captured_by: {
+    id: string;
+    // "audit 4850688e" — short enough to say out loud, long enough to find.
+    label: string;
+    finished_at: string | null;
+    status: string;
+    asked: number;
+    opened: number;
+  } | null;
+}
+
+export interface A11yReviewQueue {
+  queue: A11yReviewItem[];
+  can_review: boolean;
+  lock_minutes: number;
+  // Which empty state to show when `queue` is empty. `false` means nothing on this project has
+  // ever been checked — a completely different sentence from "every check was sure enough to
+  // answer on its own", and the two used to be told to the reader as the same thing.
+  ever_checked: boolean;
+}
+
+// ── G6 · keyboard journeys (S-38) ────────────────────────────────────────────────────────
+//
+// Eight WCAG criteria cannot be answered by reading a page standing still — whether tabbing ever
+// traps you, whether focus stays visible, whether a status message is announced. They are only
+// answerable by OPERATING the application, which is what a journey does.
+
+// `status` is the last walk's status, with one value the platform derives rather than stores:
+// `"queued"` means dispatched and not yet claimed by a machine. See `journey.QUEUED`.
+export interface A11yJourneyRow {
+  // What the screen sends back to start this one. Always present, unlike `test_ref`: a test case
+  // is only usually stamped with a TC id, and two unstamped ones must not become one row.
+  id: string;
+  test_ref: string;
+  title: string;
+  artifact_id: string;
+  steps: number;
+  last_walked: string | null;
+  // "walking" | "complete" | "failed", or "" when it has never been walked.
+  status: string;
+  // The pass's own honesty check: asked / walked / blocked / never reached.
+  summary: {
+    asked?: number;
+    walked?: number;
+    blocked?: { step: number; reason: string }[];
+    not_reached?: number[];
+    findings?: number;
+    reason?: string;
+  };
+}
+
+// A test case that CALLS itself a journey and cannot be walked. Shown, never hidden: omitting it
+// is how an application with no keyboard coverage comes to look like one with no problems.
+export interface A11yUnwalkable {
+  artifact_id: string;
+  title: string;
+  test_ref?: string;
+  reason: string;
+}
+
+export interface A11yJourneyList {
+  journeys: A11yJourneyRow[];
+  unwalkable: A11yUnwalkable[];
+  over_cap: string[];
+  max_journeys: number;
+  // Pre-filled from the last audit, else the repository. Editable — the user starts the
+  // application and confirms where it is answering.
+  base_url: string;
+  base_url_source: string;
+  base_url_reason: string;
+  // Whether THIS user may start one. The list is readable by anyone on the project.
+  can_start: boolean;
+}
+
+export interface A11yJourneyStarted {
+  name: string;
+  test_ref: string;
+  run_id: string;
+  journey_run_id: string;
+  steps: number;
+}
+
+export interface A11yJourneyQueued {
+  started: A11yJourneyStarted[];
+  // Named, never dropped: already walking, no companion, over the cap, or a name this project
+  // does not have.
+  refused: { name: string; test_ref: string; reason: string }[];
+  over_cap: string[];
+  unwalkable: A11yUnwalkable[];
+  reason: string;
+}
+
+// ── QA-24 · conformance statement (S-37) ─────────────────────────────────────────────────
+
+// The VPAT vocabulary, deliberately the standard's own words — a procurement team reads this
+// against other vendors' documents.
+export type A11yConformanceLevel =
+  | "supports"
+  | "partially_supports"
+  | "does_not_support"
+  | "not_applicable"
+  | "not_evaluated";
+
+export interface A11yConformanceRow {
+  criterion: string;
+  handle: string;
+  level: string;
+  // What actually happened, with no verdict in it: "checked on 12 pages with nothing wrong",
+  // "nothing checked this". This is the column the evidence lives in.
+  evidence: string;
+  // Which engines produced that evidence — rule / AI / agentic / human. AC1's provenance.
+  established_by: string[];
+  routes_checked: number;
+  open_failures: number;
+  human_decisions: number;
+  // What the evidence supports. `null` means the platform declines to put a word in the
+  // reviewer's mouth, which is what happens whenever a check looked and could not decide.
+  suggested: A11yConformanceLevel | null;
+  // The reviewer's own word, when they gave one. Always wins.
+  verdict: A11yConformanceLevel | null;
+  // What the statement will actually say: their word, else the evidence's, else not evaluated.
+  effective: A11yConformanceLevel;
+  needs_a_person: boolean;
+}
+
+export interface A11yConformanceTotals {
+  supports: number;
+  partially_supports: number;
+  does_not_support: number;
+  not_applicable: number;
+  not_evaluated: number;
+  total: number;
+  evaluated: number;
+  awaiting_a_person: number;
+  // How many levels the platform suggested and the reviewer did not change. Counted out loud
+  // at signing rather than hidden — it is the thing they are taking responsibility for.
+  platform_suggested: number;
+}
+
+// Which accessibility checks the statement was compiled from, and when the most recent of them
+// ran. Also written INTO the wording by `draft_body`, so the person signing signs it too — this
+// copy is for the screen, which still has to be able to say it after a reviewer has replaced the
+// wording with their own.
+export interface A11yConformanceBasis {
+  latest: {
+    id: string;
+    label: string;
+    finished_at: string | null;
+    asked: number;
+    opened: number;
+  } | null;
+  // Every completed audit, not just the named one: the findings ledger is cumulative, so a
+  // statement compiled today rests on every pass recorded up to today.
+  audits: number;
+  runs: number;
+}
+
+export interface A11yConformance {
+  scope: string;
+  body: string;
+  basis: A11yConformanceBasis;
+  drafted: boolean;
+  rows: A11yConformanceRow[];
+  totals: A11yConformanceTotals;
+  disclaimer: string;
+  signed: boolean;
+  signed_name: string;
+  signed_role: string;
+  signed_at: string | null;
+  // Signed, but the evidence has moved since (team decision C1). The wording is still what they
+  // signed; it no longer describes what the platform holds, and export is refused until re-signed.
+  stale: boolean;
+  artifact_id: string | null;
+  required_role: string;
+  can_export: boolean;
+  export_refused_because: string;
+  can_sign: boolean;
+}
+
+export interface A11yReviewDecision {
+  id: string;
+  adjudication: string;
+  outcome: string;
+  status: string;
+  severity: string;
+  // True only when this project's policy will actually raise a ticket, so the screen never
+  // promises a defect that will not exist.
+  opens_defect: boolean;
 }

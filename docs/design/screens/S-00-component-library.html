@@ -617,6 +617,45 @@
       </div>
     </section>
 
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Page screenshot · fit / actual size / missing</h2></div>
+      <div class="panel__body">
+        <p class="t-sm u-muted" style="margin-bottom:var(--space-4)">A captured page is routinely 2560px wide and taller than the viewport. <strong>Fit</strong> shows the whole thing scaled, to judge layout; <strong>actual size</strong> scrolls inside the frame at 1:1, to judge the things that cannot be judged on a scaled image — contrast, focus rings, text size. The marker travels with the scroll.</p>
+        <div class="grid grid--2">
+          <div class="shot">
+            <div class="shot__stage shot__stage--fit">
+              <div class="shot__img shot__img--sample"></div>
+              <span class="shot__marker" data-label="button.checkout" style="top:96px;left:22%;width:132px;height:34px"></span>
+            </div>
+            <div class="shot__bar"><span>Fit to width</span><span class="u-spacer"></span><span class="shot__dims">2560 × 1340</span></div>
+          </div>
+          <div class="shot">
+            <div class="shot__stage">
+              <div class="shot__img shot__img--sample shot__img--sample-wide"></div>
+              <span class="shot__marker" data-label="button.checkout" style="top:96px;left:520px;width:132px;height:34px"></span>
+            </div>
+            <div class="shot__bar"><span>Actual size · scroll to see the rest</span><span class="u-spacer"></span><span class="shot__dims">2560 × 1340</span></div>
+          </div>
+        </div>
+        <div class="grid grid--2" style="margin-top:var(--space-4)">
+          <div class="shot">
+            <div class="shot__stage">
+              <div class="shot__img shot__img--sample shot__img--sample-tall"></div>
+              <span class="shot__marker" data-label="a.skip-link" style="top:640px;left:6%;width:150px;height:28px"></span>
+            </div>
+            <div class="shot__bar"><span>Tall page · the frame scrolls, the panel does not</span><span class="u-spacer"></span><span class="shot__dims">1440 × 8200</span></div>
+          </div>
+          <div class="shot shot--missing">
+            <div class="shot__stage">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 15l5-4 4 3 3-2 6 5"/><path d="M3 3l18 18"/></svg>
+              <span class="t-sm">No screenshot was captured for this finding</span>
+            </div>
+            <div class="shot__bar"><span>Missing · judge from the element and evidence below</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </div>
 </main>
 <script src="../shell.js"></script>

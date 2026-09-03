@@ -6,11 +6,15 @@
     python -m runner.companion serve  --api-url URL --tenant T --token TOK --worktrees ~/sdlc \
         --repo acme/api=~/repos/api --repo acme/web=~/repos/web             # multi-repo
     python -m runner.companion run    --task task.json --repo-path ~/repos/api --worktrees ~/sdlc
+    python -m runner.companion audit  --api-url URL --tenant T --token TOK --project P \
+                                      [--base-url http://localhost:5173]
 
 `enroll` returns the one-time token. `serve` is the headless background process: it claims
 phases dispatched to this enrollment and runs them on the **local logged-in Claude Code**
 (no API key), so the user does everything in the web app. `run` drives a single BuildTask
-(kept for local/manual runs). The ClaudeDriver is imported lazily.
+(kept for local/manual runs). `audit` runs a baseline accessibility pass over an app that is
+already built and already running — no repository, no build, no engine (QA-17). The
+ClaudeDriver is imported lazily.
 """
 from __future__ import annotations
 
@@ -71,7 +75,7 @@ def _enroll(args) -> int:
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
     print(json.dumps(data, indent=2))
-    print("\nStore the token securely — it is shown only once.")
+    print("\nStore the token securely - it is shown only once.")
     return 0
 
 
@@ -89,6 +93,32 @@ def _run(args) -> int:
     ))
     print(json.dumps(out, indent=2))
     return 0
+
+
+def _audit(args) -> int:
+    """Run a baseline accessibility audit against an already-built app (QA-17).
+
+    Needs no repository and no build: the app is already running somewhere this machine can
+    reach, which is the whole difference between this and every other accessibility check the
+    platform does. The routes come from the project's registered list unless named here.
+    """
+    from .daemon import ensure_backend_importable
+
+    # The capture parser lives in `backend/` and is the platform's single definition of the
+    # format — the same lazy import discipline `a11ycapture` follows.
+    ensure_backend_importable()
+    from .a11yaudit import run_baseline_audit
+    from .state_client import RemoteStateClient
+
+    client = RemoteStateClient(api_url=args.api_url, tenant_id=args.tenant, token=args.token)
+    out = run_baseline_audit(
+        client=client, project_id=args.project, base_url=args.base_url,
+        workdir=args.workdir or os.getcwd(), routes=args.route or None, node=args.node,
+    )
+    print(json.dumps(out, indent=2))
+    # A pass that captured nothing is a failure of the audit, not a clean application — exit
+    # non-zero so a script that ran this cannot read silence as success.
+    return 0 if out["posted"] else 1
 
 
 def _parse_repo_map(pairs) -> dict:
@@ -124,7 +154,7 @@ def _serve(args) -> int:
     if log_path:
         print(f"[companion] engine log: {log_path}", file=sys.stderr, flush=True)
     else:
-        print("[companion] engine log could not be opened — engine output stays terminal-only",
+        print("[companion] engine log could not be opened - engine output stays terminal-only",
               file=sys.stderr, flush=True)
 
     repo_paths = _parse_repo_map(args.repo)
@@ -178,9 +208,29 @@ def main(argv=None) -> int:
     r.add_argument("--keep", action="store_true")
     r.set_defaults(func=_run)
 
+    a = sub.add_parser("audit", help="baseline-audit an already-built app for accessibility")
+    a.add_argument("--api-url", required=True)
+    a.add_argument("--tenant", required=True)
+    a.add_argument("--token", required=True)
+    a.add_argument("--project", required=True)
+    a.add_argument("--base-url", default="",
+                   help="where the running app is reachable FROM THIS MACHINE, e.g. "
+                        "http://localhost:5173 — the platform never connects to it. Optional: "
+                        "left out, the platform uses the address it already holds for this "
+                        "project (the repository's Preview URL, or the port it builds with) "
+                        "and refuses with a readable reason if it holds none")
+    a.add_argument("--route", action="append", default=[], metavar="PATH",
+                   help="audit these paths instead of the project's registered routes; "
+                        "repeat once per path")
+    a.add_argument("--workdir", default=None,
+                   help="where the capture is written (default: the current directory)")
+    a.add_argument("--node", default="node", help="the Node executable to run the audit with")
+    a.set_defaults(func=_audit)
+
     args = parser.parse_args(argv)
     # `serve`/`run` launch the engine — verify the runtime can before doing anything (S.No 135).
     # `enroll` needs no engine, so it still works even in a broken env (e.g. first-time setup).
+    # `audit` drives a browser and never starts the engine, so it is exempt like `enroll`.
     if args.cmd in ("serve", "run"):
         _assert_engine_env()
     return args.func(args)

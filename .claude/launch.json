@@ -15,6 +15,13 @@
       "port": 5174,
       "autoPort": false,
       "env": { "VITE_API_BASE": "http://localhost:8000/api" }
+    },
+    {
+      "name": "meridian",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Users/Msi/projects/Web-Accessibility/meridian-library-web-accessibility/server.js"],
+      "port": 4180,
+      "autoPort": false
     }
   ]
 }

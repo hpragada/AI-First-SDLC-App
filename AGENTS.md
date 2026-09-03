@@ -14,9 +14,19 @@ this file. If a task would violate one, stop and flag it.
 |---|---|---|---|
 | **4.7** | Auth & admin **backend** (design-invariant) | backend | `docs/PHASE_4.7_BUILD_SPEC.md` |
 | **4.8** | Hi-fi **React UI** + design-sensitive backend (bucket B) | frontend + backend | `docs/PHASE_4.8_BUILD_SPEC.md` |
+| **A11Y** | **Web-accessibility QA capability (WCAG 2.2)** — a new client-driven capability built *on top of* the platform | backend + runner + agents + frontend | `docs/web-accessibility/` |
 
 **Phases 5 & 6 are CLOSED** — do not start them (team decision; built on client demand). Phases 0–4.5
 are **complete** — read them for context, don't modify.
+
+**The A11Y workstream is different from the phase work above — read this before touching it.**
+It lives on its own branch **`web-accessibility-build`** (off `develop`) and carries its **own plans, backlog
+and claim markers**, not `BUILD_PLAN.md`. Read in this order: `docs/web-accessibility/RESEARCH_CORRECTIONS.md`
+(what the research got wrong about this platform — several "already exists" claims are untrue) →
+`USER_JOURNEYS.md` → `BUILD_PLAN_QA.md` → `TASK_BACKLOG_QA.md`. **Build the QA plan to completion before
+starting the other-phases plan.** Claim tasks by flipping the box to `🟡` in the relevant task backlog with
+your initials, and to `🟢` with a one-line "what shipped" when done — same discipline as `BUILD_PLAN.md`,
+different file. As of 2026‑08‑12 the greenfield/brownfield bug backlogs are **parked** while this is built.
 
 ## Context-consumption read-order (do this before writing any code)
 

@@ -204,6 +204,75 @@ def add_trace_edge(from_artifact_id: str, to_artifact_id: str, rel: str) -> dict
 
 
 @server.tool()
+def get_a11y_batch() -> dict:
+    """The accessibility elements THIS run must judge, one screen at a time. Each element
+    carries a short `id` — echo that exact id back to `record_a11y_finding`. Call this first:
+    it is the only list of what you are being asked to judge."""
+    return tools.get_a11y_batch(_tenant(), _bound_run())
+
+
+@server.tool()
+def get_a11y_screenshots(start: int = 0) -> list:
+    """SEE the elements you are judging — a picture of each element in this run's batch, as
+    viewable image blocks labelled with the element `id`. Call this before judging anything
+    visual: `color` asks what a thing looks like, and `alt` often does too. Paginated; the
+    summary gives a `next_start` and names any element that has no captured image."""
+    import base64
+
+    from mcp.server.fastmcp import Image as McpImage
+
+    res = tools.get_a11y_screenshots(_tenant(), _bound_run(), start) or {}
+    images = res.get("images") or []
+    unseen = res.get("unseen") or []
+    nxt = res.get("next_start")
+    summary = (
+        f"{res.get('returned', len(images))} of {res.get('total', 0)} element image(s), "
+        f"starting at index {res.get('start', start)}. "
+        + (f"Call get_a11y_screenshots(start={nxt}) for the next batch."
+           if nxt is not None else "This is the last batch.")
+        + (f" {len(unseen)} element(s) have no captured image: "
+           f"{', '.join(u.get('id', '') for u in unseen[:12])}." if unseen else "")
+    )
+    blocks: list = [summary]
+    for im in images:
+        try:
+            raw = base64.b64decode(im.get("data_base64") or "")
+        except Exception:  # noqa: BLE001 — skip one unreadable image, keep the rest
+            continue
+        if raw:
+            blocks.append(f"element {im.get('name')}:")
+            blocks.append(McpImage(data=raw, format=(im.get("mime") or "image/png").split("/")[-1]))
+    return blocks
+
+
+@server.tool()
+def get_wcag_grounding(criteria: list[str]) -> dict:
+    """The exact WCAG 2.2 wording for these success criteria, with the glossary definitions
+    they depend on. Judge against THIS text, not your recollection of the standard."""
+    return tools.get_wcag_grounding(_tenant(), criteria)
+
+
+@server.tool()
+def record_a11y_finding(
+    element_id: str,
+    criteria: list[str],
+    verdict: str,
+    confidence: float,
+    evidence: str,
+    suggested_fix: str = "",
+) -> dict:
+    """Record your verdict for ONE element. `verdict` is pass | fail | uncertain, `confidence`
+    is 0-1, `criteria` lists every criterion this element actually breaches (a div-as-button
+    breaches 1.3.1 AND 4.1.2), and `evidence` quotes what led you there. Call it exactly once
+    per element in the batch — an element you never report on is recorded as unjudged and
+    fails the run."""
+    return tools.record_a11y_finding(
+        _tenant(), element_id, criteria, verdict, confidence, evidence,
+        suggested_fix=suggested_fix, run_id=_bound_run(),
+    )
+
+
+@server.tool()
 def log_event(
     actor: str, action: str, target_type: str,
     target_id: str | None = None, payload: dict | None = None,

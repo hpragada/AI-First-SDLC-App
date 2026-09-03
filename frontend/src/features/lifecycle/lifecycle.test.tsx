@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 
 import { renderWithProviders, stubFetchJson } from "../../test/utils";
 import {
@@ -283,6 +283,41 @@ describe("P3-09b Test cases (coverage screen)", () => {
     rerender(<TestCases forceView="add-form" />);
     expect(screen.getByText("Steps / spec")).toBeDefined();
     expect(screen.getByText("Add test case")).toBeDefined();
+  });
+});
+
+describe("G2 — a case says what kind it is", () => {
+  // This file predates RTL auto-cleanup being off, so each test here unmounts explicitly:
+  // without it the previous screen is still in the document and a getByText can match it.
+  beforeEach(() => cleanup());
+  afterEach(() => cleanup());
+
+  it("shows the type beside each case, and filters by it", () => {
+    renderWithProviders(<TestCases forceView="populated" />);
+    // Two of each name: the filter chip, and the type on the row that declares it.
+    expect(screen.getAllByText("Accessibility")).toHaveLength(2);
+    expect(screen.getAllByText("Functional")).toHaveLength(2);
+    expect(screen.getAllByText("E2E")).toHaveLength(2);
+    expect(screen.getByText("Checkout with expired card")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Accessibility" }));
+    expect(screen.getByText("Checkout is operable by keyboard")).toBeDefined();
+    expect(screen.queryByText("Checkout with expired card")).toBeNull();
+  });
+
+  it("says so when a filter matches nothing, instead of looking like an empty story", () => {
+    renderWithProviders(<TestCases forceView="populated" />);
+    fireEvent.click(screen.getByRole("button", { name: "Integration" }));
+    expect(screen.getByText("No integration test cases")).toBeDefined();
+    expect(screen.queryByText("No test cases yet")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show all types" }));
+    expect(screen.getByText("Checkout with expired card")).toBeDefined();
+  });
+
+  it("prints an em dash for a case that never declared a type — never a guess", () => {
+    renderWithProviders(<TestCases forceView="empty" />);
+    expect(screen.getByText("No test cases yet")).toBeDefined();
   });
 });
 

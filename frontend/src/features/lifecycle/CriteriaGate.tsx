@@ -257,7 +257,7 @@ function CriteriaGateGallery({ view }: { view: CriteriaGateView }) {
         <div className="page-head__titles">
           <h1 className="t-h1">UX Design gate — Checkout Flow Redesign</h1>
           <p className="page-head__sub">
-            A quality gate: approval stays disabled until every required WCAG 2.1 AA criterion is
+            A quality gate: approval stays disabled until every required WCAG 2.2 AA criterion is
             ticked. The product gates on accessibility, so the product must pass.
           </p>
         </div>

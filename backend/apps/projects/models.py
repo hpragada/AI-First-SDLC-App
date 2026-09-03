@@ -55,6 +55,12 @@ class ProjectProfile(TenantScopedModel):
     # ready_timeout_s, ready_log}. Empty ⇒ no preview; a test-automation run then fails loud
     # (P3-09bR). See docs/PHASE_3_09B_RUNNABLE_SPEC.md §1.
     preview_start = models.JSONField(default=dict, blank=True)
+    # Accessibility policy (QA-08): what this project aims at, and what stops the pipeline.
+    # {"target": "wcag_2.2_aa", "gate": {"block_severities": [...], "min_confidence": 0.0,
+    #  "block_on_incomplete_run": true, "design_checks": {"extra_criteria": []}}}. A policy
+    # block rather than columns, like theme/export_policy/preview_start, so a later setting
+    # needs no migration. Empty ⇒ apps.a11y.policy.default_policy() — never "unset behaviour".
+    a11y = models.JSONField(default=dict, blank=True)
     important_context = models.TextField(blank=True)
     version = models.IntegerField(default=1)
 

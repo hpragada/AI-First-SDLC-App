@@ -194,7 +194,9 @@ def test_role_coverage_hard_block_when_no_holder_and_no_admin(client, admin, mem
     rev = by_role["reviewer"]
     assert rev["covered"] is False
     assert rev["gate_blocked"] is True
-    assert rev["note"] == "merge gate unactionable — no reviewer"
+    # The human-readable role label, never the raw key — coverage notes used to leak
+    # "reviewer" into copy the user reads (Bugs.xlsx). This asserts the fixed behaviour.
+    assert rev["note"] == "merge gate unactionable — no Reviewer"
 
 
 def test_role_coverage_admin_fallback_softens_gap(client, admin, project):
