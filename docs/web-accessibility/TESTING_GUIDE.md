@@ -1,9 +1,10 @@
 # Web Accessibility — What Was Built, Where It Sits In The Journey, and How To Test It
 
-**For the Edvensoft team · 21 August 2026 · branch `web-accessibility-build`**
+**For the Edvensoft team · updated 31 August 2026 · branch `Eval-accuracy`**
 **Covers QA‑01 … QA‑24 (31 tasks), the ten gap-fix tasks G1 … G6c, the eighteen
 user-experience fixes of 20 August, the seventeen that five live runs found on 20–21 August,
-and the three that came out of the capture-scope question on 24 August (§9)**
+the three that came out of the capture-scope question on 24 August, the eight from reading the
+screens on 25 August, and the five (#54–#58) from the first audit at real size on 31 August (§9)**
 
 ---
 
@@ -937,7 +938,7 @@ Recorded so they can be revisited, not re-argued.
 
 ---
 
-## 9. The fifty-three findings, and what was done about each
+## 9. The sixty-five findings, and what was done about each
 
 Walking this guide screen by screen turned up fifteen places where what was built worked, but on
 reading it as the person using it would not have satisfied them. **The team reviewed all fifteen on
@@ -970,6 +971,22 @@ own in `SCOPE_GAP_INFO_AND_RELATIONSHIPS.md`.
 twelve-case probe. **#40 is the one that matters most**: nothing anywhere checked that a check
 actually covers the rule it is filed under, which is *why* #38 could happen at all and could
 have happened again on a different rule.
+
+**#59–#65 came from re-reading every fix we have ever made, and then from clearing what that
+found.** Before the next full-scale audit the team asked whether every correction since 12 August is
+accurate, surgical and permanent — and, most of all, *true rather than a confident assumption*. All
+149 commits were read and every fix re-checked against the code as it stands: **200 corrections, all
+200 still present**. None of what the review turned up was a product defect, and the team's
+instruction was that everything be cleared before the audit is run rather than carried into it. So
+#59, #61, #62, #63 and #65 are fixed. #60 ends up in two halves: the corpus rows and the missing
+capability method are built, and the accuracy evidence is **#64** — the one thing here no code
+change can close, because it needs a person who did not write the checkers.
+
+**#65 is the one to read.** It is the single fact underneath #60, #62 and #63: a correction the
+team agreed on 27 August was written into a document and never into the register that actually
+routes checks. Everything else in this group is a consequence of that gap. The full account is
+`GAP_FIX_BUILD_PLAN.md` §9.29 to §9.31 — including §9.29.D and §9.30.D, which record what the
+review itself got wrong.
 
 | # | What was wrong | Status |
 |---|---|---|
@@ -1018,6 +1035,26 @@ have happened again on a different rule.
 | 43 | **The judging limit counted the same question seventeen times** | ✅ fixed |
 | 44 | **The AI was handed its own previous answers** | ✅ fixed |
 | 45 | **The table-shape fix was built and never reached the AI** | ✅ fixed |
+| 46 | The empty page list explained our architecture instead of naming the next step | ✅ fixed |
+| 47 | Two panels announced a machine the navigation bar already announces | ✅ fixed |
+| 48 | A third of two panels was prose read once and skipped forever after | ✅ fixed |
+| 49 | **An audit that stopped at its limit called itself complete, in green** | ✅ fixed |
+| 50 | **Every artifact of an accessibility run was published, approved by nobody** | ✅ fixed |
+| 51 | **The bounding boxes were drawn in the wrong place, by exactly half** | ✅ fixed |
+| 52 | The work items an audit creates could not be read | ✅ fixed |
+| 53 | "Answered questions" showed an empty card on every platform-created item | ✅ fixed |
+| 54 | **One audit was closed twice, and the second close wrote off the first** | ✅ fixed |
+| 55 | **Work correctly queued for a second pass was reported as unaskable** | ✅ fixed |
+| 56 | **Some containers were never looked at, on any page, in any audit** | ✅ fixed |
+| 57 | **Our own check could never have found #56** | ✅ fixed |
+| 58 | Stopping a run does not stop the work | 🔬 recorded, not fixed |
+| 59 | The failing backend tests are three causes, not one | ✅ fixed |
+| 60 | **1.4.11 has no corpus rows, no capability method and no answer-key records** | ✅ corpus + method built |
+| 61 | One frontend test only passes in UTC | ✅ fixed |
+| 62 | **Five more red tests than anyone had counted, all naming the same thing** | ✅ fixed |
+| 63 | **Pausing the judge would have handed 1.4.11 back to the arithmetic** | ✅ fixed |
+| 64 | The answer key still has nobody's signature on it | 🔬 recorded, not fixed |
+| 65 | **A correction agreed on 27 August never reached the data** | ✅ fixed |
 
 **#19–#24 are a different kind of finding from the first eighteen, and the difference matters.**
 Those came from *reading* the screens. These came from *running* them, and five of the six are
@@ -2360,6 +2397,354 @@ is one click further away.
 
 **The fix.** Removed from Epic and Task detail.
 
+### #54 — One audit was closed twice, and the second close wrote off the first ⭐⭐ ✅
+
+**What it is.** The 31 August audit: 94 pages, the first run at real size.
+
+**What you saw.** The audit went to **Complete** while the judge was visibly still working. Under
+*Past audits* it said **"1065 elements were never looked at"** — about an audit that had 338 real
+verdicts in the database at that moment, and 644 by the time it was measured again. The sidebar
+badge climbed into the hundreds. None of the numbers on screen matched the database.
+
+**What was wrong.** Closing an audit this size takes minutes of real work. The companion gave up
+waiting after 60 seconds, decided the audit had failed, and ran its recovery — **which closes the
+audit**. So the same close ran twice, and the second one overlapped the first.
+
+The second close asked for a judge and was refused, correctly, because one was already running.
+But that refusal was reported as *"the judge could not be started"* — so the platform did what it
+does when no judge can be reached: **it wrote off all 1,065 elements as unjudgeable, and replaced
+the audit's record of the pass that was actually running with its own empty one.**
+
+**What it meant.** Every wrong number the team saw for the rest of that day came from that one
+record. Not from the judge, not from the capture, not from the pages — all three were working. The
+audit simply lost its own account of itself.
+
+**The fix — three parts, and the first two work independently.**
+1. A run already in progress is no longer treated as a failure. Nothing is filed and nothing is
+   written off, because those elements are being judged right now.
+2. A repeated close returns the audit exactly as the call doing the work left it, and changes
+   nothing.
+3. The companion no longer times out on a call whose job takes minutes.
+
+**How to check it:** close an audit twice. The second one reports `repeat` and the audit's numbers
+do not move.
+
+### #55 — Work correctly queued for a second pass was reported as unaskable ⭐ ✅
+
+**What it is.** The review queue badge, and the message under a finished audit.
+
+**What you saw.** **1,731 items waiting on a person.** Not one of them was real.
+
+**What was wrong.** The audit correctly held 265 elements back — over its 800-question budget,
+queued for a second pass, exactly as designed. When the dispatch above then failed, those 265 were
+swept in with everything else and stamped *"the judge could not be started"*. That is not true of
+them: they were queued, not unaskable, and the difference is the entire meaning of the **Check the
+rest** button.
+
+**The fix.** Each half now carries the reason that is actually true of it — "N could not be sent"
+and "M left for a second pass" are two facts about two different sets of elements, and both are
+shown. The failure comes first, because it is the half somebody has to act on.
+
+**How to check it:** an audit that reaches its limit and then cannot send says both sentences.
+
+### #56 — Some containers were never looked at, on any page, in any audit ⭐ ✅
+
+**What it is.** What the capture picks up off a page.
+
+**What was wrong.** The capture collected a `<div>` only if it had a `class` on it. A container
+styled by `id` or by an inline style — very common in real applications, and the normal output of
+several page builders — was **never collected at all**. Not declined by a check: never shown to
+one. So nothing recorded that it existed, and the page was written down as checked.
+
+**What it meant.** On the fixture this hid three real failures on one page. On a client site it
+would hide however many of that kind of container the site has, silently, with the page reported
+as fine.
+
+**The fix.** The capture now also offers any `<div>` with three or more children — the same bar the
+structure check itself uses. Measured across all 95 pages before it went in: **8,385 elements
+offered today, and this adds three.** It is not a broadening that costs anything.
+
+**How to check it:** `/events/workshops` goes from 80 elements to 83.
+
+### #57 — Our own check could never have found #56 ⭐⭐ ✅
+
+**What it is.** `verify-selectable` — the check whose whole job is to prove every answer-key record
+can reach the check it was written for.
+
+**What was wrong.** It looked elements up directly on the page, which finds anything that is
+there — whether or not an audit would ever collect it. So it tested *"do the rules want this?"* and
+never *"would we even have picked it up?"*. **The one failure it could not see was #56**, and it
+reported all three affected records as perfectly fine.
+
+**What it meant, and this is the part worth reading twice.** The `structure` check reported a
+reachable sample of 30 — over the line, measurable, healthy — while 3 of its 15 failure records
+could never be found by any judge. Its best possible recall was **80%**, and nothing anywhere said
+so.
+
+**The fix.** The check now uses the capture's real list, imported from the audit script itself so
+the two cannot drift apart, and asks both questions. It reports them separately, because they are
+different problems: *collected then declined by a rule* is often correct and sometimes unavoidable;
+*never collected at all* is always a gap, and now fails the check.
+
+**Proved, not asserted:** with the #56 fix temporarily removed, the check names all three records
+and fails.
+
+### #58 — Stopping a run does not stop the work 🔬 RECORDED, NOT FIXED
+
+**What it is.** Anything the platform runs on your machine, not only accessibility.
+
+**What was observed.** The audit's judge was stopped on the server at **06:46**. It went on writing
+answers into the database until **07:37** — 49 minutes, one every few seconds. Only killing the
+companion actually stopped it.
+
+**Why.** The work runs as a process on your own machine and reports its results straight to the
+platform. Stopping the run stops the platform's *supervision* of it; nothing tells the process
+itself, and nothing refuses its results afterwards.
+
+**What it means.** "Stop" is not a stop today. If you need work to actually end, stop the
+companion.
+
+**Why it is not fixed here.** It needs a decision about where the check belongs — the platform
+refusing results for a stopped run, the companion checking its own run's state, or both — and that
+is a change to how every run on the platform works, not an accessibility one. It is written down
+so nobody discovers it the way we did.
+
+### #59 — The failing backend tests were three causes, not one ✅ FIXED
+
+**What it was.** Running the accessibility suites produced failures. They were expected and they
+were logged, and **not one of them was a product defect** — but the record said they were all one
+thing, and they were not.
+
+**What was observed.** `GAP_FIX_BUILD_PLAN.md` §9.25 recorded 14, all attributed to the `graphics`
+checker. Re-measured on 1 September the real figure was **21 backend and 1 frontend**, from four
+causes — and the last five of those are their own finding, **#62**.
+
+| Count | Where | What it was |
+|---|---|---|
+| 11 | `test_a11y_capture` (5), `test_a11y_report` (6) | The `graphics` widening of 27 August. An image was claimed by **both** `alt` and `graphics`, deliberately — different questions, and an accurate alt text on an invisible icon passes one and fails the other. The tests still expected one checker. |
+| 4 | `test_a11y_conformance` (2), `test_a11y_findings` (1), `test_a11y_conformance_rest` (1) | **Nothing to do with `graphics`.** Stale assertions against the conformance guard of 27 August. |
+| 5 | `test_a11yai_capability` (2), `test_a11y_ownership`, `test_a11y_journey`, `test_a11y_wcag` | Never counted before — see **#62**. |
+| 2 | `test_a11y_selection_corpus` | 1.4.11 owning no failure shape — see **#60**. |
+
+**One diagnosis in the 1 September note was itself wrong, and it is corrected here.** The
+conformance failures were written up as *"their fixtures load no ownership registry"*. They do load
+it. The real cause is sharper: the fixture records a **rule-scanner** pass for **1.1.1**, and
+`ownership.json` gives 1.1.1 to the **AI**. axe's `image-alt` proves an alt attribute *exists*;
+whether it *says* anything is the judge's question. So the guard correctly refused the claim —
+which is the 1.2.2 captions bug in miniature, caught by the very guard built for it.
+
+**How it was fixed.** Sixteen of the twenty-one needed **no assertion edited at all**: they went
+green the moment the `graphics` claim was withdrawn (**#60**), because every one of them was
+objecting to that single thing. Of the rest, the four conformance fixtures now name the engine that
+owns the criterion they are covering — each with a comment saying why, so nobody "fixes" them back.
+The guard's own coverage is untouched: `test_a11y_conformance_guard.py` already holds thirteen
+tests on exactly this rule, from both directions.
+
+**What it means going forward.** The bar is a **green suite**, not "the sixteen are these sixteen".
+A background of expected red is how #62 hid for five days.
+
+
+### #60 — 1.4.11 was claimed with no evidence of any kind ⭐⭐ ✅ CORPUS AND METHOD BUILT
+
+**What it is.** `graphics`, the sixth element check, added 27 August. It asks the half of *Non-text
+Contrast* that arithmetic cannot: **are the meaningful parts of the icons, charts and diagrams
+actually visible enough?** Somebody has to know which parts of a picture carry meaning before any
+ratio means anything, which is why it is an AI check and not a rule.
+
+**What was observed.** Three gaps: no selection-corpus rows, no `check_graphics` on the capability,
+and **zero answer-key records** where every other checker has 31 to 42. Every other check on this
+platform can say how often it is right. This one could not, at all.
+
+**And then the decisive thing, which nobody had read.** The platform had been saying since the day
+the check landed that the claim itself was wrong:
+
+```
+claimed == set(criteria_for(owner=Owner.AI, tier=Tier.IN_POC))
+Extra items in the left set: '1.4.11'
+```
+
+`apps/a11y/data/ownership.json` records 1.4.11 as owned by **`rule`**. `A11Y_CHECKER_CRITERIA` is
+the map of what the **AI** owns. Putting 1.4.11 in it made the two disagree, and the drift guard
+said so — along with four other guards. The case for the widening was argued in a code comment; the
+registry was never changed to agree.
+
+**How it was fixed, in two steps on the same day.** The claim was first *withdrawn* — `graphics`
+moved out of the live checker list into `HELD_BACK_SELECTION_RULES`, with nothing deleted. The team
+then asked the right question: **does the checker actually work?**
+
+It does, and the proof was already in the database. On the 31 August Meridian run it selected 59
+pictures, received 59 screenshots and returned 59 verdicts — and it was reading pixels, not markup:
+
+> *"Screenshot shows a flat SVG illustration of a brick building. The meaningful parts — the
+> terracotta building outline against a light grey background, the arched windows (white/light on
+> the dark brown wall)…"*
+
+So the hold was lifted after a few hours and the real blocker was fixed instead — see **#65**.
+
+**Two of the three gaps are now closed.** `check_graphics` exists on the capability, so the
+criterion can be asked about outside an audit run. The selection corpus holds seven rows for
+1.4.11 — five shapes the check must reach and two it must leave alone — every one drawn from the
+rule's own written scope rather than invented, and two of the five reachable by nothing else in the
+platform: a chart drawn as a bare `<svg>`, and an icon painted as a CSS background image.
+
+**The third stays open, and is now #64.** Answer-key records have to be labelled by someone other
+than the author of the checker, and no code change satisfies that. So 1.4.11 ships **judged but not
+measured for accuracy** — which the team has accepted, and which the report should state rather
+than gloss. Worth keeping in view: in 59 verdicts this check has never once returned a failure. It
+runs, and it reasons about the right thing; whether it can say *no* is still unproven.
+
+
+### #61 — One frontend test only passed in UTC ✅ FIXED
+
+**What it was.** `audit.test.tsx` asserted the screen shows `13:04` for a stubbed
+`2026-08-31T13:04:11Z`. The screen renders that in the **viewer's own local time**, deliberately, so
+on a machine in India it correctly read 18:34 and the test failed. 415 of 416 frontend tests passed;
+this was the one.
+
+**What it meant.** The feature is right and is the point of the fix it covers — a count with no time
+beside it reads identically one second and half an hour after the machine died. Nothing a user sees
+was wrong. But the suite was **not portable**, and a test that is red only on your machine is one
+people learn to ignore.
+
+**How it was fixed.** The **test timezone is pinned to UTC** in `vite.config.ts`, not the one
+assertion — because the next time-rendering test somebody writes would have had the same problem and
+nobody would have connected the two. Set at config load, which happens in the Vitest parent process
+before any worker is forked, so workers inherit it; and cross-platform, unlike a `TZ=UTC` prefix on
+the npm script, which Windows does not understand. **416 of 416 pass.**
+
+
+### #62 — Five more red tests than anyone had counted, all naming the same thing ✅ FIXED
+
+**What it is.** The 1 September review measured the failing tests across eleven a11y test files and
+reported sixteen. There are **thirty-three** a11y test files. Sweeping all of them found
+**twenty-one**.
+
+**What the five were, and why they matter more than their number.**
+
+| Test | What it had been saying since 27 August |
+|---|---|
+| `test_the_capability_offers_a_check_for_every_checker_in_the_registry` | there is no `check_graphics` method — a checker that can be selected and dispatched and has nowhere to put its verdict |
+| `test_every_checker_maps_to_a_real_wcag_criterion` | the checker map is not the five the POC shipped |
+| `test_the_poc_checkers_and_the_registry_cannot_drift_apart` | the map claims 1.4.11 and the registry does not give it to the AI |
+| `test_the_poc_element_checks_are_untouched` | the element-check set changed without a decision |
+| `test_the_statement_arrives_compiled_with_every_criterion` | the conformance guard, as in **#59** |
+
+**What it means.** Four of the five were the platform's own drift guards, and **all four were
+pointing at the same fact** — the one in **#60**. They were not noise around a known problem; they
+*were* the problem, stated four times, for five days, in a suite everybody had been told had "about
+sixteen expected failures".
+
+This is **#57 for the third time**: a check whose whole purpose is to notice something, ignored
+because it was noticing it. The first was a scan rule, the second was 1.4.11 itself, and this is the
+test suite. The pattern is not a test problem — it is what an accepted background of red does to
+every signal inside it.
+
+**How it was fixed.** All five are green. Four of them were saying one thing — see **#65** —
+and went green when that was fixed. And the count is no longer the thing being remembered:
+**the a11y suite is at 1,765 passing and zero failing across all thirty-three files**, so the
+next red test is visible on the day it appears rather than five days later.
+
+
+### #63 — Pausing the judge would have handed 1.4.11 back to the arithmetic ✅ FIXED
+
+**What it is.** The most dangerous thing found today, and it was found by a test refusing to go
+green for the wrong reason.
+
+**What was observed.** With `graphics` held back (**#60**), one test stayed red:
+*`test_non_text_contrast_is_covered_by_a_rule_AND_a_judge_and_needs_both`*. Its whole point is that
+1.4.11 has two halves and needs both. Following it through:
+
+* the ownership registry gives 1.4.11 to **`rule`**;
+* `page_rules` records its measurements under the **`rule`** engine;
+* the conformance guard asks *did an engine entitled to settle this criterion look?* — and with
+  `graphics` gone, the answer would have been **yes**.
+
+So a page whose buttons all had visible edges would have been reported as **Supports 1.4.11** with
+**nothing having looked at a single icon**. That is QA-25 word for word — a narrow pass claiming a
+criterion it cannot prove — recreated by the act of pausing the check built to fix it.
+
+**How it was fixed.** A held-back check now **withdraws its criterion from positive claims** rather
+than handing it to the other half. `A11Y_HELD_BACK_CLAIMS` derives the criteria from the held-back
+map, and `suggest()` returns no suggestion for them — placed with the other positive-only guards, so
+**failures are untouched in both directions**: a control edge under 3:1 is still a proven Level AA
+defect and is still reported. The test holds both ends: that a held check is *held and not
+deleted*, and that while it is held nothing may claim its criterion.
+
+**What it means.** Withdrawing a claim is not the same as disabling a feature, and doing the
+first by doing the second is how the original bug gets rebuilt.
+
+**Nothing is held back today** — `graphics` runs again and 1.4.11 is both measured and judged
+(**#65**). The guard is kept and tested anyway, because the day somebody holds a check is
+exactly the day nobody re-derives this, and it cost a near-miss on a client-facing document
+to learn it once.
+
+
+### #64 — The answer key still has nobody's signature on it 🔬 RECORDED, NOT FIXED
+
+**What it is.** The accuracy figures rest on an answer key of **173 records that are all
+draft-unadjudicated**. Until an expert signs them off and the blind second pass runs, those figures
+measure how often our checks agree with a careful draft — not how often they are right.
+
+**Why it is not fixed here.** It cannot be. The golden set's own rule is that the person who labels
+must not be the person who wrote the checker, and no code change satisfies that. It is recorded here
+so the number is read for what it is, and because **#60** cannot be reversed without it.
+
+**What is also still open, and does not block a run:** the contested 0.833 precision on `structure`
+(three tables where our check and the key disagree, needing a ruling, and it can only move up);
+`#open-exports` and `#newsletter-email`, two judgement calls the key's own author flagged both ways;
+screenshot paging; and **#58** — terminating a run still does not stop the agent, so if a run must
+actually end, stop the companion.
+
+
+### #65 — A correction agreed on 27 August never reached the data ⭐⭐ ✅ FIXED
+
+**What it is.** The single fact underneath #60, #62 and #63, and the reason all three existed.
+
+**What was observed.** `RESEARCH_CORRECTIONS.md` **R14**, agreed 27 August, says of WCAG 1.4.11:
+*"the rationale is correct and the owner is not."* The research report gives the criterion to the
+arithmetic; the team decided the judge decides it. Both halves of the check were built the same day.
+
+**And `ownership.json` was never changed.** The register that actually routes every check still said
+`"owner": "rule"`.
+
+So from 27 August the code assumed one thing and the data said another. Five separate self-checks
+reported the disagreement **every day for five days**, and every one was read as background red:
+
+| Guard | What it was saying |
+|---|---|
+| the ownership drift test | the AI's map claims 1.4.11 and the register does not give it to the AI |
+| the register/map equality test | the checker map is not the five the POC shipped |
+| the POC element-check list | the set of checks changed without a decision |
+| the capability-surface check | there is no `check_graphics` method |
+| the selection corpus (both halves) | 1.4.11 is claimed with no example behind it |
+
+**What it means.** *A decision recorded only in prose is not a decision the platform can act on.*
+Every layer above the register had already been changed to match R14 — that is why the checker
+worked. Only the register was left, and the register is what routes.
+
+**How it was fixed — and deliberately not by editing the register.** `data/ownership.json` is a
+**derivation**, not a decision record: it is rebuilt from the committed research PDF and proved
+against eight independent cross-checks, including the report's own headline counts. Editing a row
+there would make the file disagree with its own source, and the rebuild would fail — correctly.
+
+So the decision lives in **`ownership.ENGINEERING_OVERRIDES`**, applied when the register is loaded.
+The committed file keeps saying what the report says; the routing table carries what the team
+decided. Both are true statements about different things. Three guards keep it honest: the file is
+asserted to be unedited, the override set is exactly one criterion, and **every override must name a
+criterion that appears in `RESEARCH_CORRECTIONS.md`** — because a correction in code with none in
+prose is this same failure pointing the other way.
+
+**Also completed, both missing since 27 August:** `check_graphics` on the capability, and seven
+selection-corpus rows for 1.4.11 — five shapes the check must catch and two it must leave alone,
+every one taken from the rule's own written scope rather than invented. Two of the five can be seen
+by nothing else in the platform: a chart drawn as a bare `<svg>` (never announced, so the alt check
+skips it on purpose) and an icon painted as a CSS background image (no tag or attribute says it is a
+picture).
+
+**What it leaves.** Six element checks, all six exposed, register and code agreeing for the first
+time since 27 August, and 1.4.11 both measured and judged. The conformance statement is now
+*stricter* than before any of this: the criterion cannot read as supported unless the judge has
+actually looked.
 
 ---
 
@@ -2406,6 +2791,39 @@ the moment it lags.
 slot, and those ten pages are **144 slots but 81 distinct elements** — the header and footer are
 the same markup on every page and one verdict answers all ten. Nothing was ever lost.
 
+#### The first run at real size — 31 August
+
+**94 pages, 2,171 elements, 1,065 questions.** Eight times the largest previous run, and the first
+one big enough for the capture and the judging to take long enough to collide.
+
+| | |
+|---|---|
+| Pages | **94 of 94** captured, none unreachable, no reconciliation gaps |
+| Elements | **2,171** |
+| Questions | **1,065** distinct — 800 sent, 265 correctly queued |
+| Real verdicts | **644** before it was stopped (567 pass, 51 fail, 18 uncertain) |
+| Rule-scanner findings | **335**, all genuine |
+| Friday's fixes, confirmed live | 20 `label-content-name-mismatch` + 3 `td-has-header` — findings no audit before 28 August could have produced |
+| Accuracy number | **none, and correctly none** — see below |
+
+**What worked is most of it.** Every page visited, every element captured, the judge answering
+steadily for over an hour. The scale that Friday's dataset work made possible is the scale that
+this run proved the capture holds.
+
+**What broke is one thing, four ways.** A duplicated close destroyed the audit's own record of
+itself: #54 above, with #55 as its consequence, and #56/#57 found in the wreckage while reading
+what had actually been measured. All four are fixed. #58 was found while trying to stop it.
+
+**Why there is no accuracy figure, and why that is the right outcome.** Only **43 of the 173**
+answer-key records received a real verdict — `alt` 12, `color` 9, `label` 19, `semantics` 0,
+`structure` 3 — against a minimum sample of 30. Every checker reads *not yet measurable*. The
+floor did exactly what it exists for: a number built on 43 records would have been quotable,
+wrong, and impossible to withdraw.
+
+The audit was cleared afterwards on the team's decision — a genuinely blank slate, judgments
+included — so the next run proves itself end to end with nothing inherited. The 95 registered
+routes were kept.
+
 ### 10.2 What is still unproven 🔬
 
 Five runs have not touched **any** of these. Ranked by how likely a live run is to surprise us:
@@ -2426,24 +2844,45 @@ Five runs have not touched **any** of these. Ranked by how likely a live run is 
 4. **Signing a conformance statement.** It has been *rendered* from a real audit's findings —
    that part is proven. Nobody has signed one against a live run, and signing is what registers
    and approves the artifact.
-5. **Two passes over 68 pages.** The pass loop is tested; the largest live run is 12 pages
-   against a limit of 60. Ten pages is the small case and we have only ever run the small case.
+5. **An audit that finishes at real size.** ⚠️ **Corrected 31 August, and only half answered.** The
+   multi-pass capture is now proven at 94 pages: two passes, every page visited, nothing
+   reconciled away. What is *not* proven is a run of that size **finishing** — the 31 August audit
+   was stopped by hand after the defects in #54–#55, so no large audit has yet reached
+   `complete` under its own steam and published its documents. That is the next thing a live run
+   settles.
 
 ⚠️ **A real `passes` array is no longer on this list.** The scanner returns positive evidence into
 the platform on every live run — 175 passed on the last one. Answered.
 
+⚠️ **And one item was removed from this list on 31 August without being proven: an accuracy
+number.** It is not unproven-and-pending; it is *not yet measurable*, which is a different and
+more honest state. 43 of 173 records were scored against a floor of 30 per checker. See §10.1.
+
 ### 10.3 What is proven by tests, and how much
 
-Measured on this branch on **21 August**, after §9.11:
+Measured on this branch on **31 August**, after §9.25:
 
 | Ran | Result |
 |---|---|
-| `test_a11y_report.py` · `test_a11y_baseline.py` · `test_a11y_baseline_report.py` · `test_a11y_dispatch.py` · `test_a11y_scope_rest.py` | **390 passed** (6 minutes) |
-| The whole frontend suite | **374 passed across 21 files**, `tsc -b` and `eslint` clean |
-| The a11y frontend suites alone | 114 across 6 files |
+| `test_a11y_dispatch.py` · `test_a11y_baseline.py` | **238 passed**, including the three new regressions for #54 and #55 |
+| `test_a11y_report.py` · `test_a11y_findings.py` · `test_a11y_review.py` · `test_a11y_defects.py` · `test_a11y_judging_carrier.py` · `test_a11y_baseline_report.py` · `test_a11yai_capability.py` | 312 passed, 9 failed — **all 9 pre-existing, see below** |
+| The a11y audit frontend suite | **65 passed**, `tsc --noEmit` clean |
+| The scorer's own tests | **41 passed**, no database, no Django |
+| The fixture harness (`npm run check`) | **all 8 checks green**, 94 routes, 173 records, 0 never-collected |
+| `ruff` on `apps/a11y` | clean. `mypy` reports 3 errors, all pre-existing on the same lines |
 
-Both numbers were **measured on the day this section was written**, not carried forward. The
-previous version of this table quoted 336 frontend tests across 20 files; it had been true once.
+⚠️ **14 tests were already failing on this branch before any of this work started**, and they fail
+identically with every change stashed. All of them trace to the `graphics` / 1.4.11 checker added
+on 27 August and never wired into the capability interface, the selection corpus, or several test
+expectations that enumerate checkers. One may be a real gap rather than a stale test — there is no
+`check_graphics`, so 1.4.11 cannot be asked through the capability at all. **Logged as its own
+task rather than fixed in passing:** the corpus entries need writing properly and the capability
+question needs a decision. One of the fourteen was fixed, because it sat in a file this work was
+already changing.
+
+Every number here was **measured on the day this section was written**, not carried forward. An
+earlier version of this table quoted 390 backend and 374 frontend tests from 21 August; both had
+been true once.
 
 ⚠️ **The backend suite is never run whole** — it is killed by the machine. Only the files a change
 touches are run, which is why the table names files rather than claiming a total.
@@ -2501,10 +2940,20 @@ It does not prove the artefact the person actually opens.
 | Registered pages per project | 200 |
 | Pages per capture document (⇒ per pass) | 60 |
 | Elements per screen | 600 |
-| Element judgments per judging run | 200 |
+| Element judgments per judging run | 200 by default — **set per workspace**; the 31 August audit ran at 800 |
 | Keyboard journeys started at once | 10 |
 | Steps per journey | 40 |
 | Review lock | 15 minutes, self-renewing |
+| How long the companion waits for the platform | 60 seconds — **except closing an audit, which is allowed 15 minutes** (#54) |
+
+⚠️ **The judgment limit counts distinct questions, not elements-times-checks.** The same markup on
+twenty pages is one question and one answer, so a site whose furniture repeats costs far less than
+its element count suggests. It is a limit on what one run may *spend*, and a run that reaches it
+stops and offers the rest back rather than skipping anything.
+
+⚠️ **The 15-minute allowance on closing an audit is not a tuning knob.** Closing a 94-page audit
+is minutes of real work, and the 60-second default caused #54 — the companion decided a healthy
+audit had failed and closed it a second time.
 
 ### 11.4 Severity
 
@@ -2553,3 +3002,133 @@ each showed the other's last walk. Keyed on the artifact now.
 | `RESEARCH_CORRECTIONS.md` | where the research reports disagreed with the platform |
 | `USER_JOURNEYS.md` | the nine journeys, rewritten 20 August against what the code does — each marked built, part-built or not built |
 | `docs/design/screens/S-38-a11y-audit.html` | the approved wireframe for Pages & audit |
+
+### #66 — A new tenant silently inherits a judging cap of 200 🔬 RECORDED, NOT FIXED
+
+**What.** `caps_for()` falls back to `DEFAULT_MAX_JUDGMENTS_PER_RUN = 200` when the `a11yai`
+connection has no `max_judgments_per_run` in its scopes. A freshly created tenant has empty scopes.
+
+**Found.** 2 September, during the capture phase of audit `f60c8f1a` on a brand-new tenant — early
+enough to correct before dispatch.
+
+**Why it matters more than the number suggests.** 1,068 distinct questions at 200 per pass is about
+five passes instead of two. But the failure is invisible: the audit stops saying it reached "this
+run's limit", which is exactly what it says when a correctly configured run reaches 800. There is no
+error, nothing is lost, and nothing on screen states the cap — so the symptom is a slow day nobody
+investigates.
+
+**How to reproduce.** Create a tenant, add the `a11yai` connection, read `caps_for(tenant_id)`.
+Returns `(200, None)`.
+
+**Not fixed.** Options are to surface the cap at project setup, seed it with the tenant, or print it
+on the audit screen before the run. The team's call.
+
+---
+
+### #67 — The findings ledger write fails silently when the run fails ⭐⭐ 🔬 RECORDED, NOT FIXED
+
+**What.** `publish_report` calls `merge_run` then `record_run_findings` inside a best-effort handler
+that records any failure onto the returned dict. That dict comes back on the Temporal activity's
+return value — which is never persisted when the run itself fails. `record_run_findings` takes
+**427 seconds** on a 94-page audit. So on precisely the run most likely to cut it short, its error
+cannot be recorded anywhere.
+
+**Found.** 2 September, after pass 2 of audit `f60c8f1a` ended on a subscription session limit. The
+Accessibility screen read 370 problems and 106 awaiting review for **80 minutes**; both were pass 1
+figures. The report document had regenerated at 05:39:38 and the ledger had not.
+
+**How it was proven.** Every one of the 476 ledger rows had `created_at` and `updated_at` between
+04:13 and 04:16, and pass 2 finished at 05:39 — so no row was touched afterwards. A dry run of
+`record_run_findings` inside a rolled-back transaction then showed the function itself succeeds
+(76 opened, 377 seen again, 99 resolved) and takes 7 minutes.
+
+**Confirmed non-permanent.** Pass 3 ran the same write to completion, moving the queue 106 → 2.
+
+**The write is correct; the silence is the defect.** Preferred fix: record the ledger outcome on the
+audit `summary`, which survives a failed run, instead of only on the activity result. Secondary:
+reduce the write cost.
+
+**Watch for it.** If an audit finishes and the two headline counts do not move within about ten
+minutes, the ledger write did not complete. There is currently no other signal.
+
+> **Team decision, 2 September.** Both of the above were presented in full with a proposed fix, a size and a risk assessment. **The team weighed them and judged neither urgent**, and chose to spend the time on conformance-tab UI work instead. They are deferred by decision, not by neglect — do not reopen the question without new evidence. The fixes proposed were: for the cap, show it on the audit screen and set it explicitly for new workspaces; for the ledger, record the reconciliation outcome on the audit's own `summary` (which survives a failed run) rather than only on the run's return value, and leave the seven-minute write cost alone — speed is a comfort, the silence is the defect.
+
+---
+
+### #68 — Three defects on the conformance tab, and a fourth found while fixing them ✅ FIXED
+
+**Found.** 2 September, from the team reading the screen. All three were bugs rather than design
+choices — nobody decided any of this.
+
+**#68a — The three summary tiles ran together on one line.** The tab hand-rolled its own copy of
+the shared `Tile` component using `<span>` for the number, the label and the sentence. A span is
+inline, so all three sat on one line — `20EVALUATEDSomething actually checked these` — and the
+`margin-top` on `.tile__label` / `.tile__sub` was inert, because top margins do nothing on an
+inline box. Every other screen used the component and stacked correctly, which is why this was
+the only tab that looked wrong. **Fix:** use the component.
+
+The wording was rewritten at the same time, by team decision: `20 of 55 · Checked`,
+`35 of 55 · Not checked yet`, `4 · Waiting on you`. The third deliberately carries no "of 55"
+because **it is a subset of the second** — a criterion lands there precisely because nothing
+suggested a level, which drops it into "not evaluated". Printing "4 of 55" would invite a reader
+to add it to the other two.
+
+**#68b — The count of criteria needing a decision could not be acted on.** The tile said four
+criteria were waiting on a person; nothing in the list of fifty-five said which. **Fix:** those
+rows carry an amber edge, a tint, and a "needs your decision" chip. `needs_a_person` was already
+on every row and already reaching the browser — no backend change was needed, it simply was not
+shown. Colour is never the only cue: the chip says it in words.
+
+**#68c — The conformance dropdown clipped every option longer than a few characters.** It
+carried `.input` rather than `.select`, so it never got `appearance: none` nor the 32px of right
+padding the chevron needs — the **browser's own** arrow was painted over the words, and
+"Partially supports" rendered as "Partial". It also shared one flex row with the "suggested"
+chip, so in a narrow column the two competed and the control lost. **Fix:** the right class, a
+168px floor, and the chip stacked beneath rather than beside.
+
+**#68d — A 2.46:1 chip, introduced by the fix for #68b and caught before it shipped.** The first
+version of the "needs your decision" chip was white on `--warning`, which measures **2.46:1** —
+a hard WCAG AA failure at any size, in the accessibility tool. It was found by measuring the
+rendered page rather than by looking at it.
+
+**The wider finding is the one worth keeping: `--warning` cannot be used as a text colour at
+all.** It measures 2.19:1 on its own `--warning-bg` tint and 2.46:1 under white. The app's
+existing pattern for other roles (`background: var(--x-bg); color: var(--x);`) would therefore
+have failed here too, so copying it was not an option. **Fix:** a new `--warning-ink` (#7A4E06)
+for warning-coloured text and figures — 6.42:1 on the tint, 7.19:1 on white, both measured in
+the live browser.
+
+> **Not checked, and worth someone's time:** whether `--warning` is used as a text colour
+> anywhere else in the app. This entry only fixed the two places the conformance work created.
+
+**Verified.** 418 of 418 frontend tests pass, including two new ones pinning the row marking and
+the dropdown's class. The rendered page was measured in a real browser for computed colour,
+contrast, control width and stacking direction — not eyeballed.
+
+---
+
+### #69 — The accuracy harness demands an app version and then throws it away 🔬 RECORDED, NOT FIXED
+
+**What.** `run.py` takes `--app-version` and **refuses to score without it**. The Makefile explains
+why in detail: nothing in the platform records which version of the application was audited, so
+the number has to be stated by hand, and taking it from the answer key instead *"would make both
+sides agree by construction and turn the check into decoration"*. All of that reasoning is sound.
+
+**But the value is used for exactly one thing — `labels.check_app_version(manifest, ...)`, a guard
+that the key matches the app — and is then never written to the results file.** Confirmed on the
+2 September run: `1.4.0` was passed on the command line and the string appears **zero times** in
+`results/20260902T140726+0000.json`. There is no `app_version` key in the file at all.
+
+**Why it matters.** The results files are the accuracy record; the whole point of demanding the
+version is that a score is meaningless without knowing what was scored. As it stands, a file from
+six months hence cannot answer *"which build of Meridian produced these numbers?"* — and the two
+1 September files cannot answer it either. The guard runs and the evidence of it is discarded.
+
+**Found.** 2 September, while running the harness for real against audit `f60c8f1a`. Not a
+regression — it has been true since the harness was written.
+
+**The fix is one line**: put `app_version` on the results payload beside `audit`, `project` and
+`generated_on`. Worth doing before the next run rather than after, because the files already
+written cannot be repaired — nobody recorded what they scored.
+
+**Not fixed.** Recorded for the team's decision.

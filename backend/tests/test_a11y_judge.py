@@ -108,6 +108,114 @@ def report(run_fixture, element_id, **kwargs):
         element_id=element_id, **payload)
 
 
+def _resumed(run_fixture, *, answered_ids=()):
+    """Put this run into its SECOND session — as a re-claim after a dead companion does — with
+    `answered_ids` already carrying verdicts from the first one."""
+    from django.utils import timezone
+
+    from apps.runs.models import Run
+
+    tenant, _proj, row, _requests = run_fixture
+    for element_id in answered_ids:
+        report(run_fixture, element_id, verdict="pass")
+    # The re-claim: `first_claimed_at` is stamped afresh and `claim_count` goes up. Everything
+    # answered above belongs to the session BEFORE this line.
+    Run.objects.filter(id=row.id).update(inputs={
+        **(row.inputs or {}),
+        "dispatch": {"kind": "plan", "status": "claimed", "claim_count": 2,
+                     "first_claimed_at": timezone.now().isoformat()},
+    })
+    return tenant, row
+
+
+# ── a run that has ENDED stops being work ────────────────────────────
+#
+# 31 August: a judgment workflow was terminated on Temporal at 06:46:36 and reported
+# TERMINATED. Verdicts went on arriving until 07:37 — forty-nine minutes, one every five to ten
+# seconds, every one stamped with the terminated run's id. Nothing was wrong with the agent: no
+# tool it called had ever asked whether the run it named was still alive. "Stop" stopped the
+# orchestration and not the work, and the gap between those is a hole a client-facing
+# conformance report can be written through.
+
+
+def _ended(run_fixture, status):
+    from apps.runs.models import Run
+
+    _tenant, _proj, row, _requests = run_fixture
+    Run.objects.filter(id=row.id).update(status=status)
+
+
+@pytest.mark.parametrize("status", ["failed", "completed", "rejected", "approved"])
+def test_a_finished_run_takes_no_more_verdicts(run, status):
+    element = ids_of(run)[0]
+    _ended(run, status)
+
+    with pytest.raises(ValueError) as caught:
+        report(run, element)
+    assert "already ended" in str(caught.value)
+
+    # …and nothing was written. The point is not the error; it is that a finished audit's
+    # numbers cannot be moved after the fact.
+    tenant, proj, row, _ = run
+    assert not A11yJudgmentCache.objects.filter(tenant=tenant, run_id=row.id).exists()
+
+
+def test_a_finished_run_is_handed_no_more_work_either(run):
+    """Refusing the write alone would leave the agent reading batches and reasoning about
+    elements for as long as it had context — the forty-nine minutes were mostly that."""
+    _ended(run, "failed")
+
+    with pytest.raises(ValueError, match="already ended"):
+        judge.batch_for_run(run[0].id, run[2].id)
+    with pytest.raises(ValueError, match="already ended"):
+        judge.screenshot_pointers(run[0].id, run[2].id)
+
+
+def test_the_refusal_tells_the_agent_to_stop_rather_than_describing_a_state(run):
+    """Who reads this is a model deciding what to do next. "Run is in state failed" invites a
+    retry; a rejection an agent cannot act on is a rejection it repeats."""
+    _ended(run, "failed")
+
+    with pytest.raises(ValueError) as caught:
+        report(run, ids_of(run)[0])
+    message = str(caught.value).lower()
+    assert "stop" in message
+    assert "not stored" in message
+
+
+def test_a_PARKED_run_is_still_working_and_is_not_refused(run):
+    """The subtlety the whole guard turns on.
+
+    A parked run is not over — its report deadline passed while the machine was still going, and
+    the platform keeps waiting ON PURPOSE so a late report reconciles it. On 31 August that is
+    exactly what happened: the deadline fired at two hours and the pass reported normally
+    sixteen minutes later. Refusing a parked run's verdicts would throw away the last fifteen
+    answers of that pass and break the recovery the park exists to allow.
+    """
+    element = ids_of(run)[0]
+    _ended(run, "stalled")
+
+    assert report(run, element)["recorded"] is True
+    assert judge.batch_for_run(run[0].id, run[2].id)["total_elements"] == 3
+
+
+def test_the_platforms_own_accounting_still_runs_on_a_finished_run(run):
+    """The other thing that must not break. `verify_judgment_completeness` files a fallback for
+    every element the judge never answered, and `close_unfinished_ai_pass` calls it on runs that
+    are ALREADY terminal — it is the recovery that saved this audit twice. A guard that could
+    not tell the platform from the agent would have silenced it."""
+    from orchestration.activities import WriteCompletenessError
+
+    tenant, proj, row, _ = run
+    _ended(run, "failed")
+
+    with pytest.raises(WriteCompletenessError):
+        judge.verify_judgment_completeness(tenant_id=tenant.id, run_id=row.id)
+    assert A11yJudgmentCache.objects.filter(tenant=tenant, run_id=row.id).count() == 3, (
+        "every unanswered element must still be accounted for after the run has ended"
+    )
+
+
 # ── the element handle ───────────────────────────────────────────────
 def test_the_handle_is_readable_and_a_typo_is_loud():
     """`e1` mistyped is another valid element; this mistyped is almost certainly none."""
@@ -135,6 +243,117 @@ def test_the_batch_hands_over_one_screen_at_a_time(run):
     second = judge.batch_for_run(tenant.id, row.id, start=first["next_start"])
     assert [screen["route"] for screen in second["screens"]] == ["/checkout"]
     assert second["next_start"] is None, "the last page says so"
+
+
+# ── the record of what was never looked at (9.26.G) ──────────────────
+
+
+def test_a_later_shorter_reading_never_shrinks_what_was_never_looked_at(run):
+    """31 August: the closing path ran three times over one run and the attempts overlapped —
+    verdicts were still being filed while a later attempt counted what was still missing. The
+    later attempt saw a SMALLER set and replaced the true one: 170 recorded became 65, and 105
+    elements silently changed meaning from *work that did not happen* to *somebody's job in the
+    review queue*. That is the one distinction this record exists to keep."""
+    tenant, _proj, row, _requests = run
+    everything = ["a" * 64, "b" * 64, "c" * 64]
+
+    judge._remember_unanswered(tenant.id, row.id, everything)
+    judge._remember_unanswered(tenant.id, row.id, everything[:1])   # the partial re-count
+
+    row.refresh_from_db()
+    assert set((row.outputs or {})[judge.UNANSWERED_KEY]) == set(everything)
+
+
+def test_the_record_still_leaves_the_runs_own_outputs_alone(run):
+    """It shares `Run.outputs` with the reason a failed run records, and that must survive."""
+    from apps.runs.models import Run
+
+    tenant, _proj, row, _requests = run
+    Run.objects.filter(id=row.id).update(outputs={"error": "run abandoned by human takeover"})
+
+    judge._remember_unanswered(tenant.id, row.id, ["a" * 64])
+
+    row.refresh_from_db()
+    assert row.outputs["error"] == "run abandoned by human takeover"
+
+
+# The safety the union rests on — that keeping a hash in this record is NOT the same as offering
+# it back — is `unanswered_for_capture`'s own last step: it drops every hash that has since been
+# decided. That needs a real capture to exercise and is proven where the captures live, in
+# tests/test_a11y_report.py (`test_asking_again_and_finding_nothing_left_takes_the_button_away`
+# and its neighbours). Restating it here against a fixture with no stored bundles would prove
+# nothing — the function returns empty before it reaches the step.
+
+
+# ── a run that had to be resumed (9.26.E2) ───────────────────────────
+#
+# A companion that dies mid-phase stops heartbeating; its claim goes stale and the next companion
+# to poll re-claims THIS VERY RUN and starts the agent again. That is the right recovery — but
+# the agent starts a fresh session at element 1, so on 31 August a restart 99 elements into a
+# 269-element pass was about to re-decide 99 questions already answered, out of the user's own
+# subscription, to arrive where it already was.
+
+
+def test_a_resumed_run_is_handed_only_what_it_has_not_answered(run):
+    # Read the ids BEFORE resuming: `ids_of` pages through the batch tool, which is the very
+    # thing this changes.
+    before = ids_of(run)
+    tenant, row = _resumed(run, answered_ids=[before[0]])
+
+    served = [e["id"] for screen in judge.batch_for_run(tenant.id, row.id)["screens"]
+              for e in screen["elements"]]
+    assert before[0] not in served, "already answered by this very run"
+    assert set(ids_of(run)) == set(before[1:]), "and the rest are still asked about"
+
+
+def test_a_resumed_run_counts_its_contract_over_what_is_left(run):
+    """`total_elements` is the judge's own check that it finished — every element it was given
+    gets exactly one verdict. On a resumed run the set it was given IS the remainder, so a total
+    still describing the original dispatch would tell the judge it had failed to finish."""
+    tenant, row = _resumed(run, answered_ids=[ids_of(run)[0]])
+
+    assert judge.batch_for_run(tenant.id, row.id)["total_elements"] == 2, \
+        "three dispatched, one already answered by this run"
+
+
+def test_an_ordinary_first_run_is_not_filtered_at_all(run):
+    """The filter must be reachable only by a re-claim. A first session has `claim_count` 1 and
+    must serve byte-for-byte what it always did — including elements another, EARLIER pass over
+    the same capture already answered, which are dispatched to this run deliberately."""
+    tenant, _proj, row, requests = run
+    report(run, ids_of(run)[0], verdict="pass")
+
+    batch = judge.batch_for_run(tenant.id, row.id)
+    served = [e["id"] for screen in batch["screens"] for e in screen["elements"]]
+    assert ids_of(run)[0] in served
+    assert batch["total_elements"] == len(requests)
+
+
+def test_a_resumed_run_is_shown_pictures_of_only_what_it_is_judging(run):
+    """The pictures and the questions have to be the same set, or the judge spends its vision
+    budget looking at elements it is not being asked about."""
+    before = ids_of(run)
+    tenant, row = _resumed(run, answered_ids=[before[0]])
+
+    pointers, unseen = judge.screenshot_pointers(tenant.id, row.id)
+    named = {p["name"] for p in pointers} | {u["id"] for u in unseen}
+    assert before[0] not in named
+    assert named == set(before[1:]), "and every element it IS judging is still covered"
+
+
+def test_what_the_run_must_account_for_is_never_narrowed_by_a_resume(run):
+    """The completeness check measures against everything the run was DISPATCHED. A contract that
+    shrank to fit what was done is not a contract — and this is the guarantee §9.25 exists over."""
+    from orchestration.activities import WriteCompletenessError
+
+    tenant, proj, row, requests = run
+    _resumed(run, answered_ids=[ids_of(run)[0]])
+
+    # It raises, because two elements really are unanswered — and what it must say is "of 3".
+    with pytest.raises(WriteCompletenessError) as caught:
+        judge.verify_judgment_completeness(
+            tenant_id=tenant.id, project_id=proj.id, run_id=row.id)
+    assert f"of {len(requests)} accessibility element(s)" in str(caught.value)
 
 
 def test_the_contract_is_the_whole_run_on_every_page(run):
@@ -571,15 +790,100 @@ def test_the_long_verify_phases_are_the_real_phase_keys():
 def test_the_judge_phase_gets_the_longer_verification_window():
     """One minute was sized for "does the artifact exist"; this branch writes a fallback verdict
     per unanswered element and then publishes a report. Cancelled part-way it wrote 81 of 144
-    fallbacks and left 63 elements with none — the exact thing the branch exists to prevent."""
+    fallbacks and left 63 elements with none — the exact thing the branch exists to prevent.
+
+    Then a flat five minutes became the same mistake at 800 elements, so the number is no longer
+    written here at all: the dispatcher sizes it and the workflow reads what it was given. This
+    asserts the workflow still asks the phase rather than hard-coding a minute, and that what it
+    reads is the field the dispatcher fills.
+    """
     import inspect
 
     from orchestration import workflows
 
     source = inspect.getsource(workflows)
-    assert "LONG_VERIFY_PHASES else 1" in source, (
+    assert "LONG_VERIFY_PHASES else 60" in source, (
         "verify_writes must take its timeout from the phase, not a flat one minute"
     )
+    assert "verify_timeout_seconds" in source, (
+        "the long window must come from the run's own budget, not a constant in the workflow"
+    )
+
+
+def test_a_judging_pass_is_given_time_that_scales_with_what_it_was_handed():
+    """The two deadlines that fired on work which was going perfectly well.
+
+    The report deadline rang at exactly 7,200 s on a pass that needed 8,193, on a companion that
+    answered seconds either side of it — and the obvious response to what the screen then said
+    would have killed the run fifteen verdicts from the end. The completeness check was cancelled
+    at its flat five minutes on the same pass. Both numbers were constants sized for a phase that
+    takes four minutes.
+    """
+    from apps.a11y.dispatch import judging_deadlines
+
+    big = judging_deadlines(800)
+    assert big["report_timeout_seconds"] == 20_000       # 800 × 25 s ≈ 5 h 33 m
+    assert big["verify_timeout_seconds"] == 1_600        # 800 × 2 s ≈ 26 m
+    # …and comfortably past what that pass actually measured: 8,193 s of judging, ~5 min of
+    # verification. Sized to the work, not to the incident.
+    assert big["report_timeout_seconds"] > 8_193
+
+    # A small re-judge keeps exactly the budgets it has today — nothing gets *less* time than
+    # before, which is what makes this safe to ship for every other size of pass.
+    small = judging_deadlines(12)
+    assert small["report_timeout_seconds"] == 7_200
+    assert small["verify_timeout_seconds"] == 300
+
+    # And a deadline that can be made arbitrarily long by making the batch arbitrarily large is
+    # not a deadline.
+    huge = judging_deadlines(100_000)
+    assert huge["report_timeout_seconds"] == 28_800
+    assert huge["verify_timeout_seconds"] == 1_800
+
+
+    # (That the dispatcher actually HANDS these to the run is proven where the dispatch fixtures
+    # live — `test_a11y_dispatch.py::test_the_dispatcher_hands_the_run_its_own_deadlines`.)
+
+
+def test_a_check_that_ran_out_of_time_is_not_reported_as_a_check_that_found_a_gap():
+    """31 August, 12:00:44: a run that had judged all 800 of its elements and reported `ok` was
+    written up as `write-completeness check failed: activity StartToClose timeout`.
+
+    It found nothing. It never got to the end of looking. But the console shows the run as
+    FAILED with a sentence that reads as "the completeness check found a gap" — and on a
+    capability whose entire promise is that nothing dispatched vanishes silently, a false alarm
+    about that promise is the most expensive false alarm available. Two different facts had one
+    sentence, and the one they shared was the alarming one.
+    """
+    from orchestration.build_types import is_activity_timeout
+
+    class _Timeout(Exception):
+        pass
+
+    _Timeout.__name__ = "TimeoutError"          # what temporalio raises as the ActivityError cause
+
+    class _Wrapped(Exception):
+        def __init__(self, cause):
+            self.cause = cause
+
+    assert is_activity_timeout(_Wrapped(_Timeout("StartToClose")))
+    # …and the message fallback, for a cause that did not arrive structured.
+    assert is_activity_timeout(_Wrapped(RuntimeError("activity StartToClose timeout")))
+    # A real gap is NOT a timeout, and must keep saying so.
+    assert not is_activity_timeout(
+        _Wrapped(RuntimeError("run x judged 31 of 40 accessibility element(s)")))
+
+
+def test_the_workflow_says_which_of_the_two_it_was():
+    """The distinction above only matters if it reaches the sentence a person reads."""
+    import inspect
+
+    from orchestration import workflows
+
+    source = inspect.getsource(workflows.AgentRunWorkflow)
+    assert "is_activity_timeout" in source
+    assert "did not finish in time" in source
+    assert "finding anything missing" in source
 
 
 # ── a judging run that DIED still has to account for itself ─────────────────

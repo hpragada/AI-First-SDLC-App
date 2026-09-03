@@ -260,22 +260,69 @@ A11Y_CHECKER_CRITERIA: dict[str, tuple[str, ...]] = {
     "graphics": ("1.4.11",),            # Non-text Contrast — can you SEE the meaningful parts?
 }
 
-#: **Why `graphics` exists, and why it is an AI check when 1.4.11 is recorded as rule-owned.**
+#: **Why `graphics` exists, and why it is the AI that owns 1.4.11.**
 #: 1.4.11 is a criterion in two halves. *Can you see where the controls are?* is colours and a
 #: threshold, and `apps.a11y.page_rules` decides it deterministically. *Are the meaningful parts
 #: of the icons, charts and diagrams visible enough?* requires knowing which parts of a picture
 #: carry meaning before any ratio can be computed, and nothing deterministic knows that.
 #:
-#: The registry said so itself, in its own rationale for this criterion — *"computable, but
-#: 'which graphics matter' needs some review"* — and then recorded the owner as `rule` anyway.
-#: That is how the second half went unbuilt for four tasks while the criterion was reported as
-#: covered. Both halves ship together or the criterion is not covered; see QA-25.
+#: Addendum A gave the criterion to `rule`, and said why it should not have in the same cell —
+#: *"computable, but 'which graphics matter' needs some review"*. That is how the second half
+#: went unbuilt for four tasks while the criterion was reported as covered. **Correction R14
+#: (agreed 27 August) settles it: the rationale is right and the owner is not**, and
+#: `ownership.ENGINEERING_OVERRIDES` carries that into the routing table — `ai` decides, with
+#: `page_rules` recorded as the rule engine's contribution. Both halves ship together or the
+#: criterion is not covered; see QA-25.
+#:
+#: **The correction was agreed on 27 August and the registry was not changed until 1 September**,
+#: and the gap between those two dates is the whole lesson. For five days this map said the AI
+#: owned 1.4.11 while the registry said `rule`, and five separate guards reported the
+#: disagreement every single day: the ownership drift test, the registry-map equality test, the
+#: POC element-check list, the capability-surface check, and both halves of the selection corpus.
+#: They were read as background red. A decision recorded only in prose is not a decision the
+#: platform can act on.
 #:
 #: **Its scope is deliberately wider than `alt`'s, and the difference is the point.** `alt` asks
 #: what assistive technology is told, so it skips a graphic that is never announced. This asks
 #: what a person can SEE, so a decorative-to-a-screen-reader icon carrying visible meaning is
 #: still in scope. The two checks look at many of the same elements and are asking genuinely
 #: different questions about them.
+
+#: Checks that are BUILT and are deliberately not running, with the criterion each one holds.
+#:
+#: **Empty today, and kept anyway** — for `A11Y_HELD_BACK_CLAIMS` below, which is the part that
+#: has to exist before anything is ever put in here again.
+#:
+#: A check goes in here when it is not wrong but its claim cannot be supported: the rule, the
+#: prompt schema and the style keys stay exactly where they are, and only the permission to say
+#: it covers a criterion is withdrawn. `checkers.rules.HELD_BACK_SELECTION_RULES` holds the
+#: matching selection rule, `describe_rules()` prints it as **HELD BACK, NOT RUNNING**, and
+#: `A11Y_ALL_CHECKER_CRITERIA` keeps validating it so a verdict recorded before the pause still
+#: reads back.
+#:
+#: `graphics` sat here for part of 1 September while the registry was brought into line with
+#: R14. What that half-day taught is written below, and it is why this is a mechanism rather
+#: than a commented-out line.
+A11Y_HELD_BACK_CRITERIA: dict[str, tuple[str, ...]] = {}
+
+#: The criteria a held-back check was answering part of — and NO conformance claim may be made
+#: about any of them while it is held.
+#:
+#: **This is here because holding a check back nearly recreated the bug that built it.** On
+#: 1 September `graphics` was held for a few hours, and one test refused to go green: 1.4.11's
+#: measurable half is recorded under the `rule` engine, so with the judge paused the conformance
+#: guard would have found an entitled engine had looked and answered **Supports 1.4.11** — for a
+#: page whose buttons all had visible edges and whose icons nothing had judged. That is QA-25
+#: word for word: a narrow pass claiming a criterion it cannot prove.
+#:
+#: So a hold **withdraws the claim** rather than handing it to whatever else touches the
+#: criterion. Failures are untouched in both directions — a control edge under 3:1 is still a
+#: proven Level AA defect and is still reported — because only the POSITIVE direction was ever
+#: unsafe here. Guarded whether or not anything is currently held, so the next hold is safe on
+#: the day it is made rather than after somebody rediscovers this.
+A11Y_HELD_BACK_CLAIMS: frozenset[str] = frozenset(
+    criterion for criteria in A11Y_HELD_BACK_CRITERIA.values() for criterion in criteria
+)
 
 #: **Why `semantics` and `structure` both carry 1.3.1, and are still two checks.**
 #: They ask different questions about it. `semantics` looks at ONE element and asks whether it
@@ -314,12 +361,21 @@ A11Y_JOURNEY_CRITERIA: dict[str, tuple[str, ...]] = {
     "status": ("4.1.3",),           # Status Messages — is a status announced to assistive tech?
 }
 
-#: Every checker the platform has, of either shape. This is what *validates* a judgment; the
-#: two maps above are what each half of the system iterates. Kept as a derived view so a new
+#: Every checker the platform has, of any shape. This is what *validates* a judgment; the
+#: maps above are what each half of the system iterates. Kept as a derived view so a new
 #: checker can never be added to one without being validated by the other.
+#:
+#: **Held-back checks are in here, and that is not a loophole.** Nothing selects or
+#: dispatches from this map -- selection reads `checkers.rules.CHECKERS`, which a held-back
+#: check is not in. What this map does is answer *is this a real checker?*, and the answer
+#: for a check that is built but paused is yes. Leaving it out would mean a verdict recorded
+#: before the pause could no longer be validated at all (the check is skipped when the
+#: checker is unknown), and a workspace that had tuned its confidence threshold would be
+#: told the check `does not exist` -- the same error QA-20 fixed for the journey checks.
 A11Y_ALL_CHECKER_CRITERIA: dict[str, tuple[str, ...]] = {
     **A11Y_CHECKER_CRITERIA,
     **A11Y_JOURNEY_CRITERIA,
+    **A11Y_HELD_BACK_CRITERIA,
 }
 
 
@@ -354,6 +410,26 @@ class A11yCandidate:
     screenshot_ref: str = ""    # object-store key of the element/page image (pointer only)
     context: str = ""           # surrounding text/markup the judge needs
     route: str = ""             # the screen/route the element belongs to
+    #: The name assistive technology announces for this element, as the BROWSER computed it
+    #: from the accessibility tree — never approximated from `aria-label` or the text content,
+    #: which would make the name and the visible label agree by construction.
+    #:
+    #: **It was captured, stored, and never sent, from the first day to 1 September.** WCAG
+    #: 2.5.3 asks one question — does the announced name contain the visible label — and the
+    #: judge was handed the markup, the picture and the surrounding text, and not the name. For
+    #: a `<button>` that is survivable, because a button's name is the word printed on it and
+    #: the markup carries that word. For a `<select>` it is not: the name comes from a
+    #: `<label for=…>` that is a SIBLING, so it is never inside the element's own `html` and
+    #: cannot be recovered from anything else that travels. Every `<select>` in the 31 August
+    #: Meridian audit — 13 of 13 — came back "cannot determine the accessible name", against a
+    #: 1.4% uncertainty rate everywhere else.
+    accessible_name: str = ""
+    #: What the element sits inside: {tag, role, href, text}. `context` is the parent's WORDS,
+    #: and an icon-only control's parent has none — so for the one element on /events/calendar
+    #: queued under both 1.1.1 and 1.4.11, the judge was asked what the icon is inside and told
+    #: nothing at all. Both criteria hinge on it: a link whose only content is this icon, or an
+    #: already-labelled container.
+    parent: Mapping = field(default_factory=dict)
 
     @property
     def has_input(self) -> bool:

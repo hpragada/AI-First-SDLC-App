@@ -179,6 +179,8 @@ def trigger_phase(
     auto_approve: bool = False,
     review_history: list[dict] | None = None,
     revision_of: str | None = None,
+    report_timeout_seconds: int | None = None,
+    verify_timeout_seconds: int | None = None,
     workflow_starter=None,
 ) -> TriggerResult:
     """Start an agent run for a work item and kick off its Temporal workflow. The phase runs
@@ -191,7 +193,15 @@ def trigger_phase(
     `review_history` / `revision_of` are set only when a reviewer pressed "Request changes" on this
     phase's gate: the accumulated review conversation, and the run this one revises. They are
     persisted on `Run.inputs` (NOT on the Temporal payload) and read back by the manifest composer,
-    so the revising agent sees every round's direction and what it produced in response."""
+    so the revising agent sees every round's direction and what it produced in response.
+
+    **`report_timeout_seconds` / `verify_timeout_seconds` let a caller size its own deadlines.**
+    Both were fixed constants shared by every phase, and both fired on work that was going
+    perfectly well: the report deadline at two hours on a judging pass that needed two and a
+    quarter, and the write-completeness budget at five minutes on a check with 800 elements to
+    account for. A phase that knows how much work it is handing over is the only thing that can
+    know how long that work should take, so it may now say. `None` keeps the dataclass defaults,
+    which is every caller but one — nothing else changes behaviour."""
     workflow_starter = workflow_starter or _default_workflow_starter
 
     with tenant_context(tenant_id):
@@ -231,12 +241,20 @@ def trigger_phase(
         run.temporal_workflow_id = workflow_id
         run.save(update_fields=["temporal_workflow_id", "updated_at"])
 
+        # Only pass the deadlines a caller actually chose, so an unset one keeps the dataclass
+        # default rather than this function having to restate it (a second copy of a default is
+        # a second place for it to drift).
+        deadlines = {
+            k: v for k, v in (("report_timeout_seconds", report_timeout_seconds),
+                              ("verify_timeout_seconds", verify_timeout_seconds))
+            if v is not None
+        }
         inp = AgentRunInput(
             run_id=str(run.id), tenant_id=str(tenant_id), project_id=str(project_id),
             work_item_id=str(work_item_id), agent_spec_id=str(spec.id), phase=phase,
             gate_type=gate_type, required_role=role, execution_mode=mode,
             enrollment_id=str(enrollment.id) if enrollment is not None else None,
-            repo=repo, base=base, auto_approve=auto_approve,
+            repo=repo, base=base, auto_approve=auto_approve, **deadlines,
         )
         event_payload = {
             "agent_key": agent_key, "workflow_id": workflow_id, "execution_mode": mode,

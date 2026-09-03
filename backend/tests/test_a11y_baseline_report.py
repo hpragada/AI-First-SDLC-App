@@ -463,6 +463,43 @@ def test_a_second_baseline_is_the_next_version_of_one_document(world):
     assert Artifact.objects.filter(tenant_id=world["t"], type=BASELINE_TYPE).count() == 2
 
 
+def test_closing_one_audit_twice_updates_its_baseline_instead_of_stacking_a_version(world):
+    """9.26.C. The closing path is not called exactly once: on 31 August the judging phase's
+    write-completeness step published, was cancelled on its timeout, and the failure path
+    published again — four versions of one document in two minutes, so the version history said
+    this project had been baselined four times when it had been baselined once."""
+    audit = _audit(world, "/login")
+    _finding(world, fingerprint="one")
+
+    first = publish_baseline(tenant_id=world["t"], project_id=world["p"], audit=audit)
+    # A body that CHANGES between the two calls, which is what actually happened — findings were
+    # still being written. A guard keyed on the content hash would have let this straight through.
+    _finding(world, criterion="1.4.3", route="/other", fingerprint="two")
+    second = publish_baseline(tenant_id=world["t"], project_id=world["p"], audit=audit)
+
+    assert second["artifact_id"] == first["artifact_id"], "the same document, brought up to date"
+    assert second["updated"] is True and first["updated"] is False
+    assert Artifact.objects.filter(tenant_id=world["t"], type=BASELINE_TYPE).count() == 1
+
+
+def test_a_different_audit_still_produces_the_next_version(world):
+    """The guard must not cost the thing versioning exists for — comparing where this application
+    stood at one audit against where it stands at the next."""
+    audit_one = _audit(world, "/login")
+    _finding(world, fingerprint="one")
+    first = publish_baseline(tenant_id=world["t"], project_id=world["p"], audit=audit_one)
+
+    audit_two = _audit(world, "/login")
+    second = publish_baseline(tenant_id=world["t"], project_id=world["p"], audit=audit_two)
+
+    assert second["artifact_id"] != first["artifact_id"]
+    assert second["version"] == 2 and second["updated"] is False
+    # Two versions of ONE document, which is what `supersedes` buys: same identity, next number.
+    rows = Artifact.objects.filter(tenant_id=world["t"], type=BASELINE_TYPE)
+    assert {r.version for r in rows} == {1, 2}
+    assert len({r.title for r in rows}) == 1
+
+
 def test_each_version_keeps_its_own_body(world):
     """A baseline you cannot compare against the last one is not a baseline."""
     _finding(world, criterion="1.1.1", fingerprint="one")

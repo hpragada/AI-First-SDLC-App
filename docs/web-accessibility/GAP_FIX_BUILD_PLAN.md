@@ -15,13 +15,16 @@ plain words, why it happens underneath, exactly what will change, and how we pro
 We take one task at a time: I surface it in full, the team says go, I build it, we test it, and
 only then do we move on.
 
-> **Status, 2026-08-21.** This line used to read *"nothing in here is built yet"*. **All eleven
+> **Status, 2026-08-31.** This line used to read *"nothing in here is built yet"*. **All eleven
 > gaps in §3 and §4 are built**, and the document has since grown a second half nobody planned
-> for: **§9, what running it turned up** — **thirty-five so far across twenty-four sections**, all
-> built. #19–#35 were found by people watching the product work rather than by
-> reading code; #36–#41 came the other way, and #42–#45 from tracking a live audit end to end and reconciling it against a second tenant’s. The other way, from the team asking whether we capture every
-> element WCAG puts in scope and the answer being no. §3 is the plan as written; §9 is what
-> reality added to it, and §9 is now the larger and the more useful of the two.
+> for: **§9, what running it turned up** — **forty so far across twenty-five sections**, all built
+> bar one that is deliberately recorded and not built (§9.25.5). #19–#35 were found by people
+> watching the product work rather than by reading code; #36–#41 came the other way, from the team
+> asking whether we capture every element WCAG puts in scope and the answer being no; #42–#45 from
+> tracking a live audit end to end and reconciling it against a second tenant’s; and **§9.25 from
+> the first audit at real size — 94 pages, 2,171 elements — which is where four defects nothing
+> smaller could have surfaced came out at once.** §3 is the plan as written; §9 is what reality
+> added to it, and §9 is now the larger and the more useful of the two.
 
 ### How to read a task
 
@@ -1332,11 +1335,15 @@ team took `/staff/shelf-audit` out to stay under the judging cap.
 
 > **This section was appended as an afterthought and is now the larger half of the document.**
 > §3 is the plan as written; §9 is what running it added: **thirty-five findings across twenty-four
-> sections** (§9.1–§9.23), all built. #19–#35 were produced by a person
+> sections** (§9.1–§9.23), all built — and it has gone on growing since that was written. **§9.24
+> to §9.28** carry the 25 and 31 August and 1 September findings and are also all built; **§9.29 is
+> the 1 September re-reading of every fix ever made, and built nothing; §9.30 and §9.31 are what the
+> team asked for in answer to it — everything that review found, cleared, and the sixth check
+> back in with the registry agreeing, at 1,765 passing and zero failing.** #19–#35 were produced by a person
 > watching the product work; #36–#45 by putting twelve textbook WCAG failures through the
 > selection code after the team asked what we do and do not capture. **Every built one has a
 > green test suite standing over it** — which is the point, and why they are written up at
-> length. They are numbered #19–#53 in the Testing Guide.
+> length. They are numbered #19–#64 in the Testing Guide.
 
 **It worked, and it found four defects no test could have caught, each hidden behind the one
 before it.** That is the shape of a capability that has never run: the first defect stops you
@@ -2711,6 +2718,1309 @@ file ended up holding a raw control byte — rendering live as a tofu box follow
 "B8". A shape with no glyph in it cannot be mis-encoded and needs no font installed. Every file
 this change touched is now scanned for stray control bytes.
 
+### 9.25 The first full-scale audit — 31 August ⭐⭐ (BUILT)
+
+**The first run at real size: 94 pages, 2,171 elements, 1,065 questions.** Everything built for
+scale worked — every page visited, every element captured, the judge answering steadily. Then one
+duplicated call destroyed the audit's own account of itself, and every wrong number the team saw
+for the rest of the day came from that one record.
+
+Four defects, all of them **product** defects that would hit any client application identically,
+plus a fifth finding that is recorded rather than fixed.
+
+#### 9.25.1 One audit was closed twice, and the second close wrote off the first ⭐⭐
+
+**The chain, end to end, and none of the links is exotic.**
+
+Closing a 94-route audit is minutes of work: reconcile the route list, hash 2,171 stored
+elements, check each against the cache, file what cannot be asked about, start the judging run,
+write the batches. The companion's platform client had a hard **60-second timeout on every call**
+(`state_client.py`). The socket gave up; the server carried on regardless; the daemon read the
+timeout as *the audit failed* and ran its recovery path — which closes the audit. **The same close
+ran a second time while the first was still going.**
+
+The second close was refused a judge, correctly, by `trigger._guard_no_active_run` — a run was
+already live on that work item. But that refusal arrived at `dispatch` as an ordinary exception,
+so it was reported as *the judge could not be started* and every pending element was filed as
+`uncertain` for a person.
+
+**What that cost, read straight off the audit row before and after:**
+
+```
+started        : true            ->  false
+dispatched     : 800             ->  0
+deferred       : 265             ->  0
+judge_run_id   : dce6c6be…       ->  null
+filed_unjudged : 0               ->  1065
+status         : judging         ->  complete
+```
+
+**1,065 elements written off while 800 of them were being judged at that moment**, the record of
+the pass that *was* running replaced by the record of a pass that did nothing, and the audit
+marked complete with the judge still working. The screen then said *"1065 elements were never
+looked at"* about an audit that had 338 real verdicts in the database and climbing.
+
+**Three fixes, and the first two are independent of each other on purpose.**
+
+1. **A run already in progress is no longer a failure.** `dispatch` catches `ActiveRunError`
+   separately from every other trigger failure and returns `already_running`: nothing filed,
+   nothing deferred away, nothing written off. This is the fix that matters — it protects every
+   caller, not only a baseline audit, and it is stateless, so no crash can leave it half-applied.
+2. **A repeat close returns the audit untouched.** `finish_baseline_audit` sees
+   `already_running` and returns what the call doing the work left — status, summary and baseline
+   all belong to the run that is judging, and it completes them through the ordinary closing step.
+3. **The client stops timing out on a call whose job takes minutes.** `SLOW_TIMEOUT_S` for the
+   three `finish_a11y_audit` call sites. A client that reports a healthy audit as failed is wrong
+   on its own terms, and would have gone on doing it on every large audit.
+
+**Verified:** the live case reproduced as a test that closes one audit twice through the
+platform's **real** `_guard_no_active_run` — only the Temporal start is stubbed — and asserts the
+summary is byte-identical afterwards, the status is still `judging`, `filed_unjudged` is 0, and
+exactly one judge run exists. 238 tests across dispatch and baseline.
+
+#### 9.25.2 A failed dispatch relabelled work that was correctly queued ⭐
+
+**Two facts about two different sets of elements, held in one string and one list.**
+
+Both failure paths in `dispatch` did `unjudged_requests = pending + deferred` and then
+`deferred = []`. So the 265 elements correctly held back at this run's limit were filed carrying
+*"the judge could not be started"* — a sentence that is not true of them. They were queued, not
+unaskable, and the difference is the whole content of the **Check the rest** button.
+
+Client-visible result: the sidebar badge read **1,731 items waiting on a person**, every one of
+them `source='AI'`, `verdict='uncertain'`, and none of them real.
+
+**The fix.** Each path files only what it actually attempted. The deferred tail stays deferred and
+carries its own reason in its own field (`deferred_reason`), so a failure can no longer overwrite
+it. Nothing is lost by leaving them: an element with no verdict row at all is exactly what
+`unanswered_for_capture` looks for, and `unanswered_counts` still adds `filed_unjudged` to
+`deferred_distinct`, so the total a screen shows is unchanged. **What changes is that each half
+now carries the reason that is true of it.**
+
+**And the consequence had to be fixed with it.** `unaskedNote` on the audit screen returned the
+cap sentence *or* the failure sentence. Now that both can be true at once, showing one would have
+hidden the other — and the hidden one would have been the failure, which is the half somebody has
+to act on. It says both, failure first.
+
+#### 9.25.3 A container `<div>` with no class was never captured ⭐
+
+Same shape as the `tr` gap and the `polyline` gap before it, one step further out. The `OFFER`
+list carried `div[class]`; the three season containers on `/events/workshops` are
+`<div id="workshops-spring" style="padding-left:1.5rem">` wrapping five identically classed
+children. `structure` claims that shape on sight — it was simply never shown one.
+
+**Never offered is worse than declined, and this is why.** An element that is offered and turned
+down is *counted*, and `rules.explain()` can say which rule declined it. An element never offered
+produces no row anywhere: nothing declined it, nothing recorded that it existed, and the page is
+written down as checked.
+
+**Measured before it was written**, exactly as the `polyline` change was, and the two candidates
+cost the same on this fixture:
+
+```
+routes measured : 95
+offered today   : 8,385 elements
+div:has(> *:nth-child(3))  -> +3, all 3 claimed   (busiest page 545 of the 600 ceiling)
+div[id], div[style]        -> +3, all 3 claimed
+```
+
+**`div:has(> *:nth-child(3))` was chosen, and not because of the fixture.** It is
+`REPEATED_CHILD_MINIMUM` said in CSS — the same bar the rule that would claim it uses — so it
+offers what that rule can actually want and not a wrapper more. `div[id], div[style]` would have
+fixed Meridian and left every framework's class-less, id-less wrapper exactly as invisible as
+before, and the target is any real application rather than this one.
+
+**Verified live** against the running fixture: that page went from 80 to 83 elements and all three
+containers arrive carrying their structural outline.
+
+#### 9.25.4 Our own check could never have found 9.25.3 ⭐⭐
+
+**The one that should worry us most**, because it is a check that reported green on exactly the
+thing it exists to find.
+
+`verify-selectable.js` asks whether every answer-key record can reach the checker it was labelled
+for. It reached each recorded element with `document.querySelector` — which finds anything on the
+page, offered or not. So it ran the **second** step of selection (do the rules claim it?) and
+never the **first** (would an audit collect it at all?), and the only failure it could not see was
+an element missing from the `OFFER` list.
+
+**What that hid, and the asymmetry is why it stayed hidden.** An expected-`fail` record counts
+toward a checker's ceiling whether or not anything reaches it. So `structure` reported a reachable
+sample of 30 — over the line — while **3 of its 15 failure records could never be found by any
+judge**. Its recall was capped at **12/15 = 80%** and every check was green.
+
+**The fix.** `OFFER` is exported from the companion's audit script and imported by the harness —
+one definition, so it cannot drift, the same rule `selectable.py` already follows by importing
+`rules.py` rather than restating it. The check compares **element identity** rather than selector
+strings, because the companion writes its own `cssPath` and comparing that against a hand-written
+golden selector would call two spellings of one element a miss.
+
+`selectable.py` now reports two different problems instead of one, and only the second fails the
+run:
+
+| | Means | Fix lives in |
+|---|---|---|
+| *collected, then declined* | a rule looked and said no | the answer key, or nowhere |
+| *NEVER COLLECTED* | nothing ever showed it to a rule | the `OFFER` list |
+
+**Proved rather than asserted:** with the 9.25.3 fix temporarily removed, the check names all
+three records by id, says which rule would have claimed each, and exits non-zero.
+
+#### 9.25.5 Terminating a run does not stop the agent — BUILT, 31 August ⭐⭐
+
+**Found while stopping the audit, and it is a platform-wide fact rather than an accessibility
+one.** The workflow was terminated on Temporal at 06:46:36 and reported `TERMINATED`. Verdicts
+went on arriving until **07:37** — 49 minutes later, one every five to ten seconds, all stamped
+with the terminated run's id.
+
+The agent is a Claude Code process on the companion. It posts each verdict through the runner
+state API, which never asks whether the run it names is still live. So the workflow is the
+platform's control over *orchestration* and not over *work*, and "stop" stops only the former.
+Only killing the companion ended it.
+
+**BUILT, 31 August, at the agent surface — and the choice of surface IS the fix.**
+
+The three tools the agent calls — `batch_for_run`, `record_finding`, `screenshot_pointers` — now
+refuse a run whose status is `failed`, `completed`, `rejected` or `approved`. Refusing the write
+alone would not have been enough: most of those forty-nine minutes were an agent reading batches
+and reasoning about elements, so it is refused work as well as refused writes.
+
+**`STALLED` is deliberately absent from that list, and it is the whole subtlety.** A parked run is
+not over — its deadline passed while the machine was still working, and the platform keeps waiting
+on purpose so a late report reconciles it (S.No 89). On 31 August that is exactly what happened:
+the deadline fired at two hours and the pass reported normally sixteen minutes later. Refusing a
+parked run's verdicts would have thrown away the last fifteen answers of that pass.
+
+**And the platform's own accounting is not the agent.** `verify_judgment_completeness` files a
+fallback for every element the judge never answered, and `close_unfinished_ai_pass` calls it on
+runs that are ALREADY terminal by design — it is the recovery that saved this audit twice. A guard
+that could not tell the platform from the agent would have silenced the thing that guarantees
+nothing dispatched vanishes. Tested explicitly, in both directions.
+
+**The message is written for a model to act on**, because that is who reads it: it says the work is
+over, that nothing was stored, and to stop — rather than describing a state and leaving the next
+move to be guessed. A rejection an agent cannot act on is a rejection it repeats.
+
+**What is still open, and named rather than implied.** This closes the surface where the leak was
+observed and where it corrupts a client-facing conformance report. It does not make the runner
+state API refuse every write for every closed run of every phase, and it does not have the
+companion poll its own run's status and exit — both are control-plane changes with their own
+blast radius, and neither is a11y's to make unilaterally. The earlier defence still stands too:
+tenant clean-up refuses to delete anything if a judgment was written in the last five minutes,
+because "the workflow is stopped" turned out not to be evidence that nothing is writing.
+
+#### What this audit produced, and what it could not
+
+**No accuracy number, and the reason is stated rather than worked around.** Only **43 of 173**
+answer-key records received a real verdict — `alt` 12, `color` 9, `label` 19, `semantics` 0,
+`structure` 3. `DEFAULT_MIN_SAMPLE` is 30 and no checker reached it, so every figure reads *not
+yet measurable*, which is correct and is the point of that floor.
+
+**What did stand up, and is worth saying because it is easy to lose in a bad day:** all 94 pages
+visited and 2,171 elements captured with no reconciliation gaps; 335 genuine rule-scanner
+findings; and Friday's fixes confirmed working on real output — 20 `label-content-name-mismatch`
+and 3 `td-has-header` findings that no pre-28-August audit could have produced.
+
+#### One thing found that is not ours to fix here
+
+**14 backend tests were already failing on this branch**, identically with every change above
+stashed. ~~All of them trace to the `graphics` / 1.4.11 checker added on 27 August~~ and never wired
+into `integrations.capabilities.A11yAI`, the selection corpus, or several test expectations that
+enumerate checkers. One may be a real product gap rather than a stale test: there is no
+`check_graphics`, so 1.4.11 cannot be asked through the capability at all. Logged as its own
+task, deliberately not fixed in passing — the corpus entries need writing properly and the
+capability question needs a decision.
+
+> **Corrected 1 September — see §9.29.A.** The struck clause is wrong, and the count has moved.
+> Re-measured across eleven a11y test files the figure is **16, from three causes**: 11 are the
+> graphics widening described here, **3 are stale assertions against the conformance guard of
+> §9.26 and have nothing to do with `graphics`**, and 2 are the selection corpus reporting that
+> 1.4.11 owns no failure shape. None of the sixteen is a product defect. The suspicion recorded
+> above — that the missing `check_graphics` is real rather than a stale test — **is confirmed**,
+> and is one of the three gaps in §9.29.B.
+>
+> **And corrected again, the same day — see §9.30.** The figure of 16 was itself short: eleven of
+> thirty-three a11y test files were measured, and a full sweep found **21 backend and 1 frontend**.
+> The three "conformance guard" failures were also mis-explained here — see §9.30.D. **All of them
+> are now green**, sixteen of the twenty-one without an assertion being edited, because they were
+> all objecting to one thing: `graphics` claiming a criterion the ownership registry gives to
+> `rule`. That claim is withdrawn (§9.30.A). The missing `check_graphics` is no longer a gap for
+> the same reason — a held-back check needs no capability method.
+
+One of the fourteen was fixed, because it sat in a file this work was already changing and a red
+test on the branch we build on is a hazard: `test_finishing_produces_findings_for_the_registered_routes`
+asserted the exact list of every finding regardless of source, so a correctly added checker read
+as a broken audit. It now asserts on rule-scanner findings, which is what it was always about.
+
+### 9.26 The first audit that RAN TO COMPLETION — 31 August ⭐⭐ (ALL BUILT)
+
+**The second attempt of 31 August finished.** 94 pages, 2,174 elements, 1,068 distinct questions;
+800 judged in the first pass, 268 deliberately left for a second; **358 findings** (75 critical,
+283 high); report and baseline both published; `filed_unjudged` **0** and placeholders **0** where
+the broken run of the same morning finished at 1,065 and 727. The four §9.25 fixes are proven on
+real output.
+
+Running to completion exposed **four more defects, none of them caused by those fixes**. Every one
+is behaviour that has always been there and that no previous audit survived long enough to reach —
+the first attempt was killed at 1 h 07 m and never got past the two-hour mark at all.
+
+**Deliberately NOT built yet.** The team's decision: finish the audit first, judge whether the run
+was a success, then fix these together. This section is the record so nothing is lost in between.
+
+Timeline of the close, straight from the ledger:
+
+```
+11:55:37  phase.reported   status ok, cost $33.12, "all 800 elements judged"
+11:55:40  the judge's own write-up registered
+11:55:42  run.executed     phase result registered; the takeover flag cleared itself
+12:00:44  run.failed       "write-completeness check failed: activity StartToClose timeout"
+12:00:50  the accessibility report published
+12:00:51+ defects opened, one per finding
+12:02:12  baseline v1   12:02:36  v2   12:03:12  v3   12:04:14  v4
+12:03:43  audit status complete
+```
+
+---
+
+#### 9.26.A The phase report deadline is one fixed number for every kind of work ⭐⭐ — BUILT, 31 August
+
+**What it is.** When the platform hands a phase to the user's machine it starts a timer. If no
+report has come back when it rings, the platform raises a *human takeover* flag saying the
+companion appears offline.
+
+**What went wrong.** At **11:39:05.905** it fired on a companion that was demonstrably online — a
+verdict had landed seconds before and another landed seconds after. The arithmetic is exact:
+
+| | |
+|---|---|
+| phase dispatched | 09:39:04.8 |
+| takeover written | 11:39:05.9 |
+| elapsed | **7,200 s — two hours to the second** |
+| `report_timeout_seconds` on the run | never set, so the default of **7200** applied |
+
+The judging actually took **8,193 s** for 800 elements — **10.2 s per element**. The timer is a
+single constant shared by every phase; a planning phase takes minutes and this takes hours.
+
+**What it means.** Nothing broke — the design is right: the workflow does **not** end, it writes
+the flag and waits again with no deadline, and the late report reconciled it automatically at
+11:55:42, sixteen minutes later. **The danger is the wording.** The event says *"companion
+offline"*, and the natural response to "offline" is to press **take over** — the one signal that
+turns this soft park into a terminal failure. It would have stopped the run **fifteen verdicts
+from the end**. On this run the only thing that saved it was somebody deciding not to click.
+
+**The fix — two halves, both small.**
+
+1. **Let the phase say how long its own work should take.** `orchestration/trigger.py:234` builds
+   `AgentRunInput` without ever setting `report_timeout_seconds`, so every phase silently inherits
+   the `7200` default at `orchestration/types.py:28`. Add an optional
+   `report_timeout_seconds: int | None = None` parameter to `trigger_phase` and pass it through.
+   Then `apps/a11y/dispatch.py:480` passes a budget derived from the batch it is handing over:
+
+   ```
+   report_timeout_seconds = min(28_800, max(7_200, distinct * 25))
+   ```
+
+   **25 s/element is ~2.4× the 10.2 s/element measured here** — generous without being unbounded.
+   This run would have been given 5 h 33 m; a small re-judge still gets the two-hour floor; the
+   8-hour ceiling keeps a runaway bounded. **No other phase changes behaviour.**
+
+2. **Say what actually happened.** `orchestration/activities.py:1050` writes the reason
+   `"companion offline / no report before timeout"`. It should say that no report arrived inside
+   the phase's budget, name the budget, and state that **the run is still waiting and will
+   complete on its own if the machine reports** — which is what the code already does. A message
+   that describes a deadline as a detection is what makes the dangerous click look reasonable.
+
+**Proof it works:** a test that a11y dispatch passes a timeout scaled to `distinct`, and that a
+small batch keeps the floor.
+
+**BUILT, 31 August — as specified, both halves.** `trigger_phase` takes an optional
+`report_timeout_seconds` (and B's `verify_timeout_seconds`); `None` keeps the dataclass default,
+so every caller but one is byte-identical. The one is `dispatch_judgments`, which passes
+`judging_deadlines(len(pending))` — `pending` being the distinct list *after* de-duplication and
+*after* the cap, which is exactly the work handed over. The constants are named and carry their
+measurement: 25 s/element against the 10.2 s/element measured, a 2-hour floor, an 8-hour ceiling.
+
+`mark_phase_takeover_core` no longer says "companion offline" anywhere. It names the budget in
+minutes, states in the same breath that **the machine has not been checked and may still be
+working**, that the run is still waiting and completes on its own if the report arrives, and that
+taking over is only for stopping it. Nothing in the codebase matched on the old string.
+
+**Three tests**, one of them asserting the words that are absent — `"offline" not in reason` —
+because the danger was never a missing fact, it was a present and wrong one.
+
+**What it is.** After a phase reports, the platform runs a separate step that checks everything
+the agent claimed to write was actually written. That step is deliberately strict.
+
+**What went wrong.** At 12:00:44 the run failed with:
+
+```
+write-completeness check failed: activity StartToClose timeout
+```
+
+The *check* ran out of its own time budget. The judging had already reported `ok` at 11:55:37 with
+all 800 elements answered.
+
+**What it means.** **Nothing in the data was lost** — the failure path is built for exactly this
+and did all three of its jobs: the report published, the defects opened, the baseline published,
+the audit reached `complete`. But the run row reads **failed**, and anyone opening the run console
+sees a failed run with no way to tell that the *checker* timed out rather than the work. On a
+client-facing audit that is a false alarm about the one thing the platform exists to be trusted on.
+
+**Root cause — VERIFIED after the first write-up.** `workflows.py:158` gives `verify_writes`
+**5 minutes** for the phases in `LONG_VERIFY_PHASES` (`build_types.py:205` — `a11y_judge` and
+`a11y_journey`) and 1 minute for everything else. Judging 800 elements blew through the five.
+
+**And this is the same bug, one size up.** The constant's own comment records why it exists: at
+**60 seconds** the check was cancelled mid-way on a 144-element run, **81 of 144 fallback verdicts
+were written and 63 elements silently got none** — precisely the *"nothing dispatched may vanish
+from a conformance report"* guarantee the branch exists to keep. It was raised to five minutes.
+**At 800 elements five minutes is the new sixty seconds.**
+
+**So this is not cosmetic, and today's run was lucky.** The check is cancellable half-way through
+work it is supposed to complete. It only *looked* harmless this time because the judge had
+answered all 800 and there were no fallbacks left to write. Had the judge stopped short — the
+usage-limit case the team asked about, or 9.26.E's dead machine — the cancellation would have
+filed some of the unanswered elements and silently skipped the rest.
+
+What saved the run afterwards is worth knowing: the a11y judge dispatches with `auto_approve=True`
+(`dispatch.py:483`), and `workflows.py:170` sends an auto-apply phase to `fail_run` rather than
+parking it — so `close_unfinished_ai_pass` redid the accounting properly and published. **A gated
+phase in the same situation parks and waits for a human instead.**
+
+**The fix — the same shape as 9.26.A, because it is the same mistake.** Stop picking a constant
+and size the budget to the work:
+
+```
+start_to_close_timeout = 1 min                                  (ordinary phases)
+                       = min(30 min, max(5 min, elements * 2s)) (LONG_VERIFY_PHASES)
+```
+
+Today's 800 elements would have been given 26 minutes against the ~5 it needed. `verify_writes`
+already receives `inp`; the element count comes from the same `run.inputs.a11y_batches` the check
+is about to walk, so nothing new has to be plumbed through the workflow's arguments.
+
+**Second, smaller half:** a *timeout* and a *found gap* are different facts and should not produce
+the same run state. A check that could not finish should say so in those words.
+
+**Not on the table: weakening the check.** It is the thing that guarantees nothing dispatched
+vanishes silently, and §9.25 is what happens when that guarantee slips.
+
+**BUILT, 31 August — with one deliberate departure from the sketch above.** The budget is sized
+by the DISPATCHER and read by the workflow, rather than computed inside the workflow. The
+workflow module is Django-free on purpose — it cannot read `run.inputs.a11y_batches`, so the
+line above ("nothing new has to be plumbed through") was wrong when it was written. It travels as
+`AgentRunInput.verify_timeout_seconds`, defaulting to the 300 s the workflow used to hard-code.
+`min(30 min, max(5 min, elements × 2 s))`, so 800 elements get 26 minutes against the ~5 they
+needed, and no size of pass gets less than it has today.
+
+**One deploy consequence, and it is the usual one: worker before API.** An input carrying a field
+the worker's dataclass does not have yet fails to deserialize. Same rule as the `revise` flag.
+
+The second half is built too, and it is the half a person actually sees. A cancelled check and a
+check that found a gap were producing one sentence, and it was the alarming one — a run whose work
+was complete and correct read as having FAILED its completeness check. `is_activity_timeout` tells
+them apart (structured cause first, message fallback — the same shape as `is_merge_conflict`), and
+the timeout wording now says in words that it ran out of its own budget **rather than finding
+anything missing**. On a capability whose entire promise is that nothing dispatched vanishes
+silently, a false alarm about that promise is the most expensive one available.
+
+---
+
+#### 9.26.C The baseline document published four times for one audit — BUILT, 31 August
+
+**What it is.** Every audit publishes an **Accessibility baseline** — the document a client is
+actually shown.
+
+**What went wrong.** Four versions, one audit, inside two minutes: v1 12:02:12, v2 12:02:36,
+v3 12:03:12, v4 12:04:14.
+
+**Why the report did not do this.** `report.publish_report` is keyed to its capture and *updates*
+in place — there is exactly one report artifact, correctly. `baseline_report.publish_baseline`
+deliberately creates the **next version** each time (`supersedes`), so that two audits of one
+project can be compared. Each behaviour is right on its own. Together with a closing sequence that
+runs more than once, the report absorbs the repeat and the baseline stacks.
+
+**Cause — two of the four publishers are now named; the other two are not.** Tracing 9.26.B turned
+up the mechanism: for `a11y_judge`, **`verify_writes` itself publishes the merged report and closes
+the audit**, and when it was cancelled at five minutes `fail_run` → `close_unfinished_ai_pass`
+**published again**. That is two. A Temporal cancellation stops the *activity*, not the worker
+thread already running inside it, so the cancelled publish very likely finished anyway — but
+**that is inference, not a reading**, and it does not by itself account for four. The remaining
+calls are **NOT VERIFIED** and are not written here as though they were.
+
+**What it means.** Cosmetic, and misleading in a way that matters to a client-facing artefact: the
+version history says this project was baselined four times today when it was baselined once.
+
+**The fix.** In `publish_baseline`, when the newest existing baseline already carries
+`external_ref.audit == this audit's id` **and** the same content hash, update that row instead of
+superseding it. A genuinely new audit still produces a new version; one audit closing repeatedly
+no longer does. Fix 9.26.B as well and this stops being reachable — but the guard is worth having
+regardless, because "the closing path ran twice" is a recurring shape (§9.25.1).
+
+---
+
+#### 9.26.D The incomplete-audit banner under-reports what was never checked ⭐ — BUILT, 31 August
+
+**What it is.** Two places on the audit screen say how much was left unchecked. The team spotted
+them disagreeing:
+
+- the amber banner: *"268 elements were left for a second pass"*
+- the **Past audits** card, right beside it: *"269 elements were never looked at"*
+
+**Which is right: 269.** Verified against the database rather than reasoned about:
+
+| Source | Count | What it is |
+|---|---|---|
+| `ai_pass.deferred_distinct` | 268 | the dispatch reached its 800 limit and stopped short |
+| `ai_pass.filed_unjudged` | 0 | nothing was written off — the §9.25 fix holding |
+| the judge run's `outputs.a11y_unanswered` | **1** | element `ad26a8b6…`, handed to the judge and never reported on |
+| **total, `baseline.unanswered_counts`** | **269** | |
+
+That one element was filed `uncertain` by `verify_judgment_completeness` and recorded on the run,
+which is exactly the mechanism built in §9.3 to keep *"nothing looked at this"* distinguishable
+from *"a check looked and could not decide"*. **The "Check the rest" button is already correct**:
+`unanswered_for_capture` was run directly and returns **269**, including that element.
+
+**So the banner is the wrong one.** Its sentence is `ai_pass.reason` — a string composed at
+**dispatch** time, when the only thing that could be known was the cap. It cannot know that the
+judge would later fail to report on an element, so it can only ever under-count.
+
+**What it means.** The prominent, reassuring number is the wrong one, and the small print beside
+it is right. This is precisely the failure `_incomplete_lines` was written against, in its own
+words: *two counts of one thing is how this capability spent 21 August telling a team six elements
+were outstanding while the code that would ask about them said none were.* It says so and then
+does it, one screen over.
+
+**The fix.** The banner renders its **count** from `baseline.unanswered_counts` — the same single
+source the button, the baseline document and the Past audits card already use — and keeps
+`ai_pass.reason` only as the *explanation* of why work was deferred, never as the number. One
+count, one source, two sentences:
+
+> **269 elements were captured and never checked.** This run reached its limit of 800, so 268 were
+> left for a second pass, and 1 more was sent to the judge and never reported on. Nothing was
+> skipped — asking again is the only thing that answers them.
+
+**Proof it works:** a test with a non-empty `a11y_unanswered` on the judge run asserting the
+banner count equals `unanswered_counts`, not `deferred_distinct`.
+
+**BUILT, 31 August.** `unaskedNote` takes its count from `audit.unanswered` — the field the row
+already carried, computed by `baseline.unanswered_counts`, which is what the button, the Past
+audits card and the baseline document all read. `deferred_distinct` survives only as the fallback
+for an audit closed before `unanswered` was ever computed for it, never as a second opinion when
+both are present.
+
+**And the two halves are now said separately when they differ**, which the sketch above already
+had right: "269 elements were captured and never checked. This run reached its limit, so 268 were
+left for a second pass, and 1 more was sent to the check and never reported on." The limit
+explains the 268 it explains and does not pretend to explain the one it does not. Tested with the
+real 31 August numbers.
+
+---
+
+#### 9.26.E The machine holding a JUDGING pass died, and nothing said so ⭐⭐ — BUILT, 31 August
+
+**How this was found.** Not a thought experiment. During the second pass the operator's **Windows
+machine restarted itself** — the Docker stack went down and the companion was killed mid-judging.
+
+**MEASURED, after the stack came back up:**
+
+```
+last verdict written    13:04:11     (898 total — 98 of the 269 done)
+last companion heartbeat 13:04:21
+last claim renewal       13:04:21
+state 25 minutes later   audit  = judging        run = running
+                         dispatch = claimed      takeover_flag = False
+                         Temporal workflow = RUNNING, still waiting
+```
+
+**What survived, and it is worth saying first.** Nothing was lost. All 898 verdicts are permanent
+rows; the capture is untouched; `filed_unjudged` is still 0; the remote Temporal workflow never
+noticed the local machine had gone. The platform's durability held exactly as designed.
+
+**What is wrong — two things, and the first is the serious one.**
+
+**E1 · A judging audit whose machine is gone goes on saying it is working.** For 25 minutes the
+screen said *judging*, the run said *running*, and nothing anywhere said the companion had been
+dead since 13:04. There is no signal at all until the two-hour report deadline (§9.26.A) fires at
+~14:45 and raises a takeover flag — **101 minutes after the machine died.**
+
+The capture phase already has exactly this protection and has had it since 21 August: §9.5 built
+`abandon_stale_audits` precisely so that *"an audit captured by a machine this server cannot see"*
+stops claiming to be visiting pages once the claim lease expires. **The judging phase never got
+the same treatment.** The claim lease is already stale here — 15 minutes, expired at 13:19:21 —
+so the fact is available and simply is not acted on.
+
+**The team then sharpened this, and their observation is worse than the version above.** The
+platform does not merely *have* the fact somewhere. **It is already on the screen, twice, in the
+same viewport as the panel that contradicts it:**
+
+```
+header badge   ●  Companion: Offline
+sidebar badge  ●  Companion: Offline
+the panel between them:
+   "Checking the rest of this audit"          ●  Checking the rest
+   "99 of 269  ELEMENTS JUDGED — the AI half, in progress"
+   "You can leave this page. This carries on and the result appears under Past audits."
+```
+
+**Three separate false statements, on one screen, next to two badges that say why they are
+false.** Nothing is in progress; nothing carries on; the result will not appear. A user reading
+this leaves the page and comes back to an audit that has not moved.
+
+Two things make it worse than an ordinary stale-UI bug:
+
+- **the counter is presented as live and carries no timestamp.** "99 of 269, in progress" looks
+  identical whether the last verdict landed one second ago or twenty-five minutes ago. The one
+  piece of information that would have made this obvious — *when* the 99th answer arrived — is the
+  one thing not shown;
+- **it is the same mistake this document already records the observer making** (§7.3 of
+  `Audit_Live_Check_Reasoning.md`): reading a status field as liveness instead of the newest
+  verdict's timestamp. The screen does exactly what the watcher did before it was corrected.
+
+**The fix, now in two independent halves — the second one is nearly free.**
+
+1. **Server side.** Extend the sweep the capture phase already uses to audits in `judging`: when
+   the judge run's claim has been stale past `CLAIM_LEASE` and the run is still `running`, say so
+   on the audit — *"the machine that was checking this stopped responding N minutes ago"* — with
+   the two honest choices beside it (restart the companion and it picks the work back up, or close
+   the audit now and ask again later). **Do not auto-fail it.** A laptop that slept can come back,
+   which is the whole reasoning behind the soft takeover in §9.26.A; the defect is the silence,
+   not the waiting.
+
+2. **UI side.** When the audit reads stalled the panel must stop claiming progress: no live dot,
+   no *"in progress"*, and above all not *"You can leave this page."* Show the count as **last
+   known** with the time it was last known beside it. **A number with a timestamp cannot lie
+   about being live.** And it must say the JUDGING truth, not the capture's: every verdict is
+   kept, no page is visited again, and starting the machine carries on from here — telling a
+   half-judged capture that it "will be closed as failed" and offering a fresh audit would throw
+   away an hour of judging that is already paid for and already correct.
+
+   **…and the same audit's ROW, which the team caught the moment the panel was fixed.** The list
+   under *Past audits* draws its badge from `statusLabel`, which knew about the status and not
+   about the stall — so the corrected panel sat directly above a live blue **Checking the rest**
+   badge for the same audit. One audit, two answers, one screen. `statusLabel` and `auditBadge`
+   now read `stalled` **first**, before the status word, because it contradicts it: a row in a
+   list is exactly where somebody scans for what still needs attention, and it must not be the
+   reassuring one. This also fixes the same latent bug for a stalled CAPTURE, whose row has been
+   saying *Visiting pages* since the flag existed.
+
+**One number on that screen that is NOT a bug, checked so nobody chases it.** The panel says
+**99 of 269** while the database holds **898** verdict rows against the first pass's 800 — a
+difference of 98, not 99. Both are right and they count different things: one of the 269 is the
+element the first pass filed `uncertain` (§9.26.D), so answering it **updated** an existing row
+instead of inserting a new one. Verified directly — of this run's 269 dispatched hashes, 99 now
+carry a verdict. It is also why the finished audit should total **1,068** distinct answers and not
+1,069.
+
+**E2 · The recovery re-does work that is already done.** The claim lease means a restarted
+companion **re-claims this very run** and re-runs the phase. But the agent starts a fresh session
+and `judge.batch_for_run` pages from `start=0` with no knowledge of which elements already carry a
+verdict — so it re-judges **all 269**, including the **98 already answered**.
+
+Not corrupting: `record_verdict` is idempotent and the second answer simply overwrites the first.
+But it is **36% of this pass burned on the user's own Claude subscription re-deciding questions
+whose answers are already in the database** — and on a bigger audit interrupted later, that
+fraction is worse.
+
+**The fix, with its constraint named.** A resumed judging run should be handed the elements that
+are still **unanswered by this run**, not the whole batch. The constraint that makes this less
+trivial than it looks: `total_elements` is the judge's own contract — *every dispatched element
+gets exactly one verdict* — so it must be recomputed for the resumed set rather than left
+describing the original dispatch, or the judge will believe it has failed to finish. And the
+filter must key on *this run's* verdicts, not on any verdict, so that an element deliberately
+filed `uncertain` by an earlier pass is not quietly skipped.
+
+**One thing that worked, and is worth recording because it is the first time.** The five-minute
+stall alarm fired, and this is its **first true positive** — every earlier firing was the alarm
+measuring the wrong thing (§7.2, §7.3 of `Audit_Live_Check_Reasoning.md`). Measured from the later
+of *the newest verdict* or *this pass's start*, it named a genuinely dead judge within five
+minutes, against a platform that would not have said anything for another hour and a half.
+
+---
+
+#### 9.26.F A parked judging run cannot be recovered, and the screen tells the user the wrong thing ⭐⭐ — BUILT, 31 August
+
+**The team's question, and it is the right one:** *the run had to be taken over by hand — but in
+real time a user does not know that. Does Fix A close it?*
+
+**No. Fix A does not close it, and E1 as shipped this afternoon made one half of it worse.**
+
+**What happened.** The machine died at 13:04 with 99 of 269 judged. At **14:45:28** — two hours
+after dispatch — the report deadline fired and parked the run `stalled`. The re-claim rule
+(`runner_views.py:499`) offers a stale claim back only when the run is `PENDING` or `RUNNING`:
+
+```python
+if (st == "claimed" and claimed_at and claimed_at < stale_before
+        and cand.status in (Run.Status.PENDING, Run.Status.RUNNING)):
+```
+
+`STALLED` is not in that tuple. **So the moment the deadline fires, the judging pass becomes
+unrecoverable by the claim lease — permanently.** Reconnecting the companion does nothing. The
+only way out is a human takeover from the run-recovery screen, which is a page a person auditing
+their website has no reason to have ever opened.
+
+**Why Fix A does not close it.** A longer, size-scaled deadline makes the timeout fire less often.
+It does not change what happens when it *does* fire, and a machine that dies at hour six of a
+five-and-a-half-hour budget lands in exactly this state. **A makes this rarer; it does not make it
+recoverable.**
+
+**And it silently disarms 9.26.E2.** The "hand a resumed run only what it has not answered" fix can
+only ever run if the run is **re-claimed** — which is possible only inside the deadline window.
+After the park, E2 is unreachable. Fixing A is what makes E2 reachable at all; that is a better
+argument for A than anything written under it.
+
+**The half that is ours, and it is hours old.** 9.26.E1's panel says:
+
+> Start the machine again and it carries on from where it stopped — nothing here needs to be
+> re-run by hand.
+
+**That was true when it was written and is false once the run is parked.** It was measured against
+a run that was still `running` and therefore still re-claimable. In the parked state the sentence
+sends a person to restart a machine that will sit there doing nothing, and offers them no other
+route. A wrong instruction is worse than no instruction, and this one is mine.
+
+**The fix — the audit screen owns the whole recovery, because the audit is what the user
+understands.** Two states, told apart, each with the true sentence:
+
+| The judge run is | The screen says | The action |
+|---|---|---|
+| `running` (still re-claimable) | "Start the machine again and it carries on from where it stopped." | none needed — it resumes itself |
+| `stalled` (parked past the deadline) | "The machine did not come back in time, so this audit is waiting on you." | one button: **Finish this audit** |
+
+**Finish this audit** does exactly what the run-recovery screen's takeover does — ends the parked
+run, files what was never answered, publishes the report and baseline, closes the audit — after
+which **Check the rest** appears on the row and offers the remainder. The user never learns the
+words "parked run", "takeover" or "workflow", and never leaves the page they started on.
+
+Mechanically small: the audits payload already carries `stalled`; it needs one more field saying
+whether the judge run is parked, and the panel needs one button wired to the existing take-over
+endpoint.
+
+**The alternative, and why it is not the recommendation.** The re-claim rule could simply accept
+`STALLED` for judging runs, and the work would resume with no human involved. It is fewer moving
+parts — and it spends the user's own Claude subscription on a decision nobody asked them about.
+The team has already ruled on this shape once, rejecting an audit that continues itself: *"that is
+not the platform's job — what if he adds 30 routes and all his Claude usage burns?"* The same
+reasoning applies here. **Offer the button; do not press it for them.**
+
+**BUILT, 31 August — exactly as specified, including the alternative that was rejected.**
+`baseline.parked_judge_runs` returns `{audit_id: judge_run_id}` for judging audits whose run is
+`STALLED`, and the audits payload carries it as `parked_run_id` — null on every audit that can
+still recover, which is what makes its presence the signal. The re-claim rule in
+`runner_views.py` was **not** touched: a parked pass still does not resume itself, and the reason
+is the team's own ruling about somebody's Claude usage, not an implementation limit.
+
+The panel now has three states rather than two, and the parked one replaces the wrong instruction
+instead of merely removing it — "Restarting the machine on its own will not pick this up" — beside
+one button, **Finish this audit**, which makes the same `take-over` call the run console makes.
+One recovery path, two places it is offered. Tested for the wording in both directions and for
+the words the person must never meet: *take over*, *parked*, *workflow* are all asserted absent
+from the screen.
+
+**And this is what makes 9.26.E2 reachable at all.** The "hand a resumed run only what it has not
+answered" fix can only run if the run is re-claimed, which is only possible inside the deadline
+window — so it was unreachable after a park. A's longer, size-scaled deadline is what widens that
+window, and F is what gives the person a way out when it closes anyway.
+
+---
+
+#### 9.26.G Concurrent closes overwrote the record of what was never looked at ⭐⭐ — BUILT, 31 August
+
+**Found by watching the takeover close the audit**, 15:32–15:36.
+
+The takeover worked: the run ended, 170 unanswered elements were filed for review, the report and
+baseline published, the audit reached `complete` with **1,068 verdicts** — the exact total
+predicted from 800 + 268 (9.26.D's arithmetic, confirmed).
+
+**But "Check the rest" now offers 65, not 170.**
+
+**What happened.** The closing path ran **three times** (`run.failed` at 15:32:19, 15:33:20,
+15:34:22 — the same repeated-close shape as 9.26.C). `verify_judgment_completeness` files every
+unanswered element as `uncertain` and then records the list on the run under `a11y_unanswered`,
+**replacing** whatever was there:
+
+```python
+run.outputs = {**(run.outputs or {}), UNANSWERED_KEY: sorted(set(content_hashes))}
+```
+
+The attempts overlapped. Verdicts were still being written at 15:32:42 (932), 15:33:12 (988),
+15:33:50 (1,055) while later attempts were already counting. So a **later attempt saw fewer
+elements still missing** — because an earlier attempt had just filed them — and its shorter list
+overwrote the true one. 170 became 65.
+
+**Why that matters more than a wrong number.** `_remember_unanswered` exists for exactly one
+purpose, in its own words: the moment the fallback verdicts are stored, *"a check looked at this
+and could not decide"* and *"nothing ever looked at this"* become the same row. **The list on the
+run is the only thing that tells them apart** — and the overwrite destroyed that distinction for
+105 elements. They now read as somebody's job in the review queue when they are actually work that
+never happened.
+
+**Nothing is lost, and this is the part that makes the fix easy.** Every one of the 170 carries the
+platform's own reason text, and it is unambiguous:
+
+```
+uncertain rows on this run                : 170
+   carrying the platform's NOT_JUDGED text: 170
+   authored by the judge                  :   0
+```
+
+Across the whole project: 185 uncertain, of which 170 are the platform's. **The two kinds are
+still perfectly separable** — just not by the field the code currently reads.
+
+**The fix — two halves, either of which closes it alone; do both.**
+
+1. **Never shrink the record — BUILT, 31 August.** `_remember_unanswered` now UNIONs with what is
+   already there instead of replacing it. An element recorded as never-looked-at does not stop
+   being that because a later pass over the same run found it already filed; **a later, shorter
+   reading is never a correction.** One line, and it makes the write safe under the concurrency
+   that 9.26.C proves is real. Tested for the overlap itself (a full list then a partial re-count
+   keeps the full set) and for the thing it shares its field with (a failed run's `error` survives
+   the write). The safety it rests on — that keeping a hash is not the same as offering it back —
+   is `unanswered_for_capture`'s own last step and is proven where the captures live.
+2. **Do not depend on the record alone — BUILT, 31 August.** `unanswered_for_capture` now also
+   recognises an `uncertain` whose evidence is the platform's own `NOT_JUDGED` text — that string
+   is written by the platform and never by an agent, so it is a reliable marker of *work that did
+   not happen*. The answer is derivable from the verdicts themselves rather than from a
+   side-record that can be lost.
+
+   **Scoped to this run**, deliberately: a `NOT_JUDGED` uncertain belonging to an earlier run of
+   the same project is that run's history, and dragging it in would re-offer elements this capture
+   has since dealt with.
+
+   **Proved by deleting the record outright** — a harsher test than the partial overwrite that
+   actually happened — and asserting the answer does not move. And guarded in the other direction
+   by the test that matters more: this reading is one keystroke from "every `uncertain`", which
+   would hand the review queue's own contents back to the machine and recycle a person's job list.
+   A judge's own `uncertain`, sitting beside the fallbacks with only its evidence text to tell
+   them apart, is asserted **not** offered while the fallbacks beside it are.
+
+**Recovery for the audit already in this state — DONE, 31 August, on the team's instruction.**
+`a11y_unanswered` on run `c454d5f0` was rewritten to the 170 hashes whose verdict is `uncertain`
+and whose evidence is `NOT_JUDGED` — one named run, nothing else touched, and exactly what fix 2
+would compute:
+
+```
+BEFORE  a11y_unanswered: 65    Check-the-rest offers: 65
+        platform-filed never-looked-at: 170
+        is the old list a subset of it? True      ← the overwrite theory, confirmed
+AFTER   a11y_unanswered: 170   Check-the-rest offers: 170   badge: 170
+```
+
+The old list being a strict **subset** is the proof: the shorter reading was a real but partial
+count taken mid-filing, not a different set. Nothing was invented by the repair.
+
+**The hazard is not gone until fix 1 lands.** The next pass writes its own record, so if its close
+runs more than once — which is the norm, not the exception (9.26.C) — the same overwrite can
+happen again to the new run.
+
+Without it, the 105 are recoverable only by a **fresh audit**: `dispatch._cached` never serves an
+`uncertain` back, so a new audit re-asks them. They are not stranded for ever — just not offered by
+this audit's button.
+
+---
+
+#### 9.26.H Two screens describing the wrong thing in the right words — BUILT, 31 August
+
+Found in the end-to-end cross-check after the audit closed. Neither is a counting error; **both
+numbers were right and both captions were wrong**, which is the harder kind to spot because the
+only symptom is a reader concluding the platform contradicts itself.
+
+**H1 · "4 awaiting a person" beside a review queue of 19.** The team asked which number was wrong.
+Neither. They count different things and can never match:
+
+| | Unit | Question |
+|---|---|---|
+| review queue · **19** | *elements* | a check reached this one and could not settle it |
+| conformance tile · **4** | *criteria* | the platform will not suggest a conformance level at all |
+
+The 4 are **1.2.2 Captions, 2.1.1 Keyboard, 2.2.1 Timing Adjustable, 2.2.2 Pause Stop Hide** — each
+with **0 open failures**, reached on all 94 routes by the **rule scanner only**. The platform
+declines to suggest a level because *"axe found nothing"* is not evidence that keyboard operation
+works. Meanwhile all five criteria that DO have queue items carry a suggested level, so **not one
+of the 19 is among the 4** — the overlap is zero.
+
+The tile's sub-line read *"A check looked and could not decide"* — **the review queue's own
+sentence**, on the conformance statement's number. Now: **"Need your decision · Criteria the
+platform will not suggest a level for."**
+
+**H2 · A low-confidence PASS described as though nothing had been decided.** The review queue holds
+two shapes, and until now said the same thing about both:
+
+```
+15 × uncertain   confidence 0.50–0.60   a check looked and could not decide
+ 4 × pass        confidence 0.75–0.80   the check DID decide; it was under this check's bar
+```
+
+The banner interpolated the verdict label into one sentence, so a low-confidence pass rendered
+**"The check gave not sure · 75%"** — broken English that also buried the fact the reviewer most
+needs: *the check said this element is fine, and how sure it was.* The body went on to say the
+platform *"did not act on it either way"*, true of the routing and misleading about the check.
+
+Now the two shapes get their own sentences: *"The check gave no verdict"* for an `uncertain`, and
+*"The check said this is fine, and was 75% sure — that is under the confidence this check needs
+before the platform will act on its own, so it is asking you instead."* Tested both ways.
+
+**Why these are the same bug as 9.26.E1 and 9.26.D.** Four separate screens today said something
+true of a neighbouring concept and false of the one in front of them. The pattern is worth naming
+because it is cheap to keep making: **a number is copied from one place and its explanation from
+another.** The check that catches it is asking, of every caption, *what exactly is being counted,
+and in what unit* — which is what found all four.
+
+---
+
+### 9.27 Scoring the completed audit — 1 September ⭐⭐ (BUILT)
+
+**The first accuracy baseline this capability has ever had.** Scored against audit `ee977648`
+(Meridian Library v1.4.0, 94 pages, 1,068 distinct questions) and locked. Two defects had to be
+fixed to get there, and **both were in the harness, not in the product** — the checkers were
+already right; the scorecard was describing them wrongly.
+
+| check | precision | recall | F1 | sample |
+|---|---|---|---|---|
+| alt | 1.000 | 1.000 | 1.000 | 30 |
+| color | 1.000 | 0.938 | 0.968 | 32 |
+| label | 1.000 | 1.000 | 1.000 | **40** (20 by the check, 20 by rule) |
+| semantics | 1.000 | 0.875 | 0.933 | 31 |
+| structure | **0.833** *(contested)* | 1.000 | 0.909 | 30 |
+
+**All five cleared the 30-record floor.** On 31 August none did — only 43 of 173 answer-key
+records had received a verdict at all.
+
+---
+
+#### 9.27.A A correct answer, recorded as "nobody looked" ⭐⭐ — BUILT
+
+**What it is.** 2.5.3 asks whether a control's spoken name contains the words printed on it. When
+it demonstrably does, that is a string comparison and not an opinion, so the selection rules
+settle it and the AI is never asked. Right, and free.
+
+**What went wrong.** Nothing recorded that a decision had been made. `_applies_label` returned a
+single boolean for two entirely different situations — *"this criterion does not apply here"* and
+*"it applies and is satisfied"* — so a control the platform had correctly cleared was
+indistinguishable from one nothing had ever examined. No dispatch, no verdict row, no trace.
+
+**Measured on this audit:** 22 of the 42 labelled 2.5.3 controls. Every one right. Every one
+reported by the harness as **NEVER LOOKED AT**, counted as **wrong** in the difficulty band
+(`clear: 20/40` for a checker that was 42/42), and excluded from `sample`.
+
+**And it was structural, not a data shortage.** `sample = TP + FP + FN + TN`; the 22 are true
+negatives. The dataset pairs every AI-judged failure with a rule-settled pass *by construction* —
+that is what makes it a clean pair — so **every new pair adds one to the sample and one to the
+ignored pile.** `label` could never have reached 30 no matter how much data was authored.
+
+**The fork, and the team's ruling.** Two honest readings: score *the AI* (the 22 don't belong;
+the AI never exercised that restraint) or score *the platform* (a client experiences the
+platform's answer, and an answer reached by rule is still correct — and cheaper). **The team
+chose the platform reading, with the split printed.** What does not move either way: precision
+and recall use neither TN, so `label` reads 1.000 / 1.000 before and after. **Nothing was
+inflated** — only whether we are allowed to believe it.
+
+**The fix.** `rules.settled()`, beside the existing `explain()`. Three states where there were
+two: *dispatched* · *settled here* · *out of scope*. The scorer reads it **from the platform's own
+rule module and never re-implements it** — a second copy would agree with the first by
+construction and the comparison would become decoration, the same trap `check_app_version` exists
+to avoid. The rule's answer is then scored against the answer key like any other, which is what
+keeps it falsifiable.
+
+**It proved that on its first run.** `/account/my-loans#renew-all` — a button reading **"Renew"**
+announced as **"Renew all loans"**. The rule says pass: the letter of 2.5.3 is met. The answer key
+says an expert should weigh it, because *"Renew"* alone does not warn a sighted user it renews
+**everything**. **The rule can compare words; it cannot see a name widening what the button
+promised.** Reported as `over-confident … settled by RULE, not by the check — narrow the rule, do
+not re-prompt the model`, because the two have different remedies. **Before this change that
+record was invisible.**
+
+**One bug introduced and caught in the same session:** the first version counted rule-settled
+records *before* the branches that exclude some from the sample, so the printed split described a
+different set from the one it was splitting (`19 / 21` for a sample of 40). Counted at the point
+of scoring instead: **20 / 20.** Ironically the exact class of mistake the change exists to
+remove.
+
+**Proof:** 5 tests, including the invariant `a checker never both asks and answers` — asserted
+across every checker, not only `label`, so the next rule that learns to settle something inherits
+the guarantee instead of re-deriving it.
+
+---
+
+#### 9.27.B The completeness half weighed the bag instead of reading the list ⭐⭐ — BUILT
+
+**What it is.** The half of the harness the spec says to *"build and trust before any accuracy
+figure"*, because it separates *"the check got it wrong"* from *"the check was never shown it"*.
+
+**What went wrong.** It compared **totals**. `RouteCount` held three integers and no identities:
+
+```python
+if self.captured < self.expected:   → dropped before capture
+elif self.captured > self.expected: → surplus (explicitly NOT a failure)
+```
+
+So a page can capture twenty-nine of the wrong things, miss every one of the eleven the answer key
+names, and print `ok`. **A packing list checked by weighing the bag.**
+
+**It was doing exactly that on 1 September.** `/help/membership-actions` printed
+`expected 11 · captured 29 · judged 29 · ok` on the same run where the accuracy half reported
+eleven records on that page as never looked at. **One page, one run, two halves of one tool,
+opposite readings — and nothing anywhere noticing they disagreed.**
+
+**The fix.** The names were already there — the key records route, selector and checker for all
+173 records, and they were read, discarded, and reduced to a count per page. They are now carried
+through and ticked off one at a time; a page reports **which** expected elements never reached
+their check. The counts remain for pages the manifest gives a number for without naming anything,
+and with no answer key at all this still does what it always did — captured against judged, which
+needs no key and works on any run of any application.
+
+**It found four immediately**, and where it found them is the point:
+
+```
+/loans/renewals    #renew-tidewater [color]
+/newsletter        #newsletter-email [label]
+/staff/exports     #open-exports [semantics]
+/staff/quick-edit  #save-entry [semantics]
+```
+
+**Every one sits on a page the manifest gives no expected count for.** The counting check could
+not have found them *even in principle* — there was no number to compare against. And the totals
+match the accuracy half's own `NEVER LOOKED AT` lines exactly (1 colour, 1 label, 2 semantics):
+**the two halves now agree.**
+
+The page that motivated all this, `/help/membership-actions`, now correctly reads `ok` with
+nothing missing — not because the check got weaker but because 9.27.A made it true.
+
+**Consequence to know:** the run now exits **2** (*"something was dropped"*), which was true
+before and merely invisible. It blocks nothing; blocking is exit 1.
+
+**Proof:** 6 tests, one of which reconstructs the 11-vs-29 failure with its real numbers and
+asserts it no longer passes.
+
+---
+
+#### 9.27.C What the baseline commits us to, and the one figure that is not settled
+
+`baseline.json` holds the accepted figure per checker, `min_sample: 30`, `tolerance: 0.02`. A
+later run more than two points below a stored figure prints `SHIPPING IS BLOCKED` and exits 1 —
+and **does not overwrite the baseline**, so a regression cannot be cleared by re-running. There is
+no CI in this repository: the exit code is a signal to a person, for the day there is one.
+
+**What is blocked is OUR release of a changed prompt, model or selection rule. Never a client's
+work, and nothing in the platform reads any of it.**
+
+**`structure` 0.833 is contested and is recorded as such in the results file.** It rests on three
+records — `/staff/staffing-plan#rota-week-1/2/3` — where our checker and the answer key's author
+genuinely disagree: the tables carry correct `<th scope="col">` column headers, and the shift
+names in the first column are `<td>` rather than `<th scope="row">`. Our checker calls that a
+1.3.1 breach; the key says the column headers suffice. **Both are defensible readings**, the
+golden set is `draft-unadjudicated` throughout, and no code change resolves it — it needs an
+expert to rule. It is a **floor, not a ceiling**: whichever way the ruling goes the number can
+only move up, so locking it cannot trap us.
+
+**A `--note` flag was added for exactly this.** A figure can be correct and still not settled, and
+a number that outlives the reason for it is read three months later as a settled fact. The caveat
+travels **in** the results file rather than in somebody's memory of the day it was written.
+
+---
+
+#### 9.27.D Three things this left open
+
+1. **The rota adjudication** — above. Needs a person, not a commit.
+2. **Four elements no rule reaches** — the ones 9.27.B found. ~~Same family as §9.25.3's
+   class-less container `<div>`.~~ **That reading was wrong on both counts**, and §9.28.A has
+   the root cause of each: they have four different owners, only one is a platform gap, and it
+   is a gap in what the capture *records* rather than in what the selectors *reach*.
+3. **The containment rule cannot see scope-widening** — 9.27.A's `#renew-all`. Now visible and
+   scored, which is the precondition for fixing it.
+
+---
+
+### 9.28 Reading the completed audit's review queue — 1 September ⭐⭐ (BUILT)
+
+The team opened the 19 items waiting on a person and read the judge's own words on the *Label in
+Name* ones:
+
+> *"this is likely a `<label>` element not provided in this batch… Cannot determine accessible
+> name without the full surrounding HTML."*
+
+Then asked the question that decided the outcome: **the audit ran in three passes and we took one
+of them over by hand — did our own interference make these, and are we about to call it a bug?**
+
+**It was the right challenge and it changed the answer twice.** Two of the six things first
+reported were the observer's own analysis errors, not defects. They are written up in
+`Audit_Live_Check_Reasoning.md` §14.2 rather than quietly dropped.
+
+**Where the 19 came from.** Every one traces to pass 1, the run that answered 799 of 800:
+
+```
+15  genuine "I could not decide" verdicts   — label 11, colour 2, alt 1, graphics 1
+ 4  passes at or below the confidence bar   — routed to a person BY DESIGN (triage.py uses <=)
+```
+
+Passes 2 and 3 — including the one we abandoned — produced **not one** uncertain verdict between
+them. **Our disturbance put nothing in this queue.**
+
+**And the judge is not the problem.** Across the whole audit:
+
+```
+953 pass   100 fail   15 uncertain      — 1.4% of 1,068 answers
+colour: 512 judged,  2 uncertain (0.4%)
+label:   32 judged, 11 uncertain (34%)  ← every one of them a <select>
+```
+
+One data-plumbing gap accounts for nearly all the uncertainty there is.
+
+---
+
+#### 9.28.A The judge was never told the accessible name ⭐⭐ — BUILT
+
+**What it is.** WCAG 2.5.3 asks one question: *does the name a screen reader announces contain the
+words printed on the control?* The browser computes that name during the capture, deliberately —
+never approximated from `aria-label` or the text content, because an approximation makes the two
+agree by construction and switches the check off. The platform stores it.
+
+**And then `dispatch._group_by_screen` did not send it.** The judge received the markup, the
+picture, the surrounding text and the container outline, and not the one string the criterion is
+about. `git log -S accessible_name` on that file across every branch returns nothing: **it had
+never been sent, on any run, ever.**
+
+**Why it only shows on dropdowns.** A `<button>`'s name is the word printed on it, and `html`
+carries that word — so the judge could answer. A `<select>` is named by a `<label for=…>` that is
+a **sibling**, so it is never inside the element's own markup and is recoverable from nothing else
+that travels. The split is total:
+
+| | judged | uncertain |
+|---|---|---|
+| `<button>` | 19 | **0** |
+| `<select>` | 13 | **11**, plus 2 low-confidence passes — **none resolved** |
+
+**The fix.** `accessible_name` is carried on `A11yCandidate`, through `to_candidate`, into the
+batch, and named in the judge's instructions — with the "I cannot tell without the surrounding
+HTML" escape removed for this case, because it stops being true.
+
+**`tag` and `role` were deliberately NOT added.** The judge reads both off `html`; restating them
+would change the cache key for no gain. The name is different in kind — computed from the whole
+page, recoverable from nothing else.
+
+#### 9.28.B A dropdown's options were being read as its label ⭐ — BUILT
+
+**The rule that decides what reaches the AI had already got this wrong, one step earlier.**
+`_visible_text` returns the element's inner text; for a `<select>` that is every option it holds.
+So the rule compared
+
+```
+announced name   "Home branch"
+"visible label"  "Fenner Road Ashcombe North Quay"
+```
+
+found no match, concluded *possible mismatch*, and sent it on — to a judge that had not been given
+the name either. **Two faults stacked, and fixing either alone leaves dropdowns broken.**
+
+There was never anything to compare. A closed dropdown displays none of its options, and a
+dropdown's visible label **is** its accessible name. `VALUE_NOT_LABEL_TAGS` (`select`, `textarea`)
+now puts them out of scope — the mirror of the `VALUE_LABEL_INPUT_TYPES` carve-out §9.15 added for
+`<input type=submit>`, and for the same reason: **no visible label we can read means no comparison
+we can make.** Out of scope is not a pass, and `settled()` reports neither.
+
+**Proved against the stored audit, read-only: 13 of the 19 leave the queue. The other 6 stay, and
+every one of them should.**
+
+#### 9.28.C `border-color` was never captured — the same silent loss, a third time ⭐ — BUILT
+
+`STYLE_KEYS` records `border-style`, which says a border **exists** and never what it looks like.
+So the third way to colour a thing was invisible, after `background-color` (the first) and
+`stroke`/`fill` (§9.23's, the second).
+
+On `/loans/renewals` three status markers sit in adjacent rows of one table. Two are `.dot`,
+coloured by `background`; one is a `.ring`, drawn with `border: 3px solid`. **The two were offered
+to the colour rule and the third was not** — `_applies_color` looked for a painted background,
+found none on an empty span, and concluded there was no colour here to ask about.
+
+Both `STYLE_KEYS` lists now carry `border-color` and `outline-color`, and a painted border counts
+as carrying colour — **but only when there is nothing else**, no text and no background. That
+narrowness is measured, not cautious: the reasoning already recorded on `_has_second_cue`
+establishes that parents almost never have a border to compare against, so treating any painted
+border as a difference would make every input and card on the page a colour candidate and spend
+the judgment budget on chrome.
+
+#### 9.28.D An icon's parent was never described ⭐ — BUILT
+
+The bookmark icon on `/events/calendar` is the `alt` uncertain **and** the `graphics` uncertain —
+one element, both of the remaining non-colour uncertains in the entire audit. Both criteria turn
+on **what the icon sits inside**: a link whose only content is this icon (so `alt=""` hides where
+it goes) or an already-labelled container (so `alt=""` is right).
+
+`surroundingText` sends the parent's **words**. An icon-only link has none — correctly, and
+uselessly. The capture now carries the parent's `tag`, `role`, `href` and text.
+
+#### 9.28.E Two guards, because this class of loss is silent by design ⭐⭐ — BUILT
+
+The companion's own comment says it out loud: *a missing style key is not an error anywhere.*
+That is why 9.28.C is the third occurrence and why 9.28.A survived from the first day.
+
+- **`test_the_batch_carries_every_field_a_check_needs`** — every field of the candidate contract
+  must be in the batch the judge receives. The sibling of the test §9.23 added after `structure`
+  was dropped one step before storage, and written for the same reason: *nothing failed, because
+  the two lists had never been compared.*
+- **`test_the_companion_captures_exactly_the_styles_the_rules_read`** — the two `STYLE_KEYS`
+  lists must be **identical**, not merely overlapping.
+
+#### 9.28.F What this costs, and it is not a footnote
+
+**Every judgment cached before today is invalidated.** `accessible_name` and `parent` are inputs
+the judge now reads, so both are in the cache key — the same argument §9.19 made for `structure`.
+A verdict reached without ever seeing a field must not be served as a hit, because a cache hit is
+a promise that nothing the judge looks at has moved.
+
+**The next audit therefore re-judges everything.** Pass 1 of the 31 August run cost **$33.12** for
+800 elements. Recorded here so the number is a decision and not a surprise.
+
+#### 9.28.G Withdrawn — the "106 silently closed findings"
+
+**Reported as a serious defect, investigated, and it is not one.** The full correction is in
+§14.2; in short: 104 distinct elements filed as *"nothing looked at this"* when we abandoned pass
+2 were **all re-judged by pass 3 and all passed**, so the placeholders were correctly closed. The
+guard drafted for `findings.record_run_findings` was written and **reverted** — it fixed nothing
+and would have stopped a genuinely deleted element from ever resolving.
+
+**`Audit_Live_Check_Reasoning.md` §6.11 had recorded this correctly on the day** — *"114 of those
+133 were never work for a person at all"*. The document was right and was not read.
+
+#### 9.28.H Still open after this
+
+1. **Not provable until a fresh capture.** 9.28.A, C and D change what is *collected*; the August
+   bundles cannot carry fields nothing asked for. The rules are covered by tests; the end-to-end
+   proof waits.
+2. **`#open-exports`** — should the `semantics` rule reach a link styled as a button? A judgement
+   call the answer key's own author flags both ways. Needs a decision, not a fix.
+3. **`#newsletter-email`** — marked *"Disputed — flagged for the expert"* by its author. An input
+   labelled only by its placeholder.
+4. **Screenshot paging** — the batch is served per screen (25) while images are served as one
+   run-wide list (4 a call), so a judge on screen 9 must page past screens 1–8. The shape mismatch
+   is real; **the damage first attributed to it was a miscount** (§14.2). Pass 1 worked through 73
+   screens and 800 elements, so it is survivable. Recorded, not fixed.
+5. **The rota adjudication** and **the `#renew-all` containment limit** — unchanged from §9.27.D.
+
+
+### 9.29 Re-reading every fix, oldest to newest — 1 September 🔬 (REVIEW — NOTHING BUILT)
+
+Before the next full-scale audit the team asked for something this plan has never had: **every
+correction made since 12 August, re-checked against the code as it stands** rather than against
+the commit message written on the day. One straight line of 149 commits from `47578d0` to
+`41458ae` — `web-accessibility-build` turned out to be wholly contained in `Eval-accuracy`, so
+there is no second history to reconcile. 200 corrections catalogued.
+
+**The result is good, and should be read precisely: all 200 are present at HEAD.** None was
+reverted and none was undone by a later change. Eleven needed a second fix; two were withdrawn as
+not defects (§9.28.G, and §14.2 of `Audit_Live_Check_Reasoning.md`).
+
+What follows is only what the review found that this plan did not already say.
+
+#### 9.29.A The red tests are three causes, not one — §9.25's note is corrected
+
+> **Corrected the same day — see §9.30.B and §9.30.D.** Two things below are wrong. The count is
+> **21, not 16**: this was measured across eleven a11y test files and there are thirty-three, and
+> the five that were missed are four drift guards all naming the same fact. And the three
+> conformance failures do **not** come from a fixture with no ownership registry — the registry is
+> loaded; the fixture records a *rule-scanner* pass for a criterion the registry gives to the *AI*,
+> which is the guard working precisely as designed. The shape of the paragraph below is right and
+> its two specifics are not, which is the habit it is itself about.
+
+§9.25 records **14 backend tests failing, "all of them" tracing to the `graphics` / 1.4.11 checker
+added on 27 August**. Re-measured today across eleven a11y test files, the figure is **16, and
+they have three separate causes**:
+
+```
+11   the graphics widening (27 Aug)   capture 5, report 6
+ 3   the conformance guard (27 Aug)   conformance 2, findings 1
+ 2   the selection corpus             no 1.4.11 rows — see 9.29.B
+```
+
+The eleven are what §9.25 described, and they are stale assertions rather than defects: an image
+is now legitimately claimed by **both** `alt` and `graphics`, deliberately and for different
+questions (§9.25 and the `graphics` docstring), so an assertion expecting one checker sees two.
+The report failures name the extra row outright — `1.4.11 /checkout img.hero`.
+
+**The three are not the graphics checker at all.** They are stale assertions against the
+conformance guard of §9.26 — the one that stopped a narrow rule pass claiming a criterion it
+cannot prove. Those tests build a fixture with no ownership registry loaded, so `suggest()`
+correctly answers nothing where they still expect `supports`:
+
+```
+AssertionError: assert 'not_evaluated' == 'supports'
+AssertionError: assert None == 'supports'
+```
+
+That is the guard working exactly as designed — *an unknown owner claims nothing, and those rows
+go to a reviewer* — and the tests predate it. **Neither group is a product defect.**
+
+The correction worth having is not the number. It is that **one cause was recorded for a set that
+had three**, which is the habit §14.2.3 names: taking the explanation from the nearest place
+rather than from the place that answers the question.
+
+#### 9.29.B 1.4.11 has no evidence of any kind — the one item to decide before the next audit ⭐⭐
+
+> **Decided and acted on the same day — see §9.30.A.** The team's answer was **hold it back**: the
+> claim on 1.4.11 is withdrawn until the ownership registry, the corpus and the answer key can
+> support it, and the check itself is kept intact and idle rather than deleted. Everything below
+> still stands as the description of the gap; what changed is that the platform no longer claims
+> the criterion while the gap is open. §9.30.C is the part of that which nearly went wrong.
+
+Three separate gaps, all pointing the same way. Each verified today rather than inferred.
+
+1. **No selection-corpus rows.** §9.22's corpus of forty-six failure shapes holds 1.1.1, 1.3.1,
+   1.4.1, 2.5.3 and 4.1.2 — and nothing for 1.4.11. So both of its assertions fail for that
+   criterion: it owns no recorded failure shape, and no recorded shape it must leave alone.
+   **Red since 27 August.**
+2. **No `check_graphics` on the capability.** `integrations.capabilities.A11yAI` and the built-in
+   connector expose `check_alt`, `check_semantics`, `check_structure`, `check_color`,
+   `check_label` and `check_journey` — **five element checks, not six**. An **audit is
+   unaffected**, because the dispatch path reads the checker list from the rules; what cannot be
+   done is asking the capability directly about 1.4.11.
+3. **No answer-key records.** The scorer already carries the aliases — `non-text-contrast` and
+   `graphic-contrast` map to `graphics` — and the golden set holds alt 32, color 35, label 42,
+   semantics 33, structure 31, and graphics **0**. The golden README already says why, and the
+   rule it sets for closing it stands: the labeller must not be the person who wrote the checker.
+
+**Why this needs a decision rather than a patch.** §9.22 exists precisely to stop a check being
+filed under a criterion it does not cover — it is the guard that caught the 1.3.1 gap, and writing
+corpus rows to silence it without settling the scope question would defeat the thing it is for. It
+has now been reporting this condition for five days and has been read as part of the background
+red, which is the exact failure §9.24 recorded once already: *a test whose whole purpose is to
+notice a change, red because of the change it was meant to notice, and passed over.*
+
+**Nothing here says `graphics` is wrong.** It says we have no evidence either way, and two of the
+three gaps are things the platform already knows how to state.
+
+#### 9.29.C One frontend test passes only in UTC
+
+`frontend/src/features/a11y/audit.test.tsx` — *"a judging pass whose machine went away stops
+claiming to be in progress"* — asserts `getByText(/13:04|1:04/)` against a stubbed
+`stalled_since` of `2026-08-31T13:04:11Z`. The component renders that through
+`toLocaleString(undefined, …)`, which is deliberately the **viewer's** local time. So the test
+passes on a machine in UTC and fails everywhere else; on IST the screen correctly reads 18:34.
+
+The feature is right and is the point of §9.26.E — *a count with no time beside it reads
+identically one second and half an hour after the machine died* — and the time is being shown.
+**The test is the defect**, and it is the same class as the harness default fixed in §9.25.5's
+sibling change: a check that only works on the machine of whoever wrote it.
+
+#### 9.29.D One thing the review itself got wrong, recorded rather than dropped
+
+The review's first pass carried a fourth item: that `structure` findings may not be scorable
+against the answer key at all — flagged in the commit that widened the checker count on 25 August,
+and never ruled on. **It is not open. It was closed on 28 August, and nothing recorded that it had
+been closed.**
+
+`CHECKER_ALIASES` carries `fake-structure` and `real-structure` → `structure`; the golden set holds
+31 structure records; and the baseline locked at 09:00 on 1 September scores it — sample 30,
+recall 1.0, precision 0.833, which is the contested figure of §9.27.C.
+
+**The error was checking whether a *ruling* had been recorded, finding none, and concluding the
+question was still open** — without asking whether the situation had changed underneath it. It is
+§14.2.3 one document further along, and it is written here for the same reason that section
+exists: a review that keeps only the findings which survived is not evidence of anything.
+
+---
+
+---
+
 ### What was deliberately NOT built — 24 August
 
 **An audit that continues itself until nothing is left.** Proposed, and the team rejected it:
@@ -2725,3 +4035,411 @@ code. His platform was on current code and ingest ran 2.4 seconds before dispatc
 came between. Every link says it should have worked. The remaining explanations are all about
 his working copy rather than our code, and no fix was invented for a defect that has not been
 shown to exist.
+
+
+### 9.30 Clearing everything before the next audit — 1 September ✅ (BUILT)
+
+> **Read with §9.30.A. The hold described there lasted part of one day.** The team asked whether
+> the checker actually worked; it does, and the evidence is in §9.31. `graphics` runs
+> again, the ownership registry now agrees it is AI-owned, and the two things missing since
+> 27 August — the capability method and the corpus rows — are built. What stays true from
+> §9.30 is §9.30.C: the guard that stops a future hold handing a criterion to the wrong half.
+
+§9.29 was a review and built nothing. The team's answer to it was short: *before I click Run audit,
+everything has to be fixed and cleared.* This is that work. **Route B was chosen for 1.4.11** — hold
+the claim back rather than complete it — and the investigation that followed showed that choice was
+better founded than the case put for it.
+
+**The state before: 21 backend tests red and 1 frontend, not 16 and 1.** §9.29.A measured eleven
+a11y test files. There are thirty-three. **Sweeping all of them found five more**, and those five
+are the subject of §9.30.B.
+
+**The state after: 1,747 a11y backend tests passing, 0 failing; 416 of 416 frontend passing.**
+Plus the scorer at 47/47, and 126 tests across the capability, WCAG-gate, integrations-admin,
+phase-4 acceptance and build-activity suites, all green.
+
+#### 9.30.A The claim on 1.4.11 is withdrawn, and the check is kept
+
+`ownership.json` records **1.4.11 as owned by `rule`**. `A11Y_CHECKER_CRITERIA` is the map of what
+the **AI** owns. When `graphics` was added on 27 August it put 1.4.11 into that map, and the case
+for doing so was argued in a code comment — *"the registry said so itself… and then recorded the
+owner as `rule` anyway"* — while the registry itself was never changed to agree. Five guards said so
+immediately and went on saying it (§9.30.B).
+
+So the entry moved rather than being deleted:
+
+* `A11Y_HELD_BACK_CRITERIA` in `integrations/types.py` holds `{"graphics": ("1.4.11",)}`, with the
+  reason, what is lost, and the three things that must be true before it returns;
+* `HELD_BACK_SELECTION_RULES` in `checkers/rules.py` holds the selection rule itself — its `covers`
+  and `skips` prose intact, so the scope somebody argued for is readable rather than reconstructable
+  from a git log;
+* `describe_rules()` prints it with **HELD BACK, NOT RUNNING** and a line saying nothing it would
+  have found is reported, because a reviewer has to be able to tell what runs from what does not;
+* `A11Y_ALL_CHECKER_CRITERIA` — the *validation* union, which nothing selects from — still contains
+  it, so a verdict recorded before the pause can still be validated and a workspace that had tuned
+  its confidence threshold is not told the check "does not exist" (the QA-20 error, avoided).
+
+**Sixteen of the twenty-one red tests went green on this change alone, with no assertion touched.**
+That is the strongest evidence that the hold is the right reading rather than a convenient one:
+sixteen independent guards were objecting to one thing.
+
+Bringing it back is three moves in two files, listed in the code — **after** the registry is changed
+to agree, which is the step that was skipped last time.
+
+#### 9.30.B Five red tests nobody had counted, all saying the same thing
+
+| Test | What it had been saying since 27 August |
+|---|---|
+| `test_the_capability_offers_a_check_for_every_checker_in_the_registry` | there is no `check_graphics` — a checker selectable and dispatchable with nowhere to put its verdict |
+| `test_every_checker_maps_to_a_real_wcag_criterion` | the checker map is not the five the POC shipped |
+| `test_the_poc_checkers_and_the_registry_cannot_drift_apart` | the map claims 1.4.11; the registry does not give it to the AI |
+| `test_the_poc_element_checks_are_untouched` | the element-check set changed without a decision |
+| `test_the_statement_arrives_compiled_with_every_criterion` | the conformance guard, as in §9.29.A |
+
+Four of the five are the platform's own drift guards and **all four were pointing at §9.30.A**. They
+were not noise around a known problem; they *were* the problem, stated four times over, in a suite
+everybody had been told had "about sixteen expected failures".
+
+**This is #57 for the third time** — a check whose whole purpose is to notice something, ignored
+because it was noticing it. First a scan rule, then 1.4.11, now the test suite. The lesson is not
+about tests: **an accepted background of red destroys every signal inside it**, so the bar from here
+is a green suite, not a remembered count.
+
+#### 9.30.C The dangerous one: pausing the judge would have rebuilt the bug it was built to fix ⭐⭐
+
+One test refused to go green after §9.30.A, and it was right to:
+*`test_non_text_contrast_is_covered_by_a_rule_AND_a_judge_and_needs_both`*.
+
+Following it through: the registry gives 1.4.11 to `rule`; `page_rules` records its measurements
+under the `rule` engine; and the §9.26 conformance guard asks *did an engine entitled to settle this
+criterion look?* With `graphics` held back, the answer would have been **yes** — so a page whose
+buttons all had visible edges would have been reported as **Supports 1.4.11** with nothing having
+looked at a single icon.
+
+**That is QA-25 word for word**, recreated by the act of pausing the check built to fix it.
+
+The fix: a held-back check now **withdraws its criterion from positive claims** rather than handing
+it to the other half. `A11Y_HELD_BACK_CLAIMS` derives those criteria, and `suggest()` declines for
+them — placed beside the other positive-only guards, so **failures are untouched in both
+directions**: a control edge under 3:1 is still a proven Level AA defect and is still reported.
+1.4.11 now reads as **measured but not judged**, which is what is true.
+
+The test holds both ends now: that the judged half is *held and not deleted*, and that while it is
+held nothing may claim the criterion.
+
+#### 9.30.D §9.29.A's diagnosis of the conformance failures was wrong
+
+§9.29.A says those tests *"build a fixture with no ownership registry loaded"*. **They load it.**
+
+The real cause is sharper. The fixture records a **rule-scanner** pass for **1.1.1**, and the
+registry gives 1.1.1 to the **AI**. axe's `image-alt` proves an alt attribute *exists*; whether it
+*says* anything is the judge's question. The guard declined — correctly, and for exactly the reason
+it was written.
+
+Fixed by having those four fixtures name the engine that owns the criterion, each with a comment
+saying why so nobody reverses it. The guard's own coverage is untouched:
+`test_a11y_conformance_guard.py` holds thirteen tests on this rule from both directions, including
+`test_a_scanner_pass_cannot_claim_a_criterion_the_ai_decides` — which is the case those four had
+been accidentally re-testing.
+
+**Recorded rather than quietly corrected**, for the same reason as §9.29.D: this is the third time
+in this document that an explanation was taken from the nearest place rather than the place that
+answers the question, and the count matters.
+
+#### 9.30.E The timezone, pinned once for the whole suite
+
+`audit.test.tsx` asserted `13:04` for a `13:04Z` stamp; the screen renders the **viewer's** local
+time, deliberately, so it read 18:34 in India and failed. Pinned `TZ=UTC` in `vite.config.ts` rather
+than patching the assertion — every time-rendering test written from now on inherits it, and it is
+set at config load in the Vitest parent before any worker forks, which is the only cross-platform
+place to do it. **416 of 416.**
+
+#### 9.30.F What is still open going into the run
+
+Unchanged by any of the above, and stated so the numbers are read for what they are:
+
+* **the answer key is 173 draft-unadjudicated records** — the accuracy figures measure agreement
+  with a careful draft, not correctness. Only a person who did not write the checkers can close
+  this, and 1.4.11 cannot come back without it;
+* the contested **0.833** precision on `structure` — three tables, needs a ruling, can only move up;
+* `#open-exports` and `#newsletter-email` — two judgement calls the key's own author flagged both
+  ways;
+* screenshot paging — a real shape mismatch, survivable, recorded not fixed;
+* **§9.28.H / #58 — terminating a run still does not stop the agent.** The writes are refused; the
+  agent keeps going. To actually end a run, stop the companion.
+
+**And one thing that is not a code item at all:** the running worker and API containers were started
+at 04:17 UTC on 1 September and hold 31 August code in memory. Every fix in §9.29 and §9.30 lives on
+disk only until they are restarted — **worker first, then API** (the deploy order of `b8617a1`,
+because the verify timeout travels on the run's payload and an older worker cannot read it), and the
+companion started fresh so it captures `border-color`, `outline-color` and the parent description.
+
+
+### 9.31 The sixth check goes back in, and the registry finally agrees — 1 September ✅ (BUILT)
+
+§9.30 held `graphics` back because the map of what the AI owns and the ownership registry disagreed
+about 1.4.11, and five guards had been saying so for five days. The team then asked the right
+question: **does the checker actually work?**
+
+**It does, and the evidence was already in the database.** From the 31 August Meridian run:
+
+```
+graphics elements selected     59
+screenshots delivered          59      every one
+verdicts returned              59      every one
+   pass                        58      confidence 0.85-1.00, mean 0.91
+   uncertain                    1      0.50
+routed to a person              5
+background-image captured     yes
+```
+
+Selection → capture → crop → dispatch → judge → verdict → cache → finding: **every stage fired and
+nothing fell through.** And it is reading pixels, not markup — the judge's own words on one page:
+
+> *"Screenshot shows a flat SVG illustration of a brick building. The meaningful parts — the
+> terracotta building outline against a light grey background, the arched windows (white/light on
+> the dark brown wall)…"*
+
+**The caveat, kept in view: 58 pass, 1 uncertain, 0 fail.** It has never returned a failure. So it
+runs, looks at the right thing and answers with high confidence; whether it can say *no* is
+unproven, and only the answer key settles that (§9.30.F, #64).
+
+So the hold was lifted — properly, which took four things rather than one.
+
+#### 9.31.A The decision was made on 27 August and never reached the data
+
+`RESEARCH_CORRECTIONS.md` **R14**, agreed 27 August, says of 1.4.11: *"the rationale is correct and
+the owner is not."* Both halves were built the same day. **`ownership.json` was never changed.**
+
+That is the whole five-day failure in one sentence: a correction agreed in prose, and the registry
+— the thing that actually routes — never told. Everything downstream had already assumed the
+correction; only the data disagreed, and only the guards noticed.
+
+#### 9.31.B Carried into the data as an override, not an edit ⭐
+
+`data/ownership.json` is **not a decision record**. `ownership_build` rebuilds it from the committed
+research PDF and proves it against eight independent cross-checks — the report's headline counts
+(RULE 14 / AI 11 / HUMAN 30), its enumeration of the fourteen rule-primary criteria, its
+per-principle headers, and five more. Editing a row there to record a decision would make the file
+disagree with its own source, and `build_ownership_dataset --check` would fail. Correctly.
+
+So the decision lives in **`ownership.ENGINEERING_OVERRIDES`**, applied at load:
+
+* `dataset()` stays a faithful read of the file, and every test holding it to the report stays green;
+* `CriterionOwnership` — the table every routing and conformance decision actually reads — carries
+  1.4.11 as **`ai`**, with the rule half recorded as a `secondary_check`, exactly the shape 1.1.1
+  already has;
+* the two views are asserted to differ by **exactly the override**, written as
+  `RULE_PRIMARY_14 minus 1.4.11` rather than as a second hand-typed list, so a second departure
+  cannot arrive quietly.
+
+Three guards hold it: the committed file is unedited, the override set is exactly `{1.4.11}`, and
+**every override must name a criterion that appears in `RESEARCH_CORRECTIONS.md`** — a correction in
+code with none in prose is the same failure as R14's, pointing the other way. An override naming a
+criterion that does not exist is refused rather than silently doing nothing.
+
+#### 9.31.C The two things missing since 27 August, now built
+
+* **`check_graphics` on the capability.** Five element checks were exposed, not six. An audit was
+  unaffected — the audit path reads its checker list from the rules — so this was invisible to every
+  run and visible only to the test that had been failing about it since the day the checker landed.
+  What could not be done was asking the capability about 1.4.11 for one element, which is how
+  anything outside an audit reaches the criterion.
+* **Seven selection-corpus rows for 1.4.11** — five failure shapes it must reach, two it must leave
+  alone, every one drawn from the rule's own `covers` and `skips` prose rather than invented. **Two
+  of the five are reachable by nothing else in the platform**, and they are why `graphics` is a
+  separate check rather than folded into `alt`:
+
+  | Shape | Why only this check sees it |
+  |---|---|
+  | a chart drawn as a bare `<svg>` | never announced, so `alt` skips it deliberately — and it is still drawn on the screen |
+  | an icon painted as a CSS background image | no tag, role or attribute says it is a picture; it is visible only because `background-image` is in `STYLE_KEYS` for this check |
+
+  The negative side is deliberately narrow, because the rule's own `skips` says *"graphics with no
+  rendered box, and nothing else"*. A photograph is **not** skipped: no rule can tell a photograph
+  from a diagram, and the standard's "essential presentation" exemption is a judgment the judge
+  makes and reports as not applicable.
+
+#### 9.31.D Eleven tests, fixed for the right reason this time
+
+§9.30 recorded that sixteen of the twenty-one red tests went green when `graphics` was withdrawn.
+Putting it back turned eleven of those red again — which is the correct outcome, because **those
+eleven were never fixed; they were made moot.** They are fixed now:
+
+* **Five in `test_a11y_capture` and six in `test_a11y_report`** asserted an exact checker list, or a
+  literal count of requests, in tests about something else entirely — stability, ordering,
+  carry-forward, "the report is still produced". Each now asserts *its own subject*: sets of
+  elements rather than lists of checks, `len(_selected(world))` rather than `== 2`.
+* **Exactly one test keeps the exact list** — `test_only_selected_elements_are_stored`, whose
+  subject that genuinely is. Widening coverage is now one deliberate edit in one place, which is
+  the only thing an exact list is worth having for.
+* The tempting alternative — deriving the expected set from the rules — was rejected: a test that
+  agrees with the code by construction proves nothing.
+
+Two fixtures also had to change substance rather than arithmetic: `_judge_everything(world)` now
+answers **every selected check** instead of a hand-named `("alt", "semantics")`, because a complete
+run reading as incomplete the moment a sixth check starts selecting elements is not a test problem,
+it is a fixture asserting a fact about August.
+
+#### 9.31.E Where this leaves the run
+
+```
+a11y backend      1,765 passing   0 failing   (33 files)
+adjacent suites     126 passing   0 failing
+scorer               47 passing   0 failing
+frontend            416 passing   0 failing
+migrations          none needed
+```
+
+Six element checks live, all six exposed on the capability, nothing held back, registry and code
+agreeing for the first time since 27 August. 1.4.11 is now **measured and judged**, and the
+conformance guard requires the judge to have looked before the criterion can read as supported —
+which is stricter than it was before any of this started.
+
+**Still open and unchanged:** the answer key is 173 draft-unadjudicated records, so 1.4.11 ships
+with no accuracy figure — accepted by the team, and #64 records it. §9.30.F holds the rest.
+
+**And still the team's to do before the run:** restart the worker, then the API and frontend, then
+start the companion fresh. Everything above is on disk; none of it is in the running processes.
+
+---
+
+### 9.32 The audit that ran to completion on a fresh tenant — 2 September ✅ (BUILT / 2 RECORDED)
+
+**Audit `f60c8f1a` · fresh tenant `Edvensoft-WCAG-2` · 94 pages · three passes · complete.**
+
+The first full-scale audit run with all six element checks live and the ownership registry agreeing
+with the code. Full reading-by-reading account in `Audit_Live_Check_Reasoning.md` Part II.
+
+**The result.** 2,177 elements captured, 2,283 requests collapsing to **1,068 distinct questions**,
+**1,068 judged, 0 unanswered**. 968 pass, 100 fail. 410 open problems (105 critical, 305 high),
+**2 awaiting a person**. Active work 3 h 31 m; engine cost $37.18 on the subscription.
+
+**What it proved, and none of it was assumed:**
+
+* **The five original checks were untouched by the 1 September work.** The 31 August selection rules
+  were loaded alongside the current ones and all 50 corpus elements walked past both. Identical
+  selection, identical scope prose, identical criteria. Recorded because "we did not change that"
+  is not evidence.
+* **The audit selected the same work as before the changes.** 1,068 distinct questions on both runs,
+  dedup 2.15× vs 2.14×, and `graphics` selecting **59 elements on both**. The single most convincing
+  number of the day.
+* **`graphics` works end to end on real content.** 59 selected, 59 judged, mean confidence 0.938,
+  reading pixels and correctly declining the photograph exemption on a flat illustration.
+* **The 1 September capture fields are live and in use.** `parent` on 800 of 800 dispatched elements,
+  `accessible_name` on 524 — and the judge quotes `accessible_name` in its own evidence, so it is
+  being reasoned with rather than merely delivered.
+* **Interruption costs nothing but time.** Two passes stopped for environmental reasons and the third
+  completed the work. No element was lost, re-judged unnecessarily, or silently marked as passing.
+  Answers already banked were reused at zero cost.
+
+#### 9.32.1 A new tenant silently inherits a judging cap of 200 🔬 RECORDED, NOT FIXED
+
+`caps_for()` reads `max_judgments_per_run` from the `a11yai` connection scopes and falls back to
+`DEFAULT_MAX_JUDGMENTS_PER_RUN = 200`. A freshly created tenant has `scopes = {}`, so it inherits
+200 — where the previous tenant had 800 configured by hand.
+
+**Effect measured on this run:** 1,068 distinct questions at a cap of 200 is roughly five passes
+instead of two. Caught during capture and corrected to 800 before dispatch, so it never bit.
+
+**Why it is worth fixing rather than remembering.** Nothing on any screen states the cap, and the
+first symptom is an audit that stops early saying it reached "this run's limit" — which reads as
+normal behaviour, because it is. The failure mode is a slow day, not an error, so nobody
+investigates. Options: surface the cap at project setup, seed it with the tenant, or state it on the
+audit screen before the run starts.
+
+#### 9.32.2 The ledger write fails silently when a run fails ⭐⭐ 🔬 RECORDED, NOT FIXED
+
+**Symptom.** After pass 2 the screen showed 370 problems and 106 awaiting review. Both were pass 1
+figures, 80 minutes stale. The report document had regenerated; the ledger had not.
+
+**Proof.** All 476 ledger rows were created *and last touched* between 04:13 and 04:16. Pass 2
+finished at 05:39. Not one row moved.
+
+**Diagnosis**, from a dry run inside a rolled-back transaction:
+
+```
+merge_run           :   8.3 s
+record_run_findings : 427.3 s   <- and it SUCCEEDS
+   would open      76
+   would see again 377
+   would resolve   99
+```
+
+`record_run_findings` is not broken — it is **slow**, and `publish_report` calls it inside a
+best-effort handler that stores the failure on the returned dict. That dict travels back on the
+Temporal activity's return value, **which a failed run never persists**. So the one case where the
+ledger write is most likely to be cut short is exactly the case where its error cannot be recorded.
+
+**Confirmed non-permanent:** on pass 3 the same write ran to completion, moving the queue 106 → 2 and
+open problems 370 → 410.
+
+**The write is correct. The silence is the defect.** Two directions, neither urgent: make the failure
+durable (write it to the audit `summary`, which survives a failed run, rather than only to the
+activity result), and reduce the write's cost so it is less likely to be interrupted. The first is
+the one that matters — an 80-minute-wrong screen with no signal anywhere is the same class of failure
+as the accepted background of red in §9.29.
+
+**Cross-check that no new bad behaviour was introduced:** the resolution rules held correctly
+throughout. The 44 elements still unanswered after pass 2 did **not** have their findings closed,
+because "we did not get an answer" is not "the problem is gone".
+
+#### 9.32.3 The accuracy score for the completed audit — 2 September ✅ (RUN, RECORDED)
+
+Scored against the golden set (`--app-version 1.4.0`, confirmed by the team), audit `f60c8f1a`.
+Result file `evaluation/scorer/results/20260902T140726+0000.json`, carrying a stored note that
+explains the colour movement. **`baseline.json` was deliberately left alone** — the run blocked,
+and the harness keeps the baseline untouched on a block so the comparison stays honest.
+
+| Check | Records | Precision | Recall | F1 | Caught | False alarms | Missed |
+|---|---|---|---|---|---|---|---|
+| alt | 30 | 1.000 | 1.000 | 1.000 | 15 | 0 | 0 |
+| label | 40 | 1.000 | 1.000 | 1.000 | 20 | 0 | 0 |
+| semantics | 31 | 1.000 | 1.000 | 1.000 | 16 | 0 | 0 |
+| structure | 30 | 0.833 | 1.000 | 0.909 | 15 | **3** | 0 |
+| colour | 32 | 0.938 | 0.938 | 0.938 | 15 | 1 | 1 |
+
+**`graphics` has no score and that is correct** — the answer key holds zero records for 1.4.11,
+deliberately, as its manifest states. Five of six checks are measurable; the sixth ships judged
+but not measured, unchanged from §9.32.
+
+**Completeness: 2,283 element-checks offered, 2,283 answered, across all 94 routes.** Nothing was
+dropped between being on a page and getting an answer. Three elements the key names were never
+offered to their check — `#newsletter-email [label]`, `#open-exports [semantics]`,
+`#save-entry [semantics]` — all three already recorded at §9.28, and two are the standing
+judgement calls the key's own author flagged both ways. **On 1 September there were four; the
+fourth was `/loans/renewals #renew-tidewater [color]`, and it is now captured.** That is the
+border-colour capture fix proven on live data rather than by test.
+
+**Movement since 1 September.** `semantics` recall improved 0.875 → 1.000. `alt`, `label` and
+`structure` unchanged. `colour` precision fell 1.000 → 0.938 and the run blocked on it.
+
+**The colour movement, root-caused and accepted by the team.** The entire drop is one record:
+`/help/problem-report #problem-detail`. That page and `/help/report-a-problem` are a deliberate
+A/B twin — the same textarea, one carrying `aria-invalid` and an `aria-describedby` note that
+states the error in words, one carrying neither. **The 1 September capture work is what first put
+those attributes in front of the judge**; the 1 September results file mentions `problem-detail`
+nowhere, because the judge could not reason about it at all. Shown them, the judge applied the
+platform's own rule for 1.4.1 as written in `_has_second_cue` — *only visual cues count; an ARIA
+attribute is not one, because 1.4.1 is about what a person who cannot distinguish the colours can
+still see* — and failed the field. The key's record assumes the ARIA makes it a pass.
+
+**The checker did what it is specified to do.** This is a disagreement between a documented
+platform rule and one answer-key record, and it needs an expert's ruling, not a code change. The
+three `ambiguous` `/loans/renewals` markers moved for the same reason and are excluded from
+precision and recall by design.
+
+> **The largest real gap is `structure`, not colour.** Precision 0.833 on three false alarms is
+> the lowest figure on the board, it is **unchanged from the baseline** so it is not new, and
+> nobody has looked at it. Colour got the attention this run because it moved.
+
+**The standing caveat is unchanged and governs every number above.** The dataset's own manifest:
+every verdict is an unadjudicated draft awaiting expert review, single-labeller, no blind
+re-label round (`relabel_agreement: null`). These measure how often the checks agree with a
+careful draft, **not how often they are right**. Internal only; the team has confirmed they will
+not be published or shown to a client.
+
+**One gap found while running it:** the harness demands `--app-version` and never records it —
+see `TESTING_GUIDE.md` #69.
+
+> **Team decision, 2 September.** Both of the above were presented in full with a proposed fix, a size and a risk assessment. **The team weighed them and judged neither urgent**, and chose to spend the time on conformance-tab UI work instead. They are deferred by decision, not by neglect — do not reopen the question without new evidence. The fixes proposed were: for the cap, show it on the audit screen and set it explicitly for new workspaces; for the ledger, record the reconciliation outcome on the audit's own `summary` (which survives a failed run) rather than only on the run's return value, and leave the seven-minute write cost alone — speed is a comfort, the silence is the defect.

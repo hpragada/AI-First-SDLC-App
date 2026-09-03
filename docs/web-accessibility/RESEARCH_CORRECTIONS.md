@@ -6,7 +6,7 @@
 
 Think of it as planning a renovation from the *original* blueprint after the house was rebuilt to a new one. The rooms moved. Most of the plan still stands — but the steps to the back door lead nowhere, because there is no longer a back door there.
 
-**Status:** R1–R12 are agreed team decisions (2026‑08‑12). **R13–R17 were added on 2026‑08‑27** and are a different kind of correction: R1–R12 are places the reports described *the platform* wrongly, while R13–R17 are places **we** read the reports wrongly, or where the reports contradict themselves. R13 is the one to read first — it is the root cause of two criteria being reported as machine-checked while nothing checked them, and of the guard that now makes that impossible. Where a correction changed the build, the affected tasks are named.
+**Status:** R1–R12 are agreed team decisions (2026‑08‑12). **R13–R17 were added on 2026‑08‑27, R18 on 2026‑08‑28** and are a different kind of correction: R1–R12 are places the reports described *the platform* wrongly, while R13–R18 are places **we** read the reports wrongly, or where the reports contradict themselves. R13 is the one to read first — it is the root cause of two criteria being reported as machine-checked while nothing checked them, and of the guard that now makes that impossible. Where a correction changed the build, the affected tasks are named.
 
 ---
 
@@ -256,6 +256,19 @@ Recording it as rule-only is how the second half went unbuilt for four tasks whi
 
 **Fixed 2026‑08‑27 (QA‑25).** The measurable half is `page_rules.contrast_failures`; the judged half is the sixth element checker, `graphics`, whose scope is deliberately *wider* than `alt`'s — 1.4.11 is about what can be **seen**, not about what assistive technology is **told**, so a graphic that is never announced is still in scope. `test_a11y_owner_capability` asserts both halves exist and would fail if either were removed.
 
+> **Amended 2026‑09‑01 — the correction was agreed, and for five days nothing carried it into the data.**
+> Everything above was written and agreed on 27 August, and both halves were built the same day. What was never done is the step that makes a decision operative: **`ownership.json` still said `"owner": "rule"`.**
+>
+> That mattered more than it sounds. `integrations.types.A11Y_CHECKER_CRITERIA` is the map of what the **AI** owns, and it had 1.4.11 in it from the day `graphics` shipped. The registry did not. Five separate guards reported the disagreement every single day for five days — the ownership drift test, the registry/map equality test, the POC element-check list, the capability-surface check, and both halves of the selection corpus — and were read as background red. On 1 September `graphics` was briefly held back to make the code agree with the registry, which was the wrong half to move.
+>
+> **What that half-day exposed is worth more than the fix.** With the judge paused, 1.4.11's measurable half is recorded under the `rule` engine — the engine the registry named as owner — so the conformance guard would have found an entitled engine had looked and answered **"Supports 1.4.11"** for a page whose buttons all had visible edges and whose icons nothing had judged. Pausing the check would have recreated the exact bug the check was built to fix. Holding a check back now **withdraws its criterion from positive claims** rather than leaving it to whatever else touches the criterion (`A11Y_HELD_BACK_CLAIMS`).
+>
+> **Carried into the data on 1 September**, and deliberately *not* by editing the registry file. `data/ownership.json` is a derivation — `ownership_build` rebuilds it from the committed PDF and proves it against eight cross-checks including the report's own headline counts — so an edit there would make the file disagree with its own source. The decision lives in `ownership.ENGINEERING_OVERRIDES` instead, applied at load, so the file keeps saying what the report says and `CriterionOwnership` carries what we decided. `test_a11y_ownership` holds three things about it: the file is unedited, the override set is exactly `{1.4.11}`, and every override names a criterion that appears in this document.
+>
+> Also completed the same day, both missing since 27 August: **`check_graphics` on the capability** (without it the criterion could be selected, dispatched and judged in an audit but never asked about directly), and **seven selection-corpus rows for 1.4.11** — five failure shapes it must reach and two it must leave alone, drawn from the rule's own `covers` and `skips` prose. Two of the five are reachable by nothing else in the platform: a bare `<svg>` with no name, and an icon painted as a CSS background image.
+>
+> **The lesson, and it is the third time this document has recorded a version of it:** a correction agreed in prose and not carried into the data is not a correction. The registry is what routes; everything else is commentary.
+
 ---
 
 ## R15 — Six rule-owned criteria have thinner scanner coverage than their rationale describes — **real, but not holes**
@@ -288,6 +301,309 @@ Recording it as rule-only is how the second half went unbuilt for four tasks whi
 **Less severe than 1.4.10 was**, and the difference matters: all three are honestly recorded as `tier=phase_2`, so no report claims them as covered — whereas 1.4.10 was recorded as shipping in the POC. They were being *skipped* on a false reason, not *claimed* on one.
 
 **Fixed 2026‑08‑27.** Split into a new `deferred_to_a_later_phase` bucket whose stated reason is true, and `test_a11y_owner_capability` now checks both machine buckets against the engines that actually exist — so a bucket's reason can no longer quietly become false.
+
+---
+
+## R18 — Five axe rules matched our filter and never ran, and two criteria rested on nothing
+
+**Agreed 2026‑08‑28.** Found while aligning the Meridian fixture's scan configuration with the
+platform's, for the accuracy harness.
+
+**What is true.** The scan asks axe for everything tagged WCAG 2.0/2.1/2.2 A and AA. **axe holds
+`experimental` rules out of a tag-selected run and reports nothing about having done so.** Five
+rules match our tags and are experimental, so five rules never ran. Two criteria have no other
+rule at all:
+
+| Criterion | Its only rule | Consequence |
+|---|---|---|
+| **1.3.4** Orientation | `css-orientation-lock` | recorded `owner: rule`, `tier: in_poc`, skipped at design review on the grounds that a scanner decides it — and nothing did |
+| **2.5.3** Label in Name | `label-content-name-mismatch` | correctly `owner: ai`, so no false claim; the scanner simply added nothing |
+
+The other three — `p-as-heading`, `table-fake-caption`, `td-has-header` — are 1.3.1 rules, and
+1.3.1 keeps other rules, so the criterion never looked uncovered while three real checks were off.
+
+**Measured, not reasoned.** axe-core 4.13.0, `/account/card-services`, which carries seven
+violations of `label-content-name-mismatch`:
+
+```
+six tags, no rules block        63 rules ran    0 violations reported
+same tags + an explicit opt-in  64 rules ran    7 violations reported
+```
+
+`target-size` looks like the same case and is not. It ships `enabled: false`, but that flag
+governs only what axe does when given no instructions — a tag selection runs it anyway. The
+distinction matters: one of these two needs naming and it is not the one it looks like.
+
+**This is the third instance of R13's failure mode, and the guard R13 produced did not catch it.**
+`test_a11y_owner_capability` asks whether a rule-owned criterion has an engine behind it, and
+answers from `scanner_coverage.json` — which was generated by filtering `axe.getRules()` on tag
+membership, never on whether a tag-selected run executes them. The guard was sound; its evidence
+was not. **A guard is only as true as the thing it reads**, and that is the lesson worth keeping
+from this one.
+
+**Fixed 2026‑08‑28.**
+1. `runner/companion/assets/a11y_audit.mjs` names all five rules in a `rules` block. Naming them
+   is the narrow way in; adding `experimental` to the tag list would pull in every experimental
+   rule axe ships, including ones outside WCAG A/AA.
+2. `scanner_inventory.mjs` mirrors that list and excludes any other experimental rule, so the
+   inventory records what the scan runs rather than what it selects.
+3. A new parity test asserts the two lists are identical — verified to fail when one drifts.
+4. The fixture harness opts in to the same five, and `/catalogue/subject-index` now reports
+   `td-has-header`. That page keeps its AI label: the scorer drops rule-scanner rows entirely, so
+   neither engine can be credited with what the other found.
+
+**What it changes for a client.** Audits run after this date report findings on 1.3.4, 2.5.3 and
+three more 1.3.1 rules that earlier audits could not have reported. An earlier clean result on
+those criteria was never evidence of anything.
+
+---
+
+## R19 — An element with a border is invisible to the colour check, and a coloured border is the commonest error cue there is
+
+**Found 2026‑08‑28**, while planting 1.4.1 material for the accuracy dataset.
+**Fixed the same day**, once the team had ruled on it — see the end of this entry.
+
+**What is true.** `_applies_color` skips any element `_has_second_cue` returns true for, and one
+of the things that returns true is a `border-style` other than `none`:
+
+```python
+if str(element.styles.get("border-style", "")).strip().lower() not in {"", "none"}:
+    return True
+```
+
+The reasoning is sound in general — a border is a visual cue that is not colour — and it is wrong
+in the case it matters most. **A field marked invalid by turning its border red already had a
+border.** The border is not the cue; the border's *colour* is. So the rule reads the presence of
+the thing being coloured as proof that colour is not the only cue, and declines to look.
+
+**The answer key already contained this and it read as a coverage miss.** `g-141-0019`
+(`/help/report-a-problem` `#problem-detail`) is labelled a clear 1.4.1 failure — "a rejected
+field marked by a red border and nothing else, no aria-invalid, no message". The colour rule
+declines it **because it has a border**. Its clean twin `g-141-0020` is declined for the same
+reason. One shows up as a false negative and the other cannot score at all.
+
+**Measured across the whole fixture**, 6,885 captured elements on 78 routes. Elements that would
+be colour candidates but for a second cue:
+
+```
+selected as colour candidates          747
+declined for a second cue              328
+    of those, declined for a border    219   <-- this correction
+    declined for an underline           79   (a real second cue; correct)
+    declined for a nested img or svg    30   (a real second cue; correct)
+```
+
+The 219 by tag: 72 `button`, 49 `input`, 20 `li`, 20 `th`, 13 `select`, 11 `div`, 10 `a`,
+9 `span`, 6 `textarea`, 5 `td`, 4 `ul`. Every form control in the application is in there,
+because the stylesheet gives every form control a border.
+
+**Nothing else covers it either.** 1.4.1 has exactly one axe rule in our tag selection,
+`link-in-text-block`, and it is about links in prose. A red border on an invalid field is
+therefore decided by no engine the platform runs — not the scanner, and not the AI check that
+was built to catch what the scanner cannot.
+
+**Same failure mode as R13 and R18, for the third and fourth time: a guard reading a proxy
+instead of the thing.** R18's lesson was "a guard is only as true as the thing it reads". This
+one is narrower and worth stating on its own: **the presence of a property is not evidence about
+its value.** A border, an underline and an icon are cues only when they distinguish this element
+from its neighbours — which is what `_colour_differs_from_surroundings` already does for colour,
+and what `_has_second_cue` does not do for anything.
+
+**Every narrower option was measured and none of them work.** The obvious idea is to compare
+the border against something rather than merely noticing it exists. Measured across 94 routes,
+against the 901 elements the colour check already selects:
+
+| Option | Extra candidates |
+|---|---|
+| drop the border test entirely | **+300** |
+| a cue unless the border's colour differs from the parent's | +296 |
+| a cue unless the border's colour differs from the element's own text colour | +300 |
+| a cue only when the border's *style* differs and its colour matches | +0 — never fires |
+
+The middle two save four candidates out of three hundred and cost a new captured property,
+because a parent almost never has a border to compare against. There is no way to tell a
+decorative border from a signalling one from what a single element carries.
+
+**Fixed 2026‑08‑28 by removing the border from the second-cue test**, on the team's ruling. The
+judge now decides, which is the trade `_repeats_a_child_class` already makes and states in as
+many words: it costs a judgment on things that turn out to be fine, and that is the direction
+worth being wrong in. The two golden records on `/help/report-a-problem` and its twin are now
+both selected, and `color`'s reachable sample went from 31 to 32.
+
+**What it changed for a client.** Audits from this date report a field whose only error
+indication is a red border. Before it, they could not — and that is the single most common way
+applications signal an invalid field, so a clean 1.4.1 result from an earlier audit is not
+evidence about it.
+
+---
+
+## R20 — A balanced answer key was producing a one-sided scored sample, and every check was green
+
+**Found 2026‑08‑28**, while growing the golden set so the accuracy numbers could be produced at
+all. **Fixed the same day**, in the dataset and with a new check.
+
+**What is true.** The golden set is deliberately balanced — 45 clear failures against 45 clear
+passes at v0.1.0, because "flag everything" is the failure mode a compliance tool falls into
+naturally and an unbalanced key would not catch it. That balance is real in the file and was not
+real in the scoring, because `accuracy._record` does not treat the two sides alike:
+
+```
+expected `fail`       always counts — a true positive if found, a false negative if not
+expected `pass`       counts ONLY if the checker actually SELECTS the element
+expected `uncertain`  never counts; scored on calibration instead
+```
+
+A `pass` record whose element the selection rules skip is **inert**: it can never contribute to
+any figure in either direction, and it looks exactly like a healthy record in every other check.
+
+**Where it bit hardest.** `label` / 2.5.3 had 19 clear records and could reach a scored sample of
+**9**. All ten pass twins name a control whose accessible name already contains its visible text,
+and `_applies_label` skips precisely those — correctly, because the criterion is then met as a
+matter of fact and there is nothing left to judge. So the only 2.5.3 records the checker could
+ever be scored on were failures. Measured ceilings at v0.1.0, against the 30 the scorer requires:
+
+| Checker | Records | Could ever score | Short by |
+|---|---|---|---|
+| `alt` | 22 | 20 | 10 |
+| `color` | 23 | 19 | 11 |
+| `label` | 20 | **9** | 21 |
+| `semantics` | 27 | 25 | 5 |
+| `structure` | 7 | 6 | 24 |
+
+The plan written before this was measured budgeted 60 new records on the assumption that
+"records minus the arguable ones" was the ceiling. The real figure was 74, and `label` needed
+more than three times what the plan allowed for it.
+
+**Why no existing check saw it.** `verify-golden.js` proves every label's `(route, selector)`
+resolves on the running page and re-derives under the companion's own `cssPath()`. That is
+necessary and it is not the same question. Resolving is about the page; scoring is about the
+selection rules, and nothing compared the answer key against them.
+
+**Fixed 2026‑08‑28.**
+1. The 74 records added for v0.2.0 were each checked against the real selection rules **before**
+   their label was written. All 74 are claimed by the checker they name, including all 37 pass
+   records.
+2. Where a checker's pass side is structurally hard to reach, the records are the cases that do
+   reach it. For `label` that meant pass twins whose name differs from the visible label by a
+   typographic mark — which both axe and the W3C rule treat as a separator, so the criterion is
+   met while the strings still differ and the element is still judged.
+3. `harness/verify-selectable.js` + `scorer/selectable.py` now assert this, in `npm run check`.
+   It captures in Node and decides in Python using `rules.py` itself, never a copy.
+
+**The general lesson, and it is not about accessibility.** *An answer key is only balanced with
+respect to the questions the system is actually asked.* A checker that filters its own inputs —
+which every one of ours does, deliberately — reshapes the distribution it is measured on, and a
+key balanced before that filter can be lopsided after it. Any evaluation set for a component
+that selects its own work needs to be balanced **downstream** of the selection, and needs a check
+that says so.
+
+---
+
+## R21 — The label check compared letters where the standard compares words
+
+**Found 2026‑08‑28**, while building pass examples for 2.5.3. **Fixed the same day.**
+
+**What was true.** Before asking the AI about a control, `_applies_label` checked whether the
+accessible name already contained the visible label — and did it with a plain substring test.
+
+A button reading **"Search"** whose accessible name is **"Research tools"** passed that test,
+because the letters of *search* sit inside *research*. The rule concluded the criterion was
+already satisfied and never asked anybody. It is not satisfied: a speech-input user looks at the
+button, says "Search", and nothing happens, because there is no such **word** in the name.
+
+Both the criterion's own ACT rule (`2ee8b8`) and axe-core compare **whole words**, treating
+punctuation as a separator. We compared characters.
+
+**Two opposite errors that cancelled out on a scoreboard.** The same test also asked about
+controls it should have left alone. A button reading "Update details…" named "Update details"
+differs by one character, so the rule sent it to the judge — when by the standard it is
+provably fine and there is nothing to judge.
+
+**Fixed** by comparing word sequences after replacing punctuation with spaces, Unicode-aware so
+that accented and non-Latin labels survive (a naive `[a-z0-9]` filter would empty every label in
+any language but English and make every control look like a mismatch).
+
+**What it cost, and why the cost was accepted.** Eleven of the golden set's `label` pass records
+were exactly the "differs by a typographic mark" shape. Under the corrected rule they are
+provably-fine controls the checker rightly skips, so they stopped scoring and `label` fell from
+31 reachable records to **20** — below the 30 the scorer requires.
+
+**That gap cannot be closed by writing more records, and the reason is worth understanding.**
+After the fix, the only controls that reach the judge are ones where the words genuinely differ
+— and those are either real failures or genuinely arguable cases. **A clearly-correct example
+is, by definition, one the check skips.** So 2.5.3 cannot have a balanced scored sample at all.
+Recall for that checker is meaningful; precision is not, because no correct examples remain that
+it could get wrong. Recorded in `scorer/selectable.py`'s `KNOWN_SHORTFALL` with that reasoning,
+so the harness reports it rather than failing, and an *unrecorded* shortfall still fails.
+
+**The general shape, and it is the same as R20's.** A component that filters its own inputs
+decides what it can be measured on. Fixing the filter changed the measurable population — and
+keeping the defect to protect a number would have been exactly backwards.
+
+**What it changes for a client.** Audits from this date report controls whose accessible name
+merely contains the visible label's letters rather than its words. Earlier audits could not.
+
+---
+
+## R22 — The check that guards the answer key could not see the failure it exists to find
+
+**Found 2026‑08‑31**, by a live audit rather than by the check. **Fixed the same day.** This is
+R20 one level deeper, and it is the more uncomfortable of the two.
+
+**What R20 built.** `verify-selectable.js` + `scorer/selectable.py`, to prove that every
+hand-written record can actually reach the checker it names — because a record can resolve
+perfectly on the page and still be structurally incapable of contributing a number.
+
+**What it could not see.** Selection is **two steps**, and R20's check only ran the second:
+
+```
+the capture COLLECTS what matches its OFFER list   <- never checked
+the rules then CLAIM what they want                <- this is what was checked
+```
+
+The check reached each recorded element with `document.querySelector`, which finds anything on
+the page whether an audit would collect it or not. So the one failure it could never detect was
+**an element the capture does not offer** — and that is the failure a capture-side gap produces.
+
+**What that hid, and the asymmetry is why it stayed hidden.** `accuracy._record` counts an
+expected-`fail` record toward a checker's ceiling **whether or not anything ever reaches it** — a
+miss is still a scored outcome. So three `structure` records on class-less container divs sat
+unreachable while:
+
+| | |
+|---|---|
+| `structure`'s reported reachable sample | **30** — over the floor, healthy |
+| `structure`'s failure records that no judge could ever find | **3 of 15** |
+| Its best achievable recall, therefore | **80%**, and nothing said so |
+
+A ceiling is not a floor. R20's check measured the sample a checker could reach and never asked
+whether the elements in it would arrive.
+
+**Fixed** by making the two steps distinguishable and reporting them as different problems:
+
+1. The `OFFER` list is **exported** from `runner/companion/assets/a11y_audit.mjs` and imported by
+   the harness — one definition, the same discipline R20 already applied by importing `rules.py`
+   rather than restating it.
+2. The check compares **element identity**, not selector strings. The companion writes its own
+   `cssPath`; comparing that against a hand-written golden selector would call two spellings of
+   one element a miss.
+3. `selectable.py` reports *collected then declined* separately from *never collected*, and only
+   the second fails the run. The first is a rule's decision and is sometimes a property of the
+   criterion (that is what `KNOWN_SHORTFALL` is for); the second is a gap no answer key can
+   compensate for.
+
+**Proved rather than asserted:** with the capture-side fix temporarily removed, the check names
+all three records by id and exits non-zero.
+
+**The general lesson, and it is not about accessibility.** *A guard is only as wide as the
+pipeline it models.* R20's guard modelled selection as one step because that is how it is usually
+described; the system does it in two, and the guard was blind to the whole of the first. Any check
+that certifies inputs to a multi-stage pipeline has to run **every** stage, or it certifies the
+stages it happens to know about and stays green about the rest.
+
+**What it changes for a client.** Nothing directly — this is an internal measurement guard. What
+it changes for us is that a capture-side coverage gap can no longer sit behind a green harness,
+which is how this one survived for a week.
 
 ---
 

@@ -148,6 +148,54 @@ def test_dispatch_starts_one_run_through_the_trigger(world):
     assert result.complete is True
 
 
+def test_the_dispatcher_hands_the_run_its_own_deadlines(world):
+    """The two timers that fired on work which was going perfectly well, 31 August.
+
+    The report deadline rang at exactly 7,200 s on a pass that needed 8,193 — on a companion that
+    answered seconds either side of it — and the write-completeness check was cancelled at its
+    flat five minutes on the same pass. Both were constants sized for a planning phase that takes
+    four minutes, and `trigger_phase` never set either field, so every phase inherited them in
+    silence. The dispatcher is the only place that knows how big the pass is, so the dispatcher
+    says.
+
+    Asserted on the CALL rather than on the numbers: `judging_deadlines` owns the arithmetic and
+    is tested against real measurements in `test_a11y_judge.py`. What is at stake here is that
+    the answer travels — the whole failure was a value that was computed nowhere and passed
+    nowhere.
+    """
+    from apps.a11y.dispatch import judging_deadlines
+
+    trigger = FakeTrigger(world)
+    requests = [_request(), _request(html="<img src='b.png'>"), _request(html="<img src='c'>")]
+    _dispatch(world, requests, trigger)
+
+    assert len(trigger.calls) == 1
+    call = trigger.calls[0]
+    assert call["report_timeout_seconds"] == judging_deadlines(3)["report_timeout_seconds"]
+    assert call["verify_timeout_seconds"] == judging_deadlines(3)["verify_timeout_seconds"]
+    # A batch this small sits on the floors, which are the budgets it already had — nothing gets
+    # LESS time than before, which is what makes this safe for every other size of pass.
+    assert call["report_timeout_seconds"] == 7_200
+    assert call["verify_timeout_seconds"] == 300
+
+
+def test_a_big_pass_is_given_more_than_the_two_hours_that_parked_the_real_one(world):
+    """The same call, at the size that actually broke: 800 distinct questions."""
+    trigger = FakeTrigger(world)
+    _dispatch(world, [_request(html=f"<img src='{n}.png'>") for n in range(40)], trigger)
+
+    # 40 distinct questions is still on the floor — the point of the floor. What matters is that
+    # the number now comes from the batch at all, so the 800-element case scales instead of
+    # inheriting a constant.
+    assert trigger.calls[0]["report_timeout_seconds"] >= 7_200
+
+    from apps.a11y.dispatch import judging_deadlines
+
+    assert judging_deadlines(800)["report_timeout_seconds"] > 8_193, (
+        "the real pass took 8,193 s and was parked at 7,200"
+    )
+
+
 def test_the_run_carries_the_candidates_grouped_by_screen(world):
     """The judge should read a page at a time, not a shuffled pile of elements."""
     trigger = FakeTrigger(world)
@@ -213,6 +261,63 @@ def test_the_same_input_under_a_different_checker_is_judged_separately():
     assert content_hash("alt", candidate) != content_hash("semantics", candidate)
 
 
+def test_a_changed_accessible_name_is_a_different_question():
+    """The `<label>` beside a dropdown is renamed. The dropdown's own markup does not move.
+
+    Left out of the key, the old 2.5.3 verdict would outlive the only input it was about — the
+    same argument that put `structure` in the key, and for a field that changes far more often.
+    """
+    before = A11yCandidate(html="<select id='b'></select>", accessible_name="Home branch")
+    after = A11yCandidate(html="<select id='b'></select>", accessible_name="Collection point")
+    assert content_hash("label", before) != content_hash("label", after)
+
+
+def test_a_changed_parent_is_a_different_question():
+    """The same `<img alt="">` inside a link and inside a figure are not the same question:
+    one hides where a link goes, the other is correct."""
+    in_link = A11yCandidate(html='<img alt="">', parent={"tag": "a", "href": "/x"})
+    in_figure = A11yCandidate(html='<img alt="">', parent={"tag": "figure"})
+    assert content_hash("alt", in_link) != content_hash("alt", in_figure)
+
+
+def test_the_batch_carries_every_field_a_check_needs():
+    """The batch handed to the judge must carry every field of the candidate contract.
+
+    **The sibling of `test_a11y_capture.test_every_field_the_contract_reads_is_actually_stored`,
+    and it exists for the same reason that one does.** `accessible_name` was captured from the
+    browser's accessibility tree, normalised, stored on the bundle — and never put in this dict.
+    WCAG 2.5.3 asks one question, *does the announced name contain the visible label*, and the
+    judge was handed the markup, the picture and the surrounding text and not the name.
+
+    For a `<button>` that was survivable: its name is the word printed on it, and `html` carries
+    that word. For a `<select>` it was not, because the `<label for=…>` that names one is a
+    SIBLING and is therefore never inside the element's own markup. Every dropdown in the
+    31 August Meridian audit — 13 of 13 — came back "cannot determine the accessible name",
+    against 1.4% uncertainty everywhere else.
+
+    Nothing failed, because the two lists had never been compared.
+
+    `route` is the deliberate exception: it is the batch's own key, one level up, so restating
+    it on every element would be noise. Naming it here means a second exception has to be argued
+    for rather than quietly appearing.
+    """
+    import dataclasses
+
+    from apps.a11y.dispatch import _group_by_screen
+
+    request = A11yRequest(checker="label", candidate=A11yCandidate(route="/x"))
+    sent = set(_group_by_screen([request])[0]["elements"][0])
+    contract = {f.name for f in dataclasses.fields(A11yCandidate)}
+    keyed_on_the_batch = {"route"}
+
+    assert not (contract - sent - keyed_on_the_batch), (
+        "the judge's batch drops candidate fields: "
+        f"{sorted(contract - sent - keyed_on_the_batch)}. Add them to `_group_by_screen` — and "
+        "if a field genuinely belongs to the screen rather than the element, add it to "
+        "`keyed_on_the_batch` here with the reason."
+    )
+
+
 # ── AC3: the audit trail ─────────────────────────────────────────────
 def test_a_stored_verdict_records_the_engine_model_and_prompt_version(world):
     trigger = FakeTrigger(world)
@@ -276,6 +381,59 @@ def test_a_refused_dispatch_returns_uncertain_not_an_exception(world):
     assert all(j.verdict == A11Y_UNCERTAIN for j in result.unjudged)
     assert "a run is already in progress" in result.unavailable_reason
     assert result.complete is False
+
+
+def test_a_run_already_judging_this_work_item_files_nothing_and_writes_nothing_off(world):
+    """The 31 August audit, in one test.
+
+    `trigger_phase` refuses a second run for a work item that already has a live one. That
+    refusal used to arrive here as an ordinary exception, so it was reported as "the judge could
+    not be started" and every pending element was filed as `uncertain` for a human — writing off
+    1,065 elements while 800 of them were being judged at that moment.
+
+    A run already in progress is not a failure. Nothing is filed, the deferred tail is left
+    alone, and the caller is told which state it is in rather than being handed work to record.
+    """
+    from orchestration.trigger import ActiveRunError
+
+    trigger = FakeTrigger(world, fail=ActiveRunError(
+        "a run is already in progress for this work item (status: running)."))
+    result = _dispatch(world, [_request(), _request(html="<img src='b'>")], trigger)
+
+    assert result.already_running is True
+    assert result.run_id is None
+    assert result.unjudged_requests == [], "nothing may be written off while a judge is judging"
+    assert result.unjudged == []
+    assert "already in progress" in result.unavailable_reason
+    assert "nothing was written off" in result.unavailable_reason
+    # Still not a complete pass — this dispatch judged nothing. The run that got there first is
+    # what will report, and it is not this call's to claim.
+    assert result.complete is False
+
+
+def test_a_failed_dispatch_leaves_the_deferred_tail_deferred(world):
+    """Over-budget and could-not-send are two facts about two different sets of elements.
+
+    Both used to be folded into one list and one sentence: a dispatch that reached its limit and
+    THEN failed to start reported everything as unaskable, so the elements correctly queued for a
+    second pass were relabelled. On the 31 August audit that stamped 265 correctly-queued
+    elements with "the judge could not be started" and put them on a person's review queue.
+    """
+    _set_caps(world, judgments=2)
+    trigger = FakeTrigger(world, fail=RuntimeError("no worker answered"))
+    requests = [_request(html=f"<img src='{i}.png'>") for i in range(5)]
+
+    result = _dispatch(world, requests, trigger)
+
+    # The two attempted are filed with the failure's own reason…
+    assert len(result.unjudged_requests) == 2
+    assert result.unjudged_requests == requests[:2]
+    assert "no worker answered" in result.unavailable_reason
+    # …and the three held back at the limit stay held back, with the reason that is true of them.
+    assert result.deferred == requests[2:]
+    assert "3 element(s) were left for a second pass" in result.deferred_reason
+    # Nothing is counted twice and nothing is lost: every request is in exactly one of the lists.
+    assert len(result.unjudged_requests) + len(result.deferred) == len(requests)
 
 
 def test_no_judge_agent_is_reported_in_plain_words_and_nothing_is_dispatched(world):

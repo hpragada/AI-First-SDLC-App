@@ -215,6 +215,27 @@ def _by_checker(world, checker):
                 if r.checker == checker)
 
 
+def _selected(world):
+    """Every element-check this page produced — one row per (element, checker) pair.
+
+    **Use this instead of a literal count.** The page below has two selected elements, and
+    the number of REQUESTS they produce is one per check that applies, which moves whenever
+    a checker is added: it was 2 before 27 August and is 3 now, because `img.hero` is asked
+    both whether its alt text SAYS what it means and whether the image can be SEEN. Six
+    tests here hard-coded that 2, none of them was about it, and all six were red for five
+    days as a result.
+    """
+    return requests_for(world["t"], world["p"], world["run_id"])
+
+
+def _judge_everything(world, verdict=A11Y_PASS, confidence=0.97):
+    """Answer every selected check, so "complete" means complete rather than "the two I
+    happened to name". Naming checkers by hand is what made a complete run read as
+    incomplete the moment a sixth check started selecting elements."""
+    for request in _selected(world):
+        _judge(world, request, verdict, confidence, evidence="", fix="")
+
+
 # ══ the capture carries the whole scan, not only what got selected ═════════════════
 
 def test_a_screens_whole_scan_is_read_and_stored(world):
@@ -466,7 +487,10 @@ def test_the_ai_still_stands_where_the_scanner_said_nothing(world):
 def test_an_element_that_was_never_judged_is_named_in_the_report(world):
     _ingest(world)
     report = merge_run(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"])
-    assert len(report.unjudged) == 2, "both captured elements were selected and none judged"
+    assert len(report.unjudged) == len(_selected(world)), "nothing was judged"
+    assert {u["selector"] for u in report.unjudged} == {"img.hero", "div.fake-btn"}, (
+        "both captured elements were selected and both must be named"
+    )
     assert report.complete is False
     body = report_body(report)
     assert "This check is incomplete" in body
@@ -475,8 +499,7 @@ def test_an_element_that_was_never_judged_is_named_in_the_report(world):
 
 def test_a_complete_check_carries_no_incompleteness_warning(world):
     _ingest(world)
-    for checker in ("alt", "semantics"):
-        _judge(world, _by_checker(world, checker), A11Y_PASS, 0.97, evidence="", fix="")
+    _judge_everything(world)
     report = merge_run(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"])
     assert report.complete is True
     assert "This check is incomplete" not in report_body(report)
@@ -606,8 +629,7 @@ def test_when_every_answer_is_already_known_the_report_is_published_at_once(worl
     """No run starts when the cache answers everything — so if the report waited for a run it
     would wait forever, and a re-run of an unchanged screen would produce no report at all."""
     _ingest(world)
-    for checker in ("alt", "semantics"):
-        _judge(world, _by_checker(world, checker), A11Y_PASS, 0.97, evidence="", fix="")
+    _judge_everything(world)
 
     trigger = FakeTrigger(world)
     out = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"],
@@ -635,8 +657,9 @@ def test_a_judge_that_cannot_be_started_still_produces_a_report(world):
     assert out["started"] is False
     assert "temporal is down" in out["reason"]
     assert out["report"]["artifact_id"], "the report exists"
-    assert out["filed_unjudged"] == 2, "and every element it could not ask about was FILED"
-    assert out["report"]["needs_review"] == 2, "each one routed to a person, not lost"
+    asked = len(_selected(world))
+    assert out["filed_unjudged"] == asked, "every check it could not ask about was FILED"
+    assert out["report"]["needs_review"] == asked, "each one routed to a person, not lost"
 
 
 def test_an_uncertain_verdict_is_never_served_back_to_a_later_dispatch(world):
@@ -700,7 +723,7 @@ def test_what_could_not_be_asked_about_reaches_the_review_queue(world):
     start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=world["run_id"],
                   trigger=FakeTrigger(world, fail=RuntimeError("temporal is down")))
     queue = review_queue(world["t"], world["p"])
-    assert len(queue) == 2
+    assert len(queue) == len(_selected(world))
     assert all("could not be started" in f.evidence for f in queue), \
         "and each one says WHY, not just that no verdict was recorded"
 
@@ -782,7 +805,7 @@ def test_the_test_automation_phase_does_run_the_pass(world, monkeypatch):
         work_item_key="wi", repo="o/r", base="main",
     ))
     assert out["started"] is True
-    assert out["dispatched"] == 2
+    assert out["dispatched"] == len(_selected(world))
     assert trigger.calls[0]["agent_key"] == JUDGE_AGENT_KEY
 
 
@@ -1056,6 +1079,114 @@ def test_the_count_on_the_button_matches_what_asking_again_would_ask(world):
     actual = unanswered_for_capture(
         tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id))
     assert counted == len(actual) > 0
+
+
+def test_losing_the_record_of_what_was_never_looked_at_no_longer_loses_the_fact(world):
+    """The 31 August failure, reproduced by deleting the record outright.
+
+    `_remember_unanswered` writes the list of never-reported-on elements into one JSON field on
+    the run, and that list is the ONLY thing separating *"a check looked and could not decide"*
+    from *"nothing ever looked at this"* once the fallback verdicts are stored — same verdict,
+    same confidence, same run. On 31 August a closing path that ran three times overlapping
+    itself had a later, partial count overwrite the true one and 170 became 65.
+
+    The union fix stops a shorter write from shrinking it. This is the other half: the same
+    answer read off the verdicts themselves, where the platform's own `NOT_JUDGED` text marks
+    each fallback it filed. Deleting the record entirely is a harsher test than the overwrite
+    that actually happened, and the answer must not move.
+    """
+    from apps.a11y import judge as judge_mod
+    from apps.a11y.aipass import _remember_source_run, start_ai_pass, unanswered_for_capture
+    from apps.a11y.models import A11yBaselineAudit
+    from apps.runs.models import Run
+
+    audit = A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"], routes=["/checkout"],
+        status=A11yBaselineAudit.Status.COMPLETE)
+    _ingest(world)
+    A11yCandidateBundle.objects.filter(
+        tenant=world["tenant"], run_key=world["run_id"]).update(run_key=str(audit.id))
+    started = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id),
+                            trigger=FakeTrigger(world), triggered_by=str(world["user"].id))
+    _remember_source_run(world["t"], started["judge_run_id"], str(audit.id))
+    audit.summary = {"ai_pass": {"judge_run_id": started["judge_run_id"]}}
+    audit.save(update_fields=["summary"])
+    with pytest.raises(WriteCompletenessError):
+        judge_mod.verify_judgment_completeness(tenant_id=world["t"],
+                                               run_id=started["judge_run_id"])
+
+    with_record = unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id))
+    assert with_record, "nothing was dispatched — the fixture proves nothing"
+
+    # Now destroy the side-record, which is what a repeated close did a partial version of.
+    run = Run.objects.get(id=started["judge_run_id"])
+    outputs = dict(run.outputs or {})
+    assert outputs.pop(judge_mod.UNANSWERED_KEY, None), "the record must have been there to lose"
+    run.outputs = outputs
+    run.save(update_fields=["outputs"])
+
+    without_record = unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id))
+    assert without_record == with_record, (
+        "what nothing looked at must be derivable from the verdicts, not only from a field"
+    )
+
+
+def test_an_answer_the_judge_actually_gave_is_still_never_offered_back(world):
+    """The guard on the fix above, and the more important half of it.
+
+    Reading `uncertain` rows to find never-looked-at work is one keystroke away from reading
+    EVERY `uncertain` — which would hand the review queue's own contents back to the machine and
+    quietly recycle a person's job list. What makes it safe is that the match is on the
+    platform's own `NOT_JUDGED` sentence, which `record_finding` cannot produce: it requires
+    evidence the judge itself supplies, and refuses an `uncertain` with none.
+    """
+    from apps.a11y import judge as judge_mod
+    from apps.a11y.aipass import _remember_source_run, start_ai_pass, unanswered_for_capture
+    from apps.a11y.models import A11yBaselineAudit, A11yJudgmentCache
+
+    audit = A11yBaselineAudit.objects.create(
+        tenant=world["tenant"], project=world["project"], routes=["/checkout"],
+        status=A11yBaselineAudit.Status.COMPLETE)
+    _ingest(world)
+    A11yCandidateBundle.objects.filter(
+        tenant=world["tenant"], run_key=world["run_id"]).update(run_key=str(audit.id))
+    started = start_ai_pass(tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id),
+                            trigger=FakeTrigger(world), triggered_by=str(world["user"].id))
+    _remember_source_run(world["t"], started["judge_run_id"], str(audit.id))
+    audit.summary = {"ai_pass": {"judge_run_id": started["judge_run_id"]}}
+    audit.save(update_fields=["summary"])
+    with pytest.raises(WriteCompletenessError):
+        judge_mod.verify_judgment_completeness(tenant_id=world["t"],
+                                               run_id=started["judge_run_id"])
+
+    # Read the verdicts on their own, with the side-record out of the way — otherwise the record
+    # would answer for them and this would prove nothing about the new reading.
+    from apps.runs.models import Run
+
+    run = Run.objects.get(id=started["judge_run_id"])
+    run.outputs = {k: v for k, v in (run.outputs or {}).items() if k != judge_mod.UNANSWERED_KEY}
+    run.save(update_fields=["outputs"])
+
+    # One of them is now a real judgement that happens to also be `uncertain` — the judge looked
+    # and said, in its own words, that it could not decide. That is a person's job, not the
+    # machine's, and the only thing separating it from the row beside it is the evidence text.
+    rows = list(A11yJudgmentCache.objects.filter(
+        tenant=world["tenant"], run_id=started["judge_run_id"]).order_by("content_hash"))
+    assert len(rows) > 1, "need at least two, so the test can tell them apart"
+    answered, untouched = rows[0], rows[1]
+    answered.evidence = "the contrast could not be measured from the crop supplied"
+    answered.save(update_fields=["evidence"])
+
+    offered = unanswered_for_capture(
+        tenant_id=world["t"], project_id=world["p"], run_id=str(audit.id))
+    assert answered.content_hash not in offered, (
+        "an answer a person owns must never be handed back to the machine"
+    )
+    assert untouched.content_hash in offered, (
+        "…while the fallbacks beside it, which nothing ever looked at, still are"
+    )
 
 
 def test_a_verdict_with_no_run_against_it_is_only_ever_the_platforms_own(world):

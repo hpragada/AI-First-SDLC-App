@@ -1,0 +1,962 @@
+{
+  "audit": "f60c8f1a-1a53-4fc0-b1d4-fa61cf67ddb0",
+  "blocked": [
+    "color/golden/precision",
+    "color/golden/f1"
+  ],
+  "completeness": {
+    "ok": false,
+    "routes": [
+      {
+        "captured": 61,
+        "expected": null,
+        "judged": 61,
+        "missing": [],
+        "problems": [],
+        "route": "/"
+      },
+      {
+        "captured": 20,
+        "expected": null,
+        "judged": 20,
+        "missing": [],
+        "problems": [],
+        "route": "/about/choose-a-branch"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/about/find-a-branch"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/about/history"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/about/membership"
+      },
+      {
+        "captured": 17,
+        "expected": null,
+        "judged": 17,
+        "missing": [],
+        "problems": [],
+        "route": "/about/opening-hours"
+      },
+      {
+        "captured": 31,
+        "expected": 5,
+        "judged": 31,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/about/our-buildings"
+      },
+      {
+        "captured": 31,
+        "expected": 5,
+        "judged": 31,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/about/reading-rooms"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/about/team"
+      },
+      {
+        "captured": 21,
+        "expected": 0,
+        "judged": 21,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/about/terms"
+      },
+      {
+        "captured": 18,
+        "expected": null,
+        "judged": 18,
+        "missing": [],
+        "problems": [],
+        "route": "/about/visit-us"
+      },
+      {
+        "captured": 21,
+        "expected": null,
+        "judged": 21,
+        "missing": [],
+        "problems": [],
+        "route": "/account/apply"
+      },
+      {
+        "captured": 25,
+        "expected": null,
+        "judged": 25,
+        "missing": [],
+        "problems": [],
+        "route": "/account/card-options"
+      },
+      {
+        "captured": 32,
+        "expected": null,
+        "judged": 32,
+        "missing": [],
+        "problems": [],
+        "route": "/account/card-services"
+      },
+      {
+        "captured": 26,
+        "expected": 6,
+        "judged": 26,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/account/charges"
+      },
+      {
+        "captured": 32,
+        "expected": 15,
+        "judged": 32,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/account/full-profile"
+      },
+      {
+        "captured": 25,
+        "expected": null,
+        "judged": 25,
+        "missing": [],
+        "problems": [],
+        "route": "/account/join"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/account/loan-history"
+      },
+      {
+        "captured": 40,
+        "expected": 11,
+        "judged": 40,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/account/membership-tools"
+      },
+      {
+        "captured": 21,
+        "expected": null,
+        "judged": 21,
+        "missing": [],
+        "problems": [],
+        "route": "/account/my-loans"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/account/notifications"
+      },
+      {
+        "captured": 18,
+        "expected": null,
+        "judged": 18,
+        "missing": [],
+        "problems": [],
+        "route": "/account/preferences"
+      },
+      {
+        "captured": 20,
+        "expected": null,
+        "judged": 20,
+        "missing": [],
+        "problems": [],
+        "route": "/account/register"
+      },
+      {
+        "captured": 21,
+        "expected": null,
+        "judged": 21,
+        "missing": [],
+        "problems": [],
+        "route": "/account/security"
+      },
+      {
+        "captured": 21,
+        "expected": null,
+        "judged": 21,
+        "missing": [],
+        "problems": [],
+        "route": "/account/settings"
+      },
+      {
+        "captured": 26,
+        "expected": 6,
+        "judged": 26,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/account/statement-of-fees"
+      },
+      {
+        "captured": 21,
+        "expected": null,
+        "judged": 21,
+        "missing": [],
+        "problems": [],
+        "route": "/account/statements"
+      },
+      {
+        "captured": 25,
+        "expected": null,
+        "judged": 25,
+        "missing": [],
+        "problems": [],
+        "route": "/account/update-details"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/authors/featured"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/authors/spotlight"
+      },
+      {
+        "captured": 35,
+        "expected": 8,
+        "judged": 35,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/branches"
+      },
+      {
+        "captured": 35,
+        "expected": null,
+        "judged": 35,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue"
+      },
+      {
+        "captured": 20,
+        "expected": null,
+        "judged": 20,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/advanced-search"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/all-titles"
+      },
+      {
+        "captured": 18,
+        "expected": null,
+        "judged": 18,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/award-winners"
+      },
+      {
+        "captured": 54,
+        "expected": 12,
+        "judged": 54,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/catalogue/browse-all"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/by-subject"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/filter"
+      },
+      {
+        "captured": 18,
+        "expected": null,
+        "judged": 18,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/genres"
+      },
+      {
+        "captured": 22,
+        "expected": 3,
+        "judged": 22,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/catalogue/my-searches"
+      },
+      {
+        "captured": 35,
+        "expected": null,
+        "judged": 35,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/new-arrivals"
+      },
+      {
+        "captured": 18,
+        "expected": null,
+        "judged": 18,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/place-hold"
+      },
+      {
+        "captured": 18,
+        "expected": null,
+        "judged": 18,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/quick-find"
+      },
+      {
+        "captured": 18,
+        "expected": null,
+        "judged": 18,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/recommended"
+      },
+      {
+        "captured": 20,
+        "expected": null,
+        "judged": 20,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/refine"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/reserve"
+      },
+      {
+        "captured": 18,
+        "expected": null,
+        "judged": 18,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/reserve-copy"
+      },
+      {
+        "captured": 18,
+        "expected": null,
+        "judged": 18,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/results"
+      },
+      {
+        "captured": 22,
+        "expected": 3,
+        "judged": 22,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/catalogue/saved-searches"
+      },
+      {
+        "captured": 20,
+        "expected": null,
+        "judged": 20,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/search"
+      },
+      {
+        "captured": 35,
+        "expected": null,
+        "judged": 35,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/staff-picks"
+      },
+      {
+        "captured": 24,
+        "expected": null,
+        "judged": 24,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/subject-index"
+      },
+      {
+        "captured": 24,
+        "expected": null,
+        "judged": 24,
+        "missing": [],
+        "problems": [],
+        "route": "/catalogue/subject-list"
+      },
+      {
+        "captured": 17,
+        "expected": null,
+        "judged": 17,
+        "missing": [],
+        "problems": [],
+        "route": "/contact"
+      },
+      {
+        "captured": 21,
+        "expected": null,
+        "judged": 21,
+        "missing": [],
+        "problems": [],
+        "route": "/events/book-a-room"
+      },
+      {
+        "captured": 21,
+        "expected": null,
+        "judged": 21,
+        "missing": [],
+        "problems": [],
+        "route": "/events/book-a-seat"
+      },
+      {
+        "captured": 20,
+        "expected": null,
+        "judged": 20,
+        "missing": [],
+        "problems": [],
+        "route": "/events/book-club"
+      },
+      {
+        "captured": 20,
+        "expected": null,
+        "judged": 20,
+        "missing": [],
+        "problems": [],
+        "route": "/events/calendar"
+      },
+      {
+        "captured": 23,
+        "expected": 3,
+        "judged": 23,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/events/classes"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/events/summer-reading"
+      },
+      {
+        "captured": 21,
+        "expected": null,
+        "judged": 21,
+        "missing": [],
+        "problems": [],
+        "route": "/events/tickets"
+      },
+      {
+        "captured": 23,
+        "expected": 3,
+        "judged": 23,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/events/workshops"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/help/borrowing-guide"
+      },
+      {
+        "captured": 26,
+        "expected": null,
+        "judged": 26,
+        "missing": [],
+        "problems": [],
+        "route": "/help/contact-us"
+      },
+      {
+        "captured": 26,
+        "expected": null,
+        "judged": 26,
+        "missing": [],
+        "problems": [],
+        "route": "/help/faq"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [],
+        "problems": [],
+        "route": "/help/getting-started"
+      },
+      {
+        "captured": 29,
+        "expected": 11,
+        "judged": 29,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/help/membership-actions"
+      },
+      {
+        "captured": 23,
+        "expected": null,
+        "judged": 23,
+        "missing": [],
+        "problems": [],
+        "route": "/help/problem-report"
+      },
+      {
+        "captured": 22,
+        "expected": null,
+        "judged": 22,
+        "missing": [],
+        "problems": [],
+        "route": "/help/report-a-problem"
+      },
+      {
+        "captured": 28,
+        "expected": null,
+        "judged": 28,
+        "missing": [],
+        "problems": [],
+        "route": "/loans/current"
+      },
+      {
+        "captured": 29,
+        "expected": null,
+        "judged": 29,
+        "missing": [],
+        "problems": [],
+        "route": "/loans/history"
+      },
+      {
+        "captured": 26,
+        "expected": null,
+        "judged": 26,
+        "missing": [],
+        "problems": [],
+        "route": "/loans/renewals"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [
+          "#newsletter-email [label]"
+        ],
+        "problems": [
+          "named in the answer key and never offered to its check"
+        ],
+        "route": "/newsletter"
+      },
+      {
+        "captured": 23,
+        "expected": null,
+        "judged": 23,
+        "missing": [],
+        "problems": [],
+        "route": "/reports/annual-review"
+      },
+      {
+        "captured": 18,
+        "expected": null,
+        "judged": 18,
+        "missing": [],
+        "problems": [],
+        "route": "/reports/borrowing-trends"
+      },
+      {
+        "captured": 28,
+        "expected": null,
+        "judged": 28,
+        "missing": [],
+        "problems": [],
+        "route": "/reports/branch-comparison"
+      },
+      {
+        "captured": 32,
+        "expected": 3,
+        "judged": 32,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/reports/holdings-by-branch"
+      },
+      {
+        "captured": 35,
+        "expected": 3,
+        "judged": 35,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/reports/issue-figures"
+      },
+      {
+        "captured": 18,
+        "expected": null,
+        "judged": 18,
+        "missing": [],
+        "problems": [],
+        "route": "/reports/lending-summary"
+      },
+      {
+        "captured": 35,
+        "expected": 3,
+        "judged": 35,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/reports/loan-figures"
+      },
+      {
+        "captured": 27,
+        "expected": null,
+        "judged": 27,
+        "missing": [],
+        "problems": [],
+        "route": "/reports/monthly-issues"
+      },
+      {
+        "captured": 26,
+        "expected": 3,
+        "judged": 26,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/reports/stock-levels"
+      },
+      {
+        "captured": 22,
+        "expected": null,
+        "judged": 22,
+        "missing": [],
+        "problems": [],
+        "route": "/staff/branch-settings"
+      },
+      {
+        "captured": 39,
+        "expected": 20,
+        "judged": 39,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/staff/bulk-actions"
+      },
+      {
+        "captured": 21,
+        "expected": null,
+        "judged": 21,
+        "missing": [],
+        "problems": [],
+        "route": "/staff/catalogue-entry"
+      },
+      {
+        "captured": 22,
+        "expected": null,
+        "judged": 22,
+        "missing": [],
+        "problems": [],
+        "route": "/staff/display-options"
+      },
+      {
+        "captured": 19,
+        "expected": null,
+        "judged": 19,
+        "missing": [
+          "#open-exports [semantics]"
+        ],
+        "problems": [
+          "named in the answer key and never offered to its check"
+        ],
+        "route": "/staff/exports"
+      },
+      {
+        "captured": 25,
+        "expected": null,
+        "judged": 25,
+        "missing": [],
+        "problems": [],
+        "route": "/staff/overview"
+      },
+      {
+        "captured": 20,
+        "expected": null,
+        "judged": 20,
+        "missing": [
+          "#save-entry [semantics]"
+        ],
+        "problems": [
+          "named in the answer key and never offered to its check"
+        ],
+        "route": "/staff/quick-edit"
+      },
+      {
+        "captured": 24,
+        "expected": null,
+        "judged": 24,
+        "missing": [],
+        "problems": [],
+        "route": "/staff/reports"
+      },
+      {
+        "captured": 38,
+        "expected": 3,
+        "judged": 38,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/staff/rota"
+      },
+      {
+        "captured": 26,
+        "expected": null,
+        "judged": 26,
+        "missing": [],
+        "problems": [],
+        "route": "/staff/shelf-audit"
+      },
+      {
+        "captured": 26,
+        "expected": null,
+        "judged": 26,
+        "missing": [],
+        "problems": [],
+        "route": "/staff/shelf-settings"
+      },
+      {
+        "captured": 35,
+        "expected": 3,
+        "judged": 35,
+        "missing": [],
+        "problems": [
+          "more captured than the manifest expects"
+        ],
+        "route": "/staff/staffing-plan"
+      }
+    ],
+    "totals": {
+      "captured": 2283,
+      "expected": 129,
+      "judged": 2283,
+      "routes": 94,
+      "routes_with_an_expected_count": 21
+    }
+  },
+  "generated_on": "2026-09-02T14:07:26+00:00",
+  "min_sample": 30,
+  "note": "Colour moved for a known and accepted reason, root-caused 2 Sep. The single new false alarm is /help/problem-report #problem-detail (difficulty clear). That page and /help/report-a-problem are an A/B twin: the same textarea, one with aria-invalid plus a describedby note, one without. The 1 Sep capture work is what first put those attributes in front of the judge; before it, the judge could not reason about them at all (the 1 Sep results file mentions problem-detail nowhere). Shown them, the judge applied the platform rule for 1.4.1 as written in _has_second_cue - only VISUAL cues count, ARIA is not one - and failed the field. The key record assumes the ARIA makes it a pass. Checker behaviour is per spec; the disagreement is a policy question for the expert, not a regression. The three ambiguous /loans/renewals markers moved for the same reason and are excluded from precision and recall. Also note colour NEVER LOOKED AT is now 0, down from 1 (#renew-tidewater) - the border-colour capture fix, confirmed on live data.",
+  "project": "4bf9a00a-f672-4b25-a905-52f009b18ef4",
+  "scores": [
+    {
+      "by_difficulty": {
+        "ambiguous": {
+          "right": 0,
+          "wrong": 2
+        },
+        "clear": {
+          "right": 30,
+          "wrong": 0
+        }
+      },
+      "checker": "alt",
+      "deferred": 0,
+      "f1": 1.0,
+      "false_negative": 0,
+      "false_positive": 0,
+      "never_looked": 0,
+      "over_confident": 2,
+      "precision": 1.0,
+      "recall": 1.0,
+      "sample": 30,
+      "source": "golden",
+      "true_negative": 15,
+      "true_positive": 15,
+      "under_confident": 0
+    },
+    {
+      "by_difficulty": {
+        "ambiguous": {
+          "right": 0,
+          "wrong": 3
+        },
+        "clear": {
+          "right": 30,
+          "wrong": 2
+        }
+      },
+      "checker": "color",
+      "deferred": 0,
+      "f1": 0.9375,
+      "false_negative": 1,
+      "false_positive": 1,
+      "never_looked": 0,
+      "over_confident": 3,
+      "precision": 0.9375,
+      "recall": 0.9375,
+      "sample": 32,
+      "source": "golden",
+      "true_negative": 15,
+      "true_positive": 15,
+      "under_confident": 0
+    },
+    {
+      "by_difficulty": {
+        "ambiguous": {
+          "right": 0,
+          "wrong": 2
+        },
+        "clear": {
+          "right": 40,
+          "wrong": 0
+        }
+      },
+      "checker": "label",
+      "deferred": 0,
+      "f1": 1.0,
+      "false_negative": 0,
+      "false_positive": 0,
+      "never_looked": 1,
+      "over_confident": 1,
+      "precision": 1.0,
+      "recall": 1.0,
+      "sample": 40,
+      "source": "golden",
+      "true_negative": 20,
+      "true_positive": 20,
+      "under_confident": 0
+    },
+    {
+      "by_difficulty": {
+        "ambiguous": {
+          "right": 0,
+          "wrong": 1
+        },
+        "clear": {
+          "right": 31,
+          "wrong": 1
+        }
+      },
+      "checker": "semantics",
+      "deferred": 0,
+      "f1": 1.0,
+      "false_negative": 0,
+      "false_positive": 0,
+      "never_looked": 2,
+      "over_confident": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "sample": 31,
+      "source": "golden",
+      "true_negative": 15,
+      "true_positive": 16,
+      "under_confident": 0
+    },
+    {
+      "by_difficulty": {
+        "ambiguous": {
+          "right": 0,
+          "wrong": 1
+        },
+        "clear": {
+          "right": 27,
+          "wrong": 3
+        }
+      },
+      "checker": "structure",
+      "deferred": 0,
+      "f1": 0.9090909090909091,
+      "false_negative": 0,
+      "false_positive": 3,
+      "never_looked": 0,
+      "over_confident": 1,
+      "precision": 0.8333333333333334,
+      "recall": 1.0,
+      "sample": 30,
+      "source": "golden",
+      "true_negative": 12,
+      "true_positive": 15,
+      "under_confident": 0
+    }
+  ],
+  "tolerance": 0.02
+}

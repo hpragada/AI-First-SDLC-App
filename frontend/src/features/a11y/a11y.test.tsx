@@ -141,6 +141,35 @@ describe("S-36 accessibility review console", () => {
     expect(screen.getByText("Not sure · 58%")).toBeDefined();
   });
 
+  // 31 August: four of the nineteen items in a real review queue were PASSES the check was only
+  // 75–80% sure of — under the bar the platform needs before acting alone. The banner pasted the
+  // verdict label into one sentence for every case, so those read "The check gave not sure · 75%"
+  // — broken English that also hid the one fact the reviewer needs: the check said it was fine.
+  it("a low-confidence pass says the check DID decide, and how sure it was", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [row()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/22222222/, item({ can_review: true, verdict: "pass", confidence: 0.75 })],
+    ]));
+    renderWithProviders(<A11yReview />);
+
+    await screen.findByText("The check said this is fine, and was 75% sure");
+    expect(screen.queryByText(/The check gave/)).toBeNull();
+    expect(screen.getByText(/under the confidence this check needs/)).toBeDefined();
+  });
+
+  it("an uncertain still says the check reached no answer at all", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...AUTHED,
+      [/a11y-review\/$/, { queue: [row()], can_review: true, lock_minutes: 15 }],
+      [/a11y-review\/22222222/, item({ can_review: true, verdict: "uncertain", confidence: 0 })],
+    ]));
+    renderWithProviders(<A11yReview />);
+
+    await screen.findByText("The check gave no verdict");
+    expect(screen.getByText(/did not act on it either way/)).toBeDefined();
+  });
+
   it("no capture · says why, instead of showing an empty frame", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...AUTHED,

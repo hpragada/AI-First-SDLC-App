@@ -1040,14 +1040,32 @@ def mark_phase_takeover_core(inp: AgentRunInput) -> dict:
     WorkItem for human takeover. The run is marked STALLED, NOT terminal FAILED (Bugs S.No 89):
     a companion that only slept can still return and report, and that late report reconciles
     the run through the normal gate path (the workflow stays alive waiting). Terminal failure
-    happens only on an explicit human takeover (`abandon_run`) or a reported failure."""
+    happens only on an explicit human takeover (`abandon_run`) or a reported failure.
+
+    **The reason text is load-bearing, and the old one was dangerous.** It said "companion
+    offline", which is a DETECTION — a statement that the machine has been looked at and found
+    gone. Nothing here looks at the machine. All that has happened is that a deadline expired,
+    and on 31 August it expired at 7,200 seconds to the second on a companion that was
+    demonstrably alive: a verdict landed seconds before it fired and another landed seconds
+    after, and the run reported normally sixteen minutes later. The natural response to the word
+    "offline" is to press *take over*, which is the one signal that turns this soft park into a
+    terminal failure — it would have ended that run fifteen verdicts from the end, and the only
+    thing that saved it was somebody deciding not to click. So the event now says what actually
+    happened, names the budget it was measured against, and states the thing the code already
+    does: the run is still waiting, and a late report still completes it."""
+    budget = int(getattr(inp, "report_timeout_seconds", 0) or 0)
     with tenant_context(inp.tenant_id):
         WorkItem.objects.filter(id=inp.work_item_id, tenant_id=inp.tenant_id).update(
             takeover_flag=True)
         Run.objects.filter(id=inp.run_id, tenant_id=inp.tenant_id).update(
             status=Run.Status.STALLED)
         tools.log_event(inp.tenant_id, "orchestrator", "phase.takeover", "run", inp.run_id,
-                        {"reason": "companion offline / no report before timeout",
+                        {"reason": (
+                            f"no report arrived within this phase's budget of "
+                            f"{budget // 60} minute(s). The machine has NOT been checked and may "
+                            f"still be working — this run is still waiting, and it completes on "
+                            f"its own if the report arrives. Take it over only to stop it."),
+                         "report_timeout_seconds": budget,
                          "reconcilable": True})
     return {"status": "takeover"}
 

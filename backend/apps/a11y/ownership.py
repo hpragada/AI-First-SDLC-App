@@ -48,10 +48,10 @@ from .wcag import DEFAULT_VERSION, UnknownCriterion, UnpublishedRows
 DATASET_PATH = Path(__file__).resolve().parent / "data" / "ownership.json"
 
 __all__ = [
-    "DATASET_PATH", "IncompleteOwnership", "OwnershipNotLoaded", "UnknownCriterion",
-    "UnpublishedRows", "criteria_for", "criteria_touched_by", "dataset", "is_in_poc",
-    "load_ownership", "needs_human_always", "ownership", "partially_flaggable",
-    "verify_complete",
+    "DATASET_PATH", "ENGINEERING_OVERRIDES", "IncompleteOwnership", "OwnershipNotLoaded",
+    "UnknownCriterion", "UnpublishedRows", "applied_overrides", "criteria_for",
+    "criteria_touched_by", "dataset", "is_in_poc", "load_ownership", "needs_human_always",
+    "ownership", "partially_flaggable", "verify_complete",
 ]
 
 
@@ -63,10 +63,75 @@ class IncompleteOwnership(RuntimeError):
     """A loaded criterion has no owner, so nothing would ever route a check for it."""
 
 
+ENGINEERING_OVERRIDES: dict[str, dict] = {
+    # R14, agreed 2026-08-27: "the rationale is correct and the owner is not."
+    #
+    # Addendum A gives 1.4.11 to `rule` on the strength of "contrast >= 3:1 is computable",
+    # and its own rationale in the same cell immediately qualifies that -- "but 'which
+    # graphics matter' needs some review." 1.4.11 is a criterion in two halves: whether you
+    # can see where the CONTROLS are is arithmetic, and `page_rules` decides it; whether the
+    # meaningful parts of the ICONS, CHARTS AND DIAGRAMS can be made out requires knowing
+    # which parts of a picture carry meaning, and nothing deterministic knows that.
+    #
+    # Recording it as rule-only is how the judged half went unbuilt for four tasks while the
+    # criterion was reported as covered -- and, on 1 September, how holding that half back
+    # would have handed the whole criterion to the arithmetic. The decisive half decides, so
+    # the owner is `ai` and the rule is recorded where a contributing engine belongs.
+    #
+    # The correction was agreed and written down on 27 August and the check was built the
+    # same day. **The registry was never changed to match**, so the map of what the AI owns
+    # and the registry disagreed, and five separate guards said so every day for five days.
+    # This is that last step.
+    "1.4.11": {
+        "owner": "ai",
+        "secondary_checks": [
+            {"engine": "rule",
+             "note": "page_rules measures every control's edge against 3:1"},
+        ],
+    },
+}
+
+
 @lru_cache(maxsize=1)
 def dataset() -> dict:
     """The committed dataset, read once per process. Never mutated."""
     return json.loads(DATASET_PATH.read_text(encoding="utf-8"))
+
+
+def applied_overrides(data: dict) -> dict:
+    """The committed dataset with the team's recorded corrections applied, for ROUTING only.
+
+    **Why this exists as a layer rather than an edit to the file.** `data/ownership.json` is not
+    a decision record — it is a *derivation*, rebuilt from the committed research PDF by
+    `ownership_build` and proved against eight independent cross-checks including the report's
+    own headline counts (RULE 14 / AI 11 / HUMAN 30) and its enumeration of the fourteen
+    rule-primary criteria. Editing a row there would make the file disagree with its own source
+    and `build_ownership_dataset --check` would fail, correctly. The report says what the report
+    says, and it stays saying it.
+
+    So a place the platform can disagree *by name* has to exist, and this is it. The same shape
+    the build already uses for corrections R7, R8 and decision D5: state the departure, state
+    why, and let a test hold it — never reconcile a difference quietly.
+
+    Applied at LOAD, so `dataset()` stays a faithful read of the file (and the tests that hold it
+    to the report keep passing), while `CriterionOwnership` -- the table every routing and
+    conformance decision actually reads -- carries the corrected view.
+
+    Every entry must be recorded in `docs/web-accessibility/RESEARCH_CORRECTIONS.md`. A change
+    here without one is how the last five days happened.
+    """
+    numbers = {row["number"] for row in data.get("criteria") or ()}
+    if unknown := sorted(set(ENGINEERING_OVERRIDES) - numbers):
+        raise UnknownCriterion(
+            f"an ownership override names criteria the committed registry does not have: "
+            f"{', '.join(unknown)}"
+        )
+    if not ENGINEERING_OVERRIDES:
+        return data
+    return {**data, "criteria": [
+        {**row, **ENGINEERING_OVERRIDES.get(row["number"], {})}
+        for row in data["criteria"]
+    ]}
 
 
 def load_ownership(*, version: str = DEFAULT_VERSION, data: dict | None = None) -> dict:
@@ -83,7 +148,7 @@ def load_ownership(*, version: str = DEFAULT_VERSION, data: dict | None = None) 
     """
     from .models import CriterionOwnership
 
-    data = data or dataset()
+    data = applied_overrides(data or dataset())
     if data.get("version") != version:
         raise ValueError(
             f"dataset holds WCAG {data.get('version')!r}, asked to load {version!r}")

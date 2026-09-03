@@ -233,6 +233,103 @@ def test_a_page_the_manifest_expects_and_the_run_never_visited_still_gets_a_line
     assert result.routes[0].captured == 0 and not result.ok
 
 
+# ══ completeness — the names, not just the totals ════════════════════════════════════
+#
+# 1 September: `/help/membership-actions` printed `expected 11 · captured 29 · judged 29 · ok`
+# on the same run where the accuracy half reported eleven records on that page as never looked
+# at. Both halves were reading the same run, and neither noticed they disagreed — because the
+# counting half only ever compared two integers. 29 is more than 11, so it passed.
+
+
+def test_a_page_that_captured_plenty_of_the_wrong_things_no_longer_passes():
+    """**The exact shape of the failure, with the exact numbers that produced it.**
+
+    A packing list checked by weighing the bag: the page offered twenty-nine elements and not
+    one of them was among the eleven the answer key names. Counting alone calls that a surplus
+    and moves on.
+    """
+    wanted = {(f"#act-{n}", "label") for n in range(11)}
+    result = completeness_module.check(
+        captured_by_route={"/help/membership-actions": 29},
+        judged_by_route={"/help/membership-actions": 29},
+        expected_by_route={"/help/membership-actions": 11},
+        expected_elements={"/help/membership-actions": wanted},
+        captured_elements={("/help/membership-actions", "#something-else", "color")},
+    )
+    route = result.routes[0]
+    assert completeness_module.NAMED_AND_MISSING in route.problems
+    assert len(route.missing) == 11
+    assert not result.ok, "a page that missed everything it was asked for must not read as ok"
+    assert result.missing_named == 11
+
+
+def test_the_page_says_WHICH_elements_are_missing_and_not_merely_how_many():
+    """A count tells somebody a number is wrong. A name tells them where to look."""
+    result = completeness_module.check(
+        captured_by_route={"/account/card-options": 25},
+        judged_by_route={"/account/card-options": 25},
+        expected_elements={"/account/card-options": {("#card-renew", "label"),
+                                                     ("#card-pay", "label")}},
+        captured_elements={("/account/card-options", "#card-pay", "label")},
+    )
+    route = result.routes[0]
+    assert route.missing == ("#card-renew [label]",)
+    assert "#card-renew [label]" in route.line()
+    # …and it survives into the results file, which is the record anyone reads next month.
+    assert result.as_dict()["routes"][0]["missing"] == ["#card-renew [label]"]
+
+
+def test_an_element_offered_to_ONE_check_is_not_offered_to_ANOTHER():
+    """The identity is (page, element, check) — not (page, element).
+
+    A button can be perfectly captured for the colour check and never put in front of the label
+    check, which is exactly what happens when a rule settles one criterion and not another. The
+    comparison has to be per check or it would call that page complete.
+    """
+    result = completeness_module.check(
+        captured_by_route={"/x": 1}, judged_by_route={"/x": 1},
+        expected_elements={"/x": {("#b", "label")}},
+        captured_elements={("/x", "#b", "color")},
+    )
+    assert result.routes[0].missing == ("#b [label]",)
+
+
+def test_every_named_element_present_is_the_quiet_pass():
+    result = completeness_module.check(
+        captured_by_route={"/x": 2}, judged_by_route={"/x": 2},
+        expected_elements={"/x": {("#a", "label"), ("#b", "alt")}},
+        captured_elements={("/x", "#a", "label"), ("/x", "#b", "alt")},
+    )
+    assert result.routes[0].missing == ()
+    assert result.ok and result.missing_named == 0
+
+
+def test_with_no_answer_key_this_is_exactly_the_check_it_always_was():
+    """**The half that must keep working on any run, on any application, from day one.**
+
+    Naming is an extra the golden set makes possible; it is not a dependency. Called with
+    neither names nor counts, this still checks captured-against-judged — which needs no answer
+    key and is why the spec says to build and trust this half first.
+    """
+    result = completeness_module.check(captured_by_route={"/a": 20}, judged_by_route={"/a": 17})
+    assert completeness_module.DROPPED_BEFORE_JUDGING in result.routes[0].problems
+    assert result.routes[0].missing == ()
+    assert not result.ok
+
+
+def test_a_long_list_of_missing_elements_stays_readable():
+    """Twelve names on one line is a wall nobody reads. The line names a few and counts the
+    rest; the results file keeps every one of them."""
+    wanted = {(f"#e{n}", "label") for n in range(12)}
+    result = completeness_module.check(
+        captured_by_route={"/x": 0}, judged_by_route={"/x": 0},
+        expected_elements={"/x": wanted}, captured_elements=set(),
+    )
+    line = result.routes[0].line()
+    assert "and 9 more" in line
+    assert len(result.as_dict()["routes"][0]["missing"]) == 12
+
+
 # ══ the golden set: refuse to run rather than warn ═══════════════════════════════════
 
 def test_a_missing_golden_directory_is_not_an_error():
@@ -300,9 +397,20 @@ def test_scoring_against_a_different_version_of_the_app_refuses_to_run():
         labels_module.check_app_version({"app_version": "1.4.0"}, "1.5.0")
 
 
-def test_an_unstated_version_on_either_side_is_a_gap_to_close_not_a_mismatch_to_fail_on():
-    labels_module.check_app_version({"app_version": "1.4.0"}, "")
+def test_an_answer_key_with_no_version_of_its_own_cannot_demand_one():
+    """The original leniency, kept on the side it still applies to. A dataset that never states
+    a version has nothing to compare against, and failing there would make the harness
+    unbuildable before it declares one."""
     labels_module.check_app_version({}, "1.5.0")
+
+
+def test_a_run_that_does_not_say_which_version_it_audited_refuses_to_score():
+    """**This used to pass silently and that was the bug.** `run.py` defaults --app-version to
+    an empty string, so the one hard stop protecting every number this tool produces did
+    nothing unless somebody remembered a flag. Point a run at an older checkout and the report
+    looks entirely normal."""
+    with pytest.raises(DatasetError, match="--app-version"):
+        labels_module.check_app_version({"app_version": "1.4.0"}, "")
 
 
 def _record(**kwargs) -> dict:

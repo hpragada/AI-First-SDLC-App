@@ -141,15 +141,62 @@ describe("S-37 conformance statement", () => {
     // And the count is on the page, not buried — in the headline tile AND on the checkbox the
     // reviewer has to tick, which is why there are two of them.
     expect(screen.getAllByText("54").length).toBe(2);
+    // The tile's label reads "Not checked yet" and its figure carries "of 55" beside it, so the
+    // reader can see this is 54 OUT OF the whole standard. What is being guarded is unchanged:
+    // the count is on the headline as itself, never folded into a supporting result.
     const tile = screen
-      .getAllByText("Not evaluated")
+      .getAllByText("Not checked yet")
       .map((el) => el.closest(".tile"))
       .find(Boolean);
-    expect(tile?.querySelector(".tile__num")?.textContent).toBe("54");
+    expect(tile).toBeDefined();
+    expect(tile?.querySelector(".tile__num")?.textContent).toContain("54");
+    expect(tile?.querySelector(".tile__of")?.textContent).toBe("of 55");
     // The row agrees with the headline. A reviewer may change it — that is the whole design —
     // but nothing has softened it into "supports" on their behalf.
     const level = screen.getByLabelText("Conformance level for 3.3.7 Redundant Entry");
     expect((level as HTMLSelectElement).value).toBe("not_evaluated");
+  });
+
+  it("marks the criteria waiting on a person, so the tile's count can be found", async () => {
+    // The tile says N criteria are waiting on a person. Before this, nothing in the list of 55
+    // said WHICH ones, so the number could be read but not acted on.
+    const waiting = row({
+      criterion: "1.2.2",
+      handle: "Captions (Prerecorded)",
+      evidence: "94 pages had nothing for this rule to apply to.",
+      suggested: null,
+      verdict: null,
+      effective: "not_evaluated",
+      needs_a_person: true,
+    });
+    vi.stubGlobal(
+      "fetch",
+      stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance({ rows: [row(), waiting] })]]),
+    );
+    renderWithProviders(<A11yConformanceScreen />);
+
+    const cell = await screen.findByText("1.2.2 Captions (Prerecorded)");
+    const tr = cell.closest("tr");
+    expect(tr?.className).toContain("conf-row--needs-you");
+    // Colour is never the only cue: the row says so in words as well.
+    expect(screen.getByText("needs your decision")).toBeDefined();
+
+    // ...and a row that has a suggestion is NOT marked, or the marking would mean nothing.
+    const plain = screen.getByText("1.1.1 Non-text Content").closest("tr");
+    expect(plain?.className ?? "").not.toContain("conf-row--needs-you");
+  });
+
+  it("gives the conformance control the dropdown class, not the text-field one", async () => {
+    // With `.input` it never got `appearance: none` or the padding the chevron needs, so the
+    // browser drew its own arrow over the words and "Partially supports" rendered as "Partial".
+    vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance()]]));
+    renderWithProviders(<A11yConformanceScreen />);
+
+    const level = await screen.findByLabelText("Conformance level for 1.1.1 Non-text Content");
+    expect(level.className).toContain("select");
+    expect(level.className).not.toContain("input");
+    // Stacked above its chip rather than beside it, so the chip can never squeeze it.
+    expect(level.closest(".conf-level")).toBeDefined();
   });
 
   it("carries the risk-reduction wording, which is the whole disclaimer", async () => {

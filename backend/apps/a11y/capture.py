@@ -162,6 +162,11 @@ def _element(raw) -> dict:
         # look" and "there is no structure here" are different answers.
         "structure": _mapping(data.get("structure")),
         "context": _text(data.get("context"), MAX_CONTEXT_CHARS),
+        # What the element sits inside — tag, role, href and its own text. Small and bounded,
+        # because it is an identity and not a document. `context` above is the parent's words,
+        # and an icon-only control's parent has none: both 1.1.1 and 1.4.11 ask what the parent
+        # IS, and until 1 September nothing carried that.
+        "parent": {str(k): _text(v, 400) for k, v in _mapping(data.get("parent")).items()},
         "box": _box(data.get("box")),
         "axe": _mapping(data.get("axe")),
     }

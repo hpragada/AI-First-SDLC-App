@@ -26,7 +26,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from integrations.types import A11Y_CHECKER_CRITERIA, A11yCandidate
+from integrations.types import A11Y_CHECKER_CRITERIA, A11Y_PASS, A11yCandidate
 
 #: The element checkers, in the order a page's requests are emitted. Fixed so that two runs over
 #: the same page produce the same batch in the same order — a judgment run that is not
@@ -38,7 +38,11 @@ from integrations.types import A11Y_CHECKER_CRITERIA, A11yCandidate
 #:
 #: `graphics` (QA-25) is the second half of a criterion in the same way, and its other half is
 #: not a checker at all — it is `apps.a11y.page_rules`, which measures the controls while this
-#: judges the pictures. 1.4.11 is covered by both together and by neither alone.
+#: judges the pictures. 1.4.11 is covered by both together and by neither alone: correction R14
+#: settled that on 27 August, and `ownership.ENGINEERING_OVERRIDES` carries it into routing.
+#:
+#: It sat in `HELD_BACK_SELECTION_RULES` for part of 1 September while that last step was taken.
+#: Nothing about the check was wrong; what was missing was the registry agreeing with it.
 CHECKERS: tuple[str, ...] = ("alt", "semantics", "structure", "color", "label", "graphics")
 
 #: The computed style properties the rules read. Named here because this is also the list the
@@ -57,8 +61,33 @@ STYLE_KEYS: tuple[str, ...] = (
     "font-size",
     "font-weight",
     "border-style",
+    # ...and the colour that border is painted in. `border-style` alone says a border EXISTS
+    # and never what it looks like, so the third way to colour a thing was invisible — after
+    # `background-color` (the first) and `stroke`/`fill` (the second, below). On /loans/renewals
+    # three status markers sit in adjacent rows of one table: two carry their colour in
+    # `background`, one in `border: 3px solid`. The two were offered to the colour rule and the
+    # third was not, because `_applies_color` looked for a painted background, found none on an
+    # empty span, and concluded there was no colour here to ask about.
+    "border-color",
+    "outline-color",
     "background-image",
+    # A shape inside a chart is not coloured by `background-color` — it is drawn in `stroke` or
+    # filled with `fill`, and neither was captured. So a line chart whose three series are told
+    # apart by colour alone arrived with every colour it uses invisible to the one rule that
+    # asks about colour. Read only for `SERIES_SHAPES`; see `_series_colour` for why.
+    "stroke",
+    "fill",
 )
+
+#: The SVG shapes that draw a data series. Their colour IS their identity — that is the whole
+#: reason `a11y_audit.mjs` offers them — so unlike an icon they are never decorative.
+#:
+#: **Read for these tags and no others, deliberately.** `fill` computes to opaque black on any
+#: SVG element that never set it, so treating a painted `fill` as meaningful in general would
+#: make every icon on every page a colour candidate and spend the run's judgment budget on
+#: decoration. Restricting it to the two shapes offered for exactly this reason keeps the fix
+#: the size of the bug.
+SERIES_SHAPES = frozenset({"polyline", "polygon"})
 
 #: Elements that are already controls. Their semantics are real, so `semantics` skips them
 #: unless something overrides those semantics (an explicit contradictory `role`, or an `<a>`
@@ -74,6 +103,11 @@ HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 #: the element inside it, because the question cannot be answered from a cell: whether a table
 #: has headers is a fact about the table.
 STRUCTURE_TAGS = frozenset({"table", "ul", "ol", "dl", "fieldset"})
+
+#: How many in-page links sitting side by side in one container make it read as a set of
+#: controls rather than as prose with anchors in it. Same number and same reasoning as
+#: `REPEATED_CHILD_MINIMUM`: two of anything is a pair.
+IN_PAGE_LINK_MINIMUM = 3
 
 #: How many identically-classed children make a run of `div`s read as a list to the eye. Three
 #: rather than two because two of anything is a pair, and a two-panel layout is far more often
@@ -130,8 +164,24 @@ TEXT_CUE_MARKERS = ("*", "✓", "✗", "×", "!", "⚠")
 #: accessible name and call the difference a defect.
 VALUE_LABEL_INPUT_TYPES = frozenset({"submit", "reset", "button"})
 
+#: Controls whose inner text is their CONTENT, not their label — the mirror image of
+#: `VALUE_LABEL_INPUT_TYPES` (1 Sep). A `<select>`'s inner text is every one of its options; a
+#: `<textarea>`'s is whatever is typed into it. Neither is "the words a sighted user reads on
+#: the control", which is what 2.5.3 compares the announced name against, and a closed dropdown
+#: does not display its options at all.
+#:
+#: Read as a label, this sent all 13 dropdowns in the 31 August Meridian audit to the AI: the
+#: rule compared the announced name "Home branch" against the option list
+#: "Fenner Road Ashcombe North Quay", found no match and reported a possible mismatch. There
+#: was never anything to compare — a dropdown is named by its `<label for=…>`, so its visible
+#: label IS its accessible name and 2.5.3 has no two strings to hold against each other. Out of
+#: scope, exactly as `<input type="submit">` with no `value` is out of scope above, and for the
+#: same reason: no visible label we can read means no comparison we can make.
+VALUE_NOT_LABEL_TAGS = frozenset({"select", "textarea"})
+
 _WHITESPACE = re.compile(r"\s+")
 _CLASS_ATTR = re.compile(r'class="([^"]*)"')
+_IN_PAGE_HREF = re.compile(r'<a[^>]+href="#[^"]*"', re.IGNORECASE)
 #: A grouping the markup already carries, so a set of related fields is not ungrouped.
 _GROUPING = re.compile(r'<fieldset|role="(?:group|radiogroup)"', re.IGNORECASE)
 #: Fields that only mean anything as a set — one radio button on its own answers nothing.
@@ -167,6 +217,10 @@ class CapturedElement:
     rendered: bool = True                           # has a box: not display:none, not zero-size
     styles: Mapping[str, str] = field(default_factory=dict)          # see STYLE_KEYS
     parent_styles: Mapping[str, str] = field(default_factory=dict)   # same keys, on the parent
+    #: What the element sits inside: {tag, role, href, text}. Carried for the judge, not read
+    #: by any rule — an icon-only control's parent has no text, and "what is it inside" is the
+    #: question 1.1.1 and 1.4.11 both actually turn on.
+    parent: Mapping[str, str] = field(default_factory=dict)
     html: str = ""
     #: True when `html` is a fragment because the element's markup was longer than the capture
     #: sends. Never inferred from the length of what arrived — a container that happens to be
@@ -219,6 +273,7 @@ class CapturedElement:
             # `{"kind": "unreadable", ...}` and reaches the judge as such.
             structure=dict(raw.get("structure") or {}),
             context=str(raw.get("context") or ""),
+            parent={str(k): str(v) for k, v in dict(raw.get("parent") or {}).items()},
             screenshot_ref=str(raw.get("screenshot_ref") or ""),
             route=str(raw.get("route") or ""),
         )
@@ -229,6 +284,32 @@ class CapturedElement:
 def _normalise(text: str) -> str:
     """Lowercased, whitespace-collapsed — how two labels are compared for "the same words"."""
     return _WHITESPACE.sub(" ", str(text or "")).strip().lower()
+
+
+def _label_words(text: str) -> str:
+    """A label reduced to its words, with punctuation acting as a separator rather than a
+    character.
+
+    **This is how 2.5.3 is actually compared**, by the criterion's own ACT rule and by axe, and
+    the difference is not cosmetic. Comparing raw characters says the visible label "Search" is
+    contained in the accessible name "Research tools" — because the letters of *search* sit
+    inside *research* — so the rule concluded the criterion was already met and never asked
+    anybody. A speech-input user saying "Search" activates nothing.
+
+    Unicode-aware on purpose: `str.isalnum()` keeps accented and non-Latin letters, where a
+    naive `[a-z0-9]` filter would shred every label in a language other than English and make
+    every control on the page look like a mismatch.
+    """
+    lowered = _normalise(text)
+    return " ".join("".join(c if c.isalnum() else " " for c in lowered).split())
+
+
+def _name_contains_label(name: str, visible: str) -> bool:
+    """Does the accessible name contain the visible label as a run of whole words?"""
+    words, target = _label_words(name), _label_words(visible)
+    if not target:
+        return True         # nothing textual on the control, so nothing to contain
+    return f" {target} " in f" {words} "
 
 
 def _px(value: str) -> float:
@@ -251,6 +332,26 @@ def _paints(colour: str) -> bool:
     return str(colour or "").strip().lower() not in _NO_PAINT
 
 
+#: Border styles that draw nothing, so their colour paints nothing either.
+_NO_BORDER = frozenset({"", "none", "hidden"})
+
+
+def _paints_border(element: CapturedElement) -> bool:
+    """Is this element outlined in a colour you can actually see?
+
+    Both halves are required and neither is enough alone. `border-color` computes to the
+    element's own `color` on anything that never set one, so a painted colour with
+    `border-style: none` describes a border that is not drawn — reading that as colour would
+    make every element on the page a colour candidate.
+    """
+    style = str(element.styles.get("border-style", "")).strip().lower()
+    if style and all(part in _NO_BORDER for part in style.split()):
+        return False
+    if not style:
+        return False
+    return _paints(element.styles.get("border-color", ""))
+
+
 def _has_nested_graphic(element: CapturedElement) -> bool:
     lowered = element.html.lower()
     return "<img" in lowered or "<svg" in lowered
@@ -269,7 +370,13 @@ def _visible_text(element: CapturedElement) -> str:
     A submit button with no `value` at all is still out of scope, and that skip is deliberate:
     the browser draws its own default word, that word is chosen by the user agent and its
     language, and it is not in the markup for us to compare anything against.
+
+    The opposite exception is `VALUE_NOT_LABEL_TAGS`, whose inner text is the control's content
+    rather than its label. That one returns nothing at all: there is no visible label on the
+    control to read, so there is no comparison to make.
     """
+    if element.tag in VALUE_NOT_LABEL_TAGS:
+        return ""
     text = _normalise(element.text)
     if text or element.tag != "input":
         return text
@@ -308,13 +415,43 @@ def _looks_like_heading(element: CapturedElement) -> bool:
     )
 
 
+def _series_colour(element: CapturedElement) -> tuple[str, str]:
+    """The property and value a chart series is drawn in, or a pair of blanks.
+
+    Blank for anything that is not a `SERIES_SHAPES` tag, which is what keeps `fill` from
+    claiming every icon in the application — see the note on that constant.
+    """
+    if element.tag not in SERIES_SHAPES:
+        return "", ""
+    for key in ("stroke", "fill"):
+        value = str(element.styles.get(key, "") or "")
+        if _paints(value):
+            return key, value
+    return "", ""
+
+
 def _colour_differs_from_surroundings(element: CapturedElement) -> bool:
     """Something about this element's colour singles it out from what is around it."""
     styles, parent = element.styles, element.parent_styles
     if styles.get("color", "") and styles.get("color") != parent.get("color", ""):
         return True
+    key, value = _series_colour(element)
+    if key and value != str(parent.get(key, "") or ""):
+        return True
     background = styles.get("background-color", "")
-    return _paints(background) and background != parent.get("background-color", "")
+    if _paints(background) and background != parent.get("background-color", ""):
+        return True
+    # A border is the whole of the colour ONLY when there is nothing else — no text and no
+    # background. Kept that narrow deliberately: `_has_second_cue` measured that comparing a
+    # border against its parent's saves four candidates in three hundred, because parents
+    # almost never have one, so treating any painted border as a difference would make every
+    # bordered input and card on the page a colour candidate and spend the run's judgment
+    # budget on chrome. An element with no text and no fill is the case where it is not chrome
+    # — it is the only thing being drawn.
+    if element.text.strip() or _paints(background):
+        return False
+    return (_paints_border(element)
+            and styles.get("border-color", "") != parent.get("border-color", ""))
 
 
 def _has_second_cue(element: CapturedElement) -> bool:
@@ -322,11 +459,26 @@ def _has_second_cue(element: CapturedElement) -> bool:
 
     Only *visual* cues count. An `aria-label` is not one: 1.4.1 is about what a person who
     cannot distinguish the colours can still see, not about what assistive tech is told.
+
+    **A border is not on this list, and used to be.** The reasoning was that a border is a
+    visual cue and is not colour, which is true in general and wrong in the case that matters
+    most: a field marked invalid by turning its border red **already had a border**. Only its
+    colour changed. The rule was reading the presence of the thing being coloured as proof that
+    colour was not the only cue, and declining to look — so the commonest way on the web to mark
+    a field invalid was skipped by the one check built to catch it, and nothing else covers it
+    (1.4.1 has a single scanner rule and it is about links in prose).
+
+    **Nothing narrower works, and that was measured rather than assumed.** Comparing the
+    border's colour against the parent's saves four candidates out of three hundred, because
+    parents almost never have a border to compare with; comparing it against the element's own
+    text colour saves none. There is no way to tell a decorative border from a signalling one
+    from what a single element carries, so the honest move is to stop pretending and let the
+    judge decide. That is the same trade `_repeats_a_child_class` already makes and states: it
+    costs a judgment on things that turn out to be fine, which is the direction worth being
+    wrong in.
     """
     decoration = str(element.styles.get("text-decoration-line", "")).lower()
     if "underline" in decoration or "line-through" in decoration:
-        return True
-    if str(element.styles.get("border-style", "")).strip().lower() not in {"", "none"}:
         return True
     if _has_nested_graphic(element):
         return True
@@ -449,13 +601,33 @@ def _applies_semantics(element: CapturedElement) -> bool:
         return True
     if element.tag == "a" and not element.attrs.get("href"):
         return True         # an <a> without href is not a link, whatever it looks like
+    if element.tag == "a" and str(element.attrs.get("href", "")).startswith("#"):
+        # **An in-page link does not navigate**, so "a real link with real semantics needs no
+        # judgment" is not safely true of it. It may be a tab, a disclosure or a toggle wearing
+        # an anchor, and the tab case is the one this was found on: three <a href="#panel-…">
+        # styled as a tab strip, announced as links, with nothing saying which is selected.
+        #
+        # Narrow by measurement, not by hope: the whole fixture holds four in-page links and
+        # 228 ordinary ones, so this asks about 1.7% of the anchors on the site and leaves
+        # every real navigation link exactly where it was.
+        return True
     if element.tag in NATIVE_CONTROL_TAGS:
         return False        # a real control with no overriding role: the semantics are real
     if element.interactive:
         return True         # something non-native is behaving like a control
     if "tabindex" in element.attrs:
         return True         # put in the tab order without being a control
+    if element.tag == "div" and _holds_in_page_links(element.html):
+        # The strip itself, not just the tabs in it. Whether a row of anchors is a tab list is a
+        # question about the container — one tab cannot tell you, and the relationship to the
+        # panels below it lives here or nowhere.
+        return True
     return _looks_like_heading(element)
+
+
+def _holds_in_page_links(html: str) -> bool:
+    """Three or more in-page links inside one container — a set of controls, or prose."""
+    return len(_IN_PAGE_HREF.findall(_inside(html))) >= IN_PAGE_LINK_MINIMUM
 
 
 def _inside(html: str) -> str:
@@ -533,33 +705,71 @@ def _applies_color(element: CapturedElement) -> bool:
     """
     if not element.rendered:
         return False
-    if not element.text.strip() and not _paints(element.styles.get("background-color", "")):
-        return False        # no text and no fill: there is no colour carrying anything
+    if (not element.text.strip()
+            and not _paints(element.styles.get("background-color", ""))
+            and not _paints_border(element)
+            and not _series_colour(element)[0]):
+        return False        # no text, no fill, no border, no series colour: nothing to ask about
     if _has_second_cue(element):
         return False
     return _colour_differs_from_surroundings(element)
 
 
-def _applies_label(element: CapturedElement) -> bool:
-    """A control whose announced name may not contain its visible label — 2.5.3.
+def _label_in_scope(element: CapturedElement) -> bool:
+    """Is 2.5.3 a question that can be asked about this element at all?
 
-    Two skips, both straight out of the criterion's own wording. It applies to "components
-    with labels that include text", so a control with no visible text is out of scope
-    entirely. And it requires that "the name contains the text that is presented visually" —
-    when the name demonstrably does contain it, the criterion is met as a matter of fact and
-    there is nothing left to judge. What reaches the AI is the remainder: the cases where the
-    strings differ and only a person (or something reading like one) can say whether that
-    difference is a real mismatch or a harmless suffix.
+    Two exclusions, both straight out of the criterion's own wording. It applies to "components
+    with labels that include text", so a control with no visible text is out of scope entirely.
+    And a control with no accessible name at all is 4.1.2's problem, not this one.
+
+    **Out of scope is not the same as satisfied**, and keeping them apart is the whole point of
+    splitting this function — see `_settles_label`.
     """
     if not element.rendered or not _is_control(element):
         return False
-    visible = _visible_text(element)
-    if not visible:
+    if not _visible_text(element):
         return False
-    name = _normalise(element.accessible_name)
-    if not name:
-        return False        # no accessible name at all is 4.1.2's problem, not 2.5.3's
-    return visible not in name
+    return bool(_normalise(element.accessible_name))
+
+
+def _applies_label(element: CapturedElement) -> bool:
+    """A control whose announced name may not contain its visible label — 2.5.3.
+
+    What reaches the AI is the remainder after `_settles_label`: the cases where the strings
+    differ and only a person (or something reading like one) can say whether that difference is
+    a real mismatch or a harmless suffix.
+    """
+    if not _label_in_scope(element):
+        return False
+    return not _name_contains_label(_normalise(element.accessible_name), _visible_text(element))
+
+
+def _settles_label(element: CapturedElement) -> str | None:
+    """2.5.3 answered here and now, by fact rather than by judgement. `"pass"`, or None.
+
+    The criterion requires that "the name contains the text that is presented visually". When
+    the name demonstrably does contain it, the criterion **is met** — that is a string
+    comparison, not an opinion, and asking a model to confirm it would spend money to be told
+    something we already know.
+
+    **Why this had to become its own function.** The skip was previously folded into
+    `_applies_label`, which returned one boolean for two completely different situations:
+    *"this criterion does not apply here"* and *"this criterion applies and is satisfied"*. With
+    both collapsed into `False`, nothing downstream could tell a decision from a silence — so a
+    control the platform had correctly cleared was indistinguishable from one nothing had
+    looked at. On the 31 August audit that was 22 of the 42 labelled 2.5.3 controls: every one
+    of them right, every one of them recorded as though no check had happened, and the accuracy
+    harness reporting them as "never looked at" and counting them wrong.
+
+    Returning the verdict rather than a boolean because a future rule may settle a criterion as
+    `"fail"` — a deterministic breach nobody needs to judge — and the caller should not have to
+    assume which way a settled answer went.
+    """
+    if not _label_in_scope(element):
+        return None
+    if _name_contains_label(_normalise(element.accessible_name), _visible_text(element)):
+        return A11Y_PASS
+    return None
 
 
 @dataclass(frozen=True)
@@ -576,9 +786,26 @@ class SelectionRule:
     covers: str
     skips: str
     applies: object          # Callable[[CapturedElement], bool]
+    #: Optional. Callable[[CapturedElement], str | None] — a verdict this rule can reach on its
+    #: own, without asking the AI, because the criterion's own wording makes the answer a matter
+    #: of fact rather than of judgement. None (the default) means this checker never settles
+    #: anything and every in-scope element goes to the AI.
+    #:
+    #: **`applies` and `settles` are mutually exclusive by construction**: an element the rule
+    #: has already answered must not also be dispatched, or we would pay to be told what we
+    #: know. `settled_verdict` asserts nothing here — the rules themselves are written so that
+    #: `applies` returns False exactly where `settles` returns a verdict, and
+    #: `test_a11y_checkers` holds them to it.
+    settles: object | None = None
 
     def matches(self, element: CapturedElement) -> bool:
         return bool(self.applies(element))       # type: ignore[operator]
+
+    def settled_verdict(self, element: CapturedElement) -> str | None:
+        """The verdict this rule reaches without the AI, or None if it reaches none."""
+        if self.settles is None:
+            return None
+        return self.settles(element)             # type: ignore[operator]
 
 
 #: The whole rule set, one entry per checker. This is the table D-A11Y-6 keeps a single copy
@@ -603,9 +830,12 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
         criteria=A11Y_CHECKER_CRITERIA["semantics"],
         covers="anything behaving like a control without being one, anything carrying a role "
                "that overrides its tag, anything put in the tab order, an <a> with no href, "
-               "and text merely styled to look like a heading",
+               "an <a> whose href stays on the page (it does not navigate, so it may be a tab "
+               "or a disclosure wearing an anchor), a container holding three or more such "
+               "links, and text merely styled to look like a heading",
         skips="native controls and native structure with no overriding role — the semantics "
-              "are already real — and a role that only restates the tag it sits on",
+              "are already real — a role that only restates the tag it sits on, and links "
+              "that actually navigate somewhere",
         applies=_applies_semantics,
     ),
     SelectionRule(
@@ -628,9 +858,11 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
         covers="text or filled areas whose colour singles them out from their surroundings "
                "with no other visual cue — status dots, required-field markers, legend keys, "
                "links that are only a different colour",
-        skips="elements that already carry a second visual cue (an underline, a border, an "
-              "icon, a marker character like *) and elements with nothing colour could be "
-              "carrying. A missing screenshot is NOT a skip — it becomes an uncertain verdict.",
+        skips="elements that already carry a second visual cue (an underline, an icon, a "
+              "marker character like *) and elements with nothing colour could be carrying. "
+              "A BORDER is not a second cue: a field marked invalid by turning its border red "
+              "already had a border, and only its colour changed. A missing screenshot is not "
+              "a skip either — it becomes an uncertain verdict.",
         applies=_applies_color,
     ),
     SelectionRule(
@@ -639,10 +871,14 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
         covers="controls whose visible text does not appear in their accessible name — "
                "including a submit, reset or button <input>, whose visible text is its "
                "`value` attribute rather than inner text it can never have",
-        skips="controls with no visible text (2.5.3 does not apply to them), controls with no "
-              "accessible name at all (that is 4.1.2), and controls whose name already "
-              "contains the visible text — the criterion is met as a matter of fact",
+        skips="controls with no visible text (2.5.3 does not apply to them) and controls with "
+              "no accessible name at all (that is 4.1.2). A control whose name already "
+              "contains the visible text AS WHOLE WORDS is not skipped but SETTLED — the "
+              "criterion is met as a matter of fact, and that is recorded as a pass rather "
+              "than as a silence. Words, not letters: 'Search' is not contained in 'Research "
+              "tools', and comparing characters made that failure invisible.",
         applies=_applies_label,
+        settles=_settles_label,
     ),
     SelectionRule(
         checker="graphics",
@@ -660,6 +896,23 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
         applies=_applies_graphics,
     ),
 )
+
+
+#: Built, reviewed, and deliberately not running. **Empty today.**
+#:
+#: Kept as a mechanism rather than deleted, because a check belongs here when it is not wrong
+#: but its claim cannot yet be supported — and the alternative, commenting it out, loses the
+#: scope somebody argued for and leaves nothing for `describe_rules()` to show a reviewer.
+#:
+#: `graphics` sat here for part of 1 September, while the ownership registry was brought into
+#: line with correction R14. What that taught is in `A11Y_HELD_BACK_CLAIMS`: a hold must
+#: WITHDRAW its criterion from positive conformance claims, never leave it to whatever else
+#: happens to touch that criterion.
+#:
+#: To hold a check: move its `SelectionRule` here, take its name out of `CHECKERS`, and move
+#: its criteria from `A11Y_CHECKER_CRITERIA` into `A11Y_HELD_BACK_CRITERIA`. Leave it in
+#: `A11Y_ALL_CHECKER_CRITERIA` so verdicts recorded before the hold still read back.
+HELD_BACK_SELECTION_RULES: tuple[SelectionRule, ...] = ()
 
 _RULES_BY_CHECKER: dict[str, SelectionRule] = {rule.checker: rule for rule in SELECTION_RULES}
 
@@ -692,6 +945,8 @@ def to_candidate(element: CapturedElement) -> A11yCandidate:
         screenshot_ref=element.screenshot_ref,
         context=element.context,
         route=element.route,
+        accessible_name=element.accessible_name,
+        parent=dict(element.parent or {}),
     )
 
 
@@ -728,11 +983,57 @@ def explain(element: CapturedElement) -> dict[str, bool]:
     return {checker: _RULES_BY_CHECKER[checker].matches(element) for checker in CHECKERS}
 
 
+def settled(element: CapturedElement | Mapping) -> dict[str, str]:
+    """Criteria this element ANSWERS on the rules alone, as `{checker: verdict}`.
+
+    The companion piece to `explain`, and the answer to a question that had none. `explain` says
+    which checkers were dispatched; between them they separate the three states an element can
+    be in for a given checker, which used to be two:
+
+        dispatched      — the AI was asked (`explain` says True)
+        settled here    — the criterion was answered by fact (this function)
+        out of scope    — the criterion cannot be asked about this element at all
+
+    **Why the middle one had to become visible.** A settled element carries no verdict row and
+    no dispatch, so it looked exactly like an element nothing had examined. On the 31 August
+    audit that covered 22 of the 42 labelled 2.5.3 controls — all answered correctly, none of
+    them recorded as answered. The accuracy harness read them as "never looked at", counted
+    them as wrong, and `label` could not reach the sample floor no matter how much data was
+    added, because the dataset pairs every AI-judged failure with a rule-settled pass.
+
+    Empty for every checker that settles nothing, which today is every checker but `label`. That
+    is a statement about the rules as they stand, not a limit of this function.
+    """
+    if not isinstance(element, CapturedElement):
+        element = CapturedElement.from_dict(element)
+    out: dict[str, str] = {}
+    for checker in CHECKERS:
+        verdict = _RULES_BY_CHECKER[checker].settled_verdict(element)
+        if verdict is not None:
+            out[checker] = verdict
+    return out
+
+
 def describe_rules() -> str:
-    """The rule set in plain words — what each checker covers and what it deliberately skips."""
+    """The rule set in plain words: what each checker covers and what it deliberately skips.
+
+    **Held-back checks are printed too, and labelled.** Leaving them out would make this read
+    as the whole rule set when it is not, and a reviewer comparing it against a conformance
+    statement has to be able to see that something built is not running. Printing them WITHOUT
+    the label would be worse: that is how a check nobody was running came to be described as
+    covering a criterion for five days.
+    """
     lines: list[str] = []
     for rule in SELECTION_RULES:
         lines.append(f"{rule.checker} (WCAG {', '.join(rule.criteria)})")
         lines.append(f"  covers: {rule.covers}")
         lines.append(f"  skips:  {rule.skips}")
+    for rule in HELD_BACK_SELECTION_RULES:
+        lines.append(
+            f"{rule.checker} (WCAG {', '.join(rule.criteria)}) - HELD BACK, NOT RUNNING")
+        lines.append(f"  covers: {rule.covers}")
+        lines.append(f"  skips:  {rule.skips}")
+        lines.append("  held:   this check does not run, and nothing it would have found is "
+                     "reported. See A11Y_HELD_BACK_CRITERIA for why, and for what has to be "
+                     "true before it runs again.")
     return "\n".join(lines)

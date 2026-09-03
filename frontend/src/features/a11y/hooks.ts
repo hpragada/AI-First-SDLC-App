@@ -218,6 +218,33 @@ export function useRejudgeA11yAudit(projectId: string | undefined) {
   });
 }
 
+/** Finish an audit whose judging pass was parked past its deadline (9.26.F).
+ *
+ *  **The same call the run-recovery console's "Take over" makes**, deliberately — one recovery
+ *  path, not two implementations of one. What differs is only where it is offered: a person
+ *  auditing their own website has no reason to have ever opened a run console, and until this
+ *  the parked pass was reachable from nowhere else. The re-claim lease will not offer a parked
+ *  run back to a returning machine, so without this the audit was stuck for good.
+ *
+ *  Invalidates the audit list, because ending the run is what lets the closing path publish the
+ *  report and baseline and move the audit to `complete` — after which the row grows its "Check
+ *  the rest" button for everything the pass never reached.
+ */
+export function useFinishStalledA11yAudit(projectId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) => api.takeOverRun(tenantId, runId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["a11y-audits", projectId] });
+      // Everything the pass never answered is filed for a person as it closes, so the queue is
+      // about to change too.
+      qc.invalidateQueries({ queryKey: ["a11y-review", projectId] });
+      qc.invalidateQueries({ queryKey: ["artifacts", projectId] });
+    },
+  });
+}
+
 // ── Conformance statement (S-37, QA-24) ──────────────────────────────────────────────────
 
 export function useA11yConformance(projectId: string | undefined) {

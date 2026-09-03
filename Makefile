@@ -64,14 +64,25 @@ fmt:  ## Auto-format (ruff format)
 # database. There is no CI in this repository, which is why this runs through `make` and
 # not through a pipeline (decision D4).
 #
-#   make a11y-eval                                 # the latest finished audit
+#   make a11y-eval APP_VERSION=1.4.0               # the latest finished audit
 #   make a11y-eval ARGS="--completeness-only"      # counting only, needs no answer key
-#   make a11y-eval ARGS="--run <audit-id> --dry-run"
+#   make a11y-eval APP_VERSION=1.4.0 ARGS="--run <audit-id> --dry-run"
+#
+# `APP_VERSION` is the version of the app that was AUDITED, and the scorer now refuses to score
+# without it. It has to be stated by hand because nothing records it: the platform reads the
+# app's route list but keeps no note of the version that list declared, so there is no honest
+# way to derive it here. Taking it from the answer key instead would make both sides agree by
+# construction and turn the check into decoration.
 #
 # Exit codes: 1 = a checker regressed and OUR release is blocked (never a client's work);
 # 2 = something was dropped between being on the page and getting an answer.
 a11y-eval:  ## Internal: score the accessibility checks against the golden set
-	docker compose --profile app run --rm backend sh -c 'python ../docs/web-accessibility/evaluation/scorer/run.py $(ARGS)'
+	docker compose --profile app run --rm backend sh -c 'python ../docs/web-accessibility/evaluation/scorer/run.py --app-version "$(APP_VERSION)" $(ARGS)'
 
+# `env -u DJANGO_SETTINGS_MODULE` is load-bearing. The image exports that variable for the
+# application, and pytest-django reads it on start-up, decides a Django project is expected, and
+# fails collection hunting for a manage.py that is deliberately not there. These tests are
+# standalone on purpose — no Django, no database — so the variable has to be absent for this one
+# command. Without it the whole suite dies before a single test runs.
 a11y-eval-test:  ## Internal: unit-test the scorer (no database, no platform)
-	docker compose --profile app run --rm backend sh -c 'cd ../docs/web-accessibility/evaluation/scorer && python -m pytest tests -q'
+	docker compose --profile app run --rm backend sh -c 'cd ../docs/web-accessibility/evaluation/scorer && env -u DJANGO_SETTINGS_MODULE python -m pytest tests -q'

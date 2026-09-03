@@ -168,6 +168,34 @@ the harness's `npm run contrast`.
 }
 ```
 
+Two colours used by the app are **not** tokens, and both are deliberate.
+
+```css
+/* Every text input, select and textarea. 2.98:1 on the surface, 2.73:1 on a panel.
+   FAILS the 3:1 that 1.4.11 asks of a non-text part you have to be able to see. */
+border: 1px solid #9a958c;
+
+/* The two states on the charges statement (v1.4.0). Both legible; near-identical in lightness. */
+color: #c0392b;   /* still owed  — 5.44:1 on surface, relative luminance 0.143 */
+color: #2e7d32;   /* settled     — 5.13:1 on surface, relative luminance 0.155 */
+```
+
+> **The field border is a planted 1.4.11 failure, and it is the only one in the fixture.** It
+> appears on every form page, which is a knowing exception to one-defect-per-page: it is a
+> property of the shared form styling rather than of any one view, and giving it its own page
+> would mean styling that page's fields differently from every other page's — which is a bigger
+> lie than the exception. No golden record cites it yet, because the checker that would judge it
+> (`graphics`, 1.4.11) has no answer key at all; see "Not covered, and how to add it" in
+> `golden/README.md`. It is asserted in `check-contrast.js` under `DELIBERATE_FAILURES` so it
+> survives until somebody labels it.
+
+> **The two charge colours must stay ALIKE, which is the opposite of every other rule here.**
+> They are a 1.4.1 case: both are comfortably legible, so contrast is not the defect — what makes
+> them a failure is that hue is the only thing separating them. Darken one "to be safe" and they
+> become tellable apart in greyscale, the pages stop being colour-only, and the records that
+> depend on them quietly become wrong while every other check still passes. `check-contrast.js`
+> asserts the luminance gap stays under 0.03 (`SAME_LIGHTNESS`); it is currently 0.012.
+
 > **Why the status tints are so pale.** The colour-only pages (§8.4) must fail 1.4.1 and **nothing
 > else**. If a tint dropped text contrast below 4.5:1, those pages would fail contrast too, axe would
 > report it, and you could no longer tell which engine found what. Every tint above keeps text above
@@ -179,8 +207,10 @@ the harness's `npm run contrast`.
 
 ### `harness/check-contrast.js` — compute the palette, do not choose it
 
-Sixteen pairs pass and one has to fail. Write a checker that asserts both, so the failing pair is
-guarded as carefully as the passing ones:
+Nineteen pairs pass, three have to fail, and one pair has to stay indistinguishable. Write a
+checker that asserts all three kinds, so the failing and the look-alike pairs are guarded as
+carefully as the passing ones — a planted defect that nothing asserts is a planted defect that
+quietly disappears:
 
 ```js
 function luminance(hex) {

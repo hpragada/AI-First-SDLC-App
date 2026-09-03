@@ -33,6 +33,7 @@ import pytest
 
 from apps.a11y.checkers import (
     CHECKERS,
+    HELD_BACK_SELECTION_RULES,
     SELECTION_RULES,
     STYLE_KEYS,
     AnswerIncomplete,
@@ -42,12 +43,15 @@ from apps.a11y.checkers import (
     explain,
     requirements_for,
     select,
+    settled,
     to_candidate,
     verify_answer,
 )
 from integrations.types import A11Y_CHECKER_CRITERIA, A11yCandidate
 
 AGENT_BODY = Path(__file__).resolve().parents[2] / "agents" / "09c_a11y_judge" / "agent.md"
+COMPANION_CAPTURE = (Path(__file__).resolve().parents[2]
+                     / "runner" / "companion" / "assets" / "a11y_audit.mjs")
 
 
 def element(**kwargs) -> CapturedElement:
@@ -90,13 +94,21 @@ def test_the_element_checkers_judge_these_criteria_and_no_others():
 
     **1.4.11 joined the set in QA-25, and it is the one entry here that is only half a
     criterion.** The other half is `apps.a11y.page_rules`, which measures whether a control's
-    edge reaches 3:1 deterministically; `graphics` judges the part no rule can — which parts of
-    an icon or a chart carry the meaning, and whether they can be made out. Neither half covers
-    1.4.11 alone, and this test says nothing about whether the other half exists;
+    edge reaches 3:1 deterministically; `graphics` judges the part no rule can — which parts
+    of an icon or a chart carry the meaning, and whether they can be made out. Neither half
+    covers 1.4.11 alone, and this test says nothing about whether the other half exists;
     `test_a11y_owner_capability` is what proves that.
+
+    It was held back for part of 1 September, while the ownership registry was brought into
+    line with correction R14 — the registry gave 1.4.11 to `rule` and this map is what the AI
+    owns, and the two disagreeing is what five guards reported for five days. Nothing here
+    should be held now, and the second assertion says so rather than leaving it unsaid.
     """
     covered = {c for rule in SELECTION_RULES for c in rule.criteria}
     assert covered == {"1.1.1", "1.3.1", "4.1.2", "1.4.1", "2.5.3", "1.4.11"}
+    assert HELD_BACK_SELECTION_RULES == (), (
+        "a check is held back and this test has not been told which or why"
+    )
 
 
 # ── alt: WCAG 1.1.1 ──────────────────────────────────────────────────
@@ -225,6 +237,115 @@ def test_color_selects_a_filled_indicator_with_no_text():
     assert "color" in checkers_for(dot)
 
 
+def test_color_selects_an_indicator_drawn_only_as_a_coloured_ring():
+    """The third way to colour a thing, after a background and a series stroke.
+
+    On `/loans/renewals` three status markers sit in adjacent rows of one table. Two carry
+    their colour in `background`; one is a `.ring`, drawn with `border: 3px solid`. The two
+    were offered to the colour rule and the third was not — `border-color` was never captured,
+    so an empty span with no background read as carrying no colour at all.
+    """
+    ring = element(
+        selector="#renew-tidewater",
+        styles={**{k: "" for k in STYLE_KEYS},
+                "border-style": "solid", "border-color": "rgb(196, 106, 20)"},
+        parent_styles={**{k: "" for k in STYLE_KEYS}, "background-color": "rgb(255, 255, 255)"},
+    )
+    assert "color" in checkers_for(ring)
+
+
+def test_a_border_colour_with_no_border_drawn_is_not_colour():
+    """`border-color` computes to the element's own `color` on anything that never set one, so
+    a painted colour with `border-style: none` describes a border that is not there. Counting
+    it would make every element on the page a colour candidate."""
+    plain = element(
+        styles={**{k: "" for k in STYLE_KEYS},
+                "border-style": "none", "border-color": "rgb(196, 106, 20)"},
+    )
+    assert "color" not in checkers_for(plain)
+
+
+def test_the_companion_captures_exactly_the_styles_the_rules_read():
+    """The two `STYLE_KEYS` lists are written out at both ends and nothing compared them.
+
+    A key the rules read and the browser never sends arrives empty, and an empty style is
+    indistinguishable from a style that paints nothing — so the loss is silent everywhere, by
+    design. It has now happened twice: `stroke`/`fill`, which left every chart series colourless
+    to the one rule that asks about colour, and `border-color`, which did the same to anything
+    outlined rather than filled. The companion's own comment says a missing key is not an error
+    anywhere. This is that error.
+    """
+    source = COMPANION_CAPTURE.read_text(encoding="utf-8")
+    block = source.split("const STYLE_KEYS = [", 1)[1].split("];", 1)[0]
+    captured = [line.split('"')[1] for line in block.splitlines()
+                if line.strip().startswith('"')]
+
+    assert captured == list(STYLE_KEYS), (
+        "the browser captures a different set of computed styles than the rules read — "
+        f"only in the capture: {sorted(set(captured) - set(STYLE_KEYS))}; "
+        f"only in the rules: {sorted(set(STYLE_KEYS) - set(captured))}"
+    )
+
+
+def test_color_selects_a_chart_series_drawn_in_a_stroke_colour():
+    """The same shape as the tinted-row case, one level further in.
+
+    `/reports/branch-comparison` draws three branches as three `<polyline>` elements told apart
+    by stroke colour and nothing else. Two things had to be true before that could ever be
+    judged and neither was: the shapes were not offered by the capture, and `stroke` was not a
+    style key, so even offered they carried no colour any rule could read. A `<polyline>` has no
+    text and no background, so both earlier tests here would have passed while the page's only
+    1.4.1 failure went unreported and the page was recorded as checked.
+    """
+    series = element(
+        selector="#chart-branches polyline:nth-of-type(2)",
+        tag="polyline",
+        styles={**{k: "" for k in STYLE_KEYS}, "stroke": "rgb(214, 69, 65)"},
+        parent_styles={**{k: "" for k in STYLE_KEYS}, "stroke": "none"},
+    )
+    assert "color" in checkers_for(series)
+
+
+def test_color_selects_an_area_series_drawn_in_a_fill_colour():
+    """A filled area chart carries its series colour in `fill` rather than `stroke`."""
+    band = element(
+        selector="#chart-branches polygon:nth-of-type(1)",
+        tag="polygon",
+        styles={**{k: "" for k in STYLE_KEYS}, "fill": "rgb(31, 119, 180)"},
+        parent_styles={**{k: "" for k in STYLE_KEYS}, "fill": "none"},
+    )
+    assert "color" in checkers_for(band)
+
+
+def test_color_does_not_claim_every_icon_because_fill_has_a_default():
+    """**The reason `fill` is read for two tags and not for all of them.**
+
+    `getComputedStyle` reports `fill` as opaque black on any SVG element that never set it, so a
+    rule treating a painted fill as meaningful in general would claim every icon on every page,
+    spend the run's judgment budget on decoration, and push real candidates out of the pass. An
+    `<svg>` with the default fill and nothing else is not a colour question.
+    """
+    icon = element(
+        selector="span.bookmark svg",
+        tag="svg",
+        styles={**{k: "" for k in STYLE_KEYS}, "fill": "rgb(0, 0, 0)"},
+        parent_styles={**{k: "" for k in STYLE_KEYS}, "fill": "rgb(0, 0, 0)"},
+    )
+    assert "color" not in checkers_for(icon)
+
+
+def test_a_series_shape_with_no_colour_of_its_own_is_not_claimed():
+    """A shape inheriting its parent's stroke is not singled out by colour, so there is nothing
+    for 1.4.1 to be about."""
+    plain = element(
+        selector="#chart-branches polyline",
+        tag="polyline",
+        styles={**{k: "" for k in STYLE_KEYS}, "stroke": "rgb(0, 0, 0)"},
+        parent_styles={**{k: "" for k in STYLE_KEYS}, "stroke": "rgb(0, 0, 0)"},
+    )
+    assert "color" not in checkers_for(plain)
+
+
 def test_color_selects_a_table_row_tinted_to_carry_a_status():
     """The shape that went unreported on a real page for a whole audit.
 
@@ -257,14 +378,32 @@ def test_color_leaves_the_cells_inside_a_tinted_row_to_the_row_itself():
 
 @pytest.mark.parametrize("second_cue", [
     {"styles": {"text-decoration-line": "underline"}},
-    {"styles": {"border-style": "solid"}},
     {"html": "<span><svg aria-hidden='true'/>Overdue</span>"},
     {"text": "Overdue *"},
 ])
 def test_color_skips_anything_that_already_carries_a_second_visual_cue(second_cue):
-    """1.4.1 is breached only when colour is the ONLY visual means. An underline, a border, an
-    icon or a marker character is that second means, and the criterion is met."""
+    """1.4.1 is breached only when colour is the ONLY visual means. An underline, an icon or a
+    marker character is that second means, and the criterion is met."""
     assert "color" not in checkers_for(_coloured(**second_cue))
+
+
+def test_color_does_not_treat_a_border_as_a_second_cue():
+    """**A border used to be on that list and had to come off** (RESEARCH_CORRECTIONS R19).
+
+    The reasoning was that a border is visual and is not colour, which is true in general and
+    wrong in the case that matters most. A field marked invalid by turning its border red
+    **already had a border** — every field on the page has one — and only its colour changed.
+    Treating the border as a second cue meant the rule read the presence of the thing being
+    coloured as proof that colour was not the only cue, and declined to look. That is the
+    commonest way on the web to mark a field invalid, and nothing else covers it: 1.4.1 has one
+    scanner rule and it is about links in prose.
+
+    Nothing narrower was available, and that was measured rather than assumed. Comparing the
+    border's colour against the parent's saves four candidates out of three hundred, because a
+    parent almost never has a border to compare against.
+    """
+    invalid_field = _coloured(styles={"border-style": "solid"})
+    assert "color" in checkers_for(invalid_field)
 
 
 @pytest.mark.parametrize("el", [
@@ -283,6 +422,78 @@ def test_a_missing_screenshot_does_not_remove_an_element_from_the_colour_check()
 
 
 # ── label: WCAG 2.5.3 ────────────────────────────────────────────────
+def test_semantics_selects_an_in_page_link_because_it_does_not_navigate():
+    """**The tab strip case** (golden/README gap 2). The rule skips an `<a>` that has an href,
+    on the reasoning that a real link with real semantics needs no judgment. That holds for a
+    link that goes somewhere. An in-page link does not navigate — it may be a tab, a disclosure
+    or a toggle wearing an anchor — and the case this was found on is three of them styled as a
+    tab strip, announced as links, with nothing saying which one is showing.
+
+    Measured before it was widened: the whole fixture holds four in-page links against 228
+    ordinary ones, so this asks about 1.7% of the anchors and leaves real navigation alone.
+    """
+    tab = element(tag="a", text="Loans", attrs={"href": "#panel-loans"}, interactive=True,
+                  html='<a href="#panel-loans">Loans</a>')
+    assert "semantics" in checkers_for(tab)
+
+
+def test_semantics_still_skips_a_link_that_actually_goes_somewhere():
+    ordinary = element(tag="a", text="Borrowing guide", attrs={"href": "/help/borrowing-guide"},
+                       interactive=True, html='<a href="/help/borrowing-guide">Borrowing guide</a>')
+    assert "semantics" not in checkers_for(ordinary)
+
+
+def test_semantics_selects_the_container_holding_a_row_of_in_page_links():
+    """One tab cannot tell you whether it is part of a tab list, and the relationship between
+    the strip and the panels below it lives on the container or nowhere. So the strip is asked
+    about as well as the tabs in it."""
+    strip = element(
+        tag="div", text="Loans Members Stock",
+        html=('<div class="tabstrip" id="report-tabs">'
+              '<a class="is-current" href="#panel-loans">Loans</a>'
+              '<a href="#panel-members">Members</a>'
+              '<a href="#panel-stock">Stock</a></div>'),
+    )
+    assert "semantics" in checkers_for(strip)
+
+
+def test_semantics_leaves_prose_that_happens_to_contain_an_anchor_alone():
+    """Two of anything is a pair. A paragraph with a couple of in-page references is prose, and
+    claiming it would spend a judgment on every footnote in the application."""
+    prose = element(
+        tag="div", text="See the notes and the summary.",
+        html=('<div class="panel"><p>See the <a href="#notes">notes</a> and the '
+              '<a href="#summary">summary</a>.</p></div>'),
+    )
+    assert "semantics" not in checkers_for(prose)
+
+
+def test_a_dropdown_is_out_of_scope_because_its_options_are_not_its_label():
+    """A `<select>`'s inner text is every option it holds, and a closed one displays none of
+    them. Read as the visible label, this compared the announced name against the option list,
+    found no match, and reported a possible mismatch — on all 13 dropdowns in the 31 August
+    Meridian audit, every one of which then reached the AI and came back "cannot determine".
+
+    There was never anything to compare: a dropdown is named by its `<label for=…>`, so its
+    visible label IS its accessible name. Out of scope, and out of scope is not a pass — the
+    same distinction `test_out_of_scope_is_not_the_same_as_satisfied` turns on.
+    """
+    dropdown = element(
+        tag="select", accessible_name="Home branch",
+        text="Fenner Road\nAshcombe\nNorth Quay",
+        html="<select id='settings-branch'><option>Fenner Road</option></select>",
+    )
+    assert "label" not in checkers_for(dropdown)
+    assert settled(dropdown) == {}
+
+
+def test_a_textarea_is_out_of_scope_for_the_same_reason():
+    """Its inner text is what somebody typed into it, which is content and not a label."""
+    box = element(tag="textarea", accessible_name="Notes for staff",
+                  text="Left at the Fenner Road desk")
+    assert "label" not in checkers_for(box)
+
+
 def test_label_selects_a_control_whose_name_does_not_contain_its_visible_text():
     mismatch = element(tag="button", text="Buy now", accessible_name="Purchase",
                        html="<button aria-label='Purchase'>Buy now</button>")
@@ -294,6 +505,110 @@ def test_label_skips_a_control_whose_name_already_contains_the_visible_text():
     the visible label satisfies it as a matter of fact, so there is nothing left to judge."""
     fine = element(tag="button", text="Buy now",
                    accessible_name="Buy now — opens in a new window")
+    assert "label" not in checkers_for(fine)
+
+
+# ── a criterion ANSWERED by the rules is a decision, not a silence ───────────
+#
+# The skip above used to be the end of the story: the checker was left out of the batch and
+# nothing anywhere recorded that a question had been settled. So a control the platform had
+# correctly cleared was indistinguishable from one nothing had ever looked at — and on the
+# 31 August audit that covered 22 of the 42 labelled 2.5.3 controls. Every one of them right;
+# every one of them reported by the accuracy harness as "never looked at" and counted wrong,
+# with `label` unable to reach its sample floor no matter how much data was added, because the
+# dataset pairs every AI-judged failure with a rule-settled pass and always will.
+
+
+def test_a_criterion_met_as_a_matter_of_fact_is_reported_as_answered():
+    fine = element(tag="button", text="Buy now",
+                   accessible_name="Buy now — opens in a new window")
+    assert settled(fine) == {"label": "pass"}
+
+
+def test_out_of_scope_is_not_the_same_as_satisfied():
+    """The distinction the whole change turns on, and the one a single boolean could not carry.
+
+    2.5.3 applies to "components with labels that include text". A control with no visible text
+    is outside the criterion — nothing was decided about it, and claiming a pass would be
+    inventing a result. A control with no accessible name at all is 4.1.2's problem. Neither is
+    an answer, and neither may be reported as one.
+    """
+    no_visible_text = element(tag="button", text="", accessible_name="Submit")
+    assert settled(no_visible_text) == {}
+    assert "label" not in checkers_for(no_visible_text)
+
+    no_name = element(tag="button", text="Submit", accessible_name="")
+    assert settled(no_name) == {}
+    assert "label" not in checkers_for(no_name)
+
+
+def test_a_real_mismatch_is_never_settled_it_is_dispatched():
+    """The failure case must reach the AI. A rule that quietly passed this would be worse than
+    no rule at all — it would clear the exact thing the check exists to find."""
+    mismatch = element(tag="button", text="Buy now", accessible_name="Purchase")
+    assert settled(mismatch) == {}
+    assert "label" in checkers_for(mismatch)
+
+
+@pytest.mark.parametrize("el", [
+    element(tag="button", text="Buy now", accessible_name="Purchase"),          # dispatched
+    element(tag="button", text="Buy now", accessible_name="Buy now, please"),   # settled
+    element(tag="button", text="", accessible_name="Submit"),                   # out of scope
+    element(tag="div", text="Buy now", accessible_name="Purchase"),             # not a control
+])
+def test_a_checker_never_both_asks_and_answers(el):
+    """**The invariant that keeps the two halves from paying twice.**
+
+    An element the rules have already answered must not also be dispatched: we would spend the
+    engine budget being told what we already know, and then hold two answers to one question
+    with no rule for which wins. Asserted across every checker rather than only `label`, so the
+    next rule that learns to settle something inherits the guarantee instead of re-deriving it.
+    """
+    answered = settled(el)
+    asked = checkers_for(el)
+    assert not (set(answered) & set(asked)), (
+        f"{sorted(set(answered) & set(asked))} both dispatched and settled"
+    )
+
+
+def test_every_settled_verdict_is_one_the_platform_recognises():
+    """A rule may only return a verdict the rest of the platform can store and read. A typo here
+    would travel silently into a conformance report."""
+    from integrations.types import A11Y_VERDICTS
+
+    fine = element(tag="button", text="Buy now", accessible_name="Buy now — new window")
+    assert set(settled(fine).values()) <= A11Y_VERDICTS
+
+
+def test_label_compares_whole_words_and_not_letters():
+    """**The bug this replaced was silent and it lost real failures** (RESEARCH_CORRECTIONS
+    R20b). The rule asked whether the visible label appeared inside the accessible name as a run
+    of characters. The letters of *search* sit inside *research*, so a button reading "Search"
+    announced as "Research tools" was read as already satisfying the criterion and never
+    reached anybody.
+
+    It is not satisfied. A speech-input user looks at the button, says "Search", and nothing
+    happens, because the name the software matches against contains no such word. Both the
+    criterion's ACT rule and axe compare whole words; so does this now.
+    """
+    hidden_failure = element(tag="button", text="Search", accessible_name="Research tools",
+                             html="<button aria-label='Research tools'>Search</button>")
+    assert "label" in checkers_for(hidden_failure)
+
+
+def test_label_treats_punctuation_as_a_separator_rather_than_as_a_character():
+    """A trailing ellipsis is the standard way to say a control opens a dialog, and it is not
+    part of the label. Both implementations of this comparison ignore punctuation, so a name
+    that is the visible words without the mark satisfies the criterion and needs no judgment."""
+    settled = element(tag="button", text="Update details…", accessible_name="Update details")
+    assert "label" not in checkers_for(settled)
+
+
+def test_label_keeps_letters_that_are_not_english():
+    """`str.isalnum()` rather than a naive a-z filter. Stripping accented and non-Latin letters
+    would empty the label of any application not written in English, and every control on the
+    page would then look like a mismatch."""
+    fine = element(tag="button", text="Caf\u00e9", accessible_name="Caf\u00e9 list")
     assert "label" not in checkers_for(fine)
 
 
@@ -599,6 +914,10 @@ def test_selection_is_stable_and_in_page_then_checker_order():
     # The image is queued twice, and that is the design rather than a duplicate: `alt` asks
     # whether it SAYS what it means (1.1.1), `graphics` asks whether it can be SEEN (1.4.11).
     # An icon passes one and fails the other routinely.
+    #
+    # The order is not incidental either: within one element it follows `CHECKERS` order, so a
+    # second run over the same page produces the same batch and the result stays comparable
+    # against the golden set.
     assert once == [
         ("alt", "img.a"), ("graphics", "img.a"),
         ("semantics", "div.b"), ("color", "div.b"),

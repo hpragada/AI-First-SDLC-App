@@ -634,7 +634,13 @@ def test_finishing_produces_findings_for_the_registered_routes(world):
         "help": "Images must have alternate text", "nodes": ["img.hero"]}]))
 
     finish_baseline_audit(tenant_id=world["t"], audit_id=str(audit.id))
-    findings = list(A11yFinding.objects.filter(tenant_id=world["t"]))
+    # **Rule-scanner findings only, which is what this test is about.** With no judge to ask,
+    # every element an AI check claims is filed as `uncertain` for a person — real behaviour
+    # (QA-13), and it means the AI half of this list grows whenever a checker is added. It grew
+    # on 27 Aug when `graphics` arrived and started claiming the default screen's element for
+    # 1.4.11, and this assertion had been listing every finding regardless of source, so a
+    # correct new checker read as a broken audit.
+    findings = list(A11yFinding.objects.filter(tenant_id=world["t"], source="rule"))
     assert [f.criterion for f in findings] == ["1.1.1"]
     assert findings[0].route == "/login"
 
@@ -730,6 +736,103 @@ def test_an_audit_completes_when_its_judgment_run_ends(world):
     assert out["published"] is True and out["audit_completed"] is True
     audit.refresh_from_db()
     assert audit.status == A11yBaselineAudit.Status.COMPLETE
+
+
+def _judging_world(world):
+    """A tenant that can really dispatch a judge: agent registered, machine connected, and a
+    user to own both — `_resolve_enrollment` returns nothing without one."""
+    from apps.registry.models import AgentSpec
+    from apps.runs.enrollment import enroll_runner
+    from apps.tenancy.models import User
+
+    user = User.objects.create_user(email="qa@acme.com", name="QA", tenant=world["tenant"],
+                                    password="pw")
+    AgentSpec.objects.create(
+        tenant=world["tenant"], key="09c_a11y_judge", semver="1.0.0",
+        prompt_version="a11y-judge-1", body_ref="agents/09c_a11y_judge/agent.md",
+        recommended_engine="claude", recommended_model="claude-opus-5",
+        phase_label="a11y_judge")
+    enroll_runner(tenant_id=world["t"], project_id=world["p"],
+                  developer_id=str(user.id), label="qa-laptop")
+    return user
+
+
+def _guarded_trigger(world):
+    """`trigger_phase` with Temporal taken out and NOTHING ELSE.
+
+    The platform's own `_guard_no_active_run` is called for real, so the refusal this test is
+    about is the refusal the platform actually raises — not a stand-in exception chosen to
+    match. Only the workflow start is skipped, which is `trigger_phase`'s own tested business.
+    """
+    from apps.registry.models import AgentSpec
+    from apps.runs.models import Run
+    from apps.tenancy.context import tenant_context
+    from orchestration.trigger import _guard_no_active_run
+
+    def trigger(*, tenant_id, project_id, work_item_id, agent_key, **kwargs):
+        with tenant_context(tenant_id):
+            _guard_no_active_run(tenant_id, work_item_id)
+            spec = AgentSpec.objects.get(tenant_id=tenant_id, key=agent_key)
+            run = Run.objects.create(
+                tenant_id=tenant_id, work_item_id=work_item_id, agent_spec=spec,
+                status=Run.Status.RUNNING, engine=spec.recommended_engine,
+                model=spec.recommended_model, prompt_version=spec.prompt_version)
+
+        class _Outcome:
+            run_id = str(run.id)
+            workflow_id = f"agent-run-{run.id}"
+
+        return _Outcome()
+
+    return trigger
+
+
+def test_closing_one_audit_twice_leaves_the_judging_pass_untouched(world):
+    """The 31 August audit, end to end.
+
+    Closing a 94-route audit is minutes of work — reconcile the routes, hash 2,171 elements,
+    check each against the cache, file the rest, start the run. The companion's platform client
+    gave up after 60 seconds, its daemon read that timeout as the audit having failed, and its
+    recovery path closed the SAME audit again while the first close was still going.
+
+    The second close was refused a judge (one was already running), and then: wrote off all
+    1,065 captured elements as unjudgeable while 800 of them were being judged, replaced the
+    first close's record of the pass with its own empty one, and marked the audit complete with
+    the judge still working. Every wrong number the team saw afterwards came from that record.
+
+    A repeat now returns what the first call left and changes nothing.
+    """
+    user = _judging_world(world)
+    _register(world, "/login")
+    audit = start_baseline_audit(tenant_id=world["t"], project_id=world["p"],
+                                 base_url="http://localhost:5173", started_by=user.id)
+    _post(world, audit, _screen())
+    trigger = _guarded_trigger(world)
+
+    first = finish_baseline_audit(tenant_id=world["t"], audit_id=str(audit.id), trigger=trigger)
+    assert first["ai_pass"]["started"] is True, "the first close really did dispatch a judge"
+    judge_run_id = first["ai_pass"]["judge_run_id"]
+    assert judge_run_id
+
+    audit.refresh_from_db()
+    before = dict(audit.summary)
+    assert audit.status == A11yBaselineAudit.Status.JUDGING
+
+    second = finish_baseline_audit(tenant_id=world["t"], audit_id=str(audit.id), trigger=trigger)
+
+    assert second["repeat"] is True
+    assert "already in progress" in second["reason"]
+    audit.refresh_from_db()
+    assert audit.summary == before, "the record of the pass that IS running must not be replaced"
+    assert audit.status == A11yBaselineAudit.Status.JUDGING, "the audit is not complete yet"
+    assert audit.summary["ai_pass"]["judge_run_id"] == judge_run_id
+    assert audit.summary["ai_pass"]["filed_unjudged"] == 0, "nothing may be written off"
+
+    # And no second run was started for the judging work item either — the guard is what
+    # refused, and this proves the refusal was obeyed rather than worked around.
+    from apps.runs.models import Run
+
+    assert Run.objects.filter(tenant_id=world["t"], agent_spec__key="09c_a11y_judge").count() == 1
 
 
 def test_a_build_runs_judgment_does_not_look_like_an_audit(world):
@@ -2761,6 +2864,157 @@ def test_a_pending_audit_nobody_has_claimed_is_not_stalled(world):
     assert audit.status == "pending"
     assert stalled_audit_ids(
         world["t"], [audit], stale_before=timezone.now() - timedelta(minutes=15)) == set()
+
+
+# ── a JUDGING pass whose machine went away (9.26.E1) ────────────────────────
+#
+# The capture half of this has been covered since 21 August. The judging half was left out on the
+# reasoning that a judging pass is "closed from the other end" — true only when the RUN fails.
+# When the MACHINE dies the run does not fail: the workflow waits two hours for a report that is
+# never coming. On 31 August that left an audit reading "Checking the rest… in progress" for 25
+# minutes beside a header badge that said `Companion: Offline`.
+
+
+def _judging_audit(world, *, claimed_ago, verdict_ago=None, run_status="running"):
+    """An audit in `judging`, its judge run claimed `claimed_ago` ago, optionally with its newest
+    verdict written `verdict_ago` ago."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.models import A11yJudgmentCache
+    from apps.registry.models import AgentSpec
+    from apps.runs.models import Run
+    from apps.workitems.models import WorkItem
+
+    now = timezone.now()
+    spec = AgentSpec.objects.create(
+        tenant=world["tenant"], key="09c_a11y_judge", semver="1.0.0",
+        prompt_version="a11y-judge-1", body_ref="agents/09c_a11y_judge/agent.md",
+        recommended_engine="claude", recommended_model="claude-opus-5",
+        phase_label="a11y_judge")
+    item = WorkItem.objects.create(tenant=world["tenant"], project=world["project"],
+                                   title="judging", type="chore")
+    run = Run.objects.create(
+        tenant=world["tenant"], work_item=item, agent_spec=spec, status=run_status,
+        inputs={"dispatch": {"kind": "plan", "status": "claimed",
+                             "claimed_at": (now - claimed_ago).isoformat()}})
+    Run.objects.filter(id=run.id).update(started_at=now - claimed_ago - timedelta(minutes=1))
+
+    audit = _audit(world, "/")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(
+        status="judging", summary={"ai_pass": {"judge_run_id": str(run.id)}})
+    audit.refresh_from_db()
+
+    if verdict_ago is not None:
+        row = A11yJudgmentCache.objects.create(
+            tenant=world["tenant"], project=world["project"], checker="alt",
+            content_hash="a" * 64, criteria=["1.1.1"], verdict="pass", confidence=0.9,
+            run=run, engine="claude")
+        # `updated_at` is auto_now, so it can only be set past the ORM.
+        A11yJudgmentCache.objects.filter(id=row.id).update(updated_at=now - verdict_ago)
+    return audit, run
+
+
+def test_a_judging_audit_whose_machine_went_quiet_is_stalled_and_says_when(world):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audits
+
+    quiet_for = timedelta(hours=1)
+    audit, _ = _judging_audit(world, claimed_ago=quiet_for, verdict_ago=quiet_for)
+
+    out = stalled_audits(world["t"], [audit],
+                         stale_before=timezone.now() - timedelta(minutes=15))
+    assert set(out) == {str(audit.id)}, "a judging pass gets the same honesty as a capture"
+    # …and WHEN, because a count with no time beside it reads the same after one second and
+    # after twenty-five minutes. That is the half of E1 that made the screen dangerous.
+    assert (timezone.now() - out[str(audit.id)]) >= quiet_for
+
+
+def test_a_judge_still_writing_verdicts_is_not_stalled_however_old_its_claim_is(world):
+    """**The false alarm this must not raise.** `_renew_claims_for` deliberately STOPS renewing a
+    claim once it has been held for MAX_CLAIM_AGE, so a long healthy judging pass has a frozen
+    claim by design — on 31 August the first pass's claim froze at 10:38 and the judge went on
+    answering until 11:55. Keyed on the claim alone this would have called a working audit dead
+    for well over an hour, which is the same false alarm that nearly had a healthy audit killed."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audits
+
+    audit, _ = _judging_audit(world, claimed_ago=timedelta(hours=2),
+                              verdict_ago=timedelta(seconds=5))
+
+    assert stalled_audits(world["t"], [audit],
+                          stale_before=timezone.now() - timedelta(minutes=15)) == {}
+
+
+def test_a_judging_audit_whose_run_already_failed_is_not_reported_as_gone_quiet(world):
+    """It is being closed through the ordinary path — `close_unfinished_ai_pass` files what was
+    never answered and publishes. Calling that "the machine went away" would put a second, wrong
+    explanation on a screen that is about to show the right one."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.a11y.baseline import stalled_audits
+
+    audit, _ = _judging_audit(world, claimed_ago=timedelta(hours=1),
+                              verdict_ago=timedelta(hours=1), run_status="failed")
+
+    assert stalled_audits(world["t"], [audit],
+                          stale_before=timezone.now() - timedelta(minutes=15)) == {}
+
+
+def test_a_judging_pass_past_its_deadline_is_reported_as_needing_a_person(world):
+    """**The difference between "wait" and "act", which the screen was getting wrong.**
+
+    A quiet judging pass recovers by itself for exactly as long as the report deadline has not
+    fired: the claim lease offers the stale claim back and the pass carries on. Parking sets the
+    run STALLED, and the re-claim rule requires PENDING or RUNNING — so from that instant it can
+    never be re-claimed, permanently. Reconnecting the machine does nothing.
+
+    The screen was still saying "start the machine again and it carries on from where it
+    stopped", which was true when it was written and false the moment the deadline fired. A
+    wrong instruction is worse than none: it sends a person to restart something that will sit
+    there doing nothing, and offers no other route. This is what tells the two apart.
+    """
+    from datetime import timedelta
+
+    from apps.a11y.baseline import parked_judge_runs
+
+    audit, run = _judging_audit(world, claimed_ago=timedelta(hours=3), run_status="stalled")
+
+    assert parked_judge_runs(world["t"], [audit]) == {str(audit.id): str(run.id)}
+
+
+def test_a_judging_pass_that_can_still_recover_by_itself_offers_no_button(world):
+    """The other side, and the one that keeps the button honest. Offering "finish this audit" on
+    a pass that a returning companion would resume is asking somebody to end work that is about
+    to continue on its own."""
+    from datetime import timedelta
+
+    from apps.a11y.baseline import parked_judge_runs
+
+    audit, _ = _judging_audit(world, claimed_ago=timedelta(hours=3), run_status="running")
+
+    assert parked_judge_runs(world["t"], [audit]) == {}
+
+
+def test_a_finished_audit_is_never_offered_a_recovery(world):
+    """A capture that failed, or an audit already complete, has no judging pass to finish. Its
+    route back is "check the rest", which is a different button meaning a different thing."""
+    from apps.a11y.baseline import parked_judge_runs
+
+    audit = _audit(world, "/")
+    A11yBaselineAudit.objects.filter(id=audit.id).update(status="complete")
+    audit.refresh_from_db()
+
+    assert parked_judge_runs(world["t"], [audit]) == {}
 
 
 def test_the_sweep_closes_the_dead_one_and_leaves_the_live_one_alone(world):

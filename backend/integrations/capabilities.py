@@ -228,6 +228,31 @@ class A11yAI(Protocol):
         voice-control user would say?"""
         ...
 
+    def check_graphics(self, *, candidate: A11yCandidate, project_id=None) -> A11yJudgment:
+        """WCAG 1.4.11 — can a person actually make out the parts of this icon, chart or
+        diagram that carry the meaning?
+
+        **The half of Non-text Contrast that arithmetic cannot reach.** Whether a control's
+        edge clears 3:1 is a measurement and `apps.a11y.page_rules` makes it. Which parts of a
+        picture *matter* has to be known before any ratio means anything, and nothing
+        deterministic knows that — so the two halves ship together, and neither is the
+        criterion alone (correction R14, QA-25).
+
+        **Its scope is wider than `check_alt`'s on purpose.** That one asks what assistive
+        technology is TOLD, so it skips a graphic that is never announced. This asks what a
+        person can SEE, so a bare `<svg>` with no name, and an icon painted as a CSS background
+        image, are both in scope here and in neither of them there. The same element is
+        routinely judged by both, and an accurate alt text on an invisible icon passes one and
+        fails the other.
+
+        **This method was missing from 27 August to 1 September** while the checker itself ran
+        normally, because an audit reads its checker list from the rules rather than from here.
+        `test_a11yai_capability` said so every day. What could not be done in that window was
+        asking the capability about one element — which is how anything outside an audit run
+        reaches this criterion.
+        """
+        ...
+
     def check_journey(self, *, journey: A11yJourney, project_id=None) -> list[A11yJudgment]:
         """WCAG 2.1.1 / 2.1.2 / 2.4.3 / 2.4.7 / 2.4.11 / 3.2.1 / 3.2.2 / 4.1.3 — the eight
         questions that can only be answered by **operating** the application (QA-20).

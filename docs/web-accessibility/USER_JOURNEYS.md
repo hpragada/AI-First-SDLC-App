@@ -404,7 +404,10 @@ change either list has to restate them rather than leave a stale figure in a pro
 - **`GAP_FIX_BUILD_PLAN.md`** — the **eleven** fixes that made those tasks *reachable*: a screen
   to register pages and run an audit, a caller for the keyboard journey, a truthful greenfield
   capture, and the plumbing kept off the user's board. All eleven built, 19–20 August. **Plus §9,
-  which nobody planned for:** thirty-five more findings across twenty-four sections, all built.
+  which nobody planned for:** thirty-five more findings across twenty-four sections (§9.1–§9.23),
+  all built — and §9 has kept growing: **§9.24–§9.28** are the 25 and 31 August and 1 September
+  findings, also all built, and **§9.29** is the 1 September re-reading of every fix made since
+  12 August, which built nothing and is a review.
   Seventeen were produced by a person watching the product work on 20–21 August rather
   than by reading code; ten more came on 24 August from the opposite direction, when the team
   asked whether we capture every element WCAG puts in scope. §9 is now the larger half of that

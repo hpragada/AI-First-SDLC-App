@@ -27,11 +27,40 @@ import axe from "axe-core";
  *  two lists are identical. */
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"];
 
+/** A rule carrying this tag MATCHES a tag filter and is still not run by one. axe holds
+ *  experimental rules out of a `runOnly: {type: "tag"}` selection and says nothing about it, so
+ *  the report comes back complete-looking and quietly narrower than asked for.
+ *
+ *  **Measured, not reasoned** (axe-core 4.13.0, 28 Aug, `/account/card-services`, which carries
+ *  seven `label-content-name-mismatch` violations):
+ *
+ *    six tags, no rules block          rule did NOT run   0 violations
+ *    same tags + an explicit opt-in    rule RAN           7 violations
+ *
+ *  Counting them as covered without opting in is how this file first reported 24 criteria when
+ *  the scan decided 22 — and it hid a rule-owned criterion, 1.3.4 Orientation, that nothing was
+ *  checking. `target-size` looks like the same case and is not: it ships `enabled: false`, which
+ *  governs only what axe does when given no instructions, so a tag selection runs it anyway. */
+const NOT_RUN_BY_A_TAG_SELECTION = "experimental";
+
+/** The experimental rules `a11y_audit.mjs` names in its `rules` block, which is what makes them
+ *  run. Mirrored here rather than imported, for the same reason TAGS is — and a test asserts the
+ *  two lists are identical, because an inventory listing a rule the scan does not run credits
+ *  the platform with a check that never fires. */
+const OPTED_IN = [
+  "css-orientation-lock",
+  "label-content-name-mismatch",
+  "p-as-heading",
+  "table-fake-caption",
+  "td-has-header",
+];
+
 const byCriterion = {};
 const selected = [];
 for (const rule of axe.getRules()) {
   const tags = rule.tags || [];
   if (!tags.some((t) => TAGS.includes(t))) continue;
+  if (tags.includes(NOT_RUN_BY_A_TAG_SELECTION) && !OPTED_IN.includes(rule.ruleId)) continue;
   selected.push(rule.ruleId);
   for (const tag of tags) {
     const m = /^wcag(\d)(\d)(\d+)$/.exec(tag);
@@ -56,5 +85,6 @@ process.stdout.write(JSON.stringify({
   tags: TAGS,
   rules_total: axe.getRules().length,
   rules_selected: selected.length,
+  opted_in: OPTED_IN,
   criteria,
 }, null, 1));

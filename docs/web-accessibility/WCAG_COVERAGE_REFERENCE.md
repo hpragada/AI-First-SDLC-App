@@ -22,7 +22,13 @@
 
 ---
 
-## 2. REALITY — the five buckets, as of 2026‑08‑27
+## 2. REALITY — the five buckets, as of 2026‑08‑28
+
+> **Two of these buckets only became true on 28 August.** `1.3.4` and `2.5.3` were listed here as
+> scanner-covered, and axe does ship a rule for each — but neither rule was running. axe holds
+> `experimental` rules out of a tag-selected scan silently, and both of those rules are
+> experimental. The scan now names them explicitly, so the buckets below describe what happens
+> rather than what was meant to. See defect #10 in section 6.
 
 Five buckets. They add to 55.
 
@@ -31,6 +37,8 @@ Five buckets. They add to 55.
 `1.3.4` `1.3.5` `1.4.2` `1.4.3` `1.4.4` `1.4.12` `2.4.1` `2.4.2` `2.5.8` `3.1.1` `3.1.2` `3.3.2`
 
 Backed by axe‑core 4.13.0. **Six of these twelve are thinner than they look** — see section 5.
+
+`1.3.4` rests on a single rule, `css-orientation-lock`, which axe marks experimental and does not run unless it is named. Until 28 August it was not named, so this criterion was recorded as machine-checked with nothing checking it — the same shape as 1.4.10 and 1.4.11 in section 4.
 
 ### Bucket 2 — the platform's own rule decides it alone (1)
 
@@ -52,7 +60,7 @@ Backed by axe‑core 4.13.0. **Six of these twelve are thinner than they look** 
 | 1.1.1 Non-text Content | finds missing alt (7 rules) | judges whether the alt is *meaningful* |
 | 1.3.1 Info & Relationships | 12 rules on lists and tables | two checkers: fake headings, and real table structure |
 | 1.4.1 Use of Color | links in text blocks only | meaning carried by colour alone |
-| 2.5.3 Label in Name | one string-match rule | judges the match properly |
+| 2.5.3 Label in Name | one string-match rule, `label-content-name-mismatch` — experimental, and only running since 28 Aug | judges the match properly |
 | 4.1.2 Name, Role, Value | 29 rules on ARIA | catches a `div` pretending to be a button |
 | 2.1.1 Keyboard | 3 narrow rules | the keyboard agent walks the app |
 
@@ -181,6 +189,7 @@ A rule fires for each of these and can fail the page, so **none is a hole**. But
 | **7** | 1.4.4 and 1.4.12 rationales describe work axe does not do | **Recorded** as R15 + pinned |
 | **8** | OP‑02 told us to reuse an AI check that was never built (2.4.6) | **Fixed** in `TASK_BACKLOG_OTHER_PHASES.md`; recorded as **R16** |
 | **9** | Coverage rows written for 2.1.3, a Level AAA criterion no report reads | **Fixed** — `coverage.record` filters to the levels the audit is about |
+| **10** | Five axe rules matched our tag filter and never ran. Two criteria — **1.3.4 Orientation** and **2.5.3 Label in Name** — have no other rule, so both were reported as scanner-covered with nothing behind them. Found 2026‑08‑28 | **Fixed** — the scan now names all five; `scanner_inventory.mjs`, which had been counting them without checking they run, corrected; a parity test added so the two lists cannot drift again. Recorded as **R18** |
 
 ### Defect #6 in detail, because it was the worst one
 
@@ -275,6 +284,45 @@ Building group A takes coverage from **27 to 42 of 55**. With group B, **49 of 5
 | **2.3.1** Three Flashes | measure flash rate from video frames — real arithmetic, but needs a frame pipeline, and seizure risk is not a thing to be wrong about | **L** |
 
 All six need a **media pipeline** we do not have. Biggest lift on the board, for the six lowest-frequency criteria. **Recommendation: last, or never.**
+
+---
+
+## 8b. Accuracy evidence — which checkers have any, as of 2026‑08‑28
+
+Coverage and accuracy are different claims, and this document is mostly about the first. A
+criterion can be fully covered by a checker that is wrong most of the time, and nothing above
+would show it.
+
+The golden set (`evaluation/golden/`, v0.2.0, 173 records) is what turns coverage into accuracy.
+As of today it can produce a number for **five of the six AI checkers**:
+
+| Checker | Criteria | Records that can score | Measurable? |
+|---|---|---|---|
+| `alt` | 1.1.1 | 30 | yes |
+| `color` | 1.4.1 | 32 | yes |
+| `label` | 2.5.3 | 20 | **recall only** — see below |
+| `semantics` | 1.3.1, 4.1.2 | 31 | yes |
+| `structure` | 1.3.1 | 30 | yes |
+| **`graphics`** | **1.4.11** | **0** | **no — none, ever** |
+
+**`label` is short by ten and cannot be made otherwise.** The rule correctly skips any control
+whose accessible name already contains its visible label, so the only controls that reach the
+judge are ones where the words genuinely differ — and those are either real failures or
+genuinely arguable. A clearly-correct example is, by definition, one the check skips. **Recall
+for 2.5.3 is meaningful; precision is not**, because no correct examples remain that it could
+get wrong. Recorded in `evaluation/scorer/selectable.py`; see `RESEARCH_CORRECTIONS.md` R21.
+
+**`graphics` has no accuracy evidence of any kind and this is deliberate.** The checker and the
+answer key would have the same author, which measures self-consistency rather than correctness.
+The fixture already holds the material to label — the `#9a958c` field border, 2.98:1 on the
+content surface — and it is asserted in the harness so it stays there. The one constraint on
+closing this is that the records must be written by someone who did not write the checker. Full
+note: **"Not covered, and how to add it"** in `evaluation/golden/README.md`.
+
+**Three cautions before anyone quotes a number from that set.** It is unadjudicated — every
+record is a draft awaiting expert sign-off. It has had no blind re-label round. And 30 records
+with ~15 failures means one miss moves recall by 6–7 points. Internally useful; not a client
+figure.
 
 ---
 

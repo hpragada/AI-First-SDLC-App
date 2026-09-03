@@ -1047,8 +1047,24 @@ def test_built_coverage_is_what_the_documents_claim():
     # as rule-decided and checked by nothing at all, because axe-core ships no rule tagged
     # `wcag1411`. It is covered by this checker AND by `apps.a11y.page_rules` together - the
     # rule measures the controls, the judge looks at the pictures - and by neither alone.
+    #
+    # It was held back for part of 1 September, while the ownership registry was brought into
+    # line with correction R14. The widening had been agreed on 27 August and recorded only in
+    # prose; `ownership.json` still gave 1.4.11 to `rule`, and this map is what the AI owns.
+    # `ownership.ENGINEERING_OVERRIDES` is where that decision now lives, and the count is six.
+    #
+    # This is the document-facing count, so it is the number a client-facing claim is read
+    # against: the platform judges SIX things about a page, and 1.4.11 is both measured (by
+    # page_rules) and judged (by graphics). `test_a11y_owner_capability` holds the other end -
+    # that neither half may carry the criterion on its own.
     assert len(CHECKERS) == 6
     assert ai == {"1.1.1", "1.3.1", "1.4.1", "1.4.11", "2.5.3", "4.1.2"}
+
+    from integrations.types import A11Y_HELD_BACK_CRITERIA
+    assert A11Y_HELD_BACK_CRITERIA == {}, (
+        "a check is held back and this count has not been told which, so the number above is "
+        "a claim about coverage the platform is not making"
+    )
     assert journey == {"2.1.1", "2.1.2", "2.4.3", "2.4.7", "2.4.11", "3.2.1", "3.2.2", "4.1.3"}
 
 

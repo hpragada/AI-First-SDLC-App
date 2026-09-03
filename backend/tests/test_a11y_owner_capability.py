@@ -159,15 +159,48 @@ def test_non_text_contrast_is_covered_by_a_rule_AND_a_judge_and_needs_both():
     The registry's own rationale said so before either half was built — *"computable, but 'which
     graphics matter' needs some review"* — and then recorded the owner as `rule` anyway. That is
     how the judged half went unbuilt while the criterion was reported as covered.
+
+    **Correction R14 settled that on 27 August and the registry was not changed until
+    1 September**, and this test is one of the places that noticed. In between, the map of what
+    the AI owns and the routing registry disagreed, five guards said so daily, and the check was
+    briefly held back — at which point the criterion would have fallen back on the arithmetic
+    alone. Both failure modes have a guard here now.
     """
+    from apps.a11y.checkers import HELD_BACK_SELECTION_RULES
+    from apps.a11y.conformance import suggest
+    from integrations.types import A11Y_HELD_BACK_CLAIMS
+
     assert _BY_NUMBER["1.4.11"]["rationale"].count("review") >= 1, (
         "the registry's own words are the evidence this criterion is not rule-only; if they "
         "change, this test's reasoning has to be re-argued rather than quietly updated"
     )
+
+    # Both halves exist and both are running.
     deciders = sc.deciders_for("1.4.11")
     assert sc.ENGINE_PLATFORM in deciders, "the measurable half: control edges, in page_rules"
     assert sc.ENGINE_AI in deciders, "the judged half: which parts of a graphic carry meaning"
     assert deciders[sc.ENGINE_AI] == ("graphics",)
+    assert HELD_BACK_SELECTION_RULES == (), "the judged half is built and is not running"
+
+    # And the routing registry agrees the judge decides it, which is the step that was missing
+    # for five days while every layer above it already assumed so.
+    from apps.a11y.ownership import ENGINEERING_OVERRIDES
+
+    assert ENGINEERING_OVERRIDES["1.4.11"]["owner"] == "ai"
+    assert [c["engine"] for c in ENGINEERING_OVERRIDES["1.4.11"]["secondary_checks"]] == ["rule"]
+
+    # The other end: if the judged half is ever held back, the measured half must NOT pick the
+    # criterion up. Guarded while nothing is held, because the day something is held is exactly
+    # the day nobody re-derives this.
+    assert "1.4.11" not in A11Y_HELD_BACK_CLAIMS, "nothing is held today"
+    clean = {"routes": {"/a": "passed"}, "engines": {"rule"}}
+    assert suggest(clean, 0, owner="rule", held_back=True) is None, (
+        "a clean sweep of control edges just claimed a criterion whose judge is paused"
+    )
+    assert suggest({"routes": {"/a": "failed"}, "engines": {"rule"}}, 0, owner="rule",
+                   held_back=True) == "does_not_support", (
+        "a hold must never soften a proven failure — only the positive direction is unsafe"
+    )
 
 
 def test_reflow_is_rule_only_and_deliberately_has_no_judge():
@@ -187,6 +220,35 @@ def test_the_inventory_scans_with_exactly_the_tags_the_companion_scans_with():
     assert block, "could not find the scan's tag list in a11y_audit.mjs"
     assert [t.strip().strip('"') for t in block.group(1).split(",") if t.strip()] == \
         sc.inventory()["tags"]
+
+
+def test_the_inventory_opts_in_to_exactly_the_rules_the_companion_opts_in_to():
+    """The second half of the same guarantee, and the half that was missing.
+
+    A tag filter is not the only way an inventory can claim a rule the scan never runs. axe holds
+    `experimental` rules out of a tag selection **silently** — they match the tags, they are
+    enabled, and they do not run. This file counted them, so it reported 24 criteria against a
+    scan that decided 22, and 1.3.4 Orientation sat recorded as machine-checked with nothing
+    checking it. The same shape as 1.4.10 and 1.4.11, found the same way, and missed by the guard
+    above because that guard trusts this data.
+
+    The companion now names them in a `rules` block. The two lists have to stay identical: name a
+    rule here that the scan does not run and the platform is credited with a check that never
+    fires; run one there and omit it here and the inventory understates what we do.
+    """
+    audit = (_REPO / "runner/companion/assets/a11y_audit.mjs").read_text(encoding="utf-8")
+    block = re.search(r"rules:\s*\{(.*?)\n\s*\},", audit, re.S)
+    assert block, "could not find the scan's opt-in rules block in a11y_audit.mjs"
+    in_audit = sorted(re.findall(r'"([^"]+)":\s*\{\s*enabled:\s*true', block.group(1)))
+    in_inventory = sorted(sc.inventory().get("opted_in", []))
+    assert in_audit == in_inventory, (
+        f"the scan opts in to {in_audit} and the inventory records {in_inventory}. "
+        f"Regenerate it with `{sc.REBUILD_COMMAND}`."
+    )
+    assert in_audit, (
+        "the opt-in block is empty. 1.3.4 Orientation and 2.5.3 Label in Name have no other rule, "
+        "so an empty block means neither is machine-checked."
+    )
 
 
 def test_the_inventory_names_the_scanner_and_version_it_was_taken_from():

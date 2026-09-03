@@ -32,6 +32,8 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
+from runner.companion.state_client import SLOW_TIMEOUT_S
+
 #: The audit script, shipped with the companion rather than generated per audit. See the file's
 #: own header: driving a browser over a list of URLs is the same for every project, and a
 #: program synthesised per run is a program nobody reviews.
@@ -231,7 +233,8 @@ def run_baseline_audit(*, client, project_id: str, workdir, base_url: str = "",
         # not respond", which would send someone to check a server that was never contacted.
         reason = (ready.get("browser") or {}).get("error") or "this folder cannot run an audit"
         print(f"[companion] {reason}", file=sys.stderr)
-        finished = client.call("finish_a11y_audit", audit_id=audit_id, reason=reason)
+        finished = client.call("finish_a11y_audit", _timeout=SLOW_TIMEOUT_S,
+                               audit_id=audit_id, reason=reason)
         return {"audit_id": audit_id, "routes": asked, "passes": [], "captured": 0,
                 "posted": 0, "post_failures": [], "script_returncode": 3,
                 "preflight": ready, "finished": finished}
@@ -259,7 +262,9 @@ def run_baseline_audit(*, client, project_id: str, workdir, base_url: str = "",
             "posted": post["posted"], "script_returncode": ran["returncode"],
         })
 
-    finished = client.call("finish_a11y_audit", audit_id=audit_id)
+    # The one call in this module whose work is measured in minutes: it reconciles the route
+    # list, hashes every captured element and starts the judging run. See `SLOW_TIMEOUT_S`.
+    finished = client.call("finish_a11y_audit", _timeout=SLOW_TIMEOUT_S, audit_id=audit_id)
     return {
         "audit_id": audit_id,
         "routes": asked,

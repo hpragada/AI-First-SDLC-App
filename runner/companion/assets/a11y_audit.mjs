@@ -106,7 +106,16 @@ const STYLE_KEYS = [
   "font-size",
   "font-weight",
   "border-style",
+  // ...and the colour it is painted in. `border-style` says a border exists and never what it
+  // looks like, so an element coloured only by its border carried no colour at all downstream.
+  "border-color",
+  "outline-color",
   "background-image",
+  // How a chart series is drawn. A <polyline> has no background-color and no text, so without
+  // these two the one element on a line-chart page that fails 1.4.1 carries no colour at all as
+  // far as the rules can see. The rules read them only for the shapes that draw a series.
+  "stroke",
+  "fill",
 ];
 
 /** The viewport 1.4.10 Reflow is written against: 320 CSS pixels wide, 256 tall.
@@ -217,6 +226,29 @@ async function scanPage(page, axe) {
           type: "tag",
           values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"],
         },
+        // Five rules match those tags and are still not run by them. axe holds `experimental`
+        // rules out of a tag selection and says nothing about it, so the report comes back
+        // looking complete and is quietly narrower than asked for. Two criteria have no other
+        // rule at all, so without this block they are not machine-checked despite being
+        // recorded as machine-checked: 1.3.4 Orientation and 2.5.3 Label in Name.
+        //
+        // Measured on axe-core 4.13.0 against a page carrying seven violations of one of them:
+        // tags alone ran 63 rules and reported none of the seven; the same tags plus this block
+        // reported all seven.
+        //
+        // Naming them is the narrow way in. Adding "experimental" to the tag list above would
+        // pull in every experimental rule axe ships, including ones outside WCAG A/AA.
+        //
+        // `scanner_inventory.mjs` mirrors this list, and a test asserts the two are identical —
+        // an inventory listing rules the scan does not run would credit the platform with
+        // checks that never fire, which is the exact bug this block fixes.
+        rules: {
+          "css-orientation-lock": { enabled: true },        // 1.3.4 — its only rule
+          "label-content-name-mismatch": { enabled: true }, // 2.5.3 — its only rule
+          "p-as-heading": { enabled: true },                // 1.3.1
+          "table-fake-caption": { enabled: true },          // 1.3.1
+          "td-has-header": { enabled: true },               // 1.3.1
+        },
       });
     });
     const withNodes = (list) =>
@@ -239,37 +271,80 @@ async function scanPage(page, axe) {
   }
 }
 
-/** Everything on the page the four checks could apply to, with the facts they read.
+/** Everything on the page the checks could apply to.
  *
  *  Over-offering is safe — the platform runs the selection rules and discards the rest — so
  *  this errs toward including an element rather than deciding here that nothing will want it.
- *  Deciding what gets checked is the platform's, in one reviewable place. */
+ *  Deciding what gets checked is the platform's, in one reviewable place.
+ *
+ *  **Exported, and there is one reason for that.** The evaluation harness has its own check that
+ *  every hand-written answer-key record can actually reach a checker, and it was reading the page
+ *  with `document.querySelector` on each recorded selector — which finds any element on the page,
+ *  offered or not. So the one thing that check could never detect was an element this list does
+ *  not offer, which is precisely the gap it exists to find: three records went unmeasured for a
+ *  whole audit while the check reported them fine. `verify-selectable.js` imports this array now,
+ *  so the harness can only ever see what an audit would see. */
+export const OFFER = [
+  "img", "svg", "area", "input", "button", "a", "select", "textarea",
+  "[role]", "[tabindex]", "[onclick]", "[onkeydown]", "[onkeyup]",
+  "h1", "h2", "h3", "h4", "h5", "h6", "label", "summary", "details",
+  "p", "li", "td", "th", "span", "div[class]",
+  // The containers, added after a live audit showed what leaving them out costs.
+  // `/loans/current` carries its loan status as a tint on each table ROW, with a colour
+  // key underneath and the status written nowhere. The cells inside were offered and
+  // correctly declined — the colour is not theirs, they inherit it — and the row that
+  // owns the colour was never offered at all, so the one element on that page which
+  // fails 1.4.1 was never judged and the page was recorded as checked. The colour rule
+  // claims that row the moment it arrives; it was only ever missing from this list.
+  //
+  // The rest are here for the same reason in a different form: structure lives on the
+  // container, so a table with no header cells, a list built out of divs and an
+  // ungrouped set of radio buttons are all invisible while only their children are
+  // offered. Most are not claimed by any rule YET — the 1.3.1 scope work is written up
+  // separately — and that is deliberate. An element that is offered and declined is
+  // COUNTED, and `rules.explain()` can say which rule declined it; an element never
+  // offered is a silence nothing can measure. This turns the second into the first.
+  "table", "tr", "ul", "ol", "fieldset", "form", "canvas", "iframe",
+  // The series inside a chart. `svg` is offered and its shapes were not, so a line chart
+  // arrived as one element with no way to say that three lines are told apart by stroke
+  // colour and nothing else — `/reports/branch-comparison` in the fixture, whose only
+  // 1.4.1 defect was never sent to any check while the page was recorded as checked. Same
+  // shape as the `tr` gap above, one level further in.
+  //
+  // Two shapes, not five. `path`, `rect` and `circle` build every icon in an app, and
+  // offering those would spend the run's element budget on decoration and push real
+  // candidates out — a worse bug than the one being fixed. Measured across the fixture's
+  // 78 routes: polyline and polygon add 6 candidates in total, all 6 on the chart pair.
+  "polyline", "polygon",
+  // A container div with no class on it. `div[class]` above misses these entirely, and
+  // "entirely" is the word: the element is never offered, so no rule ever declines it and
+  // nothing anywhere records that it existed. Found on the 31 August audit — three
+  // hand-written answer-key records on `/events/workshops` sat on
+  // `<div id="workshops-spring" style="padding-left:1.5rem">` wrapping five identically
+  // classed children. The structure rule claims that shape on sight; it was simply never
+  // shown one.
+  //
+  // Three or more element children, which is `rules.REPEATED_CHILD_MINIMUM` said in CSS — the
+  // same bar the rule that would claim it uses, so this offers what that rule can actually
+  // want and not a wrapper more. Deliberately NOT `div[id], div[style]`, which would have
+  // fixed the fixture and left every framework's class-less, id-less wrapper exactly as
+  // invisible as before; the target is any real application, not this one.
+  //
+  // Measured across all 95 fixture routes before it went in: 8,385 elements offered today,
+  // and this adds THREE — the three on `/events/workshops`, all three claimed. The per-page
+  // ceiling is MAX_ELEMENTS_PER_SCREEN and the busiest page reaches 545 of it without this,
+  // unchanged by it.
+  "div:has(> *:nth-child(3))",
+];
+
+/** Collect them, with the facts every check reads.
+ *
+ *  `OFFER` is passed IN rather than closed over: the body of this function is serialised and run
+ *  inside the page, where nothing in this module exists. */
 async function collectElements(page) {
   return await page.evaluate(
-    ({ styleKeys, maxElements }) => {
+    ({ styleKeys, maxElements, offer }) => {
       /* global document, window, getComputedStyle, Node */
-      const OFFER = [
-        "img", "svg", "area", "input", "button", "a", "select", "textarea",
-        "[role]", "[tabindex]", "[onclick]", "[onkeydown]", "[onkeyup]",
-        "h1", "h2", "h3", "h4", "h5", "h6", "label", "summary", "details",
-        "p", "li", "td", "th", "span", "div[class]",
-        // The containers, added after a live audit showed what leaving them out costs.
-        // `/loans/current` carries its loan status as a tint on each table ROW, with a colour
-        // key underneath and the status written nowhere. The cells inside were offered and
-        // correctly declined — the colour is not theirs, they inherit it — and the row that
-        // owns the colour was never offered at all, so the one element on that page which
-        // fails 1.4.1 was never judged and the page was recorded as checked. The colour rule
-        // claims that row the moment it arrives; it was only ever missing from this list.
-        //
-        // The rest are here for the same reason in a different form: structure lives on the
-        // container, so a table with no header cells, a list built out of divs and an
-        // ungrouped set of radio buttons are all invisible while only their children are
-        // offered. Most are not claimed by any rule YET — the 1.3.1 scope work is written up
-        // separately — and that is deliberate. An element that is offered and declined is
-        // COUNTED, and `rules.explain()` can say which rule declined it; an element never
-        // offered is a silence nothing can measure. This turns the second into the first.
-        "table", "tr", "ul", "ol", "fieldset", "form", "canvas", "iframe",
-      ].join(",");
 
       // ── the structural outline ──────────────────────────────────────────────
       //
@@ -438,6 +513,27 @@ async function collectElements(page) {
         return parent ? (parent.innerText || "").trim().slice(0, 4000) : "";
       }
 
+      /** What the element sits inside, as a tag and a role rather than as text.
+       *
+       *  `surroundingText` above is the parent's words, and for an icon-only control there are
+       *  none — an <a> whose entire content is a bookmark icon has empty innerText, correctly
+       *  and uselessly. Both 1.1.1 and 1.4.11 turn on what that parent IS: a link with nothing
+       *  else in it (so alt="" hides the only clue to where it goes) or an already-labelled
+       *  container (so alt="" is right). The judge was asked both questions about the same
+       *  <img> on /events/calendar and told nothing about its parent either time. */
+      function parentOf(el) {
+        const parent = el.parentElement;
+        if (!parent) return {};
+        return {
+          tag: parent.tagName.toLowerCase(),
+          role: parent.getAttribute("role") || "",
+          href: parent.getAttribute("href") || "",
+          // Its own text with this element's contribution left in — what a reader would see if
+          // the element were the only thing naming it.
+          text: (parent.innerText || "").trim().slice(0, 400),
+        };
+      }
+
       // How much of an element's own markup travels to the judge. Ample for a control;
       // reachable by a long table, which is exactly when the judge most needs to know that
       // what it is looking at is a fragment.
@@ -445,7 +541,7 @@ async function collectElements(page) {
 
       const seen = new Set();
       const out = [];
-      for (const el of document.querySelectorAll(OFFER)) {
+      for (const el of document.querySelectorAll(offer)) {
         if (out.length >= maxElements) break;
         const selector = cssPath(el);
         if (!selector || seen.has(selector)) continue;
@@ -480,6 +576,7 @@ async function collectElements(page) {
           // `uncertain` naming the truncation rather than judging a table it half saw.
           markup_truncated: el.outerHTML.length > MAX_MARKUP,
           context: surroundingText(el),
+          parent: parentOf(el),
           box: {
             x: box.left + window.scrollX,
             y: box.top + window.scrollY,
@@ -490,7 +587,7 @@ async function collectElements(page) {
       }
       return out;
     },
-    { styleKeys: STYLE_KEYS, maxElements: MAX_ELEMENTS_PER_SCREEN },
+    { styleKeys: STYLE_KEYS, maxElements: MAX_ELEMENTS_PER_SCREEN, offer: OFFER.join(",") },
   );
 }
 
@@ -1040,9 +1137,23 @@ async function main() {
   console.error(`[a11y-audit] wrote ${screens.length} screen(s) to ${output}`);
 }
 
-main().catch((err) => {
-  // A crash here leaves routes uncaptured. That is not silent: the platform reconciles what
-  // arrived against what it asked for and records the difference as never reported.
-  console.error(`[a11y-audit] the audit stopped: ${err.stack || err.message}`);
-  process.exit(1);
-});
+/** Was this file RUN, or was it imported for one of its constants?
+ *
+ *  Importing a module runs its top level, and the top level of this one starts an audit. So
+ *  `verify-selectable.js` — which needs `OFFER` and nothing else — would have launched a browser
+ *  and then exited with "usage: node a11y_audit.mjs ..." simply for asking what the list is.
+ *
+ *  Compared by URL rather than by path because `import.meta.url` is a file: URL and
+ *  `process.argv[1]` is a plain path, and on Windows the two differ in separator and drive case
+ *  even when they name the same file. */
+const RUN_DIRECTLY = process.argv[1]
+  && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+
+if (RUN_DIRECTLY) {
+  main().catch((err) => {
+    // A crash here leaves routes uncaptured. That is not silent: the platform reconciles what
+    // arrived against what it asked for and records the difference as never reported.
+    console.error(`[a11y-audit] the audit stopped: ${err.stack || err.message}`);
+    process.exit(1);
+  });
+}

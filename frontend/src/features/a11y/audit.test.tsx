@@ -339,6 +339,131 @@ describe("S-38 pages and audit", () => {
     expect(screen.getByText("1 of 3")).toBeTruthy();
   });
 
+  // 9.26.E1. The operator's machine restarted mid-judging and the panel went on saying
+  // "Checking the rest… in progress — you can leave this page", six inches below its own header
+  // badge reading `Companion: Offline`. Three false statements next to two that said why.
+  it("a judging pass whose machine went away stops claiming to be in progress", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "judging", base_url: "http://localhost:4180",
+        routes: ["/", "/login"],
+        created_at: "2026-08-31T12:45:00Z", summary: { ai_pass: { rejudged: true } },
+        progress: { visited: 94, unreachable: 0, judged: 99, dispatched: 269 },
+        stalled: true, stalled_since: "2026-08-31T13:04:11Z",
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Checking stopped")).toBeTruthy();
+    expect(screen.queryByText("Checking the rest of this audit")).toBeNull();
+    expect(screen.queryByText(/You can leave this page/)).toBeNull();
+    // …and the row for the SAME audit under Past audits, which went on wearing a live blue
+    // "Checking the rest" badge beside the panel that had just been corrected. One audit, one
+    // answer: the list is where somebody scans for what needs attention.
+    expect(screen.queryByText("Checking the rest")).toBeNull();
+    expect(screen.getAllByText("Stopped").length).toBeGreaterThan(1);
+    // What it got to, in the unit this pass works in — elements, not pages.
+    expect(screen.getByText("99 of 269")).toBeTruthy();
+    // …and WHEN, which is the whole point: a count with no time beside it reads identically
+    // one second and twenty-five minutes after the machine died.
+    expect(screen.getByText(/13:04|1:04/)).toBeTruthy();
+  });
+
+  it("a stalled judging pass is not told its work will be thrown away", async () => {
+    // A half-CAPTURE is discarded — a baseline from four of twelve pages states coverage the
+    // audit never had. A half-JUDGED capture is the opposite: every verdict is kept and the
+    // machine carries on from here. Telling it the capture half's story would send somebody to
+    // re-run an hour of judging that is already paid for and already correct.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "judging", base_url: "http://localhost:4180",
+        routes: ["/"], created_at: "2026-08-31T12:45:00Z", summary: {},
+        progress: { visited: 1, unreachable: 0, judged: 99, dispatched: 269 },
+        stalled: true, stalled_since: "2026-08-31T13:04:11Z",
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    await screen.findByText("Checking stopped");
+    expect(screen.queryByText(/closed as failed/)).toBeNull();
+    expect(screen.queryByText(/start a new audit/)).toBeNull();
+    expect(screen.getByText(/carries on from where it stopped/)).toBeTruthy();
+    // …and no button, because this one genuinely does resume by itself. Offering to END work
+    // that is about to continue is the same class of wrong sentence in the other direction.
+    expect(screen.queryByText("Finish this audit")).toBeNull();
+  });
+
+  // 9.26.F. The instruction above is true for exactly as long as the report deadline has not
+  // fired. Parking sets the run STALLED, and the re-claim rule only ever offers PENDING or
+  // RUNNING runs back — so from that instant the pass can never be re-claimed, permanently, and
+  // restarting the machine does nothing at all. The panel went on saying "start the machine
+  // again", which was true when it was written and false the moment the deadline fired: it sent
+  // somebody to restart a machine that would sit there doing nothing, and offered no other
+  // route. The only real way out was a human takeover from the run-recovery console, a page
+  // somebody auditing their own website has no reason to have ever opened.
+  it("a judging pass past its deadline is not told to restart the machine", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "judging", base_url: "http://localhost:4180",
+        routes: ["/"], created_at: "2026-08-31T12:45:00Z", summary: {},
+        progress: { visited: 1, unreachable: 0, judged: 99, dispatched: 269 },
+        stalled: true, stalled_since: "2026-08-31T13:04:11Z",
+        parked_run_id: "c454d5f0-0000-0000-0000-000000000000",
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("This audit is waiting on you")).toBeTruthy();
+    // The wrong instruction is gone, and it is REPLACED rather than merely removed — a person
+    // with no instruction at all is only marginally better off than one with a wrong one.
+    expect(screen.queryByText(/carries on from where it stopped/)).toBeNull();
+    expect(screen.getByText(/Restarting the machine on its own will not pick this up/))
+      .toBeTruthy();
+    expect(screen.getByText("Finish this audit")).toBeTruthy();
+    // Still true, and still said: nothing the pass already answered is thrown away.
+    expect(screen.getByText(/Every answer it did give is kept/)).toBeTruthy();
+  });
+
+  it("finishing a parked audit ends its run and never says take over or workflow", async () => {
+    // The same call the run console's "Take over" makes — one recovery path, not two
+    // implementations of one. What changes is only where it is offered, and in whose words.
+    const fetchMock = stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/take-over/, { work_item_id: "w1", takeover: true }],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "judging", base_url: "http://localhost:4180",
+        routes: ["/"], created_at: "2026-08-31T12:45:00Z", summary: {},
+        progress: { visited: 1, unreachable: 0, judged: 99, dispatched: 269 },
+        stalled: true, stalled_since: "2026-08-31T13:04:11Z",
+        parked_run_id: "c454d5f0-0000-0000-0000-000000000000",
+      }] }],
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithProviders(<A11yAudit />);
+
+    const button = await screen.findByText("Finish this audit");
+    // None of the platform's internal vocabulary reaches the person. They started an audit and
+    // they want it finished.
+    expect(screen.queryByText(/take over/i)).toBeNull();
+    expect(screen.queryByText(/parked/i)).toBeNull();
+    expect(screen.queryByText(/workflow/i)).toBeNull();
+
+    await userEvent.click(button);
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).includes("/runs/c454d5f0-0000-0000-0000-000000000000/take-over/"))
+      ).toBe(true)
+    );
+  });
+
   it("an audit that is genuinely running is not called stopped", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...authed(),
@@ -398,9 +523,43 @@ describe("S-38 pages and audit", () => {
     expect(await screen.findByText("Not everything captured was checked")).toBeTruthy();
     // FIVE, not the nine request slots that were deferred. The screen composes the sentence
     // from the count, so the number here and the number on the button cannot disagree.
-    expect(screen.getAllByText(/5 elements were left for a second pass/).length)
+    expect(screen.getAllByText(/5 elements were captured and never checked/).length)
       .toBeGreaterThan(0);
+    expect(screen.getAllByText(/so 5 were left for a second pass/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/9 /)).toBeNull();
+  });
+
+  // 9.26.D. The banner's number came from `deferred_distinct` — what the DISPATCH knew when it
+  // stopped — and the card beside it came from `unanswered`, which is also what the button acts
+  // on. The dispatch cannot know that the judge would then fail to report on an element as well,
+  // so it can only ever under-count: on 31 August the audit screen said 268 directly beside a
+  // card saying 269, and the prominent, reassuring number was the wrong one.
+  it("the banner counts what the button will actually ask about, not what the dispatch deferred", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        id: "a1", status: "complete", base_url: "http://localhost:4180",
+        routes: ["/", "/login"], created_at: "2026-08-18T14:02:00Z",
+        // 268 held back at the cap, and one more the judge was handed and never reported on.
+        unanswered: 269,
+        summary: {
+          asked: 2, opened: 2, unreachable: [], never_reported: [],
+          ai_pass: { deferred: 800, deferred_distinct: 268, dispatched: 800, distinct: 1068 },
+        },
+        outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Not everything captured was checked")).toBeTruthy();
+    expect(screen.getAllByText(/269 elements were captured and never checked/).length)
+      .toBeGreaterThan(0);
+    // …and the limit still explains the 268 it does explain, with the one it does not called
+    // out separately. Two facts, two sentences — not one number covering for the other.
+    expect(screen.getAllByText(/so 268 were left for a second pass/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/1 more was sent to the check and never reported on/).length)
+      .toBeGreaterThan(0);
   });
 
   // One of the four checks not running at all is a different, worse sentence than part of the
@@ -524,7 +683,7 @@ describe("S-38 pages and audit", () => {
     renderWithProviders(<A11yAudit />);
 
     expect(await screen.findByText("Not everything captured was checked")).toBeTruthy();
-    expect(screen.getAllByText(/6 elements were left for a second pass/).length)
+    expect(screen.getAllByText(/6 elements were captured and never checked/).length)
       .toBeGreaterThan(0);
   });
 
@@ -588,6 +747,34 @@ describe("S-38 pages and audit", () => {
 
     expect(await screen.findByText("Not everything captured was checked")).toBeTruthy();
     expect(screen.getAllByText(/none is connected/).length).toBeGreaterThan(0);
+  });
+
+  it("a pass that hit its limit AND then could not send says both things", async () => {
+    // Two facts about two different sets of elements, and one used to hide the other.
+    //
+    // The dispatcher folded the deferred tail into "could not be sent" and cleared it, so only
+    // one sentence could ever apply. Now that it keeps them apart (31 Aug), showing one would
+    // hide the other — and the one it would hide is the failure, which is the half somebody has
+    // to act on. Both appear, failure first.
+    vi.stubGlobal("fetch", stubRoutes([
+      ...authed(),
+      [/a11y-routes/, routesBody()],
+      [/a11y-audits/, { audits: [{
+        ...judgingAudit({
+          deferred: 265, deferred_distinct: 265, dispatched: 0, distinct: 0, filed_unjudged: 800,
+          reason: "The accessibility judge could not be started (no worker answered). These items were sent for human review instead of being scored.",
+          deferred_reason: "This run's limit of 800 was reached, so 265 element(s) were left for a second pass. Run the check again to continue from here; nothing was skipped.",
+        }),
+        status: "complete",
+        outcome: { problems: 0, critical: 0, high: 0, waiting: 0 },
+      }] }],
+    ]));
+    renderWithProviders(<A11yAudit />);
+
+    expect(await screen.findByText("Not everything captured was checked")).toBeTruthy();
+    expect(screen.getAllByText(/could not be started/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/265 elements were captured and never checked/).length)
+      .toBeGreaterThan(0);
   });
 
   // ── a SECOND judging pass over one capture ("check the rest") ─────────────────────────────

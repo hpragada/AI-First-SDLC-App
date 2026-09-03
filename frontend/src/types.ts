@@ -1031,8 +1031,17 @@ export interface A11yAudit {
       // duplicates are not collapsed before the cap, so the tail of a stopped pass is often
       // markup already judged earlier in the same run.
       deferred_distinct?: number;
+      // Why those were deferred, kept apart from `reason` so one cannot overwrite the other. A
+      // pass can reach its limit AND then fail to send what it had kept: two facts about two
+      // different sets of elements, and a single string could only hold the last one to happen.
+      deferred_reason?: string;
       dispatched?: number;
       distinct?: number;
+      // A judgment run was ALREADY live for this capture, so this pass deliberately did nothing
+      // — it did not dispatch, and it wrote nothing off. Not a failure: the run that got there
+      // first is judging those elements. A pass carrying this never replaces the record of the
+      // pass that is running.
+      already_running?: boolean;
       // How many elements nothing could be asked about at all — no judge registered, or no
       // machine connected. Tells that case apart from the cap case WITHOUT matching on the
       // wording of `reason`, which would break the moment somebody improved a sentence.
@@ -1067,6 +1076,18 @@ export interface A11yAudit {
   // comes back to be swept, and the screen must not be the last thing still claiming the audit
   // is running.
   stalled?: boolean;
+  // When it last gave any sign of life — the newest screen, the newest verdict, or its last
+  // heartbeat, whichever came last. Only sent when `stalled`; on a healthy audit the honest
+  // answer is "it is talking to us now". A count with no time beside it reads identically after
+  // one second and after twenty-five minutes, which is how a dead judging pass went on calling
+  // itself "in progress".
+  stalled_since?: string | null;
+  // The judging run to finish when this audit can no longer recover on its own. A quiet judging
+  // pass resumes by itself for as long as its report deadline has not fired; once it has, the
+  // run is PARKED and the claim lease will never offer it back — so "start the machine again"
+  // stops being true and the screen has to offer a way out instead. Null on every audit that can
+  // still recover, which is what makes its presence the signal.
+  parked_run_id?: string | null;
   // How far this audit has got RIGHT NOW. Present only while it is still going somewhere —
   // `summary` above is written when it closes, so until then there was no count of anything
   // anywhere and a screen could only show the status word. `judged`/`dispatched` appear once
