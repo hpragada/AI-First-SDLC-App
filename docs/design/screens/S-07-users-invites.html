@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-07 · Users & Invitations — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Users &amp; invitations</h1>
+        <p class="page-head__sub">Everyone in the Acme Corp workspace. Invite by email and grant initial project roles.</p>
+      </div>
+      <button class="btn btn--primary">+ Invite</button>
+    </div>
+
+    <!-- ============ Populated ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Populated · members + pending invite</span>
+      <div class="panel"><div class="panel__body--flush">
+        <table class="table table--in-panel">
+          <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Projects &amp; roles</th><th></th></tr></thead>
+          <tbody>
+            <tr><td><div class="u-row-tight"><span class="avatar avatar--sm">Yo</span><span class="table__primary">You</span></div></td><td>you@acme.com</td><td><span class="badge badge--done"><span class="status-dot"></span>Active</span></td><td>Tenant-admin · Engineer @ Payment Gateway v2</td><td><button class="btn btn--ghost btn--sm">Manage</button></td></tr>
+            <tr><td><div class="u-row-tight"><span class="avatar avatar--sm">SC</span><span class="table__primary">Sarah Chen</span></div></td><td>sarah@acme.com</td><td><span class="badge badge--done"><span class="status-dot"></span>Active</span></td><td>Product Owner @ Payment Gateway v2</td><td><button class="btn btn--ghost btn--sm">Manage</button></td></tr>
+            <tr><td><div class="u-row-tight"><span class="avatar avatar--sm">ML</span><span class="table__primary">Marcus Lee</span></div></td><td>marcus@acme.com</td><td><span class="badge badge--done"><span class="status-dot"></span>Active</span></td><td>Architect @ Payment Gateway v2</td><td><button class="btn btn--ghost btn--sm">Manage</button></td></tr>
+            <tr style="background:var(--warning-bg)"><td><div class="u-row-tight"><span class="avatar avatar--sm" style="background:var(--text-faint)">R</span><span class="table__primary">raj@acme.com</span></div></td><td>raj@acme.com</td><td><span class="badge badge--gate"><span class="status-dot"></span>Invited · pending</span></td><td>invited 1d ago · Engineer @ Payment Gateway v2</td><td><span class="u-row-tight"><button class="btn btn--ghost btn--sm">Resend</button><button class="btn btn--danger btn--sm">Revoke</button></span></td></tr>
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- ============ Invite drawer ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Invite drawer</span>
+      <div class="drawer">
+        <div class="drawer__panel">
+          <div class="drawer__header"><h3 class="drawer__title">Invite teammate</h3><button class="modal__close" aria-label="Close">✕</button></div>
+          <div class="drawer__body">
+            <label class="field"><span class="field__label">Work email <span class="req">*</span></span><input class="input" type="email" placeholder="name@company.com"></label>
+            <label class="field"><span class="field__label">Name (optional)</span><input class="input" type="text" placeholder="e.g. Jordan Lee"></label>
+            <div class="t-label" style="margin:var(--space-4) 0 var(--space-2)">Initial project &amp; role grants</div>
+            <!-- Bugs.xlsx row 21: full 10-role set from one shared source, human-readable labels;
+                 each granted-role row gets an X to remove it once there is more than one. -->
+            <div class="u-row" style="gap:var(--space-2)">
+              <select class="select"><option>Payment Gateway v2</option><option>Legacy Billing</option></select>
+              <select class="select"><option>Product Owner</option><option>Architect</option><option>Designer</option><option>Tech Lead</option><option selected>Engineer</option><option>Reviewer</option><option>QA Lead</option><option>Security Engineer</option><option>DevOps</option><option>Admin</option></select>
+            </div>
+            <button class="btn btn--ghost btn--sm" style="margin-top:var(--space-3)">+ Add another grant</button>
+          </div>
+          <div class="drawer__footer"><button class="btn btn--secondary">Cancel</button><button class="btn btn--primary">Send invite</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Duplicate-email error in drawer ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Drawer · duplicate-email error</span>
+      <div class="drawer">
+        <div class="drawer__panel">
+          <div class="drawer__header"><h3 class="drawer__title">Invite teammate</h3><button class="modal__close" aria-label="Close">✕</button></div>
+          <div class="drawer__body">
+            <label class="field field--error"><span class="field__label">Work email <span class="req">*</span></span><input class="input" type="email" value="sarah@acme.com" aria-invalid="true"><span class="field__error">sarah@acme.com is already a member of this workspace.</span></label>
+          </div>
+          <div class="drawer__footer"><button class="btn btn--secondary">Cancel</button><button class="btn btn--primary" disabled aria-disabled="true">Send invite</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Just you · admin only (Bugs.xlsx row 31) ============ -->
+    <!-- The signed-in admin is always listed as a row; the empty illustration only shows when
+         the list is genuinely empty (which, since the admin always exists, is effectively never). -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Just you · admin only</span>
+      <div class="panel"><div class="panel__body--flush">
+        <table class="table table--in-panel">
+          <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Projects &amp; roles</th><th></th></tr></thead>
+          <tbody>
+            <tr><td><div class="u-row-tight"><span class="avatar avatar--sm">Yo</span><span class="table__primary">You</span></div></td><td>you@acme.com</td><td><span class="badge badge--done"><span class="status-dot"></span>Active</span></td><td>Tenant-admin · Admin @ Payment Gateway v2</td><td><button class="btn btn--ghost btn--sm">Manage</button></td></tr>
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("admin");</script>
+</body>
+</html>

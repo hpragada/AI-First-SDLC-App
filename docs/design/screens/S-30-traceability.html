@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-30 · Traceability Graph — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Traceability</h1>
+        <p class="page-head__sub">Artifact lineage — what derives from what, which tasks implement which requirement, which tests cover which task. Click a node to preview or deep-link.</p>
+      </div>
+    </div>
+
+    <div class="u-row u-wrap" style="margin-bottom:var(--space-4)">
+      <select class="select" style="max-width:170px" aria-label="Filter by phase"><option>Phase: All</option><option>Requirements</option><option>Architecture</option></select>
+      <select class="select" style="max-width:150px" aria-label="Filter by type"><option>Type: All</option><option>Document</option><option>Diagram</option></select>
+      <select class="select" style="max-width:200px" aria-label="Highlight work item"><option>Highlight: WI-492 lineage</option><option>None</option></select>
+      <span class="u-spacer"></span>
+      <span class="graph-legend">
+        <span class="graph-legend__item"><span class="graph-legend__dot" style="background:var(--success)"></span>Published</span>
+        <span class="graph-legend__item"><span class="graph-legend__dot" style="background:var(--warning)"></span>Pending gate</span>
+        <span class="graph-legend__item"><span class="graph-legend__dot" style="background:var(--info)"></span>Draft</span>
+      </span>
+    </div>
+
+    <!-- ============ Small graph ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Small graph</span>
+      <div class="graph-canvas">
+        <svg viewBox="0 0 920 320" width="100%" role="img" aria-label="Lineage graph for WI-492">
+          <!-- edges -->
+          <g class="gedge">
+            <line x1="170" y1="80" x2="250" y2="80"/>
+            <line x1="400" y1="80" x2="480" y2="80"/>
+            <line x1="400" y1="80" x2="480" y2="200"/>
+            <line x1="630" y1="80" x2="710" y2="80"/>
+            <line x1="630" y1="200" x2="710" y2="200"/>
+          </g>
+          <!-- nodes -->
+          <g font-family="var(--font-sans)">
+            <g transform="translate(20,58)"><rect width="150" height="44" rx="8" class="gnode" style="stroke:var(--success)"/><circle cx="16" cy="22" r="5" style="fill:var(--success)"/><text x="30" y="20" style="fill:var(--text-strong);font-size:12px;font-weight:600">Requirements</text><text x="30" y="35" style="fill:var(--text-muted);font-size:11px">v1.0 · Confluence</text></g>
+            <g transform="translate(250,58)"><rect width="150" height="44" rx="8" class="gnode" style="stroke:var(--success)"/><circle cx="16" cy="22" r="5" style="fill:var(--success)"/><text x="30" y="20" style="fill:var(--text-strong);font-size:12px;font-weight:600">PRD v1.2</text><text x="30" y="35" style="fill:var(--text-muted);font-size:11px">Published · Confluence</text></g>
+            <g transform="translate(480,58)"><rect width="150" height="44" rx="8" class="gnode" style="stroke:var(--warning)"/><circle cx="16" cy="22" r="5" style="fill:var(--warning)"/><text x="30" y="20" style="fill:var(--text-strong);font-size:12px;font-weight:600">Seq. Diagram</text><text x="30" y="35" style="fill:var(--text-muted);font-size:11px">v0.9 · Pending · Figma</text></g>
+            <g transform="translate(480,178)"><rect width="150" height="44" rx="8" class="gnode" style="stroke:var(--info)"/><circle cx="16" cy="22" r="5" style="fill:var(--info)"/><text x="30" y="20" style="fill:var(--text-strong);font-size:12px;font-weight:600">UX Design</text><text x="30" y="35" style="fill:var(--text-muted);font-size:11px">Draft · Figma</text></g>
+            <g transform="translate(710,58)"><rect width="160" height="44" rx="8" class="gnode" style="stroke:var(--border-strong)"/><circle cx="16" cy="22" r="5" style="fill:var(--info)"/><text x="30" y="20" style="fill:var(--text-strong);font-size:12px;font-weight:600">Task WI-540</text><text x="30" y="35" style="fill:var(--text-muted);font-size:11px">implements · Jira STR-15</text></g>
+            <g transform="translate(710,178)"><rect width="160" height="44" rx="8" class="gnode" style="stroke:var(--border-strong)"/><circle cx="16" cy="22" r="5" style="fill:var(--success)"/><text x="30" y="20" style="fill:var(--text-strong);font-size:12px;font-weight:600">Tests</text><text x="30" y="35" style="fill:var(--text-muted);font-size:11px">covers · Xray</text></g>
+          </g>
+        </svg>
+      </div>
+    </div>
+
+    <!-- ============ Highlighted lineage ============ -->
+    <div class="state-block">
+      <span class="state-block__label">WI-492 lineage highlighted</span>
+      <div class="graph-canvas">
+        <svg viewBox="0 0 920 320" width="100%" role="img" aria-label="Highlighted lineage">
+          <g class="gedge">
+            <line x1="170" y1="80" x2="250" y2="80" style="stroke:var(--brand-orange);stroke-width:2.5"/>
+            <line x1="400" y1="80" x2="480" y2="80" style="stroke:var(--brand-orange);stroke-width:2.5"/>
+            <line x1="400" y1="80" x2="480" y2="200" style="opacity:.3"/>
+            <line x1="630" y1="80" x2="710" y2="80" style="stroke:var(--brand-orange);stroke-width:2.5"/>
+            <line x1="630" y1="200" x2="710" y2="200" style="opacity:.3"/>
+          </g>
+          <g font-family="var(--font-sans)">
+            <g transform="translate(20,58)"><rect width="150" height="44" rx="8" class="gnode" style="stroke:var(--brand-orange);stroke-width:2"/><circle cx="16" cy="22" r="5" style="fill:var(--success)"/><text x="30" y="20" style="fill:var(--text-strong);font-size:12px;font-weight:600">Requirements</text><text x="30" y="35" style="fill:var(--text-muted);font-size:11px">v1.0</text></g>
+            <g transform="translate(250,58)"><rect width="150" height="44" rx="8" class="gnode" style="stroke:var(--brand-orange);stroke-width:2"/><circle cx="16" cy="22" r="5" style="fill:var(--success)"/><text x="30" y="20" style="fill:var(--text-strong);font-size:12px;font-weight:600">PRD v1.2</text><text x="30" y="35" style="fill:var(--text-muted);font-size:11px">Published</text></g>
+            <g transform="translate(480,58)"><rect width="150" height="44" rx="8" class="gnode" style="stroke:var(--brand-orange);stroke-width:2"/><circle cx="16" cy="22" r="5" style="fill:var(--warning)"/><text x="30" y="20" style="fill:var(--text-strong);font-size:12px;font-weight:600">Seq. Diagram</text><text x="30" y="35" style="fill:var(--text-muted);font-size:11px">v0.9 · Pending</text></g>
+            <g transform="translate(480,178)" opacity="0.4"><rect width="150" height="44" rx="8" class="gnode"/><circle cx="16" cy="22" r="5" style="fill:var(--info)"/><text x="30" y="20" style="fill:var(--text-strong);font-size:12px;font-weight:600">UX Design</text><text x="30" y="35" style="fill:var(--text-muted);font-size:11px">Draft</text></g>
+            <g transform="translate(710,58)"><rect width="160" height="44" rx="8" class="gnode" style="stroke:var(--brand-orange);stroke-width:2"/><circle cx="16" cy="22" r="5" style="fill:var(--info)"/><text x="30" y="20" style="fill:var(--text-strong);font-size:12px;font-weight:600">Task WI-540</text><text x="30" y="35" style="fill:var(--text-muted);font-size:11px">Jira STR-15</text></g>
+            <g transform="translate(710,178)" opacity="0.4"><rect width="160" height="44" rx="8" class="gnode"/><circle cx="16" cy="22" r="5" style="fill:var(--success)"/><text x="30" y="20" style="fill:var(--text-strong);font-size:12px;font-weight:600">Tests</text><text x="30" y="35" style="fill:var(--text-muted);font-size:11px">Xray</text></g>
+          </g>
+        </svg>
+      </div>
+    </div>
+
+    <!-- ============ Large graph (cluster) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Large graph · cluster (pan / zoom)</span>
+      <div class="graph-canvas" style="position:relative">
+        <div class="u-row-tight" style="position:absolute;top:8px;right:8px;z-index:1"><button class="btn btn--secondary btn--sm">−</button><button class="btn btn--secondary btn--sm">+</button><button class="btn btn--secondary btn--sm">Fit</button></div>
+        <svg viewBox="0 0 920 360" width="100%" role="img" aria-label="Large lineage cluster">
+          <g class="gedge">
+            <line x1="120" y1="60" x2="120" y2="120"/><line x1="120" y1="60" x2="320" y2="60"/>
+            <line x1="120" y1="180" x2="320" y2="180"/><line x1="320" y1="60" x2="520" y2="120"/>
+            <line x1="320" y1="180" x2="520" y2="120"/><line x1="520" y1="120" x2="720" y2="60"/>
+            <line x1="520" y1="120" x2="720" y2="180"/><line x1="520" y1="120" x2="720" y2="300"/>
+            <line x1="320" y1="300" x2="520" y2="300"/><line x1="120" y1="300" x2="320" y2="300"/>
+          </g>
+          <g font-family="var(--font-sans)">
+            <g transform="translate(60,40)"><rect width="120" height="40" rx="7" class="gnode" style="stroke:var(--success)"/><circle cx="14" cy="20" r="4" style="fill:var(--success)"/><text x="26" y="24" style="fill:var(--text-strong);font-size:11px;font-weight:600">Ideation</text></g>
+            <g transform="translate(60,160)"><rect width="120" height="40" rx="7" class="gnode" style="stroke:var(--success)"/><circle cx="14" cy="20" r="4" style="fill:var(--success)"/><text x="26" y="24" style="fill:var(--text-strong);font-size:11px;font-weight:600">Requirements</text></g>
+            <g transform="translate(60,280)"><rect width="120" height="40" rx="7" class="gnode" style="stroke:var(--success)"/><circle cx="14" cy="20" r="4" style="fill:var(--success)"/><text x="26" y="24" style="fill:var(--text-strong);font-size:11px;font-weight:600">Glossary</text></g>
+            <g transform="translate(260,40)"><rect width="120" height="40" rx="7" class="gnode" style="stroke:var(--success)"/><circle cx="14" cy="20" r="4" style="fill:var(--success)"/><text x="26" y="24" style="fill:var(--text-strong);font-size:11px;font-weight:600">PRD</text></g>
+            <g transform="translate(260,160)"><rect width="120" height="40" rx="7" class="gnode" style="stroke:var(--warning)"/><circle cx="14" cy="20" r="4" style="fill:var(--warning)"/><text x="26" y="24" style="fill:var(--text-strong);font-size:11px;font-weight:600">Architecture</text></g>
+            <g transform="translate(260,280)"><rect width="120" height="40" rx="7" class="gnode" style="stroke:var(--info)"/><circle cx="14" cy="20" r="4" style="fill:var(--info)"/><text x="26" y="24" style="fill:var(--text-strong);font-size:11px;font-weight:600">UX Design</text></g>
+            <g transform="translate(460,100)"><rect width="120" height="40" rx="7" class="gnode" style="stroke:var(--border-strong)"/><circle cx="14" cy="20" r="4" style="fill:var(--info)"/><text x="26" y="24" style="fill:var(--text-strong);font-size:11px;font-weight:600">Tasks ×6</text></g>
+            <g transform="translate(660,40)"><rect width="120" height="40" rx="7" class="gnode" style="stroke:var(--border-strong)"/><circle cx="14" cy="20" r="4" style="fill:var(--success)"/><text x="26" y="24" style="fill:var(--text-strong);font-size:11px;font-weight:600">PR #218</text></g>
+            <g transform="translate(660,160)"><rect width="120" height="40" rx="7" class="gnode" style="stroke:var(--border-strong)"/><circle cx="14" cy="20" r="4" style="fill:var(--success)"/><text x="26" y="24" style="fill:var(--text-strong);font-size:11px;font-weight:600">Tests</text></g>
+            <g transform="translate(660,280)"><rect width="120" height="40" rx="7" class="gnode" style="stroke:var(--danger)"/><circle cx="14" cy="20" r="4" style="fill:var(--danger)"/><text x="26" y="24" style="fill:var(--text-strong);font-size:11px;font-weight:600">Defect</text></g>
+          </g>
+        </svg>
+      </div>
+    </div>
+
+    <!-- ============ Empty ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Empty</span>
+      <div class="panel">
+        <div class="empty">
+          <svg class="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7 6h10M6 8l5 8M18 8l-5 8"/></svg>
+          <div class="empty__title">No lineage yet</div>
+          <div class="empty__text">Once phases produce artifacts and tasks, their relationships render here as a graph.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("artifacts");</script>
+</body>
+</html>

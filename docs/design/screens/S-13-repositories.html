@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-13 · Repositories — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Repositories</h1>
+        <p class="page-head__sub">Where build PRs open. Multi-repo drives API-contract &amp; drift checks.</p>
+      </div>
+      <button class="btn btn--primary">+ Add repository</button>
+    </div>
+
+    <!-- ============ Multi-repo ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Multi-repo</span>
+      <div class="u-row" style="margin-bottom:var(--space-3)"><span class="chip badge--navy">Topology: multi</span></div>
+      <div class="panel"><div class="panel__body--flush">
+        <table class="table table--in-panel">
+          <thead><tr><th>Repository</th><th>Role</th><th>Default base</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="table__id">acme/payments-api</td><td><span class="chip">backend</span></td><td class="table__id">main · default</td><td><span class="badge badge--done"><span class="status-dot"></span>Connected</span></td><td><span class="u-row-tight"><button class="btn btn--ghost btn--sm">Set default</button><button class="btn btn--danger btn--sm">Remove</button></span></td></tr>
+            <tr><td class="table__id">acme/payments-web</td><td><span class="chip">frontend</span></td><td class="table__id">main</td><td><span class="badge badge--done"><span class="status-dot"></span>Connected</span></td><td><span class="u-row-tight"><button class="btn btn--ghost btn--sm">Set default</button><button class="btn btn--danger btn--sm">Remove</button></span></td></tr>
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- ============ Add-repo form ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Add-repo form</span>
+      <div class="card"><div class="card__body">
+        <div class="u-row u-wrap" style="align-items:flex-end;gap:var(--space-3)">
+          <label class="field" style="margin-bottom:0;flex:1;min-width:220px"><span class="field__label">Repository (owner/repo)</span><input class="input" placeholder="acme/payments-jobs"></label>
+          <label class="field" style="margin-bottom:0;min-width:140px"><span class="field__label">Role</span><select class="select"><option>backend</option><option>frontend</option><option>infra</option></select></label>
+          <label class="field" style="margin-bottom:0;min-width:120px"><span class="field__label">Base branch</span><input class="input" value="main"></label>
+          <button class="btn btn--primary">Add</button>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ============ Single repo ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Single repo</span>
+      <div class="u-row" style="margin-bottom:var(--space-3)"><span class="chip">Topology: single</span></div>
+      <div class="panel"><div class="panel__body--flush">
+        <table class="table table--in-panel">
+          <thead><tr><th>Repository</th><th>Role</th><th>Default base</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="table__id">acme/payments-api</td><td><span class="chip">backend</span></td><td class="table__id">main · default</td><td><span class="badge badge--done"><span class="status-dot"></span>Connected</span></td><td><button class="btn btn--danger btn--sm">Remove</button></td></tr>
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- ============ Duplicate error ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Duplicate error</span>
+      <div class="card"><div class="card__body">
+        <label class="field field--error" style="margin-bottom:0"><span class="field__label">Repository (owner/repo)</span><input class="input" value="acme/payments-api" aria-invalid="true"><span class="field__error">acme/payments-api is already registered on this project.</span></label>
+      </div></div>
+    </div>
+
+    <!-- ============ Empty ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Empty</span>
+      <div class="panel">
+        <div class="empty">
+          <svg class="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 3h11l3 3v15H5z"/><path d="M9 7h6M9 11h6"/></svg>
+          <div class="empty__title">No repositories yet</div>
+          <div class="empty__text">Add a repository so build phases know where to open pull requests.</div>
+          <button class="btn btn--primary">+ Add repository</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("repositories");</script>
+</body>
+</html>

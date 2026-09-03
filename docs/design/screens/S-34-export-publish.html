@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-34 · Export / Publish — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <nav class="breadcrumb"><a href="S-28-artifacts.html">Artifacts</a><span class="sep">›</span><span class="here">Publish</span></nav>
+    <div class="page-head"><div class="page-head__titles"><h1 class="t-h1">Publish to system of record</h1><p class="page-head__sub">Manually publish (or re-publish) a gate-approved artifact to a chosen target. Gate rule still holds — only approved artifacts can be published.</p></div></div>
+
+    <!-- ============ Choose target (default) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Choose target</span>
+      <div class="panel__body--flush"><div class="modal-scrim">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="p1">
+          <div class="modal__header"><h3 class="modal__title" id="p1">Publish artifact</h3><button class="modal__close" aria-label="Close">✕</button></div>
+          <div class="modal__body">
+            <label class="field"><span class="field__label">Artifact</span><input class="input" value="PRD: Stripe Webhook Integration v1.2" disabled></label>
+            <div class="banner banner--success" style="margin-bottom:var(--space-4)"><span class="banner__icon">✓</span><div class="banner__body">Gate approved — Architecture gate cleared by Marcus Lee. Eligible to publish.</div></div>
+            <label class="field"><span class="field__label">Target capability</span><select class="select"><option>Documentation store · Confluence</option><option>Task tracker · Jira</option></select></label>
+            <label class="field" style="margin-bottom:0"><span class="field__label">Destination</span><select class="select"><option>Space PAY</option><option>Space ENG</option></select></label>
+          </div>
+          <div class="modal__footer"><button class="btn btn--secondary">Cancel</button><button class="btn btn--primary">Publish</button></div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ============ Publishing ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Publishing</span>
+      <div class="panel__body--flush"><div class="modal-scrim">
+        <div class="modal" role="dialog" aria-modal="true">
+          <div class="modal__header"><h3 class="modal__title">Publish artifact</h3></div>
+          <div class="modal__body"><div class="conn-status conn-status--waiting"><span class="spinner"></span>Publishing to Confluence space PAY…</div></div>
+          <div class="modal__footer"><button class="btn btn--secondary" disabled aria-disabled="true">Cancel</button><button class="btn btn--primary" disabled aria-disabled="true">Publishing…</button></div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ============ Success ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Success</span>
+      <div class="panel__body--flush"><div class="modal-scrim">
+        <div class="modal" role="dialog" aria-modal="true">
+          <div class="modal__header"><h3 class="modal__title">Published</h3><button class="modal__close" aria-label="Close">✕</button></div>
+          <div class="modal__body">
+            <div class="banner banner--success"><span class="banner__icon">✓</span><div class="banner__body"><div class="banner__title">Published to Confluence</div>PRD: Stripe Webhook Integration v1.2 is live in space PAY.</div></div>
+            <div class="u-row" style="margin-top:var(--space-3)"><span class="t-sm u-muted">View it in the system of record:</span><span class="u-spacer"></span><a class="sor-chip sor-chip--confluence" href="#"><span class="sor-chip__glyph">C</span>Open in Confluence</a></div>
+          </div>
+          <div class="modal__footer"><button class="btn btn--primary">Done</button></div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ============ Blocked · not gate-approved ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Blocked · artifact not gate-approved</span>
+      <div class="panel__body--flush"><div class="modal-scrim">
+        <div class="modal" role="dialog" aria-modal="true">
+          <div class="modal__header"><h3 class="modal__title">Publish artifact</h3><button class="modal__close" aria-label="Close">✕</button></div>
+          <div class="modal__body">
+            <label class="field"><span class="field__label">Artifact</span><input class="input" value="System Sequence Diagram v0.9" disabled></label>
+            <div class="banner banner--danger"><span class="banner__icon">▲</span><div class="banner__body"><div class="banner__title">Can't publish — not gate-approved</div>This artifact is still <strong>Pending Architecture gate</strong>. Approve the gate first; manual publish never bypasses a gate. <a href="S-21-gates.html">Open gate ↗</a></div></div>
+          </div>
+          <div class="modal__footer"><button class="btn btn--secondary">Cancel</button><button class="btn btn--primary" disabled aria-disabled="true">Publish</button></div>
+        </div>
+      </div></div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("artifacts");</script>
+</body>
+</html>

@@ -2,7 +2,7 @@
 
 This repo builds a multi-tenant, web-delivered, **engine-agnostic agentic SDLC platform** (Django + React + Postgres) that operates clients' real tools-of-record (Confluence/Jira/Figma/Xray/Git) and runs the full lifecycle with human review gates.
 
-**Before writing any code, read `/docs/PHASE_0_BUILD_SPEC.md` for the current phase, and follow `/BUILD_PLAN.md` task by task.** The "why" lives in `/docs/SDLC_Platform_Master_Build_Blueprint.md`. Keep this file lean — detail belongs in `/docs`.
+**Before writing any code, read `/docs/PHASE_2_BUILD_SPEC.md` for the current phase, and follow `/BUILD_PLAN.md` task by task.** (Phases 0 and 1 are complete — `/docs/PHASE_0_BUILD_SPEC.md` and `/docs/PHASE_1_BUILD_SPEC.md` are the finished-phase references.) The "why" lives in `/docs/SDLC_Platform_Master_Build_Blueprint.md`. Keep this file lean — detail belongs in `/docs`.
 
 ---
 
@@ -44,6 +44,7 @@ docs/           blueprint, continuation brief, per-phase build specs
 ```
 
 ## How we work (read this — it prevents drift)
+- **Parallel / multi-assistant execution:** read **`/AGENTS.md`** first — context read-order, task-claim protocol, work-stream + file-ownership rules, branch/PR/DoD. (Active phases: 4.7 backend + 4.8 UI; specs `/docs/PHASE_4.7_BUILD_SPEC.md` + `/docs/PHASE_4.8_BUILD_SPEC.md`; per-screen map `/docs/SCREEN_BUILD_MAP.md`.)
 - **Phase by phase, slice by slice.** Do the current phase's "thin vertical slice" end-to-end before adding breadth. Don't build Phase N+1 modules early.
 - **Implement contracts, don't re-decide them.** The build spec fixes schemas, interfaces, and tool signatures. If something is genuinely undecided, ask — don't silently invent.
 - **One task at a time from `/BUILD_PLAN.md`.** After each task: run it, write/pass a test, commit, tick the checkbox.
@@ -74,7 +75,9 @@ make lint                       # ruff + mypy + eslint
 Runs locally via `docker compose up` + `make dev`; the phase's thin-slice demo works end-to-end; tests pass; `tenant_id`/RLS enforced; gates enforced; `/BUILD_PLAN.md` checkboxes updated; `/docs` updated if a decision changed.
 
 ## Reference docs
-- `/docs/PHASE_0_BUILD_SPEC.md` — build-grade contracts for the current phase (**read before coding**).
+- `/docs/PHASE_2_BUILD_SPEC.md` — build-grade contracts for the **current** phase (**read before coding**).
+- `/docs/PHASE_1_BUILD_SPEC.md` — Phase 1 contracts (complete; Atlassian SoR + brownfield-lite + rate governor).
+- `/docs/PHASE_0_BUILD_SPEC.md` — Phase 0 contracts (complete; the spine these phases build on).
 - `/docs/AGENT_MIGRATION_SPEC.md` — **how to migrate the `/legacy_suite/` agents, rules, commands (read before any agent task)**.
 - `/BUILD_PLAN.md` — the ordered task backlog across all phases (with legacy-suite coverage map).
 - `/docs/SDLC_Platform_Master_Build_Blueprint.md` — full architecture + concern→resolution ledger (the "why/what").

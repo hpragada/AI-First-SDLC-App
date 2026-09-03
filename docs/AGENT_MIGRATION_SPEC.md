@@ -48,8 +48,8 @@ There is no fixed "Context Loading section" to edit and stop. Sweep the whole ag
 | reads a prior-phase doc — `requirements.md`, `prd.md`, `architecture.md`, user journeys/stories, ADRs | `platform-state.get_context(...)` (already in the manifest) or `get_artifact(artifact_id)` for the specific input |
 | "read the next task / the task from `tasks.md`" | the **WorkItem / issue key passed into the run**; fetch via `tasktracker.get_issue(key)` (Phase 1+) or `get_work_item(id)` |
 | "the current design / screens" | `designsource.get_design_context()` + `get_variable_defs()` — the **current** Figma (Phase 3) |
-| reads the codebase / repo | the build-runner workspace + `codeintel.*` (Repowise) where applicable |
-| writes a doc — `prd.md`, `tasks.md`, test cases, review notes, etc. | write body to S3 (draft) → `register_artifact(type, sor, s3_key, content_hash)` → `add_trace_edge(input→output, rel)` → `log_event(...)` |
+| reads the codebase / repo | the **companion worktree** (the Phase-2 local-companion build runner's working tree) + `codeintel.*` (Repowise) where applicable |
+| writes a doc — `prd.md`, `tasks.md`, test cases, review notes, etc. | write body to S3 (draft) → `register_artifact(type, sor, s3_key, content_hash, title)` → `add_trace_edge(input→output, rel)` → `log_event(...)`. **Always pass a human-readable `title`** — a short, context-carrying name a person can tell apart from its siblings (e.g. `"Wireframe — Login Page"`, `"ADR-003 — Event Sourcing"`, `"TC-014 — Login rejects a bad password"`). A bare `type` is not enough when a phase registers several of the same type; the `title` is what every UI surface displays and how the platform distinguishes per-item artifacts (Bugs S.No 120). |
 | creates epics/stories/sprints | `tasktracker.create_*` (Jira, Phase 1) + `register_artifact` |
 | publishes a doc/page | `docstore.create_page/update_page` (Confluence, Phase 1) on **gate APPROVED only** |
 | "update `CLAUDE.md`" / write-back to project context | `register_artifact` + `log_event` (the registry/ledger ARE the project context now) |
@@ -66,7 +66,7 @@ There is no fixed "Context Loading section" to edit and stop. Sweep the whole ag
 
 **07 Implementation — a Process step:**
 - *Before:* "Read the next task from `tasks.md`, implement it, mark it complete in `tasks.md`."
-- *After:* "**[Take the WorkItem/issue key passed into this run; fetch it via `tasktracker.get_issue(key)`]**, implement it, **[open a PR via `codehost.*`, transition the issue, `register_artifact` the code pointer, `log_event`]**." — "implement it" and all the how-to/quality guidance around it stay verbatim.
+- *After:* "**[Take the WorkItem/issue key passed into this run; fetch it via `tasktracker.get_issue(key)`]**, implement it **[in the companion worktree]**, **[`register_artifact` the code pointer + `log_event`]**." — "implement it" and all the how-to/quality guidance around it stay verbatim. **The agent never calls GitHub directly (Phase-2 D2):** the platform/companion commits, pushes the branch, and opens the PR via `codehost.*`; the merge is gate-only.
 
 These two are just illustrations. **The reference sweep (§8) applies the same treatment to every agent** — 04 reading the PRD, 09 reading acceptance criteria, 10 reading the codebase + dependencies, 08 reading the PR diff, and so on.
 
@@ -101,7 +101,7 @@ Each agent is migrated in the phase where its dependencies (SoR, runner, connect
 | 04 Architecture | **P0** | prd | architecture/ADR artifact | architect |
 | 06 Task Breakdown | **P1** | prd, architecture | epics/stories → **Jira** | tech_lead |
 | (onboarding-lite) | **P1** | static files / Atlassian | registered/internal artifacts | product_owner |
-| 07 Implementation | **P2** | story (Jira), design | code → **PR (GitHub)** | engineer |
+| 07 Implementation | **P2** | story (Jira), design | code (companion worktree) → **PR (GitHub)** | tech_lead |
 | 08 Code Review | **P2** | PR diff | review + remediation items | reviewer |
 | 11 CI/CD | **P2** | repo | pipeline config | devops |
 | 12 Deployment | **P2** | build | deployment + release artifact | devops |

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-22 · Criteria Gate — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad" style="max-width:880px">
+
+    <nav class="breadcrumb"><a href="S-21-gates.html">Gates</a><span class="sep">›</span><span class="here">UX Design · WI-487</span></nav>
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">UX Design gate — Checkout Flow Redesign</h1>
+        <p class="page-head__sub">A quality gate: approval stays disabled until every required WCAG 2.1 AA criterion is ticked. The product gates on accessibility, so the product must pass.</p>
+      </div>
+      <span class="meta-item"><span class="chip badge--navy">designer</span></span>
+    </div>
+
+    <!-- ============ None ticked ============ -->
+    <div class="state-block">
+      <span class="state-block__label">None ticked · approve disabled</span>
+      <div class="card gate-panel"><div class="card__body">
+        <div class="u-row"><span class="gate-panel__role">UX Design criteria · WI-487</span><span class="u-spacer"></span><span class="criteria-progress">0 of 8 criteria met</span></div>
+        <a href="S-29-artifact-preview.html" class="t-sm">Preview design under review ↗</a>
+        <div class="criteria-list">
+          <label class="criteria-item"><input type="checkbox"><span class="criteria-item__text">Color contrast ≥ 4.5:1 for body text</span></label>
+          <label class="criteria-item"><input type="checkbox"><span class="criteria-item__text">Keyboard navigable end-to-end</span></label>
+          <label class="criteria-item"><input type="checkbox"><span class="criteria-item__text">Visible focus on all interactive controls</span></label>
+          <label class="criteria-item"><input type="checkbox"><span class="criteria-item__text">Hit targets ≥ 40px</span></label>
+          <label class="criteria-item"><input type="checkbox"><span class="criteria-item__text">Form fields have programmatic labels</span></label>
+          <label class="criteria-item"><input type="checkbox"><span class="criteria-item__text">Status never encoded by color alone</span></label>
+          <label class="criteria-item"><input type="checkbox"><span class="criteria-item__text">Respects prefers-reduced-motion</span></label>
+          <label class="criteria-item"><input type="checkbox"><span class="criteria-item__text">Images have text alternatives</span></label>
+        </div>
+        <div class="gate-panel__actions"><button class="btn btn--primary" disabled aria-disabled="true">Approve (8 remaining)</button><button class="btn btn--danger">Reject</button></div>
+      </div></div>
+    </div>
+
+    <!-- ============ Partial ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Partial · 5 of 8 · approve still disabled</span>
+      <div class="card gate-panel"><div class="card__body">
+        <div class="u-row"><span class="gate-panel__role">UX Design criteria · WI-487</span><span class="u-spacer"></span><span class="criteria-progress">5 of 8 criteria met</span></div>
+        <div class="criteria-list">
+          <label class="criteria-item criteria-item--met"><input type="checkbox" checked><span class="criteria-item__text">Color contrast ≥ 4.5:1 for body text</span></label>
+          <label class="criteria-item criteria-item--met"><input type="checkbox" checked><span class="criteria-item__text">Keyboard navigable end-to-end</span></label>
+          <label class="criteria-item criteria-item--met"><input type="checkbox" checked><span class="criteria-item__text">Visible focus on all interactive controls</span></label>
+          <label class="criteria-item criteria-item--met"><input type="checkbox" checked><span class="criteria-item__text">Hit targets ≥ 40px</span></label>
+          <label class="criteria-item criteria-item--met"><input type="checkbox" checked><span class="criteria-item__text">Form fields have programmatic labels</span></label>
+          <label class="criteria-item"><input type="checkbox"><span class="criteria-item__text">Status never encoded by color alone</span></label>
+          <label class="criteria-item"><input type="checkbox"><span class="criteria-item__text">Respects prefers-reduced-motion</span></label>
+          <label class="criteria-item"><input type="checkbox"><span class="criteria-item__text">Images have text alternatives</span></label>
+        </div>
+        <div class="gate-panel__actions"><button class="btn btn--primary" disabled aria-disabled="true">Approve (3 remaining)</button><button class="btn btn--danger">Reject</button></div>
+      </div></div>
+    </div>
+
+    <!-- ============ All ticked ============ -->
+    <div class="state-block">
+      <span class="state-block__label">All ticked · approve enabled</span>
+      <div class="card--attention gate-panel"><div class="card__body">
+        <div class="u-row"><span class="gate-panel__role">UX Design criteria · WI-487</span><span class="u-spacer"></span><span class="criteria-progress" style="color:var(--success)">8 of 8 criteria met</span></div>
+        <div class="criteria-list">
+          <label class="criteria-item criteria-item--met"><input type="checkbox" checked><span class="criteria-item__text">Color contrast ≥ 4.5:1 for body text</span></label>
+          <label class="criteria-item criteria-item--met"><input type="checkbox" checked><span class="criteria-item__text">Keyboard navigable end-to-end</span></label>
+          <label class="criteria-item criteria-item--met"><input type="checkbox" checked><span class="criteria-item__text">Visible focus on all interactive controls</span></label>
+          <label class="criteria-item criteria-item--met"><input type="checkbox" checked><span class="criteria-item__text">Hit targets ≥ 40px · and the remaining four criteria</span></label>
+        </div>
+        <div class="gate-panel__actions"><button class="btn btn--primary">Approve</button><button class="btn btn--danger">Reject</button></div>
+      </div></div>
+    </div>
+
+    <!-- ============ Rejected path ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Rejected path</span>
+      <div class="card gate-panel"><div class="card__body">
+        <span class="gate-panel__role">UX Design criteria · WI-487</span>
+        <div class="banner banner--danger"><span class="banner__icon">✕</span><div class="banner__body"><div class="banner__title">Rejected — sent back for rework</div>Contrast failed on the secondary buttons. A remediation note was sent to the run; the design returns to UX Design.</div></div>
+        <label class="field"><span class="field__label">Rejection comment</span><textarea class="textarea">Secondary button text is 3.1:1 on white — bump to navy text or darken the fill.</textarea></label>
+      </div></div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("gates");</script>
+</body>
+</html>

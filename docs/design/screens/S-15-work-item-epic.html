@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-15 · Work Item — Epic — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <!-- ============ DEFAULT: mid-pipeline, Architecture = Gate Pending ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Default · Architecture gate pending</span>
+
+      <nav class="breadcrumb"><a href="S-14-work-items-board.html">Work Items</a><span class="sep">›</span><span class="here">WI-492</span></nav>
+      <div class="page-head">
+        <div class="page-head__titles">
+          <h1 class="t-h1">⚡ Stripe Webhook Integration</h1>
+          <div class="meta-row" style="margin-top:var(--space-2)">
+            <span class="meta-item"><span class="chip badge--navy">Epic</span></span>
+            <span class="meta-item">Created <strong>2d ago</strong></span>
+            <span class="meta-item">Owner <strong>Sarah Chen</strong></span>
+            <span class="meta-item"><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-14</span></span>
+          </div>
+        </div>
+        <span class="u-row-tight"><button class="btn btn--secondary">Edit</button><button class="btn btn--primary">Architecture Gate</button></span>
+      </div>
+
+      <!-- plan-tier lifecycle rail -->
+      <div class="panel" style="margin-bottom:var(--space-5)">
+        <div class="panel__header"><h2 class="panel__title">Lifecycle — Plan tier</h2><span class="u-spacer"></span><span class="t-sm u-muted">Epic · one pass through plan phases</span></div>
+        <div class="rail">
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Ideation</span><span class="rail__state">Approved</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Requirements</span><span class="rail__state">Approved</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">PRD</span><span class="rail__state">Approved</span></div>
+          <div class="rail__node rail__node--current"><span class="rail__dot">●</span><span class="rail__label">Architecture</span><span class="rail__state">Gate Pending</span></div>
+          <div class="rail__node rail__node--upcoming"><span class="rail__dot">5</span><span class="rail__label">UX Design</span><span class="rail__state">Upcoming</span></div>
+          <div class="rail__node rail__node--upcoming"><span class="rail__dot">6</span><span class="rail__label">Task Breakdown</span><span class="rail__state">Upcoming</span></div>
+        </div>
+      </div>
+
+      <div class="grid grid--detail">
+        <div class="u-stack">
+          <!-- description -->
+          <div class="panel">
+            <div class="panel__header"><h2 class="panel__title">Description &amp; context</h2></div>
+            <div class="panel__body">
+              <p class="t-body">Integrate Stripe webhooks to reconcile asynchronous payment events (charge succeeded/failed, dispute created) into the gateway's ledger, with signature verification and idempotent processing.</p>
+              <dl class="kv" style="margin-top:var(--space-4)">
+                <dt>Feature stream</dt><dd>Payments core</dd>
+                <dt>NFRs</dt><dd>PCI-DSS scope, &lt;500ms ack, at-least-once delivery</dd>
+                <dt>Constraints</dt><dd>Stripe + Adyen parity required</dd>
+              </dl>
+            </div>
+          </div>
+
+          <!-- linked artifacts -->
+          <div class="panel">
+            <div class="panel__header"><h2 class="panel__title">Linked artifacts</h2><span class="u-spacer"></span><a href="S-30-traceability.html" class="t-sm">View traceability ↗</a></div>
+            <div class="panel__body--flush">
+              <div class="artifact-row">
+                <span class="artifact-row__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M9 12h6M9 16h6"/></svg></span>
+                <div class="artifact-row__main"><div class="artifact-row__title">PRD: Stripe Webhook Integration</div><div class="artifact-row__meta">v1.2 · Requirements · Published</div></div>
+                <span class="badge badge--done"><span class="status-dot"></span>Published</span>
+                <a class="sor-chip sor-chip--confluence" href="S-29-artifact-preview.html"><span class="sor-chip__glyph">C</span>Confluence</a>
+                <button class="btn btn--ghost btn--sm">Preview</button>
+              </div>
+              <div class="artifact-row">
+                <span class="artifact-row__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></span>
+                <div class="artifact-row__main"><div class="artifact-row__title">System Sequence Diagram</div><div class="artifact-row__meta">v0.9 · Architecture · Pending Architecture Gate</div></div>
+                <span class="badge badge--gate"><span class="status-dot"></span>Pending gate</span>
+                <a class="sor-chip sor-chip--figma" href="S-29-artifact-preview.html"><span class="sor-chip__glyph">F</span>Figma</a>
+                <button class="btn btn--ghost btn--sm">Preview</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- latest AI run -->
+          <div class="panel">
+            <div class="panel__header"><h2 class="panel__title">Latest AI run</h2><span class="u-spacer"></span><a href="S-19-run-console.html" class="t-sm">View full run console ↗</a></div>
+            <div class="panel__body">
+              <div class="console" role="log" aria-label="Latest run console">
+                <div class="console__line"><span class="console__ts">10:42:01</span>Compiling requirements… <span class="ok">[OK]</span></div>
+                <div class="console__line"><span class="console__ts">10:42:14</span>Generating sequence diagrams… <span class="ok">[OK]</span></div>
+                <div class="console__line"><span class="console__ts">10:42:30</span>Validating against security rules… <span class="ok">[OK]</span></div>
+                <div class="console__line"><span class="console__ts">10:42:31</span><span class="info">Run completed. Awaiting gate.</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- child tasks (fan-out) -->
+          <div class="panel">
+            <div class="panel__header"><h2 class="panel__title">Child tasks</h2><span class="u-spacer"></span><span class="t-sm u-muted">Created by Task Breakdown</span></div>
+            <div class="panel__body">
+              <div class="empty" style="padding:var(--space-6)">
+                <div class="empty__text">No child tasks yet — they appear after the <strong>Task Breakdown</strong> gate fans this epic out into task work items.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- right rail: gate attention card -->
+        <div class="u-stack">
+          <div class="card--attention gate-panel"><div class="card__body">
+            <span class="gate-panel__role">▲ Architecture gate · required role: architect</span>
+            <h3 class="t-h3">Awaiting your decision</h3>
+            <p class="t-sm u-body">Approve to publish the System Sequence Diagram to Figma and advance to UX Design.</p>
+            <a href="S-29-artifact-preview.html" class="t-sm">Preview artifact under review ↗</a>
+            <div class="gate-panel__actions">
+              <button class="btn btn--primary">Approve</button>
+              <button class="btn btn--secondary">Reject</button>
+            </div>
+            <span class="gate-reassure">Decision is logged with your role &amp; comment.</span>
+          </div></div>
+          <div class="card"><div class="card__body">
+            <h3 class="t-h3" style="margin-bottom:var(--space-3)">At a glance</h3>
+            <dl class="kv" style="grid-template-columns:1fr auto">
+              <dt>Phase</dt><dd>Architecture</dd>
+              <dt>Artifacts</dt><dd>2</dd>
+              <dt>Open gates</dt><dd>1</dd>
+              <dt>Clarifications</dt><dd>0</dd>
+            </dl>
+          </div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Phase running + needs answer ============ -->
+    <div class="state-block">
+      <span class="state-block__label">A phase running · needs answer</span>
+      <div class="panel" style="margin-bottom:var(--space-5)">
+        <div class="panel__header"><h2 class="panel__title">Lifecycle — Plan tier</h2></div>
+        <div class="rail">
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Ideation</span><span class="rail__state">Approved</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Requirements</span><span class="rail__state">Approved</span></div>
+          <div class="rail__node rail__node--needs"><span class="rail__dot">?</span><span class="rail__label">PRD</span><span class="rail__state">Needs answer</span></div>
+          <div class="rail__node rail__node--upcoming"><span class="rail__dot">4</span><span class="rail__label">Architecture</span><span class="rail__state">Upcoming</span></div>
+          <div class="rail__node rail__node--upcoming"><span class="rail__dot">5</span><span class="rail__label">UX Design</span><span class="rail__state">Upcoming</span></div>
+          <div class="rail__node rail__node--upcoming"><span class="rail__dot">6</span><span class="rail__label">Task Breakdown</span><span class="rail__state">Upcoming</span></div>
+        </div>
+      </div>
+      <div class="grid grid--detail">
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Latest AI run</h2><span class="u-spacer"></span><span class="badge badge--needs-answer"><span class="status-dot"></span>Needs answer</span></div>
+          <div class="panel__body">
+            <div class="console" role="log">
+              <div class="console__line"><span class="console__ts">11:03:10</span>Reading approved Requirements… <span class="ok">[OK]</span></div>
+              <div class="console__line"><span class="console__ts">11:03:44</span>Drafting PRD sections… <span class="ok">[OK]</span></div>
+              <div class="console__line"><span class="console__ts">11:04:02</span><span class="warn">[?] Need input: CSV export in v1?</span> <span class="console__cursor"></span></div>
+            </div>
+          </div>
+        </div>
+        <div class="card--attention"><div class="card__body">
+          <span class="gate-panel__role" style="color:var(--accent-purple)">? Clarification · WI-510</span>
+          <h3 class="t-h3">1 question awaiting an answer</h3>
+          <p class="zero-cost">⏸ Paused — no usage billed while waiting · 6m</p>
+          <div class="gate-panel__actions"><a href="S-20-clarifications.html" class="btn btn--primary">Answer question</a></div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ All phases complete ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">All plan phases complete · fanned out</span>
+      <div class="panel" style="margin-bottom:var(--space-5)">
+        <div class="panel__header"><h2 class="panel__title">Lifecycle — Plan tier</h2><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Plan complete</span></div>
+        <div class="rail">
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Ideation</span><span class="rail__state">Approved</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Requirements</span><span class="rail__state">Approved</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">PRD</span><span class="rail__state">Approved</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Architecture</span><span class="rail__state">Approved</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">UX Design</span><span class="rail__state">Approved</span></div>
+          <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Task Breakdown</span><span class="rail__state">6 tasks</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Child tasks</h2><span class="u-spacer"></span><span class="t-sm u-muted">6 created · pushed to Jira backlog</span></div>
+        <div class="panel__body--flush">
+          <div class="artifact-row"><div class="artifact-row__main"><div class="artifact-row__title">Verify Stripe signing secret</div><div class="artifact-row__meta">WI-540 · Implementation</div></div><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-15</span><a href="S-16-work-item-task.html" class="btn btn--ghost btn--sm">Open</a></div>
+          <div class="artifact-row"><div class="artifact-row__main"><div class="artifact-row__title">Persist webhook event log</div><div class="artifact-row__meta">WI-541 · Implementation</div></div><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-16</span><a href="S-16-work-item-task.html" class="btn btn--ghost btn--sm">Open</a></div>
+          <div class="artifact-row"><div class="artifact-row__main"><div class="artifact-row__title">Add idempotency key handling</div><div class="artifact-row__meta">WI-542 · Implementation</div></div><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-17</span><a href="S-16-work-item-task.html" class="btn btn--ghost btn--sm">Open</a></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("work-items");</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# The Platform-State MCP server reuses the Django ORM and therefore runs inside the
+# BACKEND environment — it has no independent dependency set. All it needs is already
+# pinned in ../backend/requirements.txt (Django, psycopg, pgvector, and `mcp`).
+#
+# It is launched on-demand over stdio by the ClaudeDriver (P0-T6), as:
+#   PYTHONPATH=<repo-root> python -m mcp_platform_state.server
+#
+# (No standalone image is built in P0; see mcp_platform_state/README.md.)

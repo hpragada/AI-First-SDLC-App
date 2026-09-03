@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────────────────────
+# docker-compose.temporal.yml — Temporal Option T1: run Temporal + UI on the
+# shared EC2 box, backed by the EXISTING native Postgres on that same box.
+#
+# Postgres runs natively on the EC2 host (not in Docker), so we use HOST networking:
+# the containers share the host's network namespace and reach Postgres at
+# 127.0.0.1:5432 directly — no need to expose Postgres to the Docker bridge, and
+# no need to open the `postgres` superuser. Temporal connects as `sdlc_migrator`,
+# which OWNS the `temporal` / `temporal_visibility` databases (pre-created by
+# bootstrap_shared_db.sql), so it can install its schema.
+#
+# Run on the EC2 box (see deploy/shared-aws/README.md Step 4 for the full walkthrough).
+# Put the required vars in a sibling ~/temporal/.env (Compose reads it automatically for
+# EVERY subcommand — ps/logs/up):
+#   MIG_PW=<sdlc_migrator-password>
+#   TEMPORAL_UI_ADDR=<ec2-private-ip>:7233   # host networking → Temporal binds the private IP, not 127.0.0.1
+#   TEMPORAL_UI_CORS=http://<ec2-public-ip>:8080
+# Then:  sudo docker compose -f docker-compose.temporal.yml up -d
+#
+# Skip this file entirely if you chose Temporal Cloud (Option T2).
+# ─────────────────────────────────────────────────────────────────────────
+name: sdlc-temporal
+
+services:
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    network_mode: host          # share the EC2 host network → reach 127.0.0.1:5432
+    environment:
+      DB: postgres12            # Temporal's driver name for Postgres (correct for PG12–16)
+      DB_PORT: 5432
+      POSTGRES_SEEDS: 127.0.0.1 # the native Postgres on this same host
+      POSTGRES_USER: sdlc_migrator
+      POSTGRES_PWD: ${MIG_PW:?set MIG_PW to the sdlc_migrator password}
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      SKIP_DB_CREATE: "true"    # DBs already exist (bootstrap_shared_db.sql) — just install schema
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    volumes:
+      # Copy the repo's docker/temporal/dynamicconfig here as ./dynamicconfig (see README Step 4).
+      - ./dynamicconfig:/etc/temporal/config/dynamicconfig
+    # Temporal serves gRPC on 7233 (workers connect here). With host networking the
+    # process binds 7233 directly on the host; `ports:` is ignored in host mode.
+    restart: unless-stopped
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    network_mode: host
+    depends_on:
+      - temporal
+    environment:
+      # Under host networking, Temporal binds gRPC to the EC2 PRIVATE IP (not 127.0.0.1),
+      # so the UI must dial that. Set TEMPORAL_UI_ADDR=<private-ip>:7233 in ~/temporal/.env.
+      TEMPORAL_ADDRESS: ${TEMPORAL_UI_ADDR:?set TEMPORAL_UI_ADDR to <ec2-private-ip>:7233}
+      TEMPORAL_UI_PORT: 8080
+      # Origins allowed to load the UI in a browser. Keep the UI behind the security group / VPN.
+      TEMPORAL_CORS_ORIGINS: ${TEMPORAL_UI_CORS:-http://localhost:8080}
+    restart: unless-stopped

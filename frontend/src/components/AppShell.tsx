@@ -1,0 +1,293 @@
+import { useEffect, useRef, useState } from "react";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+
+import { useAuth } from "../auth/AuthContext";
+import { useRunners } from "../features/identity/hooks";
+import { useDashboard } from "../features/observability/hooks";
+import { cx, StatusDot } from "./ui";
+
+type NavId =
+  | "dashboard"
+  | "work-items"
+  | "runs"
+  | "gates"
+  | "clarifications"
+  | "artifacts"
+  | "profile"
+  | "onboarding"
+  | "integrations"
+  | "repositories"
+  | "test-reporting"
+  | "admin"
+  | "connect";
+
+const ICON = {
+  dashboard: "M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z",
+  work: "M4 4h16v4H4zM4 10h16v4H4zM4 16h10v4H4z",
+  runs: "M8 5v14l11-7z",
+  gate: "M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6l8-4z",
+  clar: "M21 6h-7M3 6h7M3 12h18M3 18h11",
+  artifacts: "M4 4h10l6 6v10H4z M14 4v6h6",
+  profile: "M14 3H6v18h12V9z M14 3v6h6 M9 13h6M9 16h4",
+  onboarding: "M12 3l9 5-9 5-9-5 9-5z M3 13l9 5 9-5",
+  integrations: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
+  repos: "M5 3h11l3 3v15H5z M9 7h6M9 11h6M9 15h4",
+  "test-reporting": "M9 3h6v2H9z M6 5h12v16H6z M9 12l2 2 4-4",
+  admin: "M12 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8z M4 21v-1c0-3.3 3.6-5 8-5s8 1.7 8 5v1",
+  bell: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9 M13.7 21a2 2 0 0 1-3.4 0",
+};
+
+const NAV: Array<{
+  section?: string;
+  adminOnly?: boolean;
+  items: Array<{ id: NavId; label: string; icon: keyof typeof ICON; href: string; count?: number; adminOnly?: boolean }>;
+}> = [
+  {
+    items: [
+      { id: "dashboard", label: "Workspace Dashboard", icon: "dashboard", href: "/" },
+      { id: "work-items", label: "Work Items", icon: "work", href: "/work-items" },
+      { id: "runs", label: "Phases & Runs", icon: "runs", href: "/runs" },
+      { id: "gates", label: "Gates", icon: "gate", href: "/gates" },
+      { id: "clarifications", label: "Clarifications", icon: "clar", href: "/clarifications" },
+      { id: "artifacts", label: "Artifacts & Traceability", icon: "artifacts", href: "/artifacts" },
+    ],
+  },
+  {
+    section: "Project",
+    items: [
+      { id: "profile", label: "Project Profile", icon: "profile", href: "/profile" },
+      { id: "onboarding", label: "Onboarding", icon: "onboarding", href: "/onboarding" },
+      { id: "integrations", label: "Integrations", icon: "integrations", href: "/integrations" },
+      { id: "repositories", label: "Repositories", icon: "repos", href: "/repositories" },
+      { id: "test-reporting", label: "Test Reporting", icon: "test-reporting", href: "/test-reporting", adminOnly: true },
+      { id: "connect", label: "Connect Machine", icon: "runs", href: "/connect" },
+    ],
+  },
+  {
+    section: "Admin",
+    adminOnly: true,
+    items: [{ id: "admin", label: "Workspace Admin", icon: "admin", href: "/admin" }],
+  },
+];
+
+function SvgIcon({ path }: { path: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {path.split(" M").map((part, index) => (
+        <path key={index} d={index === 0 ? part : `M${part}`} />
+      ))}
+    </svg>
+  );
+}
+
+function initials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
+function activeNav(pathname: string): NavId {
+  if (pathname === "/") return "dashboard";
+  if (pathname.startsWith("/work-items")) return "work-items";
+  if (pathname.startsWith("/runs") || pathname.startsWith("/transcripts")) return "runs";
+  if (pathname.startsWith("/gates")) return "gates";
+  if (pathname.startsWith("/clarifications")) return "clarifications";
+  if (pathname.startsWith("/artifacts") || pathname.startsWith("/traceability")) return "artifacts";
+  if (pathname.startsWith("/profile")) return "profile";
+  if (pathname.startsWith("/onboarding")) return "onboarding";
+  if (pathname.startsWith("/integrations")) return "integrations";
+  if (pathname.startsWith("/repositories") || pathname.startsWith("/contracts")) return "repositories";
+  if (pathname.startsWith("/test-reporting")) return "test-reporting";
+  if (pathname.startsWith("/admin")) return "admin";
+  if (pathname.startsWith("/connect") || pathname.startsWith("/setup")) return "connect";
+  return "dashboard";
+}
+
+// Account menu on the topbar avatar — the only affordance that invokes the (already
+// wired) AuthContext.logout(). Kept self-contained so its open/close state and the
+// sign-out lifecycle never leak into the shell.
+function AccountMenu({ name, email }: { name: string; email: string }) {
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const itemRef = useRef<HTMLButtonElement>(null);
+
+  // Close on outside click + Escape while open.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  // Move focus to the first item when the menu opens (keyboard users).
+  useEffect(() => {
+    if (open) itemRef.current?.focus();
+  }, [open]);
+
+  // Any navigation dismisses the menu.
+  useEffect(() => {
+    setOpen(false);
+  }, [location.pathname]);
+
+  const onSignOut = async () => {
+    if (signingOut) return; // guard double-clicks
+    setSigningOut(true);
+    try {
+      // logout() clears the query cache + selectedProjectId even if the network call
+      // fails (AuthContext onSettled), so redirect regardless of the outcome.
+      await logout();
+    } catch {
+      /* client session already cleared; fall through to the redirect */
+    } finally {
+      setOpen(false);
+      navigate("/login", { replace: true });
+    }
+  };
+
+  return (
+    <div className="account-menu" ref={rootRef}>
+      <button
+        className="avatar"
+        aria-label={`Account menu for ${name}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {initials(name)}
+      </button>
+      {open && (
+        <div className="account-menu__pop" role="menu" aria-label="Account">
+          <div className="account-menu__head">
+            <div className="account-menu__name">{name}</div>
+            <div className="account-menu__email">{email}</div>
+          </div>
+          <div className="account-menu__sep" role="separator" />
+          <button
+            ref={itemRef}
+            className="account-menu__item account-menu__item--danger"
+            role="menuitem"
+            onClick={onSignOut}
+            disabled={signingOut}
+          >
+            {signingOut ? "Signing out…" : "Sign out"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function AppShell() {
+  const location = useLocation();
+  const { currentUser, selectedProject, setSelectedProjectId, isAdmin } = useAuth();
+  const active = activeNav(location.pathname);
+
+  // Live nav/bell counts from the real needs-me rollup (Bugs.xlsx row 29.2) — no longer
+  // hardcoded. The dashboard query polls, so these stay current; zero when nothing needs you.
+  const dashboard = useDashboard(selectedProject?.project_id);
+  const gateCount = dashboard.data?.needs_me.gates.length ?? 0;
+  const clarCount = dashboard.data?.needs_me.clarifications.length ?? 0;
+  const navCounts: Partial<Record<NavId, number>> = { gates: gateCount, clarifications: clarCount };
+  const bellCount = gateCount + clarCount;
+
+  // Companion pill reflects the real runner status (Bugs.xlsx row 30) — not a hardcoded "Ready".
+  // Poll gently here since the shell is mounted on every screen (Bugs.xlsx row 13); the
+  // Connect/Phases screens keep the fast 4s cadence via their own useRunners call (shared key).
+  const runners = useRunners(true, 15000);
+  const companionOnline = (runners.data ?? []).some((r) => r.online);
+  const companionPillClass = companionOnline ? "companion-pill--ready" : "companion-pill--offline";
+  const companionPillText = companionOnline ? "Companion: Ready" : "Companion: Offline";
+  const tenant = currentUser?.tenant.name ?? "Acme Corp";
+  const project = selectedProject?.project_name ?? "No project yet";
+  const user = currentUser?.user.name ?? "You";
+  const userEmail = currentUser?.user.email ?? "";
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="sidebar__brand">
+          <span className="sidebar__brand-mark" aria-hidden="true" />
+          <span className="sidebar__brand-text">edvensoft</span>
+        </div>
+        <nav className="sidebar__nav" aria-label="Primary">
+          {NAV.map((group, index) => {
+            if (group.adminOnly && !isAdmin) return null;
+            return (
+              <div key={group.section ?? index}>
+                {group.section && <div className="sidebar__section">{group.section}</div>}
+                {group.items.map((item) => {
+                  if (item.adminOnly && !isAdmin) return null;
+                  const count = item.count ?? navCounts[item.id];
+                  return (
+                    <Link key={item.id} className="nav-item" to={item.href} aria-current={item.id === active ? "page" : undefined}>
+                      <SvgIcon path={ICON[item.icon]} />
+                      <span className="nav-item__label">{item.label}</span>
+                      {count !== undefined && count > 0 && <span className="nav-item__count">{count}</span>}
+                    </Link>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </nav>
+        <div className="sidebar__foot">
+          <span className={cx("companion-pill", companionPillClass)}>
+            <StatusDot />
+            {companionPillText}
+          </span>
+        </div>
+      </aside>
+      <div className="app-main">
+        <header className="topbar">
+          <button className="switcher" aria-label="Switch tenant">
+            <span className="switcher__glyph">{initials(tenant)}</span>
+            {tenant}
+            <span className="switcher__caret" aria-hidden="true">v</span>
+          </button>
+          <span className="crumb-sep" aria-hidden="true">/</span>
+          <select
+            className="switcher"
+            aria-label="Switch project"
+            value={selectedProject?.project_id ?? ""}
+            onChange={(event) => setSelectedProjectId(event.target.value)}
+          >
+            {currentUser?.memberships.map((membership) => (
+              <option key={membership.project_id} value={membership.project_id}>{membership.project_name}</option>
+            ))}
+            {!currentUser?.memberships.length && <option>{project}</option>}
+          </select>
+          <span className="u-spacer" />
+          <span className={cx("companion-pill", companionPillClass)} style={{ width: "auto" }}>
+            <StatusDot />
+            {companionPillText}
+          </span>
+          <button className="bell" aria-label={`Notifications, ${bellCount} unread`}>
+            <SvgIcon path={ICON.bell} />
+            {bellCount > 0 && <span className="bell__badge">{bellCount}</span>}
+          </button>
+          <AccountMenu name={user} email={userEmail} />
+        </header>
+        <div className="app-canvas">
+          <Outlet />
+        </div>
+      </div>
+    </div>
+  );
+}

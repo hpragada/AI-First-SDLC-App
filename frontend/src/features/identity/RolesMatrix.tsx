@@ -1,0 +1,195 @@
+﻿import { useState } from "react";
+
+import { ApiError } from "../../api";
+import { useAuth } from "../../auth/AuthContext";
+import {
+  Assess,
+  Banner,
+  Button,
+  Modal,
+  Panel,
+  Switch,
+  Table,
+} from "../../components/ui";
+import type { AdminUser } from "../../types";
+import { useRevokeMembership, useRoleCoverage, useSetMembership, useSetTenantAdmin, useUsers } from "./hooks";
+import { roleLabel } from "./roles";
+
+// S-08 view states: gap-warning · saving · last-admin-guard.
+export type RolesView = "gap-warning" | "saving" | "last-admin-guard";
+
+const ROLE_COLS: { key: string; short: string }[] = [
+  { key: "product_owner", short: "PO" },
+  { key: "architect", short: "Arch" },
+  { key: "designer", short: "Design" },
+  { key: "tech_lead", short: "Lead" },
+  { key: "engineer", short: "Eng" },
+  { key: "reviewer", short: "Rev" },
+  { key: "qa_lead", short: "QA" },
+  { key: "security_engineer", short: "Sec" },
+  { key: "devops", short: "DevOps" },
+  { key: "admin", short: "Admin" },
+];
+
+// role → membership id, for this project only — needed to revoke a specific grant.
+function membershipMapFor(user: AdminUser, projectId: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const m of user.memberships) {
+    if (m.project_id === projectId) map.set(m.role, m.id);
+  }
+  return map;
+}
+
+export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
+  const { selectedProject } = useAuth();
+  const projectId = selectedProject?.project_id;
+  const projectName = selectedProject?.project_name ?? "this project";
+  const users = useUsers();
+  const coverage = useRoleCoverage(projectId);
+  const setMembership = useSetMembership(projectId);
+  const revokeMembership = useRevokeMembership(projectId);
+  const setTenantAdmin = useSetTenantAdmin();
+  const [guardOpen, setGuardOpen] = useState(false);
+  // The change currently being saved, so the banner names the real user + role instead of a
+  // hardcoded sample (Bugs.xlsx row 53: was always "Tom Reyes (reviewer …)").
+  const [pending, setPending] = useState<{ name: string; role: string } | null>(null);
+
+  const view: RolesView =
+    forceView ??
+    (guardOpen
+      ? "last-admin-guard"
+      : setMembership.isPending || revokeMembership.isPending || setTenantAdmin.isPending
+        ? "saving"
+        : "gap-warning");
+
+  const list = users.data ?? [];
+  const blockedRoles = coverage.data?.roles.filter((r) => r.gate_blocked) ?? [];
+
+  const toggleRole = (u: AdminUser, roleKey: string) => {
+    setPending({ name: u.name, role: roleKey });
+    if (roleKey === "admin") {
+      setTenantAdmin.mutate(
+        { userId: u.id, isTenantAdmin: !u.is_tenant_admin },
+        {
+          onError: (err) => {
+            if (err instanceof ApiError && err.status === 409) setGuardOpen(true);
+          },
+        },
+      );
+      return;
+    }
+    if (!projectId) return;
+    const membershipId = membershipMapFor(u, projectId).get(roleKey);
+    if (membershipId) {
+      revokeMembership.mutate(membershipId);
+    } else {
+      setMembership.mutate({ user_id: u.id, role: roleKey });
+    }
+  };
+
+  const headers = ["User", ...ROLE_COLS.map((c) => <span title={c.key}>{c.short}</span>)];
+  const rows = list.map((u) => {
+    const membershipMap = projectId ? membershipMapFor(u, projectId) : new Map<string, string>();
+    return [
+      <span className="table__primary" key="u">
+        {u.name}
+      </span>,
+      ...ROLE_COLS.map((c) => (
+        <Switch
+          key={c.key}
+          label={`${u.name} — ${c.key}`}
+          checked={c.key === "admin" ? u.is_tenant_admin : membershipMap.has(c.key)}
+          onChange={() => toggleRole(u, c.key)}
+        />
+      )),
+    ];
+  });
+
+  return (
+    <div className="canvas-pad">
+      <div className="page-head">
+        <div className="page-head__titles">
+          <h1 className="t-h1">Roles & memberships</h1>
+          <p className="page-head__sub">
+            Per-project role grants. Each role gates specific decisions — uncovered gate roles make
+            their gate unactionable.
+          </p>
+        </div>
+        <select className="select" style={{ maxWidth: "220px" }} aria-label="Project">
+          <option>{projectName}</option>
+        </select>
+      </div>
+
+      {view === "saving" && (
+        <Banner variant="info">
+          {pending
+            ? `Saving role change for ${pending.name} (${roleLabel(pending.role)} @ ${projectName})…`
+            : "Saving role change…"}
+        </Banner>
+      )}
+
+      {view === "last-admin-guard" && (
+        <div className="modal-scrim">
+          <Modal inline
+            title="Can't remove the last admin"
+            footer={
+              <>
+                <Button variant="secondary" onClick={() => setGuardOpen(false)}>
+                  Cancel
+                </Button>
+                <Button variant="primary" onClick={() => setGuardOpen(false)}>
+                  Promote a member
+                </Button>
+              </>
+            }
+          >
+            <Banner variant="danger">
+              You're the only tenant-admin. Promote another member to admin before removing your own
+              admin role, or the workspace would be left unmanageable.
+            </Banner>
+          </Modal>
+        </div>
+      )}
+
+      {view === "gap-warning" && (
+        <>
+          {blockedRoles.length > 0 && (
+            <div style={{ marginBottom: "var(--space-4)" }}>
+              <Banner variant="warning" title={`No reviewer on ${projectName}`}>
+                {blockedRoles.map((r) => r.note).filter(Boolean).join(" ") ||
+                  "The merge gate & code-review gate will be unactionable until someone holds the reviewer role."}
+              </Banner>
+            </div>
+          )}
+          <Panel flush>
+            <div style={{ overflowX: "auto" }}>
+              <Table matrix headers={headers} rows={rows} />
+            </div>
+          </Panel>
+
+          <div style={{ marginTop: "var(--space-4)" }}>
+            <Panel title="Gate-role coverage">
+              <div className="u-stack">
+                {(coverage.data?.roles ?? []).map((r) => (
+                  <div className="u-row-tight" key={r.role}>
+                    {r.covered ? (
+                      <Assess state="complete">✓</Assess>
+                    ) : (
+                      <Assess state="missing">✗</Assess>
+                    )}
+                    <span className={r.covered ? "t-sm" : "t-sm u-danger"}>
+                      {roleLabel(r.role)}
+                      {r.covered
+                        ? ` — ${r.holders.map((h) => h.name).join(", ")}`
+                        : ` — nobody${r.note ? ` (${r.note})` : ""}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

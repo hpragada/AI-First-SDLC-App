@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-03 · Accept Invitation — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <!-- ============ Default ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Default</span>
+      <div class="auth">
+        <div class="auth__brand"><div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div><div class="auth__tagline">You're invited to Acme Corp.</div><div class="auth__sub">Set a password and join your team's workspace.</div></div>
+        <div class="auth__form"><div class="auth-card">
+          <h1 class="auth-card__title">Join Acme Corp</h1>
+          <p class="auth-card__sub">You've been invited by <strong>Sarah Chen</strong> as <strong>engineer</strong> on Payment Gateway v2.</p>
+          <label class="field"><span class="field__label">Your name</span><input class="input" type="text" placeholder="e.g. Jordan Lee"></label>
+          <label class="field"><span class="field__label">Email</span><input class="input" type="email" value="raj@acme.com" disabled></label>
+          <label class="field"><span class="field__label">Set a password</span><input class="input" type="password" placeholder="At least 8 characters">
+            <span class="strength"><span class="strength__bar is-on"></span><span class="strength__bar is-on"></span><span class="strength__bar is-on"></span><span class="strength__bar is-on"></span></span>
+            <span class="field__help">Strong password.</span>
+          </label>
+          <button class="btn btn--primary btn--block">Join workspace</button>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Expired / used link ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Expired / used link</span>
+      <div class="auth">
+        <div class="auth__brand"><div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div><div class="auth__tagline">You're invited to Acme Corp.</div></div>
+        <div class="auth__form"><div class="auth-card" style="text-align:center">
+          <div class="empty__icon" style="margin:0 auto var(--space-3)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v5M12 16h.01"/></svg></div>
+          <h1 class="auth-card__title">This invite link has expired</h1>
+          <p class="auth-card__sub">Invitation links are valid for 7 days, or expire once used. Ask your admin to resend it.</p>
+          <button class="btn btn--secondary btn--block">Request a new invite</button>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Submitting ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Submitting</span>
+      <div class="auth">
+        <div class="auth__brand"><div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div><div class="auth__tagline">You're invited to Acme Corp.</div></div>
+        <div class="auth__form"><div class="auth-card">
+          <h1 class="auth-card__title">Join Acme Corp</h1>
+          <p class="auth-card__sub">Setting up your account…</p>
+          <button class="btn btn--primary btn--block" disabled aria-disabled="true"><span class="spinner"></span> Joining workspace…</button>
+        </div></div>
+      </div>
+    </div>
+
+  </div>
+</main>
+</body>
+</html>

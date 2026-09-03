@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-11 · Integrations — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Integrations</h1>
+        <p class="page-head__sub">Capabilities, not vendors — connect a vendor as the current binding for each capability. Phases use whatever is connected.</p>
+      </div>
+    </div>
+
+    <!-- ============ Mixed ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Mixed · some connected</span>
+      <div class="grid grid--3">
+        <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo cap-card__logo--confluence">C</span><div><div class="cap-card__cap">Documentation store</div><div class="cap-card__vendor">Confluence · space PAY</div></div></div><div class="cap-card__foot"><span class="badge badge--done"><span class="status-dot"></span>Connected</span><span class="u-spacer"></span><a href="S-12-connect-capability.html" class="btn btn--ghost btn--sm">Manage</a></div></div>
+        <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo cap-card__logo--jira">J</span><div><div class="cap-card__cap">Task tracker</div><div class="cap-card__vendor">Jira · project STR</div></div></div><div class="cap-card__foot"><span class="badge badge--done"><span class="status-dot"></span>Connected</span><span class="u-spacer"></span><a href="S-12-connect-capability.html" class="btn btn--ghost btn--sm">Manage</a></div></div>
+        <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo cap-card__logo--figma">F</span><div><div class="cap-card__cap">Design source</div><div class="cap-card__vendor">Figma</div></div></div><div class="cap-card__foot"><span class="badge badge--done"><span class="status-dot"></span>Connected</span><span class="u-spacer"></span><a href="S-12-connect-capability.html" class="btn btn--ghost btn--sm">Manage</a></div></div>
+        <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo cap-card__logo--github">G</span><div><div class="cap-card__cap">Code host</div><div class="cap-card__vendor">GitHub · acme/*</div></div></div><div class="cap-card__foot"><span class="badge badge--done"><span class="status-dot"></span>Connected</span><span class="u-spacer"></span><a href="S-12-connect-capability.html" class="btn btn--ghost btn--sm">Manage</a></div></div>
+        <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo cap-card__logo--empty">X</span><div><div class="cap-card__cap">Test management</div><div class="cap-card__vendor">Not connected</div></div></div><div class="cap-card__foot"><span class="badge badge--queued"><span class="status-dot"></span>Not connected</span><span class="u-spacer"></span><a href="S-12-connect-capability.html" class="btn btn--primary btn--sm">Connect</a></div></div>
+        <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo" style="background:var(--brand-navy-500)">●</span><div><div class="cap-card__cap">Code intelligence</div><div class="cap-card__vendor">Built-in</div></div></div><div class="cap-card__foot"><span class="badge badge--done"><span class="status-dot"></span>Enabled</span><span class="u-spacer"></span><button class="btn btn--ghost btn--sm">Manage</button></div></div>
+      </div>
+    </div>
+
+    <!-- ============ Connection failed ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Connection failed · reason</span>
+      <div class="grid grid--3">
+        <div class="cap-card cap-card--failed"><div class="cap-card__head"><span class="cap-card__logo cap-card__logo--github">G</span><div><div class="cap-card__cap">Code host</div><div class="cap-card__vendor">GitHub</div></div></div>
+          <div class="banner banner--danger"><span class="banner__icon">✕</span><div class="banner__body">Token rejected (401). The app credential may have expired.</div></div>
+          <div class="cap-card__foot"><span class="badge badge--failed"><span class="status-dot"></span>Failed</span><span class="u-spacer"></span><a href="S-12-connect-capability.html" class="btn btn--secondary btn--sm">Fix connection</a></div></div>
+      </div>
+    </div>
+
+    <!-- ============ All empty ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">All empty</span>
+      <div class="grid grid--3">
+        <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo" style="background:var(--bg-subtle);color:var(--text-muted)">C</span><div><div class="cap-card__cap">Documentation store</div><div class="cap-card__vendor">Not connected</div></div></div><div class="cap-card__foot"><span class="badge badge--queued"><span class="status-dot"></span>Not connected</span><span class="u-spacer"></span><a href="S-12-connect-capability.html" class="btn btn--primary btn--sm">Connect</a></div></div>
+        <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo" style="background:var(--bg-subtle);color:var(--text-muted)">J</span><div><div class="cap-card__cap">Task tracker</div><div class="cap-card__vendor">Not connected</div></div></div><div class="cap-card__foot"><span class="badge badge--queued"><span class="status-dot"></span>Not connected</span><span class="u-spacer"></span><a href="S-12-connect-capability.html" class="btn btn--primary btn--sm">Connect</a></div></div>
+        <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo" style="background:var(--bg-subtle);color:var(--text-muted)">F</span><div><div class="cap-card__cap">Design source</div><div class="cap-card__vendor">Not connected</div></div></div><div class="cap-card__foot"><span class="badge badge--queued"><span class="status-dot"></span>Not connected</span><span class="u-spacer"></span><a href="S-12-connect-capability.html" class="btn btn--primary btn--sm">Connect</a></div></div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("integrations");</script>
+</body>
+</html>

@@ -123,7 +123,7 @@ Transform the existing local/Git-coupled SDLC command suite (17 agents + rules +
 
 ## B5. Execution model
 **ExecutionDriver interface** (`run_planning_task`, `run_build_task`) with drivers: **ClaudeDriver** (Agent SDK), **CodexDriver** (`codex exec`/Agents SDK), **CopilotDriver** (CLI in own runner). Same composed context + same MCP set across drivers; only the driver differs.
-**Runner topologies (LOCKED — local-first):** **Local runner** (dev machine / local container) for all of Phases 0–4 development & testing. **Cloud runner fleet** + sandbox hardening (gVisor/Firecracker, autoscaling) is a Phase 5 Cloud-Migration workstream. Customer-hosted runner (enterprise/on-prem) and Local companion are later options. Planning phases always run server-side (no repo).
+**Runner topologies (LOCKED — local-first):** **Planning** phases run **server-side** (no repo). **Build** execution (Phase 2+) runs on a **local-companion runner on the developer's own machine**, editing a **platform-managed git worktree** (a clean `feature/<key>` branch) so the developer runs/tests locally before any PR — the daily dev loop is unchanged. The companion connects **outbound** to the platform (the platform never reaches into the dev machine; state tools are served remotely so the machine needs no DB — tenant binding + RLS stay server-side). A **server-side/container build runner** is an optional later topology behind the same `run_build_task` seam; the **cloud runner fleet** + sandbox hardening (gVisor/Firecracker, autoscaling) is the Phase-5 Cloud-Migration workstream. (Detail: `docs/PHASE_2_BUILD_SPEC.md` D8–D9.)
 **Default engine (LOCKED):** **ClaudeDriver (Agent SDK)**; interface built so Codex/Copilot drivers drop in at Phase 6.
 **Gates live in the control plane**, never in engine hooks → identical behavior across engines.
 
@@ -182,13 +182,14 @@ OTel spans per run/tool-call; per-tenant cost metering + quotas; durable workflo
 ## Phase 2 — Build Execution
 **Goal:** Real code: implementation/review/test producing PRs, durably.
 **Components:**
-- **CodeHost connector** (GitHub: branches, PRs, status, webhooks).
-- **Build runners** (sandboxed; **runner provisioning**: toolchains, private registries, test DB, secrets inject).
-- **Durable workflow** (Temporal — introduced Phase 0; here extended for long-running build sagas): retries, idempotency, dead-letter, compensation/saga.
-- **Build phases** (implementation, code review, testing) via Remediation loop preserved.
-- **Secret scanning** + **egress allowlist** (initial prompt-injection guardrails).
-- **Human takeover** state + **Git-webhook reconciliation** (human commits update registry).
-**Thin slice:** WorkItem→PR→CI→status round-trip with a forced mid-run failure recovered idempotently.
+- **CodeHost connector** (GitHub: branches, PRs, status, webhooks; headless REST, per-tenant). Platform owns the PR/merge SoR surface; the engine never calls GitHub directly.
+- **Local-companion build runner** (developer's machine; **managed git-worktree** edit surface — run/test locally before PR; provisioning: toolchain, test DB, secrets inject; **remote Platform-State serving**, no DB on the dev machine). Server-side runner is a later optional topology.
+- **Light multi-repo** (repo-per-WorkItem: `WorkItem.repo`, N repos/project, per-repo CodeHost). Full multi-repo (cross-repo DAG, API-contract, drift) stays Phase 4.
+- **Durable workflow** (Temporal — introduced Phase 0; here extended for long-running build sagas): dispatch-to-companion + await, retries, idempotency, dead-letter, compensation/saga.
+- **Build phases** (implementation, code review, testing) via Remediation loop preserved. Gate roles split: 07→`tech_lead`, 08+merge→`reviewer`.
+- **Secret scanning** + **egress allowlist** + per-phase tool allowlist (initial prompt-injection guardrails on a developer-trusted runner; full sandbox → Phase 5).
+- **Human takeover** state + **Git-webhook reconciliation** (human commits update registry — the primary collaboration path in companion mode).
+**Thin slice:** WorkItem→**companion worktree**→local build/test→PR→CI status round-trip, with a forced mid-run failure recovered idempotently; a human commit reconciles via webhook; two repos in one project build independently.
 **Defer:** design/test-mgmt loops, multi-repo.
 
 ## Phase 3 — Design & Test Loops
@@ -208,7 +209,7 @@ OTel spans per run/tool-call; per-tenant cost metering + quotas; durable workflo
 - **Onboarding service (full):** adds **gap-fill** generation for genuinely missing artifacts on top of Phase 1's discover→register→reconcile.
 - **CodeIntel connector** (Repowise) per repo; Knowledge Index population; entry agents (00-series) reworked here.
 - **API-Contract artifact** (context-bridge's surviving job) + cross-repo edges in Work DAG.
-- **Multi-repo project model** (one Project, N Repositories, shared memory, per-repo manifest).
+- **Multi-repo project model — full** (cross-repo DAG edges, API-Contract artifact, shared memory, per-repo manifest). *(Light repo-per-WorkItem — `WorkItem.repo`, N repos/project — already shipped in Phase 2.)*
 - **Drift detection live** (webhooks → ledger → drift gates; change-impact via traceability).
 **Thin slice:** onboard split FE/BE, resume mid-pipeline, change contract → both repos get drift gates.
 
@@ -270,5 +271,6 @@ A **mandatory reference sweep** (grep the migrated agent for any leftover `.md`/
 | 6 | Default engine | **Claude Code (Agent SDK)**, switchable | ClaudeDriver default; ExecutionDriver interface built Phase 0; Codex/Copilot Phase 6 |
 | 7 | Project tracks to test | **Both greenfield & brownfield** | Brownfield-**lite** (single-repo: Atlassian register + static-file extract) added to **Phase 1**; brownfield-**full** (codeintel + multi-repo + drift) stays Phase 4 |
 | 8 | Gate policy | **All artifacts reviewed, gated, published** | Single policy: every artifact `gate-then-publish`; no auto-publish in v1 |
+| 9 | Build execution model | **Local-companion runner + managed worktree** | Phase 2: build runs on the developer's machine in a platform-managed git worktree (run/test locally before PR); platform owns the PR/merge SoR surface + gates (07→`tech_lead`, 08+merge→`reviewer`); **light repo-per-WorkItem** multi-repo in P2 (full → P4); server-side/cloud runners later. See `docs/PHASE_2_BUILD_SPEC.md` D8–D10 |
 
 > **Next deliverables (Phase 0 kickoff):** (1) Phase 0 Postgres schema (with `tenant_id`+RLS), (2) Platform-State MCP tool contract, (3) Manifest Composer spec, (4) Temporal workflow/activity shapes for a run, (5) worked before/after migration of one agent (PRD or Implementation), (6) local `docker-compose` topology.
