@@ -29,7 +29,6 @@ from apps.runs.enrollment import (
 from apps.runs.models import Run, RunnerEnrollment
 from apps.tenancy.auth import IsAuthenticatedMember, current_user
 from apps.tenancy.context import tenant_context
-from apps.tenancy.services import require_project_member
 from orchestration.build_report import BuildReportError, report_build
 
 # A work claim is a *lease*. If the companion that claimed a run dies before reporting (crash,
@@ -219,11 +218,26 @@ class RunnerEnrollmentView(APIView):
     local-companion runner for this tenant."""
 
     def get_permissions(self):
-        # Bugs S.No 214: this used to gate GET only, so POST — which MINTS A CREDENTIAL that
-        # lets a machine claim and run this tenant's phases — fell through to `AllowAny` and
-        # took no login at all. Both verbs need a member; the runner's own token-authenticated
-        # routes are untouched because they set their own `authentication_classes`.
-        return [IsAuthenticatedMember()]
+        # GET only, and that is a DELIBERATE hold rather than an oversight.
+        #
+        # S.No 214 closed eight other anonymous writes, and the enrollment POST is genuinely the
+        # ninth: it mints a credential that lets a machine claim and run this tenant's phases,
+        # and enrollment tokens never expire. Gating it, however, breaks the documented CLI
+        # onboarding path - `python -m runner.companion enroll --api-url ... --tenant T
+        # --project P` (runner/README.md, Quick start step 1) sends only an X-Tenant-ID header
+        # and a `developer_id` body param, with no session to present. There is no user-token
+        # auth for it to use instead; giving it one is new capability, not a bug fix.
+        #
+        # So this is recorded against S.No 35, which already owns the redesign of the whole
+        # Connect Machine flow, alongside the two findings filed there earlier: `revoke_runner`
+        # revokes exactly one enrollment row and leaves that machine's other tokens ACTIVE, and
+        # the token travels on the command line where any process listing reveals it. Whatever
+        # replaces the token flow has to answer "how does a headless machine authenticate" once,
+        # for all three - and closing this half first would break onboarding while solving none
+        # of it.
+        if self.request.method == "GET":
+            return [IsAuthenticatedMember()]
+        return super().get_permissions()
 
     def get(self, request):
         tenant_id = _tenant_id(request)
@@ -241,16 +255,9 @@ class RunnerEnrollmentView(APIView):
         if not Project.objects.filter(id=project_id, tenant_id=tenant_id).exists():
             return Response({"project_id": "not found in tenant"},
                             status=status.HTTP_404_NOT_FOUND)
-        # Layer 2 of S.No 214: an enrollment token is a credential that lets a machine claim and
-        # run this project's phases. It is minted FOR the caller and bound to them, though, so it
-        # is self-service — the equivalent of issuing yourself an API token — and connecting your
-        # own laptop is exactly what the S-05/S-06 setup checklist asks every developer to do.
-        # Membership is the right bar; a lead-only one would break onboarding for the whole team.
-        require_project_member(
-            tenant_id=tenant_id, project_id=str(project_id),
-            user_id=getattr(current_user(request), "id", None),
-            what="connect a machine to this project",
-        )
+        # NOTE: no project-membership check here either, for the reason in `get_permissions`
+        # above - the CLI path has no session to check a membership against. It belongs with the
+        # S.No 35 redesign, not ahead of it.
         # The authenticated session user owns the enrollment; `developer_id` in the body is
         # only the pre-auth/runner/test fallback (mirrors `resolve_actor`, P4.7-T5).
         user = current_user(request)

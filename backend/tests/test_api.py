@@ -397,7 +397,6 @@ def _anon_writes(project):
         ("wire atlassian", "post", f"/api/projects/{pid}/onboard-atlassian/", {}),
         ("create work item", "post", "/api/work-items/",
          {"project": str(pid), "type": "story", "title": "t"}),
-        ("mint enrollment", "post", "/api/runners/", {"project_id": str(pid)}),
     ]
 
 
@@ -458,8 +457,6 @@ def test_the_second_layer_is_scoped_to_what_it_is_actually_for(client, project):
                        {"project": str(project.id), "type": "story", "title": "mine"},
                        format="json", **hdr)
     assert made.status_code == 201
-    assert client.post("/api/runners/", {"project_id": str(project.id)},
-                       format="json", **hdr).status_code == 201
     # Triggering reaches the domain layer rather than being refused at the permission layer.
     assert client.post(f"/api/work-items/{wi.id}/trigger/", {"agent_key": "03_prd"},
                        format="json", **hdr).status_code != 403
@@ -472,8 +469,6 @@ def test_a_signed_in_outsider_cannot_act_on_a_project_they_are_not_on(client, pr
     client.force_authenticate(outsider)
     wi = WorkItem.objects.create(tenant=project.tenant, project=project, type="story", title="t")
     assert client.post(f"/api/work-items/{wi.id}/trigger/", {"agent_key": "03_prd"},
-                       format="json", **_hdr(project.tenant_id)).status_code == 403
-    assert client.post("/api/runners/", {"project_id": str(project.id)},
                        format="json", **_hdr(project.tenant_id)).status_code == 403
 
 

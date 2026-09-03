@@ -115,6 +115,21 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
             onRetry={() => void artifacts.refetch()}
           />
         </Panel>
+      ) : view === "empty" && scoped ? (
+        // The unscoped copy below would be a lie here: the project may have plenty of artifacts
+        // and this filter simply matched none of them. Saying "no artifacts yet" under a scope
+        // is the same class of mistake as showing an empty list for a failed request.
+        <Panel>
+          <EmptyState
+            title="Nothing matched this filter"
+            text="The project may still have artifacts — this view is narrowed to the link you followed."
+            action={
+              <Link to="/artifacts" className="btn btn--secondary">
+                Show the whole registry
+              </Link>
+            }
+          />
+        </Panel>
       ) : view === "empty" ? (
         <Panel>
           <EmptyState
