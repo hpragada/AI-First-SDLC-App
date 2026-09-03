@@ -160,11 +160,17 @@ Context the team should know before reading these: **"Index code" does NOT run t
 - **Also:** `test_document_vision.py::test_auto_apply_rejects_a_version_that_shrank` greps for *"shorter version"*; the message now says *"shorter rendering"*.
 - **Must be fixed before this branch merges** — a red suite hides real regressions.
 
-### S4-10 · 🔲 Opening "Connect Machine" silently kills the running companion
+### S4-10 · ✅ Opening "Connect Machine" silently kills the running companion
 - **Symptom:** a working companion started failing every poll with `401 invalid or missing Runner token`.
 - **Root cause:** visiting the Connect Machine page mints a **new** enrollment and **revokes** the current one. The running companion holds the revoked token and dies. Verified in the data: `20cddcee` revoked at 09:13, `90b52e99` created 09:13.
 - **Compounding:** the token is shown **once** and stored only as a hash — unrecoverable. The tenant had **10 enrollments**, 8 `active`, most never used.
 - **Suggested fix:** warn before revoking while a companion is online, and/or offer "show the command for the current enrollment" without minting a new one.
+- **✅ VERIFIED FIXED 2026-09-03 — by work already merged, not by anything new.** Re-read against the code as it stands, all three links in the chain are broken, and any one of them alone would break it:
+  1. *Opening the screen mints a token* — it does not. A token is minted only when the user **clicks** "Generate enrollment token" (`ConnectMachine.tsx` `onGenerate`).
+  2. *Minting revokes the previous enrollment* — it does not. `apps/runs/enrollment.py::enroll_runner` creates a row and returns a token. It contains no revoke, no update, nothing that touches another row.
+  3. *A second enrollment steals the work* — it does not. `trigger.py::_resolve_enrollment` prefers an enrollment that is **online** (`last_seen` inside the threshold), then one that has been seen at all, and only then the newest. A freshly minted, never-used enrollment is chosen **last**.
+  The symptom was fixed by the row-61/RC-4 grouping work — `list_developer_enrollments` collapses label-less enrollments for one project into a single card, and its comment names that bug — and hardened again by the online-preferring dispatch. **No further work is needed for the symptom this entry describes.**
+- **What remains, and where it went:** the *compounding* observation above is real and outlives the symptom. Disconnect sends only the representative row's id and `revoke_runner` revokes exactly one row by primary key, so a developer who generated three tokens still holds two working ones afterwards; and enrollment tokens never expire. That is recorded against **Bugs.xlsx S.No 35**, which owns the Connect Machine redesign, together with the token travelling on the command line (`multi_project_recon` C1/C4) and the still-anonymous `POST /api/runners/` found while closing S.No 214. All four are one question — how does a headless machine authenticate — and are to be answered together, not piecemeal.
 
 ### S4-11 · 🔲 Humans and agents see different projects
 - **Symptom:** the Artifacts page shows **11** artifacts; the database holds **19**.
@@ -443,7 +449,7 @@ actually proves it:** after clicking, check a `codeintel_mcp` process exists and
 | S4-7 | Repo-scoped runs hang — un-denied but not allow-listed | ✅ FIX KEPT — **but it was NOT the cause of the hangs** (see S4-13). Genuine latent inconsistency; `10_security` had it too |
 | S4-8 | Companion logs nothing during a run | 🔲 OPEN — partially mitigated in practice: redirecting the companion's output to a file (`>> companion.log 2>&1`) does capture the failure-path lines, and caught the missing-worktree misconfiguration this session. It still reports **nothing** while a healthy run is in progress |
 | S4-9 | 7 stale tests from `b97f804` | ✅ FIXED — `test_onboarding.py` **28/28 green**. Artifact ids now come from the **adopt** result (upload registers nothing since `b97f804`); the two Confluence tests gained the adopt step the 2026-07-29 two-step decision requires, and now assert the phase reads *missing* until adoption. Also fixed `test_document_vision.py` ("shorter version" → "shorter rendering") |
-| S4-10 | Connect Machine revokes the live companion's token | 🔲 OPEN (decision) |
+| S4-10 | Connect Machine revokes the live companion's token | ✅ FIXED (verified 2026-09-03; residue → S.No 35) |
 | S4-11 | Agents see run-record artifacts the UI hides | 🔲 OPEN (decision) |
 | S4-12 | **`00c` agent body ≠ the tools it is given** (migration §8 miss) | ✅ FIXED — all four (a `workspace` param, b `frm` not `from`, c Knowledge Index → S4-18, d headless not a Tech Lead gate). **Re-sweep of the OTHER migrated agents still owed** |
 | S4-13 | **THE HANG — git inherited the MCP server's JSON-RPC channel** | ✅ FIXED (verified live: run completed) |
@@ -464,7 +470,8 @@ actually proves it:** after clicking, check a `codeintel_mcp` process exists and
 = fixed with guards, not yet exercised live. As of run **`9d1b4d32`** (2026-08-03) every Step-4
 finding except S4-8, S4-10, S4-11 and S4-25 is fixed, and all of those four are either a decision
 or observability — none blocks the journey. **S4-25 was subsequently closed** in the Step-5 second
-pass (as S5-26), leaving S4-8, S4-10 and S4-11.
+pass (as S5-26), and **S4-10 was verified fixed on 2026-09-03** by work already merged (see its
+entry above; the residue moved to Bugs.xlsx S.No 35) — leaving **S4-8 and S4-11**.
 
 ---
 
@@ -589,7 +596,9 @@ gap-report run.
 | S5-9 · S5-19 · S5-22 · S5-23 · S5-24 · S5-25 | Mode banner · actionable blockers · assessor branch · evidence type · stale-answer note · truncation recorded | This run had no blockers, no truncation and no replayed answers, so none rendered |
 
 ### 🔲 OPEN — decisions for the team (not defects)
-- **S4-10** — "Connect Machine" revokes the live companion's token.
+- ~~**S4-10** — "Connect Machine" revokes the live companion's token.~~ ✅ Verified fixed
+  2026-09-03: the mechanism this described cannot occur in the current code (see the S4-10 entry).
+  The credential-lifecycle residue it raised is now tracked on Bugs.xlsx S.No 35.
 - **S4-11** — agents can see run-record artifacts the UI hides.
 
 ### 🔲 OPEN — observability / hardening
