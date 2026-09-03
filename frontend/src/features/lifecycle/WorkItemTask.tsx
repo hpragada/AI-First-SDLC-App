@@ -17,6 +17,7 @@ import {
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
+import { artifactsForWorkItem, gateLink } from "../../links";
 import { useRepositories } from "../setup/hooks";
 import type { WorkItemCard } from "../../types";
 
@@ -97,7 +98,7 @@ function WorkItemTaskLive() {
             </span>
             {workItem.data.parent && (
               <span className="meta-item">
-                Parent <a href={`/work-items/${workItem.data.parent}`}>↖ {workItem.data.parent.slice(0, 8)}</a>
+                Parent <Link to={`/work-items/${workItem.data.parent}`}>↖ {workItem.data.parent.slice(0, 8)}</Link>
               </span>
             )}
             {workItem.data.owner && (
@@ -153,9 +154,9 @@ function WorkItemTaskLive() {
                   ["Phase", phaseLabel(latestRun.agent_phase ?? latestRun.agent_key)],
                 ]}
               />
-              <a href={`/runs/${latestRun.id}`} className="t-sm">
+              <Link to={`/runs/${latestRun.id}`} className="t-sm">
                 View run console ↗
-              </a>
+              </Link>
             </Panel>
           )}
 
@@ -167,9 +168,9 @@ function WorkItemTaskLive() {
                     <div className="artifact-row__title">{c.title || c.id.slice(0, 8)}</div>
                     <div className="artifact-row__meta">{c.type} · {phaseLabel(c.phase)}</div>
                   </div>
-                  <a href={`/work-items/${c.id}`} className="btn btn--ghost btn--sm">
+                  <Link to={`/work-items/${c.id}`} className="btn btn--ghost btn--sm">
                     Open
-                  </a>
+                  </Link>
                 </div>
               ))}
             </Panel>
@@ -193,7 +194,7 @@ function WorkItemTaskLive() {
                   {/* Rejecting from here sent NO comment at all — there is no box on this card,
                       so the reason was lost. The gate is where you can reject with a reason or
                       request changes and have the build actually revise. */}
-                  <Link className="btn btn--secondary" to="/gates">
+                  <Link className="btn btn--secondary" to={gateLink(pendingGate.id)}>
                     Reject or request changes…
                   </Link>
                 </div>
@@ -217,7 +218,14 @@ function WorkItemTaskLive() {
               <Kv
                 rows={[
                   ["State", statusLabel(workItem.data.state)],
-                  ["Artifacts", String(workItem.data.artifact_count ?? 0)],
+                  // N2: the count was inert text — the card told you there were four artifacts
+                  // and left you to find them in the registry by hand.
+                  [
+                    "Artifacts",
+                    <Link to={artifactsForWorkItem(workItem.data.id)} key="a">
+                      {workItem.data.artifact_count ?? 0}
+                    </Link>,
+                  ],
                   ["Open gates", String(approvals.data?.length ?? 0)],
                 ]}
               />
@@ -399,7 +407,7 @@ function WorkItemTaskGallery({ view }: { view: TaskView }) {
             view === "loop-failed" && (
               <>
                 ⌐ Child defect:{" "}
-                <a href="/work-items/WI-547">WI-547 "Signature check rejects valid test events"</a> —
+                <Link to="/work-items/WI-547">WI-547 "Signature check rejects valid test events"</Link> —
                 closes on clean re-run.
               </>
             )

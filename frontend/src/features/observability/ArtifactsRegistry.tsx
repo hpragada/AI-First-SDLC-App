@@ -2,11 +2,12 @@
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, EmptyState, Panel, Table } from "../../components/ui";
+import { Badge, Banner, EmptyState, ErrorState, Panel, Table } from "../../components/ui";
 import { isPhaseReport } from "../../types";
 import { phaseLabel, artifactLabel } from "../lifecycle/phases";
 import { artifactStatusBadge, statusLabel } from "./artifactStatus";
 import { useArtifacts } from "./hooks";
+import { useParamState } from "../../urlState";
 
 // S-28 view states: populated · internal-only (no external link) · empty.
 export type ArtifactsView = "populated" | "internal-only" | "empty";
@@ -16,7 +17,32 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
   // One row per artifact, newest version (Part B fix 5) — prior versions stay readable as version
   // history on the artifact's own screen, so a document that vision re-transcribed reads as one
   // entry rather than two.
-  const artifacts = useArtifacts({ project: selectedProject?.project_id, latest: true });
+  // N2: a link whose text names one run's, one phase's or one type's output must open THAT,
+  // not the whole registry. The scope is sent to the server rather than filtered in the browser
+  // — the registry is paged and unbounded, so filtering client-side would search only what
+  // happened to be loaded while appearing to search everything.
+  const [runScope] = useParamState("run");
+  const [phaseScope] = useParamState("phase");
+  const [typeScope] = useParamState("type");
+  const [workItemScope] = useParamState("work_item");
+  const scoped = Boolean(runScope || phaseScope || typeScope || workItemScope);
+
+  const artifacts = useArtifacts({
+    project: selectedProject?.project_id,
+    ...(runScope ? { run: runScope } : {}),
+    ...(phaseScope ? { phase: phaseScope } : {}),
+    ...(typeScope ? { type: typeScope } : {}),
+    ...(workItemScope ? { work_item: workItemScope } : {}),
+    // One row per artifact, newest version (Part B fix 5) — prior versions stay readable as
+    // version history on the artifact's own screen, so a document that vision re-transcribed
+    // reads as one entry rather than two.
+    //
+    // **Off when a RUN scope is present.** A run-scoped view is a provenance view — "what did
+    // this run produce" — and collapsing to the newest version there would hide the very row the
+    // deep link points at as soon as a later run supersedes it. The backend enforces the same
+    // rule; this keeps the request honest about what it is asking for.
+    latest: !runScope,
+  });
   const list = artifacts.data ?? [];
 
   // Bugs.xlsx row 24: the search box and Phase/Type/Status filters were inert with no options.
@@ -61,7 +87,35 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
         </Link>
       </div>
 
-      {view === "empty" ? (
+      {scoped && (
+        <Banner variant="info" title="Showing part of the registry">
+          <p className="t-sm">
+            {runScope
+              ? "Everything one run produced, including superseded versions."
+              : phaseScope
+                ? `Everything the ${phaseLabel(phaseScope)} phase produced.`
+                : typeScope
+                  ? `Every ${phaseLabel(typeScope)} artifact.`
+                  : "Everything produced for one work item."}
+          </p>
+          <Link to="/artifacts" className="btn btn--secondary btn--sm">
+            Show the whole registry
+          </Link>
+        </Banner>
+      )}
+
+      {/* S.No 220: this screen had neither a loading nor an error branch. `list` is `?? []`, so a
+          failed request fell through to the registry table with nothing in it — and, because the
+          empty view is keyed off `isSuccess`, not even to the honest "No artifacts yet" card. */}
+      {!forceView && artifacts.isError ? (
+        <Panel>
+          <ErrorState
+            title="We couldn't load the artifact registry"
+            detail={artifacts.error}
+            onRetry={() => void artifacts.refetch()}
+          />
+        </Panel>
+      ) : view === "empty" ? (
         <Panel>
           <EmptyState
             title="No artifacts yet"

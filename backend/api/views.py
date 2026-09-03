@@ -1360,8 +1360,11 @@ class ProjectViewSet(
                     status=Artifact.Status.PUBLISHED, created_at__gte=one_week_ago,
                 ).count(),
             },
+            # N2: the title alone gave the browser nothing to link with, so "recently published"
+            # was a list of names the user could look at and not open. Send the id too.
             "recent_publishes": [
-                {"title": a.title or f"{a.type} — {a.phase}"} for a in recent_published
+                {"artifact_id": str(a.id), "title": a.title or f"{a.type} — {a.phase}"}
+                for a in recent_published
             ],
         })
 
@@ -2240,6 +2243,30 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
+    #: Query params this list honours. Same idiom as `ApprovalViewSet._FILTERS` right below.
+    #:
+    #: `run` and `type` are new (N2): a link whose text names one thing must be able to open that
+    #: thing, and without a run scope a gate could only ever send the reviewer to the whole
+    #: registry to re-find what they were already looking at. `run` is the right scope for
+    #: "the artifact under review" precisely because it does NOT require the platform to invent a
+    #: notion of a run's *primary* artifact — a UX Design run registers several wireframes, and a
+    #: "pick the first" rule would be a new lie in place of the old one.
+    #:
+    #: Note `phase` matches `Artifact.phase`, which stores the catalog's phase LABEL. An agent key
+    #: (`06_task_breakdown`) matches nothing here; the label (`task_breakdown`) is what to send.
+    #: `ApprovalSerializer.phase_label` exists so a caller holding an approval has the label.
+    _FILTERS = {
+        "project": "project_id",
+        "phase": "phase",
+        "status": "status",
+        "type": "type",
+        "run": "run_id",
+        # An artifact has no direct work-item FK — it is reached through the run that produced
+        # it. Named `work_item` so it reads the same as `ApprovalViewSet._FILTERS`, which is the
+        # vocabulary the client already uses.
+        "work_item": "run__work_item_id",
+    }
+
     def get_queryset(self):
         from integrations.onboarding import RUN_RECORD_ARTIFACT_TYPES
 
@@ -2248,11 +2275,13 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         # this, every document the vision agent rewrote appeared twice in the registry: the
         # document itself, and the phase blob holding the agent's closing message.
         #
+        # Stays BEFORE the filter loop, exactly as before: the exclusion is about what the
+        # registry is, not about what this request asked for.
         qs = qs.exclude(type__in=RUN_RECORD_ARTIFACT_TYPES)
-        for field in ("project", "phase", "status"):
+        for field, lookup in self._FILTERS.items():
             value = self.request.query_params.get(field)
             if value:
-                qs = qs.filter(**{("project_id" if field == "project" else field): value})
+                qs = qs.filter(**{lookup: value})
         # `?latest=1` — one row per artifact identity (phase+type+title), newest version only
         # (Part B fix 5). Re-registration is how this platform records a revision: re-running a
         # phase makes v2, and document vision makes v2 of an adopted upload. Listing every row
@@ -2260,7 +2289,13 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         # as duplication rather than history. Superseded rows are never deleted — they stay
         # readable as prior versions on the artifact's own screen (that is the provenance the
         # registry exists to keep); this only changes what the list shows by default.
-        if self.request.query_params.get("latest") in ("1", "true", "yes"):
+        # **`latest` is turned OFF by a run scope, deliberately.** A run-scoped view is a
+        # PROVENANCE view — "what did this run produce" — where v1 belongs; collapsing to the
+        # newest version there would hide the very row a deep link was pointing at whenever a
+        # later run superseded it, which is the silent-empty-list failure this work exists to
+        # remove. The unscoped registry is unchanged.
+        if (self.request.query_params.get("latest") in ("1", "true", "yes")
+                and not self.request.query_params.get("run")):
             newest = (
                 qs.order_by("phase", "type", "title", "-version", "-created_at")
                 .distinct("phase", "type", "title")

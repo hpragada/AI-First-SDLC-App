@@ -523,6 +523,20 @@ class ApprovalSerializer(serializers.ModelSerializer):
     # must render ONLY on the Task Breakdown gate, never resurface on a later merge/phase gate
     # whose sibling tasks still carry their planner repo_assignment (Bugs S.No 106 follow-up).
     phase = serializers.SerializerMethodField()
+    # The same run's phase LABEL — a DIFFERENT vocabulary, and the reason this field exists.
+    #
+    # `phase` above returns the agent KEY (`06_task_breakdown`, `00c_intelligent_context_extractor`)
+    # and must keep doing so: the phase-specific gate panels key on it. `Artifact.phase` stores the
+    # catalog's phase LABEL (`task_breakdown`, `context_extraction`). So a client holding an
+    # approval and asking `/artifacts?phase=<approval.phase>` gets ZERO rows — a silent empty list,
+    # which is worse than the wrong-but-populated list it would replace.
+    #
+    # The client-side workaround was to strip the `NN_` prefix. Measured against the whole catalog
+    # that is right for 10 of 11 agents and WRONG for `00c_intelligent_context_extractor`, whose
+    # label is `context_extraction`, not `intelligent_context_extractor`. Rather than fix the
+    # heuristic, serve the fact: the platform already knows both. Mirrors
+    # `RunSerializer.get_agent_phase` verbatim.
+    phase_label = serializers.SerializerMethodField()
     # If this merge gate was RE-OPENED because the merge hit a conflict (Bugs S.No 141 / ENH-2),
     # surface the conflict so the gate panel can explain WHY the user is being asked to approve
     # again (resolve in GitHub, then re-approve to retry the merge — no rebuild). None otherwise.
@@ -535,9 +549,9 @@ class ApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = Approval
         fields = [
-            "id", "run", "gate_type", "phase", "work_item", "work_item_title", "required_role",
-            "approver", "approver_name", "decision", "comment", "decided_at", "created_at",
-            "merge_conflict",
+            "id", "run", "gate_type", "phase", "phase_label", "work_item", "work_item_title",
+            "required_role", "approver", "approver_name", "decision", "comment", "decided_at",
+            "created_at", "merge_conflict",
         ]
         read_only_fields = fields
 
@@ -547,6 +561,12 @@ class ApprovalSerializer(serializers.ModelSerializer):
     def get_phase(self, obj) -> str | None:
         spec = getattr(obj.run, "agent_spec", None)
         return getattr(spec, "key", None) if spec is not None else None
+
+    def get_phase_label(self, obj) -> str | None:
+        spec = getattr(obj.run, "agent_spec", None)
+        if spec is None:
+            return None
+        return spec.phase_label or spec.key
 
     def get_work_item_title(self, obj) -> str | None:
         return getattr(obj.work_item, "title", None) or None

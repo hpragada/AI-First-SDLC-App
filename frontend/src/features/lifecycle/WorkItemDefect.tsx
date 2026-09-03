@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, Card, CardBody, Kv, LifecycleRail, Markdown, Panel, Spinner } from "../../components/ui";
 import { railNodeView } from "./railView";
@@ -62,7 +62,7 @@ function WorkItemDefectLive() {
             </span>
             {workItem.data.parent && (
               <span className="meta-item">
-                Parent <a href={`/work-items/${workItem.data.parent}`}>↖ {workItem.data.parent.slice(0, 8)}</a>
+                Parent <Link to={`/work-items/${workItem.data.parent}`}>↖ {workItem.data.parent.slice(0, 8)}</Link>
               </span>
             )}
           </div>
@@ -118,9 +118,9 @@ function WorkItemDefectLive() {
           {latestRun && (
             <Panel title="Latest run" actions={<Badge variant={running ? "running" : "done"}>{latestRun.status}</Badge>}>
               <Kv rows={[["Phase", phaseLabel(latestRun.agent_phase ?? latestRun.agent_key)]]} />
-              <a href={`/runs/${latestRun.id}`} className="t-sm">
+              <Link to={`/runs/${latestRun.id}`} className="t-sm">
                 View run console ↗
-              </a>
+              </Link>
             </Panel>
           )}
         </div>

@@ -15,6 +15,7 @@ import { isInternalStream } from "../../types";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useClarifications, useDecideApproval, useLifecycle, useRuns, useWorkItem } from "./hooks";
+import { artifactsForWorkItem, clarificationLink, gateLink } from "../../links";
 
 function typeLabel(type: string): string {
   if (!type) return "Item";
@@ -86,9 +87,9 @@ function WorkItemEpicLive() {
           </div>
         </div>
         <span className="u-row-tight">
-          <a href={`/work-items/${id}/test-cases`} className="btn btn--secondary">
+          <Link to={`/work-items/${id}/test-cases`} className="btn btn--secondary">
             Test cases
-          </a>
+          </Link>
         </span>
       </div>
 
@@ -121,9 +122,9 @@ function WorkItemEpicLive() {
             <Panel
               title="Latest run"
               actions={
-                <a href={`/runs/${latestRun.id}`} className="t-sm">
+                <Link to={`/runs/${latestRun.id}`} className="t-sm">
                   View run console ↗
-                </a>
+                </Link>
               }
             >
               <Kv
@@ -153,7 +154,7 @@ function WorkItemEpicLive() {
                   {/* Rejecting from here sent NO comment at all — the reviewer had no box to
                       write in, so the reason was lost and nothing could act on it. Send them to
                       the gate, where they can reject with a reason or request changes. */}
-                  <Link className="btn btn--secondary" to="/gates">
+                  <Link className="btn btn--secondary" to={gateLink(pendingGate.id)}>
                     Reject or request changes…
                   </Link>
                 </div>
@@ -173,9 +174,9 @@ function WorkItemEpicLive() {
                 <h3 className="t-h3">1 question awaiting an answer</h3>
                 <p className="zero-cost">⏸ Paused — waiting for your answer</p>
                 <div className="gate-panel__actions">
-                  <a href="/clarifications" className="btn btn--primary">
+                  <Link to={clarificationLink(pendingClar.id)} className="btn btn--primary">
                     Answer question
-                  </a>
+                  </Link>
                 </div>
               </CardBody>
             </Card>
@@ -187,7 +188,14 @@ function WorkItemEpicLive() {
               </h3>
               <Kv
                 rows={[
-                  ["Artifacts", String(workItem.data.artifact_count ?? 0)],
+                  // N2: the count was inert text — the card told you there were four artifacts
+                  // and left you to find them in the registry by hand.
+                  [
+                    "Artifacts",
+                    <Link to={artifactsForWorkItem(workItem.data.id)} key="a">
+                      {workItem.data.artifact_count ?? 0}
+                    </Link>,
+                  ],
                   ["Open gates", String(approvals.data?.length ?? 0)],
                   ["Clarifications", String(clarifications.data?.length ?? 0)],
                   ["Children", String(lifecycle.data?.children.length ?? 0)],
@@ -331,9 +339,9 @@ function WorkItemEpicGallery({ view }: { view: EpicView }) {
                 <h3 className="t-h3">1 question awaiting an answer</h3>
                 <p className="zero-cost">⏸ Paused — waiting for your answer · 6m</p>
                 <div className="gate-panel__actions">
-                  <a href="/clarifications" className="btn btn--primary">
+                  <Link to="/clarifications" className="btn btn--primary">
                     Answer question
-                  </a>
+                  </Link>
                 </div>
               </CardBody>
             </Card>

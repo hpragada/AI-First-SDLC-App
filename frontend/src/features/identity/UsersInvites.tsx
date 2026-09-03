@@ -9,6 +9,7 @@ import {
   Button,
   Drawer,
   EmptyState,
+  ErrorState,
   Field,
   Input,
   Panel,
@@ -281,7 +282,21 @@ export function UsersInvites({ forceView }: { forceView?: UsersView }) {
         </Button>
       </div>
 
-      {view === "empty" ? (
+      {/* S.No 220: both queries are read as `?? []`, so a failed one produced an empty roster and
+          this screen then told an admin their whole team was just them. That is the most alarming
+          form the bug takes — it looks like data loss rather than a failed request. */}
+      {!forceView && (users.isError || invitations.isError) ? (
+        <Panel>
+          <ErrorState
+            title="We couldn't load your team"
+            detail={users.error ?? invitations.error}
+            onRetry={() => {
+              void users.refetch();
+              void invitations.refetch();
+            }}
+          />
+        </Panel>
+      ) : view === "empty" ? (
         <Panel>
           <EmptyState
             title="It's just you so far"

@@ -1053,6 +1053,53 @@ export function EmptyState({ title, text, action }: { title: ReactNode; text: Re
   );
 }
 
+/** A request FAILED — which is not the same thing as there being nothing to show.
+ *
+ * **Why this exists.** Bugs S.No 220: five list screens branched on "loading?" and then on "is
+ * the list empty?", and a failed request produces an empty list. So a completely broken backend
+ * rendered as a calm, healthy, brand-new workspace — "You're all caught up", "No lineage yet".
+ * The QA audit found the sharpest consequence: several written test cases would PASS against a
+ * dead server, because "the dashboard shows no pending gates" is exactly what they assert. It
+ * also costs support time, because a user whose session or network has failed sees no error to
+ * report.
+ *
+ * **Why a shared primitive rather than five inline banners.** The whole finding is that five
+ * screens independently forgot the same case. One component makes the omission visible in review,
+ * and it is the only way the sixth screen built next month inherits the behaviour.
+ *
+ * Render it BEFORE the empty check, never after — `if (q.isError) return <ErrorState … />`.
+ */
+export function ErrorState({
+  title = "We couldn't load this",
+  detail,
+  onRetry,
+}: {
+  title?: ReactNode;
+  detail?: unknown;
+  onRetry?: () => void;
+}) {
+  // The server's own words when we have them. `detail` is whatever the query threw, so it is
+  // typed `unknown` on purpose — an Error, a DRF `{detail: "..."}` body, or a string.
+  const message =
+    (typeof detail === "string" && detail) ||
+    (detail && typeof detail === "object"
+      ? ((detail as { message?: string }).message ??
+         (detail as { detail?: string }).detail ??
+         "")
+      : "") ||
+    "The server did not respond. This is a problem loading the page, not an empty list.";
+  return (
+    <Banner variant="danger" title={title}>
+      <div className="empty__text">{message}</div>
+      {onRetry && (
+        <Button variant="secondary" size="sm" onClick={onRetry} style={{ marginTop: 8 }}>
+          Try again
+        </Button>
+      )}
+    </Banner>
+  );
+}
+
 export function Skeleton({ kind = "line" }: { kind?: "line" | "title" | "block" }) {
   return <div className={cx("skeleton", `skeleton--${kind}`)} />;
 }

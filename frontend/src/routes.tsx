@@ -1,4 +1,4 @@
-import { Link, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
 
 import { useAuth } from "./auth/AuthContext";
 import { AppShell } from "./components/AppShell";
@@ -77,6 +77,12 @@ function RedirectIfAuthed() {
   return <Outlet />;
 }
 
+/** `/gates/:id` → `/gates?gate=:id`. See the routes below for why these are redirects. */
+function RedirectToSelection({ list, param }: { list: string; param: string }) {
+  const { id } = useParams();
+  return <Navigate to={id ? `${list}?${param}=${encodeURIComponent(id)}` : list} replace />;
+}
+
 // Admin-only routes (Bugs.xlsx row 51): a signed-in non-admin who deep-links to
 // /admin/* must see a clear "admin access needed" screen, not a broken blank render.
 function RequireAdmin() {
@@ -138,7 +144,25 @@ export function AppRoutes() {
           <Route path="/runs/:id" element={<RunConsole />} />
           <Route path="/gates" element={<Gates />} />
           <Route path="/gates/:id/criteria" element={<CriteriaGate />} />
+          {/* N2 — `/gates/:id` and `/clarifications/:id` are REDIRECTS, not screens.
+              `OnboardingHub` already linked to `/gates/:id`; there was no such route, so the
+              catch-all below silently bounced the user to the Dashboard and the primary action on
+              a blocking onboarding step went nowhere. These make every URL of that shape already
+              in the wild — a bookmark, a link pasted into chat — resolve to the gate it names.
+              New code links straight to `?gate=` via `links.ts`.
+
+              They are redirects rather than detail screens deliberately: the Gates screen holds
+              the selection state and every phase-specific panel, and a real detail screen would
+              be a THIRD gate-decision UI (`CriteriaGate` is already a second, partial one) —
+              exactly the drift this pass exists to remove. It would also throw away the
+              master-detail layout, which is not noise: a reviewer with five pending gates wants
+              to see the other four. */}
+          <Route path="/gates/:id" element={<RedirectToSelection list="/gates" param="gate" />} />
           <Route path="/clarifications" element={<Clarifications />} />
+          <Route
+            path="/clarifications/:id"
+            element={<RedirectToSelection list="/clarifications" param="clarification" />}
+          />
           <Route path="/artifacts" element={<ArtifactsRegistry />} />
           <Route path="/artifacts/:id" element={<ArtifactPreviewScreen />} />
           <Route path="/artifacts/:id/publish" element={<ExportPublish />} />

@@ -11,6 +11,8 @@
 // edge — D-A11Y-99. The list is the narrow half; the item under review is the wide one.
 import { useState } from "react";
 
+import { useParamState } from "../../urlState";
+
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
@@ -188,17 +190,17 @@ function ItemPanel({
         {item.work_item_id && (
           <span className="meta-item">
             Found by{" "}
-            <a href={`/work-items/${item.work_item_id}`} target="_blank" rel="noreferrer">
+            <Link to={`/work-items/${item.work_item_id}`} target="_blank" rel="noreferrer">
               <strong>{item.work_item_label}</strong>
               {item.work_item_title ? ` — ${item.work_item_title}` : ""}
-            </a>
+            </Link>
           </span>
         )}
         {item.source_run && (
           <span className="meta-item">
-            <a href={`/runs/${item.source_run}`} target="_blank" rel="noreferrer">
+            <Link to={`/runs/${item.source_run}`} target="_blank" rel="noreferrer">
               View run
-            </a>
+            </Link>
           </span>
         )}
         <span className="meta-item">
@@ -335,10 +337,15 @@ export function A11yReview() {
   const { selectedProject } = useAuth();
   const projectId = selectedProject?.project_id;
   const queue = useA11yReviewQueue(projectId);
-  const [selectedId, setSelectedId] = useState<string | undefined>();
+  // N2: `?finding=<id>` opens THAT finding. Note what opening one does — `ItemPanel` CLAIMS the
+  // finding server-side for 15 minutes — so landing on the wrong one is not a cosmetic mistake:
+  // it takes another reviewer's item out of the queue. That is also why a stale link must select
+  // NOTHING rather than fall back to `items[0]`.
+  const [selectedId, setSelectedId, pinnedFromUrl] = useParamState("finding");
 
   const items = queue.data?.queue ?? [];
-  const selected = items.find((i) => i.id === selectedId) ?? items[0];
+  const selected = items.find((i) => i.id === selectedId) ?? (pinnedFromUrl ? undefined : items[0]);
+  const staleLink = pinnedFromUrl && Boolean(selectedId) && !selected && !queue.isLoading;
 
   if (queue.isLoading) {
     return (
@@ -408,6 +415,12 @@ export function A11yReview() {
         </Panel>
       ) : (
         <div className="grid grid--console">
+          {staleLink && (
+            <Banner variant="info" title="That finding is not in your queue">
+              It may already have been reviewed, or claimed by someone else. Nothing is open, so
+              no decision can land on the wrong finding — pick one from the list.
+            </Banner>
+          )}
           <Panel title="Waiting on you" flush>
             {items.map((item) => (
               <QueueRow
@@ -424,7 +437,10 @@ export function A11yReview() {
               projectId={projectId as string}
               findingId={selected.id}
               onDecided={() => {
-                setSelectedId(undefined);
+                // Clearing the selection also clears the "pinned from URL" state, so the next
+                // item is picked normally rather than the deep link re-opening the one just
+                // decided.
+                setSelectedId("");
                 queue.refetch();
               }}
             />

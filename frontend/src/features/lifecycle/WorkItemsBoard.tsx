@@ -19,6 +19,7 @@ import {
 import type { WorkItemCard } from "../../types";
 import { roleLabel } from "../identity/roles";
 import { useCreateWorkItem, usePhaseCatalog, useWorkItems } from "./hooks";
+import { workItemLink } from "../../links";
 import { humanizeLabel, lifecyclePhaseColumns, phaseLabel, statusLabel } from "./phases";
 
 // S-14 view states: board (default) · list · filtered (tasks only) · empty.
@@ -355,9 +356,11 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
           <Table
             headers={["ID", "Title", "Level", "Phase", "Status", "Artifacts", "Owner"]}
             rows={list.map((item) => [
-              <span className="table__id" key="id">
+              // N2: the board's own ID column was inert text — the one thing on the row that
+              // IS the work item was the one thing you could not click.
+              <Link className="table__id" to={workItemLink(item.id)} key="id">
                 {item.key || item.id}
-              </span>,
+              </Link>,
               <span className="table__primary" key="t">
                 {item.title || item.key || item.id}
               </span>,

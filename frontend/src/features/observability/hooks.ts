@@ -133,6 +133,9 @@ export function useArtifacts(q: {
   project?: string;
   phase?: string;
   status?: string;
+  type?: string;
+  run?: string;
+  work_item?: string;
   latest?: boolean;
 }) {
   const tenantId = useTenantId();

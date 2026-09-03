@@ -475,3 +475,103 @@ def test_a_signed_in_outsider_cannot_act_on_a_project_they_are_not_on(client, pr
                        format="json", **_hdr(project.tenant_id)).status_code == 403
     assert client.post("/api/runners/", {"project_id": str(project.id)},
                        format="json", **_hdr(project.tenant_id)).status_code == 403
+
+
+# ── N2: a link's text is a promise — the API has to be able to keep it ──
+def test_an_approval_carries_BOTH_vocabularies(client, project):
+    """The vocabulary trap, pinned. `Approval.phase` is the agent KEY and the UI's phase-specific
+    gate panels key on it; `Artifact.phase` is the catalog's phase LABEL. They differ, so
+    `/artifacts?phase=<approval.phase>` returns ZERO rows — a silent empty list, worse than the
+    wrong-but-populated one it would replace.
+
+    `00c` is the case that breaks the obvious client-side workaround (strip the `NN_` prefix):
+    that yields `intelligent_context_extractor`, and the real label is `context_extraction`. It
+    is right for 10 of the 11 agents, which is exactly what makes it dangerous."""
+    spec = AgentSpec.objects.create(tenant=project.tenant, key="00c_intelligent_context_extractor",
+                                    body_ref="x", phase_label="context_extraction")
+    wi = WorkItem.objects.create(tenant=project.tenant, project=project, type=WorkItem.Type.STORY)
+    run = Run.objects.create(tenant=project.tenant, work_item=wi, agent_spec=spec,
+                             temporal_workflow_id="wf-x")
+    Approval.objects.create(tenant=project.tenant, run=run, work_item=wi,
+                            required_role="product_owner")
+    row = client.get("/api/approvals/?decision=pending", **_hdr(project.tenant_id)).json()[0]
+    assert row["phase"] == "00c_intelligent_context_extractor"        # panels depend on this
+    assert row["phase_label"] == "context_extraction"                 # artifacts filter on this
+    assert row["phase"].split("_", 1)[1] != row["phase_label"]        # the heuristic would fail
+
+
+@pytest.fixture
+def two_runs_of_artifacts(project):
+    spec = AgentSpec.objects.create(tenant=project.tenant, key="03_prd", body_ref="x",
+                                    phase_label="prd")
+    wi = WorkItem.objects.create(tenant=project.tenant, project=project, type=WorkItem.Type.STORY)
+    runs = [Run.objects.create(tenant=project.tenant, work_item=wi, agent_spec=spec,
+                               temporal_workflow_id=f"wf-{n}") for n in (1, 2)]
+    made = []
+    for n, run in enumerate(runs, start=1):
+        made.append(Artifact.objects.create(
+            tenant=project.tenant, project=project, run=run, type="prd", phase="prd",
+            title="PRD", version=n, status=Artifact.Status.PUBLISHED, sor="internal"))
+    made.append(Artifact.objects.create(
+        tenant=project.tenant, project=project, run=runs[1], type="wireframe", phase="ux_design",
+        title="Sign-in", version=1, status=Artifact.Status.DRAFT, sor="internal"))
+    return {"runs": runs, "artifacts": made}
+
+
+def test_artifacts_can_be_scoped_to_one_run(client, project, two_runs_of_artifacts):
+    """The scope a gate actually has. It is the right one BECAUSE it does not require the platform
+    to invent a notion of a run's *primary* artifact — the second run here registered two, and a
+    "pick the first" rule would be a new lie in place of the old one."""
+    run = two_runs_of_artifacts["runs"][1]
+    rows = client.get(f"/api/artifacts/?run={run.id}", **_hdr(project.tenant_id)).json()
+    assert {r["type"] for r in rows} == {"prd", "wireframe"}
+    assert len(rows) == 2
+
+
+def test_artifacts_can_be_scoped_to_one_type(client, project, two_runs_of_artifacts):
+    rows = client.get("/api/artifacts/?type=wireframe", **_hdr(project.tenant_id)).json()
+    assert [r["type"] for r in rows] == ["wireframe"]
+
+
+def test_a_run_scope_turns_latest_off_so_a_superseded_version_still_resolves(
+    client, project, two_runs_of_artifacts
+):
+    """The easiest thing in this whole change to get wrong. The registry hardcodes `latest`, which
+    collapses to one row per (phase, type, title) — so a deep link into the run that produced v1
+    would find NOTHING once a later run made v2. A run-scoped view is a PROVENANCE view; v1
+    belongs in it."""
+    first = two_runs_of_artifacts["runs"][0]
+    rows = client.get(f"/api/artifacts/?run={first.id}&latest=1", **_hdr(project.tenant_id)).json()
+    assert [r["version"] for r in rows] == [1], "the run's own v1 must still resolve"
+
+
+def test_the_unscoped_registry_still_collapses_to_latest(client, project, two_runs_of_artifacts):
+    """The other side of that rule — turning `latest` off must not leak into the plain registry."""
+    rows = client.get("/api/artifacts/?latest=1", **_hdr(project.tenant_id)).json()
+    prds = [r for r in rows if r["type"] == "prd"]
+    assert [r["version"] for r in prds] == [2]
+
+
+def test_the_existing_filters_behave_exactly_as_before(client, project, two_runs_of_artifacts):
+    """The no-regression test for the `_FILTERS` refactor. These three are what the app already
+    sends on every registry load."""
+    tid = project.tenant_id
+    assert len(client.get(f"/api/artifacts/?project={project.id}", **_hdr(tid)).json()) == 3
+    assert len(client.get("/api/artifacts/?phase=prd", **_hdr(tid)).json()) == 2
+    assert len(client.get("/api/artifacts/?status=draft", **_hdr(tid)).json()) == 1
+    # An agent key is NOT a phase label, and must keep returning nothing rather than guessing.
+    assert client.get("/api/artifacts/?phase=03_prd", **_hdr(tid)).json() == []
+
+
+def test_artifacts_can_be_scoped_to_one_work_item(client, project, two_runs_of_artifacts):
+    """An artifact has no direct work-item FK — it is reached through the run that produced it.
+    That indirection is exactly why the count on a work-item card used to be inert text: there
+    was no filter to link to."""
+    run = two_runs_of_artifacts["runs"][0]
+    wi = run.work_item_id
+    rows = client.get(f"/api/artifacts/?work_item={wi}", **_hdr(project.tenant_id)).json()
+    assert len(rows) == 3           # both runs belong to the same work item
+    other = WorkItem.objects.create(tenant=project.tenant, project=project,
+                                    type=WorkItem.Type.STORY, title="unrelated")
+    assert client.get(f"/api/artifacts/?work_item={other.id}",
+                      **_hdr(project.tenant_id)).json() == []

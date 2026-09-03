@@ -364,7 +364,17 @@ export const api = {
   // remain available on the artifact's own screen.
   listArtifacts: (
     tenantId: string,
-    q: { project?: string; phase?: string; status?: string; latest?: boolean },
+    // `run` and `type` are the scopes a deep link carries (N2). `phase` is the phase LABEL that
+    // `Artifact.phase` stores — never an agent key; see `links.ts`.
+    q: {
+      project?: string;
+      phase?: string;
+      status?: string;
+      type?: string;
+      run?: string;
+      work_item?: string;
+      latest?: boolean;
+    },
   ) => {
     const { latest, ...filters } = q;
     return req<Artifact[]>("GET", "/artifacts/", {

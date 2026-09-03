@@ -1,10 +1,11 @@
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Button, Card, CardBody, ConnStatus, EmptyState, Kv, Panel, Spinner, Tile, Todo } from "../../components/ui";
+import { Badge, Button, Card, CardBody, ConnStatus, EmptyState, ErrorState, Kv, Panel, Spinner, Tile, Todo } from "../../components/ui";
 import { roleLabel } from "../identity/roles";
 import { gateLabel, phaseLabel, statusLabel } from "../lifecycle/phases";
 import { useDashboard } from "./hooks";
+import { clarificationLink, gateLink } from "../../links";
 
 // S-31 view states: busy (default) · calm · new-project.
 export type DashboardView = "busy" | "calm" | "new-project";
@@ -30,6 +31,20 @@ function DashboardLive() {
         <Panel>
           <Spinner /> Loading dashboard…
         </Panel>
+      </div>
+    );
+  }
+
+  // S.No 220: a failed request produces an empty rollup, and every branch below reads an empty
+  // rollup as "you are all caught up". Say which it was, before anything else renders.
+  if (dashboard.isError) {
+    return (
+      <div className="canvas-pad">
+        <ErrorState
+          title="We couldn't load your dashboard"
+          detail={dashboard.error}
+          onRetry={() => void dashboard.refetch()}
+        />
       </div>
     );
   }
@@ -102,7 +117,10 @@ function DashboardLive() {
                   title={`${gateLabel(g.gate)} · ${g.work_item.slice(0, 8)}`}
                   meta={`required role: ${roleLabel(g.role)}`}
                   action={
-                    <Link to="/gates" className="btn btn--primary btn--sm">
+                    // N2: the rollup already carries the approval id. "Review" beside a NAMED
+                    // gate that opened the whole gates list — and then selected `pending[0]` —
+                    // is how a reviewer ends up deciding a different gate to the one they read.
+                    <Link to={gateLink(g.approval_id)} className="btn btn--primary btn--sm">
                       Review
                     </Link>
                   }
@@ -116,7 +134,9 @@ function DashboardLive() {
                   title={`Question · ${c.work_item.slice(0, 8)}`}
                   meta={`"${c.question}" · waiting ${Math.round(c.waiting_s / 60)}m`}
                   action={
-                    <Link to="/clarifications" className="btn btn--secondary btn--sm">
+                    // Same shape, and worse consequence: the question's own text is printed
+                    // directly above this button, and the destination showed `pending[0]`.
+                    <Link to={clarificationLink(c.id)} className="btn btn--secondary btn--sm">
                       Answer
                     </Link>
                   }

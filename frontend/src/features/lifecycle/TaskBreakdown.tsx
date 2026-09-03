@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
 import { Banner, Breadcrumb, Button, Card, CardBody, Panel, Spinner } from "../../components/ui";
 import { useWorkItem, useWorkItems } from "./hooks";
@@ -80,17 +80,17 @@ function TaskBreakdownLive() {
             className="gate-panel__actions"
             style={{ justifyContent: "center", marginTop: "var(--space-4)" }}
           >
-            <a href="/work-items" className="btn btn--primary">
+            <Link to="/work-items" className="btn btn--primary">
               Go to board
-            </a>
+            </Link>
             {view === "pushed" ? (
-              <a href={`/work-items/${id}`} className="btn btn--secondary">
+              <Link to={`/work-items/${id}`} className="btn btn--secondary">
                 Back to epic
-              </a>
+              </Link>
             ) : (
-              <a href="/integrations" className="btn btn--secondary">
+              <Link to="/integrations" className="btn btn--secondary">
                 Connect a task tracker
-              </a>
+              </Link>
             )}
           </div>
         </CardBody>
@@ -111,9 +111,9 @@ function TaskBreakdownLive() {
                     {task.external_ref.key}
                   </span>
                 )}
-                <a href={`/work-items/${task.id}`} className="btn btn--ghost btn--sm">
+                <Link to={`/work-items/${task.id}`} className="btn btn--ghost btn--sm">
                   Open
-                </a>
+                </Link>
               </div>
             ))}
           </Panel>
@@ -168,17 +168,17 @@ function TaskBreakdownGallery({ view }: { view: TaskBreakdownView }) {
             className="gate-panel__actions"
             style={{ justifyContent: "center", marginTop: "var(--space-4)" }}
           >
-            <a href="/work-items" className="btn btn--primary">
+            <Link to="/work-items" className="btn btn--primary">
               Go to board
-            </a>
+            </Link>
             {view === "pushed" ? (
-              <a href="/work-items/WI-492" className="btn btn--secondary">
+              <Link to="/work-items/WI-492" className="btn btn--secondary">
                 Back to epic
-              </a>
+              </Link>
             ) : (
-              <a href="/integrations" className="btn btn--secondary">
+              <Link to="/integrations" className="btn btn--secondary">
                 Connect a task tracker
-              </a>
+              </Link>
             )}
           </div>
         </CardBody>

@@ -17,6 +17,7 @@ import {
   useRunGapReport,
   useStartCodeIntel,
 } from "./hooks";
+import { clarificationLink, gateLink } from "../../links";
 
 // S-24 view states: nothing-done (resume=Ideation) · in-progress (extracting/
 // indexing) · gap-ready (resume=Architecture).
@@ -319,7 +320,11 @@ function AgentStepStatus({ state, workingText, questionText, gateText }: {
             {gateText ?? "The assessment is ready and needs your sign-off before the project resumes."}
           </p>
           <div className="gate-panel__actions">
-            <Link to={`/gates/${state.approval_id}`} className="btn btn--primary">
+            {/* N2 — this was a DEAD LINK. There is no `/gates/:id` route, so the catch-all
+                bounced the user to the Dashboard without a word: the primary action on a
+                *blocking* onboarding step went nowhere. `/gates/:id` is now registered as a
+                redirect so bookmarks already in the wild resolve, and new code links direct. */}
+            <Link to={gateLink(state.approval_id)} className="btn btn--primary">
               Review the assessment
             </Link>
           </div>
@@ -335,7 +340,11 @@ function AgentStepStatus({ state, workingText, questionText, gateText }: {
           <span className="gate-panel__role">Waiting on you</span>
           <p className="t-sm" style={{ marginTop: "var(--space-1)" }}>{questionText}</p>
           <div className="gate-panel__actions">
-            <Link to="/clarifications" className="btn btn--primary">
+            {/* N2: the id is right there on the state. Sending "Answer the question" (singular,
+                whose text is printed directly above) to the bare list meant the screen could open
+                on a DIFFERENT pending question — which is worse than a list, because it invites
+                the wrong answer to be typed into the wrong box. */}
+            <Link to={clarificationLink(state.question.id)} className="btn btn--primary">
               {state.question.count === 1 ? "Answer the question" : "Answer the questions"}
             </Link>
           </div>

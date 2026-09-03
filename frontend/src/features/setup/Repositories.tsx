@@ -2,7 +2,7 @@
 
 import { ApiError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Button, Card, CardBody, Chip, EmptyState, Field, Input, Panel, Select, Table } from "../../components/ui";
+import { Badge, Button, Card, CardBody, Chip, EmptyState, ErrorState, Field, Input, Panel, Select, Table } from "../../components/ui";
 import type { Repository } from "../../types";
 import { useCreateRepository, useDeleteRepository, useRepositories, useUpdateRepository } from "./hooks";
 
@@ -199,7 +199,18 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
         </div>
       )}
 
-      {view === "empty" ? (
+      {/* S.No 220: the only error branch this screen had was the 409 duplicate-name case on the
+          ADD form. A failed LIST fell through to "No repositories yet" — which, on a project that
+          has repositories, reads as though they were deleted. */}
+      {!forceView && repos.isError ? (
+        <Panel>
+          <ErrorState
+            title="We couldn't load this project's repositories"
+            detail={repos.error}
+            onRetry={() => void repos.refetch()}
+          />
+        </Panel>
+      ) : view === "empty" ? (
         <Panel>
           <EmptyState
             title="No repositories yet"

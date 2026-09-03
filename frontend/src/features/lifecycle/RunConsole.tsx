@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, Console, Panel, Spinner } from "../../components/ui";
 import type { RunEvent } from "../../types";
@@ -11,6 +11,7 @@ import {
   useTriggerPhase,
   useWorkItem,
 } from "./hooks";
+import { clarificationLink, recoveryLink, runLink } from "../../links";
 
 // S-19 view states: dispatched · running · needs-answer · awaiting-gate · completed ·
 // failed · parked.
@@ -104,7 +105,8 @@ function RunConsoleLive() {
     );
   }
 
-  const hasPendingClarification = (clarifications.data ?? []).length > 0;
+  const firstPendingClarification = (clarifications.data ?? [])[0];
+  const hasPendingClarification = Boolean(firstPendingClarification);
   const view: RunConsoleView = hasPendingClarification
     ? "needs-answer"
     : run.data.status === "pending"
@@ -189,12 +191,23 @@ function RunConsoleLive() {
         {view === "needs-answer" && (
           <Banner variant="purple" title="Paused — waiting for your answer">
             The agent asked a question. Answer it to resume in the same session.{" "}
-            <a href="/clarifications">Answer now ↗</a>
+            {/* N2: this console already fetches THIS run's pending clarifications. Sending
+                "Answer now" to the bare list opened whatever question happened to be first
+                across the project — not the one this run is blocked on. */}
+            <Link
+              to={
+                firstPendingClarification
+                  ? clarificationLink(firstPendingClarification.id)
+                  : "/clarifications"
+              }
+            >
+              Answer now ↗
+            </Link>
           </Banner>
         )}
         {view === "awaiting-gate" && (
           <Banner variant="warning" title="Awaiting gate">
-            The artifact is a draft until its gate is approved. <a href="/gates">Open gate ↗</a>
+            The artifact is a draft until its gate is approved. <Link to="/gates">Open gate ↗</Link>
           </Banner>
         )}
         {view === "failed" && (
@@ -210,10 +223,10 @@ function RunConsoleLive() {
           <Banner variant="info" title="Automatically retried">
             The platform started a fresh attempt for this work item — you don't need to
             re-trigger.{" "}
-            <a href={`/runs/${retryRunId}`}>
+            <Link to={`/runs/${retryRunId}`}>
               Continued as run {retryRunId.slice(0, 8)}
               {retryRun.data ? ` (${retryRun.data.status.replace(/_/g, " ")})` : ""} ↗
-            </a>
+            </Link>
           </Banner>
         )}
         {view === "parked" && isResumable && (
@@ -238,7 +251,7 @@ function RunConsoleLive() {
             {typeof retryRunId === "string" ? (
               // Already auto-retried — sending the user to the live attempt, not spawning a
               // duplicate run via a manual re-trigger.
-              <Button variant="primary" onClick={() => navigate(`/runs/${retryRunId}`)}>
+              <Button variant="primary" onClick={() => navigate(runLink(retryRunId))}>
                 Go to the retry run →
               </Button>
             ) : (
@@ -263,7 +276,11 @@ function RunConsoleLive() {
               >
                 {resume.isPending ? <Spinner /> : "Resume from where it stopped"}
               </Button>
-              <Button variant="secondary" onClick={() => navigate("/recovery")}>
+              {/* N2: this offered takeover from the console of a SPECIFIC parked run and then
+                  navigated with no run id, so the destination had to guess — and guessed the
+                  first parked run in the project, which on a project with two is the wrong one.
+                  It is now the first producer of `?run=`. */}
+              <Button variant="secondary" onClick={() => navigate(recoveryLink(id as string))}>
                 Take over instead
               </Button>
             </div>
@@ -310,12 +327,12 @@ function RunConsoleGallery({ view }: { view: RunConsoleView }) {
         {view === "needs-answer" && (
           <Banner variant="purple" title="Paused — waiting for your answer">
             The agent asked a question. Answer it to resume in the same session.{" "}
-            <a href="/clarifications">Answer now ↗</a>
+            <Link to="/clarifications">Answer now ↗</Link>
           </Banner>
         )}
         {view === "awaiting-gate" && (
           <Banner variant="warning" title="Awaiting Architecture gate">
-            The artifact is a draft until the architect approves. <a href="/gates">Open gate ↗</a>
+            The artifact is a draft until the architect approves. <Link to="/gates">Open gate ↗</Link>
           </Banner>
         )}
         {view === "failed" && (
@@ -326,7 +343,7 @@ function RunConsoleGallery({ view }: { view: RunConsoleView }) {
         {view === "parked" && (
           <Banner variant="danger" title="Your machine went offline — this run is parked">
             Rather than hang, it's parked for human takeover. Reconnect and re-run; answered
-            clarifications are remembered. <a href="/connect">Reconnect &amp; re-run ↗</a>
+            clarifications are remembered. <Link to="/connect">Reconnect &amp; re-run ↗</Link>
           </Banner>
         )}
 

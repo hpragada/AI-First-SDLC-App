@@ -1,8 +1,8 @@
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Banner, Breadcrumb, Button, Card, CardBody, EmptyState, Kv, Panel, Spinner } from "../../components/ui";
-import { useRuns, useTriggerPhase, useWorkItem } from "../lifecycle/hooks";
+import { Banner, Breadcrumb, Button, Card, CardBody, EmptyState, ErrorState, Kv, Panel, Spinner } from "../../components/ui";
+import { useRun, useRuns, useTriggerPhase, useWorkItem } from "../lifecycle/hooks";
 import { phaseLabel } from "../lifecycle/phases";
 import { useTakeOverRun } from "./hooks";
 
@@ -23,10 +23,16 @@ function OfflineTakeoverLive() {
   const runIdParam = params.get("run") ?? undefined;
 
   const runs = useRuns({ project: runIdParam ? undefined : projectId });
+  // N2 — `?run=` was read here and then thrown away: `parkedRun` was forced to `undefined`
+  // whenever the param was present, and the guard below then rendered "No parked runs", denying
+  // the run existed. Nothing in the app ever produced the URL either, so the feature was
+  // unreachable from both ends and fixing one alone would have left it that way. Fetch the run
+  // the link names.
+  const named = useRun(runIdParam);
   // A report-timeout parks a run as "stalled" (non-terminal, reconcilable — Bugs S.No 89);
   // "failed" is the legacy/terminal park. Surface either for takeover.
   const parkedRun = runIdParam
-    ? undefined
+    ? named.data
     : (runs.data ?? []).find((r) => r.status === "stalled" || r.status === "failed");
 
   const runId = runIdParam ?? parkedRun?.id;
@@ -34,11 +40,29 @@ function OfflineTakeoverLive() {
   const takeOver = useTakeOverRun();
   const retry = useTriggerPhase(parkedRun?.work_item);
 
-  if (!runIdParam && runs.isLoading) {
+  // Guard the loading state on BOTH branches. Before, only the list branch had one — so a
+  // deep link flashed "No parked runs" while its fetch was still in flight, which is the same
+  // lie the bug told, just briefly.
+  if (runIdParam ? named.isLoading : runs.isLoading) {
     return (
       <div className="canvas-pad" style={{ maxWidth: "880px" }}>
         <Panel>
-          <Spinner /> Checking for parked runs…
+          <Spinner /> {runIdParam ? "Loading this run…" : "Checking for parked runs…"}
+        </Panel>
+      </div>
+    );
+  }
+
+  if (runIdParam && (named.isError || !named.data)) {
+    return (
+      <div className="canvas-pad" style={{ maxWidth: "880px" }}>
+        <Breadcrumb items={[{ label: "Phases & Runs", href: "/runs" }, "Recovery"]} />
+        <Panel>
+          <ErrorState
+            title="We couldn't open that run"
+            detail={named.error}
+            onRetry={() => void named.refetch()}
+          />
         </Panel>
       </div>
     );

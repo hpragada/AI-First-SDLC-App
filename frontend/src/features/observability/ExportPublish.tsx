@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Breadcrumb, Banner, Button, ConnStatus, Field, Input, Modal, Select, Spinner } from "../../components/ui";
 import { artifactLabel } from "../lifecycle/phases";
@@ -127,7 +127,7 @@ function ExportPublishLive() {
             </Field>
             <Banner variant="danger" title="Can't publish — not gate-approved">
               This artifact is still <strong>{data?.status}</strong>. Approve its gate first;
-              manual publish never bypasses a gate. <a href="/gates">Open gate ↗</a>
+              manual publish never bypasses a gate. <Link to="/gates">Open gate ↗</Link>
             </Banner>
           </Modal>
         ) : (
@@ -299,7 +299,7 @@ function ExportPublishGallery({ view }: { view: PublishView }) {
             <Banner variant="danger" title="Can't publish — not gate-approved">
               This artifact is still <strong>Pending Architecture gate</strong>. Approve the gate
               first; manual publish never bypasses a gate.{" "}
-              <a href="/gates">Open gate ↗</a>
+              <Link to="/gates">Open gate ↗</Link>
             </Banner>
           </Modal>
         )}

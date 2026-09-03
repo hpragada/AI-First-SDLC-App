@@ -382,9 +382,9 @@ function ExportPanel({ data, projectId }: { data: A11yConformance; projectId: st
           {doExport.isPending ? "Preparing…" : "Export…"}
         </Button>
         {data.artifact_id && (
-          <a className="btn btn--ghost" href={`/artifacts/${data.artifact_id}/publish`}>
+          <Link className="btn btn--ghost" to={`/artifacts/${data.artifact_id}/publish`}>
             Open publish gate ↗
-          </a>
+          </Link>
         )}
       </div>
       <p className="t-xs u-muted" style={{ marginTop: "var(--space-4)" }}>

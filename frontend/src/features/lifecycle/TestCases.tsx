@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
 import { ApiError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
@@ -64,10 +64,10 @@ const STATUS_BADGE: Record<AutomationStatus, { variant: "neutral" | "running" | 
 function GenerateCell({ tc }: { tc: TestCase }) {
   const trigger = useTriggerPhase(tc.id);
   if (tc.automation_status === "generating") {
-    return <a href={`/work-items/${tc.id}`} className="btn btn--ghost btn--sm">View run</a>;
+    return <Link to={`/work-items/${tc.id}`} className="btn btn--ghost btn--sm">View run</Link>;
   }
   if (tc.automation_status === "ready") {
-    return <a href={`/work-items/${tc.id}`} className="btn btn--ghost btn--sm">View</a>;
+    return <Link to={`/work-items/${tc.id}`} className="btn btn--ghost btn--sm">View</Link>;
   }
   return (
     <Button
