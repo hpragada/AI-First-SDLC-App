@@ -324,3 +324,20 @@ def test_review_provider_clean_review_passes_to_gate(world, monkeypatch):
     out = ba.run_code_review_core(_inp(world))
     assert out["open_blocking"] == 0
     assert not WorkItem.objects.filter(parent_id=world.wi.id, type=WorkItem.Type.TASK).exists()
+
+
+def test_08_requires_a_per_criterion_verdict_with_evidence():
+    """S.No 243. The gap was never that 08 lacked the acceptance criteria — the work item goes to
+    the composer and Step 4a has always been in the body. It was that nothing in the OUTPUT
+    contract made the agent show its working, so `{"status":"APPROVED","findings":[]}` looked the
+    same whether it had cross-referenced four criteria or skimmed the diff. Pinned here because
+    the enforcement in `guard_acceptance_criteria` is only half the fix: an agent that never
+    emits the array just fails every build."""
+    body = _body("08_code_review")
+    assert "acceptance_criteria" in body, "the verdict schema must carry the criteria table"
+    lower = body.lower()
+    for token in ("not_verifiable", "verbatim", "evidence"):
+        assert token in lower, f"the criteria contract must state `{token}`"
+    # The two rules that make it non-gameable.
+    assert "one entry per acceptance criterion" in lower
+    assert "every `not_met` must also appear as a blocking finding" in lower

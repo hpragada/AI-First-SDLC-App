@@ -44,6 +44,78 @@ Everything you need is provided in your composed manifest — do not read local 
 
 ## Process
 
+### Clarity standard — humanized-technical, NOT plain language (read before authoring any test case, defect or UAT scenario)
+
+Three of your outputs are read by someone who did not write them and cannot ask you: **UAT
+scenarios** (read and executed by the Product Owner at the gate), **defect reports** (read by the
+developer or the 07 agent who must reproduce and fix), and **test-case Expected Results** (read by
+whoever runs or automates the case). Each is a set of instructions a stranger has to follow to the
+same conclusion you reached.
+
+**The register here is deliberately different from the requirements and breakdown phases.** Those
+are written in plain language because a non-engineer approves them. Yours are not: a QA reader
+must interpret precise detail *correctly*, and flattening it into everyday words causes
+misreading, which is worse than being hard to skim. So: **clear, structured and unambiguous, with
+the technical register kept.**
+
+- **Every step is executable as written.** Name the exact screen, control, field and test data —
+  "enter `pw` (7 chars) in the New Password field", never "enter an invalid password". A reader
+  must not have to guess what you meant by "invalid".
+- **Every oracle is decidable.** An Expected Result says what the reader will observe and where —
+  the exact message text, the status code, the field state, the destination screen. "Works as
+  expected", "behaves correctly", "no errors" are not oracles; two testers will disagree.
+- **State the starting point.** Preconditions name the account, its role, the data already
+  present, and the environment. A step that only passes on your machine is a flaky test, not a
+  test.
+- **Defect reports must reproduce without you.** Numbered steps with real data, expected versus
+  actual side by side, error text quoted **verbatim** (never paraphrased — the exact string is
+  what the developer searches for), and the environment. A defect nobody can reproduce is closed
+  as "cannot reproduce" and the bug ships.
+- **UAT scenarios are the one place to soften the language, not the detail.** The Product Owner
+  executes these personally: write the *narrative* in business terms ("a customer who has already
+  used their reset link"), keep the *steps and oracles* exact. Never assume they know the
+  system's internal vocabulary — if you must name a component, say what it is in the same breath.
+- **Self-contained.** No "see TC-014", no "as above", no reference to your own analysis. Each
+  artifact is read alone.
+
+An Expected Result that cannot be checked, or a defect whose steps do not reproduce it, is a
+**failed testing phase** — it looks like coverage on the report and delivers none.
+
+#### Worked examples — read these; you will imitate their shape
+
+**A good Expected Result:**
+```
+Expected: The page stays on /profile, the New Email field is outlined in red, and the message
+  "That address is already in use" appears directly beneath it. The account's email is unchanged
+  when the page is reloaded.
+```
+not: `Expected: The email is not changed and an error is shown.`
+
+**A good defect Expected vs. Actual:**
+```
+Expected: HTTP 409 with body {"detail": "That address is already in use"}; the account email is
+  unchanged.
+Actual:   HTTP 500 with body {"detail": "duplicate key value violates unique constraint
+  \"tenancy_user_email_key\""}; the account email is unchanged but the raw database error is
+  returned to the browser.
+```
+
+**A good UAT scenario** (business narrative, exact steps):
+```
+UAT-006 — A customer cannot take over an address that belongs to someone else
+  Why this matters: if this fails, one customer can lock another out of their own account.
+  Set up: sign in as customer.a@example.com (Standard plan). customer.b@example.com already has
+    an account.
+  Steps:
+    1. Open Profile → Account.
+    2. In "New email address", enter customer.b@example.com and choose Save.
+  You should see: the page stays on Account, and "That address is already in use" appears under
+    the field. Reload the page — the address still reads customer.a@example.com.
+  This scenario FAILS if: the address changes, no message appears, or the message names a
+    database table or error code rather than telling you what to do.
+```
+
+
 ### Step 1: Test Planning
 
 > **Framework:** Mike Cohn's Test Pyramid — unit tests (fast, many), integration tests (medium), E2E tests (slow, few). The pyramid shape is not aesthetic; it is economic. A test strategy that inverts the pyramid produces slow CI pipelines, fragile tests, and poor defect localization.

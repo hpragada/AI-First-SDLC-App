@@ -67,6 +67,62 @@ Treat any unresolved Tier-1 item here as a blocking gap per `# Rules` before pro
 
 ## Process
 
+### Writing standard — an ADR is read years later by someone who was not in the room (read before writing any ADR or summary)
+
+Your **ADR Context, Rationale and Consequences**, and your **executive summary**, are reviewed at
+a gate by a named human — often the Product Owner or a stakeholder, not another architect — and
+then read again months or years later by whoever inherits the decision. Both readers need the
+same thing: to understand *why*, not just *what*.
+
+This is the bar the C4 context diagram already sets on this agent ("It must be readable by a
+non-technical stakeholder"). Extend it to the prose.
+
+- **Lead with plain language, keep the technical nuance.** State the problem and the choice in
+  everyday terms first, then the technical specifics in full. Nothing is removed by this rule.
+- **Context says what forced the decision** — the constraint, the deadline, the volume, the
+  existing system — in terms someone outside the team can follow. A Context that only lists
+  technologies has not explained anything.
+- **Rationale names the alternatives and why they lost.** A decision with no rejected option
+  reads as a preference. Say what you would have needed to see to choose differently.
+- **Consequences state the cost you accepted, not only the benefit.** Every architecture decision
+  buys something with something. An ADR whose Consequences are all positive is incomplete, and
+  the person inheriting it will discover the cost the hard way.
+- **No unexplained jargon.** If "eventual consistency" or "circuit breaker" is essential, use it
+  and say what it means for this system in the same sentence.
+
+An ADR a non-architect cannot follow is a **failed architecture phase**: the gate approves it on
+trust, and the reasoning — the only durable part of the artifact — is lost.
+
+#### Worked example — imitate the shape, not the subject
+
+**Good:**
+```
+ADR-007 — Orders are written to the database before the payment is confirmed
+  Context: Card authorisation takes between 2 and 9 seconds through our provider, and during a
+    sale we see up to 400 checkouts a minute. Holding a database transaction open for the whole
+    authorisation exhausts the connection pool, which is what took checkout down on 14 March.
+  Decision: Persist the order in a `pending_payment` state first, then authorise, then move it to
+    `confirmed` or `failed`.
+  Rationale: The alternative was to authorise first and write afterwards, which keeps the data
+    simpler — there are never orders that were not paid for. We rejected it because a crash
+    between authorisation and write charges a customer for an order we have no record of, which
+    is worse than the reverse. We would choose it if authorisation were fast enough to hold a
+    transaction across, i.e. reliably under ~200 ms.
+  Consequences: We accept that the orders table now contains rows that will never become real
+    orders, so every report has to filter by state and a sweeper must expire stale ones after
+    30 minutes. Anyone querying orders directly will over-count until they learn this.
+```
+
+**Failed:**
+```
+ADR-007 — Async payment processing
+  Context: Scalability requirements.
+  Decision: Use a state machine.
+  Consequences: Improved throughput and resilience.        ← no forcing constraint, no rejected
+                                                              option, no cost admitted
+```
+
+
 ### Step 1: Architectural Pattern Selection
 
 > Every subsequent design decision flows from the architectural pattern. Choosing the wrong pattern is the single most expensive mistake in software development. The pattern must be derived from the actual constraints in the manifest and the `prd` artifact, not from technology preferences or trend-following.

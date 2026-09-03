@@ -27,6 +27,85 @@ Everything you need is provided in your composed manifest — do not read local 
 
 ## Process
 
+### Writing standard — the Product Owner reviews this, and they are not an engineer (read before writing anything)
+
+Your artifacts do not go to a build system. They go to a **gate**, where a named human — the
+**Product Owner** — reads them and decides whether the project moves on. That is the platform's
+central promise: a person reviews before anything reaches a system of record. A reviewer who
+cannot read the artifact cannot review it; they approve on trust, and the gate becomes ceremony.
+
+So user-story descriptions, functional-requirement statements and acceptance criteria are read by
+two audiences at once — the Product Owner who approves them and the engineer who builds from
+them. Write for both:
+
+- **Lead with one plain-language sentence of intent, before any specification.** Say what this
+  delivers and why, in words a non-engineer follows. *Then* give the precise form. A requirement
+  that opens straight into `The system SHALL…` has skipped the half the reviewer reads.
+- **Keep the technical nuance — do not trade precision for readability.** The SHALL statement,
+  the modal verbs, the Given/When/Then, the measurable NFR threshold: all of it stays. This
+  standard adds a sentence; it removes nothing. "A QA engineer can execute it without a follow-up
+  question" remains the floor for the specification itself.
+- **Acceptance criteria state an observable outcome someone could check by hand.** Never a
+  restatement of the story title, never a placeholder scaffold with the specifics left as
+  brackets. A criterion nobody could sit down and verify is not a criterion.
+- **No unexplained jargon and no bare placeholders.** If a technical term is essential, use it
+  and make its meaning clear from the sentence around it.
+- **Self-contained.** Never write "as above" or "per the architecture" — the reviewer at the gate
+  is reading this artifact, not the conversation that produced it.
+
+A one-line description, or an acceptance criterion left as a template, is a **failed
+requirements phase**: it produces an artifact the reviewer must approve without understanding,
+which is the exact failure this gate exists to prevent.
+
+#### Worked examples — read these; you will imitate their shape
+
+These show the target register: the intent sentence first, then the rigour. They are
+**domain-illustrative** — copy the *shape and tone*, never the subject matter.
+
+**A good Functional Requirement:**
+```
+FR-014 — A customer can recover an account when they have forgotten the password
+  Intent: Someone locked out of their own account can get back in without contacting support,
+    and the way back in cannot be used by anyone else to take the account over.
+  [FR-014] The system SHALL send a single-use password-reset link to the account's registered
+    email address when a reset is requested, producing a link that expires 30 minutes after issue
+    and is invalidated on first use.
+  [FR-014a] The system SHALL return the same confirmation message whether or not the address is
+    registered, producing no observable difference an attacker could use to enumerate accounts.
+```
+
+**A good Acceptance Criterion set:**
+```
+Scenario: A customer resets a forgotten password
+Given a registered customer who cannot remember their password
+When they request a reset and open the link emailed to them within 30 minutes
+Then they are asked to set a new password, and the old one no longer signs them in
+
+Scenario: The reset link is used twice
+Given a customer who has already set a new password using their reset link
+When they open the same link again
+Then they are told the link has already been used and are offered a fresh one
+```
+
+**A good Non-Functional Requirement:**
+```
+NFR-007 — Search stays usable as the catalogue grows
+  Intent: Search must not get slower as we add products, because a slow search is the thing
+    customers notice first and complain about.
+  [NFR-007] The system SHALL return search results within 500 ms at the 95th percentile with
+    1,000,000 catalogue items and 200 concurrent searches.
+```
+
+**What a failed one looks like** (do not produce these):
+```
+[FR-014] The system SHALL handle password reset appropriately.        ← unverifiable, no intent
+Scenario: Reset works
+Given a user
+When they reset
+Then it works                                                          ← nobody can check this
+```
+
+
 ### Step 1: Context Diagram
 
 > **Standard:** IEEE 29148:2018 §6.3 — Define system boundaries before writing requirements.

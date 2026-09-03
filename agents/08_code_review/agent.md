@@ -238,6 +238,14 @@ of the `json` block must be the very last thing you output:
 {
   "status": "CHANGES_REQUIRED",
   "summary": "one line on the overall verdict",
+  "acceptance_criteria": [
+    {"criterion": "Given a signed-in user, when they open profile settings, then they can enter and submit a new email address.",
+     "verdict": "met", "evidence": "api/profile.py:88 + tests/test_profile.py::test_submit_new_email"},
+    {"criterion": "Given a new address is submitted, when the user clicks the confirmation link sent to that address, then the account email is updated and the old one no longer works for sign-in.",
+     "verdict": "met", "evidence": "api/profile.py:120-145 + tests/test_profile.py::test_confirm_email_change"},
+    {"criterion": "Given the new address already belongs to another account, when they submit it, then they are told it is already in use and nothing changes.",
+     "verdict": "not_met", "evidence": "no uniqueness check in api/profile.py:88; no test covers a duplicate address — raised as a blocking finding in `findings` below"}
+  ],
   "findings": [
     {"rem": "REM-C1", "severity": "critical", "title": "Search filter is open to SQL injection",
      "file": "api/search.py", "line": 42, "category": "Security — A03 Injection",
@@ -267,6 +275,25 @@ open and the run is halted for inspection), so follow these exactly:**
   the LAST block — so your true verdict must be last.
 - If blocking findings exist (`REM-C`/`REM-W`), they MUST appear in the `findings` array with the correct
   `severity`. A `CHANGES_REQUIRED` status with an empty or missing `findings` array is a contract violation.
+
+**Acceptance-criteria contract — `acceptance_criteria` is how you SHOW you performed Step 4a:**
+- Emit **one entry per acceptance criterion stated on the WorkItem**, in the order they appear, each
+  with the criterion's text **verbatim**, a `verdict`, and `evidence`. An approving verdict with fewer
+  entries than the WorkItem has criteria fails the review closed.
+- `verdict` is exactly one of `met` | `not_met` | `not_verifiable`. Use `not_verifiable` only when the
+  criterion genuinely cannot be checked from the diff (it needs a running browser, a third-party
+  sandbox, a human judgement) — and say which in the `evidence`. It is not a way to avoid deciding.
+- `evidence` is **required and must be concrete**: a `file:line` in the diff, a test name, or — for
+  `not_met` — what is missing and which `REM` id raises it. "Looks fine" and "implemented" are not
+  evidence.
+- **Every `not_met` MUST also appear as a blocking finding** (`REM-C`/`REM-W`) in `findings`. A
+  criterion you judged unmet cannot ride through on an approving verdict; the platform rejects that
+  combination.
+- Why this exists: a request once asked for four things in one sentence, three were delivered, the
+  review passed, the merge gate was approved — and the missing one stayed invisible for 18 days and 29
+  further tasks, because nothing downstream re-reads the original request. Listing the criteria one by
+  one is what makes a silent omission impossible. **Never infer criteria that are not written on the
+  WorkItem, and never edit their wording to match what was built.**
 
 **Findings contract — the platform consumes this, so be precise:**
 - `title`, `problem`, `fix` and `category` are **read by people on the Work Items board**, not just by the platform: `title` becomes the remediation item's title and `problem` + `fix` become its description (with `file`/`line`/`category`/`severity` shown as its "Where"). They are **required** on every blocking finding and must meet the Writing standard above — a finding with an empty `problem`/`fix` produces an un-actionable board item.
