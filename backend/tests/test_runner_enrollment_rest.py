@@ -80,11 +80,25 @@ def test_post_binds_developer_id_to_session_user(client, tenant, project, dev):
     assert str(enrollment.developer_id) == str(dev.id)
 
 
-def test_post_without_session_falls_back_to_body_developer_id(client, tenant, project, dev):
+def test_post_without_session_is_refused(client, tenant, project, dev):
+    """Bugs S.No 214 — this test used to assert the opposite, and the behaviour it asserted was
+    the bug. `POST /api/runners/` gates GET only, so minting an enrollment token — a credential
+    that lets a machine claim and run this tenant's phases, and one that never expires — took no
+    login at all: name any `developer_id` in the body and the token came back. The pre-auth
+    fallback was written for a platform that had no login yet; it now has one, and every caller
+    the UI makes has a session."""
     resp = _enroll(client, tenant, project, label="l", developer_id=str(dev.id))
+    assert resp.status_code == 403
+    assert not RunnerEnrollment.objects.filter(developer_id=dev.id).exists()
+
+
+def test_post_binds_the_enrollment_to_the_signed_in_developer(client, tenant, project, dev):
+    """The replacement for what the test above used to cover: the enrollment is owned by whoever
+    is signed in, which is what made the body parameter unnecessary in the first place."""
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = _enroll(client, tenant, project, label="l")
     assert resp.status_code == 201
-    enrollment = RunnerEnrollment.objects.get(id=resp.data["id"])
-    assert str(enrollment.developer_id) == str(dev.id)
+    assert str(RunnerEnrollment.objects.get(id=resp.data["id"]).developer_id) == str(dev.id)
 
 
 def test_get_groups_enrollments_by_machine_across_projects(

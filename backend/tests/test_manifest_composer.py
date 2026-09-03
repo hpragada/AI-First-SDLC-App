@@ -305,3 +305,56 @@ def test_a_long_history_drops_whole_old_rounds_and_never_cuts_the_current_direct
     assert TRUNCATION_MARKER not in section
     assert "omitted to fit" in section, "old rounds should be dropped, not the section cut"
     assert estimate_tokens(section) <= TokenBudget().review_direction + 100
+
+
+# ── T2: the work item's description survives the cap ──────────────────
+def _wi_section(md: str) -> str:
+    start = md.find("# Current Work Item")
+    end = md.find("\n# ", start + 1)
+    return md[start:end if end != -1 else len(md)]
+
+
+def test_a_short_work_item_renders_exactly_as_before():
+    """The T2 fix must be invisible when nothing overflows. Asserted rather than assumed: the
+    whole safety of rendering the description outside the cap rests on the common path being
+    untouched, and 'byte-identical' is the only version of that claim worth making."""
+    wi = _work_item(title="Add login", description="Let a user sign in with email and password.")
+    section = _wi_section(compose_manifest(context=_context(), work_item=wi, phase="prd"))
+    assert section.rstrip() == "\n".join([
+        "# Current Work Item",
+        "",
+        "- id: wi-1",
+        "- phase: prd",
+        "- type: story",
+        "- state: in_progress",
+        "- feature_stream: auth",
+        "- title: Add login",
+        "- description: Let a user sign in with email and password.",
+        "- depends_on: wi-0",
+    ])
+
+
+def test_a_long_description_survives_whole_because_the_criteria_live_at_its_end():
+    """Truncation register T2 / the second cause behind S.No 243.
+
+    `_truncate` cuts from the END, and acceptance criteria are written at the END of a
+    description. So the old behaviour did not shorten the brief, it REMOVED the requirements from
+    it — silently, with no way for the agent or the human to know. Jira bounds this field at
+    32,767 characters, so rendering it whole is bounded too."""
+    criteria = "Acceptance Criteria:\n- [ ] Given a signed-in user, when they open /settings, " \
+               "then the CORS preflight succeeds."
+    description = ("Background. " * 3000) + "\n" + criteria      # ~9,000 tokens, way over 650
+    wi = _work_item(title="Add login", description=description)
+    section = _wi_section(compose_manifest(context=_context(), work_item=wi, phase="prd"))
+    assert criteria in section, "the acceptance criteria were cut — this is the whole bug"
+    assert description in section
+
+
+def test_the_metadata_lines_still_obey_the_cap():
+    """Only the description is exempt. Metadata is bounded and repetitive; a runaway there is
+    still cut, and cut VISIBLY — the marker is what stops a silent loss happening again."""
+    wi = _work_item(title="T" * 40000, description="short")
+    section = _wi_section(compose_manifest(context=_context(), work_item=wi, phase="prd"))
+    assert TRUNCATION_MARKER in section, "runaway metadata must still be capped"
+    assert "- description: short" in section, "the description must survive the metadata cut"
+    assert estimate_tokens(section) <= TokenBudget().current_work_item + 100

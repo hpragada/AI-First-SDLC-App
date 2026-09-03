@@ -416,3 +416,64 @@ def project_role_coverage(*, tenant, project) -> dict:
             "note": note,
         })
     return {"admin_fallback": admin_fallback, "roles": rows}
+
+
+def require_project_member(*, tenant_id, project_id, user_id, what: str) -> None:
+    """Bugs S.No 214 layer 2, the common case — "are you on THIS project".
+
+    `IsAuthenticatedMember` gates "is anybody logged in" and nothing more; its own docstring says
+    so. Inside one tenant that still leaves a signed-in user free to act on a project they have no
+    membership of — trigger its phases, seize a run somebody else started, mint a companion token
+    against it. This closes that, and it is the RIGHT bar for these actions rather than a role
+    check: the platform's whole design is that each role drives its own phase (that is what
+    `project_role_coverage` exists to track), so a Product Owner triggers ideation, an Engineer
+    triggers implementation, and a developer connects their own laptop. Demanding tech_lead for
+    those would lock every other role out of the ordinary journey.
+
+    Tenant-admin is the fallback, matching `require_repo_manage_role`.
+    """
+    from rest_framework.exceptions import PermissionDenied
+
+    if user_id and Membership.objects.filter(
+        tenant_id=tenant_id, user_id=user_id, project_id=project_id,
+    ).exists():
+        return
+    if user_id and User.objects.filter(
+        id=user_id, tenant_id=tenant_id, is_tenant_admin=True
+    ).exists():
+        return
+    raise PermissionDenied(f"You need to be a member of this project to {what}.")
+
+
+def require_project_write_role(*, tenant_id, project_id, user_id, what: str) -> None:
+    """Bugs S.No 214 layer 2 — "are you ALLOWED to do this", after `IsAuthenticatedMember` has
+    answered "is anybody logged in".
+
+    `IsAuthenticatedMember` only checks for a session; its own docstring says so. That is the
+    right bar for reading a project and for the everyday writes any member makes, and the wrong
+    bar for the few actions that either steer every agent on the project or spend real money:
+    rewriting the Project Profile (the briefing every agent reads), triggering a phase run
+    (subscription time), seizing somebody else's run, and minting a companion enrollment token
+    (a credential).
+
+    Same rule and same fallback as `require_repo_manage_role`, which this deliberately mirrors —
+    `tech_lead` or `admin` on THIS project, tenant-admin as the fallback for a project with no
+    lead assigned yet. Admin-only would have been wrong in the other direction: any member is
+    meant to create work items and read traceability, and a single bar for both groups would
+    either break the ordinary journey or leave the profile open to anyone with a login.
+
+    Raises DRF's `PermissionDenied` (403) so callers need no try/except; `what` completes the
+    sentence "You need … to <what>."
+    """
+    from rest_framework.exceptions import PermissionDenied
+
+    if user_id and Membership.objects.filter(
+        tenant_id=tenant_id, user_id=user_id, project_id=project_id,
+        role__in=[Role.TECH_LEAD, Role.ADMIN],
+    ).exists():
+        return
+    if user_id and User.objects.filter(
+        id=user_id, tenant_id=tenant_id, is_tenant_admin=True
+    ).exists():
+        return
+    raise PermissionDenied(f"You need the tech_lead or admin role on this project to {what}.")

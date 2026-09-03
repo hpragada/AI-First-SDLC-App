@@ -17,10 +17,13 @@ def client():
 
 
 def _enroll(client, tenant, project):
-    r = client.post("/api/runners/", {"project_id": str(project.id), "label": "l"},
-                    format="json", HTTP_X_TENANT_ID=str(tenant.id))
-    assert r.status_code == 201, r.content
-    return r.json()["token"]
+    # S.No 214 closed `POST /api/runners/` to anonymous callers — minting an enrollment
+    # token is a credential operation. This test needs a token, not the endpoint, so it
+    # goes through the domain service directly (as test_review_dispatch already does).
+    from apps.runs.enrollment import enroll_runner
+
+    _, token = enroll_runner(tenant_id=str(tenant.id), project_id=str(project.id), label="l")
+    return token
 
 
 def _state(client, tenant, token, tool, **args):

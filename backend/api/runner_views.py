@@ -18,7 +18,8 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.projects.models import Project
+from apps.projects.models import Project, ProjectProfile
+from apps.registry.catalog import AGENT_CATALOG
 from apps.runs.enrollment import (
     authenticate_runner,
     enroll_runner,
@@ -28,6 +29,7 @@ from apps.runs.enrollment import (
 from apps.runs.models import Run, RunnerEnrollment
 from apps.tenancy.auth import IsAuthenticatedMember, current_user
 from apps.tenancy.context import tenant_context
+from apps.tenancy.services import require_project_member
 from orchestration.build_report import BuildReportError, report_build
 
 # A work claim is a *lease*. If the companion that claimed a run dies before reporting (crash,
@@ -217,9 +219,11 @@ class RunnerEnrollmentView(APIView):
     local-companion runner for this tenant."""
 
     def get_permissions(self):
-        if self.request.method == "GET":
-            return [IsAuthenticatedMember()]
-        return super().get_permissions()
+        # Bugs S.No 214: this used to gate GET only, so POST — which MINTS A CREDENTIAL that
+        # lets a machine claim and run this tenant's phases — fell through to `AllowAny` and
+        # took no login at all. Both verbs need a member; the runner's own token-authenticated
+        # routes are untouched because they set their own `authentication_classes`.
+        return [IsAuthenticatedMember()]
 
     def get(self, request):
         tenant_id = _tenant_id(request)
@@ -237,6 +241,16 @@ class RunnerEnrollmentView(APIView):
         if not Project.objects.filter(id=project_id, tenant_id=tenant_id).exists():
             return Response({"project_id": "not found in tenant"},
                             status=status.HTTP_404_NOT_FOUND)
+        # Layer 2 of S.No 214: an enrollment token is a credential that lets a machine claim and
+        # run this project's phases. It is minted FOR the caller and bound to them, though, so it
+        # is self-service — the equivalent of issuing yourself an API token — and connecting your
+        # own laptop is exactly what the S-05/S-06 setup checklist asks every developer to do.
+        # Membership is the right bar; a lead-only one would break onboarding for the whole team.
+        require_project_member(
+            tenant_id=tenant_id, project_id=str(project_id),
+            user_id=getattr(current_user(request), "id", None),
+            what="connect a machine to this project",
+        )
         # The authenticated session user owns the enrollment; `developer_id` in the body is
         # only the pre-auth/runner/test fallback (mirrors `resolve_actor`, P4.7-T5).
         user = current_user(request)
@@ -253,6 +267,15 @@ class RunnerEnrollmentView(APIView):
 
 class RunnerRevokeView(APIView):
     """POST /api/runners/{id}/revoke/ — stop a companion's token from authenticating."""
+
+    def get_permissions(self):
+        # S.No 214: an ungated write sitting next to the one above. Revoking somebody else's
+        # companion stops their phases from running, so it needs a session like everything else.
+        # NOTE this changes WHO may call it, not what it does — the fact that it revokes exactly
+        # one enrollment row and leaves the rest of that machine's tokens ACTIVE is recorded
+        # against S.No 35, which owns the Connect Machine redesign, and is deliberately not
+        # touched here.
+        return [IsAuthenticatedMember()]
 
     def post(self, request, pk):
         tenant_id = _tenant_id(request)
@@ -389,6 +412,13 @@ class RunnerClarificationPollView(APIView):
         return Response(result)
 
 
+#: The security phase's LABEL, not its agent key — a dispatch payload carries labels
+#: (`AgentRunInput.phase` is set from `spec.phase_label`). Read from the catalog rather than
+#: written out, so renaming the phase there cannot silently switch this branch off.
+SECURITY_PHASE = next(
+    (a.phase_label for a in AGENT_CATALOG if a.key == "10_security"), "security")
+
+
 def _phase_extras(run, payload: dict):
     """The dispatched task, plus what its phase needs and the generic dispatch could not carry.
 
@@ -413,8 +443,28 @@ def _phase_extras(run, payload: dict):
     but "tiny" is not "closed": a companion that claimed inside it would start an agent whose
     first tool call fails with "no accessibility journey is attached to this run". Deferring for
     one poll turns a rare, confusing failure into about a second of waiting.
+
+    **The security phase (Bugs S.No 185) needs its package registries reachable**, and likewise
+    before the agent starts: the companion builds the egress allowlist once, at task setup, and
+    a scanner that cannot reach PyPI cannot be installed at all. `extra_allowed_hosts` has been a
+    field on the companion's task and honoured by its guardrails all along — nothing on the
+    server ever populated it, which is exactly the "does not exist yet" the guardrails comment
+    names. A project that declares no registries gets a payload identical to today's.
     """
     from apps.a11y.journey import JOURNEY_PHASE
+
+    if payload.get("phase") == SECURITY_PHASE:
+        profile = ProjectProfile.objects.filter(
+            tenant_id=run.tenant_id, project_id=run.work_item.project_id).only("scan").first()
+        registries = [
+            h.strip() for h in ((profile.scan if profile else {}) or {}).get("registries", [])
+            if isinstance(h, str) and h.strip()
+        ]
+        if not registries:
+            return payload
+        existing = list(payload.get("extra_allowed_hosts") or [])
+        merged = existing + [h for h in registries if h not in existing]
+        return {**payload, "extra_allowed_hosts": merged}
 
     if payload.get("phase") != JOURNEY_PHASE:
         return payload

@@ -64,6 +64,12 @@ _CHANGES_REQUIRED = re.compile(r"CHANGES[_ ]REQUIRED", re.IGNORECASE)
 # a present, parseable *approved* verdict instead of firing on prose that merely names a RESOLVED
 # REM id in the review narrative (Bugs S.No 114 false-positive).
 _NEGATIVE_STATUS = re.compile(r"chang|reject|denied?|blocked|fail", re.IGNORECASE)
+# Acceptance criteria in the shape agent 06 authors them: markdown checkbox lines under an
+# "Acceptance Criteria:" heading (agents/06_task_breakdown/agent.md worked examples).
+_CRITERIA_HEADING = re.compile(r"^[-*#>\s]*acceptance\s+criteria\s*:?\s*$", re.IGNORECASE)
+_CRITERION_LINE = re.compile(r"^\s*[-*]\s*\[[ xX]?\]\s*(.+?)\s*$")
+#: The only per-criterion verdicts the review contract accepts.
+_CRITERION_VERDICTS = ("met", "not_met", "not_verifiable")
 
 
 class ReviewContractError(RuntimeError):
@@ -145,7 +151,102 @@ def parse_findings(text: str) -> list[Finding]:
     return findings
 
 
-def parse_and_guard(body: str | None, *, tenant_id, run_id) -> list[Finding]:
+def extract_acceptance_criteria(description: str | None) -> list[str]:
+    """The work item's acceptance criteria, verbatim, as agent 06 writes them: `- [ ] Given …
+    when … then …` lines under an `Acceptance Criteria:` heading.
+
+    Returns `[]` for anything it cannot parse — an imported Jira item, a free-form description,
+    a description with no criteria at all. That is deliberate, and it is what makes the guard
+    below safe to fail closed: **a fail-closed rule that fires on input it does not understand is
+    worse than the bug it was written for.**
+    """
+    criteria: list[str] = []
+    collecting = False
+    for raw in (description or "").splitlines():
+        if _CRITERIA_HEADING.match(raw):
+            collecting = True
+            continue
+        if not collecting:
+            continue
+        if not raw.strip():
+            continue                        # a blank line inside the list does not end it
+        match = _CRITERION_LINE.match(raw)
+        if match:
+            criteria.append(match.group(1).strip())
+        else:
+            collecting = False              # any other prose does end it
+    return criteria
+
+
+def guard_acceptance_criteria(body: str | None, criteria: list[str], *, tenant_id, run_id,
+                              findings: list[Finding]) -> None:
+    """Bugs S.No 243: an APPROVING 08 review must show, per criterion, that it checked it.
+
+    The row files this as "the review agent is never given the acceptance criteria". That is not
+    what happens — the work item goes to the manifest composer and its description is rendered
+    into `# Current Work Item`, and the agent body has carried "Step 4a — Acceptance Criteria
+    Cross-Reference" all along. The real gap is the OUTPUT CONTRACT: nothing ever required a
+    per-criterion verdict, so `{"status": "APPROVED", "findings": []}` is indistinguishable from a
+    review that performed step 4a and one that only skimmed the diff.
+
+    That is how TASK-006 shipped three of its four requirements. The missing one was CORS; the
+    review passed, the merge gate was approved, and because nothing in the pipeline opens a
+    browser it stayed invisible for 18 days and 29 further tasks. The requirement had been stated
+    twice — FOUND-003 and TASK-006 — and missed both times, which makes it systematic rather than
+    a slip.
+
+    Two deliberate limits keep this from blocking good work:
+
+    * **Nothing to check → no check.** When no criteria could be extracted the guard does not
+      fire at all. See `extract_acceptance_criteria`.
+    * **Already going back → no check.** When the review carries blocking findings the merge gate
+      does not open anyway, so the criteria table is not what decides this round.
+    """
+    if any(f.severity in _BLOCKING for f in findings):
+        return
+    if not criteria:
+        # Worth seeing in the event log — it is the population this guard cannot protect — but
+        # never a reason to fail a review.
+        return
+    verdict = _extract_verdict(body or "")
+    entries = [e for e in ((verdict or {}).get("acceptance_criteria") or [])
+               if isinstance(e, dict)]
+    problems: list[str] = []
+    if len(entries) < len(criteria):
+        problems.append(
+            f"the work item states {len(criteria)} acceptance criteria but the verdict carries "
+            f"{len(entries)}"
+        )
+    for i, entry in enumerate(entries, 1):
+        value = str(entry.get("verdict") or "").strip().lower()
+        if value not in _CRITERION_VERDICTS:
+            problems.append(
+                f"criterion {i} has verdict {entry.get('verdict')!r}; expected one of "
+                f"{', '.join(_CRITERION_VERDICTS)}"
+            )
+        elif value == "not_met":
+            problems.append(
+                f"criterion {i} is not_met, but the review raised no blocking finding for it — an "
+                "unmet requirement cannot ride through on an approving verdict"
+            )
+        if not str(entry.get("evidence") or "").strip():
+            problems.append(f"criterion {i} cites no evidence (a file:line or a test name)")
+    if not problems:
+        return
+    with tenant_context(tenant_id):
+        tools.log_event(
+            tenant_id, "orchestrator", "review.acceptance_criteria_unverified", "run", str(run_id),
+            {"criteria": len(criteria), "entries": len(entries), "problems": problems},
+        )
+    raise ReviewContractError(
+        "08 approved the PR without showing it checked the work item's acceptance criteria: "
+        + "; ".join(problems)
+        + " — failing closed so the merge gate is not opened on a requirement nobody verified"
+    )
+
+
+def parse_and_guard(body: str | None, *, tenant_id, run_id,
+                    acceptance_criteria: list[str] | None = None) -> list[Finding]:
     """Parse the verdict AND fail closed on a *genuine* contract downgrade (Bugs S.No 114).
 
     The remediation loop keys off the parsed blocking findings, so treating a review that really
@@ -181,6 +282,8 @@ def parse_and_guard(body: str | None, *, tenant_id, run_id) -> list[Finding]:
             "findings array); failing closed so the merge gate is not opened on an unreviewed "
             "downgrade"
         )
+    guard_acceptance_criteria(body, acceptance_criteria or [], tenant_id=tenant_id, run_id=run_id,
+                              findings=findings)
     return findings
 
 
@@ -211,7 +314,10 @@ class AgentReviewProvider:
             allowed_tools=PLATFORM_TOOLS, work_item=work_item,
         ))
         body = result.outputs.get("result") or result.outputs.get("text") or ""
-        return parse_and_guard(body, tenant_id=inp.tenant_id, run_id=inp.run_id)
+        return parse_and_guard(
+            body, tenant_id=inp.tenant_id, run_id=inp.run_id,
+            acceptance_criteria=extract_acceptance_criteria(work_item.description),
+        )
 
     # ── manifest assembly ───────────────────────────────────────────
     def _build_review_manifest(self, inp: BuildInput, pr_ref: str) -> str:
@@ -396,6 +502,8 @@ class CompanionReviewProvider:
                 AgentSpec.objects.filter(tenant_id=inp.tenant_id, key=_REVIEW_AGENT_KEY)
                 .order_by("-semver").first()
             )
+            work_item = WorkItem.objects.filter(
+                id=inp.work_item_id, tenant_id=inp.tenant_id).first()
         if spec is None:
             return []  # 08 not seeded → no findings (loop falls through to the merge gate)
         manifest = self._manifest._build_review_manifest(inp, pr_ref)
@@ -406,7 +514,11 @@ class CompanionReviewProvider:
                           timeout=timeout)
         if body is None:
             return []  # review timed out → no findings; human merge gate still applies (S.No 110)
-        return parse_and_guard(body, tenant_id=inp.tenant_id, run_id=inp.run_id)
+        return parse_and_guard(
+            body, tenant_id=inp.tenant_id, run_id=inp.run_id,
+            acceptance_criteria=extract_acceptance_criteria(
+                work_item.description if work_item else ""),
+        )
 
 
 def build_companion_provider() -> CompanionReviewProvider:

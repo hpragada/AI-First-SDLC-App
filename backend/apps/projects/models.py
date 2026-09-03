@@ -61,6 +61,15 @@ class ProjectProfile(TenantScopedModel):
     # block rather than columns, like theme/export_policy/preview_start, so a later setting
     # needs no migration. Empty ⇒ apps.a11y.policy.default_policy() — never "unset behaviour".
     a11y = models.JSONField(default=dict, blank=True)
+    # Security-scan provisioning (Bugs S.No 185): which package registries this project's
+    # scanners may reach. The companion's egress allowlist is deliberately narrow — GitHub, the
+    # Anthropic API and npm — and its own comment says the other ecosystems are left out because
+    # "per-project declaration is what `extra_allowed_hosts` is for, and that path needs a
+    # server-side way to declare them, which does not exist yet". This is that way.
+    # {"registries": ["pypi.org", "files.pythonhosted.org"]}. Empty ⇒ the default allowlist,
+    # byte-for-byte as today. A block rather than columns, like theme/export_policy/a11y, so a
+    # later scan setting (tool list, severity floor) needs no second migration.
+    scan = models.JSONField(default=dict, blank=True)
     important_context = models.TextField(blank=True)
     version = models.IntegerField(default=1)
 

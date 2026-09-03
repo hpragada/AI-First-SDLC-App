@@ -171,6 +171,24 @@ def _render_important_context(profile: dict, budget: TokenBudget) -> str:
 
 
 def _render_work_item(work_item: dict, phase: str, budget: TokenBudget) -> str:
+    """The task itself. **The description is rendered whole, outside the cap** (truncation
+    register T2).
+
+    Same reasoning as `_render_review_direction` one function down: `_truncate` cuts from the END,
+    and the end of a description is exactly where the acceptance criteria are written. So the
+    failure mode was never "the agent gets a shorter brief" — it was "the agent gets a brief whose
+    REQUIREMENTS have been removed, and nothing tells it or the human". A build agent then produces
+    plausible code that misses the actual requirement and the review agent has nothing to check it
+    against; that is the machinery behind the CORS miss on TASK-006 (S.No 243), which survived 18
+    days and 29 further tasks. Measured on a live run, an ordinary task (TASK-022) already rendered
+    at 366 tokens — 56% of the 650 cap — so this was not a distant edge case.
+
+    This is not an open door. The description is ONE field from the system of record, hard-bounded
+    by Jira at 32,767 characters; it does not grow with the project's age the way
+    `relevant_artifacts`, `recent_events` and `retrieved_knowledge` do, which is why their caps
+    must stay. The metadata lines keep the cap — they are bounded and repetitive, and cutting them
+    is harmless. When nothing overflows, the output is byte-identical to before.
+    """
     wi = work_item or {}
     lines = [
         f"- id: {wi.get('id', '')}",
@@ -184,8 +202,9 @@ def _render_work_item(work_item: dict, phase: str, budget: TokenBudget) -> str:
     # test case also gets its full TC-XXX block as a `test_case` artifact under Relevant Artifacts.)
     if wi.get("title"):
         lines.append(f"- title: {wi['title']}")
-    if wi.get("description"):
-        lines.append(f"- description: {wi['description']}")
+    description = str(wi.get("description") or "")
+    description_line = f"- description: {description}" if description else ""
+    at = len(lines)         # where the description sits in the established ordering
     # For an auto-materialized test case, point the agent at ITS specific `test_case` artifact —
     # get_context's artifacts are project/repo-scoped (not per-WI), so this pointer is how 09b
     # knows which TC is this run's. Fetch its full spec with get_artifact_body (P3-09b B3/B4).
@@ -201,7 +220,16 @@ def _render_work_item(work_item: dict, phase: str, budget: TokenBudget) -> str:
         lines.append(f"- repo_id: {wi['repo_id']}")
     if wi.get("takeover_flag"):
         lines.append("- takeover_flag: true")
-    return _section("Current Work Item", "\n".join(lines), budget.current_work_item)
+
+    parts = lines[:at] + ([description_line] if description_line else []) + lines[at:]
+    body = "\n".join(parts)
+    if estimate_tokens(body) <= budget.current_work_item:
+        return _section("Current Work Item", body, budget.current_work_item)
+    # Over budget: cap the metadata (which carries the "… truncated" marker, so the cut is never
+    # silent) and re-attach the description whole. It moves to the end in this case only.
+    trimmed = _truncate("\n".join(lines), budget.current_work_item)
+    return f"# Current Work Item\n\n{trimmed}" + (f"\n{description_line}"
+                                                  if description_line else "")
 
 
 def _render_clarifications(clarifications: list[dict], budget: TokenBudget) -> str:

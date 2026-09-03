@@ -60,6 +60,8 @@ from apps.tenancy.services import (
     grant_membership,
     list_tenant_users,
     project_role_coverage,
+    require_project_member,
+    require_project_write_role,
     resend_invitation,
     revoke_invitation,
     revoke_membership,
@@ -233,6 +235,21 @@ class ProjectViewSet(
         # API contracts & drift (P4.7-T9): any authenticated member may read.
         if self.action in {"api_contracts", "api_contract_detail", "drift"}:
             return [IsAuthenticatedMember()]
+        # Bugs S.No 214 — the WRITE surfaces that were still falling through to the viewset
+        # default, which is `AllowAny`: no session required at all. Tenant scoping and RLS still
+        # applied, so this was never cross-tenant exposure; it was that INSIDE a tenant nothing
+        # checked who you were. `create` is the sharpest of them — `perform_create` below already
+        # says in prose "any authenticated tenant member may create a project (see get_permissions
+        # above)", and that sentence was simply not true.
+        #
+        # `profile` is gated a second time, per project and per role, inside the action: it is
+        # the briefing every agent on the project reads, so it is the most load-bearing text in
+        # the platform and a plain member should not be able to rewrite it. The rest need only a
+        # session — uploading a source document and reading the lineage graph are ordinary member
+        # work, and raising their bar would break the ordinary journey.
+        if self.action in {"create", "profile", "export_policy", "source_documents",
+                           "traceability", "onboard_atlassian"}:
+            return [IsAuthenticatedMember()]
         # Dashboard rollup (S-31): authenticated member.
         if self.action == "dashboard":
             return [IsAuthenticatedMember()]
@@ -375,6 +392,14 @@ class ProjectViewSet(
             return Response(ProjectProfileSerializer(profile).data)
 
         # PUT — create or update (1:1), bumping version on each edit.
+        # Layer 2 of S.No 214: reading the briefing is ordinary member work; REWRITING it steers
+        # every agent that runs on this project from here on, so it takes the same role as
+        # managing repositories.
+        require_project_write_role(
+            tenant_id=self.tenant_id, project_id=str(project.id),
+            user_id=getattr(current_user(request), "id", None),
+            what="edit the project profile",
+        )
         profile = getattr(project, "profile", None)
         ser = ProjectProfileSerializer(instance=profile, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
@@ -1683,6 +1708,18 @@ class WorkItemViewSet(
     serializer_class = WorkItemSerializer
     queryset = WorkItem.objects.all().order_by("-created_at")
 
+    def get_permissions(self):
+        # Bugs S.No 214. This viewset had NO get_permissions at all, so every one of its writes
+        # inherited the project-wide DRF default of `AllowAny` — creating and editing work items,
+        # and starting phase runs, took no login whatsoever. Reads are left as they were.
+        #
+        # `trigger` and `build` are gated a second time by role inside the action: they spend real
+        # Claude subscription time on the team's account. `take_over` seizes a work item somebody
+        # else is building.
+        if self.action in {"create", "update", "partial_update", "trigger", "build", "take_over"}:
+            return [IsAuthenticatedMember()]
+        return super().get_permissions()
+
     def get_serializer_class(self):
         if self.action in ("update", "partial_update"):
             return WorkItemPatchSerializer
@@ -1839,6 +1876,16 @@ class WorkItemViewSet(
         keeps a single UI trigger correct for both plan and build phases (routing lives here,
         keyed off the catalog's `rides_build`, so a new build agent needs no UI change)."""
         work_item = self.get_object()
+        # Layer 2 of S.No 214. Membership rather than a lead role, deliberately: a phase run
+        # spends engine time, but each ROLE drives its own phase — a Product Owner triggers
+        # ideation, an Engineer triggers implementation — so a tech_lead-only bar would lock most
+        # of the team out of the ordinary journey. What this closes is a signed-in user acting on
+        # a project they are not on at all.
+        require_project_member(
+            tenant_id=self.tenant_id, project_id=str(work_item.project_id),
+            user_id=getattr(current_user(request), "id", None),
+            what="start a phase run",
+        )
         ser = TriggerSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         agent_key = ser.validated_data["agent_key"]
@@ -1881,6 +1928,12 @@ class WorkItemViewSet(
         surface for `trigger_build`). The build claims onto the triggering user's enrolled
         companion; `repo`/`base` default to the work item's Repository."""
         work_item = self.get_object()
+        # Layer 2 of S.No 214 — same reasoning as `trigger` above.
+        require_project_member(
+            tenant_id=self.tenant_id, project_id=str(work_item.project_id),
+            user_id=getattr(current_user(request), "id", None),
+            what="start a build",
+        )
         ser = BuildTriggerSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         try:
@@ -2028,6 +2081,15 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = RunSerializer
     queryset = Run.objects.all().order_by("-created_at")
 
+    def get_permissions(self):
+        # Bugs S.No 214. A ReadOnlyModelViewSet with two POST actions bolted on — so despite the
+        # class name both writes ran under `AllowAny`. Each one reaches into a run somebody else
+        # started: takeover ends it terminally, resume re-dispatches work on their branch. Role is
+        # checked inside the action, where the run's project is in hand.
+        if self.action in {"take_over", "resume"}:
+            return [IsAuthenticatedMember()]
+        return super().get_permissions()
+
     def get_queryset(self):
         from integrations.onboarding import carrier_q
 
@@ -2110,6 +2172,14 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         still-waiting AgentRunWorkflow terminally (Bugs S.No 89), so it does not linger after
         the operator has decided to hand-work the item or re-run from a clean dispatch."""
         run = self.get_object()
+        # Layer 2 of S.No 214: this reaches into a run somebody else started. Membership, not a
+        # lead role — the person who hit the error is usually the one who resumes it (S.No 157),
+        # and making them wait for a tech_lead would defeat the recourse that fix exists to give.
+        require_project_member(
+            tenant_id=self.tenant_id, project_id=str(run.work_item.project_id),
+            user_id=getattr(current_user(request), "id", None),
+            what="take over another person's run",
+        )
         try:
             if request.data.get("release"):
                 out = release_takeover(
@@ -2137,6 +2207,14 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         it. Everything already done (the build, the branch, the PR) is kept — only the failed
         step is retried, so the user never re-runs a whole phase because of one error."""
         run = self.get_object()
+        # Layer 2 of S.No 214: this reaches into a run somebody else started. Membership, not a
+        # lead role — the person who hit the error is usually the one who resumes it (S.No 157),
+        # and making them wait for a tech_lead would defeat the recourse that fix exists to give.
+        require_project_member(
+            tenant_id=self.tenant_id, project_id=str(run.work_item.project_id),
+            user_id=getattr(current_user(request), "id", None),
+            what="resume a parked run",
+        )
         try:
             out = resume_stalled_run(tenant_id=self.tenant_id, run_id=str(run.id))
         except ResumeError as exc:
@@ -2169,6 +2247,7 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         # A run's own record is not a project deliverable — see RUN_RECORD_ARTIFACT_TYPES. Without
         # this, every document the vision agent rewrote appeared twice in the registry: the
         # document itself, and the phase blob holding the agent's closing message.
+        #
         qs = qs.exclude(type__in=RUN_RECORD_ARTIFACT_TYPES)
         for field in ("project", "phase", "status"):
             value = self.request.query_params.get(field)

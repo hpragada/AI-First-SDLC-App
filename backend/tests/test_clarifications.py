@@ -355,10 +355,13 @@ def test_get_clarification_reports_status_and_answers(world):
 
 # ── runner endpoints (companion ask + poll, Runner-token auth) ──────
 def _enroll(client, tenant_id, project_id):
-    r = client.post("/api/runners/", {"project_id": project_id, "label": "l"},
-                    format="json", **_hdr(tenant_id))
-    assert r.status_code == 201, r.content
-    return r.json()["token"]
+    # S.No 214 closed `POST /api/runners/` to anonymous callers — minting an enrollment
+    # token is a credential operation. This test needs a token, not the endpoint, so it
+    # goes through the domain service directly (as test_review_dispatch already does).
+    from apps.runs.enrollment import enroll_runner
+
+    _, token = enroll_runner(tenant_id=str(tenant_id), project_id=str(project_id), label="l")
+    return token
 
 
 def test_runner_create_and_poll_roundtrip(world):

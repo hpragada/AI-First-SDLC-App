@@ -304,8 +304,12 @@ def scan_worktree(worktree_path) -> list[SecretFinding]:
 # (QA-11a). Naming it means the day real network isolation lands, those builds keep working
 # instead of failing for a reason nobody would connect to this list. yarn and pnpm default to
 # the same host. Other ecosystems' registries (NuGet, Maven, PyPI) are deliberately NOT added:
-# per-project declaration is what `extra_allowed_hosts` is for, and that path needs a
-# server-side way to declare them, which does not exist yet.
+# per-project declaration is what `extra_allowed_hosts` is for — and that path now EXISTS on the
+# server (Bugs S.No 185). A project declares them as `ProjectProfile.scan.registries`, and
+# `_phase_extras` merges them into the security phase's `extra_allowed_hosts` at dispatch. That
+# is deliberately per-project and per-phase rather than a wider default: this list is the whole
+# egress policy, and a scanner needing PyPI is not a reason for every phase of every project to
+# be able to reach it.
 _DEFAULT_ALLOWED = ("api.github.com", "github.com", "codeload.github.com", "api.anthropic.com",
                     "registry.npmjs.org")
 

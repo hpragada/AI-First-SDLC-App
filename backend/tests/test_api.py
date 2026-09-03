@@ -39,6 +39,23 @@ def project(tenant):
     return Project.objects.create(tenant=tenant, name="Platform")
 
 
+@pytest.fixture
+def lead(client, tenant):
+    """A signed-in tenant admin — request this in any test that WRITES.
+
+    Bugs S.No 214 closed the write endpoints that were still running under DRF's `AllowAny`
+    default: creating projects and work items, editing the project profile, triggering a phase,
+    uploading a source document, reading traceability, wiring Atlassian. The tests that exercise
+    them were posting with no session at all, which is precisely the hole that was fixed, so each
+    one now has to act as somebody. Tenant admin also satisfies the per-project role check on the
+    two spend/steer endpoints (profile, trigger) via the same admin fallback
+    `require_repo_manage_role` has always used."""
+    user = User.objects.create_user(email="lead@acme.test", name="Lead", tenant=tenant,
+                                    password="pw", is_tenant_admin=True)
+    client.force_authenticate(user)
+    return user
+
+
 # ── Tenant bootstrap ────────────────────────────────────────────────
 def test_create_tenant(client, db):
     resp = client.post("/api/tenants/", {"name": "NewCo"}, format="json")
@@ -51,7 +68,7 @@ def test_create_tenant(client, db):
 
 
 # ── Projects + profile ──────────────────────────────────────────────
-def test_create_and_list_projects(client, tenant):
+def test_create_and_list_projects(client, tenant, lead):
     resp = client.post("/api/projects/", {"name": "Apollo"}, format="json", **_hdr(tenant.id))
     assert resp.status_code == 201
     pid = resp.data["id"]
@@ -62,7 +79,7 @@ def test_create_and_list_projects(client, tenant):
     assert [p["id"] for p in listed.data] == [pid]
 
 
-def test_profile_upsert_bumps_version(client, project):
+def test_profile_upsert_bumps_version(client, project, lead):
     url = f"/api/projects/{project.id}/profile/"
     # GET before any profile → 404
     assert client.get(url, **_hdr(project.tenant_id)).status_code == 404
@@ -83,7 +100,7 @@ def test_profile_upsert_bumps_version(client, project):
 
 
 # ── WorkItems ───────────────────────────────────────────────────────
-def test_create_and_filter_work_items(client, project):
+def test_create_and_filter_work_items(client, project, lead):
     resp = client.post(
         "/api/work-items/",
         {"project": str(project.id), "type": "story", "feature_stream": "auth"},
@@ -100,7 +117,7 @@ def test_create_and_filter_work_items(client, project):
     assert none.data == []
 
 
-def test_create_work_item_rejects_foreign_project(client, tenant):
+def test_create_work_item_rejects_foreign_project(client, tenant, lead):
     other = Tenant.objects.create(name="Other")
     foreign = Project.objects.create(tenant=other, name="Theirs")
     resp = client.post(
@@ -110,7 +127,7 @@ def test_create_work_item_rejects_foreign_project(client, tenant):
     assert "project" in resp.data
 
 
-def test_patch_work_item_repo_assign_reject_foreign_and_clear(client, project):
+def test_patch_work_item_repo_assign_reject_foreign_and_clear(client, project, lead):
     """B1 (Option C): a work item's target repo is assignable/clearable via PATCH and validated
     to a repository on its OWN project — this backs the reviewer override + per-task redirect."""
     from apps.projects.models import Repository
@@ -140,7 +157,7 @@ def test_patch_work_item_repo_assign_reject_foreign_and_clear(client, project):
 
 
 # ── Phase trigger (real trigger_phase, stubbed workflow start) ──────
-def test_trigger_phase_creates_run(client, project, monkeypatch):
+def test_trigger_phase_creates_run(client, project, monkeypatch, lead):
     seed_agent_specs(project.tenant)
     wi = WorkItem.objects.create(tenant=project.tenant, project=project, type=WorkItem.Type.STORY)
     started = []
@@ -160,7 +177,7 @@ def test_trigger_phase_creates_run(client, project, monkeypatch):
     assert started and started[0][1] == "ideation"
 
 
-def test_trigger_unknown_agent_is_400(client, project, monkeypatch):
+def test_trigger_unknown_agent_is_400(client, project, monkeypatch, lead):
     wi = WorkItem.objects.create(tenant=project.tenant, project=project, type=WorkItem.Type.STORY)
     monkeypatch.setattr(trigger_mod, "_default_workflow_starter", lambda *a, **k: None)
     resp = client.post(
@@ -196,7 +213,7 @@ def test_list_runs_artifacts_events_edges(client, project):
     assert events.status_code == 200
 
 
-def test_traceability_endpoint_returns_nodes_and_edges(client, project):
+def test_traceability_endpoint_returns_nodes_and_edges(client, project, lead):
     run = Run.objects.create(
         tenant=project.tenant, work_item=WorkItem.objects.create(
             tenant=project.tenant, project=project, type=WorkItem.Type.STORY),
@@ -297,7 +314,7 @@ def _docx_bytes():
     return buf.getvalue()
 
 
-def test_source_document_upload_extract_and_adopt(client, project, monkeypatch):
+def test_source_document_upload_extract_and_adopt(client, project, monkeypatch, lead):
     from django.core.files.uploadedfile import SimpleUploadedFile
 
     from integrations import onboarding
@@ -340,7 +357,7 @@ def test_source_document_upload_extract_and_adopt(client, project, monkeypatch):
     assert adopted.first().status == "published"
 
 
-def test_onboard_atlassian_endpoint(client, project, monkeypatch):
+def test_onboard_atlassian_endpoint(client, project, monkeypatch, lead):
     from api import views
 
     monkeypatch.setattr(
@@ -367,3 +384,94 @@ def test_tenant_isolation_hides_other_tenants_rows(client, project):
 
 def test_missing_tenant_header_is_400(client):
     assert client.get("/api/projects/").status_code == 400
+
+
+# ── S.No 214: the write endpoints that were running under AllowAny ──
+def _anon_writes(project):
+    """(label, method, path, body) for every write this fix closed."""
+    pid = project.id
+    return [
+        ("create project", "post", "/api/projects/", {"name": "Sneaky"}),
+        ("edit profile", "put", f"/api/projects/{pid}/profile/", {"domain": "x"}),
+        ("upload source doc", "post", f"/api/projects/{pid}/source-documents/", {}),
+        ("wire atlassian", "post", f"/api/projects/{pid}/onboard-atlassian/", {}),
+        ("create work item", "post", "/api/work-items/",
+         {"project": str(pid), "type": "story", "title": "t"}),
+        ("mint enrollment", "post", "/api/runners/", {"project_id": str(pid)}),
+    ]
+
+
+def test_the_write_endpoints_refuse_an_anonymous_caller(client, project):
+    """Bugs S.No 214. DRF's project-wide default is `AllowAny`, and these actions never stated
+    their own permission, so anyone who could reach the API could create projects, rewrite the
+    project profile every agent reads as its briefing, create work items and mint a companion
+    credential — with no login at all. Tenant scoping and RLS still applied, so this was never
+    cross-tenant exposure; it was that INSIDE a tenant nothing checked who you were."""
+    hdr = _hdr(project.tenant_id)
+    failures = [
+        f"{label} → "
+        f"{getattr(client, method)(path, body, format='json', **hdr).status_code}"
+        for label, method, path, body in _anon_writes(project)
+        if getattr(client, method)(path, body, format="json",
+                                   **hdr).status_code not in (401, 403)
+    ]
+    assert not failures, "these still accept an anonymous caller: " + "; ".join(failures)
+
+
+def test_a_signed_in_lead_can_still_do_all_of_it(client, project, lead):
+    """The other half: the fix must not have closed the door on the people who belong here.
+    Anything but 401/403 is a pass — several of these legitimately 400 on a stub body; what is
+    under test is that the permission layer let them through."""
+    blocked = [
+        label for label, method, path, body in _anon_writes(project)
+        if getattr(client, method)(path, body, format="json",
+                                   **_hdr(project.tenant_id)).status_code in (401, 403)
+    ]
+    assert not blocked, f"a signed-in tenant admin was refused: {blocked}"
+
+
+def test_the_second_layer_is_scoped_to_what_it_is_actually_for(client, project):
+    """Layer 2, and the line it draws. `IsAuthenticatedMember` only asks 'is anybody logged in' —
+    its own docstring says so — which inside a tenant still lets a signed-in user act on a project
+    they are not on. Two different bars fix that without breaking the journey:
+
+    * the **project profile** takes tech_lead/admin, because rewriting it re-steers every agent
+      that will ever run on the project;
+    * everything else takes **membership**, because each role drives its own phase — a Product
+      Owner triggers ideation, an Engineer triggers implementation, a developer connects their own
+      laptop. A tech_lead-only bar there would have locked most of the team out of ordinary work,
+      which is why it is not the bar used.
+    """
+    member = User.objects.create_user(email="dev@acme.test", name="Dev",
+                                      tenant=project.tenant, password="pw")
+    Membership.objects.create(tenant=project.tenant, user=member, project=project,
+                              role="engineer")
+    client.force_authenticate(member)
+    wi = WorkItem.objects.create(tenant=project.tenant, project=project, type="story", title="t")
+    hdr = _hdr(project.tenant_id)
+
+    # Steering every agent on the project is not an ordinary member's call.
+    assert client.put(f"/api/projects/{project.id}/profile/", {"domain": "x"},
+                      format="json", **hdr).status_code == 403
+    # Their own everyday work is untouched.
+    made = client.post("/api/work-items/",
+                       {"project": str(project.id), "type": "story", "title": "mine"},
+                       format="json", **hdr)
+    assert made.status_code == 201
+    assert client.post("/api/runners/", {"project_id": str(project.id)},
+                       format="json", **hdr).status_code == 201
+    # Triggering reaches the domain layer rather than being refused at the permission layer.
+    assert client.post(f"/api/work-items/{wi.id}/trigger/", {"agent_key": "03_prd"},
+                       format="json", **hdr).status_code != 403
+
+
+def test_a_signed_in_outsider_cannot_act_on_a_project_they_are_not_on(client, project):
+    """The hole membership closes: a session is not the same as belonging here."""
+    outsider = User.objects.create_user(email="other@acme.test", name="Other",
+                                        tenant=project.tenant, password="pw")
+    client.force_authenticate(outsider)
+    wi = WorkItem.objects.create(tenant=project.tenant, project=project, type="story", title="t")
+    assert client.post(f"/api/work-items/{wi.id}/trigger/", {"agent_key": "03_prd"},
+                       format="json", **_hdr(project.tenant_id)).status_code == 403
+    assert client.post("/api/runners/", {"project_id": str(project.id)},
+                       format="json", **_hdr(project.tenant_id)).status_code == 403

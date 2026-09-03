@@ -10,7 +10,12 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
-    from .build_types import LONG_VERIFY_PHASES, failure_reason, is_activity_timeout
+    from .build_types import (
+        LONG_VERIFY_PHASES,
+        failure_reason,
+        is_activity_timeout,
+        is_engine_exit,
+    )
     from .types import AgentRunInput, GateDecision, PhaseReport
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -91,44 +96,68 @@ class AgentRunWorkflow:
         if inp.execution_mode == "companion":
             # Run on the user's enrolled local Claude Code: dispatch, then wait for the
             # companion's report (human-paced if it asks clarifications). Offline → takeover.
-            await workflow.execute_activity(
-                "dispatch_phase", args=[inp, manifest],
-                start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
-            )
-            try:
-                await workflow.wait_condition(
-                    lambda: self._report is not None,
-                    timeout=timedelta(seconds=inp.report_timeout_seconds),
-                )
-            except TimeoutError:
-                # Soft, RECONCILABLE takeover (Bugs S.No 89): surface "companion appears
-                # offline" and let a human take over, but do NOT terminate — a companion that
-                # only slept can still return and complete this very run. Keep waiting for the
-                # report; an explicit human takeover sends `abandon_run` to end it terminally.
+            #
+            # Looping for the reason BuildWorkflow loops (S.No 240 / S.No 182): when the ENGINE
+            # went away — a Claude subscription session or usage limit hit mid-phase — this used
+            # to call `fail_run` and RETURN, which closes the Temporal history for good. A closed
+            # workflow can never be signalled, so "Resume from where it stopped" became impossible
+            # for ever afterwards and the only recourse the console could offer was a brand-new
+            # run from zero. On the 21 July security scan that threw away four findings already
+            # registered. Park instead; on Resume this loop re-dispatches the phase. Bounded by
+            # the human: every pass waits on Resume or Take over, exactly like the gate.
+            while True:
                 await workflow.execute_activity(
-                    "mark_phase_takeover", inp,
-                    start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                    "dispatch_phase", args=[inp, manifest],
+                    start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
                 )
-                await workflow.wait_condition(
-                    lambda: self._report is not None or self._abandoned
-                )
-                if self._abandoned:
+                try:
+                    await workflow.wait_condition(
+                        lambda: self._report is not None,
+                        timeout=timedelta(seconds=inp.report_timeout_seconds),
+                    )
+                except TimeoutError:
+                    # Soft, RECONCILABLE takeover (Bugs S.No 89): surface "companion appears
+                    # offline" and let a human take over, but do NOT terminate — a companion that
+                    # only slept can still return and complete this very run. Keep waiting for the
+                    # report; an explicit human takeover sends `abandon_run` to end it terminally.
                     await workflow.execute_activity(
-                        "fail_run", args=[inp, "run abandoned by human takeover"],
+                        "mark_phase_takeover", inp,
                         start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
                     )
-                    return {"status": "abandoned", "run_id": inp.run_id}
-            report = self._report
-            if report.status != "ok":
+                    await workflow.wait_condition(
+                        lambda: self._report is not None or self._abandoned
+                    )
+                    if self._abandoned:
+                        await workflow.execute_activity(
+                            "fail_run", args=[inp, "run abandoned by human takeover"],
+                            start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+                        )
+                        return {"status": "abandoned", "run_id": inp.run_id}
+                report = self._report
+                # `wait_condition` returned, so the signal has landed — narrow for the type
+                # checker, which cannot see that through the lambda.
+                assert report is not None
+                if report.status == "ok":
+                    await workflow.execute_activity(
+                        "register_phase_result", args=[inp, report],
+                        start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
+                    )
+                    break
+                # The engine going away is not the phase failing. Park, and re-dispatch on Resume.
+                # A genuine phase failure still ends the run terminally below, which is right:
+                # waiting does not fix a bad run, and offering a Resume that cannot work is worse
+                # than a clear failure. `is_engine_exit` is deliberately narrow about the
+                # difference — see its docstring in build_types.
+                if is_engine_exit(report.message):
+                    self._report = None     # consume, so the next pass awaits a FRESH report
+                    if await self._park(inp, report.message, "dispatch_phase"):
+                        continue
+                    return {"status": "phase_failed", "run_id": inp.run_id}
                 await workflow.execute_activity(
                     "fail_run", args=[inp, report.message or "phase reported failed"],
                     start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
                 )
                 return {"status": "phase_failed", "run_id": inp.run_id}
-            await workflow.execute_activity(
-                "register_phase_result", args=[inp, report],
-                start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
-            )
         else:
             # Server-side fallback (CI/tests/headless): run the engine in the worker.
             await workflow.execute_activity(

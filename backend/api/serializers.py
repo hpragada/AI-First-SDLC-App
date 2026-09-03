@@ -310,10 +310,33 @@ class ProjectProfileSerializer(serializers.ModelSerializer):
         model = ProjectProfile
         fields = [
             "id", "project", "description", "domain", "tech_stack", "coding_standards",
-            "nfrs", "constraints", "glossary", "export_policy", "a11y", "important_context",
-            "version",
+            "nfrs", "constraints", "glossary", "export_policy", "a11y", "scan",
+            "important_context", "version",
         ]
         read_only_fields = ["id", "project", "version"]
+
+    def validate_scan(self, value):
+        """Bugs S.No 185: the registries a security scan may reach. Validated here, at the point
+        of writing, for the same reason `a11y` is — it is read while a phase is being dispatched,
+        and a typo must surface as a readable 400 rather than as a scan that quietly cannot
+        install its tools."""
+        if not value:
+            return value
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("scan must be an object.")
+        registries = value.get("registries", [])
+        if not isinstance(registries, list) or not all(
+            isinstance(h, str) and h.strip() and "/" not in h for h in registries
+        ):
+            raise serializers.ValidationError(
+                "scan.registries must be a list of bare hostnames, e.g. "
+                '["pypi.org", "files.pythonhosted.org"] — no scheme and no path.'
+            )
+        unknown = set(value) - {"registries"}
+        if unknown:
+            raise serializers.ValidationError(
+                f"unknown scan setting(s): {', '.join(sorted(unknown))}")
+        return value
 
     def validate_a11y(self, value):
         """Reject an accessibility policy the platform cannot honour, at the point of writing.

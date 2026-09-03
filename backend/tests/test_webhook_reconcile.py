@@ -222,7 +222,16 @@ def test_webhook_endpoint_verifies_signature_and_reconciles(world, settings):
 
 
 def test_take_over_endpoint(world):
+    from apps.tenancy.models import Membership, User
+
     client = APIClient()
+    # S.No 214: taking a work item over is a write, and writes now need a signed-in project
+    # member. Seizing an item anonymously was the behaviour that fix removed.
+    dev = User.objects.create_user(email="dev@acme.test", name="Dev", tenant=world.t,
+                                   password="pw")
+    Membership.objects.create(tenant=world.t, user=dev, project=world.wi.project,
+                              role="engineer")
+    client.force_authenticate(dev)
     resp = client.post(f"/api/work-items/{world.wi.id}/take-over/", {"reason": "manual"},
                        format="json", HTTP_X_TENANT_ID=str(world.t.id))
     assert resp.status_code == 200 and resp.json()["takeover"] is True

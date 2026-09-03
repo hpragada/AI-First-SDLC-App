@@ -817,6 +817,100 @@ async def test_workflow_companion_recovers_after_takeover(monkeypatch):
                      "publish", "transition"]
 
 
+@pytest.mark.asyncio
+async def test_workflow_engine_exit_parks_then_resumes_by_redispatching(monkeypatch):
+    """Bugs S.No 182 — the planning side gets the recourse the build side already had.
+
+    A Claude subscription session/usage limit hit mid-phase is the ENGINE going away, not the
+    phase failing. This used to call `fail_run` and RETURN, which closes the Temporal history for
+    good; a closed workflow can never be signalled, so Resume was impossible for ever afterwards
+    and the console could only offer a brand-new run from zero. On the 21 July security scan that
+    threw away SEC-001..004, already registered. Now it parks, stays signallable, and Resume
+    re-dispatches the phase — note `dispatch` appears TWICE and the run still reaches its gate."""
+    import asyncio
+
+    from temporalio.worker import Worker
+
+    from orchestration.types import GateDecision
+    from orchestration.workflows import AgentRunWorkflow
+
+    calls: list[str] = []
+    _patch_cores(monkeypatch, calls)
+    reasons: list[str] = []
+
+    def _park(inp, reason, resume_from):
+        calls.append("park")
+        reasons.append(f"{resume_from}: {reason}")
+        return {"status": "parked", "resume_from": resume_from}
+
+    monkeypatch.setattr(activities, "park_run_core", _park)
+    monkeypatch.setattr(activities, "resume_run_state_core",
+                        lambda inp: (calls.append("resume"), {"status": "resumed"})[1])
+
+    client = await _client()
+    tq = f"test-{uuid.uuid4()}"
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        async with Worker(client, task_queue=tq, workflows=[AgentRunWorkflow],
+                          activities=activities.ALL_ACTIVITIES, activity_executor=executor):
+            handle = await client.start_workflow(
+                AgentRunWorkflow.run, _companion_input(), id=f"wf-{uuid.uuid4()}", task_queue=tq)
+            await handle.signal(
+                AgentRunWorkflow.phase_reported,
+                PhaseReport(status="failed",
+                            message="Claude usage limit reached — resets at 5pm"))
+            # Wait for the park before resuming, so the assertion is about the workflow's real
+            # state and not about signal timing.
+            for _ in range(100):
+                if await handle.query(AgentRunWorkflow.status) == "parked":
+                    break
+                await asyncio.sleep(0.1)
+            assert await handle.query(AgentRunWorkflow.status) == "parked"
+            # Queue the SECOND report while still parked — the engine-exit branch cleared the
+            # first, so this one is what the re-dispatched pass reads. Sending it before the
+            # resume keeps the test free of a race with the 2s report timeout.
+            await handle.signal(AgentRunWorkflow.phase_reported,
+                                PhaseReport(status="ok", body="x"))
+            await handle.signal(AgentRunWorkflow.resume_run)
+            await handle.signal(AgentRunWorkflow.gate_decision, GateDecision(decision="approved"))
+            result = await handle.result()
+
+    assert result["status"] == "completed"
+    assert calls == ["compose", "dispatch", "park", "resume", "dispatch", "register", "verify",
+                     "open", "publish", "transition"]
+    assert reasons == ["dispatch_phase: Claude usage limit reached — resets at 5pm"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_genuine_phase_failure_still_ends_the_run_terminally(monkeypatch):
+    """The other half of S.No 182, and the one that keeps the fix honest: a real phase failure
+    must NOT park. Waiting does not fix a bad run, and offering a Resume that cannot work is
+    worse than a clear failure — the same line `is_empty_build` draws on the build side."""
+    from temporalio.worker import Worker
+
+    from orchestration.workflows import AgentRunWorkflow
+
+    calls: list[str] = []
+    _patch_cores(monkeypatch, calls)
+    monkeypatch.setattr(activities, "park_run_core",
+                        lambda *a, **k: (calls.append("park"), {"status": "parked"})[1])
+
+    client = await _client()
+    tq = f"test-{uuid.uuid4()}"
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        async with Worker(client, task_queue=tq, workflows=[AgentRunWorkflow],
+                          activities=activities.ALL_ACTIVITIES, activity_executor=executor):
+            handle = await client.start_workflow(
+                AgentRunWorkflow.run, _companion_input(), id=f"wf-{uuid.uuid4()}", task_queue=tq)
+            await handle.signal(
+                AgentRunWorkflow.phase_reported,
+                PhaseReport(status="failed",
+                            message="the agent could not read the requirements document"))
+            result = await handle.result()
+
+    assert result["status"] == "phase_failed"
+    assert calls == ["compose", "dispatch", "fail"]      # never parked
+
+
 # ── G6a: the address a keyboard journey walks reaches the machine walking it ──
 #
 # The companion needs it BEFORE the agent starts — it is what the browser is locked to — and the
@@ -890,3 +984,49 @@ def test_the_refetch_path_gives_the_address_too_and_the_same_wait(world):
     A11yJourneyRun.objects.filter(id=row.id).delete()
     late = client.get(url, **_auth(world))
     assert late.status_code == 409 and "not ready" in late.json()["detail"]
+
+
+# ── S.No 185: the security phase can reach its package registries ──
+def _security_payload(world, registries=None, phase="security"):
+    """Run `_phase_extras` for a security-phase dispatch on a project with these registries."""
+    from api.runner_views import _phase_extras
+
+    project = Project.objects.get(id=world["project_id"])
+    profile = project.profile
+    profile.scan = {"registries": registries} if registries is not None else {}
+    profile.save(update_fields=["scan"])
+    return _phase_extras(Run.objects.get(id=world["run_id"]), {"phase": phase, "kind": "plan"})
+
+
+def test_a_declared_registry_reaches_the_security_task(world):
+    """Bugs S.No 185, cause one of three: the companion's egress allowlist covers GitHub, the
+    Anthropic API and npm — not PyPI — so Bandit and pip-audit could not be installed at all, and
+    the live report said so ("blocked by sandbox restrictions"). `extra_allowed_hosts` was already
+    a field on the companion's task and already honoured by its guardrails; the missing half was
+    that nothing on the server ever populated it, which the guardrails comment itself called out
+    as "a server-side way to declare them, which does not exist yet"."""
+    payload = _security_payload(world, ["pypi.org", "files.pythonhosted.org"])
+    assert payload["extra_allowed_hosts"] == ["pypi.org", "files.pythonhosted.org"]
+
+
+def test_a_project_that_declares_nothing_gets_the_payload_it_got_before(world):
+    """The blast radius has to be nil for every project that has not opted in — this seam is
+    crossed by every phase in the platform."""
+    assert _security_payload(world) == {"phase": "security", "kind": "plan"}
+    assert _security_payload(world, []) == {"phase": "security", "kind": "plan"}
+
+
+def test_only_the_security_phase_reads_the_registries(world):
+    """Scoped per-phase on purpose. This list IS the egress policy: a scanner needing PyPI is not
+    a reason for every phase of every project to be able to reach it."""
+    assert _security_payload(world, ["pypi.org"], phase="prd") == {"phase": "prd", "kind": "plan"}
+
+
+def test_the_security_phase_label_is_read_from_the_catalog_not_hardcoded(world):
+    """The phase-vocabulary trap in miniature: the dispatch payload carries the phase LABEL, not
+    the agent key, and the two differ across the catalog. Deriving it means renaming the phase
+    cannot silently switch this branch off."""
+    from api.runner_views import SECURITY_PHASE
+    from apps.registry.catalog import AGENT_CATALOG
+
+    assert SECURITY_PHASE == next(a.phase_label for a in AGENT_CATALOG if a.key == "10_security")
