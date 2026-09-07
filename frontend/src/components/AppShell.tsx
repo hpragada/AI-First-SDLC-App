@@ -220,7 +220,7 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
 
 export function AppShell() {
   const location = useLocation();
-  const { currentUser, selectedProject, setSelectedProjectId, isAdmin } = useAuth();
+  const { currentUser, selectedProject, setSelectedProjectId, isAdmin, projects } = useAuth();
   const active = activeNav(location.pathname);
 
   // Live nav/bell counts from the real needs-me rollup (Bugs.xlsx row 29.2) — no longer
@@ -310,10 +310,13 @@ export function AppShell() {
             value={selectedProject?.project_id ?? ""}
             onChange={(event) => setSelectedProjectId(event.target.value)}
           >
-            {currentUser?.memberships.map((membership) => (
+            {/* `projects`, not `memberships` — memberships are one row per role, so a person
+                holding three roles on one project saw it listed three times (and React
+                complained about the duplicate keys, every render). */}
+            {projects.map((membership) => (
               <option key={membership.project_id} value={membership.project_id}>{membership.project_name}</option>
             ))}
-            {!currentUser?.memberships.length && <option>{project}</option>}
+            {projects.length === 0 && <option>{project}</option>}
           </select>
           <span className="u-spacer" />
           <span className={cx("companion-pill", companionPillClass)} style={{ width: "auto" }}>

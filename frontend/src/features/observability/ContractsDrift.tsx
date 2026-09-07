@@ -32,7 +32,7 @@ export function ContractsDrift({ forceView }: { forceView?: ContractsDriftView }
 
 // ── Live: the real contract registry + drift queue for the selected project ─
 function ContractsDriftLive() {
-  const { selectedProject, currentUser } = useAuth();
+  const { selectedProject, hasRole } = useAuth();
   const projectId = selectedProject?.project_id;
   const contracts = useApiContracts(projectId);
   const drift = useDrift(projectId);
@@ -43,8 +43,9 @@ function ContractsDriftLive() {
 
   const driftList = drift.data ?? [];
   const selected: DriftRecord | undefined = driftList.find((d) => d.id !== decidedId) ?? driftList[0];
-  const canDecide = (d: DriftRecord) =>
-    Boolean(currentUser?.user.is_tenant_admin) || selectedProject?.role === d.required_role;
+  // Same fix as the Gates screen, and the same reason — this had an identical copy of the
+  // one-role comparison, so a person holding two roles was locked out here too.
+  const canDecide = (d: DriftRecord) => hasRole(d.required_role);
 
   const handleDecide = (decision: "accept" | "reject") => {
     if (!selected) return;

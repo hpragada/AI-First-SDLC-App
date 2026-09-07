@@ -18,6 +18,22 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   isAdmin: boolean;
   selectedProject: Membership | null;
+  /** EVERY role the signed-in user holds on the selected project, not just one.
+   *
+   *  Memberships are stored one row per role, so a tech lead who is also product owner has two
+   *  rows for the same project and `selectedProject` is whichever came back first. Screens that
+   *  asked `selectedProject.role === requiredRole` therefore hid the decision on gates the
+   *  SERVER would have accepted — `decide_gate` checks all of a user's rows
+   *  (`role__in=[required, admin]`), so the rules were never the problem, only the screen.
+   *  Ask `hasRole` instead of comparing a single role anywhere. */
+  selectedProjectRoles: string[];
+  /** True when the user holds `role` on the selected project — or is a workspace admin, who
+   *  can decide anything. The one place that decision is made. */
+  hasRole: (role: string | null | undefined) => boolean;
+  /** The user's projects, ONE entry each. `currentUser.memberships` has a row per role, so
+   *  rendering it directly lists a project once per role (and trips React's duplicate-key
+   *  warning). Anything showing a list of projects wants this. */
+  projects: Membership[];
   setSelectedProjectId: (projectId: string) => void;
   login: (body: LoginRequest) => Promise<void>;
   logout: () => Promise<void>;
@@ -56,6 +72,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       currentUser.memberships[0]
     );
   }, [currentUser, selectedProjectId]);
+
+  // All of them, not the first. See the note on `selectedProjectRoles` above.
+  const selectedProjectRoles = useMemo(
+    () =>
+      selectedProject
+        ? (currentUser?.memberships ?? [])
+            .filter((m) => m.project_id === selectedProject.project_id)
+            .map((m) => m.role)
+        : [],
+    [currentUser, selectedProject],
+  );
+
+  // One entry per project, keeping the first row's details. Deliberately NOT sorted or
+  // re-ordered — the switcher's order should stay whatever the API sent.
+  const projects = useMemo(
+    () => [...new Map((currentUser?.memberships ?? []).map((m) => [m.project_id, m])).values()],
+    [currentUser],
+  );
 
   useEffect(() => {
     if (selectedProject?.project_id) {
@@ -106,6 +140,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: Boolean(currentUser),
       isAdmin: Boolean(currentUser?.user.is_tenant_admin),
       selectedProject,
+      selectedProjectRoles,
+      // A workspace admin decides anything, matching `decide_gate`'s own fallback — the two
+      // must agree, or a screen offers a button the server refuses (or hides one it allows).
+      hasRole: (role: string | null | undefined) =>
+        Boolean(currentUser?.user.is_tenant_admin) ||
+        (Boolean(role) && selectedProjectRoles.includes(role as string)),
+      projects,
       setSelectedProjectId,
       login,
       logout,
@@ -115,9 +156,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       currentUser,
       login,
       logout,
+      projects,
       refresh,
       meQuery.isLoading,
       selectedProject,
+      selectedProjectRoles,
       setSelectedProjectId,
     ],
   );

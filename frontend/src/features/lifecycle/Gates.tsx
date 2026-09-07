@@ -45,7 +45,7 @@ export function Gates({ forceView }: { forceView?: GatesView }) {
 
 // ── Live: real pending/decided approvals for the selected project ──────────
 function GatesLive() {
-  const { selectedProject, currentUser } = useAuth();
+  const { selectedProject, currentUser, hasRole } = useAuth();
   const projectId = selectedProject?.project_id;
   const workItems = useWorkItems(projectId);
   // Scoped SERVER-side. This used to fetch every approval and keep only those whose work item
@@ -135,8 +135,11 @@ function GatesLive() {
   const confirmAll = () =>
     setConfirmed(Object.fromEntries(assignmentItems.map((w) => [w.id, true])));
 
-  const canDecide = (a: Approval) =>
-    Boolean(currentUser?.user.is_tenant_admin) || selectedProject?.role === a.required_role;
+  // `hasRole`, not a comparison against one role. Memberships are one row per role, so
+  // `selectedProject.role` is whichever came back first — a tech lead who is also product owner
+  // was shown "you don't hold the tech_lead role" on a gate the SERVER would have let them
+  // decide. The rules were never wrong; this screen was reading one row of several.
+  const canDecide = (a: Approval) => hasRole(a.required_role);
 
   const workItemLabel = (id: string, fallbackTitle?: string | null) => {
     const wi = workItems.data?.find((w) => w.id === id);
