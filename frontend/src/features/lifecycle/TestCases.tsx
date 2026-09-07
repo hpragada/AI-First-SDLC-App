@@ -70,14 +70,27 @@ function GenerateCell({ tc }: { tc: TestCase }) {
     return <Link to={`/work-items/${tc.id}`} className="btn btn--ghost btn--sm">View</Link>;
   }
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      disabled={trigger.isPending}
-      onClick={() => trigger.mutate(TEST_AUTOMATION_KEY)}
-    >
-      {trigger.isPending ? "Starting…" : "Generate script"}
-    </Button>
+    <span style={{ display: "inline-flex", flexDirection: "column", gap: "4px" }}>
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={trigger.isPending}
+        onClick={() => trigger.mutate(TEST_AUTOMATION_KEY)}
+      >
+        {trigger.isPending ? "Starting…" : "Generate script"}
+      </Button>
+      {/* Bugs S.No 219: this read `isPending` and never `isError`, so a run that could not be
+          started — no machine connected, no permission, the phase already running — just
+          flipped the button back to "Generate script" as if nothing had been asked. The most
+          common cause is an offline companion, which the person can actually fix. */}
+      {trigger.isError && (
+        <span className="t-sm" style={{ color: "var(--danger)", display: "block" }}>
+          {trigger.error instanceof Error
+            ? trigger.error.message
+            : "Couldn't start the run."}
+        </span>
+      )}
+    </span>
   );
 }
 

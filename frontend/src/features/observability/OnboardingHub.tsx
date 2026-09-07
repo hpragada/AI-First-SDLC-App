@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Spinner, Tooltip } from "../../components/ui";
+import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Spinner, Tooltip, WriteError } from "../../components/ui";
 import type { Capability, OnboardingRegister, OnboardingRepoIndex } from "../../types";
 import { useRunners } from "../identity/hooks";
 import { ConnectCapability } from "../setup/ConnectCapability";
@@ -434,9 +434,9 @@ function IndexCodeStep({ projectId, repoStates, indexDone }: {
             Requires your companion online. It runs the analysis on your machine and reports back.
           </p>
           {startCodeIntel.isError && (
-            <p className="t-sm" style={{ color: "var(--danger)" }}>
-              {startCodeIntel.error instanceof Error ? startCodeIntel.error.message : "Could not start indexing."}
-            </p>
+            <div style={{ marginTop: "var(--space-2)" }}>
+              <WriteError title="Couldn't start indexing" detail={startCodeIntel.error} />
+            </div>
           )}
         </div>
       )}
@@ -710,9 +710,9 @@ function OnboardingHubLive() {
                 <p className="t-sm u-muted">Your machine is assessing the project.</p>
               )}
               {runGapReport.isError && (
-                <p className="t-sm" style={{ color: "var(--danger)" }}>
-                  {runGapReport.error instanceof Error ? runGapReport.error.message : "Could not run the gap report."}
-                </p>
+                <div style={{ marginTop: "var(--space-2)" }}>
+                  <WriteError title="Couldn't run the gap report" detail={runGapReport.error} />
+                </div>
               )}
             </div>
           </Vstep>

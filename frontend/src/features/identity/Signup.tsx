@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { ApiError } from "../../api";
+import { ApiError, fieldError, formError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import {
   AuthSplit,
+  Banner,
   Button,
   Field,
   Input,
@@ -35,6 +36,17 @@ export function Signup({ forceView }: { forceView?: SignupView }) {
   const view: SignupView =
     forceView ??
     (done ? "success" : signup.isPending ? "submitting" : emailInUse ? "email-in-use" : "default");
+
+  // Bugs S.No 219: this form branched on 409 (email already in use) and dropped everything
+  // else. A blank name or a password under eight characters is a 400 with the server naming
+  // the exact field — and the form simply sat there, saying nothing, having done nothing.
+  const nameError = fieldError(signup.error, "name");
+  const emailError = fieldError(signup.error, "email");
+  const passwordError = fieldError(signup.error, "password");
+  const orgError = fieldError(signup.error, "org_name");
+  const bannerError = emailInUse
+    ? undefined
+    : formError(signup.error, ["name", "email", "password", "org_name"]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -82,13 +94,18 @@ export function Signup({ forceView }: { forceView?: SignupView }) {
     <AuthSplit tagline={TAGLINE} sub={SUB}>
       <form className="auth-card" onSubmit={onSubmit}>
         <h1 className="auth-card__title">Create your workspace</h1>
-        <p className="auth-card__sub">Start your free Edvensoft workspace.</p>
-        <Field label="Full name">
+        {bannerError ? (
+          <Banner variant="danger">{bannerError}</Banner>
+        ) : (
+          <p className="auth-card__sub">Start your free Edvensoft workspace.</p>
+        )}
+        <Field label="Full name" error={nameError}>
           <Input
             type="text"
             placeholder="e.g. Jordan Lee"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            aria-invalid={Boolean(nameError)}
           />
         </Field>
         <Field
@@ -98,7 +115,7 @@ export function Signup({ forceView }: { forceView?: SignupView }) {
               <>
                 An account with this email already exists. <Link to="/login">Log in instead</Link>.
               </>
-            ) : undefined
+            ) : emailError
           }
         >
           <Input
@@ -106,27 +123,30 @@ export function Signup({ forceView }: { forceView?: SignupView }) {
             placeholder="you@company.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            aria-invalid={view === "email-in-use"}
+            aria-invalid={view === "email-in-use" || Boolean(emailError)}
           />
         </Field>
         <Field
           label="Password"
-          help={password ? "Strong — add a symbol to max it out." : undefined}
+          error={passwordError}
+          help={password && !passwordError ? "Strong — add a symbol to max it out." : undefined}
         >
           <Input
             type="password"
             placeholder="At least 8 characters"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            aria-invalid={Boolean(passwordError)}
           />
           <Strength value={passwordStrength(password)} />
         </Field>
-        <Field label="Workspace / org name">
+        <Field label="Workspace / org name" error={orgError}>
           <Input
             type="text"
             placeholder="e.g. Northwind Labs"
             value={orgName}
             onChange={(e) => setOrgName(e.target.value)}
+            aria-invalid={Boolean(orgError)}
           />
         </Field>
         <Button variant="primary" block type="submit">

@@ -14,6 +14,7 @@ import {
   Input,
   Panel,
   Table,
+  WriteError,
 } from "../../components/ui";
 import type { AdminUser, Invitation } from "../../types";
 import {
@@ -310,6 +311,18 @@ export function UsersInvites({ forceView }: { forceView?: UsersView }) {
         </Panel>
       ) : (
         <Panel flush>
+          {/* Bugs S.No 219: Resend and Revoke were fire-and-forget — `.mutate()` with nothing
+              reading `isError`. An expired or already-accepted invitation failed silently, and
+              the admin clicked Resend again and again believing it had worked. The screen has
+              always had an error state for the READ; the writes had none. */}
+          {(resend.isError || revoke.isError) && (
+            <div style={{ padding: "var(--space-4) var(--space-4) 0" }}>
+              <WriteError
+                title={resend.isError ? "Invitation not resent" : "Invitation not revoked"}
+                detail={resend.error ?? revoke.error}
+              />
+            </div>
+          )}
           <Table
             headers={["Name", "Email", "Status", "Projects & roles", ""]}
             rows={rows}

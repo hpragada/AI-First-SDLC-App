@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
-import { ApiError } from "../../api";
+import { ApiError, fieldError, formError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
-import { AuthSplit, Button, Field, Input, Spinner, Strength } from "../../components/ui";
+import { AuthSplit, Banner, Button, Field, Input, Spinner, Strength } from "../../components/ui";
 import { passwordStrength, useAcceptInvitation, useInvitationPreview } from "./hooks";
 
 // Gallery fixture copy — forceView renders this fixed content for design review / tests
@@ -56,6 +56,13 @@ export function AcceptInvite({ forceView }: { forceView?: AcceptInviteView }) {
   const loadingPreview = !forceView && !expired && preview.isLoading;
   const view: AcceptInviteView =
     forceView ?? (accept.isPending ? "submitting" : expired ? "expired" : "default");
+
+  // Bugs S.No 219: this branched on 409/410 (the invitation is gone) and dropped everything
+  // else. A password under eight characters is a 400 naming the field, and the form did
+  // nothing at all with it — the button came back and the person was left guessing.
+  const nameError = fieldError(accept.error, "name");
+  const passwordError = fieldError(accept.error, "password");
+  const bannerError = expired ? undefined : formError(accept.error, ["name", "password"]);
 
   const tagline = forceView
     ? GALLERY.tagline
@@ -148,7 +155,8 @@ export function AcceptInvite({ forceView }: { forceView?: AcceptInviteView }) {
           )}
           .
         </p>
-        <Field label="Your name">
+        {bannerError && <Banner variant="danger">{bannerError}</Banner>}
+        <Field label="Your name" error={nameError}>
           <Input
             type="text"
             placeholder="e.g. Jordan Lee"
@@ -157,13 +165,20 @@ export function AcceptInvite({ forceView }: { forceView?: AcceptInviteView }) {
               setNameTouched(true);
               setName(e.target.value);
             }}
+            aria-invalid={Boolean(nameError)}
           />
         </Field>
         <Field label="Email">
           <Input type="email" value={email} disabled />
         </Field>
-        <Field label="Set a password" help={password ? "Strong password." : undefined}>
-          <Input type="password" placeholder="At least 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <Field
+          label="Set a password"
+          error={passwordError}
+          help={password && !passwordError ? "Strong password." : undefined}
+        >
+          <Input type="password" placeholder="At least 8 characters" value={password}
+                 aria-invalid={Boolean(passwordError)}
+                 onChange={(e) => setPassword(e.target.value)} />
           <Strength value={passwordStrength(password)} />
         </Field>
         <Button variant="primary" block type="submit">
