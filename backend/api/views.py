@@ -2325,9 +2325,18 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["get"])
     def preview(self, request, pk=None):
         """S-29: read-through body (S3 draft/snapshot or SoR), never an editor, never
-        copied into the registry (#1/#3). `404` when there's truly no body to show."""
+        copied into the registry (#1/#3). `404` when there's truly no body to show.
+
+        `?raw=1` returns the stored body untouched, skipping the presentation layer that
+        renders a machine-readable artifact (an SBOM) into something readable. That is what
+        the preview screen's "View raw" control fetches — the raw file is kept, and this is
+        how a person can actually see it (Bugs S.No 187). A second request rather than a
+        second field on every payload, so an ordinary preview never carries the body twice.
+        """
         artifact = self.get_object()
-        result = read_artifact_preview(tenant_id=self.tenant_id, artifact_id=str(artifact.id))
+        raw = str(request.query_params.get("raw", "")).lower() in {"1", "true", "yes"}
+        result = read_artifact_preview(
+            tenant_id=self.tenant_id, artifact_id=str(artifact.id), raw=raw)
         if result is None:
             raise NotFound("artifact has no body to preview")
         return Response(result, status=status.HTTP_200_OK)

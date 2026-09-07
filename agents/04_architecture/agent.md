@@ -392,6 +392,8 @@ Produce each deliverable in full, then register it with the platform-state `regi
 ```
 
 ### 3. API Spec — type `api_spec`
+Write this as **markdown prose**, not as a raw OpenAPI YAML or JSON file - it is a document people read at this stage, and the platform previews it as markdown. (If a machine-readable contract is ever wanted here instead, it must be registered with `format="yaml"` or `format="json"`, or it previews as an unreadable wall of text - Bugs S.No 187.)
+
 OpenAPI 3.0-style specification: all endpoints grouped by resource; request/response schemas with field types and validation rules; authentication requirement per endpoint; error response formats and HTTP status codes; versioning strategy (`/api/v1/` prefix, deprecation policy).
 
 ### 4. Tech Stack — type `tech_stack`

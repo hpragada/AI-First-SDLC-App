@@ -609,8 +609,8 @@ export const api = {
     req<Record<string, unknown>>("POST", `/drift/${driftId}/decide/`, { body }),
 
   // Phase 4.8 T5 — artifact preview read-through (4.7 T10, DECISION-5).
-  getArtifactPreview: (artifactId: string) =>
-    req<ArtifactPreview>("GET", `/artifacts/${artifactId}/preview/`),
+  getArtifactPreview: (artifactId: string, raw = false) =>
+    req<ArtifactPreview>("GET", `/artifacts/${artifactId}/preview/${raw ? "?raw=1" : ""}`),
 
   // Phase 4.8 T5 — run transcript (new, DECISION-7). Read-only persisted conversation.
   getRunTranscript: (tenantId: string, runId: string) =>

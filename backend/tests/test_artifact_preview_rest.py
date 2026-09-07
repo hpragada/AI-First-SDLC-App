@@ -461,3 +461,124 @@ def test_a_row_the_list_calls_previewable_actually_previews(client, project, mem
 
     assert client.get(_preview_url(good.id)).status_code == 200
     assert client.get(_preview_url(bad.id)).status_code == 404
+
+
+# ── S.No 187: the SBOM renders for people, and ONLY for people ──────
+_SBOM_JSON = (
+    '{"bomFormat":"CycloneDX","specVersion":"1.5",'
+    '"metadata":{"timestamp":"2026-09-04T11:22:08Z",'
+    '"tools":{"components":[{"name":"syft","version":"1.9.0"}]}},'
+    '"components":[{"type":"library","name":"django","version":"5.1.4",'
+    '"licenses":[{"license":{"id":"BSD-3-Clause"}}]}]}'
+)
+
+
+@pytest.fixture
+def sbom(project):
+    store = s3_from_settings()
+    key = f"test-preview/{project.tenant_id}/{project.id}/sbom.json"
+    store.put(key, _SBOM_JSON)
+    return Artifact.objects.create(
+        tenant=project.tenant, project=project, phase="security", type="sbom",
+        sor="internal", status="draft", s3_key=key, version=1, title="SBOM",
+    )
+
+
+def test_sbom_previews_as_a_readable_inventory(client, sbom, member):
+    """Bugs S.No 187: the preview announced every internal body as markdown whatever was in
+    it, so the CycloneDX JSON went to the prose renderer and came out as one run-on blob."""
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(sbom.id))
+    assert resp.status_code == 200
+    assert resp.data["rendered"] is True
+    assert resp.data["content_type"] == "text/markdown"
+    assert "# Software Bill of Materials" in resp.data["body"]
+    assert "| django | 5.1.4 | BSD-3-Clause | library |" in resp.data["body"]
+    assert "bomFormat" not in resp.data["body"]          # not the raw file
+
+
+def test_raw_returns_the_stored_file_byte_for_byte(client, sbom, member):
+    """The raw file is kept — `?raw=1` is how a person can actually see it."""
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(sbom.id) + "?raw=1")
+    assert resp.status_code == 200
+    assert resp.data["body"] == _SBOM_JSON
+    assert resp.data["content_type"] == "application/json"
+    assert resp.data["rendered"] is False
+
+
+def test_agents_and_publish_still_receive_the_raw_bytes(sbom):
+    """THE REGRESSION GUARD. Three callers share the internal read and only ONE may see a
+    rendered body. Rendering for an agent would hand it a markdown table where it asked for
+    parseable JSON; rendering for publish would push a table to Confluence where the SBOM
+    belongs. Both must stay byte-identical to what was stored."""
+    from integrations.preview import artifact_body_for_agent, internal_draft_body
+
+    assert internal_draft_body(sbom) == _SBOM_JSON
+    for_agent = artifact_body_for_agent(sbom)
+    assert for_agent["body"] == _SBOM_JSON
+    assert for_agent["content_type"] == "application/json"
+
+
+def test_json_that_is_not_an_sbom_is_shown_as_json_not_guessed_at(client, project, member):
+    """The renderer is keyed on the artifact TYPE, so an unrelated JSON body is left as JSON
+    rather than pushed through whichever renderer matched first. It is still legible: the
+    preview screen renders an unknown content type in a plain block."""
+    store = s3_from_settings()
+    key = f"test-preview/{project.tenant_id}/{project.id}/other.json"
+    store.put(key, '{"some": "config"}')
+    art = Artifact.objects.create(
+        tenant=project.tenant, project=project, phase="architecture", type="api_spec",
+        sor="internal", status="draft", s3_key=key, version=1,
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(art.id))
+    assert resp.data["content_type"] == "application/json"
+    assert resp.data["body"] == '{"some": "config"}'
+    assert resp.data["rendered"] is False
+
+
+def test_a_malformed_sbom_degrades_to_text_rather_than_failing(client, project, member):
+    store = s3_from_settings()
+    key = f"test-preview/{project.tenant_id}/{project.id}/broken.json"
+    store.put(key, '{"bomFormat":"CycloneDX", TRUNCATED')
+    art = Artifact.objects.create(
+        tenant=project.tenant, project=project, phase="security", type="sbom",
+        sor="internal", status="draft", s3_key=key, version=1,
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(art.id))
+    assert resp.status_code == 200
+    assert resp.data["rendered"] is False
+    assert resp.data["content_type"] == "text/markdown"     # unparseable, so not claimed as JSON
+
+
+def test_ordinary_markdown_drafts_are_untouched(client, project, member):
+    """The whole change must be invisible to the 99% of bodies that really are prose."""
+    store = s3_from_settings()
+    key = f"test-preview/{project.tenant_id}/{project.id}/prd2.md"
+    store.put(key, "# PRD\n\nName: Ada\nRole: engineer\n")
+    art = Artifact.objects.create(
+        tenant=project.tenant, project=project, phase="prd", type="prd",
+        sor="internal", status="draft", s3_key=key, version=1,
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(art.id))
+    assert resp.data["content_type"] == "text/markdown"
+    assert resp.data["body"] == "# PRD\n\nName: Ada\nRole: engineer\n"
+    assert resp.data["rendered"] is False
+
+
+def test_a_declared_format_beats_detection(client, project, member):
+    """An agent knows what it staged. `register_artifact(format=...)` is how it says so."""
+    store = s3_from_settings()
+    key = f"test-preview/{project.tenant_id}/{project.id}/data.csv"
+    store.put(key, "name,version\ndjango,5.1.4\n")
+    art = Artifact.objects.create(
+        tenant=project.tenant, project=project, phase="security", type="security_finding",
+        sor="internal", status="draft", s3_key=key, version=1,
+        external_ref={"format": "csv"},
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = client.get(_preview_url(art.id))
+    assert resp.data["content_type"] == "text/csv"

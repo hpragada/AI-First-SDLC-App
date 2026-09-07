@@ -365,7 +365,13 @@ def _assert_body_not_shared(tenant_id, run, type, s3_key, title) -> None:
 def register_artifact(
     tenant_id, project_id, run_id, phase, type, sor,
     content_hash, s3_key=None, external_ref=None, repo_id=None, title="", supersedes=None,
+    format=None,
 ) -> dict:
+    """`format` declares what the staged body IS — "json", "yaml", "xml", "csv", "markdown"
+    (the default when nothing is said). Bugs S.No 187: the preview announced every internal
+    body as markdown whatever was in it, and there was no way for an agent to say otherwise,
+    so the security phase's CycloneDX SBOM previewed as one unbroken run of characters. The
+    platform can now also detect JSON on its own, but a declaration is better than a guess."""
     with tenant_context(tenant_id):
         project = Project.objects.get(id=project_id, tenant_id=tenant_id)
         # `supersedes` anchors this registration to an EXISTING artifact's identity (Part B fix 2).
@@ -387,6 +393,10 @@ def register_artifact(
         if sor not in Artifact.SoR.values:
             raise ValueError(f"invalid sor: {sor}")
         _assert_body_not_shared(tenant_id, run, type, s3_key, title)
+        if format:
+            # Recorded on the pointer alongside the other provenance — `_REF_POINTER_KEYS`
+            # already lists "format", so it is never mistaken for the artifact's content.
+            external_ref = {**(external_ref or {}), "format": str(format).lower()}
         # Version across re-registrations (Bugs.xlsx row 28.2): re-running a phase should yield
         # v2, v3, … of the SAME artifact. But per-item types (adr, test_case, security_finding,
         # code, code_review, test_report) register many DISTINCT rows sharing (phase, type) in one

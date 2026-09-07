@@ -67,7 +67,45 @@ _FORMAT_CONTENT_TYPE = {
     "html": "text/html",
     "text": "text/plain",
     "plain": "text/plain",
+    # Machine-readable formats (Bugs S.No 187). The map knew only prose formats, so an agent
+    # had no way to declare "this is JSON" even if it wanted to — and `register_artifact` had
+    # no `format` parameter to declare it WITH, so both halves of the mechanism were
+    # unreachable. Both are fixed; this is the declared half.
+    "json": "application/json",
+    "yaml": "application/yaml",
+    "yml": "application/yaml",
+    "xml": "application/xml",
+    "csv": "text/csv",
 }
+
+
+def _detect_content_type(body: str) -> str:
+    """What this body ACTUALLY is, for a body nobody declared a format for.
+
+    Bugs S.No 187: every internal S3 body was announced as `text/markdown` whatever was in it,
+    so the CycloneDX SBOM the security phase registers went to the prose renderer and came out
+    as one unbroken run of characters.
+
+    Deliberately conservative — it recognises only what the first character makes unambiguous,
+    and everything else stays markdown, which is what the overwhelming majority of these bodies
+    are. YAML and CSV are NOT detected: a markdown document full of `Key: value` lines parses
+    as valid YAML, and one with a comma in a table row looks like CSV, so guessing at those
+    would break far more documents than it would fix. They can still be DECLARED (see above).
+    """
+    head = (body or "").lstrip()
+    if not head:
+        return _INTERNAL_CONTENT_TYPE
+    if head[0] in "{[":
+        # A bare `123` or `true` is also valid JSON, which is why the first character is
+        # checked before parsing — otherwise a one-line markdown note would become JSON.
+        try:
+            json.loads(body)
+        except (ValueError, TypeError):
+            return _INTERNAL_CONTENT_TYPE
+        return "application/json"
+    if head.startswith("<?xml"):
+        return "application/xml"
+    return _INTERNAL_CONTENT_TYPE
 
 
 def _s3_body(key, object_store) -> str:
@@ -148,10 +186,157 @@ def render_structured_ref(ref: dict | None) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
+# ── Presentation: machine-readable bodies, rendered for a HUMAN ────────────────────────────
+#
+# READ THIS BEFORE MOVING ANY OF IT. Three callers share `_read_internal`, and only ONE of them
+# may ever see a rendered body:
+#
+#   read_artifact_preview  → the preview screen        → RENDERED   (this layer)
+#   internal_draft_body    → publish/export to a SoR   → RAW, always
+#   artifact_body_for_agent→ the MCP get_artifact_body → RAW, always
+#
+# Putting this inside `_read_internal` would hand an agent a markdown table where it asked for
+# parseable JSON, and push a table to Confluence where the SBOM belongs. It attaches to the
+# preview only, and a test asserts the other two still return byte-identical raw bytes.
+
+#: How many components a rendered SBOM lists before it summarises. A large inventory is
+#: SUMMARISED, never silently cut short — the count line below the table always states the
+#: true total, so a reader is never shown a partial inventory believing it is the whole one.
+_SBOM_TABLE_LIMIT = 200
+
+
+def _sbom_licences(component: dict) -> str:
+    """CycloneDX allows either a list of licence objects or an SPDX expression, and the licence
+    itself may be an SPDX id or a free-text name. Take whichever is there."""
+    out: list[str] = []
+    for entry in component.get("licenses") or []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("expression"):
+            out.append(str(entry["expression"]))
+            continue
+        lic = entry.get("license")
+        if isinstance(lic, dict):
+            name = lic.get("id") or lic.get("name")
+            if name:
+                out.append(str(name))
+    return ", ".join(dict.fromkeys(out))
+
+
+def _sbom_tool(metadata: dict) -> str:
+    """The scanner that produced this. CycloneDX 1.4 has metadata.tools as a list; 1.5 moved to
+    metadata.tools.components. Read both rather than show nothing on one of them."""
+    tools = metadata.get("tools")
+    entries = []
+    if isinstance(tools, dict):
+        entries = tools.get("components") or tools.get("services") or []
+    elif isinstance(tools, list):
+        entries = tools
+    for t in entries:
+        if not isinstance(t, dict):
+            continue
+        name = t.get("name")
+        if name:
+            version = t.get("version")
+            return f"{name} {version}" if version else str(name)
+    return ""
+
+
+def _md_cell(value) -> str:
+    """A pipe inside a value would split the markdown table cell it sits in."""
+    return str(value if value not in (None, "") else "—").replace("|", "\\|").replace("\n", " ")
+
+
+def _render_sbom(body: str) -> str:
+    """A CycloneDX SBOM as something a security engineer can read (Bugs S.No 187).
+
+    Returns "" when the body is not a CycloneDX document, so the caller leaves it alone — a
+    malformed or unexpected file degrades to plain text rather than raising.
+    """
+    try:
+        doc = json.loads(body)
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(doc, dict) or doc.get("bomFormat") != "CycloneDX":
+        return ""
+
+    metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+    components = [c for c in (doc.get("components") or []) if isinstance(c, dict)]
+    licences = {lic for c in components if (lic := _sbom_licences(c))}
+
+    lines = ["# Software Bill of Materials", ""]
+    facts = [f"**Components:** {len(components)}"]
+    if licences:
+        facts.append(f"**Distinct licences:** {len(licences)}")
+    if tool := _sbom_tool(metadata):
+        facts.append(f"**Scanned by:** {tool}")
+    if timestamp := metadata.get("timestamp"):
+        facts.append(f"**Taken:** {timestamp}")
+    if spec := doc.get("specVersion"):
+        facts.append(f"**CycloneDX:** {spec}")
+    lines += [" · ".join(facts), ""]
+
+    if components:
+        shown = components[:_SBOM_TABLE_LIMIT]
+        lines += ["| Package | Version | Licence | Type |", "| --- | --- | --- | --- |"]
+        lines += [
+            "| {} | {} | {} | {} |".format(
+                _md_cell(c.get("name")), _md_cell(c.get("version")),
+                _md_cell(_sbom_licences(c)), _md_cell(c.get("type")),
+            )
+            for c in shown
+        ]
+        lines.append("")
+        lines.append(
+            f"Showing all {len(components)} components."
+            if len(shown) == len(components)
+            else f"Showing the first {len(shown)} of {len(components)} components. "
+                 f"Use **View raw** for the complete inventory."
+        )
+        lines.append("")
+
+    vulns = [v for v in (doc.get("vulnerabilities") or []) if isinstance(v, dict)]
+    if vulns:
+        lines += ["## Vulnerabilities", "",
+                  "| Id | Severity | Affects | Description |", "| --- | --- | --- | --- |"]
+        for v in vulns[:_SBOM_TABLE_LIMIT]:
+            ratings = [r for r in (v.get("ratings") or []) if isinstance(r, dict)]
+            severity = next((r.get("severity") for r in ratings if r.get("severity")), "")
+            affects = ", ".join(
+                str(a.get("ref")) for a in (v.get("affects") or [])
+                if isinstance(a, dict) and a.get("ref")
+            )
+            lines.append("| {} | {} | {} | {} |".format(
+                _md_cell(v.get("id")), _md_cell(severity), _md_cell(affects),
+                _md_cell((v.get("description") or "")[:160]),
+            ))
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
+#: artifact.type -> renderer. Keyed on the TYPE, not on the content type, so a JSON body that is
+#: not an SBOM is left as JSON rather than being guessed at by whichever renderer matched first.
+_PRESENTERS = {"sbom": _render_sbom}
+
+
+def _present(artifact, body: str, content_type: str) -> tuple[str, str, bool]:
+    """Render a machine-readable body for a human. Returns (body, content_type, rendered)."""
+    presenter = _PRESENTERS.get(artifact.type)
+    if presenter is None or content_type != "application/json":
+        return body, content_type, False
+    rendered = presenter(body)
+    if not rendered:
+        return body, content_type, False
+    return rendered, _INTERNAL_CONTENT_TYPE, True
+
+
 def _read_internal(artifact, object_store) -> tuple[str, str]:
     body = _s3_body(artifact.s3_key, object_store)
     if body:
-        return body, _INTERNAL_CONTENT_TYPE
+        # An agent's declaration wins over detection — it knows what it staged. `format` was
+        # only ever read off an INLINE body before, so a staged one had no way to say.
+        declared = str((artifact.external_ref or {}).get("format", "")).lower()
+        return body, _FORMAT_CONTENT_TYPE.get(declared) or _detect_content_type(body)
     # Some internal drafts are registered with the body inline in external_ref.body and no
     # s3_key yet (the agent hasn't staged a snapshot to S3). Read that draft body through
     # here — we don't copy it anywhere, it stays where it was registered (#1/#3).
@@ -313,9 +498,14 @@ def _read_jira(tenant_id, artifact, get_capability) -> tuple[str, str, str | Non
 
 
 def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
-                          get_capability=None) -> dict | None:
+                          get_capability=None, raw=False) -> dict | None:
     """The S-29 preview payload for one artifact, or `None` when it doesn't exist / has
-    no body to show at all (internal with no `s3_key` ever stored)."""
+    no body to show at all (internal with no `s3_key` ever stored).
+
+    `raw=True` skips the presentation layer and returns the stored body exactly as it is —
+    what the "View raw" control on the preview screen asks for. The rendered payload sets
+    `rendered: True` so the UI knows whether to offer that control at all.
+    """
     from apps.registry.models import Artifact
     from apps.tenancy.context import tenant_context
 
@@ -330,6 +520,7 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
             return None
 
         sor_link = None
+        rendered = False
         # Multi-state artifacts (per-screen wireframes) carry one HTML document per UI state.
         states = render_states(artifact, object_store) if artifact.sor == "internal" else []
         if artifact.sor == "internal":
@@ -342,6 +533,10 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
                 body, content_type = default["body"], default["content_type"]
             if not body:
                 return None
+            if not raw:
+                # Preview ONLY — see the note above `_render_sbom`. Publish and the agent-facing
+                # read both go through their own functions and still get the raw body.
+                body, content_type, rendered = _present(artifact, body, content_type)
         elif artifact.sor == "confluence":
             body, content_type, sor_link = _read_confluence(tenant_id, artifact, get_capability)
         elif artifact.sor == "jira":
@@ -367,6 +562,10 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
             "phase": artifact.phase,
             "artifact_type": artifact.type,
             "export_target": export_target,
+            # True when what you are reading was rendered FROM a machine-readable body (an
+            # SBOM, say). The screen uses it to offer "View raw" — without which the raw file
+            # is kept but no person can ever see it (Bugs S.No 187).
+            "rendered": rendered,
             "states": states,
             # WHO produced this row. `phase_report` = the platform's own copy of the engine's
             # closing message, not something the agent chose to register (see

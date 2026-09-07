@@ -60,7 +60,16 @@ export function ArtifactPreviewScreen({ forceView }: { forceView?: ArtifactPrevi
 // ── Live: the real artifact's read-through body + version history ──────────
 function ArtifactPreviewLive() {
   const { id } = useParams();
-  const preview = useArtifactPreview(id);
+  // Bugs S.No 187: a machine-readable artifact (an SBOM) is RENDERED for people, and the raw
+  // file is kept. Kept where nobody could see it, though — so this toggle asks the same
+  // endpoint for the untouched body. Two cached queries rather than one payload carrying the
+  // body twice; flipping back is instant.
+  const [showRaw, setShowRaw] = useState(false);
+  const preview = useArtifactPreview(id, showRaw);
+  // The rendered fetch is the one that knows whether a raw version exists at all, and it stays
+  // cached while the raw one is on screen — so the toggle never disappears once it is used.
+  const renderedPreview = useArtifactPreview(id, false);
+  const offersRaw = Boolean(renderedPreview.data?.rendered);
 
   if (preview.isLoading) {
     return (
@@ -102,6 +111,16 @@ function ArtifactPreviewLive() {
                   the two screens. This one already showed the real token as its text — it was the
                   list that hardcoded "Draft" for anything it did not recognise. */}
               {artifactStatusBadge(data.status)}
+              {offersRaw && (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  aria-pressed={showRaw}
+                  onClick={() => setShowRaw((v) => !v)}
+                >
+                  {showRaw ? "View report" : "View raw"}
+                </button>
+              )}
               {data.sor_link && (
                 <>
                   <span className="u-spacer" />
@@ -121,6 +140,11 @@ function ArtifactPreviewLive() {
                 This is the platform's copy of the engine's closing message for this run, not an
                 artifact the agent saved. If the run failed or stopped to ask a question, that is
                 what you are reading here. Re-run the phase to produce the real document.
+              </Banner>
+            ) : showRaw ? (
+              <Banner variant="info" title="The stored file, exactly as it was saved">
+                This is what other tools and the publish step receive. The readable version is
+                one click away.
               </Banner>
             ) : (
               <Banner variant="info">Read-through from the system-of-record. This preview is never an editor.</Banner>

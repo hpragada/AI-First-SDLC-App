@@ -236,7 +236,10 @@ Install the confirmed tool if not present, then generate the SBOM in CycloneDX J
 ```bash
 # [Exact command for the confirmed SBOM tool]
 # Installation if required: [install command]
-# Register the CycloneDX JSON output as an `sbom` artifact via register_artifact
+# Register the CycloneDX JSON output as an `sbom` artifact via register_artifact,
+# passing format="json" so the platform renders it as a readable inventory rather than
+# treating the file as prose. Stage the JSON exactly as the tool produced it - do NOT
+# rewrite it as a markdown table, because other tools have to read this file.
 ```
 
 **SLSA Level Assessment (manual):**

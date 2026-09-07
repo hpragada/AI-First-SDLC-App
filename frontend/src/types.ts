@@ -815,6 +815,10 @@ export interface ArtifactPreview {
   // Provenance: "phase_report" means the PLATFORM filed this from the engine's closing
   // message — it is not a deliverable the agent chose to register. See PHASE_REPORT_ARTIFACT.
   source?: string;
+  // True when this body was RENDERED from a machine-readable file (an SBOM, say). The screen
+  // uses it to offer "View raw" — the raw file is kept, and without this control no person
+  // could ever see it (Bugs S.No 187).
+  rendered?: boolean;
 }
 
 // `external_ref.source` on an artifact the platform filed from the engine's final message.

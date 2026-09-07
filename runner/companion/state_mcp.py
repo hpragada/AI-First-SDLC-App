@@ -260,7 +260,8 @@ def build_server(
                           phase: str | None = None,
                           project_id: str | None = None, run_id: str | None = None,
                           s3_key: str | None = None,
-                          external_ref: dict | None = None, repo_id: str | None = None) -> dict:
+                          external_ref: dict | None = None, repo_id: str | None = None,
+                          format: str | None = None) -> dict:
         """Register a generated artifact (pointer/provenance only, never the body). You do NOT
         need to know or ask for the project id or run id — the platform fills them in from the
         run this phase is executing under (Bugs.xlsx row 25). Only pass project_id/run_id to
@@ -269,13 +270,18 @@ def build_server(
         ALWAYS pass a `title`: a short, human-readable, context-carrying name for THIS artifact
         that a person can tell apart from its siblings — e.g. "Wireframe — Login Page",
         "TC-014 — Login rejects a bad password". A bare type is not enough when a phase produces
-        several of the same type; the title is what every UI surface shows (Bugs S.No 120)."""
+        several of the same type; the title is what every UI surface shows (Bugs S.No 120).
+
+        Pass `format` when the body you staged is NOT prose — "json", "yaml", "xml" or "csv".
+        Without it the platform assumes markdown, which turns a structured document (a
+        CycloneDX SBOM, say) into an unreadable wall of text on the preview screen."""
         return client.call("register_artifact",
                            project_id=project_id or project_id_bound,
                            run_id=run_id or run_id_bound,
                            phase=phase or phase_bound,
                            type=type, sor=sor, content_hash=content_hash, title=title,
-                           s3_key=s3_key, external_ref=external_ref, repo_id=repo_id)
+                           s3_key=s3_key, external_ref=external_ref, repo_id=repo_id,
+                           format=format)
 
     @server.tool()
     def update_artifact(artifact_id: str, status: str | None = None, sor: str | None = None,
