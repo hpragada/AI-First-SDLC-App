@@ -111,15 +111,26 @@ _BUILD_STATE_TOOLS = {
     "finish_a11y_journey": tools.finish_a11y_journey,
 }
 
-# The build agent may move a WorkItem forward through working states (e.g. -> in_progress at
-# Step 1), but it must NEVER transition one to a gate-owned terminal state. Marking a WorkItem
-# `done` is a control-plane action that only happens after an APPROVED merge gate, via the saga's
-# transition_build_work_item activity (non-negotiables #2/#5). Letting the engine set `done`
-# itself bypassed the gate and left the WorkItem done with no workitem.transitioned event while
-# its run was still in review — the "state=done while awaiting_gate" mislabel. Blocked here at
-# the single agent/companion entry point; the orchestrator calls tools.transition_work_item
-# in-process (not through this view), so its legitimate `done` transition is unaffected.
-_AGENT_FORBIDDEN_TRANSITIONS = {"done"}
+# The states a build agent may set on a WorkItem. An ALLOWLIST, not a blocklist (Bugs S.No 87).
+#
+# `done` was blocked first, because letting the engine set it bypassed the merge gate and left a
+# WorkItem done, with no workitem.transitioned event, while its run was still in review — the
+# "state=done while awaiting_gate" mislabel (non-negotiables #2/#5). But that left every OTHER
+# state open: an agent could still promote an item to `accepted` (which is the reconciler's word
+# for "this is now in the tracker", and would be a lie), push it back to `proposed` (erasing the
+# fact that work had started), or park it in `blocked`/`in_review` — states no control-plane code
+# writes, so nothing would ever move it out again.
+#
+# Exactly one transition is an agent's to make, and it is written down: 07_implementation moves
+# the item to `in_progress` when it starts work (agents/07_implementation/agent.md, Step 1). Every
+# other state belongs to the platform. Inverting the rule also means a state added later is
+# refused by default rather than quietly permitted until somebody remembers to add it to a list —
+# which is the failure this fix exists to end, not repeat.
+#
+# Enforced at the single agent/companion entry point. The orchestrator calls
+# tools.transition_work_item in-process (not through this view), so the saga's own transitions —
+# including the gated `done` — are unaffected.
+_AGENT_ALLOWED_TRANSITIONS = {"in_progress"}
 
 
 def _tenant_id(request) -> str:
@@ -308,13 +319,17 @@ class RunnerStateView(APIView):
             return Response({"detail": f"tool '{tool}' is not in the build allowlist"},
                             status=status.HTTP_403_FORBIDDEN)
         args = request.data if isinstance(request.data, dict) else {}
-        # Guard: the engine may not transition a WorkItem to a gate-owned terminal state (`done`).
-        # That transition belongs to the control plane, after an approved merge gate (#2/#5).
-        if tool == "transition_work_item" and args.get("to_state") in _AGENT_FORBIDDEN_TRANSITIONS:
+        # Guard: an agent may only move a WorkItem to `in_progress`. Every other state is the
+        # control plane's to set — `done` after an approved merge gate, `accepted` by the
+        # reconciler when the item really reaches the tracker (#2/#5).
+        if (tool == "transition_work_item"
+                and args.get("to_state") not in _AGENT_ALLOWED_TRANSITIONS):
+            allowed = ", ".join(sorted(_AGENT_ALLOWED_TRANSITIONS))
             return Response(
                 {"detail": f"transition to '{args.get('to_state')}' is not permitted from a build "
-                           "agent — the platform transitions a WorkItem to done only after its "
-                           "merge gate is approved."},
+                           f"agent — the only state you may set is: {allowed}. Everything else, "
+                           "including marking the item done, is the platform's to decide (done "
+                           "happens only after the merge gate is approved)."},
                 status=status.HTTP_403_FORBIDDEN)
         try:
             result = fn(str(runner.tenant_id), **args)   # tenant bound server-side

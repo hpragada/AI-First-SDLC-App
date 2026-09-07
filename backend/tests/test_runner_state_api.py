@@ -98,6 +98,43 @@ def test_agent_cannot_transition_work_item_to_done(db, client):
     assert wi.state == WorkItem.State.IN_PROGRESS               # unchanged — gate not bypassed
 
 
+def test_agent_cannot_set_any_state_but_in_progress(db, client):
+    """Bugs S.No 87: blocking `done` alone left every other state open. An agent could still
+    call an item `accepted` — the reconciler's word for "this is in the tracker", which would be
+    a lie — push it back to `proposed`, erasing the fact that work had started, or park it in
+    `blocked`/`in_review`, states no control-plane code writes, so nothing would move it out
+    again. Only `in_progress` is an agent's to set."""
+    from apps.workitems.models import WorkItem
+
+    t = Tenant.objects.create(name="A")
+    p = Project.objects.create(tenant=t, name="App")
+    token = _enroll(client, t, p)
+    for target in ("proposed", "accepted", "in_review", "blocked", "done"):
+        wi = WorkItem.objects.create(tenant=t, project=p, type=WorkItem.Type.TASK, title=target,
+                                     state=WorkItem.State.IN_PROGRESS)
+        r = _state(client, t, token, "transition_work_item", work_item_id=str(wi.id),
+                   to_state=target)
+        assert r.status_code == 403, f"{target} was allowed: {r.content!r}"
+        assert "in_progress" in r.json()["detail"]      # says what IS allowed, not just "no"
+        wi.refresh_from_db()
+        assert wi.state == WorkItem.State.IN_PROGRESS, f"{target} was written anyway"
+
+
+def test_a_state_added_later_is_refused_by_default(db, client):
+    """The allowlist is the point. A blocklist has to be remembered every time a state is added
+    — and the state most likely to be added next is another terminal one."""
+    from apps.workitems.models import WorkItem
+
+    t = Tenant.objects.create(name="A")
+    p = Project.objects.create(tenant=t, name="App")
+    token = _enroll(client, t, p)
+    wi = WorkItem.objects.create(tenant=t, project=p, type=WorkItem.Type.TASK, title="X",
+                                 state=WorkItem.State.IN_PROGRESS)
+    r = _state(client, t, token, "transition_work_item", work_item_id=str(wi.id),
+               to_state="some_future_state")
+    assert r.status_code == 403, r.content
+
+
 def test_agent_may_transition_work_item_to_in_progress(db, client):
     """The guard is scoped to gate-owned terminal states — the agent's legitimate
     -> in_progress transition at build start still works."""
