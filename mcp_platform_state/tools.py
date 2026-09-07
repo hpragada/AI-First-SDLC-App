@@ -1014,6 +1014,22 @@ def transition_work_item(tenant_id, work_item_id, to_state) -> dict:
         if to_state not in WorkItem.State.values:
             raise ValueError(f"invalid state: {to_state}")
         work_item = WorkItem.objects.get(id=work_item_id, tenant_id=tenant_id)
+        # Bugs S.No 140. A person cancelled this item, and every automated caller of this
+        # function forces a state without asking what the item's current one is: a merged PR
+        # webhook would flip it to `done`, a rejected gate or a failed build would flip it back
+        # to `in_progress`. Any of those silently un-cancels a decision a human made, and the
+        # board would show work nobody intends to do.
+        #
+        # Skipped rather than raised. These callers are Temporal activities; raising here would
+        # fail the workflow over a state change that was never important to it. The skip is
+        # recorded so it is visible in the ledger rather than merely quiet, and the unchanged
+        # item is returned so a caller that checks can tell nothing moved.
+        if work_item.state == WorkItem.State.CANCELLED and to_state != WorkItem.State.CANCELLED:
+            log_event(tenant_id, "orchestrator", "workitem.transition_skipped", "work_item",
+                      str(work_item.id),
+                      {"to_state": to_state, "from_state": work_item.state,
+                       "reason": "the item is cancelled — only a person can reopen it"})
+            return _work_item(work_item)
         work_item.state = to_state
         work_item.save(update_fields=["state", "updated_at"])
         return _work_item(work_item)

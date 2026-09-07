@@ -25,6 +25,22 @@ class WorkItem(TenantScopedModel):
         IN_REVIEW = "in_review", "In Review"
         BLOCKED = "blocked", "Blocked"
         DONE = "done", "Done"
+        # Bugs S.No 140: there was no way to close a task that cannot be built. A duplicate, a
+        # defect nobody will fix, a task overtaken by a decision — the only options were to
+        # mark it `done` (a lie the delivery report then repeats) or leave it open for ever
+        # (which is how a board stops meaning anything). Finished and abandoned are different
+        # facts, and a board that cannot tell them apart cannot be trusted for either.
+        CANCELLED = "cancelled", "Cancelled"
+
+    #: The states that mean "this item needs no more work". Everything that used to ask
+    #: `state == DONE` was really asking this, and every one of those places would have read
+    #: a cancelled item as still open — a cancelled defect would have held its gate shut for
+    #: ever, and a cancelled task would still have offered a Retry button.
+    #:
+    #: DONE and CANCELLED are NOT interchangeable, and nothing here should ever collapse
+    #: them: one says the work happened, the other says it never will. This set answers only
+    #: "is there anything left to do", which is the question those sites were asking.
+    TERMINAL_STATES = frozenset({State.DONE, State.CANCELLED})
 
     project = models.ForeignKey(
         "projects.Project", on_delete=models.CASCADE, related_name="work_items"

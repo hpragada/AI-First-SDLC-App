@@ -159,6 +159,13 @@
   background-color: var(--danger-bg);
   background-image: repeating-linear-gradient(45deg, transparent 0 6px, rgba(220,38,38,.10) 6px 12px);
 }
+/* Cancelled (Bugs S.No 140): muted grey with a dashed edge. It must not borrow the green of
+   `done` — abandoned work did not succeed — nor the red of `failed`, which says something
+   broke. The dashed border is what separates it from `queued`/`neutral`, which share the same
+   grey and mean the opposite thing (not started yet, rather than never starting). */
+.badge--cancelled   { --_bg: var(--bg-subtle);          --_fg: var(--text-muted);
+  border: 1px dashed var(--border-strong);
+}
 /* informational hue variants for type/level chips etc. */
 .badge--info-hue    { --_bg: var(--info-bg);            --_fg: var(--info); }
 .badge--navy        { --_bg: var(--brand-navy-100);     --_fg: var(--brand-navy-700); }

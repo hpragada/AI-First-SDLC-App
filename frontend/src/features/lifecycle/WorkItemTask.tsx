@@ -14,6 +14,7 @@ import {
   Panel,
   Spinner,
 } from "../../components/ui";
+import { CancelWorkItem } from "./CancelWorkItem";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
@@ -42,6 +43,7 @@ function WorkItemTaskLive() {
   // Confirm before re-triggering implementation when a run already exists (Bugs S.No 77):
   // in progress → blocked; already run → restart & replace this phase's artifacts.
   const [confirm, setConfirm] = useState<{ kind: "rerun" | "active"; runId?: string } | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   const handleImplTrigger = () => {
     const prior = runs.data?.[0];
@@ -77,6 +79,9 @@ function WorkItemTaskLive() {
   const latestRun = runs.data?.[0];
   const running = latestRun?.status === "running";
   const done = workItem.data.state === "done";
+  // Bugs S.No 140. Kept separate from `done`: they are different facts and the screen says
+  // different things about each.
+  const cancelled = workItem.data.state === "cancelled";
   const nodes = visibleLifecycleNodes(lifecycle.data?.nodes ?? []).map((n, i) => railNodeView(n, i));
   const loops = lifecycle.data?.loops ?? [];
 
@@ -109,9 +114,22 @@ function WorkItemTaskLive() {
           </div>
         </div>
         <span className="u-row-tight">
-          <Button variant="primary" disabled={trigger.isPending} onClick={handleImplTrigger}>
-            {trigger.isPending ? <Spinner /> : "Trigger phase"}
-          </Button>
+          {/* Nothing to trigger on a cancelled task, and nothing left to cancel either — the
+              buttons disappear together, so the page stops offering work nobody will do.
+              A DONE task keeps its trigger: re-running a phase on finished work is a real
+              thing people do, and that is not what this fix is about. */}
+          {!cancelled && (
+            <>
+              <Button variant="primary" disabled={trigger.isPending} onClick={handleImplTrigger}>
+                {trigger.isPending ? <Spinner /> : "Trigger phase"}
+              </Button>
+              {!done && (
+                <Button variant="secondary" onClick={() => setCancelOpen(true)}>
+                  Cancel task…
+                </Button>
+              )}
+            </>
+          )}
         </span>
       </div>
 
@@ -278,6 +296,10 @@ function WorkItemTaskLive() {
             </p>
           )}
         </Modal>
+      )}
+
+      {cancelOpen && (
+        <CancelWorkItem workItem={workItem.data} onClose={() => setCancelOpen(false)} />
       )}
 
       {/* No "Answered questions" panel here (team decision, 25 August). It was a full search

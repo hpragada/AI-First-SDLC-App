@@ -16,7 +16,8 @@ import {
   Select,
   Table,
 } from "../../components/ui";
-import type { WorkItemCard } from "../../types";
+import type { BadgeVariant } from "../../components/ui";
+import type { WorkItemCard, WorkItemState } from "../../types";
 import { roleLabel } from "../identity/roles";
 import { useCreateWorkItem, usePhaseCatalog, useWorkItems } from "./hooks";
 import { workItemLink } from "../../links";
@@ -34,13 +35,35 @@ const BUILD_COLUMNS = [
   { key: "review", label: "Review" },
 ];
 
+// Bugs S.No 140. This was a chain of ifs ending in `return <Badge variant="queued">Draft</Badge>`,
+// so FOUR of the six states rendered as "Draft" — an item in review, an item blocked, an item
+// accepted into the tracker, and (once the state existed) a cancelled one. Confidently wrong is
+// worse than unlabelled: a board that calls abandoned work a draft is a board that gets planned
+// against. The chain also tested `card.state === "running"`, which has never been a work-item
+// state — dead code that read as coverage.
+//
+// An exhaustive map over the union, so the compiler names any state added later instead of
+// letting it fall into the wrong bucket. `satisfies` is what enforces that.
+const STATE_BADGE = {
+  proposed: { variant: "queued", label: "Draft" },
+  accepted: { variant: "neutral", label: "Accepted" },
+  in_progress: { variant: "running", label: "In progress" },
+  in_review: { variant: "waiting", label: "In review" },
+  blocked: { variant: "failed", label: "Blocked" },
+  done: { variant: "done", label: "Phase complete" },
+  cancelled: { variant: "cancelled", label: "Cancelled" },
+} satisfies Record<WorkItemState, { variant: BadgeVariant; label: string }>;
+
 function statusBadge(card: WorkItemCard) {
+  // Cancelled outranks a pending need, and is checked FIRST for that reason: a stale gate or
+  // clarification left over from before the decision must not badge abandoned work as
+  // "waiting on you".
+  if (card.state === "cancelled") return <Badge variant="cancelled">Cancelled</Badge>;
   const label = humanizeLabel(card.needs?.label);
   if (label && card.needs?.clarification) return <Needs type="clar">{label}</Needs>;
   if (label && card.needs?.gate) return <Needs type="gate">{label}</Needs>;
-  if (card.state === "done") return <Badge variant="done">Phase complete</Badge>;
-  if (card.state === "running") return <Badge variant="running">AI compiling…</Badge>;
-  return <Badge variant="queued">Draft</Badge>;
+  const badge = STATE_BADGE[card.state] ?? STATE_BADGE.proposed;
+  return <Badge variant={badge.variant}>{badge.label}</Badge>;
 }
 
 // Human-readable work-item type ("story" → "Story"). One place so the board card and list agree.
@@ -190,6 +213,11 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
         if (phaseFilter && phase !== phaseFilter) return false;
         if (roleFilter && (roleByPhase.get(phase) ?? "") !== roleFilter) return false;
         if (statusFilter && item.state !== statusFilter) return false;
+        // Bugs S.No 140: cancelled work is hidden by default. Cancelling exists to get things
+        // OFF the board — leaving them on it would make cancelling pointless. Never hidden
+        // outright, though: choosing "Cancelled" in the status filter shows exactly those, so
+        // the record stays reachable and a cancellation can be found and questioned.
+        if (!statusFilter && item.state === "cancelled") return false;
         if (search) {
           const hay = `${item.key ?? ""} ${item.title ?? ""} ${item.type ?? ""} ${item.feature_stream ?? ""}`.toLowerCase();
           if (!hay.includes(search.toLowerCase())) return false;
@@ -214,6 +242,13 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
   const statusOptions = useMemo(
     () => [...new Set(allItems.map((i) => i.state).filter(Boolean))].sort(),
     [allItems],
+  );
+  // How many are being hidden right now — said out loud beside the filter. A board that
+  // quietly drops rows is a board whose counts nobody can reconcile; "3 cancelled hidden" is
+  // the difference between a filter and a disappearance.
+  const hiddenCancelled = useMemo(
+    () => (statusFilter ? 0 : allItems.filter((i) => i.state === "cancelled").length),
+    [allItems, statusFilter],
   );
 
   const view: BoardView =
@@ -321,6 +356,15 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
               </option>
             ))}
           </select>
+          {hiddenCancelled > 0 && (
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => setStatusFilter("cancelled")}
+            >
+              {hiddenCancelled} cancelled hidden
+            </button>
+          )}
           <span className="u-spacer" />
           <span className="segmented">
             <button aria-pressed={mode === "board"} onClick={() => setMode("board")}>

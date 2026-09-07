@@ -60,6 +60,7 @@ import type {
   TriggerResult,
   WorkItem,
   WorkItemCard,
+  WorkItemState,
 } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000/api";
@@ -374,6 +375,16 @@ export const api = {
       tenantId,
       body: { agent_key: agentKey },
     }),
+
+  // Bugs S.No 140 — a human closing work that cannot be built. `reason` is required by the
+  // server when cancelling; it is the only record of the decision.
+  transitionWorkItem: (
+    tenantId: string, workItemId: string, toState: WorkItemState, reason = "",
+  ) =>
+    req<WorkItem & { gates_notified?: string[] }>(
+      "POST", `/work-items/${workItemId}/transition/`,
+      { tenantId, body: { to_state: toState, reason } },
+    ),
 
   // Phase 4.8 T4 — lifecycle rail (bucket B; type-adaptive plan/build/remediation).
   getLifecycle: (tenantId: string, workItemId: string) =>

@@ -39,6 +39,28 @@ export interface ProjectProfile {
   version: number;
 }
 
+// Bugs S.No 140. `state` used to be a bare `string`, which is how a cancelled item ended up
+// rendering as "Draft": every place that switches on it had a fall-through default, and a bare
+// string means the compiler cannot tell you that you missed a case. Narrowing it turns each of
+// those silent wrong answers into a build error — which is the whole reason this type exists.
+export type WorkItemState =
+  | "proposed"
+  | "accepted"
+  | "in_progress"
+  | "in_review"
+  | "blocked"
+  | "done"
+  | "cancelled";
+
+/** Finished or abandoned — "there is nothing left to do here". NOT a claim that the work
+ *  happened: `done` and `cancelled` say opposite things and must never be collapsed into one
+ *  label. Mirrors `WorkItem.TERMINAL_STATES` on the backend. */
+export const TERMINAL_WORK_ITEM_STATES: readonly WorkItemState[] = ["done", "cancelled"];
+
+export function isTerminalState(state: string | undefined): boolean {
+  return TERMINAL_WORK_ITEM_STATES.includes(state as WorkItemState);
+}
+
 export interface WorkItem {
   id: string;
   // Human-readable per-project key ("WI-42") + its raw number. Shown to users instead of the UUID.
@@ -47,7 +69,7 @@ export interface WorkItem {
   project: string;
   feature_stream: string;
   type: string;
-  state: string;
+  state: WorkItemState;
   created_at: string;
   title?: string;
   description?: string;

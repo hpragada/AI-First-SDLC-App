@@ -511,7 +511,10 @@ def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
         # first one to fall silent would tell a team a live defect had been dealt with.
         for item in existing:
             mine = _claimed(item)
-            if not (mine & set(blocking)) and item.state != WorkItem.State.DONE:
+            # A cancelled ticket is excluded (S.No 140): "no longer blocking" would
+            # otherwise close it as resolved, which is a different statement about the same
+            # defect than the one the person who cancelled it made.
+            if not (mine & set(blocking)) and item.state not in WorkItem.TERMINAL_STATES:
                 item.state = WorkItem.State.DONE
                 item.save(update_fields=["state", "updated_at"])
                 tools.log_event(tenant_id, "a11y", "a11y.defect.resolved", "work_item",

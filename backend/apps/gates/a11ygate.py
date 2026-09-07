@@ -113,7 +113,12 @@ def _a11y_refs(*, tenant_id, work_item_id) -> list[dict]:
     with tenant_context(tenant_id):
         defects = WorkItem.objects.filter(
             tenant_id=tenant_id, parent_id=work_item_id, type=WorkItem.Type.DEFECT,
-        ).exclude(state=WorkItem.State.DONE)
+        # `TERMINAL_STATES`, not `DONE` alone (S.No 140). Team decision: cancelling a defect
+        # RELEASES the gate it was blocking — a defect nobody will fix must not hold a story
+        # shut for ever. The disclosure that makes that safe is the acknowledgement condition
+        # `apps.workitems.cancel` puts on the pending approval: the gate opens, but a reviewer
+        # has to read what was cancelled and say so before it does.
+        ).exclude(state__in=WorkItem.TERMINAL_STATES)
         refs = [
             dict(item.external_ref or {})
             for item in defects
@@ -165,7 +170,12 @@ def baseline_debt(*, tenant_id, project_id) -> list[dict]:
         defects = WorkItem.objects.filter(
             tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.DEFECT,
             parent__feature_stream=BACKLOG_STREAM,
-        ).exclude(state=WorkItem.State.DONE)
+        # `TERMINAL_STATES`, not `DONE` alone (S.No 140). Team decision: cancelling a defect
+        # RELEASES the gate it was blocking — a defect nobody will fix must not hold a story
+        # shut for ever. The disclosure that makes that safe is the acknowledgement condition
+        # `apps.workitems.cancel` puts on the pending approval: the gate opens, but a reviewer
+        # has to read what was cancelled and say so before it does.
+        ).exclude(state__in=WorkItem.TERMINAL_STATES)
         refs = [
             dict(item.external_ref or {})
             for item in defects

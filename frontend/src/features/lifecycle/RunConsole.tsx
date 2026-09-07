@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, Console, Panel, Spinner } from "../../components/ui";
-import type { RunEvent } from "../../types";
+import { isTerminalState, type RunEvent } from "../../types";
+import { CancelWorkItem } from "./CancelWorkItem";
 import { phaseLabel } from "./phases";
 import {
   useClarifications,
@@ -69,6 +71,7 @@ function RunConsoleLive() {
   const workItem = useWorkItem(run.data?.work_item);
   const clarifications = useClarifications({ run: id, status: "pending" });
   const retry = useTriggerPhase(run.data?.work_item);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const resume = useResumeRun(id);
   // Bugs S.No 161 follow-up: when a build exhausts remediation it is marked FAILED and the
   // platform auto-starts a FRESH run for the same work item, storing that run's id on this
@@ -259,6 +262,16 @@ function RunConsoleLive() {
                 {retry.isPending ? <Spinner /> : "Retry run"}
               </Button>
             )}
+            {/* Bugs S.No 140 — offered beside Retry, at the moment Retry stops being worth
+                pressing. Watching the same build fail for the fourth time is exactly when a
+                person decides this work is not going to happen, and until now the only way to
+                act on that decision was to mark the item done (a lie) or leave it open for
+                ever. Hidden once the item is already finished or abandoned. */}
+            {workItem.data && !isTerminalState(workItem.data.state) && (
+              <Button variant="secondary" onClick={() => setCancelOpen(true)}>
+                Cancel this work item…
+              </Button>
+            )}
           </div>
         )}
         {view === "parked" && isResumable && (
@@ -287,6 +300,10 @@ function RunConsoleLive() {
           </>
         )}
       </Panel>
+
+      {cancelOpen && workItem.data && (
+        <CancelWorkItem workItem={workItem.data} onClose={() => setCancelOpen(false)} />
+      )}
     </div>
   );
 }

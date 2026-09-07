@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
+import type { WorkItemState } from "../../types";
 
 function useTenantId() {
   const { currentUser } = useAuth();
@@ -136,6 +137,29 @@ export function useTriggerPhase(workItemId: string | undefined) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["runs"] });
       qc.invalidateQueries({ queryKey: ["lifecycle", workItemId] });
+    },
+  });
+}
+
+// Bugs S.No 140 — close a work item that cannot be built.
+//
+// Invalidates broadly on purpose. Cancelling changes what four different screens should show:
+// the item itself, the board it sits on (where it now disappears by default), the dashboard
+// count beside that board, and — when the item is a blocking defect — the gate it just
+// released, which has gained an acknowledgement the reviewer has to tick. Refetching one of
+// those and not the others is how a board and its own count end up disagreeing.
+export function useTransitionWorkItem(workItemId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ toState, reason }: { toState: WorkItemState; reason?: string }) =>
+      api.transitionWorkItem(tenantId, workItemId as string, toState, reason ?? ""),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["work-item", workItemId] });
+      qc.invalidateQueries({ queryKey: ["work-items"] });
+      qc.invalidateQueries({ queryKey: ["lifecycle", workItemId] });
+      qc.invalidateQueries({ queryKey: ["approvals"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }

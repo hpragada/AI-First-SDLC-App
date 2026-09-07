@@ -410,6 +410,20 @@ class TriggerSerializer(serializers.Serializer):
     user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
 
 
+class WorkItemTransitionSerializer(serializers.Serializer):
+    """Input for the human state transition (Bugs S.No 140).
+
+    `to_state` is validated against the allowlist in `apps.workitems.cancel`, not here — the
+    legal move depends on the state the item is currently in, which this cannot see.
+    `reason` is required to cancel, and that too is checked there, so the message a person
+    reads is written in one place.
+    """
+
+    to_state = serializers.CharField()
+    reason = serializers.CharField(required=False, allow_blank=True, default="")
+    user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+
+
 class BuildTriggerSerializer(serializers.Serializer):
     """Input for the build trigger — starts the implementation `BuildWorkflow` saga on a
     WorkItem (the REST surface for `orchestration.trigger.trigger_build`). `repo`/`base` default

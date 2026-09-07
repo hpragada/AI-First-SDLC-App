@@ -67,6 +67,7 @@ from apps.tenancy.services import (
     revoke_membership,
     set_tenant_admin,
 )
+from apps.workitems.cancel import transition as cancel_work_item
 from apps.workitems.models import WorkItem
 from integrations.api_contract import list_api_contracts, read_api_contract_body
 from integrations.drift import DriftError, DriftRoleError, decide_drift, drift_queue
@@ -137,6 +138,7 @@ from .serializers import (
     TriggerSerializer,
     WorkItemPatchSerializer,
     WorkItemSerializer,
+    WorkItemTransitionSerializer,
 )
 
 
@@ -1376,8 +1378,13 @@ class ProjectViewSet(
                 # approval sits on a carrier and is real work a person must do. Excluding it here
                 # would hide a pending gate the Gates screen still lists, which is the same
                 # disagreement pointing the other way.
+                #
+                # Cancelled items are excluded for exactly the same reason (S.No 140): the
+                # board hides them by default, so counting them here would recreate the very
+                # disagreement the paragraph above exists to prevent.
                 "work_items": WorkItem.objects.filter(tenant_id=tid, project=project)
-                .exclude(carrier_q()).count(),
+                .exclude(carrier_q())
+                .exclude(state=WorkItem.State.CANCELLED).count(),
                 "phases_in_progress": Run.objects.filter(
                     tenant_id=tid, work_item__project=project, status="running"
                 ).exclude(carrier_q("work_item__")).count(),
@@ -1748,7 +1755,11 @@ class WorkItemViewSet(
         # `trigger` and `build` are gated a second time by role inside the action: they spend real
         # Claude subscription time on the team's account. `take_over` seizes a work item somebody
         # else is building.
-        if self.action in {"create", "update", "partial_update", "trigger", "build", "take_over"}:
+        # `transition` belongs on this list for the same reason as the rest: leaving it off
+        # would hand it the project-wide AllowAny default, which is S.No 214 all over again —
+        # anyone on the internet closing a team's work items.
+        if self.action in {"create", "update", "partial_update", "trigger", "build",
+                           "take_over", "transition"}:
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
@@ -1898,6 +1909,37 @@ class WorkItemViewSet(
         work_item = self.get_object()
         data = WorkItemSerializer(work_item).data
         data.update(self._card_fields([work_item])[str(work_item.id)])
+        return Response(data)
+
+    @action(detail=True, methods=["post"])
+    def transition(self, request, pk=None):
+        """Move a work item by hand — Bugs S.No 140: close what cannot be built.
+
+        The rules (which moves are legal, and that cancelling needs a reason) live in
+        `apps.workitems.cancel` so the endpoint and any future caller cannot disagree about
+        them. This does the two things that are the view's own: check who is asking, and
+        attribute the decision to them.
+
+        `tech_lead` or `admin`, per the team's decision. Cancelling is not an everyday edit:
+        it takes work off the board, and — when the item is a blocking defect — it releases
+        the gate that defect was holding shut.
+        """
+        work_item = self.get_object()
+        require_project_write_role(
+            tenant_id=self.tenant_id, project_id=str(work_item.project_id),
+            user_id=getattr(current_user(request), "id", None),
+            what="close or cancel a work item",
+        )
+        ser = WorkItemTransitionSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        out = cancel_work_item(
+            tenant_id=self.tenant_id, work_item_id=str(work_item.id),
+            to_state=ser.validated_data["to_state"],
+            reason=ser.validated_data.get("reason", ""),
+            actor_id=resolve_actor(request, ser.validated_data.get("user_id")),
+        )
+        data = WorkItemSerializer(out["work_item"]).data
+        data["gates_notified"] = out["gates_notified"]
         return Response(data)
 
     @action(detail=True, methods=["post"])

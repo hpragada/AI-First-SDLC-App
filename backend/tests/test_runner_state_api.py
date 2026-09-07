@@ -109,7 +109,11 @@ def test_agent_cannot_set_any_state_but_in_progress(db, client):
     t = Tenant.objects.create(name="A")
     p = Project.objects.create(tenant=t, name="App")
     token = _enroll(client, t, p)
-    for target in ("proposed", "accepted", "in_review", "blocked", "done"):
+    # `cancelled` is in this list from the moment the state exists (S.No 140). The tool
+    # validates only that a value is a member of the enum, so a new state is reachable by an
+    # agent the instant it is added unless the allowlist says otherwise — which is precisely
+    # what `test_a_state_added_later_is_refused_by_default` predicted.
+    for target in ("proposed", "accepted", "in_review", "blocked", "done", "cancelled"):
         wi = WorkItem.objects.create(tenant=t, project=p, type=WorkItem.Type.TASK, title=target,
                                      state=WorkItem.State.IN_PROGRESS)
         r = _state(client, t, token, "transition_work_item", work_item_id=str(wi.id),

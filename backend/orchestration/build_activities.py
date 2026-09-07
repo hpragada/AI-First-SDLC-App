@@ -991,11 +991,20 @@ def run_code_review_core(inp: BuildInput) -> dict:
         story = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
         children = WorkItem.objects.filter(
             tenant_id=inp.tenant_id, parent_id=inp.work_item_id, type=WorkItem.Type.TASK)
+        # Cancelled items are left out of the map entirely (S.No 140), which is stronger than
+        # not closing them. A `rem` id is a POSITION in one review's output, not an identity
+        # (see the long note in the refresh branch below): if the same id comes back next cycle
+        # meaning a DIFFERENT finding, a cancelled row holding that id would either be dragged
+        # back to `in_progress` by the refresh, or silently block the new finding from getting
+        # an item at all. Treating it as absent keeps the cancellation AND lets the real
+        # finding through on its own row.
         existing = {(c.external_ref or {}).get("rem"): c for c in children
-                    if (c.external_ref or {}).get("rem")}
+                    if (c.external_ref or {}).get("rem")
+                    and c.state != WorkItem.State.CANCELLED}
         # Close remediation items whose finding is gone (resolved by the last build).
         for rem, child in existing.items():
-            if rem not in blocking and child.state != WorkItem.State.DONE:
+            # A cancelled remediation item is left alone (S.No 140).
+            if rem not in blocking and child.state not in WorkItem.TERMINAL_STATES:
                 child.state = WorkItem.State.DONE
                 child.save(update_fields=["state", "updated_at"])
                 tools.log_event(inp.tenant_id, "code_review", "remediation.resolved",

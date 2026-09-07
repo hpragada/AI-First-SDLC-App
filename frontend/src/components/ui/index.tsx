@@ -44,7 +44,11 @@ export type BadgeVariant =
   | "info-hue"
   | "navy"
   | "orange"
-  | "outline";
+  | "outline"
+  // Bugs S.No 140. Deliberately NOT "done" and deliberately NOT "failed": abandoned work
+  // neither succeeded nor broke, and borrowing either colour would say something untrue at a
+  // glance. Muted, so a cancelled row recedes on a board without disappearing from it.
+  | "cancelled";
 type BannerVariant = "info" | "warning" | "danger" | "success" | "purple";
 
 export function cx(...parts: Array<string | false | null | undefined>) {

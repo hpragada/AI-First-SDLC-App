@@ -184,13 +184,18 @@ def _reconcile_pull_request(tenant_id: str, payload: dict) -> dict:
                 except Exception:  # noqa: BLE001 — see above
                     pass
             if run is not None and not gate_pending:
-                tools.transition_work_item(tenant_id, str(run.work_item_id), WorkItem.State.DONE)
+                moved = tools.transition_work_item(
+                    tenant_id, str(run.work_item_id), WorkItem.State.DONE)
                 # Always emit the canonical transition event so state=done is never orphaned in
-                # the audit trail (the missing-event half of the mislabel bug).
-                tools.log_event(tenant_id, "orchestrator", "workitem.transitioned", "work_item",
-                                str(run.work_item_id),
-                                {"to_state": WorkItem.State.DONE, "via": "webhook_pr_merge"})
-                work_items.append(str(run.work_item_id))
+                # the audit trail (the missing-event half of the mislabel bug) — but only when
+                # the item ACTUALLY moved. A cancelled item is left alone (S.No 140), and
+                # logging "transitioned to done" over the top of that would put a merge in the
+                # audit trail that never happened.
+                if moved.get("state") == WorkItem.State.DONE:
+                    tools.log_event(tenant_id, "orchestrator", "workitem.transitioned",
+                                    "work_item", str(run.work_item_id),
+                                    {"to_state": WorkItem.State.DONE, "via": "webhook_pr_merge"})
+                    work_items.append(str(run.work_item_id))
 
     name = ("webhook.pr_merged" if (action == "closed" and merged)
             else "webhook.pr_closed" if action == "closed" else "webhook.pr_event")
