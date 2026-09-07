@@ -2456,7 +2456,8 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         artifact.external_ref = {
             **(artifact.external_ref or {}),
             "export": {"sor": "jira", "reconciled": result["reconciled"],
-                       "created": result["created"], "failed": len(failed)},
+                       "created": result["created"],
+                       "skipped": result.get("skipped", 0), "failed": len(failed)},
         }
         artifact.save(update_fields=["status", "external_ref", "updated_at"])
         return Response({
@@ -2464,7 +2465,11 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             # warn instead of showing an all-green "Published" while items silently didn't land.
             "status": "partial" if failed else "published",
             "sor_link": next((i["url"] for i in items if i["url"]), None),
+            # `reconciled` now counts items already in the tracker too, because they are re-checked
+            # rather than filtered out (Bugs S.No 236/237) — `skipped` says how many were left
+            # alone, so "12 reconciled" can never read as "12 pushed" when only 2 were.
             "reconciled": result["reconciled"], "created": result["created"],
+            "skipped": result.get("skipped", 0),
             "failed": failed,
             "items": items,
         })
