@@ -1100,6 +1100,42 @@ export function ErrorState({
   );
 }
 
+/** The counterpart to `ErrorState` for a WRITE that failed (Bugs S.No 219).
+ *
+ * There was one of these for reads and none for writes, so four screens each invented their
+ * own spelling and three more gave up and showed nothing at all — a resend that silently did
+ * nothing, a repository refusal caught and thrown away, a password rejected by a form that
+ * just sat there. One shared piece is what stops the eighth screen inventing an eighth.
+ *
+ * Deliberately NO retry button. Retrying a read is a refetch; retrying a write is submitting
+ * again, and a "Try again" that quietly re-sends an invitation is its own bug. The control
+ * that failed is still on screen — that is the retry.
+ */
+export function WriteError({
+  title = "That didn't work",
+  detail,
+}: {
+  title?: ReactNode;
+  detail?: unknown;
+}) {
+  // `detail` is whatever the mutation threw, so it is `unknown` on purpose. An ApiError's
+  // message is already humanized by `humanizeError` in api.ts — DRF's nested validation shape
+  // has been walked down to the leaf sentences a person can actually act on.
+  const message =
+    (typeof detail === "string" && detail) ||
+    (detail && typeof detail === "object"
+      ? ((detail as { message?: string }).message ??
+         (detail as { detail?: string }).detail ??
+         "")
+      : "") ||
+    "The server didn't accept that, and didn't say why. Nothing was changed.";
+  return (
+    <Banner variant="danger" title={title}>
+      <div className="empty__text">{message}</div>
+    </Banner>
+  );
+}
+
 export function Skeleton({ kind = "line" }: { kind?: "line" | "title" | "block" }) {
   return <div className={cx("skeleton", `skeleton--${kind}`)} />;
 }
