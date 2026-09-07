@@ -74,6 +74,9 @@ def test_login_success_returns_me_shape(client, user, project):
             "project_id": str(project.id),
             "project_name": "Payment Gateway v2",
             "role": "product_owner",
+            # S.No 221: the sidebar decides whether to offer the brownfield onboarding
+            # wizard, and this payload is the only place it learns the project's kind.
+            "track": "greenfield",
         }
     ]
 
@@ -365,6 +368,7 @@ def test_accept_invitation_creates_user_and_memberships(client, admin, project):
             "project_id": str(project.id),
             "project_name": project.name,
             "role": "engineer",
+            "track": "greenfield",
         }
     ]
     # user persisted + membership queued; session live
@@ -470,3 +474,18 @@ def test_reset_invalid_token_410(client, db):
         format="json",
     )
     assert resp.status_code == 410
+
+
+# ── S.No 221: the project's kind travels with the membership ────────
+def test_me_carries_the_project_track(client, user, project):
+    """A greenfield project was offered the brownfield onboarding wizard because the
+    frontend had no way to tell the two apart: `/me` carried the project's id, name and
+    the caller's role, and nothing about the project itself. Both values are asserted —
+    a field that only ever reports one of them would hide the bug rather than fix it."""
+    client.force_login(user)
+
+    assert client.get("/api/auth/me/").data["memberships"][0]["track"] == "greenfield"
+
+    project.track = Project.Track.BROWNFIELD
+    project.save(update_fields=["track"])
+    assert client.get("/api/auth/me/").data["memberships"][0]["track"] == "brownfield"

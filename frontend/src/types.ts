@@ -273,11 +273,17 @@ export interface User {
   is_tenant_admin?: boolean;
 }
 
-// Backend returns { project_id, project_name, role } — no top-level id field.
+export type ProjectTrack = "greenfield" | "brownfield";
+
+// Backend returns { project_id, project_name, role, track } — no top-level id field.
+// `track` is OPTIONAL on purpose (S.No 221): during a rolling deploy the frontend can be
+// newer than the API, and a missing track must never hide a brownfield project's onboarding.
+// Everything that reads it therefore hides only on an explicit "greenfield".
 export interface Membership {
   project_id: string;
   project_name: string;
   role: string;
+  track?: ProjectTrack;
 }
 
 // isAdmin is NOT a top-level field in the backend response — it lives in user.is_tenant_admin.

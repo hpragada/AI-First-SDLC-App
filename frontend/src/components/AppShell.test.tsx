@@ -83,3 +83,69 @@ describe("AppShell account menu — logout", () => {
     await waitFor(() => expect(screen.queryByRole("menuitem", { name: /sign out/i })).toBeNull());
   });
 });
+
+// ── Bugs S.No 221 — a greenfield project was offered the brownfield wizard ──────────
+//
+// This file previously asserted NOTHING about which nav items appear, which is how the
+// Onboarding item stayed unconditional: nothing was watching. The sidebar's whole job is
+// deciding what a person is offered, so that decision needs tests of its own.
+describe("sidebar — which items a project is offered", () => {
+  /** Re-stubs fetch with a `/auth/me` whose single membership carries `track`. */
+  function signInWith(membership: Record<string, unknown>) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: RequestInfo | URL) => {
+        const u = String(url);
+        if (u.includes("/auth/me/")) {
+          return Promise.resolve(jsonResponse(200, { ...me, memberships: [membership] }));
+        }
+        if (u.includes("/dashboard/")) {
+          return Promise.resolve(
+            jsonResponse(200, { needs_me: { gates: [], clarifications: [] } }),
+          );
+        }
+        return Promise.resolve(jsonResponse(200, []));
+      }),
+    );
+  }
+
+  const base = { project_id: "p1", project_name: "Platform", role: "developer" };
+
+  it("hides Onboarding on a project started from scratch", async () => {
+    signInWith({ ...base, track: "greenfield" });
+    renderWithProviders(<AppShell />);
+
+    // Wait for the SESSION, not merely for the nav. The shell renders immediately, before
+    // /auth/me resolves, and at that moment there is no track and the item is (correctly)
+    // still shown — asserting too early passes against a screen that knows nothing yet.
+    await screen.findByRole("button", { name: /account menu for ada/i });
+    expect(screen.queryByRole("link", { name: "Onboarding" })).toBeNull();
+  });
+
+  it("still offers Onboarding on a project with an existing codebase", async () => {
+    signInWith({ ...base, track: "brownfield" });
+    renderWithProviders(<AppShell />);
+
+    expect(await screen.findByRole("link", { name: "Onboarding" })).toBeDefined();
+  });
+
+  it("offers Onboarding when the API is too old to send a track", async () => {
+    // Fail OPEN. A frontend deployed ahead of its API must not lock a brownfield team out
+    // of the only screen that starts their lifecycle.
+    signInWith(base);
+    renderWithProviders(<AppShell />);
+
+    expect(await screen.findByRole("link", { name: "Onboarding" })).toBeDefined();
+  });
+
+  it("keeps Test Reporting admin-only after the gate was generalised", async () => {
+    // `adminOnly` became a predicate in this change; this pins that the one rule it
+    // already enforced still holds. `me` is a non-admin.
+    signInWith({ ...base, track: "brownfield" });
+    renderWithProviders(<AppShell />);
+
+    await screen.findByRole("link", { name: "Onboarding" });
+    expect(screen.queryByRole("link", { name: "Test Reporting" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Workspace Admin" })).toBeNull();
+  });
+});

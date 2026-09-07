@@ -445,8 +445,10 @@ def test_onboarding_hub_reflects_uploads_index_and_gap(client, project, repo, te
 def test_onboarding_surfaces_are_tenant_isolated(client, db):
     t1 = Tenant.objects.create(name="Acme")
     t2 = Tenant.objects.create(name="Globex")
-    p1 = Project.objects.create(tenant=t1, name="P1")
-    p2 = Project.objects.create(tenant=t2, name="P2")
+    # Brownfield on both sides: this test is about tenant isolation, and a greenfield project
+    # is now refused for a different reason (S.No 221), which would mask what it is checking.
+    p1 = Project.objects.create(tenant=t1, name="P1", track=Project.Track.BROWNFIELD)
+    p2 = Project.objects.create(tenant=t2, name="P2", track=Project.Track.BROWNFIELD)
     User.objects.create_user(
         email="a1@acme.com", name="A1", tenant=t1, password="pw!", is_tenant_admin=True
     )
@@ -526,3 +528,26 @@ def test_an_audit_that_could_not_run_leaves_the_step_where_it_was(client, projec
 
     assert a11y["status"] == "ready"
     assert a11y["audits_run"] == 0 and a11y["running"] is False
+
+
+# ── S.No 221: onboarding is brownfield-only, at the endpoint as well as in the nav ──
+def test_hub_refuses_a_greenfield_project(client, tenant, member):
+    """Hiding the sidebar item is not the same as closing the door — `/onboarding` is still a
+    URL that can be typed or bookmarked from another project, and this endpoint would have
+    happily reported on a codebase that does not exist. A greenfield project is the ONLY
+    thing that changes here; the same member, on the same workspace, is still let through
+    to a brownfield project below, so this cannot pass by refusing everyone."""
+    greenfield = Project.objects.create(tenant=tenant, name="New Service")
+    Membership.objects.create(tenant=tenant, user=member, project=greenfield, role="engineer")
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    resp = client.get(_hub_url(greenfield))
+
+    assert resp.status_code == 403
+    # The refusal has to say WHY, or it reads as a permissions problem the person could fix.
+    assert "brownfield" in str(resp.data["detail"]).lower()
+
+
+def test_hub_still_serves_a_brownfield_project(client, project, member):
+    _login(client, "dev@acme.com", "dev-pass!")
+    assert client.get(_hub_url(project)).status_code == 200

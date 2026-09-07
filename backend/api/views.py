@@ -1183,8 +1183,19 @@ class ProjectViewSet(
     # ── Brownfield onboarding (P4.7-T8, backs S-24/S-25/S-26) ────────
     @action(detail=True, methods=["get"])
     def onboarding(self, request, pk=None):
-        """GET the onboarding hub state (S-24): upload/adopt/register/index/gap in one read."""
+        """GET the onboarding hub state (S-24): upload/adopt/register/index/gap in one read.
+
+        Brownfield only. Bugs S.No 221: the nav item is hidden for a greenfield project, but
+        hiding a door is not locking it — `/onboarding` is still a URL anyone can type, and
+        this endpoint would happily assess a project that has nothing to assess. The check
+        lives here as well so the answer is the same however the screen is reached.
+        """
         project = self.get_object()
+        if project.track != Project.Track.BROWNFIELD:
+            raise PermissionDenied(
+                "Onboarding assesses an existing codebase, and this project was started "
+                "from scratch. It is available on brownfield projects only."
+            )
         return Response(onboarding_hub(tenant_id=self.tenant_id, project_id=str(project.id)))
 
     @action(detail=True, methods=["post"], url_path="code-intel")

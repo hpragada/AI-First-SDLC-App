@@ -47,6 +47,12 @@ def serialize_me(user: User) -> dict[str, Any]:
                 "project_id": str(m.project_id),
                 "project_name": m.project.name,
                 "role": m.role,
+                # Bugs S.No 221: the sidebar has to decide whether to offer the brownfield
+                # onboarding wizard, and this payload is the only place the frontend learns
+                # anything about a project it is not currently looking at. Carried here for
+                # the same reason `role` is — it travels with the selected project for free.
+                # `select_related("project")` above means this costs no extra query.
+                "track": m.project.track,
             }
             for m in memberships
         ],
