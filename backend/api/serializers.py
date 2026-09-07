@@ -304,6 +304,15 @@ class ProjectSerializer(serializers.ModelSerializer):
         # Read-only means it's still returned to the client, just never written from a request.
         read_only_fields = ["id", "repo_topology", "created_at"]
 
+    def validate_name(self, value: str) -> str:
+        """A name of nothing but spaces was accepted, and then rendered as an empty switcher
+        entry nobody could identify (Bugs S.No 211). Store it trimmed, and refuse an empty one —
+        the Create button already blocks this in the UI, so only a direct API call reaches here."""
+        name = (value or "").strip()
+        if not name:
+            raise serializers.ValidationError("Give the project a name.")
+        return name
+
 
 class ProjectProfileSerializer(serializers.ModelSerializer):
     class Meta:

@@ -1,5 +1,6 @@
 """Projects: Project, ProjectProfile (1:1), Repository (0..N)."""
 from django.db import models
+from django.db.models.functions import Lower
 
 from apps.base import TenantScopedModel
 
@@ -24,6 +25,25 @@ class Project(TenantScopedModel):
         max_length=16, choices=RepoTopology.choices, default=RepoTopology.SINGLE
     )
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+
+    class Meta:
+        constraints = [
+            # Bugs S.No 211: nothing stopped two projects in one workspace sharing a name, so
+            # every screen that names a project (the switcher, the board header, an invite) named
+            # two different things identically and the wrong one could be worked on for days.
+            #
+            # Case-INSENSITIVE on purpose. "Billing Service" and "billing service" are the same
+            # project to the person reading the switcher; a case-sensitive constraint would let
+            # the confusing pair straight through while claiming to have solved it.
+            #
+            # Archived names stay reserved (no `condition=Q(status="active")`): un-archiving a
+            # project whose name has since been taken by another is a worse surprise than being
+            # asked to pick a different name. Recorded as a decision, not an oversight — making
+            # it conditional later is a one-line change to a partial index.
+            models.UniqueConstraint(
+                Lower("name"), "tenant", name="uniq_tenant_project_name",
+            )
+        ]
 
     def __str__(self) -> str:
         return self.name

@@ -79,6 +79,60 @@ def test_create_and_list_projects(client, tenant, lead):
     assert [p["id"] for p in listed.data] == [pid]
 
 
+def test_duplicate_project_name_is_refused_with_409(client, tenant, lead):
+    """Bugs S.No 211: two projects could share a name, so the switcher, the board header and
+    every invite named two different things identically. The Create Project screen has always
+    had the collision state built and branches on 409 — the backend just never returned one,
+    which is what made the state unreachable."""
+    assert client.post("/api/projects/", {"name": "Billing Service"}, format="json",
+                       **_hdr(tenant.id)).status_code == 201
+
+    dup = client.post("/api/projects/", {"name": "Billing Service"}, format="json",
+                      **_hdr(tenant.id))
+    assert dup.status_code == 409
+    assert "already exists" in dup.data["detail"]
+
+    # Case-insensitive: "billing service" is the same project to whoever reads the switcher.
+    cased = client.post("/api/projects/", {"name": "billing service"}, format="json",
+                        **_hdr(tenant.id))
+    assert cased.status_code == 409
+
+    # ...and so is one that differs only by the spaces around it.
+    padded = client.post("/api/projects/", {"name": "  Billing Service  "}, format="json",
+                         **_hdr(tenant.id))
+    assert padded.status_code == 409
+    assert Project.objects.filter(tenant=tenant).count() == 1
+
+
+def test_another_workspace_may_reuse_the_name(client, db, tenant, lead):
+    """The name is unique per workspace, not globally — two customers both having a "Billing
+    Service" is normal and must not be blocked."""
+    assert client.post("/api/projects/", {"name": "Billing Service"}, format="json",
+                       **_hdr(tenant.id)).status_code == 201
+
+    other = Tenant.objects.create(name="Other Co")
+    user = User.objects.create_user(email="lead@other.test", name="L", tenant=other,
+                                    password="pw", is_tenant_admin=True)
+    client.force_authenticate(user)
+    assert client.post("/api/projects/", {"name": "Billing Service"}, format="json",
+                       **_hdr(other.id)).status_code == 201
+
+
+def test_blank_project_name_is_refused(client, tenant, lead):
+    """A name of nothing but spaces was accepted and then rendered as an empty, unidentifiable
+    switcher entry. The Create button already blocks this, so only a direct API call gets here."""
+    for name in ("", "   ", "\t\n"):
+        resp = client.post("/api/projects/", {"name": name}, format="json", **_hdr(tenant.id))
+        assert resp.status_code == 400, f"{name!r} was accepted"
+    assert Project.objects.filter(tenant=tenant).count() == 0
+
+
+def test_project_name_is_stored_trimmed(client, tenant, lead):
+    resp = client.post("/api/projects/", {"name": "  Apollo  "}, format="json", **_hdr(tenant.id))
+    assert resp.status_code == 201
+    assert Project.objects.get(id=resp.data["id"]).name == "Apollo"
+
+
 def test_profile_upsert_bumps_version(client, project, lead):
     url = f"/api/projects/{project.id}/profile/"
     # GET before any profile → 404

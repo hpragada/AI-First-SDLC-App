@@ -287,6 +287,24 @@ class ProjectViewSet(
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
+    def create(self, request, *args, **kwargs):
+        """Refuse a duplicate project name with 409 (Bugs S.No 211).
+
+        The Create Project screen has always had the collision state built — it branches on 409
+        and says *"A project named X already exists in this workspace."* The backend simply never
+        returned one, so the state was unreachable and two projects could sit in the switcher
+        under the same name with no way to tell them apart. Checked here rather than left to the
+        database constraint so the client gets 409 with a sentence, not a 500 from an
+        IntegrityError. The constraint stays as the real guarantee against a race.
+        """
+        name = (request.data.get("name") or "").strip()
+        if name and Project.objects.filter(tenant_id=self.tenant_id, name__iexact=name).exists():
+            return Response(
+                {"detail": f'A project named "{name}" already exists in this workspace.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         project = serializer.save(tenant_id=self.tenant_id)
         # Any authenticated tenant member may create a project (see get_permissions above),
