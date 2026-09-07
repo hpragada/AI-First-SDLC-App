@@ -70,7 +70,14 @@ function GenerateCell({ tc }: { tc: TestCase }) {
     return <Link to={`/work-items/${tc.id}`} className="btn btn--ghost btn--sm">View</Link>;
   }
   return (
-    <span style={{ display: "inline-flex", flexDirection: "column", gap: "4px" }}>
+    <span
+      style={{
+        display: "inline-flex", flexDirection: "column", alignItems: "flex-end",
+        // Capped and right-aligned so the message sits UNDER its own button rather than
+        // sprawling across the cell to the table edge — found in the visual pass.
+        gap: "4px", maxWidth: "210px", textAlign: "right",
+      }}
+    >
       <Button
         variant="ghost"
         size="sm"
