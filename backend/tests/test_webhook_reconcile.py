@@ -121,7 +121,10 @@ def test_pull_request_merge_does_not_bypass_pending_merge_gate(world):
     the root cause of the state=done-while-awaiting_gate mislabel."""
     from apps.gates.models import Approval
 
-    Approval.objects.create(tenant=world.t, run=world.run, gate_type="merge_gate",
+    # `work_item` is not nullable — without it this setup raised IntegrityError and the test
+    # had been failing (silently, as a known-red) rather than guarding anything.
+    Approval.objects.create(tenant=world.t, run=world.run, work_item=world.wi,
+                            gate_type="merge_gate", required_role="tech_lead",
                             decision=Approval.Decision.PENDING)
     payload = {"action": "closed",
                "pull_request": {"number": 7, "merged": True, "merged_at": "2026-06-24T00:00:00Z"},
@@ -237,3 +240,104 @@ def test_take_over_endpoint(world):
     assert resp.status_code == 200 and resp.json()["takeover"] is True
     world.wi.refresh_from_db()
     assert world.wi.takeover_flag is True
+
+
+# ── S.No 88: a pull request merged outside the platform ─────────────
+def _merge_gate(world, **over):
+    from apps.gates.models import Approval
+
+    return Approval.objects.create(
+        tenant=world.t, run=world.run, work_item=world.wi, gate_type="merge_gate",
+        required_role="tech_lead", decision=Approval.Decision.PENDING, **over)
+
+
+def _merged_payload(**over):
+    pr = {"number": 7, "merged": True, "merged_at": "2026-09-07T09:41:00Z",
+          "merged_by": {"login": "alex-w"}}
+    pr.update(over.pop("pull_request", {}))
+    return {"action": "closed", "pull_request": pr,
+            "repository": {"full_name": "acme/api"},
+            "sender": {"login": "someone-else"}, **over}
+
+
+def test_a_gated_merge_is_noted_with_who_merged_it(world):
+    """Bugs S.No 88: the guard that stops a webhook bypassing the gate is correct and stays —
+    but saying NOTHING left the run waiting for ever for an approval of a merge that had
+    already happened, with nothing on the reviewer's screen to explain it."""
+    approval = _merge_gate(world)
+    reconcile_github(tenant_id=str(world.t.id), event="pull_request", delivery_id="prE1",
+                     payload=_merged_payload())
+
+    approval.refresh_from_db()
+    assert approval.external_merge["merged_by"] == "alex-w"      # not the `sender` fallback
+    assert approval.external_merge["pr_ref"] == "acme/api#7"
+    assert approval.external_merge["merged_at"] == "2026-09-07T09:41:00Z"
+    assert approval.external_merge["detected_by"] == "webhook"
+    assert Event.objects.filter(tenant=world.t,
+                                action="webhook.pr_merged_while_gated").exists()
+
+
+def test_noting_the_merge_still_does_not_transition_the_work_item(world):
+    """The note is a NOTE. Nothing in the platform decides a gate — a human still does, through
+    the same endpoint, with the same role check. This is the property that keeps a globally
+    shared webhook secret from being a way to complete somebody else's run."""
+    approval = _merge_gate(world)
+    reconcile_github(tenant_id=str(world.t.id), event="pull_request", delivery_id="prE2",
+                     payload=_merged_payload())
+
+    world.wi.refresh_from_db()
+    approval.refresh_from_db()
+    assert world.wi.state == WorkItem.State.IN_REVIEW            # gate NOT bypassed
+    assert approval.decision == "pending"                        # gate NOT decided
+    assert not Event.objects.filter(tenant=world.t, action="workitem.transitioned").exists()
+
+
+def test_the_sender_is_used_only_when_nobody_pressed_the_button(world):
+    """An auto-merge has no `merged_by`. Falling back to `sender` keeps the record honest
+    rather than inventing a single "user" that means different things."""
+    approval = _merge_gate(world)
+    payload = _merged_payload()
+    payload["pull_request"].pop("merged_by")
+    reconcile_github(tenant_id=str(world.t.id), event="pull_request", delivery_id="prE3",
+                     payload=payload)
+
+    approval.refresh_from_db()
+    assert approval.external_merge["merged_by"] == "someone-else"
+
+
+def test_a_redelivery_does_not_overwrite_or_double_log(world):
+    """The note is idempotent, so the webhook and the sweep cannot fight over it."""
+    approval = _merge_gate(world, external_merge={"merged_by": "first", "merged_at": "",
+                                                  "pr_ref": "acme/api#7",
+                                                  "detected_by": "reconciler"})
+    reconcile_github(tenant_id=str(world.t.id), event="pull_request", delivery_id="prE4",
+                     payload=_merged_payload())
+
+    approval.refresh_from_db()
+    assert approval.external_merge["merged_by"] == "first"       # untouched
+    assert Event.objects.filter(tenant=world.t,
+                                action="webhook.pr_merged_while_gated").count() == 0
+
+
+def test_a_merge_with_no_gate_pending_is_unchanged(world):
+    """No gate to annotate → the existing path still transitions the work item as before."""
+    reconcile_github(tenant_id=str(world.t.id), event="pull_request", delivery_id="prE5",
+                     payload=_merged_payload())
+    world.wi.refresh_from_db()
+    assert world.wi.state == WorkItem.State.DONE
+
+
+def test_annotation_failure_never_breaks_the_pointer_reconcile(world, monkeypatch):
+    """The dedup row for a delivery is written BEFORE the handler runs, so a failed webhook is
+    never redelivered. If annotating throws, the artifact publish that already succeeded must
+    not be lost with it."""
+    _merge_gate(world)
+    import apps.gates.external_merge as em
+
+    monkeypatch.setattr(em, "note_external_merge",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    out = reconcile_github(tenant_id=str(world.t.id), event="pull_request", delivery_id="prE6",
+                           payload=_merged_payload())
+
+    assert out["merged"] is True
+    assert Artifact.objects.get(id=world.art_id).status == Artifact.Status.PUBLISHED

@@ -2591,6 +2591,18 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             value = self.request.query_params.get(field)
             if value:
                 qs = qs.filter(**{lookup: value})
+        # Bugs S.No 88 — before answering, notice any merge gate whose pull request was already
+        # merged on GitHub. The webhook is the fast path but is not a guarantee (a delivery can
+        # be missed, and a failed one is never redelivered), and no webhook fires retroactively
+        # for a merge that happened before any of this existed.
+        #
+        # Deliberately hung off THIS read rather than registered in the run-list reconciler:
+        # every candidate costs a network call to the code host, so the cost belongs on the
+        # screen that wants the answer. Age-gated to an hour and capped at three per pass, so a
+        # reviewer who is simply still thinking about a gate is never probed. Never raises.
+        from apps.gates.reconcile import sweep
+
+        sweep(self.tenant_id)
         return qs.select_related("approver", "work_item", "run", "run__agent_spec")
 
     @action(detail=True, methods=["get"])

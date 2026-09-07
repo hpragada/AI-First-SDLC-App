@@ -554,13 +554,18 @@ class ApprovalSerializer(serializers.ModelSerializer):
     # the work-item LIST — which deliberately hides carriers, and so rendered an onboarding gate
     # as a bare id fragment (or, before the project filter moved server-side, dropped it entirely).
     work_item_title = serializers.SerializerMethodField()
+    # Set when this gate's pull request was already merged outside the platform - somebody
+    # merged it on GitHub (Bugs S.No 88). {merged_by, merged_at, pr_ref, detected_by}, or None.
+    # A NOTE, not a decision: the reviewer still approves, they just finally know what they are
+    # approving. Only meaningful while the gate is pending, like merge_conflict above.
+    external_merge = serializers.SerializerMethodField()
 
     class Meta:
         model = Approval
         fields = [
             "id", "run", "gate_type", "phase", "phase_label", "work_item", "work_item_title",
             "required_role", "approver", "approver_name", "decision", "comment", "decided_at",
-            "created_at", "merge_conflict",
+            "created_at", "merge_conflict", "external_merge",
         ]
         read_only_fields = fields
 
@@ -579,6 +584,11 @@ class ApprovalSerializer(serializers.ModelSerializer):
 
     def get_work_item_title(self, obj) -> str | None:
         return getattr(obj.work_item, "title", None) or None
+
+    def get_external_merge(self, obj) -> dict | None:
+        if obj.decision != Approval.Decision.PENDING:
+            return None
+        return obj.external_merge or None
 
     def get_merge_conflict(self, obj) -> str | None:
         # Only relevant while the gate is still pending (a re-opened, awaiting-retry merge gate).

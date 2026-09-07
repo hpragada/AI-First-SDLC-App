@@ -148,6 +148,16 @@ export interface Approval {
   /** Set when a merge gate was re-opened because the merge hit a conflict (ENH-2 / S.No 141):
    *  the human-readable conflict reason, so the gate panel can explain the retry. */
   merge_conflict?: string | null;
+  /** Set when this gate's pull request was already merged outside the platform — somebody
+   *  merged it on GitHub (S.No 88). The reviewer was being asked to approve a merge that had
+   *  already happened, with nothing on screen saying so. A note, never a decision: a person
+   *  still approves, through the same endpoint. */
+  external_merge?: {
+    merged_by: string;
+    merged_at: string;
+    pr_ref: string;
+    detected_by: string;
+  } | null;
 }
 
 export interface TriggerResult {

@@ -76,6 +76,26 @@ function GatesLive() {
   // gate, which is the bug this fix exists to remove, re-introduced one level down.
   const staleLink = pinnedFromUrl && Boolean(selectedId) && !selected && !approvals.isLoading;
 
+  // Bugs S.No 88. A developer merging on GitHub is a legitimate outcome — the platform observes
+  // the code host, it does not police it. But the run then waited for ever for an approval of
+  // something that had already happened, and this screen said nothing about it. Say it, in
+  // BOTH panels: the reviewer who can decide, and everyone else who can only look.
+  const externalMerge = selected?.external_merge;
+  const externalMergeNotice = externalMerge ? (
+    <div style={{ margin: "var(--space-3) 0 0" }}>
+      <Banner variant="info" title="Already merged on GitHub">
+        This pull request was merged outside the platform
+        {externalMerge.merged_by ? <> by <strong>{externalMerge.merged_by}</strong></> : null}
+        {externalMerge.merged_at
+          ? ` on ${new Date(externalMerge.merged_at).toLocaleString()}`
+          : null}
+        . Nothing further will be pushed
+        {externalMerge.pr_ref ? ` for ${externalMerge.pr_ref}` : null}
+        {" "}— acknowledging closes out the run and publishes its artifacts.
+      </Banner>
+    </div>
+  ) : null;
+
   // Some gates (e.g. the UX Design a11y gate) carry a required WCAG checklist that must be
   // satisfied before APPROVE — surface it here and send the reviewer's ticks with the decision,
   // otherwise the backend rejects the approval with "required gate condition(s) unmet".
@@ -257,6 +277,7 @@ function GatesLive() {
                   <Link to={artifactsForRun(selected.run)} className="t-sm">
                     Preview artifact under review ↗
                   </Link>
+                  {externalMergeNotice}
                   {selected.merge_conflict && (
                     <div style={{ margin: "var(--space-3) 0 0" }}>
                       <Banner variant="warning" title="Merge paused — conflict needs resolving">
@@ -341,6 +362,11 @@ function GatesLive() {
                         <Spinner />
                       ) : requiredUnmet ? (
                         `Approve (${criteriaList.length - metCount} remaining)`
+                      ) : selected.external_merge ? (
+                        // Same button, same endpoint, same role check, same ledger event and
+                        // the same signal to the workflow — only the word changes, because
+                        // "Approve" is the wrong word for something already done.
+                        "Acknowledge merge & complete"
                       ) : (
                         "Approve"
                       )}
@@ -397,6 +423,10 @@ function GatesLive() {
                     You don't hold the <strong>{selected.required_role}</strong> role on this
                     project, so this is read-only.
                   </Banner>
+                  {/* Whoever is LOOKING at this gate needs to know the merge already happened,
+                      not only whoever can decide it. Leaving it out here would keep the
+                      original bug alive for everyone but the tech lead. */}
+                  {externalMergeNotice}
                   <Link to={artifactsForRun(selected.run)} className="t-sm">
                     Preview artifact under review ↗
                   </Link>
