@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type {
   ButtonHTMLAttributes,
   CSSProperties,
@@ -6,6 +6,7 @@ import type {
   InputHTMLAttributes,
   LabelHTMLAttributes,
   ReactNode,
+  RefObject,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
@@ -21,6 +22,110 @@ function useEscapeToClose(onClose?: () => void) {
     window.addEventListener("keydown", handle);
     return () => window.removeEventListener("keydown", handle);
   }, [onClose]);
+}
+
+/** Dismiss a popover on an outside click or Escape, and move focus into it when it opens.
+ *
+ * Extracted from the topbar account menu when the work-items board grew a row menu of its own
+ * (Bugs S.No 140). The markup of the two differs; this — the part that is easy to get subtly
+ * wrong, and the part a keyboard user notices when it is — does not, so it is written once.
+ * `firstItem` is focused on open so a menu opened from the keyboard does not strand you at the
+ * trigger with no way in.
+ */
+export function useDismissable(
+  open: boolean,
+  onClose: () => void,
+  root: RefObject<HTMLElement | null>,
+  firstItem?: RefObject<HTMLElement | null>,
+) {
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!root.current?.contains(event.target as Node)) onClose();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose, root]);
+
+  useEffect(() => {
+    if (open) firstItem?.current?.focus();
+  }, [open, firstItem]);
+}
+
+export type RowMenuItem =
+  | { label: ReactNode; href: string; danger?: boolean }
+  | { label: ReactNode; onSelect: () => void; danger?: boolean };
+
+/** The "⋯" menu at the end of a table row.
+ *
+ * A menu rather than the buttons laid out in the cell: a row is already dense, and an action
+ * that removes work from a board should take a deliberate second click rather than sit under
+ * the cursor of someone scanning a list. `label` names WHICH row it belongs to — "Actions"
+ * repeated forty times tells a screen-reader user nothing about where they are.
+ */
+export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const first = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismissable(open, close, root, first);
+
+  if (items.length === 0) return null;
+  return (
+    <div className="row-menu" ref={root}>
+      <button
+        type="button"
+        className="row-menu__trigger"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((was) => !was)}
+      >
+        {/* Three full stops, not the single "…" character: this is a control, and the ellipsis
+            glyph is read aloud as "dot dot dot" by some screen readers mid-sentence. The
+            aria-label above is what is actually announced; this is decorative. */}
+        <span aria-hidden="true">...</span>
+      </button>
+      {open && (
+        <div className="row-menu__pop" role="menu" aria-label={label}>
+          {items.map((item, index) => {
+            const ref = index === 0 ? first : undefined;
+            const className = cx("row-menu__item", item.danger && "row-menu__item--danger");
+            return "href" in item ? (
+              <RouterLink
+                key={index}
+                ref={ref as RefObject<HTMLAnchorElement>}
+                className={className}
+                role="menuitem"
+                to={item.href}
+                onClick={close}
+              >
+                {item.label}
+              </RouterLink>
+            ) : (
+              <button
+                key={index}
+                ref={ref as RefObject<HTMLButtonElement>}
+                type="button"
+                className={className}
+                role="menuitem"
+                onClick={() => { close(); item.onSelect(); }}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 type Variant =

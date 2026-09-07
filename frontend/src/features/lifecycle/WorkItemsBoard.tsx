@@ -13,11 +13,14 @@ import {
   Input,
   Needs,
   Panel,
+  RowMenu,
   Select,
   Table,
 } from "../../components/ui";
 import type { BadgeVariant } from "../../components/ui";
+import { isTerminalState } from "../../types";
 import type { WorkItemCard, WorkItemState } from "../../types";
+import { CancelWorkItem } from "./CancelWorkItem";
 import { roleLabel } from "../identity/roles";
 import { useCreateWorkItem, usePhaseCatalog, useWorkItems } from "./hooks";
 import { workItemLink } from "../../links";
@@ -192,6 +195,7 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
   const [phaseFilter, setPhaseFilter] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [cancelling, setCancelling] = useState<WorkItemCard | null>(null);
   const catalog = usePhaseCatalog();
 
   const items = useWorkItems(projectId, level === "all" ? {} : { type: level });
@@ -398,7 +402,10 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
       ) : view === "list" ? (
         <Panel flush>
           <Table
-            headers={["ID", "Title", "Level", "Phase", "Status", "Artifacts", "Owner"]}
+            headers={["ID", "Title", "Level", "Phase", "Status", "Artifacts", "Owner",
+                      // Named for a screen reader, blank to the eye — an unlabelled column is
+                      // a column a non-sighted user cannot make sense of.
+                      <span className="u-visually-hidden" key="a">Actions</span>]}
             rows={list.map((item) => [
               // N2: the board's own ID column was inert text — the one thing on the row that
               // IS the work item was the one thing you could not click.
@@ -416,6 +423,25 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
               statusBadge(item),
               item.artifact_count ?? 0,
               item.owner ?? "—",
+              // Bugs S.No 140. The row action lives in the LIST, not on the board card: a card
+              // is one <Link> wrapping everything, and a button inside an anchor is invalid
+              // markup that breaks keyboard and screen-reader navigation. The list is also
+              // where clearing several stale items actually happens.
+              //
+              // "Cancel…" is offered only while there is something left to cancel. It is shown
+              // to everyone: the server allows tech leads and admins, and refuses anyone else
+              // with a sentence the dialog puts on screen — the same bar, and the same way of
+              // saying so, as the task and defect pages.
+              <RowMenu
+                key="menu"
+                label={`Actions for ${item.key || item.id}`}
+                items={[
+                  { label: "Open", href: workItemLink(item.id) },
+                  ...(isTerminalState(item.state)
+                    ? []
+                    : [{ label: "Cancel…", onSelect: () => setCancelling(item), danger: true }]),
+                ]}
+              />,
             ])}
           />
         </Panel>
@@ -443,6 +469,10 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
 
       {createOpen && projectId && (
         <CreateWorkItemDrawer projectId={projectId} onClose={() => setCreateOpen(false)} />
+      )}
+
+      {cancelling && (
+        <CancelWorkItem workItem={cancelling} onClose={() => setCancelling(null)} />
       )}
     </div>
   );

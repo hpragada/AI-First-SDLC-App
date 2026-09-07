@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
@@ -6,7 +6,7 @@ import { useA11yReviewQueue } from "../features/a11y/hooks";
 import { useRunners } from "../features/identity/hooks";
 import { useDashboard } from "../features/observability/hooks";
 import type { ProjectTrack } from "../types";
-import { cx, StatusDot } from "./ui";
+import { cx, StatusDot, useDismissable } from "./ui";
 
 type NavId =
   | "dashboard"
@@ -161,27 +161,9 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const itemRef = useRef<HTMLButtonElement>(null);
 
-  // Close on outside click + Escape while open.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  // Move focus to the first item when the menu opens (keyboard users).
-  useEffect(() => {
-    if (open) itemRef.current?.focus();
-  }, [open]);
+  // Close on outside click + Escape, and focus the first item on open. Shared with the work
+  // items board's row menu (S.No 140) — the markup differs, this part must not.
+  useDismissable(open, useCallback(() => setOpen(false), []), rootRef, itemRef);
 
   // Any navigation dismisses the menu.
   useEffect(() => {

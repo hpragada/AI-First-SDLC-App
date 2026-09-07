@@ -139,6 +139,51 @@ describe("the work items board", () => {
   });
 });
 
+// ── the row action in the list view (9G-A) ──────────────────────────
+describe("the list view's row menu", () => {
+  it("offers Cancel on a live row, and opens the dialog", async () => {
+    localStorage.setItem("selectedProjectId", "p1");
+    stub({ "/work-items": [card()] });
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard forceView="list" />);
+
+    // Named by ROW, not "Actions" forty times over — a screen-reader user has to be able to
+    // tell which row they are about to act on.
+    await user.click(await screen.findByRole("button", { name: "Actions for WI-1" }));
+    await user.click(screen.getByRole("menuitem", { name: "Cancel…" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Cancel Export to CSV\?/)).toBeDefined());
+  });
+
+  it("offers no Cancel on a row that is already finished or abandoned", async () => {
+    // Nothing left to cancel — and the menu still exists, because Open always makes sense.
+    localStorage.setItem("selectedProjectId", "p1");
+    stub({ "/work-items": [card({ state: "done" })] });
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard forceView="list" />);
+
+    await user.click(await screen.findByRole("button", { name: "Actions for WI-1" }));
+
+    expect(screen.getByRole("menuitem", { name: "Open" })).toBeDefined();
+    expect(screen.queryByRole("menuitem", { name: "Cancel…" })).toBeNull();
+  });
+
+  it("closes on Escape", async () => {
+    localStorage.setItem("selectedProjectId", "p1");
+    stub({ "/work-items": [card()] });
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard forceView="list" />);
+
+    await user.click(await screen.findByRole("button", { name: "Actions for WI-1" }));
+    expect(screen.getByRole("menu")).toBeDefined();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+});
+
 // ── 3. the detail screens stop offering work ────────────────────────
 describe("a cancelled work item", () => {
   it("offers no Trigger Fix on a defect, and does not call it Open", async () => {
