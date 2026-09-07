@@ -247,34 +247,39 @@ def _md_cell(value) -> str:
     return str(value if value not in (None, "") else "—").replace("|", "\\|").replace("\n", " ")
 
 
-def _render_sbom(body: str) -> str:
+def _render_sbom(body: str) -> tuple[str, dict]:
     """A CycloneDX SBOM as something a security engineer can read (Bugs S.No 187).
 
-    Returns "" when the body is not a CycloneDX document, so the caller leaves it alone — a
-    malformed or unexpected file degrades to plain text rather than raising.
+    Returns `(markdown, summary)`. The markdown is the tables; the summary is the handful of
+    headline figures, returned STRUCTURED rather than as a line of prose so the screen can lay
+    them out as the labelled figures the approved design calls for. Markdown cannot express
+    that layout, and pushing raw HTML through the document renderer would be a worse trade.
+
+    Returns `("", {})` when the body is not a CycloneDX document, so the caller leaves it
+    alone — a malformed or unexpected file degrades to plain text rather than raising.
     """
     try:
         doc = json.loads(body)
     except (ValueError, TypeError):
-        return ""
+        return "", {}
     if not isinstance(doc, dict) or doc.get("bomFormat") != "CycloneDX":
-        return ""
+        return "", {}
 
     metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
     components = [c for c in (doc.get("components") or []) if isinstance(c, dict)]
     licences = {lic for c in components if (lic := _sbom_licences(c))}
 
-    lines = ["# Software Bill of Materials", ""]
-    facts = [f"**Components:** {len(components)}"]
-    if licences:
-        facts.append(f"**Distinct licences:** {len(licences)}")
-    if tool := _sbom_tool(metadata):
-        facts.append(f"**Scanned by:** {tool}")
-    if timestamp := metadata.get("timestamp"):
-        facts.append(f"**Taken:** {timestamp}")
-    if spec := doc.get("specVersion"):
-        facts.append(f"**CycloneDX:** {spec}")
-    lines += [" · ".join(facts), ""]
+    # The headline figures, structured. `taken` stays an ISO timestamp on purpose: the screen
+    # formats it in the reader's own locale, which the server has no way to know.
+    summary = {
+        "components": len(components),
+        "licences": len(licences),
+        "tool": _sbom_tool(metadata),
+        "taken": metadata.get("timestamp") or "",
+        "spec_version": doc.get("specVersion") or "",
+    }
+    # The heading and the facts line move to the screen; this is the tables only.
+    lines: list[str] = []
 
     if components:
         shown = components[:_SBOM_TABLE_LIMIT]
@@ -311,7 +316,7 @@ def _render_sbom(body: str) -> str:
                 _md_cell((v.get("description") or "")[:160]),
             ))
         lines.append("")
-    return "\n".join(lines).strip() + "\n"
+    return "\n".join(lines).strip() + "\n", summary
 
 
 #: artifact.type -> renderer. Keyed on the TYPE, not on the content type, so a JSON body that is
@@ -319,15 +324,19 @@ def _render_sbom(body: str) -> str:
 _PRESENTERS = {"sbom": _render_sbom}
 
 
-def _present(artifact, body: str, content_type: str) -> tuple[str, str, bool]:
-    """Render a machine-readable body for a human. Returns (body, content_type, rendered)."""
+def _present(artifact, body: str, content_type: str) -> tuple[str, str, bool, dict]:
+    """Render a machine-readable body for a human.
+
+    Returns (body, content_type, rendered, summary) — `summary` is the headline figures the
+    screen shows as labelled numbers above the tables, empty when nothing was rendered.
+    """
     presenter = _PRESENTERS.get(artifact.type)
     if presenter is None or content_type != "application/json":
-        return body, content_type, False
-    rendered = presenter(body)
+        return body, content_type, False, {}
+    rendered, summary = presenter(body)
     if not rendered:
-        return body, content_type, False
-    return rendered, _INTERNAL_CONTENT_TYPE, True
+        return body, content_type, False, {}
+    return rendered, _INTERNAL_CONTENT_TYPE, True, summary
 
 
 def _read_internal(artifact, object_store) -> tuple[str, str]:
@@ -521,6 +530,7 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
 
         sor_link = None
         rendered = False
+        render_summary: dict = {}
         # Multi-state artifacts (per-screen wireframes) carry one HTML document per UI state.
         states = render_states(artifact, object_store) if artifact.sor == "internal" else []
         if artifact.sor == "internal":
@@ -536,7 +546,8 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
             if not raw:
                 # Preview ONLY — see the note above `_render_sbom`. Publish and the agent-facing
                 # read both go through their own functions and still get the raw body.
-                body, content_type, rendered = _present(artifact, body, content_type)
+                body, content_type, rendered, render_summary = _present(
+                    artifact, body, content_type)
         elif artifact.sor == "confluence":
             body, content_type, sor_link = _read_confluence(tenant_id, artifact, get_capability)
         elif artifact.sor == "jira":
@@ -566,6 +577,9 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
             # SBOM, say). The screen uses it to offer "View raw" — without which the raw file
             # is kept but no person can ever see it (Bugs S.No 187).
             "rendered": rendered,
+            # The headline figures behind a rendered body, so the screen can show them as
+            # labelled numbers rather than a run-on line of prose. Empty for ordinary bodies.
+            "render_summary": render_summary,
             "states": states,
             # WHO produced this row. `phase_report` = the platform's own copy of the engine's
             # closing message, not something the agent chose to register (see

@@ -21,10 +21,12 @@ afterEach(() => {
 const RAW = '{"bomFormat":"CycloneDX","components":[{"name":"django","version":"5.1.4"}]}';
 
 const RENDERED: ArtifactPreview = {
-  body: "# Software Bill of Materials\n\n**Components:** 1\n",
+  body: "| Package | Version |\n| --- | --- |\n| django | 5.1.4 |\n",
   content_type: "text/markdown", status: "draft", version: 1,
   title: "SBOM", versions: [], artifact_type: "sbom", phase: "security",
   source: "", rendered: true,
+  render_summary: { components: 1, licences: 1, tool: "syft 1.9.0",
+                    taken: "2026-09-04T11:22:08Z", spec_version: "1.5" },
 };
 
 const RAW_PAYLOAD: ArtifactPreview = {
@@ -56,7 +58,12 @@ function renderPreview(rendered: ArtifactPreview, raw: ArtifactPreview = RAW_PAY
 describe("S-29 preview · machine-readable artifacts", () => {
   it("shows the readable report first, with a way to reach the stored file", async () => {
     renderPreview(RENDERED);
-    await waitFor(() => expect(screen.getByText(/Software Bill of Materials/)).toBeDefined());
+    await waitFor(() => expect(screen.getByText("Components")).toBeDefined());
+    // The headline figures render as labelled numbers, not a run-on line of prose.
+    expect(screen.getByText("Scanned by")).toBeDefined();
+    expect(screen.getByText("syft 1.9.0")).toBeDefined();
+    // ...and the timestamp is formatted for a person, never shown as a raw ISO string.
+    expect(document.body.textContent ?? "").not.toContain("2026-09-04T11:22:08Z");
     expect(screen.getByRole("button", { name: "View raw" })).toBeDefined();
     // The raw file is NOT on screen until asked for.
     expect(screen.queryByText(/bomFormat/)).toBeNull();
@@ -73,13 +80,13 @@ describe("S-29 preview · machine-readable artifacts", () => {
 
     // The control must not vanish once used — going back is the whole point of a toggle.
     await user.click(screen.getByRole("button", { name: "View report" }));
-    await waitFor(() => expect(screen.getByText(/Software Bill of Materials/)).toBeDefined());
+    await waitFor(() => expect(screen.getByText("Components")).toBeDefined());
     expect(screen.queryByText(/bomFormat/)).toBeNull();
   });
 
   it("offers nothing extra on an ordinary document", async () => {
     renderPreview({ ...RENDERED, body: "# PRD\n\nSome prose.", artifact_type: "prd",
-                    title: "PRD", rendered: false });
+                    title: "PRD", rendered: false, render_summary: null });
     await waitFor(() => expect(screen.getByText(/Some prose/)).toBeDefined());
     expect(screen.queryByRole("button", { name: "View raw" })).toBeNull();
     // and the usual read-through banner is untouched

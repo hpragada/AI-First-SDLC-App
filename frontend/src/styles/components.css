@@ -1025,3 +1025,24 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
    cell, and the floor keeps every option readable when the window is narrow. */
 .conf-level { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
 .conf-level__select { min-width: 168px; }
+
+/* Artifact preview — the headline figures above a rendered machine-readable document
+   (Bugs S.No 187). Labelled numbers rather than a run-on line of prose, which is what the
+   approved design called for and what markdown cannot express. */
+.artifact-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  padding: var(--space-4) 0 var(--space-5);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-5);
+}
+.artifact-facts__item { display: flex; flex-direction: column; gap: 2px; }
+.artifact-facts__label {
+  font-size: var(--fs-xs); line-height: var(--lh-xs); font-weight: 600;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--text-faint);
+}
+.artifact-facts__value {
+  font-size: var(--fs-h2); line-height: var(--lh-h2); font-weight: 600;
+  color: var(--text-strong); font-variant-numeric: tabular-nums;
+}

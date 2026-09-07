@@ -49,6 +49,16 @@ function WireframeStates({ states }: { states: ArtifactState[] }) {
   );
 }
 
+/** An ISO timestamp as a person reads it — "4 Sep 2026, 11:22". Falls back to the raw string
+ *  rather than showing "Invalid Date" if the server ever sends something unexpected. */
+function formatTaken(iso: string): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return iso;
+  return when.toLocaleString(undefined, {
+    day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+}
+
 // S-29 view states: markdown · diagram · external · body-unavailable.
 export type ArtifactPreviewView = "markdown" | "diagram" | "external" | "unavailable";
 
@@ -96,6 +106,32 @@ function ArtifactPreviewLive() {
 
   const data = preview.data;
   const states = data.states ?? [];
+
+  // The headline figures behind a rendered body, as the labelled numbers the approved design
+  // calls for. They come from the server structured rather than as a line of prose, because
+  // markdown cannot express this layout — see `_render_sbom` in integrations/preview.py.
+  const s = data.render_summary;
+  const summaryFacts: { label: string; value: string }[] = s
+    ? [
+        { label: "Components", value: s.components != null ? String(s.components) : "" },
+        { label: "Licences", value: s.licences ? String(s.licences) : "" },
+        { label: "Scanned by", value: s.tool ?? "" },
+        // Formatted here, not on the server: only the browser knows the reader's locale.
+        { label: "Taken", value: s.taken ? formatTaken(s.taken) : "" },
+        { label: "CycloneDX", value: s.spec_version ?? "" },
+      ].filter((f) => f.value)
+    : [];
+  const renderSummary =
+    summaryFacts.length > 0 ? (
+      <div className="artifact-facts">
+        {summaryFacts.map((f) => (
+          <div key={f.label} className="artifact-facts__item">
+            <span className="artifact-facts__label">{f.label}</span>
+            <span className="artifact-facts__value">{f.value}</span>
+          </div>
+        ))}
+      </div>
+    ) : null;
   const hasBody = Boolean(data.body) || states.length > 0;
 
   return (
@@ -149,6 +185,7 @@ function ArtifactPreviewLive() {
             ) : (
               <Banner variant="info">Read-through from the system-of-record. This preview is never an editor.</Banner>
             )}
+            {renderSummary}
             {states.length > 0 ? (
               <WireframeStates states={states} />
             ) : data.content_type === "text/html" ? (

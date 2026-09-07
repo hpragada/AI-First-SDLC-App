@@ -829,6 +829,16 @@ export interface ArtifactPreview {
   // uses it to offer "View raw" — the raw file is kept, and without this control no person
   // could ever see it (Bugs S.No 187).
   rendered?: boolean;
+  /** The headline figures behind a rendered body (an SBOM's counts and provenance), so the
+   *  screen shows them as labelled numbers rather than a run-on line of prose. `taken` is an
+   *  ISO timestamp the screen formats in the reader's own locale. */
+  render_summary?: {
+    components?: number;
+    licences?: number;
+    tool?: string;
+    taken?: string;
+    spec_version?: string;
+  } | null;
 }
 
 // `external_ref.source` on an artifact the platform filed from the engine's final message.

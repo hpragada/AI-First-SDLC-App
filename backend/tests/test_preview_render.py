@@ -54,11 +54,13 @@ _SBOM = {
 def test_sbom_renders_as_a_summary_and_a_table():
     """Bugs S.No 187: the security phase's CycloneDX SBOM previewed as one unbroken run of
     characters, because every internal body was announced as markdown whatever was in it."""
-    out = _render_sbom(json.dumps(_SBOM))
-    assert "# Software Bill of Materials" in out
-    assert "**Components:** 3" in out
-    assert "**Scanned by:** syft 1.9.0" in out
-    assert "**Distinct licences:** 3" in out
+    out, summary = _render_sbom(json.dumps(_SBOM))
+    # The headline figures come back STRUCTURED, so the screen can lay them out as labelled
+    # numbers. They used to be a run-on line of bold prose, which is not what was approved.
+    assert summary == {"components": 3, "licences": 3, "tool": "syft 1.9.0",
+                       "taken": "2026-09-04T11:22:08Z", "spec_version": "1.5"}
+    # ...and the timestamp stays ISO: only the browser knows the reader's locale.
+    assert summary["taken"].endswith("Z")
     # a GFM table the preview screen already knows how to render
     assert "| Package | Version | Licence | Type |" in out
     assert "| django | 5.1.4 | BSD-3-Clause | library |" in out
@@ -73,8 +75,8 @@ def test_a_large_sbom_is_summarised_never_silently_cut_short():
     big = {**_SBOM, "components": [
         {"type": "library", "name": f"pkg-{i}", "version": "1.0.0"} for i in range(640)
     ]}
-    out = _render_sbom(json.dumps(big))
-    assert "**Components:** 640" in out
+    out, summary = _render_sbom(json.dumps(big))
+    assert summary["components"] == 640
     assert "Showing the first 200 of 640 components" in out
     assert "View raw" in out          # and it says how to see the rest
     assert out.count("| pkg-") == 200
@@ -87,7 +89,7 @@ def test_vulnerabilities_are_surfaced_when_present():
         "affects": [{"ref": "pkg:pypi/django@5.1.4"}],
         "description": "Header injection via the admin login form.",
     }]}
-    out = _render_sbom(json.dumps(doc))
+    out, _ = _render_sbom(json.dumps(doc))
     assert "## Vulnerabilities" in out
     assert "CVE-2026-1234" in out and "high" in out
     assert "pkg:pypi/django@5.1.4" in out
@@ -96,7 +98,7 @@ def test_vulnerabilities_are_surfaced_when_present():
 def test_a_pipe_in_a_value_cannot_break_the_table():
     doc = {**_SBOM, "components": [
         {"type": "library", "name": "odd|name", "version": "1.0", "licenses": []}]}
-    out = _render_sbom(json.dumps(doc))
+    out, _ = _render_sbom(json.dumps(doc))
     row = next(line for line in out.splitlines() if "odd" in line)
     escaped = BACKSLASH + "|"
     assert escaped in row                                   # the value's pipe is escaped
@@ -106,10 +108,10 @@ def test_a_pipe_in_a_value_cannot_break_the_table():
 
 def test_a_body_that_is_not_an_sbom_is_left_alone():
     """A malformed or unexpected file degrades to plain text rather than raising."""
-    assert _render_sbom("not json at all") == ""
-    assert _render_sbom('{"just": "some json"}') == ""
-    assert _render_sbom('{"bomFormat": "SPDX"}') == ""
-    assert _render_sbom("") == ""
+    assert _render_sbom("not json at all") == ("", {})
+    assert _render_sbom('{"just": "some json"}') == ("", {})
+    assert _render_sbom('{"bomFormat": "SPDX"}') == ("", {})
+    assert _render_sbom("") == ("", {})
 
 
 def test_format_detection_is_conservative():

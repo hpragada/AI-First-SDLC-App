@@ -492,9 +492,12 @@ def test_sbom_previews_as_a_readable_inventory(client, sbom, member):
     assert resp.status_code == 200
     assert resp.data["rendered"] is True
     assert resp.data["content_type"] == "text/markdown"
-    assert "# Software Bill of Materials" in resp.data["body"]
     assert "| django | 5.1.4 | BSD-3-Clause | library |" in resp.data["body"]
     assert "bomFormat" not in resp.data["body"]          # not the raw file
+    # The headline figures ride alongside, structured, for the labelled-number layout.
+    assert resp.data["render_summary"]["components"] == 1
+    assert resp.data["render_summary"]["tool"] == "syft 1.9.0"
+    assert resp.data["render_summary"]["taken"] == "2026-09-04T11:22:08Z"
 
 
 def test_raw_returns_the_stored_file_byte_for_byte(client, sbom, member):
