@@ -39,6 +39,28 @@ export interface ProjectProfile {
   version: number;
 }
 
+// Bugs S.No 140. `state` used to be a bare `string`, which is how a cancelled item ended up
+// rendering as "Draft": every place that switches on it had a fall-through default, and a bare
+// string means the compiler cannot tell you that you missed a case. Narrowing it turns each of
+// those silent wrong answers into a build error — which is the whole reason this type exists.
+export type WorkItemState =
+  | "proposed"
+  | "accepted"
+  | "in_progress"
+  | "in_review"
+  | "blocked"
+  | "done"
+  | "cancelled";
+
+/** Finished or abandoned — "there is nothing left to do here". NOT a claim that the work
+ *  happened: `done` and `cancelled` say opposite things and must never be collapsed into one
+ *  label. Mirrors `WorkItem.TERMINAL_STATES` on the backend. */
+export const TERMINAL_WORK_ITEM_STATES: readonly WorkItemState[] = ["done", "cancelled"];
+
+export function isTerminalState(state: string | undefined): boolean {
+  return TERMINAL_WORK_ITEM_STATES.includes(state as WorkItemState);
+}
+
 export interface WorkItem {
   id: string;
   // Human-readable per-project key ("WI-42") + its raw number. Shown to users instead of the UUID.
@@ -47,7 +69,7 @@ export interface WorkItem {
   project: string;
   feature_stream: string;
   type: string;
-  state: string;
+  state: WorkItemState;
   created_at: string;
   title?: string;
   description?: string;
@@ -148,6 +170,16 @@ export interface Approval {
   /** Set when a merge gate was re-opened because the merge hit a conflict (ENH-2 / S.No 141):
    *  the human-readable conflict reason, so the gate panel can explain the retry. */
   merge_conflict?: string | null;
+  /** Set when this gate's pull request was already merged outside the platform — somebody
+   *  merged it on GitHub (S.No 88). The reviewer was being asked to approve a merge that had
+   *  already happened, with nothing on screen saying so. A note, never a decision: a person
+   *  still approves, through the same endpoint. */
+  external_merge?: {
+    merged_by: string;
+    merged_at: string;
+    pr_ref: string;
+    detected_by: string;
+  } | null;
 }
 
 export interface TriggerResult {
@@ -263,11 +295,17 @@ export interface User {
   is_tenant_admin?: boolean;
 }
 
-// Backend returns { project_id, project_name, role } — no top-level id field.
+export type ProjectTrack = "greenfield" | "brownfield";
+
+// Backend returns { project_id, project_name, role, track } — no top-level id field.
+// `track` is OPTIONAL on purpose (S.No 221): during a rolling deploy the frontend can be
+// newer than the API, and a missing track must never hide a brownfield project's onboarding.
+// Everything that reads it therefore hides only on an explicit "greenfield".
 export interface Membership {
   project_id: string;
   project_name: string;
   role: string;
+  track?: ProjectTrack;
 }
 
 // isAdmin is NOT a top-level field in the backend response — it lives in user.is_tenant_admin.
@@ -815,6 +853,20 @@ export interface ArtifactPreview {
   // Provenance: "phase_report" means the PLATFORM filed this from the engine's closing
   // message — it is not a deliverable the agent chose to register. See PHASE_REPORT_ARTIFACT.
   source?: string;
+  // True when this body was RENDERED from a machine-readable file (an SBOM, say). The screen
+  // uses it to offer "View raw" — the raw file is kept, and without this control no person
+  // could ever see it (Bugs S.No 187).
+  rendered?: boolean;
+  /** The headline figures behind a rendered body (an SBOM's counts and provenance), so the
+   *  screen shows them as labelled numbers rather than a run-on line of prose. `taken` is an
+   *  ISO timestamp the screen formats in the reader's own locale. */
+  render_summary?: {
+    components?: number;
+    licences?: number;
+    tool?: string;
+    taken?: string;
+    spec_version?: string;
+  } | null;
 }
 
 // `external_ref.source` on an artifact the platform filed from the engine's final message.

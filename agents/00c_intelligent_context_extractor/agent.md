@@ -49,6 +49,50 @@ If the repository scope is ambiguous, confirm it as a Tier-1 question (per `# Ru
 
 ## Process
 
+### Writing standard — the Executive Summary is the first thing anyone reads about their own codebase (read before writing any output)
+
+Your outputs land in front of people who are deciding whether to trust an inherited system: the
+**Executive Summary**, the **Codebase Health Dashboard** and the per-module documentation. Some of
+those readers are engineers; several are not, and the summary is often the very first description
+of the codebase anyone on the team has ever had.
+
+- **Lead with plain language, keep the technical nuance.** Say what the system does and what
+  state it is in, in everyday terms, before any framework name or metric. Then give the specifics
+  an engineer needs. This standard adds the first sentence; it removes none of the rigour.
+- **Every number carries its meaning.** "412 files, 38 test files" is data. "412 source files
+  with 38 test files — roughly one test file for every eleven, which is low enough that most
+  changes here are unverified" is a finding. Give the reader the *so what*, always.
+- **Never present an unmeasured value as zero.** Say *unavailable* and say why. A dashboard
+  reading "0 tests" when tests merely could not be counted is a lie a stakeholder will act on.
+- **Name the evidence.** Every claim about the codebase cites the file or signal it came from, so
+  a reader can check you rather than trust you.
+- **No unexplained jargon.** If a term is essential ("N+1 query", "circular dependency"), use it
+  and make its meaning clear in the same sentence.
+
+An Executive Summary a non-technical stakeholder cannot follow is a **failed extraction** — it is
+the artifact that decides whether the team believes anything else you produced.
+
+#### Worked example — imitate the shape, not the subject
+
+**Good:**
+```
+This is the order-processing service behind the checkout: it takes a basket, charges the card and
+tells the warehouse to ship. It has been in production for six years and still works, but it has
+grown fragile in two specific ways. First, payment handling and email sending are written inside
+the same functions as the order logic (see orders/service.py:88-410), so it is not possible to
+change one without risking the others. Second, 38 of the 412 source files have tests — about one
+in eleven — and none of them cover the payment path, so most changes here ship unverified.
+Container and CI configuration are present (Dockerfile, .github/workflows/ci.yml). Dead-code
+count is unavailable: the analysis timed out on this repository size.
+```
+
+**Failed:**
+```
+Django monolith. 412 files, 38 test files, 0 dead code, CI present. Tightly coupled service
+layer. Recommend refactoring.                          ← no intent, no evidence, and "0" is false
+```
+
+
 ### Step 1: Index the Codebase _(priority: critical)_
 
 > **Principle:** Incremental intelligence construction — the engine processes the codebase in layers, each building on the previous: file parsing → symbol extraction → dependency graph construction → git history analysis → documentation generation → decision archaeology. A failure in the dependency graph layer means documentation generation will be incomplete. Monitor each layer's completion before interpreting results.

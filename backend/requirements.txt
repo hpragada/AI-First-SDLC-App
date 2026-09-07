@@ -56,3 +56,19 @@ Pillow==12.3.0
 
 # Secret-store encryption for IntegrationConnection (P4.7-T6, DECISION-4)
 cryptography==46.0.7
+
+# Security-phase scanners (Bugs S.No 185/186). Phase 10 is meant to RUN real tooling, and on the
+# live EPIC-004 run its own report said Bandit was "blocked by sandbox restrictions → full manual
+# pass performed" and the SBOM read "Manual CycloneDX Generation". Three things defeated it, and
+# this is the second: nothing was installed anywhere in the repo, so there was no provisioning
+# story at all. Declared here because the companion runs out of this same checkout and venv (see
+# runner/README.md "Prerequisites"), so a developer has them after an ordinary install rather
+# than the agent being asked to `pip install` mid-run.
+#   bandit        — SAST over Python source
+#   pip-audit     — dependency vulnerabilities against the PyPA advisory DB
+#   cyclonedx-bom — the software bill of materials
+# `npm audit` needs nothing: it ships with npm, and registry.npmjs.org is already reachable.
+# Reaching PyPI for these is the FIRST of the three causes, fixed by ProjectProfile.scan.
+bandit==1.9.4
+pip-audit==2.10.1
+cyclonedx-bom==7.3.1

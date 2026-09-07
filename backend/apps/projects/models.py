@@ -1,5 +1,6 @@
 """Projects: Project, ProjectProfile (1:1), Repository (0..N)."""
 from django.db import models
+from django.db.models.functions import Lower
 
 from apps.base import TenantScopedModel
 
@@ -24,6 +25,25 @@ class Project(TenantScopedModel):
         max_length=16, choices=RepoTopology.choices, default=RepoTopology.SINGLE
     )
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+
+    class Meta:
+        constraints = [
+            # Bugs S.No 211: nothing stopped two projects in one workspace sharing a name, so
+            # every screen that names a project (the switcher, the board header, an invite) named
+            # two different things identically and the wrong one could be worked on for days.
+            #
+            # Case-INSENSITIVE on purpose. "Billing Service" and "billing service" are the same
+            # project to the person reading the switcher; a case-sensitive constraint would let
+            # the confusing pair straight through while claiming to have solved it.
+            #
+            # Archived names stay reserved (no `condition=Q(status="active")`): un-archiving a
+            # project whose name has since been taken by another is a worse surprise than being
+            # asked to pick a different name. Recorded as a decision, not an oversight — making
+            # it conditional later is a one-line change to a partial index.
+            models.UniqueConstraint(
+                Lower("name"), "tenant", name="uniq_tenant_project_name",
+            )
+        ]
 
     def __str__(self) -> str:
         return self.name
@@ -61,6 +81,15 @@ class ProjectProfile(TenantScopedModel):
     # block rather than columns, like theme/export_policy/preview_start, so a later setting
     # needs no migration. Empty ⇒ apps.a11y.policy.default_policy() — never "unset behaviour".
     a11y = models.JSONField(default=dict, blank=True)
+    # Security-scan provisioning (Bugs S.No 185): which package registries this project's
+    # scanners may reach. The companion's egress allowlist is deliberately narrow — GitHub, the
+    # Anthropic API and npm — and its own comment says the other ecosystems are left out because
+    # "per-project declaration is what `extra_allowed_hosts` is for, and that path needs a
+    # server-side way to declare them, which does not exist yet". This is that way.
+    # {"registries": ["pypi.org", "files.pythonhosted.org"]}. Empty ⇒ the default allowlist,
+    # byte-for-byte as today. A block rather than columns, like theme/export_policy/a11y, so a
+    # later scan setting (tool list, severity floor) needs no second migration.
+    scan = models.JSONField(default=dict, blank=True)
     important_context = models.TextField(blank=True)
     version = models.IntegerField(default=1)
 

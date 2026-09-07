@@ -31,6 +31,8 @@ import {
 import { useRepositories } from "../setup/hooks";
 import { RepoAssignmentReview } from "./RepoAssignmentReview";
 import { gateLabel, phaseLabel } from "./phases";
+import { artifactsForRun, workItemLink } from "../../links";
+import { useParamState } from "../../urlState";
 
 // S-21 view states: can-decide (your role) · cannot-decide (permission) ·
 // decided-history · empty.
@@ -56,7 +58,10 @@ function GatesLive() {
   const patchAny = usePatchAnyWorkItem();
   const [tab, setTab] = useState<"pending" | "history">("pending");
   const [comment, setComment] = useState("");
-  const [selectedId, setSelectedId] = useState<string | undefined>();
+  // N2: `?gate=<id>` opens THAT gate. Without it, "Review the assessment" beside a named work
+  // item could open a different one — worse than a bare list, because it invites the decision
+  // to be made on the wrong gate.
+  const [selectedId, setSelectedId, pinnedFromUrl] = useParamState("gate");
   const [satisfied, setSatisfied] = useState<Record<string, boolean>>({});
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
 
@@ -65,7 +70,31 @@ function GatesLive() {
   const pending = projectApprovals.filter((a) => a.decision === "pending");
   // Decided gates are no longer derived here — GateHistory fetches them paged and filtered
   // server-side, so this screen never holds a project's entire decision history in memory.
-  const selected = pending.find((a) => a.id === selectedId) ?? pending[0];
+  const selected = pending.find((a) => a.id === selectedId) ?? (pinnedFromUrl ? undefined : pending[0]);
+  // A link that names a gate which is no longer pending must say so and select NOTHING.
+  // Falling back to `pending[0]` here would make a stale deep link silently show the wrong
+  // gate, which is the bug this fix exists to remove, re-introduced one level down.
+  const staleLink = pinnedFromUrl && Boolean(selectedId) && !selected && !approvals.isLoading;
+
+  // Bugs S.No 88. A developer merging on GitHub is a legitimate outcome — the platform observes
+  // the code host, it does not police it. But the run then waited for ever for an approval of
+  // something that had already happened, and this screen said nothing about it. Say it, in
+  // BOTH panels: the reviewer who can decide, and everyone else who can only look.
+  const externalMerge = selected?.external_merge;
+  const externalMergeNotice = externalMerge ? (
+    <div style={{ margin: "var(--space-3) 0 0" }}>
+      <Banner variant="info" title="Already merged on GitHub">
+        This pull request was merged outside the platform
+        {externalMerge.merged_by ? <> by <strong>{externalMerge.merged_by}</strong></> : null}
+        {externalMerge.merged_at
+          ? ` on ${new Date(externalMerge.merged_at).toLocaleString()}`
+          : null}
+        . Nothing further will be pushed
+        {externalMerge.pr_ref ? ` for ${externalMerge.pr_ref}` : null}
+        {" "}— acknowledging closes out the run and publishes its artifacts.
+      </Banner>
+    </div>
+  ) : null;
 
   // Some gates (e.g. the UX Design a11y gate) carry a required WCAG checklist that must be
   // satisfied before APPROVE — surface it here and send the reviewer's ticks with the decision,
@@ -170,6 +199,18 @@ function GatesLive() {
         onSelect={(id) => setTab(id as "pending" | "history")}
       />
 
+      {staleLink && (
+        <Banner variant="info" title="That gate is no longer pending">
+          <p className="t-sm">
+            Nothing is selected, so nothing here can be approved by mistake. If it was just
+            decided, it is in the decided history.
+          </p>
+          <Button variant="secondary" size="sm" onClick={() => setTab("history")}>
+            Look in the decided history
+          </Button>
+        </Banner>
+      )}
+
       {loading ? (
         <Panel>
           <Spinner /> Loading gates…
@@ -203,10 +244,17 @@ function GatesLive() {
                   <span className="chip badge--navy" key="r">
                     {roleLabel(a.required_role)}
                   </span>,
-                  <span className="table__id" key="w">
+                  // N2: an id rendered as inert text where a link belongs. The row names the
+                  // work item under review; opening it took a manual search of the board.
+                  <Link className="table__id" to={workItemLink(a.work_item)} key="w">
                     {workItemLabel(a.work_item, a.work_item_title)}
-                  </span>,
-                  <Link to="/artifacts" key="a">
+                  </Link>,
+                  // N2 / UX spec J19: "a link to preview the artifact under review". The
+                  // endpoint was built and signed off; this link never was, and sent the
+                  // reviewer to the whole registry to re-find what they were reviewing.
+                  // Scoped by RUN rather than by a single artifact id because a run can
+                  // register several — a "pick the first" rule would be a new lie.
+                  <Link to={artifactsForRun(a.run)} key="a">
                     Preview ↗
                   </Link>,
                 ],
@@ -223,9 +271,13 @@ function GatesLive() {
                     ▲ {gateLabel(selected.gate_type)} · required role: {roleLabel(selected.required_role)}
                   </span>
                   <h3 className="t-h3">{workItemLabel(selected.work_item, selected.work_item_title)}</h3>
-                  <Link to="/artifacts" className="t-sm">
+                  {/* UX spec J19: "a link to preview the artifact under review". The preview
+                      endpoint was built and signed off; this link never was, and sent the
+                      reviewer to the whole registry to re-find what they were reviewing. */}
+                  <Link to={artifactsForRun(selected.run)} className="t-sm">
                     Preview artifact under review ↗
                   </Link>
+                  {externalMergeNotice}
                   {selected.merge_conflict && (
                     <div style={{ margin: "var(--space-3) 0 0" }}>
                       <Banner variant="warning" title="Merge paused — conflict needs resolving">
@@ -310,6 +362,11 @@ function GatesLive() {
                         <Spinner />
                       ) : requiredUnmet ? (
                         `Approve (${criteriaList.length - metCount} remaining)`
+                      ) : selected.external_merge ? (
+                        // Same button, same endpoint, same role check, same ledger event and
+                        // the same signal to the workflow — only the word changes, because
+                        // "Approve" is the wrong word for something already done.
+                        "Acknowledge merge & complete"
                       ) : (
                         "Approve"
                       )}
@@ -366,7 +423,11 @@ function GatesLive() {
                     You don't hold the <strong>{selected.required_role}</strong> role on this
                     project, so this is read-only.
                   </Banner>
-                  <Link to="/artifacts" className="t-sm">
+                  {/* Whoever is LOOKING at this gate needs to know the merge already happened,
+                      not only whoever can decide it. Leaving it out here would keep the
+                      original bug alive for everyone but the tech lead. */}
+                  {externalMergeNotice}
+                  <Link to={artifactsForRun(selected.run)} className="t-sm">
                     Preview artifact under review ↗
                   </Link>
                   <div className="gate-panel__actions">
@@ -456,9 +517,9 @@ function GateHistory({
               rows={rows.map((a) => [
                 gateLabel(a.gate_type),
                 a.phase ? phaseLabel(a.phase) : "—",
-                <span className="table__id" key="w">
+                <Link className="table__id" to={workItemLink(a.work_item)} key="w">
                   {label(a.work_item, a.work_item_title)}
-                </span>,
+                </Link>,
                 <Badge variant={a.decision === "approved" ? "done" : "failed"} key="d">
                   {a.decision === "approved" ? "Approved" : "Rejected"}
                 </Badge>,
@@ -596,9 +657,9 @@ function GatesGallery({ view }: { view: GatesView }) {
                     <span className="table__id" key="w">
                       WI-492
                     </span>,
-                    <a href="/artifacts" key="a">
+                    <Link to="/artifacts" key="a">
                       Preview ↗
-                    </a>,
+                    </Link>,
                   ],
                   style: { background: "var(--brand-orange-50)" },
                 },
@@ -610,9 +671,9 @@ function GatesGallery({ view }: { view: GatesView }) {
                   <span className="table__id" key="w">
                     WI-511
                   </span>,
-                  <a href="/artifacts" key="a">
+                  <Link to="/artifacts" key="a">
                     Preview ↗
-                  </a>,
+                  </Link>,
                 ],
                 [
                   "UX Design",
@@ -622,9 +683,9 @@ function GatesGallery({ view }: { view: GatesView }) {
                   <span className="table__id" key="w">
                     WI-487
                   </span>,
-                  <a href="/work-items/WI-487" key="a">
+                  <Link to="/work-items/WI-487" key="a">
                     Preview ↗
-                  </a>,
+                  </Link>,
                 ],
               ]}
             />
@@ -639,9 +700,9 @@ function GatesGallery({ view }: { view: GatesView }) {
                   Reviewing: <strong>System Sequence Diagram v0.9</strong>. Approve to publish to Figma
                   and advance to UX Design.
                 </p>
-                <a href="/artifacts" className="t-sm">
+                <Link to="/artifacts" className="t-sm">
                   Preview artifact under review ↗
-                </a>
+                </Link>
                 <label className="field" style={{ margin: "var(--space-2) 0 0" }}>
                   <span className="field__label">Comment (optional to approve or reject)</span>
                   <Textarea placeholder="Add context for your decision — or say what you want changed…" />
@@ -670,9 +731,9 @@ function GatesGallery({ view }: { view: GatesView }) {
                   You don't hold the <strong>product_owner</strong> role on this project, so this is
                   read-only. <strong>Sarah Chen</strong> can decide.
                 </Banner>
-                <a href="/artifacts" className="t-sm">
+                <Link to="/artifacts" className="t-sm">
                   Preview artifact under review ↗
-                </a>
+                </Link>
                 <div className="gate-panel__actions">
                   <Button variant="primary" disabled aria-disabled="true">
                     Approve

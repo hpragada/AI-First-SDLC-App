@@ -60,11 +60,14 @@ from apps.tenancy.services import (
     grant_membership,
     list_tenant_users,
     project_role_coverage,
+    require_project_member,
+    require_project_write_role,
     resend_invitation,
     revoke_invitation,
     revoke_membership,
     set_tenant_admin,
 )
+from apps.workitems.cancel import transition as cancel_work_item
 from apps.workitems.models import WorkItem
 from integrations.api_contract import list_api_contracts, read_api_contract_body
 from integrations.drift import DriftError, DriftRoleError, decide_drift, drift_queue
@@ -135,6 +138,7 @@ from .serializers import (
     TriggerSerializer,
     WorkItemPatchSerializer,
     WorkItemSerializer,
+    WorkItemTransitionSerializer,
 )
 
 
@@ -233,6 +237,21 @@ class ProjectViewSet(
         # API contracts & drift (P4.7-T9): any authenticated member may read.
         if self.action in {"api_contracts", "api_contract_detail", "drift"}:
             return [IsAuthenticatedMember()]
+        # Bugs S.No 214 — the WRITE surfaces that were still falling through to the viewset
+        # default, which is `AllowAny`: no session required at all. Tenant scoping and RLS still
+        # applied, so this was never cross-tenant exposure; it was that INSIDE a tenant nothing
+        # checked who you were. `create` is the sharpest of them — `perform_create` below already
+        # says in prose "any authenticated tenant member may create a project (see get_permissions
+        # above)", and that sentence was simply not true.
+        #
+        # `profile` is gated a second time, per project and per role, inside the action: it is
+        # the briefing every agent on the project reads, so it is the most load-bearing text in
+        # the platform and a plain member should not be able to rewrite it. The rest need only a
+        # session — uploading a source document and reading the lineage graph are ordinary member
+        # work, and raising their bar would break the ordinary journey.
+        if self.action in {"create", "profile", "export_policy", "source_documents",
+                           "traceability", "onboard_atlassian"}:
+            return [IsAuthenticatedMember()]
         # Dashboard rollup (S-31): authenticated member.
         if self.action == "dashboard":
             return [IsAuthenticatedMember()]
@@ -269,6 +288,24 @@ class ProjectViewSet(
                            "a11y_audit_rejudge"}:
             return [IsAuthenticatedMember()]
         return super().get_permissions()
+
+    def create(self, request, *args, **kwargs):
+        """Refuse a duplicate project name with 409 (Bugs S.No 211).
+
+        The Create Project screen has always had the collision state built — it branches on 409
+        and says *"A project named X already exists in this workspace."* The backend simply never
+        returned one, so the state was unreachable and two projects could sit in the switcher
+        under the same name with no way to tell them apart. Checked here rather than left to the
+        database constraint so the client gets 409 with a sentence, not a 500 from an
+        IntegrityError. The constraint stays as the real guarantee against a race.
+        """
+        name = (request.data.get("name") or "").strip()
+        if name and Project.objects.filter(tenant_id=self.tenant_id, name__iexact=name).exists():
+            return Response(
+                {"detail": f'A project named "{name}" already exists in this workspace.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         project = serializer.save(tenant_id=self.tenant_id)
@@ -375,6 +412,14 @@ class ProjectViewSet(
             return Response(ProjectProfileSerializer(profile).data)
 
         # PUT — create or update (1:1), bumping version on each edit.
+        # Layer 2 of S.No 214: reading the briefing is ordinary member work; REWRITING it steers
+        # every agent that runs on this project from here on, so it takes the same role as
+        # managing repositories.
+        require_project_write_role(
+            tenant_id=self.tenant_id, project_id=str(project.id),
+            user_id=getattr(current_user(request), "id", None),
+            what="edit the project profile",
+        )
         profile = getattr(project, "profile", None)
         ser = ProjectProfileSerializer(instance=profile, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
@@ -1140,8 +1185,19 @@ class ProjectViewSet(
     # ── Brownfield onboarding (P4.7-T8, backs S-24/S-25/S-26) ────────
     @action(detail=True, methods=["get"])
     def onboarding(self, request, pk=None):
-        """GET the onboarding hub state (S-24): upload/adopt/register/index/gap in one read."""
+        """GET the onboarding hub state (S-24): upload/adopt/register/index/gap in one read.
+
+        Brownfield only. Bugs S.No 221: the nav item is hidden for a greenfield project, but
+        hiding a door is not locking it — `/onboarding` is still a URL anyone can type, and
+        this endpoint would happily assess a project that has nothing to assess. The check
+        lives here as well so the answer is the same however the screen is reached.
+        """
         project = self.get_object()
+        if project.track != Project.Track.BROWNFIELD:
+            raise PermissionDenied(
+                "Onboarding assesses an existing codebase, and this project was started "
+                "from scratch. It is available on brownfield projects only."
+            )
         return Response(onboarding_hub(tenant_id=self.tenant_id, project_id=str(project.id)))
 
     @action(detail=True, methods=["post"], url_path="code-intel")
@@ -1322,8 +1378,13 @@ class ProjectViewSet(
                 # approval sits on a carrier and is real work a person must do. Excluding it here
                 # would hide a pending gate the Gates screen still lists, which is the same
                 # disagreement pointing the other way.
+                #
+                # Cancelled items are excluded for exactly the same reason (S.No 140): the
+                # board hides them by default, so counting them here would recreate the very
+                # disagreement the paragraph above exists to prevent.
                 "work_items": WorkItem.objects.filter(tenant_id=tid, project=project)
-                .exclude(carrier_q()).count(),
+                .exclude(carrier_q())
+                .exclude(state=WorkItem.State.CANCELLED).count(),
                 "phases_in_progress": Run.objects.filter(
                     tenant_id=tid, work_item__project=project, status="running"
                 ).exclude(carrier_q("work_item__")).count(),
@@ -1335,8 +1396,11 @@ class ProjectViewSet(
                     status=Artifact.Status.PUBLISHED, created_at__gte=one_week_ago,
                 ).count(),
             },
+            # N2: the title alone gave the browser nothing to link with, so "recently published"
+            # was a list of names the user could look at and not open. Send the id too.
             "recent_publishes": [
-                {"title": a.title or f"{a.type} — {a.phase}"} for a in recent_published
+                {"artifact_id": str(a.id), "title": a.title or f"{a.type} — {a.phase}"}
+                for a in recent_published
             ],
         })
 
@@ -1683,6 +1747,22 @@ class WorkItemViewSet(
     serializer_class = WorkItemSerializer
     queryset = WorkItem.objects.all().order_by("-created_at")
 
+    def get_permissions(self):
+        # Bugs S.No 214. This viewset had NO get_permissions at all, so every one of its writes
+        # inherited the project-wide DRF default of `AllowAny` — creating and editing work items,
+        # and starting phase runs, took no login whatsoever. Reads are left as they were.
+        #
+        # `trigger` and `build` are gated a second time by role inside the action: they spend real
+        # Claude subscription time on the team's account. `take_over` seizes a work item somebody
+        # else is building.
+        # `transition` belongs on this list for the same reason as the rest: leaving it off
+        # would hand it the project-wide AllowAny default, which is S.No 214 all over again —
+        # anyone on the internet closing a team's work items.
+        if self.action in {"create", "update", "partial_update", "trigger", "build",
+                           "take_over", "transition"}:
+            return [IsAuthenticatedMember()]
+        return super().get_permissions()
+
     def get_serializer_class(self):
         if self.action in ("update", "partial_update"):
             return WorkItemPatchSerializer
@@ -1832,6 +1912,37 @@ class WorkItemViewSet(
         return Response(data)
 
     @action(detail=True, methods=["post"])
+    def transition(self, request, pk=None):
+        """Move a work item by hand — Bugs S.No 140: close what cannot be built.
+
+        The rules (which moves are legal, and that cancelling needs a reason) live in
+        `apps.workitems.cancel` so the endpoint and any future caller cannot disagree about
+        them. This does the two things that are the view's own: check who is asking, and
+        attribute the decision to them.
+
+        `tech_lead` or `admin`, per the team's decision. Cancelling is not an everyday edit:
+        it takes work off the board, and — when the item is a blocking defect — it releases
+        the gate that defect was holding shut.
+        """
+        work_item = self.get_object()
+        require_project_write_role(
+            tenant_id=self.tenant_id, project_id=str(work_item.project_id),
+            user_id=getattr(current_user(request), "id", None),
+            what="close or cancel a work item",
+        )
+        ser = WorkItemTransitionSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        out = cancel_work_item(
+            tenant_id=self.tenant_id, work_item_id=str(work_item.id),
+            to_state=ser.validated_data["to_state"],
+            reason=ser.validated_data.get("reason", ""),
+            actor_id=resolve_actor(request, ser.validated_data.get("user_id")),
+        )
+        data = WorkItemSerializer(out["work_item"]).data
+        data["gates_notified"] = out["gates_notified"]
+        return Response(data)
+
+    @action(detail=True, methods=["post"])
     def trigger(self, request, pk=None):
         """Start a phase run for this work item (replaces the legacy command). Build phases
         (07_implementation / 09b_test_automation / 11_cicd — the ones that produce a PR) route
@@ -1839,6 +1950,16 @@ class WorkItemViewSet(
         keeps a single UI trigger correct for both plan and build phases (routing lives here,
         keyed off the catalog's `rides_build`, so a new build agent needs no UI change)."""
         work_item = self.get_object()
+        # Layer 2 of S.No 214. Membership rather than a lead role, deliberately: a phase run
+        # spends engine time, but each ROLE drives its own phase — a Product Owner triggers
+        # ideation, an Engineer triggers implementation — so a tech_lead-only bar would lock most
+        # of the team out of the ordinary journey. What this closes is a signed-in user acting on
+        # a project they are not on at all.
+        require_project_member(
+            tenant_id=self.tenant_id, project_id=str(work_item.project_id),
+            user_id=getattr(current_user(request), "id", None),
+            what="start a phase run",
+        )
         ser = TriggerSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         agent_key = ser.validated_data["agent_key"]
@@ -1881,6 +2002,12 @@ class WorkItemViewSet(
         surface for `trigger_build`). The build claims onto the triggering user's enrolled
         companion; `repo`/`base` default to the work item's Repository."""
         work_item = self.get_object()
+        # Layer 2 of S.No 214 — same reasoning as `trigger` above.
+        require_project_member(
+            tenant_id=self.tenant_id, project_id=str(work_item.project_id),
+            user_id=getattr(current_user(request), "id", None),
+            what="start a build",
+        )
         ser = BuildTriggerSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         try:
@@ -2028,6 +2155,15 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = RunSerializer
     queryset = Run.objects.all().order_by("-created_at")
 
+    def get_permissions(self):
+        # Bugs S.No 214. A ReadOnlyModelViewSet with two POST actions bolted on — so despite the
+        # class name both writes ran under `AllowAny`. Each one reaches into a run somebody else
+        # started: takeover ends it terminally, resume re-dispatches work on their branch. Role is
+        # checked inside the action, where the run's project is in hand.
+        if self.action in {"take_over", "resume"}:
+            return [IsAuthenticatedMember()]
+        return super().get_permissions()
+
     def get_queryset(self):
         from integrations.onboarding import carrier_q
 
@@ -2110,6 +2246,14 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         still-waiting AgentRunWorkflow terminally (Bugs S.No 89), so it does not linger after
         the operator has decided to hand-work the item or re-run from a clean dispatch."""
         run = self.get_object()
+        # Layer 2 of S.No 214: this reaches into a run somebody else started. Membership, not a
+        # lead role — the person who hit the error is usually the one who resumes it (S.No 157),
+        # and making them wait for a tech_lead would defeat the recourse that fix exists to give.
+        require_project_member(
+            tenant_id=self.tenant_id, project_id=str(run.work_item.project_id),
+            user_id=getattr(current_user(request), "id", None),
+            what="take over another person's run",
+        )
         try:
             if request.data.get("release"):
                 out = release_takeover(
@@ -2137,6 +2281,14 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         it. Everything already done (the build, the branch, the PR) is kept — only the failed
         step is retried, so the user never re-runs a whole phase because of one error."""
         run = self.get_object()
+        # Layer 2 of S.No 214: this reaches into a run somebody else started. Membership, not a
+        # lead role — the person who hit the error is usually the one who resumes it (S.No 157),
+        # and making them wait for a tech_lead would defeat the recourse that fix exists to give.
+        require_project_member(
+            tenant_id=self.tenant_id, project_id=str(run.work_item.project_id),
+            user_id=getattr(current_user(request), "id", None),
+            what="resume a parked run",
+        )
         try:
             out = resume_stalled_run(tenant_id=self.tenant_id, run_id=str(run.id))
         except ResumeError as exc:
@@ -2162,6 +2314,30 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
+    #: Query params this list honours. Same idiom as `ApprovalViewSet._FILTERS` right below.
+    #:
+    #: `run` and `type` are new (N2): a link whose text names one thing must be able to open that
+    #: thing, and without a run scope a gate could only ever send the reviewer to the whole
+    #: registry to re-find what they were already looking at. `run` is the right scope for
+    #: "the artifact under review" precisely because it does NOT require the platform to invent a
+    #: notion of a run's *primary* artifact — a UX Design run registers several wireframes, and a
+    #: "pick the first" rule would be a new lie in place of the old one.
+    #:
+    #: Note `phase` matches `Artifact.phase`, which stores the catalog's phase LABEL. An agent key
+    #: (`06_task_breakdown`) matches nothing here; the label (`task_breakdown`) is what to send.
+    #: `ApprovalSerializer.phase_label` exists so a caller holding an approval has the label.
+    _FILTERS = {
+        "project": "project_id",
+        "phase": "phase",
+        "status": "status",
+        "type": "type",
+        "run": "run_id",
+        # An artifact has no direct work-item FK — it is reached through the run that produced
+        # it. Named `work_item` so it reads the same as `ApprovalViewSet._FILTERS`, which is the
+        # vocabulary the client already uses.
+        "work_item": "run__work_item_id",
+    }
+
     def get_queryset(self):
         from integrations.onboarding import RUN_RECORD_ARTIFACT_TYPES
 
@@ -2169,11 +2345,14 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         # A run's own record is not a project deliverable — see RUN_RECORD_ARTIFACT_TYPES. Without
         # this, every document the vision agent rewrote appeared twice in the registry: the
         # document itself, and the phase blob holding the agent's closing message.
+        #
+        # Stays BEFORE the filter loop, exactly as before: the exclusion is about what the
+        # registry is, not about what this request asked for.
         qs = qs.exclude(type__in=RUN_RECORD_ARTIFACT_TYPES)
-        for field in ("project", "phase", "status"):
+        for field, lookup in self._FILTERS.items():
             value = self.request.query_params.get(field)
             if value:
-                qs = qs.filter(**{("project_id" if field == "project" else field): value})
+                qs = qs.filter(**{lookup: value})
         # `?latest=1` — one row per artifact identity (phase+type+title), newest version only
         # (Part B fix 5). Re-registration is how this platform records a revision: re-running a
         # phase makes v2, and document vision makes v2 of an adopted upload. Listing every row
@@ -2181,7 +2360,13 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         # as duplication rather than history. Superseded rows are never deleted — they stay
         # readable as prior versions on the artifact's own screen (that is the provenance the
         # registry exists to keep); this only changes what the list shows by default.
-        if self.request.query_params.get("latest") in ("1", "true", "yes"):
+        # **`latest` is turned OFF by a run scope, deliberately.** A run-scoped view is a
+        # PROVENANCE view — "what did this run produce" — where v1 belongs; collapsing to the
+        # newest version there would hide the very row a deep link was pointing at whenever a
+        # later run superseded it, which is the silent-empty-list failure this work exists to
+        # remove. The unscoped registry is unchanged.
+        if (self.request.query_params.get("latest") in ("1", "true", "yes")
+                and not self.request.query_params.get("run")):
             newest = (
                 qs.order_by("phase", "type", "title", "-version", "-created_at")
                 .distinct("phase", "type", "title")
@@ -2193,9 +2378,18 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["get"])
     def preview(self, request, pk=None):
         """S-29: read-through body (S3 draft/snapshot or SoR), never an editor, never
-        copied into the registry (#1/#3). `404` when there's truly no body to show."""
+        copied into the registry (#1/#3). `404` when there's truly no body to show.
+
+        `?raw=1` returns the stored body untouched, skipping the presentation layer that
+        renders a machine-readable artifact (an SBOM) into something readable. That is what
+        the preview screen's "View raw" control fetches — the raw file is kept, and this is
+        how a person can actually see it (Bugs S.No 187). A second request rather than a
+        second field on every payload, so an ordinary preview never carries the body twice.
+        """
         artifact = self.get_object()
-        result = read_artifact_preview(tenant_id=self.tenant_id, artifact_id=str(artifact.id))
+        raw = str(request.query_params.get("raw", "")).lower() in {"1", "true", "yes"}
+        result = read_artifact_preview(
+            tenant_id=self.tenant_id, artifact_id=str(artifact.id), raw=raw)
         if result is None:
             raise NotFound("artifact has no body to preview")
         return Response(result, status=status.HTTP_200_OK)
@@ -2342,7 +2536,8 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         artifact.external_ref = {
             **(artifact.external_ref or {}),
             "export": {"sor": "jira", "reconciled": result["reconciled"],
-                       "created": result["created"], "failed": len(failed)},
+                       "created": result["created"],
+                       "skipped": result.get("skipped", 0), "failed": len(failed)},
         }
         artifact.save(update_fields=["status", "external_ref", "updated_at"])
         return Response({
@@ -2350,7 +2545,11 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             # warn instead of showing an all-green "Published" while items silently didn't land.
             "status": "partial" if failed else "published",
             "sor_link": next((i["url"] for i in items if i["url"]), None),
+            # `reconciled` now counts items already in the tracker too, because they are re-checked
+            # rather than filtered out (Bugs S.No 236/237) — `skipped` says how many were left
+            # alone, so "12 reconciled" can never read as "12 pushed" when only 2 were.
             "reconciled": result["reconciled"], "created": result["created"],
+            "skipped": result.get("skipped", 0),
             "failed": failed,
             "items": items,
         })
@@ -2445,6 +2644,18 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             value = self.request.query_params.get(field)
             if value:
                 qs = qs.filter(**{lookup: value})
+        # Bugs S.No 88 — before answering, notice any merge gate whose pull request was already
+        # merged on GitHub. The webhook is the fast path but is not a guarantee (a delivery can
+        # be missed, and a failed one is never redelivered), and no webhook fires retroactively
+        # for a merge that happened before any of this existed.
+        #
+        # Deliberately hung off THIS read rather than registered in the run-list reconciler:
+        # every candidate costs a network call to the code host, so the cost belongs on the
+        # screen that wants the answer. Age-gated to an hour and capped at three per pass, so a
+        # reviewer who is simply still thinking about a gate is never probed. Never raises.
+        from apps.gates.reconcile import sweep
+
+        sweep(self.tenant_id)
         return qs.select_related("approver", "work_item", "run", "run__agent_spec")
 
     @action(detail=True, methods=["get"])

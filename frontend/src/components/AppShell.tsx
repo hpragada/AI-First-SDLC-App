@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
 import { useA11yReviewQueue } from "../features/a11y/hooks";
 import { useRunners } from "../features/identity/hooks";
 import { useDashboard } from "../features/observability/hooks";
-import { cx, StatusDot } from "./ui";
+import type { ProjectTrack } from "../types";
+import { cx, StatusDot, useDismissable } from "./ui";
 
 type NavId =
   | "dashboard"
@@ -40,10 +41,25 @@ const ICON = {
   bell: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9 M13.7 21a2 2 0 0 1-3.4 0",
 };
 
+// What a nav item is allowed to know about the person and the project they have open.
+// Bugs S.No 221: this used to be a single hardcoded `adminOnly` boolean, so the second rule
+// ("hide the brownfield wizard on a greenfield project") had nowhere to go and was simply
+// never written — every project was offered every item. A predicate takes any rule; a second
+// one-off boolean is how the first one became a problem.
+type NavContext = { isAdmin: boolean; track?: ProjectTrack };
+
 const NAV: Array<{
   section?: string;
   adminOnly?: boolean;
-  items: Array<{ id: NavId; label: string; icon: keyof typeof ICON; href: string; count?: number; adminOnly?: boolean }>;
+  items: Array<{
+    id: NavId;
+    label: string;
+    icon: keyof typeof ICON;
+    href: string;
+    count?: number;
+    /** Shown when this returns true, or when it is absent. */
+    when?: (ctx: NavContext) => boolean;
+  }>;
 }> = [
   {
     items: [
@@ -68,10 +84,23 @@ const NAV: Array<{
     section: "Project",
     items: [
       { id: "profile", label: "Project Profile", icon: "profile", href: "/profile" },
-      { id: "onboarding", label: "Onboarding", icon: "onboarding", href: "/onboarding" },
+      // Brownfield only (S.No 221). Onboarding reads an EXISTING codebase and reports what is
+      // missing from it; on a project started from scratch there is nothing to read, and the
+      // screen behind this used to assert "Brownfield project" over whatever you had open.
+      // Hidden rather than disabled: an item you can never usefully click is clutter, and a
+      // permanently dead row in every greenfield sidebar is worse than an absence.
+      // `!== "greenfield"` and not `=== "brownfield"`, so an API too old to send the track
+      // shows the item rather than hiding it from the people who need it.
+      {
+        id: "onboarding", label: "Onboarding", icon: "onboarding", href: "/onboarding",
+        when: (ctx) => ctx.track !== "greenfield",
+      },
       { id: "integrations", label: "Integrations", icon: "integrations", href: "/integrations" },
       { id: "repositories", label: "Repositories", icon: "repos", href: "/repositories" },
-      { id: "test-reporting", label: "Test Reporting", icon: "test-reporting", href: "/test-reporting", adminOnly: true },
+      {
+        id: "test-reporting", label: "Test Reporting", icon: "test-reporting", href: "/test-reporting",
+        when: (ctx) => ctx.isAdmin,
+      },
       { id: "connect", label: "Connect Machine", icon: "runs", href: "/connect" },
     ],
   },
@@ -132,27 +161,9 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const itemRef = useRef<HTMLButtonElement>(null);
 
-  // Close on outside click + Escape while open.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  // Move focus to the first item when the menu opens (keyboard users).
-  useEffect(() => {
-    if (open) itemRef.current?.focus();
-  }, [open]);
+  // Close on outside click + Escape, and focus the first item on open. Shared with the work
+  // items board's row menu (S.No 140) — the markup differs, this part must not.
+  useDismissable(open, useCallback(() => setOpen(false), []), rootRef, itemRef);
 
   // Any navigation dismisses the menu.
   useEffect(() => {
@@ -242,6 +253,9 @@ export function AppShell() {
   const companionOnline = (runners.data ?? []).some((r) => r.online);
   const companionPillClass = companionOnline ? "companion-pill--ready" : "companion-pill--offline";
   const companionPillText = companionOnline ? "Companion: Ready" : "Companion: Offline";
+  // Read from the SELECTED project, not the first membership: switching projects has to
+  // change what the sidebar offers, or the greenfield rule would only ever be right once.
+  const navContext: NavContext = { isAdmin, track: selectedProject?.track };
   const tenant = currentUser?.tenant.name ?? "Acme Corp";
   const project = selectedProject?.project_name ?? "No project yet";
   const user = currentUser?.user.name ?? "You";
@@ -261,7 +275,7 @@ export function AppShell() {
               <div key={group.section ?? index}>
                 {group.section && <div className="sidebar__section">{group.section}</div>}
                 {group.items.map((item) => {
-                  if (item.adminOnly && !isAdmin) return null;
+                  if (item.when && !item.when(navContext)) return null;
                   const count = item.count ?? navCounts[item.id];
                   return (
                     <Link key={item.id} className="nav-item" to={item.href} aria-current={item.id === active ? "page" : undefined}>

@@ -17,10 +17,13 @@ def client():
 
 
 def _enroll(client, tenant, project):
-    r = client.post("/api/runners/", {"project_id": str(project.id), "label": "l"},
-                    format="json", HTTP_X_TENANT_ID=str(tenant.id))
-    assert r.status_code == 201, r.content
-    return r.json()["token"]
+    # S.No 214 closed `POST /api/runners/` to anonymous callers — minting an enrollment
+    # token is a credential operation. This test needs a token, not the endpoint, so it
+    # goes through the domain service directly (as test_review_dispatch already does).
+    from apps.runs.enrollment import enroll_runner
+
+    _, token = enroll_runner(tenant_id=str(tenant.id), project_id=str(project.id), label="l")
+    return token
 
 
 def _state(client, tenant, token, tool, **args):
@@ -93,6 +96,47 @@ def test_agent_cannot_transition_work_item_to_done(db, client):
     assert r.status_code == 403, r.content
     wi.refresh_from_db()
     assert wi.state == WorkItem.State.IN_PROGRESS               # unchanged — gate not bypassed
+
+
+def test_agent_cannot_set_any_state_but_in_progress(db, client):
+    """Bugs S.No 87: blocking `done` alone left every other state open. An agent could still
+    call an item `accepted` — the reconciler's word for "this is in the tracker", which would be
+    a lie — push it back to `proposed`, erasing the fact that work had started, or park it in
+    `blocked`/`in_review`, states no control-plane code writes, so nothing would move it out
+    again. Only `in_progress` is an agent's to set."""
+    from apps.workitems.models import WorkItem
+
+    t = Tenant.objects.create(name="A")
+    p = Project.objects.create(tenant=t, name="App")
+    token = _enroll(client, t, p)
+    # `cancelled` is in this list from the moment the state exists (S.No 140). The tool
+    # validates only that a value is a member of the enum, so a new state is reachable by an
+    # agent the instant it is added unless the allowlist says otherwise — which is precisely
+    # what `test_a_state_added_later_is_refused_by_default` predicted.
+    for target in ("proposed", "accepted", "in_review", "blocked", "done", "cancelled"):
+        wi = WorkItem.objects.create(tenant=t, project=p, type=WorkItem.Type.TASK, title=target,
+                                     state=WorkItem.State.IN_PROGRESS)
+        r = _state(client, t, token, "transition_work_item", work_item_id=str(wi.id),
+                   to_state=target)
+        assert r.status_code == 403, f"{target} was allowed: {r.content!r}"
+        assert "in_progress" in r.json()["detail"]      # says what IS allowed, not just "no"
+        wi.refresh_from_db()
+        assert wi.state == WorkItem.State.IN_PROGRESS, f"{target} was written anyway"
+
+
+def test_a_state_added_later_is_refused_by_default(db, client):
+    """The allowlist is the point. A blocklist has to be remembered every time a state is added
+    — and the state most likely to be added next is another terminal one."""
+    from apps.workitems.models import WorkItem
+
+    t = Tenant.objects.create(name="A")
+    p = Project.objects.create(tenant=t, name="App")
+    token = _enroll(client, t, p)
+    wi = WorkItem.objects.create(tenant=t, project=p, type=WorkItem.Type.TASK, title="X",
+                                 state=WorkItem.State.IN_PROGRESS)
+    r = _state(client, t, token, "transition_work_item", work_item_id=str(wi.id),
+               to_state="some_future_state")
+    assert r.status_code == 403, r.content
 
 
 def test_agent_may_transition_work_item_to_in_progress(db, client):

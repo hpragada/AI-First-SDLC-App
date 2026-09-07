@@ -13,12 +13,17 @@ import {
   Input,
   Needs,
   Panel,
+  RowMenu,
   Select,
   Table,
 } from "../../components/ui";
-import type { WorkItemCard } from "../../types";
+import type { BadgeVariant } from "../../components/ui";
+import { isTerminalState } from "../../types";
+import type { WorkItemCard, WorkItemState } from "../../types";
+import { CancelWorkItem } from "./CancelWorkItem";
 import { roleLabel } from "../identity/roles";
 import { useCreateWorkItem, usePhaseCatalog, useWorkItems } from "./hooks";
+import { workItemLink } from "../../links";
 import { humanizeLabel, lifecyclePhaseColumns, phaseLabel, statusLabel } from "./phases";
 
 // S-14 view states: board (default) · list · filtered (tasks only) · empty.
@@ -33,13 +38,35 @@ const BUILD_COLUMNS = [
   { key: "review", label: "Review" },
 ];
 
+// Bugs S.No 140. This was a chain of ifs ending in `return <Badge variant="queued">Draft</Badge>`,
+// so FOUR of the six states rendered as "Draft" — an item in review, an item blocked, an item
+// accepted into the tracker, and (once the state existed) a cancelled one. Confidently wrong is
+// worse than unlabelled: a board that calls abandoned work a draft is a board that gets planned
+// against. The chain also tested `card.state === "running"`, which has never been a work-item
+// state — dead code that read as coverage.
+//
+// An exhaustive map over the union, so the compiler names any state added later instead of
+// letting it fall into the wrong bucket. `satisfies` is what enforces that.
+const STATE_BADGE = {
+  proposed: { variant: "queued", label: "Draft" },
+  accepted: { variant: "neutral", label: "Accepted" },
+  in_progress: { variant: "running", label: "In progress" },
+  in_review: { variant: "waiting", label: "In review" },
+  blocked: { variant: "failed", label: "Blocked" },
+  done: { variant: "done", label: "Phase complete" },
+  cancelled: { variant: "cancelled", label: "Cancelled" },
+} satisfies Record<WorkItemState, { variant: BadgeVariant; label: string }>;
+
 function statusBadge(card: WorkItemCard) {
+  // Cancelled outranks a pending need, and is checked FIRST for that reason: a stale gate or
+  // clarification left over from before the decision must not badge abandoned work as
+  // "waiting on you".
+  if (card.state === "cancelled") return <Badge variant="cancelled">Cancelled</Badge>;
   const label = humanizeLabel(card.needs?.label);
   if (label && card.needs?.clarification) return <Needs type="clar">{label}</Needs>;
   if (label && card.needs?.gate) return <Needs type="gate">{label}</Needs>;
-  if (card.state === "done") return <Badge variant="done">Phase complete</Badge>;
-  if (card.state === "running") return <Badge variant="running">AI compiling…</Badge>;
-  return <Badge variant="queued">Draft</Badge>;
+  const badge = STATE_BADGE[card.state] ?? STATE_BADGE.proposed;
+  return <Badge variant={badge.variant}>{badge.label}</Badge>;
 }
 
 // Human-readable work-item type ("story" → "Story"). One place so the board card and list agree.
@@ -168,6 +195,7 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
   const [phaseFilter, setPhaseFilter] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [cancelling, setCancelling] = useState<WorkItemCard | null>(null);
   const catalog = usePhaseCatalog();
 
   const items = useWorkItems(projectId, level === "all" ? {} : { type: level });
@@ -189,6 +217,11 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
         if (phaseFilter && phase !== phaseFilter) return false;
         if (roleFilter && (roleByPhase.get(phase) ?? "") !== roleFilter) return false;
         if (statusFilter && item.state !== statusFilter) return false;
+        // Bugs S.No 140: cancelled work is hidden by default. Cancelling exists to get things
+        // OFF the board — leaving them on it would make cancelling pointless. Never hidden
+        // outright, though: choosing "Cancelled" in the status filter shows exactly those, so
+        // the record stays reachable and a cancellation can be found and questioned.
+        if (!statusFilter && item.state === "cancelled") return false;
         if (search) {
           const hay = `${item.key ?? ""} ${item.title ?? ""} ${item.type ?? ""} ${item.feature_stream ?? ""}`.toLowerCase();
           if (!hay.includes(search.toLowerCase())) return false;
@@ -213,6 +246,13 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
   const statusOptions = useMemo(
     () => [...new Set(allItems.map((i) => i.state).filter(Boolean))].sort(),
     [allItems],
+  );
+  // How many are being hidden right now — said out loud beside the filter. A board that
+  // quietly drops rows is a board whose counts nobody can reconcile; "3 cancelled hidden" is
+  // the difference between a filter and a disappearance.
+  const hiddenCancelled = useMemo(
+    () => (statusFilter ? 0 : allItems.filter((i) => i.state === "cancelled").length),
+    [allItems, statusFilter],
   );
 
   const view: BoardView =
@@ -320,6 +360,15 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
               </option>
             ))}
           </select>
+          {hiddenCancelled > 0 && (
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => setStatusFilter("cancelled")}
+            >
+              {hiddenCancelled} cancelled hidden
+            </button>
+          )}
           <span className="u-spacer" />
           <span className="segmented">
             <button aria-pressed={mode === "board"} onClick={() => setMode("board")}>
@@ -353,11 +402,16 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
       ) : view === "list" ? (
         <Panel flush>
           <Table
-            headers={["ID", "Title", "Level", "Phase", "Status", "Artifacts", "Owner"]}
+            headers={["ID", "Title", "Level", "Phase", "Status", "Artifacts", "Owner",
+                      // Named for a screen reader, blank to the eye — an unlabelled column is
+                      // a column a non-sighted user cannot make sense of.
+                      <span className="u-visually-hidden" key="a">Actions</span>]}
             rows={list.map((item) => [
-              <span className="table__id" key="id">
+              // N2: the board's own ID column was inert text — the one thing on the row that
+              // IS the work item was the one thing you could not click.
+              <Link className="table__id" to={workItemLink(item.id)} key="id">
                 {item.key || item.id}
-              </span>,
+              </Link>,
               <span className="table__primary" key="t">
                 {item.title || item.key || item.id}
               </span>,
@@ -369,6 +423,25 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
               statusBadge(item),
               item.artifact_count ?? 0,
               item.owner ?? "—",
+              // Bugs S.No 140. The row action lives in the LIST, not on the board card: a card
+              // is one <Link> wrapping everything, and a button inside an anchor is invalid
+              // markup that breaks keyboard and screen-reader navigation. The list is also
+              // where clearing several stale items actually happens.
+              //
+              // "Cancel…" is offered only while there is something left to cancel. It is shown
+              // to everyone: the server allows tech leads and admins, and refuses anyone else
+              // with a sentence the dialog puts on screen — the same bar, and the same way of
+              // saying so, as the task and defect pages.
+              <RowMenu
+                key="menu"
+                label={`Actions for ${item.key || item.id}`}
+                items={[
+                  { label: "Open", href: workItemLink(item.id) },
+                  ...(isTerminalState(item.state)
+                    ? []
+                    : [{ label: "Cancel…", onSelect: () => setCancelling(item), danger: true }]),
+                ]}
+              />,
             ])}
           />
         </Panel>
@@ -396,6 +469,10 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
 
       {createOpen && projectId && (
         <CreateWorkItemDrawer projectId={projectId} onClose={() => setCreateOpen(false)} />
+      )}
+
+      {cancelling && (
+        <CancelWorkItem workItem={cancelling} onClose={() => setCancelling(null)} />
       )}
     </div>
   );

@@ -2,7 +2,7 @@
 
 import { ApiError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Button, Card, CardBody, Chip, EmptyState, Field, Input, Panel, Select, Table } from "../../components/ui";
+import { Badge, Button, Card, CardBody, Chip, EmptyState, ErrorState, Field, Input, Panel, Select, Table, WriteError } from "../../components/ui";
 import type { Repository } from "../../types";
 import { useCreateRepository, useDeleteRepository, useRepositories, useUpdateRepository } from "./hooks";
 
@@ -63,8 +63,8 @@ function PreviewUrlCell({ projectId, repo }: { projectId: string | undefined; re
         Cancel
       </Button>
       {update.isError && (
-        <span className="t-sm" style={{ color: "var(--danger)", width: "100%" }}>
-          {update.error instanceof ApiError ? update.error.message : "Couldn't save. Try again."}
+        <span style={{ width: "100%" }}>
+          <WriteError title="Couldn't save the preview URL" detail={update.error} />
         </span>
       )}
     </span>
@@ -145,10 +145,18 @@ function AddRepoForm({ projectId, dup }: { projectId: string | undefined; dup?: 
               onChange={(e) => setPreviewUrl(e.target.value)}
             />
           </Field>
-          <Button variant="primary" type="submit" disabled={!name}>
-            Add
+          <Button variant="primary" type="submit" disabled={!name || createRepo.isPending}>
+            {createRepo.isPending ? "Adding…" : "Add"}
           </Button>
         </form>
+        {/* Bugs S.No 219: only 409 (already registered) was ever inspected. A 403 from the
+            role check — the most likely failure, and the one a person can act on — was caught
+            and discarded, so Add did nothing and said nothing. */}
+        {createRepo.isError && !duplicate && (
+          <div style={{ marginTop: "var(--space-3)" }}>
+            <WriteError title="Couldn't add that repository" detail={createRepo.error} />
+          </div>
+        )}
         {/* Bugs S.No 170: the Preview URL help text lives below the row (not on the Field) so
             it doesn't break the bottom-alignment of the inputs; reworded to drop the "09b" jargon. */}
         <p className="field__help" style={{ marginTop: "var(--space-2)" }}>
@@ -199,7 +207,18 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
         </div>
       )}
 
-      {view === "empty" ? (
+      {/* S.No 220: the only error branch this screen had was the 409 duplicate-name case on the
+          ADD form. A failed LIST fell through to "No repositories yet" — which, on a project that
+          has repositories, reads as though they were deleted. */}
+      {!forceView && repos.isError ? (
+        <Panel>
+          <ErrorState
+            title="We couldn't load this project's repositories"
+            detail={repos.error}
+            onRetry={() => void repos.refetch()}
+          />
+        </Panel>
+      ) : view === "empty" ? (
         <Panel>
           <EmptyState
             title="No repositories yet"
@@ -217,6 +236,14 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
             <Chip variant={topology === "multi" ? "navy" : undefined}>Topology: {topology}</Chip>
           </div>
           <Panel flush>
+            {/* Bugs S.No 219: Remove and Set default read no error at all. Without the role,
+                or on a repository the platform will not drop, the row simply stayed where it
+                was and the person clicked again. */}
+            {deleteRepo.isError && (
+              <div style={{ padding: "var(--space-4) var(--space-4) 0" }}>
+                <WriteError title="Couldn't remove that repository" detail={deleteRepo.error} />
+              </div>
+            )}
             <Table
               headers={["Repository", "Role", "Default base", "Preview URL", "Status", ""]}
               rows={list.map((repo) => [

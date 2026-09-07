@@ -232,3 +232,62 @@ def test_prd_run_reads_inputs_from_platform():
     assert "register_artifact" in sysprompt  # rerouted output reference
     assert ".md" not in sysprompt  # §8 clean at runtime too
     assert result.outputs["result"] == "# PRD\nbody"
+
+
+def test_10_must_say_whether_a_tool_actually_ran():
+    """Bugs S.No 186. The live EPIC-004 report said Bandit was "blocked by sandbox restrictions →
+    full manual pass performed" and the SBOM read "Manual CycloneDX Generation" — with every tool
+    checkbox in the Quality Gate ticked. The findings were sound; the framing was not, and a human
+    approved a gate believing scanners had run. Of the three causes behind S.No 185 this is the
+    one that makes the phase dangerous rather than merely limited: it turns a known limitation
+    into a misleading claim, so it ships ahead of the provisioning work."""
+    body = _body("10_security")
+    assert "Scan Provenance" in body, "the report must open with a provenance table"
+    for label in ("TOOL-RUN", "MANUAL", "CI-GATE"):
+        assert label in body, f"the provenance vocabulary must include `{label}`"
+    lower = body.lower()
+    assert "exit status" in lower, "a TOOL-RUN claim must carry the command's exit status"
+    assert "never tick a tool checkbox in the quality gate for a `manual` step" in lower
+    assert "never describe a `manual` step in tool language" in lower
+    # The gate itself must offer the manual alternative, or the rule above has nowhere to land.
+    assert "SAST reviewed by hand" in body and "SBOM hand-assembled" in body
+
+
+# ── S.No 121-126: the artifacts humans approve must be readable by those humans ──
+_HUMANIZED = {
+    # agent key -> (what the standard is called, a phrase only the right register would contain)
+    "02_requirements": ("Writing standard", "plain-language sentence of intent"),
+    "09_testing": ("Clarity standard", "humanized-technical"),
+    "00c_intelligent_context_extractor": ("Writing standard", "keep the technical nuance"),
+    "04_architecture": ("Writing standard", "readable by a non-technical stakeholder"),
+    "03_prd": ("Writing standard", "observable outcome someone could verify by hand"),
+    "10_security": ("Writing standard", "two registers"),
+}
+
+
+@pytest.mark.parametrize("key", sorted(_HUMANIZED))
+def test_the_artifacts_a_human_approves_carry_a_writing_standard(key):
+    """Bugs S.No 121-126. The gate is the platform's central promise — a named human reviews
+    before anything reaches a system of record. A reviewer who cannot read the artifact cannot
+    review it: they approve on trust and the gate becomes ceremony. 06 had this defect and it was
+    fixed (S.No 118); these six were written to an engineer-only bar while naming a Product Owner
+    as their reviewer.
+
+    Note the register is NOT uniform, and the difference is deliberate: 09 and 10's findings are
+    humanized-TECHNICAL, because a QA or security reader must interpret precise detail correctly
+    and flattening it into everyday words causes misreading."""
+    heading, phrase = _HUMANIZED[key]
+    body = _body(key)
+    assert f"### {heading}" in body, f"{key} has no {heading} block"
+    assert phrase.lower() in body.lower(), f"{key}'s standard is missing its defining phrase"
+    # The 06 fix proved the instruction alone was not enough — the exemplars are what changed the
+    # output. Every one of these must carry a worked example and a counter-example.
+    assert "Worked example" in body or "Worked examples" in body, f"{key} has no worked example"
+    assert "Failed" in body or "failed" in body
+
+
+def test_09_and_10_are_explicitly_not_plain_language():
+    """The asymmetry, pinned so a later tidy-up cannot flatten all six to one register."""
+    assert "NOT plain language" in _body("09_testing")
+    ten = _body("10_security")
+    assert "humanized-technical" in ten.lower() and "plain language" in ten.lower()

@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { ApiError } from "../../api";
-import { AuthSplit, Button, Field, Input, Spinner, Strength } from "../../components/ui";
+import { ApiError, fieldError, formError } from "../../api";
+import { AuthSplit, Banner, Button, Field, Input, Spinner, Strength } from "../../components/ui";
 import { passwordStrength, useRequestReset, useResetPassword } from "./hooks";
 
 const TAGLINE = "Reset your password.";
@@ -49,8 +49,25 @@ export function ResetPassword({ forceView }: { forceView?: ResetView }) {
     }
   };
 
+  // Bugs S.No 219: this branched on 410 (the link has expired) and dropped everything else, so
+  // a password the server rejected as too short left the form untouched and silent.
+  const passwordError = fieldError(reset.error, "password");
+  const bannerError = invalidToken ? undefined : formError(reset.error, ["password"]);
+
+  // Found while fixing the above: the form asks you to confirm the new password and then NEVER
+  // compares the two. Mistype the confirmation and your first value is silently accepted — you
+  // set a password you do not think you set, and find out at the next login. Checked here, in
+  // the browser, because only this screen knows there were two boxes; the server is sent one
+  // password and cannot possibly detect it.
+  const [confirmTouched, setConfirmTouched] = useState(false);
+  const mismatch = confirmTouched && confirm.length > 0 && confirm !== password;
+
   const onReset = async (event: FormEvent) => {
     event.preventDefault();
+    if (confirm !== password) {
+      setConfirmTouched(true);
+      return;
+    }
     try {
       await reset.mutateAsync({ token, password });
       setDone(true);
@@ -123,13 +140,29 @@ export function ResetPassword({ forceView }: { forceView?: ResetView }) {
       <AuthSplit tagline={TAGLINE}>
         <form className="auth-card" onSubmit={onReset}>
           <h1 className="auth-card__title">Set a new password</h1>
-          <p className="auth-card__sub">Choose a strong password for {email}.</p>
-          <Field label="New password">
-            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          {bannerError ? (
+            <Banner variant="danger">{bannerError}</Banner>
+          ) : (
+            <p className="auth-card__sub">Choose a strong password for {email}.</p>
+          )}
+          <Field label="New password" error={passwordError}>
+            <Input type="password" value={password} aria-invalid={Boolean(passwordError)}
+                   onChange={(e) => setPassword(e.target.value)} />
             <Strength value={passwordStrength(password)} />
           </Field>
-          <Field label="Confirm password">
-            <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+          <Field
+            label="Confirm password"
+            error={mismatch ? "The two passwords don't match." : undefined}
+          >
+            <Input
+              type="password"
+              value={confirm}
+              aria-invalid={mismatch}
+              onChange={(e) => {
+                setConfirmTouched(true);
+                setConfirm(e.target.value);
+              }}
+            />
           </Field>
           <Button variant="primary" block type="submit" disabled={reset.isPending}>
             {reset.isPending ? (

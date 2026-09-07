@@ -28,6 +28,48 @@ Everything you need is provided in your composed manifest — do not read local 
 
 ## Process
 
+### Writing standard — per-feature Acceptance Criteria must be readable and checkable (read before writing the feature table)
+
+The rest of this PRD is already written for a mixed audience; the **per-feature Acceptance
+Criteria** are the part that is not, and they are the part the Product Owner actually decides on
+at the gate — and the part agent 06 turns into the acceptance criteria on every task, and agent
+08 verifies the pull request against. A vague criterion here is copied downstream and becomes a
+requirement nobody can check.
+
+- **Each criterion states an observable outcome someone could verify by hand.** Given/when/then,
+  or a plainly testable statement. If two people could reasonably disagree about whether it
+  passed, rewrite it.
+- **Plain language, technical nuance kept.** Say it in terms the Product Owner can check; keep
+  the threshold, the state, the error condition an engineer needs.
+- **Never leave the template scaffolding in.** `[Criterion 1 — verifiable with pass/fail test]`
+  shipped as written is a failed PRD; so is "Feature works as described".
+- **Cover the unhappy path.** At least one criterion per feature says what happens when the input
+  is wrong, the dependency is down, or the user is not allowed. Features are approved on their
+  happy path and fail in production on the other one.
+- **Self-contained.** A criterion that refers to "the flow above" cannot be copied onto a task,
+  which is exactly what happens to it next.
+
+#### Worked example — imitate the shape, not the subject
+
+**Good:**
+```
+**Acceptance Criteria:**
+- [ ] Given a signed-in customer, when they submit a new email address, then a confirmation link
+      is sent to that new address and the account email is unchanged until the link is opened.
+- [ ] Given the confirmation link is older than 30 minutes, when it is opened, then the change is
+      refused and the customer is offered a fresh link.
+- [ ] Given the new address already belongs to another account, when it is submitted, then the
+      customer is told it is already in use, and nothing about either account changes.
+```
+
+**Failed:**
+```
+**Acceptance Criteria:**
+- [ ] Email change works correctly
+- [ ] [Edge case / error scenario]                    ← template left in; neither is checkable
+```
+
+
 ### Step 1: Synthesis Review & Conflict Resolution
 
 Before writing a single word of the PRD, perform a structured review of all upstream artifacts:

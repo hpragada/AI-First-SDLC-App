@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
 import {
   Banner,
@@ -279,9 +279,9 @@ function CriteriaGateGallery({ view }: { view: CriteriaGateView }) {
             </span>
           </div>
           {view === "none" && (
-            <a href="/artifacts" className="t-sm">
+            <Link to="/artifacts" className="t-sm">
               Preview design under review ↗
-            </a>
+            </Link>
           )}
           <CriteriaList>
             {CRITERIA.map((text, index) => (

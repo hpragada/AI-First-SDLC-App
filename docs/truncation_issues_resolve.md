@@ -1,7 +1,8 @@
 # Truncation — full issue register, team decisions, and recommended fixes
 
-**Status:** analysis + decisions recorded. **No code has been changed.** The team will choose
-which items to implement and in what order.
+**Status:** analysis + decisions recorded. **T5 built 2026-08-17; T2 built 2026-09-03.** The
+remaining items are still open — the team chooses which to implement and in what order. Each entry
+carries its own build note, so this header is a pointer, not the record.
 
 **Date:** 2026-08-04
 **Raised by:** a `Manifest truncated — implementation` line on the run console during the first
@@ -126,6 +127,25 @@ asked to build. Cutting it is never the right trade.
 
 *Cost:* one renderer function. No new tool, no MCP change, no Temporal payload change, no
 migration. Manifests whose description already fits stay byte-identical.
+
+**BUILT 2026-09-03 — exactly as recommended above, no deviation.** `_render_work_item`
+(`composer.py`) now assembles the metadata lines, caps THOSE at the existing 650-token
+`current_work_item` budget, and re-attaches the description whole. Ordering is preserved: when the
+whole section fits, the output is byte-identical to before, and there is a test asserting that
+rather than assuming it. When the metadata does overflow it is cut with the usual
+`[truncated to fit token budget]` marker — so the one cut that can still happen is never silent —
+and the description follows it intact.
+
+Three tests pin it (`test_manifest_composer.py`): the byte-identical short case; a ~9,000-token
+description whose trailing acceptance criteria survive; and runaway metadata still being capped
+while the description survives the cut.
+
+**This is half of the fix for Bugs.xlsx S.No 243** (the CORS requirement that shipped unbuilt and
+stayed invisible for 18 days). T2 was the reason the acceptance criteria could vanish before any
+agent read them; the other half — requiring agent 08 to show a per-criterion verdict — is the
+`guard_acceptance_criteria` work in the same batch. Neither alone is sufficient: without T2 the
+review agent has nothing to check against, and without the verdict contract nothing proves it
+looked.
 
 ---
 

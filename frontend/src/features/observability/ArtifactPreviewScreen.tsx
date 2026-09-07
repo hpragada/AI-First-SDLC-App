@@ -49,6 +49,16 @@ function WireframeStates({ states }: { states: ArtifactState[] }) {
   );
 }
 
+/** An ISO timestamp as a person reads it — "4 Sep 2026, 11:22". Falls back to the raw string
+ *  rather than showing "Invalid Date" if the server ever sends something unexpected. */
+function formatTaken(iso: string): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return iso;
+  return when.toLocaleString(undefined, {
+    day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+}
+
 // S-29 view states: markdown · diagram · external · body-unavailable.
 export type ArtifactPreviewView = "markdown" | "diagram" | "external" | "unavailable";
 
@@ -60,7 +70,16 @@ export function ArtifactPreviewScreen({ forceView }: { forceView?: ArtifactPrevi
 // ── Live: the real artifact's read-through body + version history ──────────
 function ArtifactPreviewLive() {
   const { id } = useParams();
-  const preview = useArtifactPreview(id);
+  // Bugs S.No 187: a machine-readable artifact (an SBOM) is RENDERED for people, and the raw
+  // file is kept. Kept where nobody could see it, though — so this toggle asks the same
+  // endpoint for the untouched body. Two cached queries rather than one payload carrying the
+  // body twice; flipping back is instant.
+  const [showRaw, setShowRaw] = useState(false);
+  const preview = useArtifactPreview(id, showRaw);
+  // The rendered fetch is the one that knows whether a raw version exists at all, and it stays
+  // cached while the raw one is on screen — so the toggle never disappears once it is used.
+  const renderedPreview = useArtifactPreview(id, false);
+  const offersRaw = Boolean(renderedPreview.data?.rendered);
 
   if (preview.isLoading) {
     return (
@@ -87,6 +106,32 @@ function ArtifactPreviewLive() {
 
   const data = preview.data;
   const states = data.states ?? [];
+
+  // The headline figures behind a rendered body, as the labelled numbers the approved design
+  // calls for. They come from the server structured rather than as a line of prose, because
+  // markdown cannot express this layout — see `_render_sbom` in integrations/preview.py.
+  const s = data.render_summary;
+  const summaryFacts: { label: string; value: string }[] = s
+    ? [
+        { label: "Components", value: s.components != null ? String(s.components) : "" },
+        { label: "Licences", value: s.licences ? String(s.licences) : "" },
+        { label: "Scanned by", value: s.tool ?? "" },
+        // Formatted here, not on the server: only the browser knows the reader's locale.
+        { label: "Taken", value: s.taken ? formatTaken(s.taken) : "" },
+        { label: "CycloneDX", value: s.spec_version ?? "" },
+      ].filter((f) => f.value)
+    : [];
+  const renderSummary =
+    summaryFacts.length > 0 ? (
+      <div className="artifact-facts">
+        {summaryFacts.map((f) => (
+          <div key={f.label} className="artifact-facts__item">
+            <span className="artifact-facts__label">{f.label}</span>
+            <span className="artifact-facts__value">{f.value}</span>
+          </div>
+        ))}
+      </div>
+    ) : null;
   const hasBody = Boolean(data.body) || states.length > 0;
 
   return (
@@ -102,6 +147,16 @@ function ArtifactPreviewLive() {
                   the two screens. This one already showed the real token as its text — it was the
                   list that hardcoded "Draft" for anything it did not recognise. */}
               {artifactStatusBadge(data.status)}
+              {offersRaw && (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  aria-pressed={showRaw}
+                  onClick={() => setShowRaw((v) => !v)}
+                >
+                  {showRaw ? "View report" : "View raw"}
+                </button>
+              )}
               {data.sor_link && (
                 <>
                   <span className="u-spacer" />
@@ -122,9 +177,15 @@ function ArtifactPreviewLive() {
                 artifact the agent saved. If the run failed or stopped to ask a question, that is
                 what you are reading here. Re-run the phase to produce the real document.
               </Banner>
+            ) : showRaw ? (
+              <Banner variant="info" title="The stored file, exactly as it was saved">
+                This is what other tools and the publish step receive. The readable version is
+                one click away.
+              </Banner>
             ) : (
               <Banner variant="info">Read-through from the system-of-record. This preview is never an editor.</Banner>
             )}
+            {renderSummary}
             {states.length > 0 ? (
               <WireframeStates states={states} />
             ) : data.content_type === "text/html" ? (

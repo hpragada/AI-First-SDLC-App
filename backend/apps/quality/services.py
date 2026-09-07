@@ -395,7 +395,10 @@ def _reconcile_defects(tenant_id, project_id, work_item_id, failing: set[str],
                     if (c.external_ref or {}).get("test_ref")}
         # Close only defects whose test this execution actually reported as passing.
         for test_ref, child in existing.items():
-            if test_ref in passing and child.state != WorkItem.State.DONE:
+            # `not in TERMINAL_STATES`, not `!= DONE` (S.No 140): a defect somebody
+            # cancelled is not an open defect waiting to be closed by a passing test, and
+            # flipping it to `done` would rewrite "we decided not to fix this" as "fixed".
+            if test_ref in passing and child.state not in WorkItem.TERMINAL_STATES:
                 child.state = WorkItem.State.DONE
                 child.save(update_fields=["state", "updated_at"])
                 tools.log_event(tenant_id, "quality", "defect.resolved", "work_item",
@@ -450,7 +453,9 @@ def record_security_findings(
         existing = {(c.external_ref or {}).get("finding"): c for c in children
                     if (c.external_ref or {}).get("finding")}
         for fid, child in existing.items():
-            if fid not in blocking and child.state != WorkItem.State.DONE:
+            # See the note in the test loop above — a cancelled security defect stays
+            # cancelled rather than being reported as resolved.
+            if fid not in blocking and child.state not in WorkItem.TERMINAL_STATES:
                 child.state = WorkItem.State.DONE
                 child.save(update_fields=["state", "updated_at"])
                 tools.log_event(tenant_id, "security", "security.defect.resolved", "work_item",

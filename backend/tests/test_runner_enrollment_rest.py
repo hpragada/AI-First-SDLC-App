@@ -81,10 +81,27 @@ def test_post_binds_developer_id_to_session_user(client, tenant, project, dev):
 
 
 def test_post_without_session_falls_back_to_body_developer_id(client, tenant, project, dev):
+    """The CLI onboarding path: `python -m runner.companion enroll` (runner/README.md, Quick
+    start step 1) sends an X-Tenant-ID header and a `developer_id` body param with no session,
+    because it has no session to send.
+
+    S.No 214 closed eight other anonymous writes and deliberately left this one open - see
+    `RunnerEnrollmentView.get_permissions`. It is a real gap, and it is recorded against S.No 35
+    with the rest of the Connect Machine credential model rather than half-closed here in a way
+    that breaks the documented flow without fixing the model."""
     resp = _enroll(client, tenant, project, label="l", developer_id=str(dev.id))
     assert resp.status_code == 201
     enrollment = RunnerEnrollment.objects.get(id=resp.data["id"])
     assert str(enrollment.developer_id) == str(dev.id)
+
+
+def test_post_binds_the_enrollment_to_the_signed_in_developer(client, tenant, project, dev):
+    """The replacement for what the test above used to cover: the enrollment is owned by whoever
+    is signed in, which is what made the body parameter unnecessary in the first place."""
+    _login(client, "dev@acme.com", "dev-pass!")
+    resp = _enroll(client, tenant, project, label="l")
+    assert resp.status_code == 201
+    assert str(RunnerEnrollment.objects.get(id=resp.data["id"]).developer_id) == str(dev.id)
 
 
 def test_get_groups_enrollments_by_machine_across_projects(

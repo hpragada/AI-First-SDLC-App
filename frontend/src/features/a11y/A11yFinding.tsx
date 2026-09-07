@@ -178,10 +178,10 @@ export function A11yFinding() {
           )}
           {item.work_item_id && (
             <span className="meta-item">
-              <a href={`/work-items/${item.work_item_id}`} target="_blank" rel="noreferrer">
+              <Link to={`/work-items/${item.work_item_id}`} target="_blank" rel="noreferrer">
                 <strong>{item.work_item_label}</strong>
                 {item.work_item_title ? ` — ${item.work_item_title}` : ""}
-              </a>
+              </Link>
             </span>
           )}
         </div>

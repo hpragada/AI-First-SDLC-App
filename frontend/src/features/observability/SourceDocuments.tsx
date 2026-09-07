@@ -11,6 +11,7 @@ import {
   useSourceDocuments,
   useUploadSourceDocument,
 } from "./hooks";
+import { artifactLink, artifactsForRun } from "../../links";
 
 // S-25 view states: empty · uploading · extracted (adopt-gate) · adopted.
 export type SourceDocsView = "empty" | "uploading" | "extracted" | "adopt-gate" | "adopted";
@@ -297,7 +298,17 @@ function SourceDocRow({
             </Button>
           )}
           {doc.status === "adopted" && (
-            <Link to="/artifacts" className="btn btn--ghost btn--sm">
+            // N2: the id is already on the row — `extracted_artifact_ids` is what adoption
+            // wrote. "View artifact" (singular, on THIS document's row) opened the whole
+            // registry, leaving the user to find by hand the thing they had just adopted.
+            <Link
+              to={
+                doc.extracted_artifact_ids?.[0]
+                  ? artifactLink(doc.extracted_artifact_ids[0])
+                  : artifactsForRun(doc.id)
+              }
+              className="btn btn--ghost btn--sm"
+            >
               View artifact
             </Link>
           )}

@@ -7,21 +7,35 @@ from apps.projects.models import Project
 from apps.tenancy.models import Tenant
 from apps.workitems.models import WorkItem
 from integrations.reconcile import reconcile_backlog
-from integrations.types import ExternalRef, Issue, IssueHit
+from integrations.types import CapabilityError, ExternalRef, Issue, IssueHit
 
 
 class _FakeTracker:
-    """In-memory TaskTracker: records creates; `existing` summaries register-don't-recreate."""
+    """In-memory TaskTracker: records creates; `existing` summaries register-don't-recreate.
 
-    def __init__(self, existing: dict | None = None):
+    `gone` is the set of issue keys the tracker reports as deleted (404), and `unreachable`
+    the status it raises for every key instead — the two halves of the S.No 236 pointer check.
+    """
+
+    def __init__(self, existing: dict | None = None, gone: set | None = None,
+                 unreachable: int | None = None):
         self._existing = existing or {}   # summary -> key
+        self._gone = gone or set()
+        self._unreachable = unreachable
         self.created: list[dict] = []
+        self.get_calls: list[str] = []
         self._n = 0
 
     def search(self, *, jql):
         return [IssueHit(key=k, summary=s) for s, k in self._existing.items() if s in jql]
 
     def get_issue(self, *, issue_ref):
+        self.get_calls.append(issue_ref)
+        if self._unreachable is not None:
+            raise CapabilityError(f"Atlassian GET -> {self._unreachable}",
+                                  status=self._unreachable)
+        if issue_ref in self._gone:
+            raise CapabilityError("Atlassian GET -> 404", status=404)
         return Issue(key=issue_ref, summary="", status="To Do", issue_type="Task",
                      url=f"https://x.atlassian.net/browse/{issue_ref}")
 
@@ -72,7 +86,8 @@ def test_reconcile_creates_issues_in_hierarchy_order(project):
         tracker=tracker, project_key="ST",
     )
 
-    assert out == {"reconciled": 2, "created": 2, "failed": [], "items": out["items"]}
+    assert out == {"reconciled": 2, "created": 2, "skipped": 0, "failed": [],
+                   "items": out["items"]}
     # Epic created before the story; the story references the epic's new key.
     assert [c["kind"] for c in tracker.created] == ["Epic", "Story"]
     assert tracker.created[1]["parent_ref"] == "ST-1"
@@ -163,8 +178,9 @@ def test_reconcile_is_idempotent(project):
                                tracker=tracker, project_key="ST")
 
     assert first["created"] == 1
-    # Re-run finds nothing proposed (all accepted) and creates nothing new.
-    assert second == {"reconciled": 0, "created": 0, "failed": [], "items": []}
+    # The item is a candidate again (it is no longer filtered out by state), its recorded key is
+    # re-checked against the tracker, still resolves — so it is SKIPPED, not re-created.
+    assert second["created"] == 0 and second["skipped"] == 1 and second["failed"] == []
     assert len(tracker.created) == 1
 
 
@@ -181,15 +197,122 @@ def test_reconcile_registers_existing_without_duplicating(project):
     assert wi.external_ref["id"] == "ST-77" and wi.state == WorkItem.State.ACCEPTED
 
 
-def test_reconcile_only_touches_proposed(project):
-    _wi(project, type=WorkItem.Type.STORY, title="Already done",
-        state=WorkItem.State.IN_PROGRESS)
+# ── S.No 237: an item's lifecycle stage no longer decides whether it can be tracked ────
+
+
+def test_item_past_proposed_is_still_exportable(project):
+    """Bugs S.No 237: candidates were selected on `state=proposed`, so the moment work started an
+    item became permanently un-exportable — 70 of SpendLog's 109 items could never reach Jira."""
+    wi = _wi(project, type=WorkItem.Type.STORY, title="Under way",
+             state=WorkItem.State.IN_PROGRESS)
     tracker = _FakeTracker()
 
     out = reconcile_backlog(tenant_id=str(project.tenant_id), project_id=str(project.id),
                             tracker=tracker, project_key="ST")
 
-    assert out["reconciled"] == 0 and tracker.created == []
+    assert out["created"] == 1
+    wi.refresh_from_db()
+    assert wi.external_ref["id"] == "ST-1"
+
+
+def test_export_never_moves_an_item_backwards(project):
+    """THE PINNED RULE (team decision, 2026-09-07): a re-export must never move an item that is
+    already past `accepted`. Reconcile forced state=ACCEPTED on every success, which was harmless
+    only while proposed items were the sole candidates. With S.No 237 in place that same line
+    would rewrite live history — the exact damage the July recovery needed a rewind script to
+    undo. Deleting the `if wi.state == PROPOSED` guard must fail this test loudly."""
+    tracker = _FakeTracker()
+    kept = {}
+    for state in (WorkItem.State.IN_PROGRESS, WorkItem.State.IN_REVIEW,
+                  WorkItem.State.BLOCKED, WorkItem.State.DONE):
+        kept[state] = _wi(project, type=WorkItem.Type.STORY, title=f"Story {state}", state=state)
+    promoted = _wi(project, type=WorkItem.Type.STORY, title="Fresh",
+                   state=WorkItem.State.PROPOSED)
+
+    reconcile_backlog(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                      tracker=tracker, project_key="ST")
+
+    for state, wi in kept.items():
+        wi.refresh_from_db()
+        assert wi.state == state, f"export moved a {state} item to {wi.state}"
+        assert wi.external_ref["id"]      # still exported — only the state is left alone
+    # `proposed → accepted` is the one promotion this service still makes.
+    promoted.refresh_from_db()
+    assert promoted.state == WorkItem.State.ACCEPTED
+
+
+def test_defects_and_test_cases_are_not_swept_into_the_tracker(project):
+    """Dropping the state filter must not turn a task-breakdown export into a dump of every
+    defect and test case in the project — the QA loop creates those directly in `in_progress`,
+    so they were never in scope, and `_KIND` would mislabel them all as a generic 'Task'."""
+    _wi(project, type=WorkItem.Type.DEFECT, title="Contrast too low",
+        state=WorkItem.State.IN_PROGRESS)
+    _wi(project, type=WorkItem.Type.TEST_CASE, title="TC-1 login",
+        state=WorkItem.State.IN_PROGRESS)
+    _wi(project, type=WorkItem.Type.STORY, title="A real story")
+    tracker = _FakeTracker()
+
+    out = reconcile_backlog(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                            tracker=tracker, project_key="ST")
+
+    assert out["created"] == 1
+    assert [c["summary"] for c in tracker.created] == ["A real story"]
+
+
+# ── S.No 236: a pointer is only trusted while the issue it names still exists ────
+
+
+def test_deleted_issue_is_detected_and_the_item_is_recreated(project):
+    """Bugs S.No 236: an issue deleted in Jira left the platform holding a dead key for ever —
+    the item was skipped on every future pass, so the work silently fell out of the tracker with
+    no detection and no repair path."""
+    wi = _wi(project, type=WorkItem.Type.STORY, title="Orphaned",
+             state=WorkItem.State.IN_PROGRESS)
+    wi.external_ref = {"sor": "jira", "id": "ST-99", "url": "https://x/browse/ST-99"}
+    wi.save(update_fields=["external_ref"])
+    tracker = _FakeTracker(gone={"ST-99"})
+
+    out = reconcile_backlog(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                            tracker=tracker, project_key="ST")
+
+    assert out["created"] == 1
+    wi.refresh_from_db()
+    assert wi.external_ref["id"] == "ST-1"        # a NEW key — Jira never reuses a deleted one
+    assert wi.state == WorkItem.State.IN_PROGRESS  # and the state is still preserved
+
+
+def test_an_outage_never_clears_pointers(project):
+    """The single most dangerous line in this fix. Only 404/410 mean 'gone'. If a 401 (expired
+    token), 403, 429 or 5xx were read as deletion, one export during an outage would clear every
+    pointer in the project and re-create the entire backlog as duplicate issues."""
+    for status in (401, 403, 429, 500, 503):
+        wi = _wi(project, type=WorkItem.Type.STORY, title=f"Tracked {status}")
+        wi.external_ref = {"sor": "jira", "id": f"ST-{status}", "url": "https://x"}
+        wi.save(update_fields=["external_ref"])
+        tracker = _FakeTracker(unreachable=status)
+
+        out = reconcile_backlog(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                                tracker=tracker, project_key="ST")
+
+        assert tracker.created == [], f"a {status} caused a duplicate issue to be created"
+        assert out["created"] == 0
+        wi.refresh_from_db()
+        assert wi.external_ref["id"] == f"ST-{status}", f"a {status} wiped the pointer"
+        wi.delete()
+
+
+def test_export_without_a_project_key_refuses_instead_of_duplicating(project):
+    """`_find_existing` returns None for everything when the project key is unset, so
+    register-don't-recreate is silently off and the export creates blind. Refuse the whole run
+    rather than make a second copy of a backlog that is already in Jira."""
+    _wi(project, type=WorkItem.Type.STORY, title="A story")
+    tracker = _FakeTracker()
+
+    out = reconcile_backlog(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                            tracker=tracker, project_key="")
+
+    assert out["created"] == 0 and tracker.created == []
+    assert "project key" in out["failed"][0]["error"]
 
 
 # ── live reconciliation against real Jira (runs only with creds) ────

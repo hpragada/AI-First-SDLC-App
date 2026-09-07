@@ -133,6 +133,9 @@ export function useArtifacts(q: {
   project?: string;
   phase?: string;
   status?: string;
+  type?: string;
+  run?: string;
+  work_item?: string;
   latest?: boolean;
 }) {
   const tenantId = useTenantId();
@@ -143,10 +146,12 @@ export function useArtifacts(q: {
   });
 }
 
-export function useArtifactPreview(artifactId: string | undefined) {
+export function useArtifactPreview(artifactId: string | undefined, raw = false) {
   return useQuery({
-    queryKey: ["artifact-preview", artifactId],
-    queryFn: () => api.getArtifactPreview(artifactId as string),
+    // `raw` is part of the key so switching to the raw file and back is instant and each is
+    // cached on its own — the rendered view is not thrown away to look at the source.
+    queryKey: ["artifact-preview", artifactId, raw],
+    queryFn: () => api.getArtifactPreview(artifactId as string, raw),
     enabled: Boolean(artifactId),
   });
 }

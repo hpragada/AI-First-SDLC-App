@@ -365,7 +365,13 @@ def _assert_body_not_shared(tenant_id, run, type, s3_key, title) -> None:
 def register_artifact(
     tenant_id, project_id, run_id, phase, type, sor,
     content_hash, s3_key=None, external_ref=None, repo_id=None, title="", supersedes=None,
+    format=None,
 ) -> dict:
+    """`format` declares what the staged body IS — "json", "yaml", "xml", "csv", "markdown"
+    (the default when nothing is said). Bugs S.No 187: the preview announced every internal
+    body as markdown whatever was in it, and there was no way for an agent to say otherwise,
+    so the security phase's CycloneDX SBOM previewed as one unbroken run of characters. The
+    platform can now also detect JSON on its own, but a declaration is better than a guess."""
     with tenant_context(tenant_id):
         project = Project.objects.get(id=project_id, tenant_id=tenant_id)
         # `supersedes` anchors this registration to an EXISTING artifact's identity (Part B fix 2).
@@ -387,6 +393,10 @@ def register_artifact(
         if sor not in Artifact.SoR.values:
             raise ValueError(f"invalid sor: {sor}")
         _assert_body_not_shared(tenant_id, run, type, s3_key, title)
+        if format:
+            # Recorded on the pointer alongside the other provenance — `_REF_POINTER_KEYS`
+            # already lists "format", so it is never mistaken for the artifact's content.
+            external_ref = {**(external_ref or {}), "format": str(format).lower()}
         # Version across re-registrations (Bugs.xlsx row 28.2): re-running a phase should yield
         # v2, v3, … of the SAME artifact. But per-item types (adr, test_case, security_finding,
         # code, code_review, test_report) register many DISTINCT rows sharing (phase, type) in one
@@ -1004,6 +1014,22 @@ def transition_work_item(tenant_id, work_item_id, to_state) -> dict:
         if to_state not in WorkItem.State.values:
             raise ValueError(f"invalid state: {to_state}")
         work_item = WorkItem.objects.get(id=work_item_id, tenant_id=tenant_id)
+        # Bugs S.No 140. A person cancelled this item, and every automated caller of this
+        # function forces a state without asking what the item's current one is: a merged PR
+        # webhook would flip it to `done`, a rejected gate or a failed build would flip it back
+        # to `in_progress`. Any of those silently un-cancels a decision a human made, and the
+        # board would show work nobody intends to do.
+        #
+        # Skipped rather than raised. These callers are Temporal activities; raising here would
+        # fail the workflow over a state change that was never important to it. The skip is
+        # recorded so it is visible in the ledger rather than merely quiet, and the unchanged
+        # item is returned so a caller that checks can tell nothing moved.
+        if work_item.state == WorkItem.State.CANCELLED and to_state != WorkItem.State.CANCELLED:
+            log_event(tenant_id, "orchestrator", "workitem.transition_skipped", "work_item",
+                      str(work_item.id),
+                      {"to_state": to_state, "from_state": work_item.state,
+                       "reason": "the item is cancelled — only a person can reopen it"})
+            return _work_item(work_item)
         work_item.state = to_state
         work_item.save(update_fields=["state", "updated_at"])
         return _work_item(work_item)

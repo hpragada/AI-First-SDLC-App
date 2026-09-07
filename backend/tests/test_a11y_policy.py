@@ -78,7 +78,14 @@ def _hdr(tenant_id):
 def world(db):
     tenant = Tenant.objects.create(name="Acme")
     project = Project.objects.create(tenant=tenant, name="Shop")
-    return {"t": str(tenant.id), "p": str(project.id), "tenant": tenant, "project": project}
+    # S.No 214: editing the project profile — which is what the accessibility policy lives in —
+    # takes tech_lead/admin on the project. It steers every agent that runs there, so the two
+    # policy tests below now sign in as the admin their names always claimed they were.
+    admin = User.objects.create_user(email="admin@acme.test", name="Admin", tenant=tenant,
+                                     password="pw")
+    Membership.objects.create(tenant=tenant, user=admin, project=project, role="admin")
+    return {"t": str(tenant.id), "p": str(project.id), "tenant": tenant, "project": project,
+            "admin": admin}
 
 
 def _profile(world, a11y):
@@ -484,6 +491,7 @@ def test_no_new_role_was_invented_for_this(db):
 # ══ AC1 (the API) — an admin sets it and saves it ════════════════════════════════
 
 def test_an_admin_saves_a_policy_and_reads_it_back(client, world):
+    client.force_authenticate(world["admin"])
     url = f"/api/projects/{world['p']}/profile/"
     saved = client.put(url, {"a11y": {"target": "wcag_2.2_aaa",
                                       "gate": {"min_confidence": 0.8}}},
@@ -494,6 +502,7 @@ def test_an_admin_saves_a_policy_and_reads_it_back(client, world):
 
 
 def test_an_invalid_policy_is_refused_at_the_api_with_a_readable_reason(client, world):
+    client.force_authenticate(world["admin"])
     resp = client.put(f"/api/projects/{world['p']}/profile/",
                       {"a11y": {"gate": {"block_severities": ["serious"]}}},
                       format="json", **_hdr(world["t"]))

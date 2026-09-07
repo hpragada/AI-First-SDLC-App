@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import {
   Badge,
+  Banner,
   Button,
   Card,
   CardBody,
@@ -25,6 +26,7 @@ import {
   useWorkItems,
 } from "./hooks";
 import { phaseLabel } from "./phases";
+import { useParamState } from "../../urlState";
 
 // S-20 view states: one-pending(confirm) · multi-question · tiered (all three tiers) ·
 // required-error · already-answered · cancelled · empty.
@@ -291,8 +293,16 @@ function ClarificationsLive() {
   // because the backlog it used to filter against was empty until the project resolved too.
   const loading = !projectId || clarifications.isLoading;
   const pending = projectId ? (clarifications.data ?? []) : [];
-  const current = pending[0];
+  // N2: this screen answers ONE question at a time and always picked `pending[0]`, so "Answer the
+  // question" beside a question whose text you had just read could open a DIFFERENT one. That is
+  // worse than landing on a list: it invites the wrong answer to be typed into the wrong box.
+  const [askedFor, , pinnedFromUrl] = useParamState("clarification");
+  const current = pending.find((c) => c.id === askedFor) ?? (pinnedFromUrl ? undefined : pending[0]);
+  // NOTE the answer-form effect below keys on `currentId` — the RESOLVED clarification, never on
+  // the param. Keying it on the param would re-run when the URL changed to something that is not
+  // in the list and wipe a half-typed answer.
   const currentId = current?.id;
+  const staleLink = pinnedFromUrl && Boolean(askedFor) && !current && !loading;
 
   // Whenever a new clarification surfaces, seed the form with the agent's Tier-2/3
   // suggestions so agreeing is one click and only Tier-1 blanks remain.
@@ -440,6 +450,18 @@ function ClarificationsLive() {
         active={tab}
         onSelect={(id) => setTab(id as "pending" | "history")}
       />
+
+      {staleLink && (
+        <Banner variant="info" title="That question has already been answered">
+          <p className="t-sm">
+            Nothing is open, so no answer can land on the wrong question. If it was just answered,
+            it is in the answered history.
+          </p>
+          <Button variant="secondary" size="sm" onClick={() => setTab("history")}>
+            Look in the answered history
+          </Button>
+        </Banner>
+      )}
 
       {tab === "history" ? (
         <ClarificationHistory projectId={projectId} />

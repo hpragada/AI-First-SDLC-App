@@ -18,7 +18,8 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.projects.models import Project
+from apps.projects.models import Project, ProjectProfile
+from apps.registry.catalog import AGENT_CATALOG
 from apps.runs.enrollment import (
     authenticate_runner,
     enroll_runner,
@@ -110,15 +111,26 @@ _BUILD_STATE_TOOLS = {
     "finish_a11y_journey": tools.finish_a11y_journey,
 }
 
-# The build agent may move a WorkItem forward through working states (e.g. -> in_progress at
-# Step 1), but it must NEVER transition one to a gate-owned terminal state. Marking a WorkItem
-# `done` is a control-plane action that only happens after an APPROVED merge gate, via the saga's
-# transition_build_work_item activity (non-negotiables #2/#5). Letting the engine set `done`
-# itself bypassed the gate and left the WorkItem done with no workitem.transitioned event while
-# its run was still in review — the "state=done while awaiting_gate" mislabel. Blocked here at
-# the single agent/companion entry point; the orchestrator calls tools.transition_work_item
-# in-process (not through this view), so its legitimate `done` transition is unaffected.
-_AGENT_FORBIDDEN_TRANSITIONS = {"done"}
+# The states a build agent may set on a WorkItem. An ALLOWLIST, not a blocklist (Bugs S.No 87).
+#
+# `done` was blocked first, because letting the engine set it bypassed the merge gate and left a
+# WorkItem done, with no workitem.transitioned event, while its run was still in review — the
+# "state=done while awaiting_gate" mislabel (non-negotiables #2/#5). But that left every OTHER
+# state open: an agent could still promote an item to `accepted` (which is the reconciler's word
+# for "this is now in the tracker", and would be a lie), push it back to `proposed` (erasing the
+# fact that work had started), or park it in `blocked`/`in_review` — states no control-plane code
+# writes, so nothing would ever move it out again.
+#
+# Exactly one transition is an agent's to make, and it is written down: 07_implementation moves
+# the item to `in_progress` when it starts work (agents/07_implementation/agent.md, Step 1). Every
+# other state belongs to the platform. Inverting the rule also means a state added later is
+# refused by default rather than quietly permitted until somebody remembers to add it to a list —
+# which is the failure this fix exists to end, not repeat.
+#
+# Enforced at the single agent/companion entry point. The orchestrator calls
+# tools.transition_work_item in-process (not through this view), so the saga's own transitions —
+# including the gated `done` — are unaffected.
+_AGENT_ALLOWED_TRANSITIONS = {"in_progress"}
 
 
 def _tenant_id(request) -> str:
@@ -217,6 +229,23 @@ class RunnerEnrollmentView(APIView):
     local-companion runner for this tenant."""
 
     def get_permissions(self):
+        # GET only, and that is a DELIBERATE hold rather than an oversight.
+        #
+        # S.No 214 closed eight other anonymous writes, and the enrollment POST is genuinely the
+        # ninth: it mints a credential that lets a machine claim and run this tenant's phases,
+        # and enrollment tokens never expire. Gating it, however, breaks the documented CLI
+        # onboarding path - `python -m runner.companion enroll --api-url ... --tenant T
+        # --project P` (runner/README.md, Quick start step 1) sends only an X-Tenant-ID header
+        # and a `developer_id` body param, with no session to present. There is no user-token
+        # auth for it to use instead; giving it one is new capability, not a bug fix.
+        #
+        # So this is recorded against S.No 35, which already owns the redesign of the whole
+        # Connect Machine flow, alongside the two findings filed there earlier: `revoke_runner`
+        # revokes exactly one enrollment row and leaves that machine's other tokens ACTIVE, and
+        # the token travels on the command line where any process listing reveals it. Whatever
+        # replaces the token flow has to answer "how does a headless machine authenticate" once,
+        # for all three - and closing this half first would break onboarding while solving none
+        # of it.
         if self.request.method == "GET":
             return [IsAuthenticatedMember()]
         return super().get_permissions()
@@ -237,6 +266,9 @@ class RunnerEnrollmentView(APIView):
         if not Project.objects.filter(id=project_id, tenant_id=tenant_id).exists():
             return Response({"project_id": "not found in tenant"},
                             status=status.HTTP_404_NOT_FOUND)
+        # NOTE: no project-membership check here either, for the reason in `get_permissions`
+        # above - the CLI path has no session to check a membership against. It belongs with the
+        # S.No 35 redesign, not ahead of it.
         # The authenticated session user owns the enrollment; `developer_id` in the body is
         # only the pre-auth/runner/test fallback (mirrors `resolve_actor`, P4.7-T5).
         user = current_user(request)
@@ -253,6 +285,15 @@ class RunnerEnrollmentView(APIView):
 
 class RunnerRevokeView(APIView):
     """POST /api/runners/{id}/revoke/ — stop a companion's token from authenticating."""
+
+    def get_permissions(self):
+        # S.No 214: an ungated write sitting next to the one above. Revoking somebody else's
+        # companion stops their phases from running, so it needs a session like everything else.
+        # NOTE this changes WHO may call it, not what it does — the fact that it revokes exactly
+        # one enrollment row and leaves the rest of that machine's tokens ACTIVE is recorded
+        # against S.No 35, which owns the Connect Machine redesign, and is deliberately not
+        # touched here.
+        return [IsAuthenticatedMember()]
 
     def post(self, request, pk):
         tenant_id = _tenant_id(request)
@@ -278,13 +319,17 @@ class RunnerStateView(APIView):
             return Response({"detail": f"tool '{tool}' is not in the build allowlist"},
                             status=status.HTTP_403_FORBIDDEN)
         args = request.data if isinstance(request.data, dict) else {}
-        # Guard: the engine may not transition a WorkItem to a gate-owned terminal state (`done`).
-        # That transition belongs to the control plane, after an approved merge gate (#2/#5).
-        if tool == "transition_work_item" and args.get("to_state") in _AGENT_FORBIDDEN_TRANSITIONS:
+        # Guard: an agent may only move a WorkItem to `in_progress`. Every other state is the
+        # control plane's to set — `done` after an approved merge gate, `accepted` by the
+        # reconciler when the item really reaches the tracker (#2/#5).
+        if (tool == "transition_work_item"
+                and args.get("to_state") not in _AGENT_ALLOWED_TRANSITIONS):
+            allowed = ", ".join(sorted(_AGENT_ALLOWED_TRANSITIONS))
             return Response(
                 {"detail": f"transition to '{args.get('to_state')}' is not permitted from a build "
-                           "agent — the platform transitions a WorkItem to done only after its "
-                           "merge gate is approved."},
+                           f"agent — the only state you may set is: {allowed}. Everything else, "
+                           "including marking the item done, is the platform's to decide (done "
+                           "happens only after the merge gate is approved)."},
                 status=status.HTTP_403_FORBIDDEN)
         try:
             result = fn(str(runner.tenant_id), **args)   # tenant bound server-side
@@ -389,6 +434,13 @@ class RunnerClarificationPollView(APIView):
         return Response(result)
 
 
+#: The security phase's LABEL, not its agent key — a dispatch payload carries labels
+#: (`AgentRunInput.phase` is set from `spec.phase_label`). Read from the catalog rather than
+#: written out, so renaming the phase there cannot silently switch this branch off.
+SECURITY_PHASE = next(
+    (a.phase_label for a in AGENT_CATALOG if a.key == "10_security"), "security")
+
+
 def _phase_extras(run, payload: dict):
     """The dispatched task, plus what its phase needs and the generic dispatch could not carry.
 
@@ -413,8 +465,28 @@ def _phase_extras(run, payload: dict):
     but "tiny" is not "closed": a companion that claimed inside it would start an agent whose
     first tool call fails with "no accessibility journey is attached to this run". Deferring for
     one poll turns a rare, confusing failure into about a second of waiting.
+
+    **The security phase (Bugs S.No 185) needs its package registries reachable**, and likewise
+    before the agent starts: the companion builds the egress allowlist once, at task setup, and
+    a scanner that cannot reach PyPI cannot be installed at all. `extra_allowed_hosts` has been a
+    field on the companion's task and honoured by its guardrails all along — nothing on the
+    server ever populated it, which is exactly the "does not exist yet" the guardrails comment
+    names. A project that declares no registries gets a payload identical to today's.
     """
     from apps.a11y.journey import JOURNEY_PHASE
+
+    if payload.get("phase") == SECURITY_PHASE:
+        profile = ProjectProfile.objects.filter(
+            tenant_id=run.tenant_id, project_id=run.work_item.project_id).only("scan").first()
+        registries = [
+            h.strip() for h in ((profile.scan if profile else {}) or {}).get("registries", [])
+            if isinstance(h, str) and h.strip()
+        ]
+        if not registries:
+            return payload
+        existing = list(payload.get("extra_allowed_hosts") or [])
+        merged = existing + [h for h in registries if h not in existing]
+        return {**payload, "extra_allowed_hosts": merged}
 
     if payload.get("phase") != JOURNEY_PHASE:
         return payload

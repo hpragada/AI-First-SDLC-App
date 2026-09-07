@@ -135,6 +135,13 @@ def _reconcile_pull_request(tenant_id: str, payload: dict) -> dict:
     number = pr.get("number")
     merged = bool(pr.get("merged") or pr.get("merged_at"))
     repo = (payload.get("repository") or {}).get("full_name", "")
+    # WHO merged it, which GitHub sends on every one of these and we threw away (Bugs S.No 88).
+    # `merged_by` is the account that pressed the button; `sender` is whoever the delivery is
+    # attributed to. They differ for an auto-merge, so keep the first and fall back to the
+    # second rather than inventing a single "user".
+    merged_by = ((pr.get("merged_by") or {}).get("login")
+                 or (payload.get("sender") or {}).get("login") or "")
+    merged_at = pr.get("merged_at") or ""
 
     artifacts = _code_artifacts(tenant_id, number=number, repo=repo)
     if not artifacts:
@@ -157,14 +164,38 @@ def _reconcile_pull_request(tenant_id: str, payload: dict) -> dict:
                 gate_pending = run is not None and Approval.objects.filter(
                     run_id=run.id, tenant_id=tenant_id,
                     gate_type=_MERGE_GATE_TYPE, decision=Approval.Decision.PENDING).exists()
+            if run is not None and gate_pending:
+                # The guard above is correct and stays: a webhook must never move the work item
+                # past a gate a human has not decided. But saying nothing left the run waiting
+                # for ever for an approval of a merge that had already happened, with nothing on
+                # the reviewer's screen to explain it (Bugs S.No 88). Leave a NOTE instead.
+                #
+                # Best-effort on purpose. The dedup row for a delivery is written BEFORE this
+                # handler runs, so a failed webhook is never redelivered — if annotating throws,
+                # the pointer reconcile above has already succeeded and must not be undone. The
+                # sweep in apps/gates/reconcile.py is the real safety net.
+                try:
+                    from apps.gates.external_merge import note_external_merge
+
+                    note_external_merge(
+                        tenant_id, run, repo=repo, number=number,
+                        merged_by=merged_by, merged_at=merged_at, detected_by="webhook",
+                    )
+                except Exception:  # noqa: BLE001 — see above
+                    pass
             if run is not None and not gate_pending:
-                tools.transition_work_item(tenant_id, str(run.work_item_id), WorkItem.State.DONE)
+                moved = tools.transition_work_item(
+                    tenant_id, str(run.work_item_id), WorkItem.State.DONE)
                 # Always emit the canonical transition event so state=done is never orphaned in
-                # the audit trail (the missing-event half of the mislabel bug).
-                tools.log_event(tenant_id, "orchestrator", "workitem.transitioned", "work_item",
-                                str(run.work_item_id),
-                                {"to_state": WorkItem.State.DONE, "via": "webhook_pr_merge"})
-                work_items.append(str(run.work_item_id))
+                # the audit trail (the missing-event half of the mislabel bug) — but only when
+                # the item ACTUALLY moved. A cancelled item is left alone (S.No 140), and
+                # logging "transitioned to done" over the top of that would put a merge in the
+                # audit trail that never happened.
+                if moved.get("state") == WorkItem.State.DONE:
+                    tools.log_event(tenant_id, "orchestrator", "workitem.transitioned",
+                                    "work_item", str(run.work_item_id),
+                                    {"to_state": WorkItem.State.DONE, "via": "webhook_pr_merge"})
+                    work_items.append(str(run.work_item_id))
 
     name = ("webhook.pr_merged" if (action == "closed" and merged)
             else "webhook.pr_closed" if action == "closed" else "webhook.pr_event")

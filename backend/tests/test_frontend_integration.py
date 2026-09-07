@@ -525,6 +525,10 @@ def test_dashboard_endpoint_exists(client, project, member):
     assert {"work_items", "phases_in_progress", "awaiting_gate", "published_week"} <= set(h.keys())
     nm = r.data["needs_me"]
     assert {"gates", "clarifications", "my_runs"} <= set(nm.keys())
+    # N2: "recently published" used to be a list of titles the user could look at and not open —
+    # the browser had no id to link with. Every row now carries one.
+    for row in r.data["recent_publishes"]:
+        assert {"artifact_id", "title"} <= set(row.keys())
 
 
 def test_artifact_publish_endpoint_exists(client, project, admin):

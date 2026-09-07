@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useState } from "react";
 
 import { useAuth } from "../../auth/AuthContext";
@@ -101,9 +102,9 @@ function ContractsDriftLive() {
                   <Badge variant="done" key="s">
                     {c.status}
                   </Badge>,
-                  <a href={`/artifacts/${c.artifact_id}`} key="a">
+                  <Link to={`/artifacts/${c.artifact_id}`} key="a">
                     View ↗
-                  </a>,
+                  </Link>,
                 ])}
               />
             </Panel>
@@ -258,9 +259,9 @@ function ContractsDriftGallery({ view }: { view: ContractsDriftView }) {
                   <Badge variant="done" key="s">
                     Stable
                   </Badge>,
-                  <a href="/artifacts" key="a">
+                  <Link to="/artifacts" key="a">
                     View ↗
-                  </a>,
+                  </Link>,
                 ],
                 [
                   <span className="table__primary" key="c">
@@ -275,9 +276,9 @@ function ContractsDriftGallery({ view }: { view: ContractsDriftView }) {
                   <Badge variant="done" key="s">
                     Stable
                   </Badge>,
-                  <a href="/artifacts" key="a">
+                  <Link to="/artifacts" key="a">
                     View ↗
-                  </a>,
+                  </Link>,
                 ],
               ]}
             />

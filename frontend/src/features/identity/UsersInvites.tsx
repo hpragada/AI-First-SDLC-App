@@ -9,10 +9,12 @@ import {
   Button,
   Drawer,
   EmptyState,
+  ErrorState,
   Field,
   Input,
   Panel,
   Table,
+  WriteError,
 } from "../../components/ui";
 import type { AdminUser, Invitation } from "../../types";
 import {
@@ -281,7 +283,21 @@ export function UsersInvites({ forceView }: { forceView?: UsersView }) {
         </Button>
       </div>
 
-      {view === "empty" ? (
+      {/* S.No 220: both queries are read as `?? []`, so a failed one produced an empty roster and
+          this screen then told an admin their whole team was just them. That is the most alarming
+          form the bug takes — it looks like data loss rather than a failed request. */}
+      {!forceView && (users.isError || invitations.isError) ? (
+        <Panel>
+          <ErrorState
+            title="We couldn't load your team"
+            detail={users.error ?? invitations.error}
+            onRetry={() => {
+              void users.refetch();
+              void invitations.refetch();
+            }}
+          />
+        </Panel>
+      ) : view === "empty" ? (
         <Panel>
           <EmptyState
             title="It's just you so far"
@@ -295,6 +311,18 @@ export function UsersInvites({ forceView }: { forceView?: UsersView }) {
         </Panel>
       ) : (
         <Panel flush>
+          {/* Bugs S.No 219: Resend and Revoke were fire-and-forget — `.mutate()` with nothing
+              reading `isError`. An expired or already-accepted invitation failed silently, and
+              the admin clicked Resend again and again believing it had worked. The screen has
+              always had an error state for the READ; the writes had none. */}
+          {(resend.isError || revoke.isError) && (
+            <div style={{ padding: "var(--space-4) var(--space-4) 0" }}>
+              <WriteError
+                title={resend.isError ? "Invitation not resent" : "Invitation not revoked"}
+                detail={resend.error ?? revoke.error}
+              />
+            </div>
+          )}
           <Table
             headers={["Name", "Email", "Status", "Projects & roles", ""]}
             rows={rows}

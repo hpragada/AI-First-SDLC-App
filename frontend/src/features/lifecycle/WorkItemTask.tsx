@@ -14,9 +14,11 @@ import {
   Panel,
   Spinner,
 } from "../../components/ui";
+import { CancelWorkItem } from "./CancelWorkItem";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
+import { artifactsForWorkItem, gateLink } from "../../links";
 import { useRepositories } from "../setup/hooks";
 import type { WorkItemCard } from "../../types";
 
@@ -41,6 +43,7 @@ function WorkItemTaskLive() {
   // Confirm before re-triggering implementation when a run already exists (Bugs S.No 77):
   // in progress → blocked; already run → restart & replace this phase's artifacts.
   const [confirm, setConfirm] = useState<{ kind: "rerun" | "active"; runId?: string } | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   const handleImplTrigger = () => {
     const prior = runs.data?.[0];
@@ -76,6 +79,9 @@ function WorkItemTaskLive() {
   const latestRun = runs.data?.[0];
   const running = latestRun?.status === "running";
   const done = workItem.data.state === "done";
+  // Bugs S.No 140. Kept separate from `done`: they are different facts and the screen says
+  // different things about each.
+  const cancelled = workItem.data.state === "cancelled";
   const nodes = visibleLifecycleNodes(lifecycle.data?.nodes ?? []).map((n, i) => railNodeView(n, i));
   const loops = lifecycle.data?.loops ?? [];
 
@@ -97,7 +103,7 @@ function WorkItemTaskLive() {
             </span>
             {workItem.data.parent && (
               <span className="meta-item">
-                Parent <a href={`/work-items/${workItem.data.parent}`}>↖ {workItem.data.parent.slice(0, 8)}</a>
+                Parent <Link to={`/work-items/${workItem.data.parent}`}>↖ {workItem.data.parent.slice(0, 8)}</Link>
               </span>
             )}
             {workItem.data.owner && (
@@ -108,9 +114,22 @@ function WorkItemTaskLive() {
           </div>
         </div>
         <span className="u-row-tight">
-          <Button variant="primary" disabled={trigger.isPending} onClick={handleImplTrigger}>
-            {trigger.isPending ? <Spinner /> : "Trigger phase"}
-          </Button>
+          {/* Nothing to trigger on a cancelled task, and nothing left to cancel either — the
+              buttons disappear together, so the page stops offering work nobody will do.
+              A DONE task keeps its trigger: re-running a phase on finished work is a real
+              thing people do, and that is not what this fix is about. */}
+          {!cancelled && (
+            <>
+              <Button variant="primary" disabled={trigger.isPending} onClick={handleImplTrigger}>
+                {trigger.isPending ? <Spinner /> : "Trigger phase"}
+              </Button>
+              {!done && (
+                <Button variant="secondary" onClick={() => setCancelOpen(true)}>
+                  Cancel task…
+                </Button>
+              )}
+            </>
+          )}
         </span>
       </div>
 
@@ -153,9 +172,9 @@ function WorkItemTaskLive() {
                   ["Phase", phaseLabel(latestRun.agent_phase ?? latestRun.agent_key)],
                 ]}
               />
-              <a href={`/runs/${latestRun.id}`} className="t-sm">
+              <Link to={`/runs/${latestRun.id}`} className="t-sm">
                 View run console ↗
-              </a>
+              </Link>
             </Panel>
           )}
 
@@ -167,9 +186,9 @@ function WorkItemTaskLive() {
                     <div className="artifact-row__title">{c.title || c.id.slice(0, 8)}</div>
                     <div className="artifact-row__meta">{c.type} · {phaseLabel(c.phase)}</div>
                   </div>
-                  <a href={`/work-items/${c.id}`} className="btn btn--ghost btn--sm">
+                  <Link to={`/work-items/${c.id}`} className="btn btn--ghost btn--sm">
                     Open
-                  </a>
+                  </Link>
                 </div>
               ))}
             </Panel>
@@ -193,7 +212,7 @@ function WorkItemTaskLive() {
                   {/* Rejecting from here sent NO comment at all — there is no box on this card,
                       so the reason was lost. The gate is where you can reject with a reason or
                       request changes and have the build actually revise. */}
-                  <Link className="btn btn--secondary" to="/gates">
+                  <Link className="btn btn--secondary" to={gateLink(pendingGate.id)}>
                     Reject or request changes…
                   </Link>
                 </div>
@@ -217,7 +236,14 @@ function WorkItemTaskLive() {
               <Kv
                 rows={[
                   ["State", statusLabel(workItem.data.state)],
-                  ["Artifacts", String(workItem.data.artifact_count ?? 0)],
+                  // N2: the count was inert text — the card told you there were four artifacts
+                  // and left you to find them in the registry by hand.
+                  [
+                    "Artifacts",
+                    <Link to={artifactsForWorkItem(workItem.data.id)} key="a">
+                      {workItem.data.artifact_count ?? 0}
+                    </Link>,
+                  ],
                   ["Open gates", String(approvals.data?.length ?? 0)],
                 ]}
               />
@@ -270,6 +296,10 @@ function WorkItemTaskLive() {
             </p>
           )}
         </Modal>
+      )}
+
+      {cancelOpen && (
+        <CancelWorkItem workItem={workItem.data} onClose={() => setCancelOpen(false)} />
       )}
 
       {/* No "Answered questions" panel here (team decision, 25 August). It was a full search
@@ -399,7 +429,7 @@ function WorkItemTaskGallery({ view }: { view: TaskView }) {
             view === "loop-failed" && (
               <>
                 ⌐ Child defect:{" "}
-                <a href="/work-items/WI-547">WI-547 "Signature check rejects valid test events"</a> —
+                <Link to="/work-items/WI-547">WI-547 "Signature check rejects valid test events"</Link> —
                 closes on clean re-run.
               </>
             )

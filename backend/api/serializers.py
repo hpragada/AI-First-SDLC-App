@@ -304,16 +304,48 @@ class ProjectSerializer(serializers.ModelSerializer):
         # Read-only means it's still returned to the client, just never written from a request.
         read_only_fields = ["id", "repo_topology", "created_at"]
 
+    def validate_name(self, value: str) -> str:
+        """A name of nothing but spaces was accepted, and then rendered as an empty switcher
+        entry nobody could identify (Bugs S.No 211). Store it trimmed, and refuse an empty one —
+        the Create button already blocks this in the UI, so only a direct API call reaches here."""
+        name = (value or "").strip()
+        if not name:
+            raise serializers.ValidationError("Give the project a name.")
+        return name
+
 
 class ProjectProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProjectProfile
         fields = [
             "id", "project", "description", "domain", "tech_stack", "coding_standards",
-            "nfrs", "constraints", "glossary", "export_policy", "a11y", "important_context",
-            "version",
+            "nfrs", "constraints", "glossary", "export_policy", "a11y", "scan",
+            "important_context", "version",
         ]
         read_only_fields = ["id", "project", "version"]
+
+    def validate_scan(self, value):
+        """Bugs S.No 185: the registries a security scan may reach. Validated here, at the point
+        of writing, for the same reason `a11y` is — it is read while a phase is being dispatched,
+        and a typo must surface as a readable 400 rather than as a scan that quietly cannot
+        install its tools."""
+        if not value:
+            return value
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("scan must be an object.")
+        registries = value.get("registries", [])
+        if not isinstance(registries, list) or not all(
+            isinstance(h, str) and h.strip() and "/" not in h for h in registries
+        ):
+            raise serializers.ValidationError(
+                "scan.registries must be a list of bare hostnames, e.g. "
+                '["pypi.org", "files.pythonhosted.org"] — no scheme and no path.'
+            )
+        unknown = set(value) - {"registries"}
+        if unknown:
+            raise serializers.ValidationError(
+                f"unknown scan setting(s): {', '.join(sorted(unknown))}")
+        return value
 
     def validate_a11y(self, value):
         """Reject an accessibility policy the platform cannot honour, at the point of writing.
@@ -375,6 +407,20 @@ class TriggerSerializer(serializers.Serializer):
     # The triggering user (pre-auth). Routes the run to their enrolled local companion
     # (req #1 — execution_mode resolves to "companion" when they have one); omit for the
     # server-side fallback.
+    user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+
+
+class WorkItemTransitionSerializer(serializers.Serializer):
+    """Input for the human state transition (Bugs S.No 140).
+
+    `to_state` is validated against the allowlist in `apps.workitems.cancel`, not here — the
+    legal move depends on the state the item is currently in, which this cannot see.
+    `reason` is required to cancel, and that too is checked there, so the message a person
+    reads is written in one place.
+    """
+
+    to_state = serializers.CharField()
+    reason = serializers.CharField(required=False, allow_blank=True, default="")
     user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
 
 
@@ -500,6 +546,20 @@ class ApprovalSerializer(serializers.ModelSerializer):
     # must render ONLY on the Task Breakdown gate, never resurface on a later merge/phase gate
     # whose sibling tasks still carry their planner repo_assignment (Bugs S.No 106 follow-up).
     phase = serializers.SerializerMethodField()
+    # The same run's phase LABEL — a DIFFERENT vocabulary, and the reason this field exists.
+    #
+    # `phase` above returns the agent KEY (`06_task_breakdown`, `00c_intelligent_context_extractor`)
+    # and must keep doing so: the phase-specific gate panels key on it. `Artifact.phase` stores the
+    # catalog's phase LABEL (`task_breakdown`, `context_extraction`). So a client holding an
+    # approval and asking `/artifacts?phase=<approval.phase>` gets ZERO rows — a silent empty list,
+    # which is worse than the wrong-but-populated list it would replace.
+    #
+    # The client-side workaround was to strip the `NN_` prefix. Measured against the whole catalog
+    # that is right for 10 of 11 agents and WRONG for `00c_intelligent_context_extractor`, whose
+    # label is `context_extraction`, not `intelligent_context_extractor`. Rather than fix the
+    # heuristic, serve the fact: the platform already knows both. Mirrors
+    # `RunSerializer.get_agent_phase` verbatim.
+    phase_label = serializers.SerializerMethodField()
     # If this merge gate was RE-OPENED because the merge hit a conflict (Bugs S.No 141 / ENH-2),
     # surface the conflict so the gate panel can explain WHY the user is being asked to approve
     # again (resolve in GitHub, then re-approve to retry the merge — no rebuild). None otherwise.
@@ -508,13 +568,18 @@ class ApprovalSerializer(serializers.ModelSerializer):
     # the work-item LIST — which deliberately hides carriers, and so rendered an onboarding gate
     # as a bare id fragment (or, before the project filter moved server-side, dropped it entirely).
     work_item_title = serializers.SerializerMethodField()
+    # Set when this gate's pull request was already merged outside the platform - somebody
+    # merged it on GitHub (Bugs S.No 88). {merged_by, merged_at, pr_ref, detected_by}, or None.
+    # A NOTE, not a decision: the reviewer still approves, they just finally know what they are
+    # approving. Only meaningful while the gate is pending, like merge_conflict above.
+    external_merge = serializers.SerializerMethodField()
 
     class Meta:
         model = Approval
         fields = [
-            "id", "run", "gate_type", "phase", "work_item", "work_item_title", "required_role",
-            "approver", "approver_name", "decision", "comment", "decided_at", "created_at",
-            "merge_conflict",
+            "id", "run", "gate_type", "phase", "phase_label", "work_item", "work_item_title",
+            "required_role", "approver", "approver_name", "decision", "comment", "decided_at",
+            "created_at", "merge_conflict", "external_merge",
         ]
         read_only_fields = fields
 
@@ -525,8 +590,19 @@ class ApprovalSerializer(serializers.ModelSerializer):
         spec = getattr(obj.run, "agent_spec", None)
         return getattr(spec, "key", None) if spec is not None else None
 
+    def get_phase_label(self, obj) -> str | None:
+        spec = getattr(obj.run, "agent_spec", None)
+        if spec is None:
+            return None
+        return spec.phase_label or spec.key
+
     def get_work_item_title(self, obj) -> str | None:
         return getattr(obj.work_item, "title", None) or None
+
+    def get_external_merge(self, obj) -> dict | None:
+        if obj.decision != Approval.Decision.PENDING:
+            return None
+        return obj.external_merge or None
 
     def get_merge_conflict(self, obj) -> str | None:
         # Only relevant while the gate is still pending (a re-opened, awaiting-retry merge gate).

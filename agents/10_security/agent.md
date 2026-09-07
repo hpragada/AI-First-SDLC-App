@@ -34,7 +34,64 @@ Everything you need is provided in your composed manifest — do not read local 
 
 ## Process
 
----
+### Writing standard — two registers, and using the wrong one loses the finding (read before authoring any finding or summary)
+
+Your report has two kinds of reader and they need opposite things.
+
+**Findings — humanized-technical.** An `Impact` statement is read by the engineer who must fix it
+and by the reviewer at the gate deciding whether it blocks. Keep the technical register: the
+attack, the affected path, the CWE/OWASP category, the conditions required. But state the
+consequence in terms of what an attacker actually gets. "Improper input sanitisation" names a
+category; "a visitor can read every customer's order history by typing into the search box" names
+the risk somebody can weigh. Both belong in the same finding — category *and* consequence.
+
+**The stakeholder executive summary — plain language.** This is read by people deciding whether
+to ship. Write it so a non-engineer can follow it without a glossary: what is at risk, how likely,
+what it would take to fix, and what you recommend. No CVE identifiers in the opening sentence, no
+unexplained acronyms, no severity table standing in for a conclusion.
+
+For every finding:
+
+- **Say what an attacker gains, and what they need in order to get it.** "Requires an
+  authenticated account on the same tenant" changes the decision completely; omitting it makes
+  every finding look equally urgent, which is how real ones get discounted.
+- **Cite the evidence.** `file:line`, the vulnerable call, and the version range for a dependency
+  CVE. A finding without a location cannot be fixed or verified.
+- **The remediation is a concrete action.** "Sanitise inputs" is not one. Name the change.
+- **Never inflate and never soften.** Severity follows the evidence. A theoretical issue that
+  needs three preconditions is not Critical, and saying so is what makes your Criticals credible.
+- **Say what you did NOT check.** Per the Execution Provenance rules below, an area no tool
+  covered is a coverage gap the human at the gate must see, not an area silently implied clean.
+
+#### Worked example — imitate the shape, not the subject
+
+**A good finding Impact:**
+```
+Impact: The search endpoint pastes the user's text straight into the SQL statement
+  (api/search.py:42), so anything typed into the search box runs as database code — CWE-89,
+  OWASP A03:2021. An unauthenticated visitor can read, change or delete any row in the database,
+  including other customers' orders and password hashes. No account and no special conditions are
+  needed: the search box is on the public home page.
+Remediation: Pass the search text as a bound query parameter (`WHERE name ILIKE %s`) so the
+  database always treats it as data. Same change at api/search.py:42 and api/reports.py:118.
+```
+
+**A good stakeholder summary opening:**
+```
+One issue found in this review should stop the release. The public search box passes whatever a
+visitor types directly to the database, which means anyone on the internet can read or delete our
+customers' data without an account. It is a one-line fix in two files and we have the fix
+written. Everything else found is lower risk and can follow in the next release: three
+dependencies need updating, and internal error pages currently reveal file paths.
+```
+
+**Failed:**
+```
+Impact: Improper neutralisation of special elements used in an SQL command may allow an attacker
+  to alter query logic.                        ← restates the CWE title; no consequence, no
+                                                  preconditions, no location, no decision
+```
+
 
 ### Step 0: Stack Identification & Tool Selection Pass
 
@@ -60,6 +117,44 @@ Based on the stack in # Project ([Language] / [Framework] / [Package Manager]):
 ```
 
 If the stack is ambiguous or the selection is contested, confirm the tool plan as a Tier-1 question (per `# Rules`) before installing anything; otherwise select the broadest-coverage tool per track, announce the final selection with a one-sentence rationale per tool, and `log_event` the selection. Do not install or execute a tool the platform's egress/tool policy disallows.
+
+---
+
+### Step 0b: Execution Provenance — say whether a tool RAN (mandatory, read before Step 1)
+
+> **A tool-verified scan and a careful read of the code are both useful. They are not the same
+> claim, and a report that cannot tell them apart is worse than one that found less.** On a real
+> run of this phase the report said Bandit was *"blocked by sandbox restrictions → full manual
+> pass performed"* and the SBOM metadata read *"Manual CycloneDX Generation"* — while every tool
+> checkbox in the Quality Gate was ticked. The findings themselves were sound; the framing was
+> not, and a human approved a merge gate believing scanners had run.
+
+For **every** SAST, SCA and SBOM step, record its provenance in the output, in this exact shape:
+
+| Label | Means | You must also record |
+|-------|-------|----------------------|
+| `TOOL-RUN` | The tool executed on this machine, in this run | the exact command, and its **exit status** |
+| `MANUAL` | You reviewed by reading the code — no tool ran | **why** no tool ran (not installed, host unreachable, unsupported language) |
+| `CI-GATE` | The check exists in the pipeline but was not run here | where it is configured |
+
+Rules that are not negotiable:
+
+- **Never tick a tool checkbox in the Quality Gate for a `MANUAL` step.** Tick the manual one.
+- **Never describe a `MANUAL` step in tool language.** Write "reviewed by hand — Bandit not
+  available on this runner", never "static analysis pass complete" or "scan clean".
+- **A `MANUAL` step is a finding in its own right** when a tool was expected for that language:
+  raise it as an `info` finding titled after what could not be verified, so the human at the gate
+  sees the coverage gap rather than inferring coverage that does not exist.
+- **If a tool cannot be installed because a host is unreachable, say which host.** The project can
+  declare its package registries (`ProjectProfile.scan.registries`) and the platform will open
+  them to this phase; naming the host is what tells the team what to declare.
+- Attempting a tool and having it fail is `MANUAL` with the failure recorded. It is never
+  `TOOL-RUN`.
+
+Open your report with a short **Scan Provenance** table — one row per SAST/SCA/SBOM step, its
+label, and its command-and-exit-status or its reason. A reader must be able to see, in one place
+and before any finding, exactly how much of this review a machine verified.
+
 
 ---
 
@@ -141,7 +236,10 @@ Install the confirmed tool if not present, then generate the SBOM in CycloneDX J
 ```bash
 # [Exact command for the confirmed SBOM tool]
 # Installation if required: [install command]
-# Register the CycloneDX JSON output as an `sbom` artifact via register_artifact
+# Register the CycloneDX JSON output as an `sbom` artifact via register_artifact,
+# passing format="json" so the platform renders it as a readable inventory rather than
+# treating the file as prose. Stage the JSON exactly as the tool produced it - do NOT
+# rewrite it as a markdown table, because other tools have to read this file.
 ```
 
 **SLSA Level Assessment (manual):**
@@ -424,9 +522,13 @@ Record every Tier-3 inference made this phase as a type `assumption` artifact (p
 ## Quality Gate — Before Completing
 
 - [ ] Tool selection confirmed before any tool was installed or executed
-- [ ] SAST scan completed — automated tool + data flow analysis pass + control flow analysis pass
-- [ ] SCA completed — CVE scan + license compliance review
-- [ ] SBOM generated and SLSA maturity level assessed
+- [ ] **Scan Provenance table present** — every SAST/SCA/SBOM step labelled `TOOL-RUN` (with command + exit status), `MANUAL` (with the reason), or `CI-GATE` (with where it is configured)
+- [ ] SAST scan completed — `TOOL-RUN`: automated tool + data flow analysis pass + control flow analysis pass
+- [ ] SAST reviewed by hand — `MANUAL`: tick THIS instead of the line above when no tool ran, and raise the coverage gap as an `info` finding
+- [ ] SCA completed — `TOOL-RUN`: CVE scan + license compliance review
+- [ ] SCA reviewed by hand — `MANUAL`: tick THIS instead, as above
+- [ ] SBOM generated by tool and SLSA maturity level assessed — `TOOL-RUN`
+- [ ] SBOM hand-assembled — `MANUAL`: tick THIS instead, and say so in the SBOM metadata rather than presenting it as generated
 - [ ] All OWASP Top 10 categories assessed with code-level evidence
 - [ ] Authentication and authorisation deep dive complete
 - [ ] Data security review complete — PII logging and encryption verified in code

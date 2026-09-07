@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type {
   ButtonHTMLAttributes,
   CSSProperties,
@@ -6,6 +6,7 @@ import type {
   InputHTMLAttributes,
   LabelHTMLAttributes,
   ReactNode,
+  RefObject,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
@@ -21,6 +22,110 @@ function useEscapeToClose(onClose?: () => void) {
     window.addEventListener("keydown", handle);
     return () => window.removeEventListener("keydown", handle);
   }, [onClose]);
+}
+
+/** Dismiss a popover on an outside click or Escape, and move focus into it when it opens.
+ *
+ * Extracted from the topbar account menu when the work-items board grew a row menu of its own
+ * (Bugs S.No 140). The markup of the two differs; this — the part that is easy to get subtly
+ * wrong, and the part a keyboard user notices when it is — does not, so it is written once.
+ * `firstItem` is focused on open so a menu opened from the keyboard does not strand you at the
+ * trigger with no way in.
+ */
+export function useDismissable(
+  open: boolean,
+  onClose: () => void,
+  root: RefObject<HTMLElement | null>,
+  firstItem?: RefObject<HTMLElement | null>,
+) {
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!root.current?.contains(event.target as Node)) onClose();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose, root]);
+
+  useEffect(() => {
+    if (open) firstItem?.current?.focus();
+  }, [open, firstItem]);
+}
+
+export type RowMenuItem =
+  | { label: ReactNode; href: string; danger?: boolean }
+  | { label: ReactNode; onSelect: () => void; danger?: boolean };
+
+/** The "⋯" menu at the end of a table row.
+ *
+ * A menu rather than the buttons laid out in the cell: a row is already dense, and an action
+ * that removes work from a board should take a deliberate second click rather than sit under
+ * the cursor of someone scanning a list. `label` names WHICH row it belongs to — "Actions"
+ * repeated forty times tells a screen-reader user nothing about where they are.
+ */
+export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const first = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismissable(open, close, root, first);
+
+  if (items.length === 0) return null;
+  return (
+    <div className="row-menu" ref={root}>
+      <button
+        type="button"
+        className="row-menu__trigger"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((was) => !was)}
+      >
+        {/* Three full stops, not the single "…" character: this is a control, and the ellipsis
+            glyph is read aloud as "dot dot dot" by some screen readers mid-sentence. The
+            aria-label above is what is actually announced; this is decorative. */}
+        <span aria-hidden="true">...</span>
+      </button>
+      {open && (
+        <div className="row-menu__pop" role="menu" aria-label={label}>
+          {items.map((item, index) => {
+            const ref = index === 0 ? first : undefined;
+            const className = cx("row-menu__item", item.danger && "row-menu__item--danger");
+            return "href" in item ? (
+              <RouterLink
+                key={index}
+                ref={ref as RefObject<HTMLAnchorElement>}
+                className={className}
+                role="menuitem"
+                to={item.href}
+                onClick={close}
+              >
+                {item.label}
+              </RouterLink>
+            ) : (
+              <button
+                key={index}
+                ref={ref as RefObject<HTMLButtonElement>}
+                type="button"
+                className={className}
+                role="menuitem"
+                onClick={() => { close(); item.onSelect(); }}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 type Variant =
@@ -44,7 +149,11 @@ export type BadgeVariant =
   | "info-hue"
   | "navy"
   | "orange"
-  | "outline";
+  | "outline"
+  // Bugs S.No 140. Deliberately NOT "done" and deliberately NOT "failed": abandoned work
+  // neither succeeded nor broke, and borrowing either colour would say something untrue at a
+  // glance. Muted, so a cancelled row recedes on a board without disappearing from it.
+  | "cancelled";
 type BannerVariant = "info" | "warning" | "danger" | "success" | "purple";
 
 export function cx(...parts: Array<string | false | null | undefined>) {
@@ -1050,6 +1159,89 @@ export function EmptyState({ title, text, action }: { title: ReactNode; text: Re
       <div className="empty__text">{text}</div>
       {action}
     </div>
+  );
+}
+
+/** A request FAILED — which is not the same thing as there being nothing to show.
+ *
+ * **Why this exists.** Bugs S.No 220: five list screens branched on "loading?" and then on "is
+ * the list empty?", and a failed request produces an empty list. So a completely broken backend
+ * rendered as a calm, healthy, brand-new workspace — "You're all caught up", "No lineage yet".
+ * The QA audit found the sharpest consequence: several written test cases would PASS against a
+ * dead server, because "the dashboard shows no pending gates" is exactly what they assert. It
+ * also costs support time, because a user whose session or network has failed sees no error to
+ * report.
+ *
+ * **Why a shared primitive rather than five inline banners.** The whole finding is that five
+ * screens independently forgot the same case. One component makes the omission visible in review,
+ * and it is the only way the sixth screen built next month inherits the behaviour.
+ *
+ * Render it BEFORE the empty check, never after — `if (q.isError) return <ErrorState … />`.
+ */
+export function ErrorState({
+  title = "We couldn't load this",
+  detail,
+  onRetry,
+}: {
+  title?: ReactNode;
+  detail?: unknown;
+  onRetry?: () => void;
+}) {
+  // The server's own words when we have them. `detail` is whatever the query threw, so it is
+  // typed `unknown` on purpose — an Error, a DRF `{detail: "..."}` body, or a string.
+  const message =
+    (typeof detail === "string" && detail) ||
+    (detail && typeof detail === "object"
+      ? ((detail as { message?: string }).message ??
+         (detail as { detail?: string }).detail ??
+         "")
+      : "") ||
+    "The server did not respond. This is a problem loading the page, not an empty list.";
+  return (
+    <Banner variant="danger" title={title}>
+      <div className="empty__text">{message}</div>
+      {onRetry && (
+        <Button variant="secondary" size="sm" onClick={onRetry} style={{ marginTop: 8 }}>
+          Try again
+        </Button>
+      )}
+    </Banner>
+  );
+}
+
+/** The counterpart to `ErrorState` for a WRITE that failed (Bugs S.No 219).
+ *
+ * There was one of these for reads and none for writes, so four screens each invented their
+ * own spelling and three more gave up and showed nothing at all — a resend that silently did
+ * nothing, a repository refusal caught and thrown away, a password rejected by a form that
+ * just sat there. One shared piece is what stops the eighth screen inventing an eighth.
+ *
+ * Deliberately NO retry button. Retrying a read is a refetch; retrying a write is submitting
+ * again, and a "Try again" that quietly re-sends an invitation is its own bug. The control
+ * that failed is still on screen — that is the retry.
+ */
+export function WriteError({
+  title = "That didn't work",
+  detail,
+}: {
+  title?: ReactNode;
+  detail?: unknown;
+}) {
+  // `detail` is whatever the mutation threw, so it is `unknown` on purpose. An ApiError's
+  // message is already humanized by `humanizeError` in api.ts — DRF's nested validation shape
+  // has been walked down to the leaf sentences a person can actually act on.
+  const message =
+    (typeof detail === "string" && detail) ||
+    (detail && typeof detail === "object"
+      ? ((detail as { message?: string }).message ??
+         (detail as { detail?: string }).detail ??
+         "")
+      : "") ||
+    "The server didn't accept that, and didn't say why. Nothing was changed.";
+  return (
+    <Banner variant="danger" title={title}>
+      <div className="empty__text">{message}</div>
+    </Banner>
   );
 }
 

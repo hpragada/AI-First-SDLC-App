@@ -447,3 +447,106 @@ def test_work_claim_returns_the_remediation_build(world):
     assert body["kind"] == "build"
     assert "Remediation Items" in body["payload"]["manifest"]
     assert body["payload"]["remediation"] is True
+
+
+# ── S.No 243: an approving review must SHOW it checked the acceptance criteria ──
+_TWO_CRITERIA = """A signed-in user can change their account email address.
+
+Acceptance Criteria:
+  - [ ] Given a signed-in user, when they submit a new address, then a confirmation email is sent.
+  - [ ] Given the address is already in use, when they submit it, then nothing changes.
+"""
+
+
+def _approving(criteria_json: str = "") -> str:
+    block = f'"acceptance_criteria":[{criteria_json}],' if criteria_json else ""
+    return '```json\n{"status":"APPROVED",' + block + '"findings":[]}\n```'
+
+
+def test_extract_acceptance_criteria_reads_the_shape_agent_06_writes():
+    got = rp.extract_acceptance_criteria(_TWO_CRITERIA)
+    assert got == [
+        "Given a signed-in user, when they submit a new address, then a confirmation "
+        "email is sent.",
+        "Given the address is already in use, when they submit it, then nothing changes.",
+    ]
+
+
+def test_extract_acceptance_criteria_is_empty_for_a_free_form_description():
+    """The safety valve. A fail-closed rule that fires on input it cannot parse is worse than the
+    bug it was written for — an imported Jira item must never be blocked by this."""
+    assert rp.extract_acceptance_criteria("Just make the login page work, thanks.") == []
+    assert rp.extract_acceptance_criteria(None) == []
+    # A checklist that is NOT under an Acceptance Criteria heading is not acceptance criteria.
+    assert rp.extract_acceptance_criteria("Notes:\n- [ ] ping the designer") == []
+
+
+def test_an_approving_verdict_that_skips_a_criterion_fails_closed(world):
+    """The TASK-006 shape: four things asked for, three delivered, review APPROVED, merge gate
+    approved, and the miss stayed invisible for 18 days. One entry for two criteria is the same
+    silence — it must halt the build instead of opening the gate."""
+    world.wi.description = _TWO_CRITERIA
+    world.wi.save(update_fields=["description"])
+    body = _approving('{"criterion":"c1","verdict":"met","evidence":"api/profile.py:88"}')
+    with pytest.raises(rp.ReviewContractError) as exc:
+        rp.parse_and_guard(body, tenant_id=str(world.t.id), run_id=str(world.run.id),
+                           acceptance_criteria=rp.extract_acceptance_criteria(world.wi.description))
+    assert "2 acceptance criteria" in str(exc.value)
+
+
+def test_an_approving_verdict_without_evidence_fails_closed(world):
+    """"Implemented" is not evidence. Without a file:line or a test name the entry proves only
+    that the agent wrote a line, which is the state this contract exists to end."""
+    body = _approving(
+        '{"criterion":"c1","verdict":"met","evidence":"api/profile.py:88"},'
+        '{"criterion":"c2","verdict":"met","evidence":"  "}'
+    )
+    with pytest.raises(rp.ReviewContractError) as exc:
+        rp.parse_and_guard(body, tenant_id=str(world.t.id), run_id=str(world.run.id),
+                           acceptance_criteria=rp.extract_acceptance_criteria(_TWO_CRITERIA))
+    assert "cites no evidence" in str(exc.value)
+
+
+def test_a_not_met_criterion_cannot_ride_through_on_an_approving_verdict(world):
+    body = _approving(
+        '{"criterion":"c1","verdict":"met","evidence":"api/profile.py:88"},'
+        '{"criterion":"c2","verdict":"not_met","evidence":"no uniqueness check"}'
+    )
+    with pytest.raises(rp.ReviewContractError) as exc:
+        rp.parse_and_guard(body, tenant_id=str(world.t.id), run_id=str(world.run.id),
+                           acceptance_criteria=rp.extract_acceptance_criteria(_TWO_CRITERIA))
+    assert "not_met" in str(exc.value)
+
+
+def test_a_complete_criteria_table_passes(world):
+    body = _approving(
+        '{"criterion":"c1","verdict":"met","evidence":"api/profile.py:88"},'
+        '{"criterion":"c2","verdict":"not_verifiable",'
+        '"evidence":"needs a live mailbox; flagged for the reviewer"}'
+    )
+    assert rp.parse_and_guard(
+        body, tenant_id=str(world.t.id), run_id=str(world.run.id),
+        acceptance_criteria=rp.extract_acceptance_criteria(_TWO_CRITERIA)) == []
+
+
+def test_a_work_item_with_no_parseable_criteria_is_never_blocked(world):
+    """The other half of the safety valve, at the guard rather than the parser."""
+    assert rp.parse_and_guard(_approving(), tenant_id=str(world.t.id),
+                              run_id=str(world.run.id), acceptance_criteria=[]) == []
+
+
+def test_a_review_that_already_demands_changes_is_not_also_criteria_checked(world):
+    """When blocking findings exist the merge gate does not open anyway, so the criteria table is
+    not what decides this round. Checking it here would only fail builds that are already going
+    back to the developer."""
+    findings = rp.parse_and_guard(
+        _VERDICT, tenant_id=str(world.t.id), run_id=str(world.run.id),
+        acceptance_criteria=rp.extract_acceptance_criteria(_TWO_CRITERIA))
+    assert [f.rem for f in findings] == ["REM-C1", "REM-S1"]
+
+
+def test_existing_callers_are_unaffected_when_no_criteria_are_passed(world):
+    """`acceptance_criteria` defaults to None, so every call site that has not been updated — and
+    every existing test — behaves exactly as before."""
+    assert rp.parse_and_guard(_approving(), tenant_id=str(world.t.id),
+                              run_id=str(world.run.id)) == []

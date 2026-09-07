@@ -60,6 +60,7 @@ import type {
   TriggerResult,
   WorkItem,
   WorkItemCard,
+  WorkItemState,
 } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000/api";
@@ -73,6 +74,36 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/** The message a failed request put against ONE field, if it named one (Bugs S.No 219).
+ *
+ * DRF answers a rejected form as `{"password": ["This password is too short."]}`. Three auth
+ * forms branched only on a status code — 409 or 410 — and dropped everything else, so a
+ * password that was too short left the form sitting there saying nothing at all. Reading the
+ * field lets the message go where the problem is, which is the two-tier shape the login screen
+ * already uses: a banner for the form, a line under the input.
+ */
+export function fieldError(error: unknown, field: string): string | undefined {
+  if (!(error instanceof ApiError)) return undefined;
+  const detail = error.detail;
+  if (!detail || typeof detail !== "object") return undefined;
+  const value = (detail as Record<string, unknown>)[field];
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && typeof value[0] === "string") return value[0];
+  return undefined;
+}
+
+/** The message for the FORM as a whole — what to say when no single field owns the problem.
+ *
+ * `ApiError.message` is already humanized by `humanizeError` below, so this is the readable
+ * sentence rather than a JSON body. Pass the fields already shown individually so the same
+ * sentence is not repeated twice on one screen. */
+export function formError(error: unknown, shownFields: string[] = []): string | undefined {
+  if (!(error instanceof ApiError)) return undefined;
+  const owned = shownFields.some((f) => fieldError(error, f));
+  if (owned) return undefined;
+  return error.message || "That didn't work, and the server didn't say why.";
 }
 
 // S3-10: turn an error BODY into a sentence a person can act on.
@@ -345,6 +376,16 @@ export const api = {
       body: { agent_key: agentKey },
     }),
 
+  // Bugs S.No 140 — a human closing work that cannot be built. `reason` is required by the
+  // server when cancelling; it is the only record of the decision.
+  transitionWorkItem: (
+    tenantId: string, workItemId: string, toState: WorkItemState, reason = "",
+  ) =>
+    req<WorkItem & { gates_notified?: string[] }>(
+      "POST", `/work-items/${workItemId}/transition/`,
+      { tenantId, body: { to_state: toState, reason } },
+    ),
+
   // Phase 4.8 T4 — lifecycle rail (bucket B; type-adaptive plan/build/remediation).
   getLifecycle: (tenantId: string, workItemId: string) =>
     req<Lifecycle>("GET", `/work-items/${workItemId}/lifecycle/`, { tenantId }),
@@ -364,7 +405,17 @@ export const api = {
   // remain available on the artifact's own screen.
   listArtifacts: (
     tenantId: string,
-    q: { project?: string; phase?: string; status?: string; latest?: boolean },
+    // `run` and `type` are the scopes a deep link carries (N2). `phase` is the phase LABEL that
+    // `Artifact.phase` stores — never an agent key; see `links.ts`.
+    q: {
+      project?: string;
+      phase?: string;
+      status?: string;
+      type?: string;
+      run?: string;
+      work_item?: string;
+      latest?: boolean;
+    },
   ) => {
     const { latest, ...filters } = q;
     return req<Artifact[]>("GET", "/artifacts/", {
@@ -599,8 +650,8 @@ export const api = {
     req<Record<string, unknown>>("POST", `/drift/${driftId}/decide/`, { body }),
 
   // Phase 4.8 T5 — artifact preview read-through (4.7 T10, DECISION-5).
-  getArtifactPreview: (artifactId: string) =>
-    req<ArtifactPreview>("GET", `/artifacts/${artifactId}/preview/`),
+  getArtifactPreview: (artifactId: string, raw = false) =>
+    req<ArtifactPreview>("GET", `/artifacts/${artifactId}/preview/${raw ? "?raw=1" : ""}`),
 
   // Phase 4.8 T5 — run transcript (new, DECISION-7). Read-only persisted conversation.
   getRunTranscript: (tenantId: string, runId: string) =>

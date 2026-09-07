@@ -2,11 +2,28 @@
 
 **Read this first, every session.** It tells any coding assistant (Claude Code, Cursor, Copilot, …)
 **what to read, how to claim work, and which files you may touch** so several people can build the SDLC
-platform **in parallel without integration bugs**. The project constitution is **`CLAUDE.md`** — its 10
+platform **in parallel without integration bugs**. The project constitution is **`CLAUDE.md`** — its 12
 **non-negotiables** (platform owns STATE / external tools own CONTENT; nothing reaches a system-of-record
 without an approved gate; per-table `tenant_id` + RLS; capabilities-not-vendors; go through
-`ExecutionDriver`/capability interfaces; durable runs via Temporal) **override everything**, including
+`ExecutionDriver`/capability interfaces; durable runs via Temporal; **mockups approved before any
+frontend change**) **override everything**, including
 this file. If a task would violate one, stop and flag it.
+
+## STOP — before you touch the frontend
+
+**Non-negotiable #11 in `CLAUDE.md`, repeated here because it is the easiest one to walk past.**
+
+If the work you are about to do changes **any part of the SDLC frontend** — a task, a bug fix, an
+enhancement, a flag, however small — you do **not** start by editing `frontend/`. You start by:
+
+1. **Presenting high-level mockups in the chat** — an actual visual, not a description of one.
+2. **Offering the best options**, with a recommendation and the trade-off for each.
+3. **Waiting for the team to approve one.** Presenting and building in the same turn breaks the rule.
+4. **Building exactly what was approved.** A shipped screen that differs from the chosen mockup —
+   even if it is better — is a breach.
+
+The team cannot read the frontend out of the source code. A screen nobody pictured in advance is a
+screen nobody agreed to, and every correction then arrives as re-work.
 
 ## Active phases (the only ones open for work)
 
@@ -37,7 +54,8 @@ different file. As of 2026‑08‑12 the greenfield/brownfield bug backlogs are 
    schemas, FE architecture, component list). Build to it; do **not** re-decide it. If it's genuinely
    wrong/missing, update the spec in the same PR and say so.
 4. Then, by task type:
-   - **UI task** → the screen file(s) **`docs/design/screens/S-NN.html`** (the visual + the exact
+   - **UI task** → **first, the mockup-approval rule above — no `frontend/` edit before the team has
+     approved an option.** Then the screen file(s) **`docs/design/screens/S-NN.html`** (the visual + the exact
      **states** to build) · `docs/design/README.md` (component catalog) ·
      `docs/design/{design-system,components}.css` + `shell.js` · **`docs/SCREEN_BUILD_MAP.md`** (the
      screen→component→endpoint row).

@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { EmptyState, GraphCanvas, Panel, Spinner } from "../../components/ui";
+import { EmptyState, ErrorState, GraphCanvas, Panel, Spinner } from "../../components/ui";
 import type { TraceGraph } from "../../types";
 import { phaseLabel, artifactLabel } from "../lifecycle/phases";
 import { useTraceability } from "./hooks";
@@ -64,6 +64,17 @@ function TraceabilityLive() {
       {graph.isLoading ? (
         <Panel>
           <Spinner /> Loading traceability graph…
+        </Panel>
+      ) : graph.isError ? (
+        // S.No 220: `!graph.data` is true both when the project has no lineage yet and when the
+        // request failed, and the branch below tells the user the reassuring one. Check the
+        // failure FIRST.
+        <Panel>
+          <ErrorState
+            title="We couldn't load the traceability graph"
+            detail={graph.error}
+            onRetry={() => void graph.refetch()}
+          />
         </Panel>
       ) : !graph.data || graph.data.nodes.length === 0 ? (
         <Panel>

@@ -1,9 +1,12 @@
-import { useParams } from "react-router-dom";
+import { useState } from "react";
+import { Link, useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, Card, CardBody, Kv, LifecycleRail, Markdown, Panel, Spinner } from "../../components/ui";
 import { railNodeView } from "./railView";
 import { phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
+import { isTerminalState } from "../../types";
+import { CancelWorkItem } from "./CancelWorkItem";
 
 // S-17 view states: open (default) · fixing · closed.
 export type DefectView = "open" | "fixing" | "closed";
@@ -20,6 +23,7 @@ function WorkItemDefectLive() {
   const lifecycle = useLifecycle(id);
   const runs = useRuns({ work_item: id });
   const trigger = useTriggerPhase(id);
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   if (workItem.isLoading || lifecycle.isLoading) {
     return (
@@ -41,7 +45,12 @@ function WorkItemDefectLive() {
 
   const latestRun = runs.data?.[0];
   const running = latestRun?.status === "running";
-  const closed = workItem.data.state === "done";
+  // Bugs S.No 140. `=== "done"` meant a CANCELLED defect rendered a red "Open" badge and
+  // offered a Trigger Fix button for work nobody intends to do. `closed` is the question these
+  // three places are actually asking — "is there anything left to do here" — and `cancelled` is
+  // kept separate from it because the two say opposite things to a reader.
+  const cancelled = workItem.data.state === "cancelled";
+  const closed = isTerminalState(workItem.data.state);
   const nodes = visibleLifecycleNodes(lifecycle.data?.nodes ?? []).map((n, i) => railNodeView(n, i));
 
   return (
@@ -62,22 +71,34 @@ function WorkItemDefectLive() {
             </span>
             {workItem.data.parent && (
               <span className="meta-item">
-                Parent <a href={`/work-items/${workItem.data.parent}`}>↖ {workItem.data.parent.slice(0, 8)}</a>
+                Parent <Link to={`/work-items/${workItem.data.parent}`}>↖ {workItem.data.parent.slice(0, 8)}</Link>
               </span>
             )}
           </div>
         </div>
         {!closed && (
-          <Button variant="primary" disabled={trigger.isPending} onClick={() => trigger.mutate("07_implementation")}>
-            {trigger.isPending ? <Spinner /> : "Trigger Fix"}
-          </Button>
+          <span className="u-row-tight">
+            <Button variant="primary" disabled={trigger.isPending} onClick={() => trigger.mutate("07_implementation")}>
+              {trigger.isPending ? <Spinner /> : "Trigger Fix"}
+            </Button>
+            {/* Bugs S.No 140. The defect page is where "we are not going to fix this" is most
+                often decided — and cancelling a defect is what releases the gate it was
+                holding shut, so the dialog says that before anyone commits to it. */}
+            <Button variant="secondary" onClick={() => setCancelOpen(true)}>
+              Won't fix…
+            </Button>
+          </span>
         )}
       </div>
 
       <Panel
         flush
         title="Lifecycle — Remediation"
-        actions={closed ? <Badge variant="done">Closed</Badge> : <span className="t-sm u-muted">minimal rail</span>}
+        actions={
+          cancelled ? <Badge variant="cancelled">Cancelled</Badge>
+            : closed ? <Badge variant="done">Closed</Badge>
+              : <span className="t-sm u-muted">minimal rail</span>
+        }
       >
         {nodes.length === 0 ? <p className="t-sm u-muted">No phases run yet.</p> : <LifecycleRail nodes={nodes} />}
       </Panel>
@@ -98,8 +119,10 @@ function WorkItemDefectLive() {
           <Panel
             title="Description"
             actions={
-              <Badge variant={closed ? "done" : running ? "running" : "failed"}>
-                {closed ? "Closed" : running ? "Fix running on your companion" : "Open"}
+              <Badge variant={cancelled ? "cancelled" : closed ? "done" : running ? "running" : "failed"}>
+                {cancelled ? "Cancelled"
+                  : closed ? "Closed"
+                    : running ? "Fix running on your companion" : "Open"}
               </Badge>
             }
           >
@@ -107,20 +130,22 @@ function WorkItemDefectLive() {
               <Markdown className="prose md-body">{workItem.data.description}</Markdown>
             ) : (
               <p className="t-body u-muted">
-                {closed
-                  ? "This defect was closed by a clean re-run."
-                  : running
-                    ? "Fixing…"
-                    : "No description yet."}
+                {cancelled
+                  ? "This defect was cancelled — nobody is going to fix it. The reason is on the work item's history."
+                  : closed
+                    ? "This defect was closed by a clean re-run."
+                    : running
+                      ? "Fixing…"
+                      : "No description yet."}
               </p>
             )}
           </Panel>
           {latestRun && (
             <Panel title="Latest run" actions={<Badge variant={running ? "running" : "done"}>{latestRun.status}</Badge>}>
               <Kv rows={[["Phase", phaseLabel(latestRun.agent_phase ?? latestRun.agent_key)]]} />
-              <a href={`/runs/${latestRun.id}`} className="t-sm">
+              <Link to={`/runs/${latestRun.id}`} className="t-sm">
                 View run console ↗
-              </a>
+              </Link>
             </Panel>
           )}
         </div>
@@ -138,6 +163,10 @@ function WorkItemDefectLive() {
           </CardBody>
         </Card>
       </div>
+
+      {cancelOpen && (
+        <CancelWorkItem workItem={workItem.data} onClose={() => setCancelOpen(false)} />
+      )}
     </div>
   );
 }
