@@ -140,3 +140,118 @@ today to P1 + N2:
 - Roughly a dozen Bugs.xlsx rows record work that is already done (S.No 181, 189, 104, 81, 197
   among them), plus brownfield S4-10 and S4-25 and one QA audit case.
 - `multi_project_recon.md` §2.6 overstates its finding: the track *is* read, at `tools.py:175`.
+
+---
+---
+
+# P2 batch — same branch (2026-09-07)
+
+**Status:** all ten waves built; three migrations outstanding; the team's own live pass is still to
+come. **Scope as agreed:** the P2 rows the team selected from Bugs.xlsx, in ten waves, one commit
+each. Per-item detail is in the Bugs.xlsx rows; this is the batch view.
+
+## What shipped
+
+| Wave | Item | Row | Ships as | Commit |
+|---|---|---|---|---|
+| 0 | Three rows already fixed in code | S.No 181, 189, 217 | Verification note only, no code | `dbd6fc5` |
+| 1 | A bill of materials shown as a wall of text | S.No 187 | Format detection + a rendered view, preview only | `3bdb017`, `8a583b2` |
+| 2 | Connect Machine showed a fake token, ignored the picker | S.No 198, 223 | Placeholder deleted; the picker is real | `76b6475` |
+| 3 | A Jira pointer was never re-checked; most items could never be exported | S.No 236, 237 | Pointer validation (404-only) + candidate selection by "has no id" | `92c3d18` |
+| 4 | A PR merged on GitHub stranded the platform | S.No 88 | Detect and annotate; a human still decides — [ADR 0005](decisions/0005-the-platform-observes-the-code-host-it-does-not-police-it.md) | `411d96a` |
+| 5 | Two projects could share a name | S.No 211 | Case-insensitive constraint + the 409 the screen already waited for | `8355f94` |
+| 6 | Actions that failed with no message | S.No 219 | One shared write-failure surface, on seven sites | `93f05d0`, `403060f` |
+| 7 | A new project offered an existing-codebase wizard | S.No 221 | Project kind reaches the browser; nav gate generalised | `ae34363` |
+| 8 | The build agent could move the main work item | S.No 87 | Blocklist inverted to an allowlist | `dcfb579` |
+| 9 | No human way to close work that cannot be built | S.No 140 | A terminal `cancelled` state, and everything that must respect it | `41b9068`, `76de57b` |
+| 10 | Connect Machine redesign | S.No 35 (+138) | [Spec only](CONNECT_MACHINE_REDESIGN_SPEC.md), by team decision | `96803a6`, `bb7cae6` |
+
+## Decisions the team took, so they are not re-opened
+
+- **An archived project keeps its name reserved** (S.No 211). Un-archiving a project to find its
+  name taken by something else is the worse surprise.
+- **Cancelling a defect releases the gate it was blocking** (S.No 140) — and the gate says so. The
+  release and the disclosure ship together; releasing silently would let "we won't fix this"
+  quietly become "this passed".
+- **Tech lead or admin may cancel**, and cancelled items are **hidden from the board by default**
+  with a filter to show them.
+- **The platform observes the code host; it never polices it** (S.No 88). Detection annotates; only
+  a human decides. ADR 0005 records why that matters given a globally-shared webhook secret.
+- **Onboarding is hidden, not greyed out**, on a project with no code (S.No 221) — including
+  `/onboarding/documents`, for now.
+- **Connect Machine is specified, not built** (S.No 35), and S.No 138 is folded into it.
+
+## Deliberately out of scope
+
+Recorded so the scope decision is not re-litigated:
+
+- **S.No 213** (the lifecycle rail) is **dropped from this batch.** The Work Items dashboard
+  redesign will own it; fixing it here would build something that redesign then replaces.
+- **Group C — S.No 75, 78, 79, 210 — is parked untouched.**
+- **S.No 178** is **approved and sequenced after one live security run**, so the change is made
+  against real observed output rather than an assumption about it.
+
+## Three things I told the team that were wrong, corrected in the rows
+
+- **S.No 88:** I said an approval on an externally-merged PR would hit GitHub's merge API, get a
+  405 and park in a retry loop. It would not — the merge step already short-circuits on an
+  already-merged PR and says so in its own docstring. The real bug was that nobody ever approves.
+  This made the fix much smaller and safer than described.
+- **S.No 87:** the row did not record that commit `83a2036` had already blocked the agent from
+  setting `done`. Half of it was fixed before this batch began.
+- **S.No 221:** I described project kinds as greenfield / brownfield / multi. There are **two**.
+  "Multi" is a different field, about how many repositories a project has.
+- **S.No 35:** the spec recorded three shared modules between the platform and the companion. There
+  are **four** — code intelligence brought its own, along with a second copy of the import
+  bootstrap. Corrected in `bb7cae6`; the conclusion is unchanged.
+
+## Not yet proven
+
+- **The team's own live pass has not happened.** Everything below was verified by me, by test and
+  in a browser against a local stack; none of it has been exercised by the people who reported the
+  bugs. That is the step that closes these rows in practice.
+- **S.No 88 needs webhook delivery configured** — a reachable URL and `GITHUB_WEBHOOK_SECRET` — to
+  work end to end. The sweep is also the only thing that will recover the run stranded today; no
+  webhook fires retroactively.
+- Everything else is covered by test: **499 frontend tests** and the backend files run per wave.
+  Waves 1–9 were also driven in a browser against a local stack with seeded data.
+
+## Before this runs anywhere
+
+Three migrations, **written but not run** — the team runs them.
+
+```bash
+docker compose run --rm backend python manage.py migrate projects   # 0013
+docker compose run --rm backend python manage.py migrate gates      # 0004
+docker compose run --rm backend python manage.py migrate workitems  # 0007
+```
+
+- **`projects/0013` will FAIL if two projects already share a name.** Run the pre-check as the
+  `postgres` owner and rename any duplicates first. Running it as the application user reports zero
+  rows whether or not duplicates exist, because row-level security hides them — that is no result,
+  not a clean one.
+- **`gates/0004`** adds one nullable column. Safe in any order relative to any branch, for the
+  reason in [ADR 0003](decisions/0003-additive-columns-keep-a-database-default.md).
+- **`workitems/0007`** changes a list of allowed values only. It touches no table and the SQL it
+  generates is empty, so it is safe to run at any time, including while an older release serves.
+
+## One lesson worth keeping
+
+`403060f` exists because of a screenshot. The test for the failed test-script message asserted it
+appears, and it did — but it sat in an unbounded table cell and sprawled to the table edge, reading
+as loose text rather than something attached to the button that had failed. **A passing test says
+the thing is there; only looking says it is right.** Every UI wave in this batch was checked in a
+browser afterwards for that reason, and doing so also turned up the two Wave 1 design deviations and
+the multi-role defect below.
+
+## Found while working, reported, not fixed
+
+- **A person with several roles on one project only ever gets the first one.** The selected project
+  is found by matching the project id, so a tech lead who is also product owner is treated as
+  whichever role happens to come back first — and cannot decide a gate that requires the other.
+  Pre-existing; not touched.
+- **The project switcher lists the same project once per role**, for the same reason. Deduplicated
+  on the Connect Machine screen (S.No 198) but not in the top bar.
+- **"Set default" on the Repositories screen does nothing.** There is no endpoint behind it yet.
+- **The Jira reconciler matches an existing issue by exact title**, so two work items with identical
+  titles would both adopt the same issue (S.No 236).
