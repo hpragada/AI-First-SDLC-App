@@ -65,15 +65,54 @@ import type {
 
 const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000/api";
 
+/** WHY a request failed, in the only four kinds a screen can say something useful about.
+ *
+ * Bugs S.No 248. Every error screen in the app printed whatever the failure threw, and two of the
+ * three real-world failures throw text written for a developer: an unreachable server throws the
+ * browser's own `Failed to fetch`, and a 500 (which Django answers with an HTML page) used to throw
+ * a JSON syntax error — see `req` below. So the screens could not tell a dead server from a dead
+ * network from a permission problem, and said the same useless thing for all three.
+ *
+ * `req` now guarantees it only ever rejects with an `ApiError` carrying one of these, which is the
+ * single piece of information `ErrorState` needs to write an honest sentence.
+ *
+ * - `offline`  the request never reached the server (server down, wrong origin, no network)
+ * - `server`   the server answered, and something is wrong on our side (5xx, or an answer we
+ *              could not read)
+ * - `denied`   the caller is not allowed to see this (401/403) — retrying cannot help
+ * - `request`  the server refused this particular request and said why in words (4xx)
+ */
+export type Failure = "offline" | "server" | "denied" | "request";
+
+function classify(status: number): Failure {
+  if (status === 0) return "offline";
+  if (status === 401 || status === 403) return "denied";
+  if (status >= 500) return "server";
+  return "request";
+}
+
 export class ApiError extends Error {
+  readonly failure: Failure;
   constructor(
     public status: number,
     message: string,
     public detail?: unknown,
+    failure?: Failure,
   ) {
     super(message);
     this.name = "ApiError";
+    this.failure = failure ?? classify(status);
   }
+}
+
+/** The failure kind behind anything a query threw.
+ *
+ * Defaults to `server` rather than `offline` on purpose: `req` only rejects with `ApiError`, so
+ * anything else arriving here is a fault of ours, and "something went wrong on our side" is the
+ * true thing to say about it. Guessing `offline` would blame the reader's network for our bug.
+ */
+export function failureOf(error: unknown): Failure {
+  return error instanceof ApiError ? error.failure : "server";
 }
 
 /** The message a failed request put against ONE field, if it named one (Bugs S.No 219).
@@ -171,15 +210,27 @@ async function req<T>(method: string, path: string, opts: ReqOpts = {}): Promise
     if (qs) url += (path.includes("?") ? "&" : "?") + qs;
   }
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    credentials: "include",
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      credentials: "include",
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    });
+  } catch (e) {
+    // `fetch` rejects — with the browser's own `TypeError: Failed to fetch` — only when the
+    // request never left the browser. Status 0 says so; the message is kept for the log, and no
+    // screen shows it.
+    throw new ApiError(0, e instanceof Error ? e.message : "no answer", undefined, "offline");
+  }
 
   const text = await res.text();
-  const data = text ? JSON.parse(text) : undefined;
+  // Parse AFTER checking `res.ok`, never before (Bugs S.No 248). Django answers a 500 with an
+  // HTML error page and a gateway answers 502/504 with its own; parsing first turned every one of
+  // those into `Unexpected token '<'` and threw the status code away, so a server error could
+  // never describe itself and no error screen could tell it apart from a lost connection.
+  const data = readBody(text);
   if (!res.ok) {
     const msg = humanizeError(data, `${res.status} ${res.statusText}`);
     if (res.status === 401) {
@@ -187,7 +238,22 @@ async function req<T>(method: string, path: string, opts: ReqOpts = {}): Promise
     }
     throw new ApiError(res.status, msg, data);
   }
+  if (text && data === undefined) {
+    // A 200 we cannot read is our problem, not the reader's — and it must not sail on as
+    // `undefined` data for a screen to render as an empty result.
+    throw new ApiError(res.status, "The app got an answer it could not read.", undefined, "server");
+  }
   return data as T;
+}
+
+/** A response body as JSON, or `undefined` when it is not JSON at all. */
+function readBody(text: string): unknown {
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }
 
 async function uploadFile<T>(path: string, file: File): Promise<T> {
@@ -196,9 +262,15 @@ async function uploadFile<T>(path: string, file: File): Promise<T> {
   if (csrf) headers["X-CSRFToken"] = csrf;
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(BASE + path, { method: "POST", headers, credentials: "include", body: form });
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, { method: "POST", headers, credentials: "include", body: form });
+  } catch (e) {
+    throw new ApiError(0, e instanceof Error ? e.message : "no answer", undefined, "offline");
+  }
+  // Same order as `req`: status first, body second (Bugs S.No 248).
   const text = await res.text();
-  const data = text ? JSON.parse(text) : undefined;
+  const data = readBody(text);
   if (!res.ok) {
     const msg = humanizeError(data, `${res.status} ${res.statusText}`);
     throw new ApiError(res.status, msg, data);

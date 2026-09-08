@@ -107,34 +107,42 @@ function OfflineTakeoverLive() {
           <h1 className="t-h1">
             Run recovery — {workItem.data?.title || parkedRun.work_item.slice(0, 8)} · {phaseLabel(parkedRun.agent_phase ?? parkedRun.agent_key)}
           </h1>
+          {/* Rewritten 8 September under the team's rule: the words are for whoever opens this
+              screen, not for us. "The platform parks the run for takeover rather than letting it
+              hang" described our design decision; a raw UUID was the subject of the sentence
+              below it; and the details list printed a full id, a database status value and an
+              ISO timestamp. The labelled short Run ID stays — it is a reference a person quotes
+              when asking about a task — and everything else now reads as a sentence. */}
           <p className="page-head__sub">
-            When your machine goes offline mid-run, the platform parks the run for takeover rather
-            than letting it hang.
+            When your machine goes offline part-way through, a task stops and waits here instead of
+            hanging.
           </p>
         </div>
       </div>
 
       <Card>
         <CardBody className="u-stack">
-          <Banner variant="danger" title="This run is parked for takeover">
-            {parkedRun.id} did not report back. Nothing was lost: no artifact is published, and any
-            answered clarifications are remembered.
+          <Banner variant="warning" title="This task stopped and is waiting for you">
+            Your machine stopped reporting back. Nothing has been lost — nothing was published, and
+            any questions you already answered are remembered.
           </Banner>
           <Kv
             rows={[
-              ["Run", `${parkedRun.id} · ${phaseLabel(parkedRun.agent_phase ?? parkedRun.agent_key)} · ${parkedRun.work_item.slice(0, 8)}`],
-              ["Status", parkedRun.status],
-              ["Created", parkedRun.created_at],
+              ["Task", workItem.data?.title || workItem.data?.key || "—"],
+              ["Phase", phaseLabel(parkedRun.agent_phase ?? parkedRun.agent_key)],
+              ["Stopped", parkedRun.status === "failed" ? "After an error" : "After going quiet"],
+              ["Started", new Date(parkedRun.created_at).toLocaleString()],
+              ["Run ID", parkedRun.id.slice(0, 8)],
             ]}
           />
           <Banner variant="info">
-            If your companion simply went to sleep, bringing it back online lets it finish this
-            same run — it reconciles automatically and moves to its gate. Or reconnect and re-run
-            to start from a clean dispatch, folding in your earlier answers.
+            If your machine simply went to sleep, bringing it back online lets it finish this same
+            task on its own and carry on to its approval. Or reconnect and run it again to start
+            fresh — your earlier answers are kept either way.
           </Banner>
           {takeOver.isError && (
-            <Banner variant="danger" title="Couldn't update takeover state">
-              {takeOver.error instanceof Error ? takeOver.error.message : "Unknown error"}
+            <Banner variant="danger" title="That didn't work">
+              {takeOver.error instanceof Error ? takeOver.error.message : "Nothing was changed."}
             </Banner>
           )}
           <div className="gate-panel__actions">

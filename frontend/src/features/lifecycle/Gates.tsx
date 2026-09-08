@@ -64,13 +64,18 @@ function GatesLive() {
   const [selectedId, setSelectedId, pinnedFromUrl] = useParamState("gate");
   const [satisfied, setSatisfied] = useState<Record<string, boolean>>({});
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
-  // Bugs S.No 246, and the team's chosen shape for it. A reviewer whose task is paused is NOT
-  // warned before deciding: their approval is written and signalled either way, so the only
-  // thing that differs is when it takes effect — and a warning about something they cannot fix,
-  // on a screen they use all day, is noise. They are told plainly AFTERWARDS instead, at the one
-  // moment it matters to them. Holds the work item this applies to, because the decision panel
-  // is gone by then (the gate has stopped being pending).
-  const [queuedFor, setQueuedFor] = useState<string | null>(null);
+  // The decision just made, held at PAGE level rather than in the gate panel (Bugs S.No 250).
+  //
+  // It used to be the mutation's own `isSuccess` that drove a confirmation banner inside the
+  // panel — which meant the confirmation belonged to the button press, not to the gate. Approve
+  // WI-96, and WI-96 leaves the pending list; the panel auto-selects the next gate; and the
+  // banner came along with it, so WI-95's panel announced "Decision recorded" for a gate nobody
+  // had decided. A reviewer working through five gates reads that and moves on, leaving it
+  // pending. Naming the gate in the banner and keeping the banner OUT of any gate's panel is
+  // what makes that impossible rather than merely unlikely.
+  const [decided, setDecided] = useState<
+    { label: string; kind: "approved" | "revised" | "rejected"; merge: boolean } | null
+  >(null);
 
   const loading = approvals.isLoading || workItems.isLoading;
   const projectApprovals = approvals.data ?? [];
@@ -114,9 +119,9 @@ function GatesLive() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [criteria.data, selected?.id]);
 
-  // The "approved and saved" note belongs to one decision, not to the screen. Moving to another
-  // gate clears it, so it cannot sit there implying something about a gate it never described.
-  useEffect(() => setQueuedFor(null), [selectedId]);
+  // The confirmation belongs to one decision, not to the screen. Picking another gate clears it,
+  // so it cannot sit there implying something about a gate it never described.
+  useEffect(() => setDecided(null), [selectedId]);
 
   const metCount = criteriaList.filter((c) => satisfied[c.id]).length;
   const requiredUnmet = criteriaList.some((c) => c.required && !satisfied[c.id]);
@@ -161,19 +166,17 @@ function GatesLive() {
     return `${wi.key || id.slice(0, 8)} · ${wi.title || wi.type}`;
   };
 
-  // A merge gate revises IN PLACE (same branch, same PR, preview kept); a phase gate starts a
-  // fresh run. Same button, different promise — so say the right one.
-  const isMergeGate = selected?.gate_type === "merge_gate";
-  const [revisionRequested, setRevisionRequested] = useState(false);
-
   const handleDecide = (decision: "approved" | "rejected", revise = false) => {
     if (!selected) return;
-    setQueuedFor(
-      decision === "approved" && selected.run_paused
-        ? workItemLabel(selected.work_item, selected.work_item_title)
-        : null,
-    );
-    setRevisionRequested(revise);
+    // Captured BEFORE the mutation, from the gate being decided — not read back afterwards from
+    // whatever `selected` has become by then. A merge gate revises IN PLACE (same branch, same
+    // pull request, preview kept); a phase gate starts a fresh attempt. Same button, different
+    // promise, so the sentence has to know which gate it was.
+    setDecided({
+      label: workItemLabel(selected.work_item, selected.work_item_title),
+      kind: decision === "approved" ? "approved" : revise ? "revised" : "rejected",
+      merge: selected.gate_type === "merge_gate",
+    });
     decideApproval.mutate({
       id: selected.id,
       decision,
@@ -218,14 +221,47 @@ function GatesLive() {
         onSelect={(id) => setTab(id as "pending" | "history")}
       />
 
-      {/* Shown only after an approval that landed on a paused task, and only until the reviewer
-          moves on — no permanently mounted slot. It says the one thing they need: it worked,
-          and there is nothing else for them to do. */}
-      {queuedFor && decideApproval.isSuccess && (
-        <Banner variant="success" title="Approved and saved">
+      {/* THE confirmation — one per decision, above the list rather than inside a gate's panel,
+          and it names the gate it is about. Appears only after a decision lands and only until
+          the reviewer picks another gate; no permanently mounted slot.
+
+          Whether the task happens to be running is deliberately NOT mentioned (team decision,
+          8 September). The reviewer's decision is written and signalled identically either way,
+          so it was an explanation of our machinery offered to someone who never needed it. */}
+      {decided && decideApproval.isSuccess && (
+        <Banner
+          variant={decided.kind === "approved" ? "success" : "info"}
+          title={
+            decided.kind === "approved"
+              ? "Approved"
+              : decided.kind === "revised"
+                ? "Sent back for changes"
+                : "Rejected"
+          }
+        >
           <p className="t-sm">
-            <strong>{queuedFor}</strong> is paused, so it will carry on the moment it is running
-            again. Your approval is recorded — there is nothing else for you to do.
+            {decided.kind === "approved" ? (
+              <>
+                Your approval of <strong>{decided.label}</strong> is saved.
+              </>
+            ) : decided.kind === "revised" ? (
+              decided.merge ? (
+                <>
+                  Your note on <strong>{decided.label}</strong> has been sent back. The same branch
+                  and pull request are updated — your preview stays up — and this gate re-opens for
+                  you when it's ready.
+                </>
+              ) : (
+                <>
+                  Your note on <strong>{decided.label}</strong> has been sent back. A fresh attempt
+                  starts shortly using it as the instructions — follow it in Phases &amp; Runs.
+                </>
+              )
+            ) : (
+              <>
+                <strong>{decided.label}</strong> was rejected, and will not go any further.
+              </>
+            )}
           </p>
         </Banner>
       )}
@@ -264,22 +300,25 @@ function GatesLive() {
             <Table
               headers={["Gate", "Required role", "Work item", "Artifact"]}
               rows={pending.map((a) => ({
+                // Bugs S.No 249: the WHOLE row picks the gate. Before this, the only thing that
+                // selected anything was the small button in the first column, and the work-item
+                // name — the obvious thing to click — was a link that left the screen entirely.
+                // So a reviewer with five gates could not do the one thing this layout exists
+                // for: read the list, pick one, decide it, pick the next.
+                onSelect: () => setSelectedId(a.id),
+                selected: Boolean(selected && a.id === selected.id),
+                selectLabel: `${gateLabel(a.gate_type)} — ${workItemLabel(a.work_item, a.work_item_title)}`,
                 cells: [
-                  <button
-                    key="g"
-                    className="btn btn--ghost btn--sm"
-                    onClick={() => setSelectedId(a.id)}
-                  >
-                    {gateLabel(a.gate_type)}
-                  </button>,
+                  gateLabel(a.gate_type),
                   <span className="chip badge--navy" key="r">
                     {roleLabel(a.required_role)}
                   </span>,
-                  // N2: an id rendered as inert text where a link belongs. The row names the
-                  // work item under review; opening it took a manual search of the board.
-                  <Link className="table__id" to={workItemLink(a.work_item)} key="w">
+                  // Plain text, not a link: clicking the work item now picks the gate, and
+                  // opening the work item moved to the panel on the right where it doesn't
+                  // compete with selecting.
+                  <span className="table__id" key="w">
                     {workItemLabel(a.work_item, a.work_item_title)}
-                  </Link>,
+                  </span>,
                   // N2 / UX spec J19: "a link to preview the artifact under review". The
                   // endpoint was built and signed off; this link never was, and sent the
                   // reviewer to the whole registry to re-find what they were reviewing.
@@ -289,7 +328,6 @@ function GatesLive() {
                     Preview ↗
                   </Link>,
                 ],
-                style: selected && a.id === selected.id ? { background: "var(--brand-orange-50)" } : undefined,
               }))}
             />
           </Panel>
@@ -307,17 +345,30 @@ function GatesLive() {
                         their decision lands either way — so this marks the task and stops. */}
                     {selected.run_paused && <Badge variant="paused" dot={false}>Paused</Badge>}
                   </div>
-                  {selected.run_paused && (
-                    <p className="t-sm" style={{ margin: "var(--space-1) 0 0", color: "var(--warning-ink)" }}>
-                      Approving now will be queued — it takes effect once this task is running again.
-                    </p>
-                  )}
                   {/* UX spec J19: "a link to preview the artifact under review". The preview
                       endpoint was built and signed off; this link never was, and sent the
-                      reviewer to the whole registry to re-find what they were reviewing. */}
-                  <Link to={artifactsForRun(selected.run)} className="t-sm">
-                    Preview artifact under review ↗
-                  </Link>
+                      reviewer to the whole registry to re-find what they were reviewing.
+
+                      "Open work item" joins it here because the row stopped navigating
+                      (S.No 249). Beside the artifact preview on purpose: both are ways of
+                      looking deeper at the thing under review, and neither competes with
+                      picking a gate. Stacked, not inline — two links on one line read as one. */}
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "var(--space-1)",
+                      margin: "var(--space-2) 0 0",
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    <Link to={artifactsForRun(selected.run)} className="t-sm">
+                      Preview artifact under review ↗
+                    </Link>
+                    <Link to={workItemLink(selected.work_item)} className="t-sm">
+                      Open work item ↗
+                    </Link>
+                  </div>
                   {externalMergeNotice}
                   {selected.merge_conflict && (
                     <div style={{ margin: "var(--space-3) 0 0" }}>
@@ -438,19 +489,19 @@ function GatesLive() {
                       {decideApproval.error instanceof Error ? decideApproval.error.message : "Unknown error"}
                     </Banner>
                   )}
-                  {decideApproval.isSuccess && (
-                    <Banner variant="info" title="Decision recorded">
-                      {revisionRequested
-                        ? isMergeGate
-                          ? "Sent back for changes. The same branch and pull request are updated — your preview stays up — then the gate re-opens for you."
-                          : "Sent back for changes. A new run starts shortly with your note as its instructions; watch Phases & Runs."
-                        : "Logged with your role and comment."}
-                    </Banner>
-                  )}
+                  {/* No confirmation banner here. There used to be one, and it was the third
+                      telling of a single click: the page-level banner above, then "Decision
+                      recorded — Logged with your role and comment", then the line below saying
+                      "Decision logged with your role & comment". The last two were not merely
+                      similar, they duplicated by CONSTRUCTION — deciding clears the comment box,
+                      which is exactly what flipped that line to the duplicate wording. And being
+                      mounted inside the panel is what let it drift onto the next gate
+                      (S.No 250). One confirmation, above the list, naming its own gate.
+
+                      The line below is guidance for the gate now on screen, not a report on the
+                      last one — so it says what will happen, in one sentence. */}
                   <span className="gate-reassure">
-                    {canRequestChanges
-                      ? "Request changes re-runs this phase with your note as the agent's instructions. Reject just stops it."
-                      : "Decision logged with your role & comment."}
+                    Decisions are recorded with your name and role.
                   </span>
                 </CardBody>
               </Card>

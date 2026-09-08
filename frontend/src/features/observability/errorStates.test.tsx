@@ -53,28 +53,109 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const CASES: [string, () => JSX.Element, RegExp, RegExp][] = [
-  ["the dashboard", () => <Dashboard />, /couldn't load your dashboard/i, /all caught up/i],
-  ["traceability", () => <TraceabilityView />, /couldn't load the traceability graph/i, /no lineage yet/i],
-  ["the artifact registry", () => <ArtifactsRegistry />, /couldn't load the artifact registry/i, /no artifacts yet/i],
-  ["the team roster", () => <UsersInvites />, /couldn't load your team/i, /just you so far/i],
-  ["repositories", () => <Repositories />, /couldn't load this project's repositories/i, /no repositories yet/i],
+const CASES: [string, () => JSX.Element, RegExp][] = [
+  ["the dashboard", () => <Dashboard />, /all caught up/i],
+  ["traceability", () => <TraceabilityView />, /no lineage yet/i],
+  ["the artifact registry", () => <ArtifactsRegistry />, /no artifacts yet/i],
+  ["the team roster", () => <UsersInvites />, /just you so far/i],
+  ["repositories", () => <Repositories />, /no repositories yet/i],
 ];
 
-describe.each(CASES)("%s", (_label, render, errorCopy, emptyCopy) => {
+describe.each(CASES)("%s", (_label, render, emptyCopy) => {
   it("says the request failed instead of showing an empty state", async () => {
     renderWithProviders(render());
-    await waitFor(() => expect(screen.getByText(errorCopy)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Something went wrong on our side/i)).toBeTruthy());
     expect(screen.queryByText(emptyCopy)).toBeNull();
   });
 
-  it("surfaces the server's own words, not a generic message", async () => {
+  it("★ never shows the client what the server said to us", async () => {
+    // CHANGED 8 September (Bugs S.No 248). This used to assert the opposite — that the server's
+    // own words reached the screen — and "the database is unreachable" is precisely why that was
+    // wrong. A client who did not build this cannot act on our database, and in the real failure
+    // the text was worse than unhelpful: an unreachable server produced the browser's "Failed to
+    // fetch", and a 500 produced a JSON parse error, because the body was parsed before the
+    // status was checked. The server's words still exist — in the server log, for us.
     renderWithProviders(render());
-    await waitFor(() => expect(screen.getByText(/the database is unreachable/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Something went wrong on our side/i)).toBeTruthy());
+    expect(screen.queryByText(/the database is unreachable/i)).toBeNull();
+    expect(screen.queryByText(/Failed to fetch/i)).toBeNull();
+    expect(screen.queryByText(/is not valid JSON/i)).toBeNull();
+    expect(screen.queryByText(/500/)).toBeNull();
+  });
+
+  it("still says the screen is empty because it failed, not because there is nothing", async () => {
+    // The load-bearing half of S.No 220, kept: a broken screen must never read as a clean one.
+    renderWithProviders(render());
+    await waitFor(() =>
+      expect(screen.getByText(/not because there is nothing here/i)).toBeTruthy());
   });
 
   it("offers a way to try again", async () => {
     renderWithProviders(render());
     await waitFor(() => expect(screen.getByRole("button", { name: /try again/i })).toBeTruthy());
+  });
+});
+
+/** Everything answers `answer` except `/auth/me/`, so a project is selected and the screen really
+ *  attempts its fetch. `answer` is a thunk so it can also REJECT, which is what a browser does
+ *  when the request never leaves it. */
+function stubWith(answer: () => Promise<Response>) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes("/auth/me")) {
+        return { ok: true, status: 200, statusText: "ok", text: async () => JSON.stringify(me) } as Response;
+      }
+      return answer();
+    }),
+  );
+}
+
+describe("the three failures a screen can tell apart (S.No 248)", () => {
+  it("★ a server that cannot be reached says so, in the reader's words", async () => {
+    // The team's screenshot. `fetch` rejects with the browser's own `TypeError: Failed to fetch`
+    // when the request never left the browser — the backend not running, or an origin the API
+    // does not allow. That string reached the screen verbatim for months.
+    stubWith(() => Promise.reject(new TypeError("Failed to fetch")));
+    renderWithProviders(<Dashboard />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/Can't reach the SDLC app right now/i)).toBeTruthy());
+    expect(screen.getByText(/Your browser couldn't connect/i)).toBeTruthy();
+    expect(screen.queryByText(/Failed to fetch/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /try again/i })).toBeTruthy();
+  });
+
+  it("★ a 500 answered as an HTML page is a server error, not a parse error", async () => {
+    // THE plumbing fix, stated as a test. Django answers a 500 with an HTML error page, and the
+    // body used to be parsed as JSON BEFORE the status was checked — so every real 500 became
+    // `Unexpected token '<'` and the status code was thrown away. A server error could not
+    // describe itself, and no screen could tell it apart from a lost connection.
+    stubWith(async () => ({
+      ok: false, status: 500, statusText: "Server Error",
+      text: async () => "<!doctype html><html><body><h1>Server Error (500)</h1></body></html>",
+    }) as Response);
+    renderWithProviders(<Dashboard />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/Something went wrong on our side/i)).toBeTruthy());
+    expect(screen.queryByText(/is not valid JSON/i)).toBeNull();
+    expect(screen.queryByText(/doctype/i)).toBeNull();
+    expect(screen.queryByText(/Can't reach the SDLC app/i)).toBeNull();
+  });
+
+  it("★ a permission problem offers no Try again, because retrying cannot help", async () => {
+    stubWith(async () => ({
+      ok: false, status: 403, statusText: "Forbidden",
+      text: async () => JSON.stringify({ detail: "You are not a member of this project." }),
+    }) as Response);
+    renderWithProviders(<Dashboard />);
+
+    await waitFor(() => expect(screen.getByText(/don't have access/i)).toBeTruthy());
+    expect(screen.getByText(/Ask a workspace admin/i)).toBeTruthy();
+    // A control that cannot work is its own small lie.
+    expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
+    // And this one is not our fault, so it must not claim to be.
+    expect(screen.queryByText(/Something went wrong on our side/i)).toBeNull();
   });
 });
