@@ -201,17 +201,30 @@ def _queue_versions(queue: str) -> tuple[frozenset[str], int] | None:
         return None
 
 
-def _stall_note(state: WorkflowState, versions: tuple[frozenset[str], int] | None) -> dict | None:
+def _can_tell(versions: tuple[frozenset[str], int] | None) -> bool:
+    """Whether we actually learned which code versions are being served.
+
+    Found in a browser, not by a test, and it is the more dangerous half of "could not tell is
+    never gone". The absence of an answer is easy to remember on the way IN — do not mark a run
+    you know nothing about. It is easy to forget on the way OUT: `_stall_note` returns None both
+    for "this run is fine" and for "I have no idea", and `_remember_stall` reads None as "take
+    the note off". So one unreachable moment, or a queue with no versions registered at all,
+    silently erased a real warning about a genuinely dead task.
+
+    Nothing is written in either direction unless this is true.
+    """
+    return versions is not None and bool(versions[0])
+
+
+def _stall_note(state: WorkflowState, versions: tuple[frozenset[str], int]) -> dict | None:
     """What to record about a RUNNING workflow nobody serves — or None when it is fine.
 
-    Only an explicit mismatch counts. An unversioned workflow belongs to no version set, so its
-    stamp is a plain code fingerprint and means nothing here; an empty or unknown answer means we
-    could not tell. Both leave the run alone.
+    Only called once `_can_tell` says the answer is real. An unversioned workflow belongs to no
+    version set, so its stamp is a plain code fingerprint and means nothing here — that counts
+    as fine, because it is not pinned to anything that could go out of service.
     """
-    if versions is None:
-        return None
     served, set_count = versions
-    if not served or not state.versioned or not state.build_id:
+    if not state.versioned or not state.build_id:
         return None
     if state.build_id in served:
         return None
@@ -354,6 +367,9 @@ def reconcile_tenant(
                     if versions is _UNASKED:
                         from django.conf import settings
                         versions = _queue_versions(settings.TEMPORAL_TASK_QUEUE)
+                    if not _can_tell(versions):
+                        out["undetermined"] += 1
+                        continue
                     changed = _remember_stall(tenant_id, run, _stall_note(state, versions))
                     if changed:
                         out[changed].append(str(run.id))

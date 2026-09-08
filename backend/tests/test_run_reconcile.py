@@ -431,3 +431,24 @@ def test_a_parked_run_is_reported_but_still_never_repaired(world, monkeypatch):
     run.refresh_from_db()
     assert run.status == Run.Status.STALLED
     assert out["repaired"] == []
+
+
+def test_an_outage_never_ERASES_a_report_either(world, monkeypatch):
+    """The other half of "could not tell is never gone", and the one that was missing.
+
+    Found in a browser: `_stall_note` returns None both for "this run is fine" and for "no
+    idea", and `_remember_stall` reads None as "take the note off". So a queue that answered
+    with nothing — briefly unreachable, or simply no versions registered — wiped a live warning
+    about a genuinely dead task, and the screen went quiet with nothing fixed.
+    """
+    monkeypatch.setattr("apps.runs.reconcile._queue_versions", _serving("v-new"))
+    run = _run(world)
+    reconcile_tenant(tenant_id=_tid(world), describe=_pinned("v-old"))
+    assert _stall(run)
+
+    for blind in (lambda _q: None, lambda _q: (frozenset(), 0)):
+        monkeypatch.setattr("apps.runs.reconcile._queue_versions", blind)
+        out = reconcile_tenant(tenant_id=_tid(world), describe=_pinned("v-old"))
+        assert _stall(run), "a blind pass erased a real warning"
+        assert out["recovered"] == [] and out["stalled"] == []
+        assert out["undetermined"] == 1
