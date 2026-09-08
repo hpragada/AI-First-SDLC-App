@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 !deploy/shared-aws/.env.shared.example
+!deploy/ec2-all-in-one/.env.ec2.example
 *.pem
 *.key
 
