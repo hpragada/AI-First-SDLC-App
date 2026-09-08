@@ -177,7 +177,12 @@ somebody asks later what the team actually signed off.
 | What | Why it happened | Commit |
 |---|---|---|
 | A person with several roles on one project could not decide a gate, and appeared once per role in the project switcher | Fixed before QA pulled, at the team's instruction. Found during this batch's browser passes, originally reported as "not fixed" below | `a665757` |
-| A backend test broken by Wave 5, and a format declaration that never reached the platform | Found by a full cross-verification of the batch after the merge — see **What the cross-verification found** below | this commit |
+| A backend test broken by Wave 5, and a format declaration that never reached the platform | Found by a full cross-verification of the batch after the merge — see **What the cross-verification found** below | `2723f7c` |
+| A cancelled work item was still exported to Jira as a new ticket | The third cross-verification finding. Raised as a product call because Wave 3 exists to be *less* restrictive; team chose to skip cancelled items | this commit |
+
+**The P2 batch closes here** (8 Sep 2026). Everything above is built, merged, migrated and
+verified; the team's live pass is the only step outstanding, and it does not gate the next set of
+work.
 
 ## Decisions the team took, so they are not re-opened
 
@@ -193,6 +198,9 @@ somebody asks later what the team actually signed off.
 - **Onboarding is hidden, not greyed out**, on a project with no code (S.No 221) — including
   `/onboarding/documents`, for now.
 - **Connect Machine is specified, not built** (S.No 35), and S.No 138 is folded into it.
+- **A cancelled work item is never exported to the tracker** (8 Sep 2026). Cancelled means "not
+  happening", so a tracker should not be told about it. Only `cancelled` is excluded — `done` work
+  with no ticket is still exportable, which is the whole point of S.No 237.
 
 ## Deliberately out of scope
 
@@ -310,13 +318,16 @@ are fixed in this commit.
   text S.No 187 was about. One parameter, passed through. The regression test goes through the tool
   **an agent actually calls**, because the existing test called the function behind it and passed
   either way — which is exactly how this survived.
-- **Two waves that disagree — needs a team call, deliberately not changed.** Wave 3 made every
+- **Two waves that disagreed — raised as a product call, decided, now fixed.** Wave 3 made every
   backlog item exportable to Jira whatever state it is in, because "being worked on is not a reason
   to be untracked." Wave 9 then added a state meaning "we decided not to do this." Nobody reconciled
-  them, so on the next task-breakdown export a **cancelled** story with no Jira issue gets a brand
-  new one created — the platform files a ticket for work the team just abandoned. One line excludes
-  them (`reconcile_backlog`'s candidate query in `backend/integrations/reconcile.py`), but which
-  states should be exportable is a product decision, not a bug fix.
+  them, so on the next task-breakdown export a **cancelled** story with no Jira issue got a brand
+  new one created — the platform filing a ticket for work the team had just taken off its own board,
+  landing in the sprint backlog looking like any other new ticket, ready for somebody to pick up.
+  **Team decision, 8 Sep 2026: skip cancelled items entirely** (option A of three offered).
+  `reconcile_backlog`'s candidate query now excludes them.
+  **`cancelled` only, deliberately not `TERMINAL_STATES`:** excluding `done` as well would undo
+  S.No 237, since finished work with no tracker id is exactly what could never be exported before.
 
 ## Worth knowing before testing
 
@@ -327,6 +338,11 @@ are fixed in this commit.
 
 ## Found while working, reported, not fixed
 
+- **Cancelling an item that was already exported leaves its tracker ticket open**, and nothing in
+  the platform closes it. The 8 Sep fix stops NEW tickets being created for cancelled work; this is
+  the other half, and it is a different problem with a different risk — closing a ticket means the
+  platform **writing** to a system of record on its own initiative, which needs a gate under
+  non-negotiable #5, not a one-line filter. Logged rather than folded in.
 - **"Set default" on the Repositories screen does nothing.** There is no endpoint behind it yet.
 - **The Jira reconciler matches an existing issue by exact title**, so two work items with identical
   titles would both adopt the same issue (S.No 236).

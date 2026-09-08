@@ -175,10 +175,22 @@ def reconcile_backlog(*, tenant_id, project_id, tracker=None, project_key=None) 
         # therefore never in scope here; dropping the state filter without this one would push
         # every defect and test case in the project into Jira as a generic "Task" — hundreds of
         # rows nobody asked for, mislabelled, on the next task-breakdown export.
+        #
+        # `cancelled` is the ONE state that is still a reason to be untracked (S.No 140, team
+        # decision 8 Sep 2026). It says "we have decided this is not happening", so filing a
+        # tracker ticket for it creates work the team just took off its own board — arriving in
+        # the sprint backlog looking like any other new ticket, with nothing on it saying it was
+        # cancelled, ready for somebody to pick up. Two fixes in one batch disagreed here: this
+        # query stopped filtering on state (S.No 237) before `cancelled` existed (S.No 140).
+        #
+        # `cancelled` ONLY — deliberately not `TERMINAL_STATES`. Excluding `done` too would undo
+        # S.No 237: finished work with no tracker id is exactly what could never be exported
+        # before, and `test_export_never_moves_an_item_backwards` pins that a done item may be
+        # exported and stays done. Abandoned and finished are different facts (models.py:40).
         items = list(
             WorkItem.objects.filter(
                 tenant_id=tenant_id, project_id=project_id, type__in=list(_KIND),
-            )
+            ).exclude(state=WorkItem.State.CANCELLED)
         )
     items.sort(key=lambda w: _ORDER.get(w.type, 9))
 

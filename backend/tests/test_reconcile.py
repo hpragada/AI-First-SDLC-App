@@ -259,6 +259,62 @@ def test_defects_and_test_cases_are_not_swept_into_the_tracker(project):
     assert [c["summary"] for c in tracker.created] == ["A real story"]
 
 
+def test_a_cancelled_item_is_never_filed_in_the_tracker(project):
+    """Team decision, 8 Sep 2026. Two fixes in one batch disagreed about the same query: S.No 237
+    stopped filtering candidates on state, and S.No 140 then added a state that means "we have
+    decided this is not happening". Without this exclusion the next task-breakdown export files a
+    brand-new ticket for work the team just took OFF its own board — landing in the sprint backlog
+    indistinguishable from real new work, ready for somebody to pick up.
+
+    The two other stories here are the guard on the guard: excluding `cancelled` must not quietly
+    become excluding everything terminal. `done` with no tracker id is precisely what S.No 237
+    exists to let through, and `in_progress` is the case that motivated it.
+    """
+    cancelled = _wi(project, type=WorkItem.Type.STORY, title="Duplicate of WI-402",
+                    state=WorkItem.State.CANCELLED)
+    done = _wi(project, type=WorkItem.Type.STORY, title="Shipped last sprint",
+               state=WorkItem.State.DONE)
+    tracker = _FakeTracker()
+
+    out = reconcile_backlog(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                            tracker=tracker, project_key="ST")
+
+    assert [c["summary"] for c in tracker.created] == ["Shipped last sprint"]
+    assert out["created"] == 1
+    # Nothing was written to the cancelled item either — no pointer, no state change.
+    cancelled.refresh_from_db()
+    assert cancelled.state == WorkItem.State.CANCELLED
+    assert not (cancelled.external_ref or {}).get("id")
+    done.refresh_from_db()
+    assert done.state == WorkItem.State.DONE          # exported, and still done
+    assert done.external_ref["id"] == "ST-1"
+
+
+def test_a_cancelled_item_with_a_pointer_is_left_completely_alone(project):
+    """An item exported BEFORE it was cancelled keeps the pointer it already had. The export does
+    not re-validate it, does not re-create it, and does not touch its state — a cancellation is
+    not the export's business to act on.
+
+    KNOWN GAP, logged separately rather than solved here: the Jira ticket this item already has
+    stays open, and nothing in the platform closes it. Excluding cancelled items stops NEW tickets
+    being created; the stale-ticket half is a different problem with a different risk (it means the
+    platform writing to a system of record on its own) and is not in this change.
+    """
+    wi = _wi(project, type=WorkItem.Type.STORY, title="Abandoned mid-flight",
+             state=WorkItem.State.CANCELLED)
+    wi.external_ref = {"id": "ST-77", "key": "ST-77"}
+    wi.save(update_fields=["external_ref"])
+    tracker = _FakeTracker()
+
+    reconcile_backlog(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                      tracker=tracker, project_key="ST")
+
+    assert tracker.created == []
+    wi.refresh_from_db()
+    assert wi.external_ref["id"] == "ST-77"           # pointer intact
+    assert wi.state == WorkItem.State.CANCELLED
+
+
 # ── S.No 236: a pointer is only trusted while the issue it names still exists ────
 
 
