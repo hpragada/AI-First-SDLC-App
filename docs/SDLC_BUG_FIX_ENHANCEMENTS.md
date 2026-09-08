@@ -146,9 +146,11 @@ today to P1 + N2:
 
 # P2 batch — same branch (2026-09-07)
 
-**Status:** all ten waves built; three migrations outstanding; the team's own live pass is still to
-come. **Scope as agreed:** the P2 rows the team selected from Bugs.xlsx, in ten waves, one commit
-each. Per-item detail is in the Bugs.xlsx rows; this is the batch view.
+**Status:** all ten waves built and **merged into `develop`** at `eab96e9` (`--no-ff`); **all three
+migrations applied** to the shared database by the team; **the team's own live pass is still to
+come — that is the only thing outstanding.** **Scope as agreed:** the P2 rows the team selected
+from Bugs.xlsx, in ten waves, one commit each. Per-item detail is in the Bugs.xlsx rows; this is
+the batch view.
 
 ## What shipped
 
@@ -165,6 +167,17 @@ each. Per-item detail is in the Bugs.xlsx rows; this is the batch view.
 | 8 | The build agent could move the main work item | S.No 87 | Blocklist inverted to an allowlist | `dcfb579` |
 | 9 | No human way to close work that cannot be built | S.No 140 | A terminal `cancelled` state, and everything that must respect it | `41b9068`, `76de57b` |
 | 10 | Connect Machine redesign | S.No 35 (+138) | [Spec only](CONNECT_MACHINE_REDESIGN_SPEC.md), by team decision | `96803a6`, `bb7cae6` |
+
+### After the merge
+
+Two passes ran once the batch was on `develop`. Both are recorded here rather than folded into the
+table above, because neither was part of the approved scope and the distinction matters when
+somebody asks later what the team actually signed off.
+
+| What | Why it happened | Commit |
+|---|---|---|
+| A person with several roles on one project could not decide a gate, and appeared once per role in the project switcher | Fixed before QA pulled, at the team's instruction. Found during this batch's browser passes, originally reported as "not fixed" below | `a665757` |
+| A backend test broken by Wave 5, and a format declaration that never reached the platform | Found by a full cross-verification of the batch after the merge — see **What the cross-verification found** below | this commit |
 
 ## Decisions the team took, so they are not re-opened
 
@@ -210,23 +223,32 @@ Recorded so the scope decision is not re-litigated:
 - **The team's own live pass has not happened.** Everything below was verified by me, by test and
   in a browser against a local stack; none of it has been exercised by the people who reported the
   bugs. That is the step that closes these rows in practice.
-- **S.No 88 needs webhook delivery configured** — a reachable URL and `GITHUB_WEBHOOK_SECRET` — to
-  work end to end. The sweep is also the only thing that will recover the run stranded today; no
-  webhook fires retroactively.
-- Everything else is covered by test: **499 frontend tests** and the backend files run per wave.
-  Waves 1–9 were also driven in a browser against a local stack with seeded data.
+- **S.No 88 does NOT need the webhook configured.** `integrations_webhookdelivery` holds **zero
+  rows** against 214 runs — the GitHub webhook has never delivered anything, and the platform has
+  never needed it, because it merges its own pull requests. The **sweep** is the whole mechanism
+  and it needs no configuration: it runs when anyone opens the Gates screen, over the same
+  connection that already opens the pull requests. Configuring the webhook would change *seconds*
+  versus *within the hour*, at the price of a public endpoint and a shared secret. **Team decision,
+  7 Sep 2026: don't.** Revisit only if merging by hand becomes routine. The sweep is also the only
+  thing that will recover the run stranded today; no webhook fires retroactively.
+- Everything else is covered by test: **503 frontend tests** and the backend files run per wave,
+  plus the post-merge cross-verification below. Waves 1–9 were also driven in a browser against a
+  local stack with seeded data.
 
-## Before this runs anywhere
+## Migrations — DONE
 
-Three migrations, **written but not run** — the team runs them.
+All three were applied to the shared database by the team on 7 Sep 2026, **before** the merge, and
+verified afterwards (`showmigrations` reports `[X]` for each). Nothing here is outstanding; it is
+kept as the record of what was run and what to watch for if it is ever replayed on another database.
 
 ```bash
-docker compose run --rm backend python manage.py migrate projects   # 0013
-docker compose run --rm backend python manage.py migrate gates      # 0004
-docker compose run --rm backend python manage.py migrate workitems  # 0007
+docker compose run --rm backend python manage.py migrate projects   # 0013  ✅ applied
+docker compose run --rm backend python manage.py migrate gates      # 0004  ✅ applied
+docker compose run --rm backend python manage.py migrate workitems  # 0007  ✅ applied
 ```
 
-- **`projects/0013` will FAIL if two projects already share a name.** Run the pre-check as the
+- **`projects/0013` will FAIL if two projects already share a name.** It applied cleanly, which is
+  itself the proof that no workspace had a clash. On any other database, run the pre-check as the
   `postgres` owner and rename any duplicates first. Running it as the application user reports zero
   rows whether or not duplicates exist, because row-level security hides them — that is no result,
   not a clean one.
@@ -244,14 +266,67 @@ the thing is there; only looking says it is right.** Every UI wave in this batch
 browser afterwards for that reason, and doing so also turned up the two Wave 1 design deviations and
 the multi-role defect below.
 
+## Found while working, then fixed at the team's instruction (`a665757`)
+
+Both were reported here as "not fixed" and the team asked for them before QA pulled. Both had one
+root cause: **memberships are stored one row per role, and the frontend read them as one row per
+project.** The question now lives in one place — the auth context exposes every role held on the
+selected project and a `hasRole()` that honours the workspace-admin override, matching what
+`decide_gate` already did on the server — so comparing a single role anywhere is now the thing that
+looks wrong.
+
+- **A person with several roles on one project only ever got the first one.** A tech lead who is
+  also product owner was told *"you don't hold the tech_lead role"* and shown a disabled Approve —
+  **on a gate the server would have accepted**, because `decide_gate` checks every one of their
+  rows. A locked door with no lock in it: a UI lockout, never an authorisation failure. Sweeping for
+  the pattern found **a second copy** on the contracts/drift screen that nobody had met yet.
+- **The project switcher listed the same project once per role** — three roles, three identical
+  entries, and a duplicate-key warning on every render.
+
+## What the cross-verification found (7 Sep 2026)
+
+A full read of all ten waves against this plan, plus 572 backend tests over 19 files, 503 frontend
+tests, typecheck, eslint and ruff. Nine waves were clean. Three things were not, and the first two
+are fixed in this commit.
+
+- **A backend test broken by Wave 5, failing on `develop`.** Wave 5's "one project name per
+  workspace" rule is correct and working. An older test's helper named its project after the
+  workspace — *"B-proj"* — and the test calls that helper **twice for workspace B**; it wanted two
+  clarifications, not two projects, and the new rule rightly refused the second. **The product was
+  right and the test was wrong**, so the fix is the test.
+  **Why it was missed, and the lesson:** each wave was verified against *its own* named test files,
+  and this file belongs to no wave. **A database constraint is global — it can break any fixture in
+  the suite, not only the files the wave touched.** When a wave adds a constraint, unique index or
+  NOT NULL, grep the whole test tree for fixtures that would violate it and run those files too.
+- **A declaration two agents were told to make, that never arrived.** Wave 1 gave the platform two
+  ways to know what a file is: recognise it, or let the agent declare it. Recognition works — that
+  is why the SBOM renders, and S.No 187's actual symptom was genuinely fixed. **The declaration half
+  was never wired to the agent-facing tool.** `mcp_platform_state/server.py` did not list `format`
+  among the arguments it accepts, and FastMCP **silently discards** anything missing from a tool's
+  signature — no error, no warning, the declaration simply gone. Meanwhile agents 04 and 10 had both
+  been told to pass it. Harmless for JSON, which is recognised anyway; **not** harmless for YAML and
+  CSV, which the platform deliberately refuses to guess at (a markdown document full of `Key: value`
+  lines parses as valid YAML), so a declared-but-discarded YAML body still rendered as the wall of
+  text S.No 187 was about. One parameter, passed through. The regression test goes through the tool
+  **an agent actually calls**, because the existing test called the function behind it and passed
+  either way — which is exactly how this survived.
+- **Two waves that disagree — needs a team call, deliberately not changed.** Wave 3 made every
+  backlog item exportable to Jira whatever state it is in, because "being worked on is not a reason
+  to be untracked." Wave 9 then added a state meaning "we decided not to do this." Nobody reconciled
+  them, so on the next task-breakdown export a **cancelled** story with no Jira issue gets a brand
+  new one created — the platform files a ticket for work the team just abandoned. One line excludes
+  them (`reconcile_backlog`'s candidate query in `backend/integrations/reconcile.py`), but which
+  states should be exportable is a product decision, not a bug fix.
+
+## Worth knowing before testing
+
+- **Cancelling cannot be undone.** Not in the UI and not through the API — `ALLOWED_TRANSITIONS`
+  gives a cancelled item nowhere to go. That is deliberate (reopening restarts gates and reporting,
+  and was judged a separate decision with separate consequences), but a tester who cancels an item
+  cannot put it back without a database edit.
+
 ## Found while working, reported, not fixed
 
-- **A person with several roles on one project only ever gets the first one.** The selected project
-  is found by matching the project id, so a tech lead who is also product owner is treated as
-  whichever role happens to come back first — and cannot decide a gate that requires the other.
-  Pre-existing; not touched.
-- **The project switcher lists the same project once per role**, for the same reason. Deduplicated
-  on the Connect Machine screen (S.No 198) but not in the top bar.
 - **"Set default" on the Repositories screen does nothing.** There is no endpoint behind it yet.
 - **The Jira reconciler matches an existing issue by exact title**, so two work items with identical
   titles would both adopt the same issue (S.No 236).

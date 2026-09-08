@@ -793,3 +793,32 @@ def test_server_registers_all_tools():
         "get_a11y_batch", "get_a11y_screenshots", "get_wcag_grounding", "record_a11y_finding",
     }
     assert registered == expected
+
+
+def test_a_declared_format_survives_the_tool_an_agent_actually_calls(world, monkeypatch):
+    """The AGENT-facing surface must accept `format`, not merely the function behind it.
+
+    Bugs S.No 187 gave `tools.register_artifact` a `format` parameter and told two agent bodies
+    (04_architecture, 10_security) to pass it — but the MCP wrapper never declared it. FastMCP
+    builds each tool's schema from the wrapper's signature and DISCARDS any argument missing
+    from it, silently: no error, no warning, the declaration simply gone. A test that calls
+    `tools.register_artifact(format=...)` passes either way, which is exactly why that one did
+    while the agents' declarations were being dropped. This goes through the tool they call.
+
+    It matters most for YAML and CSV: the platform recognises JSON and XML unaided, but refuses
+    to guess at those two, so a declaration is the ONLY way they render as anything but prose.
+    """
+    from mcp_platform_state import server
+
+    tool = next(t for t in asyncio.run(server.server.list_tools())
+                if t.name == "register_artifact")
+    assert "format" in tool.inputSchema["properties"]
+
+    monkeypatch.setenv("PLATFORM_TENANT_ID", str(world["t"].id))
+    monkeypatch.setenv("PLATFORM_PROJECT_ID", str(world["project"].id))
+    monkeypatch.setenv("PLATFORM_RUN_ID", str(world["run"].id))
+    out = server.register_artifact(
+        phase="04_architecture", type="api_spec", sor="internal",
+        content_hash="sha256:fmt", title="Orders API", format="yaml",
+    )
+    assert (Artifact.objects.get(id=out["id"]).external_ref or {}).get("format") == "yaml"

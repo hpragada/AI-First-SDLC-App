@@ -145,6 +145,7 @@ def register_artifact(
     external_ref: dict | None = None,
     repo_id: str | None = None,
     supersedes: str | None = None,
+    format: str | None = None,
 ) -> dict:
     """Register a generated artifact (pointer/provenance only, never the body). You do NOT
     need to know or ask for the project id or run id — the platform fills them from the run
@@ -159,7 +160,14 @@ def register_artifact(
     Pass `supersedes=<artifact id>` when this registration is the NEXT VERSION of an artifact
     that already exists (e.g. a faithful re-transcription of an adopted document). The platform
     then takes `phase`, `type` and `title` from that artifact, so the new row versions it
-    correctly — you do not have to restate them, and a mistyped title cannot fork a duplicate."""
+    correctly — you do not have to restate them, and a mistyped title cannot fork a duplicate.
+
+    Pass `format` when the body you staged is NOT prose — "json", "yaml", "xml" or "csv".
+    Markdown is assumed otherwise, and the platform can recognise JSON and XML on its own, but
+    it deliberately will not guess at YAML or CSV: a markdown document full of `Key: value`
+    lines parses as valid YAML, so guessing would mangle far more documents than it would fix.
+    An undeclared YAML or CSV body therefore previews as an unbroken wall of text (Bugs S.No
+    187) — declaring it is the only way to be sure it renders as what it is."""
     resolved_project = project_id or _bound_project()
     resolved_run = run_id or _bound_run()
     if not resolved_project:
@@ -167,6 +175,7 @@ def register_artifact(
     return tools.register_artifact(
         _tenant(), resolved_project, resolved_run, phase, type, sor,
         content_hash, s3_key, external_ref, repo_id, title, supersedes,
+        format=format,
     )
 
 

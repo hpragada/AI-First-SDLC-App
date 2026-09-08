@@ -1,8 +1,16 @@
 # P2 BUG-FIX BATCH — build plan for team review
 
-**Status:** Awaiting team approval. **No code has been written.**
-**Branch it would land on:** `SDLC_Bug_Fix_Enhancements` (currently `4988ace`, 6 commits ahead of
-`develop`, clean tree).
+**Status: APPROVED, BUILT AND MERGED — 7 September 2026.** All ten waves shipped, one commit each;
+`develop` carries them and the three migrations are applied.
+
+**This document is the plan as approved, and is deliberately left as it was written.** It records
+what the team agreed to, not what happened afterwards — letting it drift into a build log would
+destroy the only account of what was actually signed off. For what shipped, what was decided along
+the way and what was found after the merge, read
+[SDLC_BUG_FIX_ENHANCEMENTS.md](SDLC_BUG_FIX_ENHANCEMENTS.md).
+
+**Branch:** built on `SDLC_Bug_Fix_Enhancements`, merged into `develop` at `eab96e9` (`--no-ff`, so
+the whole batch reverts in one step).
 **Companion document:** [CONNECT_MACHINE_REDESIGN_SPEC.md](CONNECT_MACHINE_REDESIGN_SPEC.md) —
 written and complete; that work is parked for later implementation.
 

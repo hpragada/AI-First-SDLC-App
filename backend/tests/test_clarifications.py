@@ -241,7 +241,14 @@ def _app_role_connection():
 
 
 def _make_clarification(tenant: Tenant) -> None:
-    project = Project.objects.create(tenant=tenant, name=f"{tenant.name}-proj")
+    # The project name is per-CALL, not per-tenant. This helper is called twice for the same
+    # tenant below (two clarifications, one workspace), and `{tenant.name}-proj` made that the
+    # second project in a workspace to carry the same name — which `uniq_tenant_project_name`
+    # correctly refuses since Bugs S.No 211. The test never wanted a second project; it wanted a
+    # second question. Nothing here asserts anything about the name, so making it unique restores
+    # what the test meant without weakening the constraint.
+    project = Project.objects.create(
+        tenant=tenant, name=f"{tenant.name}-proj-{uuid.uuid4().hex[:8]}")
     wi = WorkItem.objects.create(tenant=tenant, project=project, type=WorkItem.Type.STORY)
     spec = AgentSpec.objects.create(
         tenant=tenant, key=f"03_prd_{uuid.uuid4().hex[:8]}", body_ref="x")
