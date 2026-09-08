@@ -156,10 +156,16 @@ async def elect(
         return Election(VERSIONED, current)
 
     if current is not None and not is_newer(badge, current):
+        # Bugs S.No 247: this said what had happened and not what to do about it, so the
+        # person reading it saw a container that would not stay up and no way to act. The
+        # instruction is the whole point of the message.
         log(
-            f"STANDING DOWN: queue {task_queue} is owned by build {current}, "
-            f"which is newer than mine ({badge}). This worker is running older "
-            "code and will not poll for work."
+            f"STANDING DOWN: somebody on {task_queue} is running newer code than you "
+            f"({current} is newer than {badge}), so this worker will not take any work — "
+            "that is deliberate, not a crash. Pull the latest code and restart to serve "
+            "again, or set TEMPORAL_TASK_QUEUE in your .env to your own queue name to stop "
+            "sharing one. Any task you started on the old code is picked up by the newer "
+            "worker; nothing is lost."
         )
         return Election(STAND_DOWN, badge)
 
@@ -182,10 +188,45 @@ async def elect(
 
 
 async def _claim(client: Any, task_queue: str, badge: str) -> None:
-    from temporalio.client import BuildIdOpAddNewDefault
+    """Take ownership of the queue with this badge, as a SUCCESSOR of the build already there.
 
+    Bugs S.No 244/245. This used `BuildIdOpAddNewDefault` for every badge, which makes each one
+    a new INCOMPATIBLE generation. Temporal pins a running workflow to its starting build for
+    life, so a badge that changes on every code edit — while a build runs for hours — meant any
+    worker restart permanently orphaned every build in flight, silently. The same growth also
+    filled the queue: ten sets is Temporal's cap, and `sdlc-brown` hit it, at which point the
+    worker could not start at all.
+
+    `AddNewCompatible` puts the new badge in the SAME set as a successor, and the SDK's own
+    words for what that buys are the fix: "new workflow tasks for workflows which have been
+    executing on workers in that set will now start on this new Build Id". So a restart hands
+    the in-flight builds to the incoming worker instead of stranding them, and the set count
+    stops growing.
+
+    `promote_set=True` is not optional: without it the new build serves the old workflows but
+    NOT newly started ones, which is half a claim and worse than either whole answer.
+
+    What this trades: a newer worker may now replay a workflow that started on older code. Only
+    the workflow files can break that (`workflows.py`, `build_workflow.py` — activities are
+    never replayed), it changed 21 times in 203 code changes over two months, and it fails LOUD
+    with a named non-determinism error. The alternative was a silent permanent orphan every
+    time, which is not a better trade.
+    """
+    from temporalio.client import BuildIdOpAddNewCompatible, BuildIdOpAddNewDefault
+
+    current = await _current_default(client, task_queue)
+    if current is None:
+        # Nothing to be a successor OF. A fresh queue's first badge has to open the set —
+        # `AddNewCompatible` needs an existing build id and is rejected without one.
+        await client.update_worker_build_id_compatibility(
+            task_queue, BuildIdOpAddNewDefault(badge)
+        )
+        return
     await client.update_worker_build_id_compatibility(
-        task_queue, BuildIdOpAddNewDefault(badge)
+        task_queue,
+        BuildIdOpAddNewCompatible(
+            badge, existing_compatible_build_id=current, promote_set=True
+        ),
     )
 
 

@@ -318,3 +318,116 @@ def test_listing_runs_triggers_the_check(world, monkeypatch):
 
     assert resp.status_code == 200
     assert called and called[0]["tenant_id"] == _tid(world)
+
+
+# ── S.No 246: a RUNNING workflow nobody is serving ──────────────────
+#
+# The failure that hid for 46 days. Temporal pins a workflow to the code version that started
+# it, for life, and says nothing when no worker carries that version any more. So the workflow
+# reports RUNNING, the worker reports healthy, the queue reports healthy, and the screen shows
+# an ordinary waiting state — while the task is dead. Every test here is about TELLING somebody:
+# nothing below repairs anything, because which recovery is right (take over, merge the
+# versions, re-trigger) has different consequences each way and is a person's call.
+
+
+def _pinned(build, *, versioned=True, name="RUNNING"):
+    return lambda _wf: WorkflowState(False, name, build_id=build, versioned=versioned)
+
+
+def _serving(*builds, sets=1):
+    return lambda _queue: (frozenset(builds), sets)
+
+
+def _stall(run):
+    run.refresh_from_db()
+    return (run.outputs or {}).get("worker_stalled")
+
+
+def test_a_run_whose_code_version_nobody_serves_is_reported(world, monkeypatch):
+    monkeypatch.setattr("apps.runs.reconcile._queue_versions", _serving("v-new"))
+    run = _run(world, status=Run.Status.AWAITING_GATE)
+
+    out = reconcile_tenant(tenant_id=_tid(world), describe=_pinned("v-old"))
+
+    note = _stall(run)
+    assert note and note["pinned_build"] == "v-old" and note["newest_served"] == "v-new"
+    assert out["stalled"] == [str(run.id)]
+    # Reported, NOT repaired — the run keeps the status it had.
+    assert run.status == Run.Status.AWAITING_GATE
+    assert out["repaired"] == []
+    assert Event.objects.filter(tenant=world["tenant"], action="run.worker_stalled").count() == 1
+
+
+def test_the_report_disappears_by_itself_once_somebody_serves_it_again(world, monkeypatch):
+    """The team's rule: a notice must close itself when the thing it describes is over.
+
+    This is the merge-the-versions recovery, seen from the run's side — the code version comes
+    back into service and the screen must stop saying anything, with nobody dismissing it.
+    """
+    monkeypatch.setattr("apps.runs.reconcile._queue_versions", _serving("v-new"))
+    run = _run(world)
+    reconcile_tenant(tenant_id=_tid(world), describe=_pinned("v-old"))
+    assert _stall(run)
+
+    monkeypatch.setattr("apps.runs.reconcile._queue_versions", _serving("v-old", "v-new"))
+    out = reconcile_tenant(tenant_id=_tid(world), describe=_pinned("v-old"))
+
+    assert _stall(run) is None
+    assert out["recovered"] == [str(run.id)]
+    assert Event.objects.filter(tenant=world["tenant"], action="run.worker_recovered").count() == 1
+
+
+def test_looking_twice_at_the_same_stall_says_it_once(world, monkeypatch):
+    """This rides on a page load. A run that is still stuck must not write a fresh ledger event
+    every time somebody opens the screen."""
+    monkeypatch.setattr("apps.runs.reconcile._queue_versions", _serving("v-new"))
+    run = _run(world)
+
+    first = reconcile_tenant(tenant_id=_tid(world), describe=_pinned("v-old"))
+    second = reconcile_tenant(tenant_id=_tid(world), describe=_pinned("v-old"))
+
+    assert first["stalled"] == [str(run.id)]
+    assert second["stalled"] == []          # nothing changed, so nothing was said
+    assert Event.objects.filter(tenant=world["tenant"], action="run.worker_stalled").count() == 1
+
+
+def test_an_unversioned_workflow_is_never_reported(world, monkeypatch):
+    """An unversioned workflow belongs to no version set, so its stamp is a bare code
+    fingerprint that means nothing here. Reading it as a mismatch would flag every run that
+    predates worker versioning — ten of the twelve found on 2026-09-08."""
+    monkeypatch.setattr("apps.runs.reconcile._queue_versions", _serving("v-new"))
+    run = _run(world)
+
+    reconcile_tenant(
+        tenant_id=_tid(world), describe=_pinned("bare-fingerprint", versioned=False)
+    )
+
+    assert _stall(run) is None
+
+
+def test_a_temporal_outage_reports_nothing(world, monkeypatch):
+    """"Could not tell" is never "gone" — the same rule that stops the Jira pointer check
+    wiping every pointer in a project during an auth outage (S.No 236). Without this, one
+    unreachable moment would mark every run the tenant has."""
+    monkeypatch.setattr("apps.runs.reconcile._queue_versions", lambda _q: None)
+    run = _run(world)
+
+    reconcile_tenant(tenant_id=_tid(world), describe=_pinned("v-old"))
+
+    assert _stall(run) is None
+
+
+def test_a_parked_run_is_reported_but_still_never_repaired(world, monkeypatch):
+    """TASK-039's exact shape: parked AND orphaned, indistinguishable from a companion that
+    merely went quiet. Watching it is how somebody finds out; repairing it would undo S.No 89,
+    which is why detection looks wider than repair rather than `LIVE_STATUSES` being widened.
+    """
+    monkeypatch.setattr("apps.runs.reconcile._queue_versions", _serving("v-new"))
+    run = _run(world, status=Run.Status.STALLED)
+
+    out = reconcile_tenant(tenant_id=_tid(world), describe=_pinned("v-old"))
+
+    assert _stall(run)
+    run.refresh_from_db()
+    assert run.status == Run.Status.STALLED
+    assert out["repaired"] == []

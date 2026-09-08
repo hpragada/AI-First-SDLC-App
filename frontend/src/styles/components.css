@@ -166,6 +166,12 @@
 .badge--cancelled   { --_bg: var(--bg-subtle);          --_fg: var(--text-muted);
   border: 1px dashed var(--border-strong);
 }
+/* Paused (Bugs S.No 246): nothing is serving this task's code version, so it will not move on
+   its own. Amber INK on the amber fill, not `--warning` itself, which is a fill/border colour
+   and measures 2.19:1 on `--warning-bg`. It borrows `gate`'s hue on purpose — both mean "this
+   is waiting on something" — but keeps its own name so the two never get merged: one waits for
+   a person, the other for a machine, and only one of them is a fault. */
+.badge--paused      { --_bg: var(--warning-bg);         --_fg: var(--warning-ink); }
 /* informational hue variants for type/level chips etc. */
 .badge--info-hue    { --_bg: var(--info-bg);            --_fg: var(--info); }
 .badge--navy        { --_bg: var(--brand-navy-100);     --_fg: var(--brand-navy-700); }

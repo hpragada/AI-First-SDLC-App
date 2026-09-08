@@ -25,6 +25,12 @@ def _bootstrap_django() -> None:
     django.setup()
 
 
+#: Exit status for "somebody newer owns this queue, so I served nothing" (Bugs S.No 247).
+#: Deliberately not 0 (nothing was done) and not 1 (nothing failed) — this is a third outcome,
+#: and an operator needs to be able to see which one they got.
+_STAND_DOWN_EXIT = 3
+
+
 def _log(message: str) -> None:
     """Worker lifecycle goes to stdout, where the container logs already are."""
     print(f"[worker] {message}", flush=True)
@@ -58,7 +64,12 @@ async def _run() -> None:
             client, task_queue, badge, log=_log
         )
         if outcome == worker_election.STAND_DOWN:
-            return
+            # Bugs S.No 247. This was a bare `return`, so a fenced-out worker exited 0 and the
+            # container looked like it had finished normally — while the person watching saw
+            # only "my worker will not stay up", restarted it, and got the same three-second
+            # exit again. A distinct status code lets `docker compose ps` tell "running older
+            # code" apart from "crashed", and `elect` has already printed what to do about it.
+            raise SystemExit(_STAND_DOWN_EXIT)
     else:
         _log("WORKER_VERSIONING_ENABLED is off; running unversioned")
 

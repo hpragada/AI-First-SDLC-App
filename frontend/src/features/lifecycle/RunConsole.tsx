@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, Console, Panel, Spinner } from "../../components/ui";
-import { isTerminalState, type RunEvent } from "../../types";
+import { isTerminalState, workerStalled, type RunEvent } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
 import { phaseLabel } from "./phases";
 import {
@@ -143,6 +143,10 @@ function RunConsoleLive() {
       ? (run.data.outputs as Record<string, unknown>).resumable === true
       : false;
 
+  // Bugs S.No 246 — nobody is serving the code version this run is pinned to. Read through one
+  // shared narrowing helper so no second screen invents its own shape for the same field.
+  const stalled = workerStalled(run.data.outputs);
+
   const handleRetry = () => {
     // Re-trigger by the AgentSpec *key* (e.g. "04_architecture"), never the run's
     // agent_spec UUID — the trigger endpoint resolves by key (Bugs.xlsx row 21).
@@ -238,6 +242,36 @@ function RunConsoleLive() {
             {" "}Nothing you've done is lost — the work already finished is kept. Fix the cause if
             you need to, then <strong>Resume</strong> to continue from the step that failed
             instead of starting the phase over. Or take over to end this run.
+          </Banner>
+        )}
+
+        {/* Bugs S.No 246. Rendered ONLY while the reconciler says nobody is serving this run's
+            code version, and gone the moment that stops being true — the note is the condition,
+            not a slot on the screen. This is the surface where the loud version belongs: unlike
+            the approvals screen, the person reading this is usually the one who can restart the
+            helper, so it earns a full banner and names the next step. */}
+        {stalled && (
+          <Banner variant="danger" title="This task has stopped and won't start again on its own">
+            None of the work so far is lost. It's waiting for a version of the app that is no
+            longer running, so it needs someone to pick it up. Ask your tech lead to restart the
+            SDLC helper, or take the task over here.
+            <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => navigate(recoveryLink(id as string))}
+              >
+                Take over this task
+              </Button>
+            </div>
+            <details style={{ marginTop: "var(--space-2)" }}>
+              <summary className="t-sm">Technical details</summary>
+              <p className="t-sm u-muted t-mono" style={{ margin: "var(--space-1) 0 0" }}>
+                waiting for {stalled.pinned_build}
+                <br />
+                currently running {stalled.newest_served}
+              </p>
+            </details>
           </Banner>
         )}
 

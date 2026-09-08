@@ -64,6 +64,13 @@ function GatesLive() {
   const [selectedId, setSelectedId, pinnedFromUrl] = useParamState("gate");
   const [satisfied, setSatisfied] = useState<Record<string, boolean>>({});
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
+  // Bugs S.No 246, and the team's chosen shape for it. A reviewer whose task is paused is NOT
+  // warned before deciding: their approval is written and signalled either way, so the only
+  // thing that differs is when it takes effect — and a warning about something they cannot fix,
+  // on a screen they use all day, is noise. They are told plainly AFTERWARDS instead, at the one
+  // moment it matters to them. Holds the work item this applies to, because the decision panel
+  // is gone by then (the gate has stopped being pending).
+  const [queuedFor, setQueuedFor] = useState<string | null>(null);
 
   const loading = approvals.isLoading || workItems.isLoading;
   const projectApprovals = approvals.data ?? [];
@@ -106,6 +113,10 @@ function GatesLive() {
     // reset when the selected gate (and thus its criteria payload) changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [criteria.data, selected?.id]);
+
+  // The "approved and saved" note belongs to one decision, not to the screen. Moving to another
+  // gate clears it, so it cannot sit there implying something about a gate it never described.
+  useEffect(() => setQueuedFor(null), [selectedId]);
 
   const metCount = criteriaList.filter((c) => satisfied[c.id]).length;
   const requiredUnmet = criteriaList.some((c) => c.required && !satisfied[c.id]);
@@ -157,6 +168,11 @@ function GatesLive() {
 
   const handleDecide = (decision: "approved" | "rejected", revise = false) => {
     if (!selected) return;
+    setQueuedFor(
+      decision === "approved" && selected.run_paused
+        ? workItemLabel(selected.work_item, selected.work_item_title)
+        : null,
+    );
     setRevisionRequested(revise);
     decideApproval.mutate({
       id: selected.id,
@@ -201,6 +217,18 @@ function GatesLive() {
         active={tab}
         onSelect={(id) => setTab(id as "pending" | "history")}
       />
+
+      {/* Shown only after an approval that landed on a paused task, and only until the reviewer
+          moves on — no permanently mounted slot. It says the one thing they need: it worked,
+          and there is nothing else for them to do. */}
+      {queuedFor && decideApproval.isSuccess && (
+        <Banner variant="success" title="Approved and saved">
+          <p className="t-sm">
+            <strong>{queuedFor}</strong> is paused, so it will carry on the moment it is running
+            again. Your approval is recorded — there is nothing else for you to do.
+          </p>
+        </Banner>
+      )}
 
       {staleLink && (
         <Banner variant="info" title="That gate is no longer pending">
@@ -273,7 +301,17 @@ function GatesLive() {
                   <span className="gate-panel__role">
                     ▲ {gateLabel(selected.gate_type)} · required role: {roleLabel(selected.required_role)}
                   </span>
-                  <h3 className="t-h3">{workItemLabel(selected.work_item, selected.work_item_title)}</h3>
+                  <div className="u-row-tight">
+                    <h3 className="t-h3">{workItemLabel(selected.work_item, selected.work_item_title)}</h3>
+                    {/* One chip, at chip size. The reviewer is not being warned or blocked —
+                        their decision lands either way — so this marks the task and stops. */}
+                    {selected.run_paused && <Badge variant="paused" dot={false}>Paused</Badge>}
+                  </div>
+                  {selected.run_paused && (
+                    <p className="t-sm" style={{ margin: "var(--space-1) 0 0", color: "var(--warning-ink)" }}>
+                      Approving now will be queued — it takes effect once this task is running again.
+                    </p>
+                  )}
                   {/* UX spec J19: "a link to preview the artifact under review". The preview
                       endpoint was built and signed off; this link never was, and sent the
                       reviewer to the whole registry to re-find what they were reviewing. */}

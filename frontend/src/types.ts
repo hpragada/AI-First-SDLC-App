@@ -113,6 +113,22 @@ export interface Run {
   created_at: string;
 }
 
+/** Written onto a run while nobody is serving the code version it is pinned to (S.No 246), and
+ *  REMOVED again as soon as somebody is — so anything keyed on it appears and disappears with
+ *  the condition itself rather than needing to be dismissed. */
+export interface WorkerStalled {
+  pinned_build: string;
+  newest_served: string;
+  version_sets: number;
+  noticed_at: string;
+}
+
+/** The one place `Run.outputs` is narrowed for this, so no screen re-invents the shape. */
+export function workerStalled(outputs: unknown): WorkerStalled | null {
+  const held = (outputs as { worker_stalled?: WorkerStalled } | null | undefined)?.worker_stalled;
+  return held && held.pinned_build ? held : null;
+}
+
 export interface Artifact {
   id: string;
   project: string;
@@ -180,6 +196,11 @@ export interface Approval {
     pr_ref: string;
     detected_by: string;
   } | null;
+  /** True while nobody is serving the code version this gate's run is pinned to (S.No 246).
+   *  The decision still lands — it is written and signalled either way — so this is about
+   *  TIMING only, and the screen says when it will take effect rather than pretending the
+   *  click did nothing. Optional so an API too old to send it reads as "fine". */
+  run_paused?: boolean;
 }
 
 export interface TriggerResult {

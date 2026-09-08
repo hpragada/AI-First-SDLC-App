@@ -153,7 +153,10 @@ export type BadgeVariant =
   // Bugs S.No 140. Deliberately NOT "done" and deliberately NOT "failed": abandoned work
   // neither succeeded nor broke, and borrowing either colour would say something untrue at a
   // glance. Muted, so a cancelled row recedes on a board without disappearing from it.
-  | "cancelled";
+  | "cancelled"
+  // Bugs S.No 246. "Waiting on a machine that isn't there", as against `gate`'s "waiting on a
+  // person" — same amber, separate name, because only one of the two is a fault to fix.
+  | "paused";
 type BannerVariant = "info" | "warning" | "danger" | "success" | "purple";
 
 export function cx(...parts: Array<string | false | null | undefined>) {

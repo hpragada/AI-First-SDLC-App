@@ -14,8 +14,9 @@ workflows stranded on retired builds back to life instead of them having to be t
 (Bugs S.No 244).
 
 THE ONE THING THAT MAKES THIS UNSAFE. Merging declares the builds mutually compatible, so a
-workflow started on an old build will be REPLAYED by a worker running today's code. Replay is only
-sensitive to the WORKFLOW files — `orchestration/workflows.py` and `orchestration/build_workflow.py`.
+workflow started on an old build will be REPLAYED by a worker running today's code. Replay is
+only sensitive to the WORKFLOW files — `orchestration/workflows.py` and
+`orchestration/build_workflow.py`.
 Activity, agent, API and frontend changes are never replayed. So before confirming a merge,
 somebody must answer one question for each versioned running workflow: *has its workflow file
 changed since the build it is pinned to?* If it has, replay can raise a non-determinism error and
@@ -41,7 +42,10 @@ from django.core.management.base import BaseCommand, CommandError
 
 #: The only files whose changes can break a replay. Printed as guidance, not checked — see the
 #: module docstring for why the command cannot answer the question itself.
-REPLAY_SENSITIVE = ("backend/orchestration/workflows.py", "backend/orchestration/build_workflow.py")
+REPLAY_SENSITIVE = (
+    "backend/orchestration/workflows.py",
+    "backend/orchestration/build_workflow.py",
+)
 
 
 class Command(BaseCommand):
@@ -70,7 +74,9 @@ class Command(BaseCommand):
         client = await Client.connect(
             settings.TEMPORAL_HOST, namespace=settings.TEMPORAL_NAMESPACE
         )
-        self.stdout.write(f"server   {settings.TEMPORAL_HOST}  namespace {settings.TEMPORAL_NAMESPACE}")
+        self.stdout.write(
+            f"server   {settings.TEMPORAL_HOST}  namespace {settings.TEMPORAL_NAMESPACE}"
+        )
         self.stdout.write(f"queue    {queue}")
 
         sets = await client.get_worker_build_id_compatibility(queue)

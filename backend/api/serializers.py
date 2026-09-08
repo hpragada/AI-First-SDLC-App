@@ -573,13 +573,19 @@ class ApprovalSerializer(serializers.ModelSerializer):
     # A NOTE, not a decision: the reviewer still approves, they just finally know what they are
     # approving. Only meaningful while the gate is pending, like merge_conflict above.
     external_merge = serializers.SerializerMethodField()
+    # True while nobody is serving the code version this gate's run is pinned to (Bugs S.No
+    # 246). The approval itself still lands - `decide_gate` writes the row and signals Temporal
+    # either way - so this is only about TIMING, and the screen says so rather than pretending
+    # the click did nothing. Pending-only, like the two above, so the notice closes itself the
+    # moment the gate is decided.
+    run_paused = serializers.SerializerMethodField()
 
     class Meta:
         model = Approval
         fields = [
             "id", "run", "gate_type", "phase", "phase_label", "work_item", "work_item_title",
             "required_role", "approver", "approver_name", "decision", "comment", "decided_at",
-            "created_at", "merge_conflict", "external_merge",
+            "created_at", "merge_conflict", "external_merge", "run_paused",
         ]
         read_only_fields = fields
 
@@ -603,6 +609,12 @@ class ApprovalSerializer(serializers.ModelSerializer):
         if obj.decision != Approval.Decision.PENDING:
             return None
         return obj.external_merge or None
+
+    def get_run_paused(self, obj) -> bool:
+        if obj.decision != Approval.Decision.PENDING:
+            return False
+        outputs = getattr(obj.run, "outputs", None) or {}
+        return bool(outputs.get("worker_stalled"))
 
     def get_merge_conflict(self, obj) -> str | None:
         # Only relevant while the gate is still pending (a re-opened, awaiting-retry merge gate).
