@@ -12,6 +12,8 @@ import type {
 } from "react";
 import { Link as RouterLink } from "react-router-dom";
 
+import { failureOf } from "../../api";
+
 // Close an overlay on the Esc key. No-op when there's no handler (e.g. inline gallery swatches).
 function useEscapeToClose(onClose?: () => void) {
   useEffect(() => {
@@ -528,7 +530,21 @@ export function Tabs({
 
 type TableRow =
   | ReactNode[]
-  | { cells: ReactNode[]; className?: string; style?: CSSProperties };
+  | {
+      cells: ReactNode[];
+      className?: string;
+      style?: CSSProperties;
+      /** Makes the WHOLE row the control that picks this item (Bugs S.No 189). */
+      onSelect?: () => void;
+      selected?: boolean;
+      /** What a screen reader announces for the row, when the cells alone don't read well. */
+      selectLabel?: string;
+    };
+
+/** Everything a click can land on that is already a control of its own. A link inside a
+ *  selectable row must navigate and NOT also select — otherwise "Preview" would quietly change
+ *  the selection on its way out. */
+const OWN_CONTROL = "a,button,input,select,textarea,label,summary,[role='button']";
 
 export function Table({
   headers,
@@ -539,8 +555,32 @@ export function Table({
   rows: TableRow[];
   matrix?: boolean;
 }) {
+  // Row selection is OPT-IN, per row. Every existing table in the platform passes cells and
+  // nothing else, and behaves exactly as it did — the grid semantics below only switch on for a
+  // table that actually has selectable rows.
+  const picks = rows.map((row) => (Array.isArray(row) ? undefined : row.onSelect));
+  const selectable = picks.some(Boolean);
+  const anySelected = rows.some((row) => !Array.isArray(row) && row.onSelect && row.selected);
+  const firstPick = picks.findIndex(Boolean);
+
+  // Arrow keys move between rows. Walking the DOM keeps this local to the component and correct
+  // whatever the caller filtered or sorted, rather than making every caller pass an index.
+  const step = (from: HTMLElement, dir: 1 | -1) => {
+    let next = dir === 1 ? from.nextElementSibling : from.previousElementSibling;
+    while (next && !(next as HTMLElement).dataset.pick) {
+      next = dir === 1 ? next.nextElementSibling : next.previousElementSibling;
+    }
+    if (next instanceof HTMLElement) {
+      next.focus();
+      next.click();
+    }
+  };
+
   return (
-    <table className={cx("table table--in-panel", matrix && "table--matrix")}>
+    <table
+      className={cx("table table--in-panel", matrix && "table--matrix")}
+      role={selectable ? "grid" : undefined}
+    >
       <thead>
         <tr>{headers.map((head, index) => <th key={index}>{head}</th>)}</tr>
       </thead>
@@ -549,8 +589,47 @@ export function Table({
           const cells = Array.isArray(row) ? row : row.cells;
           const className = Array.isArray(row) ? undefined : row.className;
           const style = Array.isArray(row) ? undefined : row.style;
+          const pick = picks[rowIndex];
+          const selected = Array.isArray(row) ? false : Boolean(row.selected);
+          const label = Array.isArray(row) ? undefined : row.selectLabel;
+          // Roving tab stop: the list is ONE stop in the tab order, not one per row. With
+          // nothing selected the first row holds it, so the list is still reachable.
+          const tabbable = selected || (!anySelected && rowIndex === firstPick);
           return (
-            <tr key={rowIndex} className={className} style={style}>
+            <tr
+              key={rowIndex}
+              className={cx(className, pick && "table__row--pick", selected && "table__row--sel")}
+              style={style}
+              data-pick={pick ? "1" : undefined}
+              aria-selected={pick ? selected : undefined}
+              aria-label={label}
+              tabIndex={pick ? (tabbable ? 0 : -1) : undefined}
+              onClick={
+                pick
+                  ? (event) => {
+                      if ((event.target as HTMLElement).closest(OWN_CONTROL)) return;
+                      pick();
+                    }
+                  : undefined
+              }
+              onKeyDown={
+                pick
+                  ? (event) => {
+                      if ((event.target as HTMLElement).closest(OWN_CONTROL)) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        pick();
+                      } else if (event.key === "ArrowDown") {
+                        event.preventDefault();
+                        step(event.currentTarget, 1);
+                      } else if (event.key === "ArrowUp") {
+                        event.preventDefault();
+                        step(event.currentTarget, -1);
+                      }
+                    }
+                  : undefined
+              }
+            >
               {cells.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}
             </tr>
           );
@@ -1182,34 +1261,101 @@ export function EmptyState({ title, text, action }: { title: ReactNode; text: Re
  * Render it BEFORE the empty check, never after — `if (q.isError) return <ErrorState … />`.
  */
 export function ErrorState({
-  title = "We couldn't load this",
+  title,
   detail,
   onRetry,
+  subject,
+  guard = "generic",
+  panel = false,
 }: {
+  /** Only used when the server refused this particular request and said why (a 4xx). */
   title?: ReactNode;
   detail?: unknown;
   onRetry?: () => void;
+  /** What the reader cannot see, for the no-access title: "this project's pages". */
+  subject?: string;
+  /** `a11y` swaps the closing line for the one about conformance. */
+  guard?: "generic" | "a11y";
+  /** Wrap in a Panel, with the cause as its title — the accessibility screens' shape. */
+  panel?: boolean;
 }) {
-  // The server's own words when we have them. `detail` is whatever the query threw, so it is
-  // typed `unknown` on purpose — an Error, a DRF `{detail: "..."}` body, or a string.
-  const message =
+  // Bugs S.No 248, and the team's rule of 8 September: every word here is for the CLIENT, who
+  // did not build this and has no code to read. So no status codes, no thrown text, no
+  // "Technical details" disclosure, and no instruction that needs access they don't have.
+  // Four elements and no fifth: the CAUSE as a title, ONE line of what happened, the button,
+  // then one line so an empty screen is never mistaken for a clean result.
+  //
+  // The cause is real information now rather than a guess — `req` classifies every failure (see
+  // `Failure` in api.ts). Before that, an unreachable server and a broken one were the same
+  // unreadable string, which is why this used to print "Failed to fetch" at a product owner.
+  const failure = failureOf(detail);
+
+  // The server's own words, when the server chose them for a person to read. `detail` is
+  // whatever the query threw, so it is typed `unknown` on purpose.
+  const said =
     (typeof detail === "string" && detail) ||
     (detail && typeof detail === "object"
       ? ((detail as { message?: string }).message ??
          (detail as { detail?: string }).detail ??
          "")
       : "") ||
-    "The server did not respond. This is a problem loading the page, not an empty list.";
-  return (
-    <Banner variant="danger" title={title}>
-      <div className="empty__text">{message}</div>
-      {onRetry && (
-        <Button variant="secondary" size="sm" onClick={onRetry} style={{ marginTop: 8 }}>
-          Try again
-        </Button>
+    "";
+
+  const head =
+    failure === "offline"
+      ? "Can't reach the SDLC app right now"
+      : failure === "server"
+        ? "Something went wrong on our side"
+        : failure === "denied"
+          ? `You don't have access to ${subject ?? "this"}`
+          : (title ?? "This didn't load");
+
+  const line =
+    failure === "offline"
+      ? "Your browser couldn't connect."
+      : failure === "server"
+        ? "The app couldn't load this. Nothing you did caused it."
+        : failure === "denied"
+          ? said || "You are not a member of this project."
+          : said || "The app couldn't load this.";
+
+  // Retrying a permission problem cannot work, and a control that cannot work is its own small
+  // lie — so the button is dropped for `denied` even when a caller passed a retry.
+  const retry = failure === "denied" ? undefined : onRetry;
+
+  const closing =
+    failure === "denied"
+      ? "Nothing is wrong — this screen simply isn't yours to see."
+      : guard === "a11y"
+        ? failure === "offline"
+          ? "This is a connection problem, not a result — it says nothing about your application's accessibility."
+          : "This is a problem with the app, not a result — it says nothing about your application's accessibility."
+        : "This screen is empty because it didn't load — not because there is nothing here.";
+
+  const body = (
+    <>
+      <Banner variant={failure === "denied" ? "info" : "danger"} title={panel ? undefined : head}>
+        <div className="empty__text">{line}</div>
+      </Banner>
+      {failure === "denied" && (
+        <p className="t-sm" style={{ margin: "var(--space-3) 0 0" }}>
+          Ask a workspace admin to add you to this project, then reload.
+        </p>
       )}
-    </Banner>
+      {retry && (
+        <div style={{ marginTop: "var(--space-3)" }}>
+          <Button variant="primary" size="sm" onClick={retry}>
+            Try again
+          </Button>
+        </div>
+      )}
+      <p className="t-sm u-muted" style={{ margin: "var(--space-3) 0 0" }}>
+        {closing}
+      </p>
+    </>
   );
+
+  return panel ? <Panel title={head}>{body}</Panel> : <div>{body}</div>;
 }
 
 /** The counterpart to `ErrorState` for a WRITE that failed (Bugs S.No 219).
@@ -1233,14 +1379,28 @@ export function WriteError({
   // `detail` is whatever the mutation threw, so it is `unknown` on purpose. An ApiError's
   // message is already humanized by `humanizeError` in api.ts — DRF's nested validation shape
   // has been walked down to the leaf sentences a person can actually act on.
-  const message =
+  //
+  // A 4xx is the case worth keeping verbatim: the server refused this particular thing and said
+  // why, in words, and that sentence is the whole value of this banner. The other two kinds had
+  // the same fault as the read path (Bugs S.No 248) — a save attempted with no connection showed
+  // the browser's `Failed to fetch`, and a 500 showed a JSON parse error. Neither is for a client.
+  const failure = failureOf(detail);
+  const said =
     (typeof detail === "string" && detail) ||
     (detail && typeof detail === "object"
       ? ((detail as { message?: string }).message ??
          (detail as { detail?: string }).detail ??
          "")
       : "") ||
-    "The server didn't accept that, and didn't say why. Nothing was changed.";
+    "";
+  const message =
+    failure === "offline"
+      ? "Your browser couldn't connect, so nothing was saved. Try again."
+      : failure === "server"
+        ? "Something went wrong on our side, so nothing was saved. Nothing you did caused it."
+        : failure === "denied"
+          ? said || "You don't have permission to do that."
+          : said || "That wasn't accepted, and no reason was given. Nothing was changed.";
   return (
     <Banner variant="danger" title={title}>
       <div className="empty__text">{message}</div>

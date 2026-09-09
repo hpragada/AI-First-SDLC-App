@@ -88,8 +88,9 @@ describe("a gate deep link", () => {
     // and a reviewer could approve the wrong one having read the right one.
     await waitFor(() => expect(screen.getAllByText(/Second — Search/).length).toBeGreaterThan(0));
     // Both gates appear in the LIST either way, so the list is no evidence. What proves the fix
-    // is which row is SELECTED — the highlighted one must be the gate the URL named.
-    const highlighted = Array.from(document.querySelectorAll('[style*="brand-orange-50"]'));
+    // is which row is SELECTED — the highlighted one must be the gate the URL named. (The tint
+    // moved from an inline style to a class when the whole row became selectable, S.No 189.)
+    const highlighted = Array.from(document.querySelectorAll(".table__row--sel"));
     expect(highlighted.length).toBe(1);
     expect(highlighted[0].textContent).toContain("Second — Search");
     expect(highlighted[0].textContent).not.toContain("First — Checkout");

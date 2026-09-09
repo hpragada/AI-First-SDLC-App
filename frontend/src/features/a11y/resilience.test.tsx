@@ -85,41 +85,53 @@ afterEach(() => {
 });
 
 describe("A failed load is said as a failure, never as an empty result", () => {
-  it("the page list says it could not be loaded, not that no pages are registered", async () => {
+  // REWORDED 8 September (Bugs S.No 248). These screens used to own their own failure copy —
+  // "The page list could not be loaded", three sentences of defence, and a hint about database
+  // migrations — and printed whatever the failure threw. The wording now comes from the one
+  // shared panel every screen uses, and it is written for the client. What these tests pin is
+  // unchanged in substance: a failure must never read as a clean, empty, passing screen.
+  it("the page list says the app failed, not that no pages are registered", async () => {
     vi.stubGlobal("fetch", stubRoutes(broken(/a11y-routes\/$/)));
     renderWithProviders(<A11yAudit />);
 
-    await screen.findByText("The page list could not be loaded");
+    await screen.findByText(/Something went wrong on our side/i);
     expect(screen.queryByText("No pages are registered yet")).toBeNull();
-    // The load-bearing sentence. Without it a reader still walks away with an impression of
-    // their application, formed from a screen that had no data at all.
+    // The load-bearing sentence, in its shorter form. Without it a reader still walks away with
+    // an impression of their application, formed from a screen that had no data at all — and on
+    // THIS capability that impression can end up in a conformance statement.
     expect(
-      screen.getByText(/Nothing shown here is a statement about your application/),
+      screen.getByText(/says nothing about your application's accessibility/i),
     ).toBeDefined();
   });
 
-  it("the failure carries what the platform actually said", async () => {
+  it("★ never shows the client what our database said", async () => {
+    // This used to assert the opposite — `getByText(/a11y_route/)` — and the stub above is why
+    // that was wrong: the server's honest answer to a missing table is
+    // `relation "a11y_route" does not exist`, which is our problem described in our words. A
+    // client who did not build this can do nothing with it. It stays in the server log.
     vi.stubGlobal("fetch", stubRoutes(broken(/a11y-routes\/$/)));
     renderWithProviders(<A11yAudit />);
 
-    await screen.findByText("The page list could not be loaded");
-    expect(screen.getByText(/a11y_route/)).toBeDefined();
+    await screen.findByText(/Something went wrong on our side/i);
+    expect(screen.queryByText(/a11y_route/)).toBeNull();
+    expect(screen.queryByText(/relation/i)).toBeNull();
+    expect(screen.queryByText(/migrated/i)).toBeNull();
     expect(screen.getByRole("button", { name: "Try again" })).toBeDefined();
   });
 
-  it("the review queue says it could not be loaded, not that nothing is waiting", async () => {
+  it("the review queue says so too, not that nothing is waiting", async () => {
     vi.stubGlobal("fetch", stubRoutes(broken(/a11y-review\/$/)));
     renderWithProviders(<A11yReview />);
 
-    await screen.findByText("The review queue could not be loaded");
+    await screen.findByText(/Something went wrong on our side/i);
     expect(screen.queryByText("Nothing is waiting on you")).toBeNull();
   });
 
-  it("the conformance statement says it could not be loaded, not that there is nothing", async () => {
+  it("the conformance statement says so too, not that there is nothing", async () => {
     vi.stubGlobal("fetch", stubRoutes(broken(/a11y-conformance\/$/)));
     renderWithProviders(<A11yConformanceScreen />);
 
-    await screen.findByText("The conformance statement could not be loaded");
+    await screen.findByText(/Something went wrong on our side/i);
     expect(screen.queryByText("There is nothing to compile yet")).toBeNull();
   });
 
@@ -129,7 +141,7 @@ describe("A failed load is said as a failure, never as an empty result", () => {
     vi.stubGlobal("fetch", stubRoutes(broken(/a11y-journeys\/$/)));
     renderWithProviders(<A11yAudit />);
 
-    await screen.findByText("The keyboard journeys could not be loaded");
+    await screen.findByText(/Something went wrong on our side/i);
     expect(screen.queryByText("No journeys to walk yet")).toBeNull();
     expect(screen.getByText("No pages are registered yet")).toBeDefined();
   });

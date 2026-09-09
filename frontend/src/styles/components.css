@@ -418,6 +418,18 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .table__id { font-family: var(--font-mono); font-size: var(--fs-mono); color: var(--text-muted); }
 .table--in-panel { border: 0; }
 
+/* A row that IS the control for picking its item (Bugs S.No 189). Opt-in per row: a table whose
+   rows pass no `onSelect` gets none of this.
+
+   Written to BEAT `tr:hover` above rather than to out-specify it by force: the two selectors
+   measure the same, so the later one wins and a selected row stays tinted while the cursor is
+   over it. The left rail is a box-shadow on the first cell, not a border, because a border would
+   move every cell in the row by 3px on selection. */
+.table tbody tr.table__row--pick { cursor: pointer; }
+.table tbody tr.table__row--sel { background: var(--brand-orange-50); }
+.table tbody tr.table__row--sel td:first-child { box-shadow: inset 3px 0 0 var(--brand-orange); }
+.table tbody tr.table__row--pick:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }
+
 /* ============================================================================
    10. Lifecycle rail (SIGNATURE — type-adaptive, supports loop + branch)
    ========================================================================== */

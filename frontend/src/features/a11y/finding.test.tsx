@@ -186,7 +186,10 @@ describe("S-39 one accessibility finding", () => {
     // Reports link here. A dead link out of a conformance document has to say it is dead.
     show({ detail: "no such finding on this project" }, 404);
 
-    await screen.findByText(/This finding could not be loaded/);
+    // A 404 is the one failure where the server's own sentence IS the right thing to show: it
+    // describes the reader's data in plain words rather than our machinery (Bugs S.No 248).
+    await screen.findByText(/This didn't load/i);
+    expect(screen.getByText(/no such finding on this project/i)).toBeDefined();
   });
 });
 

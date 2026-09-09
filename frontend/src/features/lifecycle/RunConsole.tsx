@@ -43,7 +43,11 @@ const BADGE_LABEL: Record<RunConsoleView, string> = {
   "awaiting-gate": "Awaiting gate",
   completed: "Completed",
   failed: "Failed",
-  parked: "Parked for takeover",
+  // "Parked for takeover" was our words for our machinery, six pixels above a banner that called
+  // the same state "stopped" — two vocabularies for one thing on one screen. The accessibility
+  // screens already settled this: they show "Stopped", with a test that fails if the words "take
+  // over" or "workflow" ever reach a user. This screen simply never got the memo.
+  parked: "Stopped",
 };
 
 export function RunConsole({ forceView }: { forceView?: RunConsoleView }) {
@@ -175,25 +179,32 @@ function RunConsoleLive() {
                 Work item <strong>{workItem.data.key || workItem.data.title || workItem.data.id.slice(0, 8)}</strong>
               </span>
             )}
+            {/* A labelled Run ID stays: it is a real reference a user quotes when asking about
+                a task, which is why the team kept it. What went is the raw workflow id beside it
+                — a Temporal identifier that references nothing a person can look up — and the
+                SECOND printing of this same id, which the panel below used as its title. */}
             <span className="meta-item" title={id}>
               Run ID <strong>{id.slice(0, 8)}</strong>
             </span>
             <span className="meta-item">
               Engine <strong>{run.data.engine} · {run.data.model}</strong>
             </span>
-            <span className="meta-item" title={run.data.temporal_workflow_id || undefined}>
-              Workflow <strong>{run.data.temporal_workflow_id ? run.data.temporal_workflow_id.slice(0, 16) : "—"}</strong>
-            </span>
           </div>
         </div>
       </div>
 
       <Panel
-        title={<span title={id}>Run {id.slice(0, 8)}</span>}
+        // The id is already labelled "Run ID" a few pixels above; repeating it here as a title
+        // spent the panel's heading on the one thing already on screen. Not the phase either —
+        // the h1 above already names that, and swapping one duplicate for another is no fix.
+        // What this panel actually holds is the task's progress.
+        title="Progress"
         actions={<Badge variant={BADGE_VARIANT[view]}>{BADGE_LABEL[view]}</Badge>}
       >
+        {/* "It will start as soon as your companion claims it" described our machinery competing
+            for work. What the reader needs is that it begins on its own. */}
         {view === "dispatched" && (
-          <Banner variant="info">Queued. It will start as soon as your companion claims it.</Banner>
+          <Banner variant="info">Waiting to start. This begins on its own — nothing to do.</Banner>
         )}
         {view === "needs-answer" && (
           <Banner variant="purple" title="Paused — waiting for your answer">
@@ -223,7 +234,9 @@ function RunConsoleLive() {
               ? "The gate was rejected. Re-trigger to try again."
               : failureReason
                 ? `Reason: ${failureReason}`
-                : "The engine exited before reporting. No artifact was registered."}
+                : // "The engine exited before reporting. No artifact was registered." — three of
+                  // our words in one sentence, for the case where we have no reason to give.
+                  "This task stopped before it finished. Nothing was saved from it — it can be run again."}
           </Banner>
         )}
         {view === "failed" && typeof retryRunId === "string" && (
@@ -245,33 +258,31 @@ function RunConsoleLive() {
           </Banner>
         )}
 
-        {/* Bugs S.No 246. Rendered ONLY while the reconciler says nobody is serving this run's
-            code version, and gone the moment that stops being true — the note is the condition,
-            not a slot on the screen. This is the surface where the loud version belongs: unlike
-            the approvals screen, the person reading this is usually the one who can restart the
-            helper, so it earns a full banner and names the next step. */}
+        {/* Bugs S.No 246, rewritten 8 September for the person who actually reads it.
+            Rendered ONLY while the reconciler says nobody is serving this run's code version,
+            and gone the moment that stops being true — the note is the condition, not a slot on
+            the screen.
+
+            WHAT THIS USED TO SAY, AND WHY IT WAS WRONG. "Ask your tech lead to restart the SDLC
+            helper, or take the task over here", a "Take over this task" button, and a Technical
+            details panel holding two build stamps. Every part of that was written for us: the
+            client does not run this platform, cannot restart it, has no idea what an "SDLC
+            helper" is (the product's own word is Companion, and the Companion is not even the
+            thing that needs restarting), and has no use for a version string. The button led to
+            a screen with no navigation entry that opens with a raw id and the words "parked for
+            takeover".
+
+            The state is on the chip above. This is the one sentence that state means for them.
+            The build stamps still exist where they belong — in the server log, which our team
+            reads when a client says "my task says it has stopped".
+
+            Amber, not red (team decision, 8 September): red means something is wrong and you
+            must act, and there is nothing here for a client to act on. Amber means waiting,
+            which is what this is — the same hue as the Paused chip on the gates screen, which is
+            this same situation seen from the other end. */}
         {stalled && (
-          <Banner variant="danger" title="This task has stopped and won't start again on its own">
-            None of the work so far is lost. It's waiting for a version of the app that is no
-            longer running, so it needs someone to pick it up. Ask your tech lead to restart the
-            SDLC helper, or take the task over here.
-            <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => navigate(recoveryLink(id as string))}
-              >
-                Take over this task
-              </Button>
-            </div>
-            <details style={{ marginTop: "var(--space-2)" }}>
-              <summary className="t-sm">Technical details</summary>
-              <p className="t-sm u-muted t-mono" style={{ margin: "var(--space-1) 0 0" }}>
-                waiting for {stalled.pinned_build}
-                <br />
-                currently running {stalled.newest_served}
-              </p>
-            </details>
+          <Banner variant="warning">
+            This task has stopped and will continue once the system is up and running.
           </Banner>
         )}
 
