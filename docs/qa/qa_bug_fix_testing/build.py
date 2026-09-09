@@ -99,15 +99,15 @@ def load_meta(planned):
     if absent:
         raise SystemExit("these rows are not in docs/Bugs.xlsx: %s" % absent)
 
-    # Two rows have an empty Feature cell in the register itself. A blank Area is no use
-    # to a tester, so name them here. The assert makes this self-destruct if the team
-    # ever fills them in upstream, rather than quietly overriding a real value.
-    for sno, area in {3: "All forms - placeholders",
-                      12: "Platform / UI - background polling"}.items():
-        if sno in meta:
-            assert meta[sno][1] == "", (
-                "S.No %s now has a Feature in Bugs.xlsx - delete this fallback" % sno)
-            meta[sno] = (meta[sno][0], area)
+    # There used to be a fallback here for two rows whose Feature cell was empty in the
+    # register. The register now carries those values, so the fallback is gone and this
+    # complains instead: a blank Area is no use to a tester, and papering over it in the
+    # generator would hide the real gap in Bugs.xlsx.
+    blank = [n for n in planned if not meta[n][1]]
+    if blank:
+        raise SystemExit(
+            "these rows have an empty Feature cell in docs/Bugs.xlsx: %s\n"
+            "  Fill it in there rather than working around it here." % blank)
     return meta
 
 
