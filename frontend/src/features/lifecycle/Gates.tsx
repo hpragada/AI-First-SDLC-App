@@ -300,7 +300,7 @@ function GatesLive() {
             <Table
               headers={["Gate", "Required role", "Work item", "Artifact"]}
               rows={pending.map((a) => ({
-                // Bugs S.No 249: the WHOLE row picks the gate. Before this, the only thing that
+                // Bugs S.No 189: the WHOLE row picks the gate. Before this, the only thing that
                 // selected anything was the small button in the first column, and the work-item
                 // name — the obvious thing to click — was a link that left the screen entirely.
                 // So a reviewer with five gates could not do the one thing this layout exists
@@ -350,7 +350,7 @@ function GatesLive() {
                       reviewer to the whole registry to re-find what they were reviewing.
 
                       "Open work item" joins it here because the row stopped navigating
-                      (S.No 249). Beside the artifact preview on purpose: both are ways of
+                      (S.No 189). Beside the artifact preview on purpose: both are ways of
                       looking deeper at the thing under review, and neither competes with
                       picking a gate. Stacked, not inline — two links on one line read as one. */}
                   <div

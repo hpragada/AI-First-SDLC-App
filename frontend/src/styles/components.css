@@ -418,7 +418,7 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .table__id { font-family: var(--font-mono); font-size: var(--fs-mono); color: var(--text-muted); }
 .table--in-panel { border: 0; }
 
-/* A row that IS the control for picking its item (Bugs S.No 249). Opt-in per row: a table whose
+/* A row that IS the control for picking its item (Bugs S.No 189). Opt-in per row: a table whose
    rows pass no `onSelect` gets none of this.
 
    Written to BEAT `tr:hover` above rather than to out-specify it by force: the two selectors

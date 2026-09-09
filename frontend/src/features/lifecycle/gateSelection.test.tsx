@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 //
-// Bugs S.No 249 and 250 — picking a gate from the list, and being told the truth afterwards.
+// Bugs S.No 189 and 250 — picking a gate from the list, and being told the truth afterwards.
 //
-// S.No 249. The gates screen is a list beside a decision panel, which only works if the list is
+// S.No 189 (reopened 2026-09-09; closed too early on 2026-09-07 against a button in one
+// column rather than a selectable row). The gates screen is a list beside a decision panel, which only works if the list is
 // how you choose what the panel shows. It wasn't. The only thing that selected anything was a
 // small button in the first column; the work-item name — the obvious thing to click — was a link
 // that left the screen for the work-item page. So a reviewer with five gates could not do the one
@@ -77,7 +78,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-describe("picking a gate from the list (S.No 249)", () => {
+describe("picking a gate from the list (S.No 189)", () => {
   it("★ clicking the work item selects that gate instead of leaving the screen", async () => {
     // The bug, stated as a test: the work-item cell used to be a link, so the natural click
     // navigated away from the only screen where the gate can be decided.

@@ -534,7 +534,7 @@ type TableRow =
       cells: ReactNode[];
       className?: string;
       style?: CSSProperties;
-      /** Makes the WHOLE row the control that picks this item (Bugs S.No 249). */
+      /** Makes the WHOLE row the control that picks this item (Bugs S.No 189). */
       onSelect?: () => void;
       selected?: boolean;
       /** What a screen reader announces for the row, when the cells alone don't read well. */
