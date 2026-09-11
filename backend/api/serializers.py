@@ -484,6 +484,9 @@ class ArtifactSerializer(serializers.ModelSerializer):
         fields = [
             "id", "project", "repo", "run", "phase", "type", "title", "status", "sor",
             "external_ref", "s3_key", "content_hash", "version", "created_at", "previewable",
+            # When it was published, as distinct from when it was drafted (Bugs S.No 224). Null
+            # until it is published, which is what "not published" means.
+            "published_at",
         ]
         read_only_fields = fields
 

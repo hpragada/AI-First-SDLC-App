@@ -455,14 +455,19 @@ export interface CreateProjectRequest {
   repo_topology: "single" | "multi";
 }
 
-// Integrations grid + connect drawer (S-11/S-12, 4.7-T6).
+// Integrations grid + connect drawer (S-11/S-12, 4.7-T6). The capabilities a person connects.
+// Code intelligence is not one of them (N1): it needs no connection, so it is provisioned
+// automatically like accessibility checking, and neither appears here.
 export type Capability =
   | "docstore"
   | "tasktracker"
   | "designsource"
   | "codehost"
-  | "testmgmt"
-  | "codeintel";
+  | "testmgmt";
+
+// A project's repository topology as the platform computes it from the repository count:
+// 0–1 single, 2 split, 3+ multi (`apps/projects/repos.py`). Never recomputed on screen (S.No 212).
+export type RepoTopology = "single" | "split" | "multi";
 
 export interface Integration {
   id: string;
@@ -558,6 +563,10 @@ export interface WorkItemCard extends WorkItem {
   // The item's current lifecycle phase (latest run's agent key, e.g. "03_prd");
   // empty when no phase has run yet. Bugs.xlsx rows 49/50.
   current_phase?: string;
+  // That same run's status ("running", "awaiting_gate", "completed", "failed", …), so the board
+  // can say what the phase is doing (Bugs S.No 117). Empty when nothing has run; absent from an
+  // API too old to send it.
+  run_status?: string;
 }
 
 export type LifecycleNodeState =
@@ -980,9 +989,14 @@ export interface DashboardRunItem {
 
 export interface DashboardRollup {
   needs_me: {
+    // Filtered to the person reading them (Bugs S.No 222), and trimmed — gates and questions to
+    // 20, runs to 10.
     gates: DashboardGateItem[];
     clarifications: DashboardClarificationItem[];
     my_runs: DashboardRunItem[];
+    // The true totals behind those lists, for the tiles and the bell. Optional so a response from
+    // an older API still renders, from the list lengths.
+    counts?: { gates: number; clarifications: number; my_runs: number };
   };
   health: {
     work_items: number;

@@ -370,11 +370,70 @@ def test_the_backfill_gives_ALREADY_EXISTING_tenants_the_capability(db):
     ).count() == 1
 
 
-def test_codeintel_is_deliberately_not_auto_provisioned():
-    """A guard on scope, not on behaviour: codeintel is credential-free too, but it is
-    user-connected today and changing that would alter a journey currently under test. If
-    this ever fails, it was a decision — make sure it was a deliberate one."""
-    assert AUTO_PROVISIONED == (("a11yai", "builtin"),)
+# ── S.No N1: the same treatment for code intelligence ───────────────
+def test_a_new_tenant_is_auto_provisioned_with_codeintel(db):
+    """Nothing in the platform resolves code intelligence through this registry, and the
+    Integrations page could never show its card as anything but connected — so asking a user to
+    connect it was a control that only looked like one."""
+    from apps.tenancy.services import create_tenant
+
+    tenant = create_tenant(name="Fresh Co")
+    assert IntegrationConnection.objects.filter(tenant=tenant, capability="codeintel").exists()
+
+
+def test_the_codeintel_backfill_gives_ALREADY_EXISTING_tenants_the_capability(db):
+    """Real workspaces were never auto-provisioned codeintel at all — only the demo seed created
+    a row — so an existing tenant could have none while its card claimed "Connected". Exercised
+    directly because a fresh test database has no tenants at migrate time."""
+    import importlib
+
+    from django.apps import apps as global_apps
+    from django.db import connection as django_connection
+
+    migration = importlib.import_module(
+        "apps.integrations.migrations.0011_codeintel_autoprovision"
+    )
+    before = Tenant.objects.create(name="Existing Co")
+    assert not IntegrationConnection.objects.filter(
+        tenant=before, capability="codeintel").exists()
+
+    with django_connection.schema_editor() as schema_editor:
+        migration.backfill(global_apps, schema_editor)
+    assert IntegrationConnection.objects.filter(tenant=before, capability="codeintel").count() == 1
+
+    # Idempotent: a re-run (or a re-applied migration) must not duplicate the connection.
+    with django_connection.schema_editor() as schema_editor:
+        migration.backfill(global_apps, schema_editor)
+    assert IntegrationConnection.objects.filter(tenant=before, capability="codeintel").count() == 1
+
+
+def test_the_codeintel_backfill_never_overwrites_a_tenants_own_choice(db):
+    import importlib
+
+    from django.apps import apps as global_apps
+    from django.db import connection as django_connection
+
+    migration = importlib.import_module(
+        "apps.integrations.migrations.0011_codeintel_autoprovision"
+    )
+    tenant = Tenant.objects.create(name="Opinionated Co")
+    IntegrationConnection.objects.create(tenant=tenant, capability="codeintel",
+                                         connector="repowise", token_ref="secret_store")
+
+    with django_connection.schema_editor() as schema_editor:
+        migration.backfill(global_apps, schema_editor)
+
+    assert IntegrationConnection.objects.get(
+        tenant=tenant, capability="codeintel").connector == "repowise"
+
+
+def test_the_auto_provisioned_set_is_exactly_what_was_decided():
+    """A guard on scope, not on behaviour. It used to assert a11yai alone, with a note saying
+    that if it ever failed it should be because someone decided so. It did, on 2026-09-10:
+    codeintel joined (Bugs S.No N1) because nothing in the platform resolves it through this
+    registry, the Integrations page hardcoded its card as permanently connected, and a real
+    workspace could have no row at all while the screen claimed otherwise."""
+    assert AUTO_PROVISIONED == (("a11yai", "builtin"), ("codeintel", "builtin"))
 
 
 # ── AC3: tenant scoping, proven under the real RLS role ──────────────

@@ -42,6 +42,7 @@ import type {
   Project,
   ProjectProfile,
   PublishResult,
+  RepoTopology,
   Repository,
   ResetRequest,
   RoleCoverage,
@@ -361,13 +362,16 @@ export const api = {
 
   // Phase 4.8 T3 — repositories (4.7 T7). Session-derived tenant; member-scoped reads,
   // tech_lead/admin writes.
-  // Backend wraps the list: { repo_topology, repositories: [...] } — unwrap here.
-  listRepositories: async (projectId: string): Promise<Repository[]> => {
-    const data = await req<{ repo_topology: string; repositories: Repository[] }>(
-      "GET", `/projects/${projectId}/repositories/`
-    );
-    return data.repositories;
-  },
+  // Backend wraps the list: { repo_topology, repositories: [...] }. Both halves are kept (S.No
+  // 212): this used to unwrap the list and throw the topology away, and the screen then worked out
+  // a topology of its own from the count, with a rule that disagreed with the platform's.
+  getRepositories: (projectId: string) =>
+    req<{ repo_topology: RepoTopology; repositories: Repository[] }>(
+      "GET", `/projects/${projectId}/repositories/`,
+    ),
+  // Make this repository the project's default (S.No 212). Answers with the refreshed list.
+  setDefaultRepository: (projectId: string, repoId: string) =>
+    req<Repository[]>("POST", `/projects/${projectId}/repositories/${repoId}/set-default/`),
   createRepository: (
     projectId: string,
     body: { name: string; role: string; base_branch: string; preview_url?: string },

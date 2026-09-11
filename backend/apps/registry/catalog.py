@@ -59,9 +59,15 @@ class AgentDefinition:
     # True ⇒ this repo-scoped PLANNING phase is given a READ-ONLY git worktree of the work
     # item's repo so it can scan real source (SAST/SCA/SBOM/OWASP-in-code). It does NOT ride
     # the build (`rides_build` stays False): no commit/push/PR/merge — the agent only reads.
-    # The single source of truth for worktree-on-planning routing, so security (and later
-    # 09_testing) get code access without hardcoding phase keys anywhere. Mutually exclusive
-    # with `rides_build` by construction (a build phase already has a worktree).
+    # The single source of truth for worktree-on-planning routing, so a code-reading review
+    # phase gets code access without hardcoding phase keys anywhere. Mutually exclusive with
+    # `rides_build` by construction (a build phase already has a worktree).
+    #
+    # This used to say "and later 09_testing". It will not be: 09 was rewritten to be
+    # planning-only (Bugs S.No 85). Its body had told it to run the suite with coverage and
+    # write E2E files into the working copy — things read-only access could not do either — and
+    # that instruction set duplicated 09b, which already writes and runs tests and already has a
+    # worktree. 09 now authors the specification; 09b executes it.
     reads_code: bool = False
     # The upstream artifact TYPES this agent depends on — its declared inputs (Bugs S.No 190).
     # `get_context` GUARANTEES the latest version of each of these reaches the manifest's
@@ -201,8 +207,9 @@ def needs_artifacts_for(phase_or_key: str) -> tuple[str, ...]:
 def reads_code(key: str) -> bool:
     """True ⇒ this repo-scoped PLANNING phase is handed a READ-ONLY worktree of the work
     item's repo so it can scan real source, WITHOUT riding the build (no commit/push/PR).
-    The single source of truth for worktree-on-planning routing (10_security today, and
-    09_testing later) — so a new code-reading review phase only sets `reads_code=True`."""
+    The single source of truth for worktree-on-planning routing (10_security today) — so a new
+    code-reading review phase only sets `reads_code=True`. NOT 09_testing: it is planning-only
+    by design (Bugs S.No 85); 09b executes what it specifies."""
     definition = _BY_KEY.get(key)
     return bool(definition and definition.reads_code)
 

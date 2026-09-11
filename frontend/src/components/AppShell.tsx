@@ -6,7 +6,7 @@ import { useA11yReviewQueue } from "../features/a11y/hooks";
 import { useRunners } from "../features/identity/hooks";
 import { useDashboard } from "../features/observability/hooks";
 import type { ProjectTrack } from "../types";
-import { cx, StatusDot, useDismissable } from "./ui";
+import { closeOnTab, cx, FloatingLayer, StatusDot, useDismissable, useFloatingPosition } from "./ui";
 
 type NavId =
   | "dashboard"
@@ -159,11 +159,16 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
   const itemRef = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
 
   // Close on outside click + Escape, and focus the first item on open. Shared with the work
-  // items board's row menu (S.No 140) — the markup differs, this part must not.
-  useDismissable(open, useCallback(() => setOpen(false), []), rootRef, itemRef);
+  // items board's row menu (S.No 140) — the markup differs, this part must not. The menu is drawn
+  // in the floating layer like every other popup (S.No 166), so the hook is told where it is.
+  useDismissable(open, close, rootRef, itemRef, popRef);
+  useFloatingPosition(open, triggerRef, popRef, { align: "end", gap: 8 });
 
   // Any navigation dismisses the menu.
   useEffect(() => {
@@ -188,6 +193,7 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
   return (
     <div className="account-menu" ref={rootRef}>
       <button
+        ref={triggerRef}
         className="avatar"
         aria-label={`Account menu for ${name}`}
         aria-haspopup="menu"
@@ -197,7 +203,14 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
         {initials(name)}
       </button>
       {open && (
-        <div className="account-menu__pop" role="menu" aria-label="Account">
+        <FloatingLayer>
+        <div
+          ref={popRef}
+          className="popover-layer account-menu__pop"
+          role="menu"
+          aria-label="Account"
+          onKeyDown={closeOnTab(close, triggerRef)}
+        >
           <div className="account-menu__head">
             <div className="account-menu__name">{name}</div>
             <div className="account-menu__email">{email}</div>
@@ -213,6 +226,7 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
             {signingOut ? "Signing out…" : "Sign out"}
           </button>
         </div>
+        </FloatingLayer>
       )}
     </div>
   );
@@ -220,14 +234,19 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
 
 export function AppShell() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { currentUser, selectedProject, setSelectedProjectId, isAdmin, projects } = useAuth();
   const active = activeNav(location.pathname);
 
   // Live nav/bell counts from the real needs-me rollup (Bugs.xlsx row 29.2) — no longer
   // hardcoded. The dashboard query polls, so these stay current; zero when nothing needs you.
+  // Bugs S.No 222: the rollup is now filtered to the person reading it, and carries true totals
+  // beside lists trimmed to 20 — the lengths of those lists under-reported a busy project. The
+  // lengths remain as the fallback for an API too old to send the totals.
   const dashboard = useDashboard(selectedProject?.project_id);
-  const gateCount = dashboard.data?.needs_me.gates.length ?? 0;
-  const clarCount = dashboard.data?.needs_me.clarifications.length ?? 0;
+  const needs = dashboard.data?.needs_me;
+  const gateCount = needs?.counts?.gates ?? needs?.gates.length ?? 0;
+  const clarCount = needs?.counts?.clarifications ?? needs?.clarifications.length ?? 0;
   // Accessibility findings waiting on THIS person (QA-23, D-A11Y-94). The item is always in the
   // sidebar; the count is how a reviewer learns there is work without going to look, and it was
   // missing — the item shipped as a plain link while the mockup and the decision both said
@@ -323,7 +342,18 @@ export function AppShell() {
             <StatusDot />
             {companionPillText}
           </span>
-          <button className="bell" aria-label={`Notifications, ${bellCount} unread`}>
+          {/* N2: this had a live count and no click handler — the one control saying "something
+              needs you" was the one that did not respond. It opens the Needs-me queue, which is
+              the dashboard's own list with a link into every item; a second notification centre
+              would be a second place the same information lives and drifts. At zero it still
+              opens, and the queue says you are all caught up: a control that silently does
+              nothing under some conditions is the bug being fixed. */}
+          <button
+            type="button"
+            className="bell"
+            aria-label={`Notifications, ${bellCount} unread`}
+            onClick={() => navigate({ pathname: "/", hash: "#needs-me" })}
+          >
             <SvgIcon path={ICON.bell} />
             {bellCount > 0 && <span className="bell__badge">{bellCount}</span>}
           </button>

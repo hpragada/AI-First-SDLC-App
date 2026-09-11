@@ -1,4 +1,5 @@
-import { Link } from "react-router-dom";
+import { useEffect, useRef } from "react";
+import { Link, useLocation } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Button, Card, CardBody, ConnStatus, EmptyState, ErrorState, Kv, Panel, Spinner, Tile, Todo } from "../../components/ui";
@@ -15,11 +16,34 @@ export function Dashboard({ forceView }: { forceView?: DashboardView }) {
   return <DashboardLive />;
 }
 
+// The subtitle under the "needs you" tiles — the team's option A for S.No 222: say how many,
+// plainly. It used to read the required role off whichever gate came FIRST, which could name a
+// role the reader does not hold. A count is true for everyone who reads it, and zero is a real
+// answer, said as one.
+function waitingOnYou(count: number): string {
+  return count > 0 ? `${count} waiting on you` : "nothing waiting on you";
+}
+
 // ── Live: the real needs-me rollup + health for the selected project ───────
 function DashboardLive() {
   const { selectedProject } = useAuth();
   const projectId = selectedProject?.project_id;
   const dashboard = useDashboard(projectId);
+  const location = useLocation();
+  const needsRef = useRef<HTMLDivElement>(null);
+  const loaded = Boolean(projectId) && dashboard.isSuccess;
+
+  // N2: the topbar bell lands HERE — on the queue, not the top of the page. Focus moves with the
+  // scroll, so a keyboard or screen-reader user arrives where a sighted one does. Keyed on the
+  // navigation as well, so pressing the bell while already on the dashboard still brings the
+  // queue back into view.
+  useEffect(() => {
+    if (!loaded || location.hash !== "#needs-me") return;
+    const queue = needsRef.current;
+    if (!queue) return;
+    queue.scrollIntoView?.({ block: "start", behavior: "smooth" });
+    queue.focus({ preventScroll: true });
+  }, [loaded, location.hash, location.key]);
 
   if (!projectId) {
     return <DashboardGallery view="new-project" />;
@@ -53,7 +77,14 @@ function DashboardLive() {
   const gates = data?.needs_me.gates ?? [];
   const clars = data?.needs_me.clarifications ?? [];
   const runs = data?.needs_me.my_runs ?? [];
-  const needsCount = gates.length + clars.length + runs.length;
+  // The TRUE totals (S.No 222). The lists above are filtered to this person and trimmed — gates
+  // and questions to 20 — so their lengths under-reported a busy project, on the one figure that
+  // has to be right. The lengths remain as the fallback for an API too old to send totals.
+  const counts = data?.needs_me.counts;
+  const gateTotal = counts?.gates ?? gates.length;
+  const clarTotal = counts?.clarifications ?? clars.length;
+  const runTotal = counts?.my_runs ?? runs.length;
+  const needsCount = gateTotal + clarTotal + runTotal;
 
   return (
     <div className="canvas-pad">
@@ -77,12 +108,16 @@ function DashboardLive() {
       </div>
 
       <div className="grid grid--3" style={{ marginBottom: "var(--space-5)" }}>
-        <Tile num={gates.length} label="Gates need your approval" sub={gates.length > 0 ? `required role: ${roleLabel(gates[0].role)}` : "all clear"} />
-        <Tile num={clars.length} label="Questions awaiting you" sub={clars.length > 0 ? "$0 while waiting" : "all answered"} />
-        <Tile num={runs.length} label="My runs in flight" sub={runs.length > 0 ? `${runs.filter((r) => r.status === "running").length} running` : "none"} />
+        <Tile num={gateTotal} label="Gates need your approval" sub={waitingOnYou(gateTotal)} />
+        <Tile num={clarTotal} label="Questions awaiting you" sub={waitingOnYou(clarTotal)} />
+        <Tile num={runTotal} label="My runs in flight" sub={runs.length > 0 ? `${runs.filter((r) => r.status === "running").length} running` : "none"} />
       </div>
 
       <div className="grid grid--detail">
+        {/* The bell's landing place (N2). A plain wrapper rather than an `id` on Panel, so the
+            shared component is untouched; `display: grid` keeps the panel stretching to the row
+            exactly as it did when it was the grid item itself. */}
+        <div id="needs-me" ref={needsRef} tabIndex={-1} className="needs-me">
         <Panel
           flush
           title="Needs me"
@@ -159,6 +194,7 @@ function DashboardLive() {
             </>
           )}
         </Panel>
+        </div>
 
         {/* Bugs S.No 171: the companion status lives in the top bar only — the separate
             Companion card was removed from the dashboard. */}
@@ -227,8 +263,8 @@ function DashboardGallery({ view }: { view: DashboardView }) {
       {view === "busy" && (
         <>
           <div className="grid grid--3" style={{ marginBottom: "var(--space-5)" }}>
-            <Tile num={2} label="Gates need your approval" sub="required role: architect" />
-            <Tile num={1} label="Question awaiting you" sub="$0 while waiting" />
+            <Tile num={2} label="Gates need your approval" sub={waitingOnYou(2)} />
+            <Tile num={1} label="Question awaiting you" sub={waitingOnYou(1)} />
             <Tile num={3} label="My runs in flight" sub="1 running · 2 awaiting gate" />
           </div>
           <div className="grid grid--detail">
@@ -326,8 +362,8 @@ function DashboardGallery({ view }: { view: DashboardView }) {
       {view === "calm" && (
         <>
           <div className="grid grid--3" style={{ marginBottom: "var(--space-5)" }}>
-            <Tile num={0} label="Gates need you" sub="all clear" />
-            <Tile num={0} label="Questions awaiting you" sub="all answered" />
+            <Tile num={0} label="Gates need you" sub={waitingOnYou(0)} />
+            <Tile num={0} label="Questions awaiting you" sub={waitingOnYou(0)} />
             <Tile num={1} label="My runs in flight" sub="1 running" />
           </div>
           <Panel title="Needs me">

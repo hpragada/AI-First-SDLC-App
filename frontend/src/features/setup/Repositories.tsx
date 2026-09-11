@@ -1,10 +1,17 @@
-﻿import { useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 import { ApiError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Button, Card, CardBody, Chip, EmptyState, ErrorState, Field, Input, Panel, Select, Table, WriteError } from "../../components/ui";
 import type { Repository } from "../../types";
-import { useCreateRepository, useDeleteRepository, useRepositories, useUpdateRepository } from "./hooks";
+import {
+  useCreateRepository,
+  useDeleteRepository,
+  useRepositories,
+  useRepositoryTopology,
+  useSetDefaultRepository,
+  useUpdateRepository,
+} from "./hooks";
 
 // S-13 view states: multi · add-form · single · duplicate · empty.
 export type RepositoriesView = "multi" | "add-form" | "single" | "duplicate" | "empty";
@@ -71,7 +78,16 @@ function PreviewUrlCell({ projectId, repo }: { projectId: string | undefined; re
   );
 }
 
-function AddRepoForm({ projectId, dup }: { projectId: string | undefined; dup?: boolean }) {
+function AddRepoForm({
+  projectId,
+  dup,
+  onDone,
+}: {
+  projectId: string | undefined;
+  dup?: boolean;
+  /** Closes the form. S.No 212: nothing did — once opened it stayed open for good. */
+  onDone?: () => void;
+}) {
   const createRepo = useCreateRepository(projectId);
   const [name, setName] = useState(dup ? "acme/payments-api" : "");
   const [role, setRole] = useState("backend");
@@ -86,6 +102,7 @@ function AddRepoForm({ projectId, dup }: { projectId: string | undefined; dup?: 
       await createRepo.mutateAsync({ name, role, base_branch: baseBranch, preview_url: previewUrl.trim() });
       setName("");
       setPreviewUrl("");
+      onDone?.();
     } catch {
       /* duplicate surfaced inline */
     }
@@ -148,6 +165,11 @@ function AddRepoForm({ projectId, dup }: { projectId: string | undefined; dup?: 
           <Button variant="primary" type="submit" disabled={!name || createRepo.isPending}>
             {createRepo.isPending ? "Adding…" : "Add"}
           </Button>
+          {onDone && (
+            <Button variant="ghost" type="button" onClick={onDone}>
+              Cancel
+            </Button>
+          )}
         </form>
         {/* Bugs S.No 219: only 409 (already registered) was ever inspected. A 403 from the
             role check — the most likely failure, and the one a person can act on — was caught
@@ -172,20 +194,27 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
   const { selectedProject } = useAuth();
   const projectId = selectedProject?.project_id;
   const repos = useRepositories(projectId);
+  const platformTopology = useRepositoryTopology(projectId);
   const deleteRepo = useDeleteRepository(projectId);
+  const setDefault = useSetDefaultRepository(projectId);
   const [showAdd, setShowAdd] = useState(false);
 
   const list = repos.data ?? [];
-  const dataTopology = list.length > 1 ? "multi" : "single";
-  const view: RepositoriesView =
-    forceView ?? (showAdd ? "add-form" : list.length === 0 ? "empty" : dataTopology);
-  const topology = view === "multi" ? "multi" : "single";
-
-  const setDefault = (repoId: string) => {
-    // PATCH-via-recreate isn't modeled yet; surfaced as a no-op affordance until
-    // the repositories endpoint grows a set-default action.
-    void repoId;
-  };
+  // Bugs S.No 212 — "Set default" did nothing, and usually was not even there. Three faults:
+  //   * the button was drawn only when this screen decided the project was "multi", working that
+  //     out from the count with its OWN rule (more than one) instead of the platform's (0–1 single,
+  //     2 split, 3+ multi) — S.No 104's two-sources-of-truth problem, moved here;
+  //   * opening the add form switched the whole table to its single-repository layout, which has
+  //     no Set default, and nothing ever closed the form again;
+  //   * the click handler was a stub.
+  // Now: the topology shown is the platform's own; the form sits above the table and closes when
+  // it is done; and Set default is offered whenever there is a genuine choice — two or more
+  // repositories — on each row that is not already the default.
+  const formOpen = forceView === "add-form" || forceView === "duplicate" || (!forceView && showAdd);
+  const empty = forceView === "empty" || (!forceView && list.length === 0);
+  const topology =
+    forceView === "multi" || forceView === "single" ? forceView : platformTopology.data;
+  const canChooseDefault = forceView === "multi" || list.length >= 2;
 
   return (
     <div className="canvas-pad">
@@ -201,9 +230,13 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
         </Button>
       </div>
 
-      {(view === "add-form" || view === "duplicate") && (
+      {formOpen && (
         <div style={{ marginBottom: "var(--space-4)" }}>
-          <AddRepoForm projectId={projectId} dup={view === "duplicate"} />
+          <AddRepoForm
+            projectId={projectId}
+            dup={forceView === "duplicate"}
+            onDone={forceView ? undefined : () => setShowAdd(false)}
+          />
         </div>
       )}
 
@@ -218,23 +251,29 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
             onRetry={() => void repos.refetch()}
           />
         </Panel>
-      ) : view === "empty" ? (
-        <Panel>
-          <EmptyState
-            title="No repositories yet"
-            text="Add a repository so build phases know where to open pull requests."
-            action={
-              <Button variant="primary" onClick={() => setShowAdd(true)}>
-                + Add repository
-              </Button>
-            }
-          />
-        </Panel>
-      ) : view !== "duplicate" ? (
+      ) : forceView === "duplicate" ? null : empty ? (
+        // With the add form already open, an empty state beneath it offering to add a repository
+        // says the same thing twice.
+        formOpen ? null : (
+          <Panel>
+            <EmptyState
+              title="No repositories yet"
+              text="Add a repository so build phases know where to open pull requests."
+              action={
+                <Button variant="primary" onClick={() => setShowAdd(true)}>
+                  + Add repository
+                </Button>
+              }
+            />
+          </Panel>
+        )
+      ) : (
         <>
-          <div className="u-row" style={{ marginBottom: "var(--space-3)" }}>
-            <Chip variant={topology === "multi" ? "navy" : undefined}>Topology: {topology}</Chip>
-          </div>
+          {topology && (
+            <div className="u-row" style={{ marginBottom: "var(--space-3)" }}>
+              <Chip variant={topology === "single" ? undefined : "navy"}>Topology: {topology}</Chip>
+            </div>
+          )}
           <Panel flush>
             {/* Bugs S.No 219: Remove and Set default read no error at all. Without the role,
                 or on a repository the platform will not drop, the row simply stayed where it
@@ -244,6 +283,12 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
                 <WriteError title="Couldn't remove that repository" detail={deleteRepo.error} />
               </div>
             )}
+            {/* The server's own sentence — it says who can make this change (S.No 212). */}
+            {setDefault.isError && (
+              <div style={{ padding: "var(--space-4) var(--space-4) 0" }}>
+                <WriteError title="Couldn't set the default repository" detail={setDefault.error} />
+              </div>
+            )}
             <Table
               headers={["Repository", "Role", "Default base", "Preview URL", "Status", ""]}
               rows={list.map((repo) => [
@@ -251,33 +296,37 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
                   {repo.name}
                 </span>,
                 <Chip key="r">{repo.role}</Chip>,
-                <span className="table__id" key="b">
-                  {repo.default_base}
-                  {repo.is_default ? " · default" : ""}
+                // Where the eye already is — the team's option A for S.No 212. Choosing a new
+                // default moves this marker to that row and removes its button; the table's
+                // own change is the confirmation, with nothing extra to read past or dismiss.
+                <span className="u-row-tight" key="b">
+                  <span className="table__id">{repo.default_base}</span>
+                  {repo.is_default && <Badge variant="done">default</Badge>}
                 </span>,
                 <PreviewUrlCell key="p" projectId={projectId} repo={repo} />,
                 <Badge variant="done" key="s">
                   {repo.status}
                 </Badge>,
-                topology === "multi" ? (
-                  <span className="u-row-tight" key="a">
-                    <Button variant="ghost" size="sm" onClick={() => setDefault(repo.id)}>
+                <span className="u-row-tight" key="a">
+                  {canChooseDefault && !repo.is_default && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={setDefault.isPending}
+                      onClick={() => setDefault.mutate(repo.id)}
+                    >
                       Set default
                     </Button>
-                    <Button variant="danger" size="sm" onClick={() => deleteRepo.mutate(repo.id)}>
-                      Remove
-                    </Button>
-                  </span>
-                ) : (
-                  <Button variant="danger" size="sm" key="a" onClick={() => deleteRepo.mutate(repo.id)}>
+                  )}
+                  <Button variant="danger" size="sm" onClick={() => deleteRepo.mutate(repo.id)}>
                     Remove
                   </Button>
-                ),
+                </span>,
               ])}
             />
           </Panel>
         </>
-      ) : null}
+      )}
     </div>
   );
 }

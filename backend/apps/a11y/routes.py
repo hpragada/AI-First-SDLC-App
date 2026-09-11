@@ -281,6 +281,7 @@ def _record_change(*, tenant_id, project_id, actor, source, changed: dict) -> No
         Event.objects.create(
             tenant_id=tenant_id, actor=str(actor or "system"), action="a11y.routes.registered",
             target_type="project", target_id=project_id,
+            project_id=project_id,      # S.No 230 — this path bypasses tools.log_event
             payload={"source": source, **{k: v for k, v in changed.items()}},
         )
 

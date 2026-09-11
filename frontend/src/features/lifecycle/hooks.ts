@@ -39,6 +39,25 @@ export function useCreateWorkItem(projectId: string | undefined) {
   });
 }
 
+// Bugs S.No 215. A test case IS a work item underneath, which is why creating one refreshed the
+// work-items list — and never the story's test-case table that was actually on screen. It saved,
+// the table kept showing the old list, and it looked like a failure worth trying again. This
+// refreshes both: the table in front of the person, and the board the case also appears on.
+export function useCreateTestCase(projectId: string | undefined, storyId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { title: string; priority: string; description: string }) =>
+      api.createWorkItem(tenantId, projectId as string, {
+        type: "test_case", parent: storyId, ...data,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["work-items", projectId] });
+      qc.invalidateQueries({ queryKey: ["test-cases", storyId] });
+    },
+  });
+}
+
 // A story's child test_case work items + automation status (P3-09b coverage screen).
 export function useTestCases(storyId: string | undefined) {
   const tenantId = useTenantId();
@@ -46,6 +65,11 @@ export function useTestCases(storyId: string | undefined) {
     queryKey: ["test-cases", storyId],
     queryFn: () => api.listTestCases(tenantId, storyId as string),
     enabled: Boolean(storyId),
+    // Same class as S.No 215: a script is generated on the developer's machine, and nothing told
+    // this table when it finished — "Generating…" stayed until a reload. Poll while any row is
+    // generating, and only then.
+    refetchInterval: (query) =>
+      query.state.data?.some((tc) => tc.automation_status === "generating") ? 4000 : false,
   });
 }
 
@@ -173,7 +197,9 @@ export function useResumeRun(runId: string | undefined) {
     mutationFn: () => api.resumeRun(tenantId, runId as string),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["run", runId] });
-      qc.invalidateQueries({ queryKey: ["run-events", runId] });
+      // The key `useRunEvents` actually reads. This said ["run-events", runId], which no query
+      // uses, so a resumed run's event list never refreshed — found beside S.No 215, same class.
+      qc.invalidateQueries({ queryKey: ["events", "run", runId] });
       qc.invalidateQueries({ queryKey: ["runs"] });
     },
   });

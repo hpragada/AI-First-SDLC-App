@@ -1308,17 +1308,33 @@ class ProjectViewSet(
         tid = self.tenant_id
         one_week_ago = timezone.now() - timedelta(days=7)
 
-        pending_gates = (
-            Approval.objects.filter(tenant_id=tid, work_item__project=project, decision="pending")
-            .select_related("work_item")[:20]
-        )
-        pending_clarifications = (
-            Clarification.objects.filter(tenant_id=tid, work_item__project=project, status="pending")
-            .select_related("work_item")[:20]
-        )
-        my_runs = []
+        from apps.gates.services import gate_roles_decidable_by
+
+        # Bugs S.No 222. The three tiles read "…your approval", "…awaiting you" and "My runs",
+        # and only the third was filtered to the person reading it: the other two listed every
+        # pending gate and question on the project, whoever they were for. The filters below are
+        # the platform's own rules for who may act, not a second copy of them:
+        #   gates — `gate_roles_decidable_by`, the function `decide_gate` enforces with, so this
+        #     queue can never offer a gate the Approve button then refuses. Admins may decide any
+        #     gate, so they still see every one.
+        #   questions — project membership, which is exactly what `answer_clarification` checks.
+        #     No admin fallback, because that function has none: a tenant admin who is not a
+        #     member would be shown a question and then refused on answering it.
+        pending_gates_q = Approval.objects.none()
+        pending_clarifications_q = Clarification.objects.none()
+        my_runs_q = Run.objects.none()
         if user:
-            my_runs = list(
+            pending_gates_q = Approval.objects.filter(
+                tenant_id=tid, work_item__project=project, decision="pending")
+            decidable = gate_roles_decidable_by(
+                tenant_id=tid, user_id=user.id, project_id=project.id)
+            if decidable is not None:
+                pending_gates_q = pending_gates_q.filter(required_role__in=decidable)
+            if Membership.objects.filter(
+                    tenant_id=tid, user_id=user.id, project=project).exists():
+                pending_clarifications_q = Clarification.objects.filter(
+                    tenant_id=tid, work_item__project=project, status="pending")
+            my_runs_q = (
                 Run.objects.filter(
                     tenant_id=tid, work_item__project=project,
                     triggered_by=user, status__in=["running", "awaiting_gate"],
@@ -1327,14 +1343,26 @@ class ProjectViewSet(
                 # Onboarding hub, not here — counting them made the dashboard claim work needed
                 # the user when the whole point is that it doesn't.
                 .exclude(carrier_q("work_item__"))
-                .select_related("agent_spec")[:10]
             )
+        # The lists stay trimmed; the COUNTS below do not. The tiles used to show the length of
+        # a list cut at 20, so a busy project quietly under-reported — and the number is the one
+        # thing on the screen that has to be right even when the list beside it is incomplete.
+        # Oldest first: a queue is worked from the thing that has waited longest.
+        pending_gates = list(
+            pending_gates_q.select_related("work_item").order_by("created_at")[:20])
+        pending_clarifications = list(
+            pending_clarifications_q.select_related("work_item").order_by("created_at")[:20])
+        my_runs = list(my_runs_q.select_related("agent_spec")[:10])
 
+        # Filtered on when it was PUBLISHED, not when it was drafted (Bugs S.No 224). Drafting
+        # and publishing are separated by a review gate, so they are routinely days apart: on
+        # `created_at` this list omitted something published this morning because it was drafted
+        # eight days ago, and included something drafted today that nobody has published at all.
         recent_published = list(
             Artifact.objects.filter(
                 tenant_id=tid, project=project,
-                status=Artifact.Status.PUBLISHED, created_at__gte=one_week_ago,
-            ).order_by("-created_at")[:5]
+                status=Artifact.Status.PUBLISHED, published_at__gte=one_week_ago,
+            ).order_by("-published_at")[:5]
         )
 
         return Response({
@@ -1366,6 +1394,12 @@ class ProjectViewSet(
                     }
                     for r in my_runs
                 ],
+                # True totals for the tiles and the topbar bell (S.No 222) — see above.
+                "counts": {
+                    "gates": pending_gates_q.count(),
+                    "clarifications": pending_clarifications_q.count(),
+                    "my_runs": my_runs_q.count(),
+                },
             },
             "health": {
                 # Carriers are excluded from BOTH of these, because both have a list beside them
@@ -1391,9 +1425,9 @@ class ProjectViewSet(
                 "awaiting_gate": Approval.objects.filter(
                     tenant_id=tid, work_item__project=project, decision="pending"
                 ).count(),
-                "published_week": Artifact.objects.filter(
+                "published_week": Artifact.objects.filter(       # by publish date (S.No 224)
                     tenant_id=tid, project=project,
-                    status=Artifact.Status.PUBLISHED, created_at__gte=one_week_ago,
+                    status=Artifact.Status.PUBLISHED, published_at__gte=one_week_ago,
                 ).count(),
             },
             # N2: the title alone gave the browser nothing to link with, so "recently published"
@@ -1423,7 +1457,8 @@ class ProjectViewSet(
         actor = resolve_actor(request, request.data.get("user_id"))
         try:
             require_repo_manage_role(
-                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
+                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor,
+                what="add a repository to this project",
             )
             result = add_repository(
                 tenant_id=self.tenant_id, project_id=str(project.id),
@@ -1451,7 +1486,9 @@ class ProjectViewSet(
         actor = resolve_actor(request, request.data.get("user_id"))
         try:
             require_repo_manage_role(
-                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
+                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor,
+                what=("change a repository's settings" if request.method == "PATCH"
+                      else "remove a repository from this project"),
             )
             if request.method == "PATCH":
                 ser = RepositoryUpdateSerializer(data=request.data)
@@ -1478,7 +1515,8 @@ class ProjectViewSet(
         actor = resolve_actor(request, request.data.get("user_id"))
         try:
             require_repo_manage_role(
-                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
+                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor,
+                what="change which repository is the default for this project",
             )
             set_default_repository(
                 tenant_id=self.tenant_id, project_id=str(project.id), repository_id=rid
@@ -1864,7 +1902,13 @@ class WorkItemViewSet(
         # The item's CURRENT lifecycle phase = its latest run's agent phase (Bugs.xlsx
         # rows 49/50: the board/list showed the feature stream as "Phase"). One query,
         # newest run per work item.
+        #
+        # The same run's STATUS travels with it (Bugs S.No 117). The board placed a card by this
+        # run's phase and then never said what that phase was doing, so "running", "waiting on a
+        # reviewer" and "failed an hour ago" all looked identical — and a failed run left in its
+        # column read as though it were still going.
         current_phase = {}
+        run_status = {}
         for r in (
             Run.objects.filter(tenant_id=self.tenant_id, work_item_id__in=ids)
             .select_related("agent_spec")
@@ -1875,6 +1919,7 @@ class WorkItemViewSet(
             current_phase[str(r.work_item_id)] = (
                 (spec.key or spec.phase_label) if spec else ""
             )
+            run_status[str(r.work_item_id)] = r.status
         out = {}
         for w in work_items:
             wid = str(w.id)
@@ -1889,6 +1934,7 @@ class WorkItemViewSet(
                 "owner": w.assignee.name if w.assignee_id else None,
                 "needs": needs,
                 "current_phase": current_phase.get(wid, ""),
+                "run_status": run_status.get(wid, ""),
             }
         return out
 
@@ -1898,7 +1944,8 @@ class WorkItemViewSet(
         work_items = page if page is not None else list(qs)
         card_fields = self._card_fields(work_items)
         data = WorkItemSerializer(work_items, many=True).data
-        empty_card = {"artifact_count": 0, "owner": None, "needs": None, "current_phase": ""}
+        empty_card = {"artifact_count": 0, "owner": None, "needs": None, "current_phase": "",
+                      "run_status": ""}
         for row in data:
             row.update(card_fields.get(row["id"], empty_card))
         if page is not None:
@@ -2303,6 +2350,23 @@ class _ExportImpossible(Exception):
     re-export."""
 
 
+def _mark_published(artifact, *fields: str) -> None:
+    """Mark an artifact published and stamp WHEN (Bugs S.No 224), then save.
+
+    One helper rather than the same two lines at each of the publish action's exits, because
+    the thing that is easy to get wrong is the same everywhere: `published_at` is set only on
+    the TRANSITION, so a re-export of an already-published artifact keeps the date it was first
+    published — which is what "published this week" has to mean, or a re-export would silently
+    re-date history into the current week.
+
+    `fields` are the caller's own changed columns (`sor`, `external_ref`).
+    """
+    if artifact.published_at is None:
+        artifact.published_at = timezone.now()
+    artifact.status = Artifact.Status.PUBLISHED
+    artifact.save(update_fields=["status", "published_at", *fields, "updated_at"])
+
+
 class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = ArtifactSerializer
     queryset = Artifact.objects.all().order_by("-created_at")
@@ -2388,8 +2452,12 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         """
         artifact = self.get_object()
         raw = str(request.query_params.get("raw", "")).lower() in {"1", "true", "yes"}
+        # `get_object` has already answered 404 for an artifact that doesn't exist or isn't
+        # visible here. What remains is an artifact that exists, so a missing body comes back as
+        # a normal answer with an empty `body` and the screen says "Preview unavailable" — the
+        # true thing — instead of a 404 worded as though the document were gone (S.No 218).
         result = read_artifact_preview(
-            tenant_id=self.tenant_id, artifact_id=str(artifact.id), raw=raw)
+            tenant_id=self.tenant_id, artifact_id=str(artifact.id), raw=raw, allow_empty=True)
         if result is None:
             raise NotFound("artifact has no body to preview")
         return Response(result, status=status.HTTP_200_OK)
@@ -2427,8 +2495,7 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             target_capability = "docstore"
 
         if target_capability == "internal":
-            artifact.status = Artifact.Status.PUBLISHED
-            artifact.save(update_fields=["status", "updated_at"])
+            _mark_published(artifact)
             return Response({"status": "published", "sor_link": None})
 
         # Phase-scoped export policy (defaults + ProjectProfile overrides).
@@ -2460,8 +2527,7 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
                 # First publish that can't reach a SoR → internal fallback (blueprint B3):
                 # the publish is still recorded, sor stays internal (provenance never
                 # claims a push that didn't happen).
-                artifact.status = Artifact.Status.PUBLISHED
-                artifact.save(update_fields=["status", "updated_at"])
+                _mark_published(artifact)
                 return Response({"status": "published", "sor_link": None})
             # Re-export of an already-published-internal artifact: succeeding without an
             # actual push would be a no-op lie — fail honestly with guidance.
@@ -2499,12 +2565,11 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
                 "No documentation-store connector is configured for this workspace. "
                 "Connect one on the Integrations page first."
             ) from exc
-        artifact.status = Artifact.Status.PUBLISHED
         artifact.sor = ref.sor
         artifact.external_ref = {
             "sor": ref.sor, "id": ref.id, "url": ref.url, "version": ref.version,
         }
-        artifact.save(update_fields=["status", "sor", "external_ref", "updated_at"])
+        _mark_published(artifact, "sor", "external_ref")
         return Response({"status": "published", "sor_link": ref.url})
 
     def _publish_tasktracker(self, artifact, destination):
@@ -2532,14 +2597,13 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             for r in result["items"]
         ]
         failed = result.get("failed", [])
-        artifact.status = Artifact.Status.PUBLISHED
         artifact.external_ref = {
             **(artifact.external_ref or {}),
             "export": {"sor": "jira", "reconciled": result["reconciled"],
                        "created": result["created"],
                        "skipped": result.get("skipped", 0), "failed": len(failed)},
         }
-        artifact.save(update_fields=["status", "external_ref", "updated_at"])
+        _mark_published(artifact, "external_ref")
         return Response({
             # A partial push is not a clean success — say so honestly (Bugs S.No 143) so the UI can
             # warn instead of showing an all-green "Published" while items silently didn't land.
@@ -2579,12 +2643,11 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         project_key = destination or ((conn.scopes or {}).get("project_key") if conn else None)
         summary, steps = parse_test_case(artifact, body_md)
         ref = tm.create_test(project=project_key, summary=summary, steps=steps)
-        artifact.status = Artifact.Status.PUBLISHED
         artifact.external_ref = {
             **(artifact.external_ref or {}),
             "export": {"sor": ref.sor, "id": ref.id, "url": ref.url},
         }
-        artifact.save(update_fields=["status", "external_ref", "updated_at"])
+        _mark_published(artifact, "external_ref")
         return Response({"status": "published", "sor_link": ref.url, "test_key": ref.id})
 
 
@@ -2607,7 +2670,12 @@ class EventViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        for field in ("actor", "action", "target_type", "target_id"):
+        # `project_id`/`work_item_id` join the filterable set with the columns themselves
+        # (S.No 230). A filter name this list does not know is applied to nothing and returns
+        # everything, which reads as "the filter did not work" rather than as an error — so a
+        # new column that is never added here is a silently ignored query parameter.
+        for field in ("actor", "action", "target_type", "target_id", "project_id",
+                      "work_item_id"):
             value = self.request.query_params.get(field)
             if value:
                 qs = qs.filter(**{field: value})
@@ -2661,9 +2729,17 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["get"])
     def criteria(self, request, pk=None):
         """S-22 generalized criteria-gate checklist (DECISION-6): exposes the approval's
-        conditions JSONField as typed GateCriterion objects with computed approve_enabled."""
+        conditions as typed GateCriterion objects with computed approve_enabled.
+
+        Read through `current_conditions` rather than straight off the column (S.No 178): a
+        platform-evaluated rule is seeded unsatisfied and recomputed only at decide time, so the
+        stored column shows every one of them as blocking even when nothing is — which greys out
+        Approve on a gate the platform would happily let through. This shows the reviewer what is
+        actually true, and it is what the decide path enforces."""
+        from apps.gates.services import current_conditions
+
         approval = self.get_object()
-        raw = approval.conditions or []
+        raw = current_conditions(approval, tenant_id=self.tenant_id)
         criteria_list = [
             {
                 "id": c.get("key", str(i)),

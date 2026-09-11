@@ -153,6 +153,30 @@ def test_current_phase_is_latest_runs_phase(client, tenant, project, dev, epic):
     assert by_id[str(fresh.id)]["current_phase"] == ""   # no runs yet
 
 
+def test_run_status_travels_with_the_current_phase(client, tenant, project, dev, epic):
+    """Bugs S.No 117: the board placed a card by its latest run's phase and then never said what
+    that phase was doing, so running, waiting and failed all looked the same. The status comes off
+    the SAME run the phase does, so the two can never describe different runs."""
+    spec_prd = AgentSpec.objects.create(tenant=tenant, key="03_prd", body_ref="agents/03.md")
+    spec_arch = _agent_spec(tenant, "04_architecture")
+    Run.objects.create(tenant=tenant, work_item=epic, agent_spec=spec_prd,
+                       status=Run.Status.COMPLETED)                          # older
+    Run.objects.create(tenant=tenant, work_item=epic, agent_spec=spec_arch,
+                       status=Run.Status.FAILED)                             # newest
+    fresh = WorkItem.objects.create(tenant=tenant, project=project, type="task", title="New")
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    by_id = {r["id"]: r for r in _list(client, tenant, project).data}
+    assert by_id[str(epic.id)]["current_phase"] == "04_architecture"
+    assert by_id[str(epic.id)]["run_status"] == "failed"
+    # Nothing has run: no phase and no status — the board's Backlog column, "Not started".
+    assert by_id[str(fresh.id)]["current_phase"] == ""
+    assert by_id[str(fresh.id)]["run_status"] == ""
+
+    detail = client.get(f"/api/work-items/{epic.id}/", HTTP_X_TENANT_ID=str(tenant.id))
+    assert detail.data["run_status"] == "failed"
+
+
 def test_needs_reflects_pending_clarification_over_gate(client, tenant, project, dev, epic):
     spec = _agent_spec(tenant)
     run = _run(tenant, epic, spec)

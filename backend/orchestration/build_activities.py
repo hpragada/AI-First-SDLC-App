@@ -20,7 +20,7 @@ from apps.runs.models import Run
 from apps.tenancy.context import tenant_context
 from apps.workitems.models import WorkItem
 
-from .activities import _boundary, compose_manifest_core, get_object_store
+from .activities import _boundary, _now, compose_manifest_core, get_object_store
 from .build_types import BuildInput, BuildReport, display_name
 
 
@@ -122,6 +122,54 @@ def _is_pr_ref(ref) -> bool:
     The implementation agent registers a *pre-PR* code pointer (branch/files, no PR yet, per its
     §Output contract); that is NOT an opened PR and must not short-circuit open_build_pr."""
     return bool(ref) and "repo" in ref and "number" in ref
+
+
+#: The commit check the platform owns on a build's head commit. `open_build_pr_core` sets it to
+#: `pending`; every path that ENDS a build moves it to a terminal state via `_finish_build_status`.
+_BUILD_STATUS_CONTEXT = "sdlc/build"
+#: GitHub truncates a commit-status description past 140 characters.
+_MAX_STATUS_DESCRIPTION = 140
+
+
+def _build_head_sha(inp: BuildInput) -> str:
+    """The commit this build's check hangs off, or "" when no commit exists.
+
+    `open_build_pr_core` has `report.head_sha` in hand; none of the terminal paths do, so recover
+    it the way the merge path recovers the PR ref — from the run's `code` artifact, which carries
+    the sha in its PR ref and again in `content_hash`. Empty when nothing was ever pushed (a
+    secret-blocked build, or a failure before the PR was opened): there is no commit to mark, and
+    posting is correctly skipped rather than guessed at."""
+    try:
+        artifact = _code_artifact(inp)
+    except Exception:      # noqa: BLE001 — status reporting never fails a build
+        return ""
+    if artifact is None:
+        return ""
+    return str((artifact.external_ref or {}).get("sha") or artifact.content_hash or "")
+
+
+def _finish_build_status(inp: BuildInput, state: str, description: str) -> None:
+    """Move `sdlc/build` off `pending` on a path that ends the build (Bugs S.No 132).
+
+    Nothing used to finish this check: it was posted as `pending` when the PR opened and left
+    there forever. Cosmetic while the check is optional — and a permanent block on EVERY merge the
+    moment anyone makes it required on GitHub, because it could never reach green.
+
+    Best-effort in the same shape as the `pending` post: a status that cannot be written must never
+    fail a build that otherwise succeeded."""
+    sha = _build_head_sha(inp)
+    if not sha:
+        return
+    from integrations.registry import get_capability
+
+    try:
+        codehost = get_capability(inp.tenant_id, "codehost")
+        codehost.set_commit_status(
+            repo=inp.repo, sha=sha, state=state, context=_BUILD_STATUS_CONTEXT,
+            description=description[:_MAX_STATUS_DESCRIPTION],
+        )
+    except Exception:      # noqa: BLE001 — status is best-effort
+        pass
 
 
 def import_build_test_results_core(inp: BuildInput, report: BuildReport) -> dict:
@@ -333,7 +381,8 @@ def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
     if report.head_sha:
         try:
             codehost.set_commit_status(repo=inp.repo, sha=report.head_sha, state="pending",
-                                       context="sdlc/build")
+                                       context=_BUILD_STATUS_CONTEXT,
+                                       description="Build in progress.")
         except Exception:  # noqa: BLE001 — status is best-effort
             pass
     with tenant_context(inp.tenant_id):
@@ -417,6 +466,7 @@ def merge_build_pr_core(inp: BuildInput) -> dict:
                     non_retryable=True,
                 )
         pr = codehost.merge_pull_request(pr_ref=pr_ref)
+    _finish_build_status(inp, "success", "Build merged.")
     with tenant_context(inp.tenant_id):
         tools.log_event(inp.tenant_id, "orchestrator", "build.merged", "run", inp.run_id,
                         {"pr": pr_ref})
@@ -486,6 +536,8 @@ def mark_takeover_core(inp: BuildInput) -> dict:
         )
         tools.log_event(inp.tenant_id, "orchestrator", "build.takeover", "run", inp.run_id,
                         {"reason": "runner offline / no report before timeout"})
+    _finish_build_status(inp, "failure", "The platform stopped this build and handed it to a "
+                                         "person.")
     return {"status": "takeover"}
 
 
@@ -670,6 +722,7 @@ def mark_build_failed_core(inp: BuildInput, reason: str) -> dict:
         tools.transition_work_item(inp.tenant_id, inp.work_item_id, WorkItem.State.IN_PROGRESS)
         tools.log_event(inp.tenant_id, "orchestrator", "build.failed", "run", inp.run_id,
                         {"reason": reason})
+    _finish_build_status(inp, "failure", reason)
     return {"status": "build_failed", "reason": reason}
 
 
@@ -817,14 +870,32 @@ def resume_build_core(inp: BuildInput) -> dict:
 
 
 def reject_build_core(inp: BuildInput, comment: str) -> dict:
+    """Rejected at the merge gate: fail the run, hand the work item back, supersede the drafts.
+
+    The supersede half is Bugs S.No 218. The planning path has always done this
+    (`activities.reject_run_core`) and the build path never did, so a rejected build left its
+    `code` artifact sitting at STAGED — the status the platform uses for "waiting at a gate" —
+    forever. That was invisible while STAGED was displayed as the machine word "Staged"; once it
+    reads "Waiting for approval" on screen, leaving it there would have the platform state
+    something false about work a human has already turned down.
+
+    Same rule as the planning path: PUBLISHED artifacts are untouched (a rejected remediation
+    cycle must not un-publish an earlier merged one), nothing is deleted, and `get_context` stops
+    serving the rest downstream as authoritative."""
     with tenant_context(inp.tenant_id):
         Run.objects.filter(id=inp.run_id, tenant_id=inp.tenant_id).update(
             status=Run.Status.REJECTED
         )
+        superseded = Artifact.objects.filter(
+            run_id=inp.run_id, tenant_id=inp.tenant_id,
+        ).exclude(status=Artifact.Status.PUBLISHED).update(
+            status=Artifact.Status.SUPERSEDED, updated_at=_now(),
+        )
         tools.transition_work_item(inp.tenant_id, inp.work_item_id, WorkItem.State.IN_PROGRESS)
         tools.log_event(inp.tenant_id, "orchestrator", "build.rejected", "run", inp.run_id,
-                        {"comment": comment})
-    return {"status": "rejected"}
+                        {"comment": comment, "superseded_artifacts": superseded})
+    _finish_build_status(inp, "failure", "Changes were rejected at the merge gate.")
+    return {"status": "rejected", "superseded_artifacts": superseded}
 
 
 # ── code review + remediation loop (07<->08, build phases §5) ───────

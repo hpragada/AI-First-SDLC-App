@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, Drawer, Field, Input, Modal, Select, Spinner } from "../../components/ui";
 import type { Capability, ConnectorVendor } from "../../types";
-import { CAP_LABEL } from "./Integrations";
+import { CAP_LABEL, isCapability } from "./Integrations";
 import {
   useCreateIntegration,
   useIntegrations,
@@ -40,8 +40,9 @@ export function ConnectCapability({
   onClose?: () => void;
 }) {
   // useParams is always called (hooks can't be conditional); the prop wins when embedded.
-  const params = useParams<{ capability: Capability }>();
-  const capability: Capability = capabilityProp ?? params.capability ?? "docstore";
+  const params = useParams<{ capability: string }>();
+  const fromUrl = params.capability;
+  const capability: Capability = capabilityProp ?? (isCapability(fromUrl) ? fromUrl : "docstore");
   const integrations = useIntegrations();
   const catalog = useIntegrationsCatalog();
   const createIntegration = useCreateIntegration();
@@ -339,6 +340,15 @@ export function ConnectCapability({
         )}
         </>
   );
+
+  // N1, and the broken page it exposed. This route read its capability straight from the address
+  // with no check, so `/integrations/codeintel` — an old bookmark to the card N1 removes — or any
+  // typo rendered the full page with an undefined title, an undefined breadcrumb and an empty
+  // vendor list. An address naming nothing the grid offers goes back to the grid, the way an
+  // unknown address anywhere else in the app goes somewhere real.
+  if (!embedded && fromUrl !== undefined && !isCapability(fromUrl)) {
+    return <Navigate to="/integrations" replace />;
+  }
 
   const title = capEntry?.label ?? CAP_LABEL[capability];
 

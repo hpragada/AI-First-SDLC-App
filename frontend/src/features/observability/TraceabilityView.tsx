@@ -4,32 +4,25 @@ import { useAuth } from "../../auth/AuthContext";
 import { EmptyState, ErrorState, GraphCanvas, Panel, Spinner } from "../../components/ui";
 import type { TraceGraph } from "../../types";
 import { phaseLabel, artifactLabel } from "../lifecycle/phases";
+import { ARTIFACT_STATUSES, artifactStatusColor, artifactStatusLabel } from "./artifactStatus";
 import { useTraceability } from "./hooks";
 
 // S-30 view states: small (default) · highlighted (WI-492 lineage) · large-cluster
 // · empty.
 export type TraceabilityViewState = "small" | "highlighted" | "large-cluster" | "empty";
 
-function nodeColor(status: string) {
-  if (status === "published") return "var(--success)";
-  if (status === "pending_gate" || status === "gate") return "var(--warning)";
-  return "var(--info)";
-}
-
+// Node colours and the legend that explains them come from the shared status map (Bugs S.No 218).
+// This screen kept its own three-way copy that knew only "published" and a status nothing ever
+// set ("pending_gate"), so an approved, a waiting and a superseded document all drew as "Draft" —
+// and the legend promised a colour no node could have.
 const LEGEND = (
   <span className="graph-legend">
-    <span className="graph-legend__item">
-      <span className="graph-legend__dot" style={{ background: "var(--success)" }} />
-      Published
-    </span>
-    <span className="graph-legend__item">
-      <span className="graph-legend__dot" style={{ background: "var(--warning)" }} />
-      Pending gate
-    </span>
-    <span className="graph-legend__item">
-      <span className="graph-legend__dot" style={{ background: "var(--info)" }} />
-      Draft
-    </span>
+    {ARTIFACT_STATUSES.map((status) => (
+      <span className="graph-legend__item" key={status}>
+        <span className="graph-legend__dot" style={{ background: artifactStatusColor(status) }} />
+        {artifactStatusLabel(status)}
+      </span>
+    ))}
   </span>
 );
 
@@ -137,6 +130,11 @@ function LineageGraph({ graph }: { graph: TraceGraph }) {
             const pos = positions.get(n.id)!;
             const go = () => (n.url ? window.open(n.url, "_blank", "noopener") : navigate(`/artifacts/${n.id}`));
             const label = artifactLabel(n.title, n.type);  // human name, not the raw type (S.No 120)
+            // The status in words, not the machine token it used to print (S.No 218). Cut to
+            // the box the way the title is; the full line is the node's <title>, so hovering
+            // shows it and a screen reader announces it as the node's name.
+            const detail = `${phaseLabel(n.phase)} · ${artifactStatusLabel(n.status)}`;
+            const color = artifactStatusColor(n.status);
             return (
               <g
                 key={n.id}
@@ -147,13 +145,14 @@ function LineageGraph({ graph }: { graph: TraceGraph }) {
                 onClick={go}
                 onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && go()}
               >
-                <rect width={boxW} height={boxH} rx="8" className="gnode" style={{ stroke: nodeColor(n.status) }} />
-                <circle cx="16" cy="22" r="5" style={{ fill: nodeColor(n.status) }} />
+                <title>{`${label} — ${detail}`}</title>
+                <rect width={boxW} height={boxH} rx="8" className="gnode" style={{ stroke: color }} />
+                <circle cx="16" cy="22" r="5" style={{ fill: color }} />
                 <text x="30" y="20" style={{ fill: "var(--text-strong)", fontSize: "12px", fontWeight: 600 }}>
                   {label.length > 22 ? `${label.slice(0, 22)}…` : label}
                 </text>
                 <text x="30" y="35" style={{ fill: "var(--text-muted)", fontSize: "11px" }}>
-                  {phaseLabel(n.phase)} · {n.status}
+                  {detail.length > 22 ? `${detail.slice(0, 22)}…` : detail}
                 </text>
               </g>
             );

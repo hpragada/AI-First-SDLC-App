@@ -857,5 +857,6 @@ def _event(tenant_id, action: str, row, user_id, payload: dict) -> None:
     Event.objects.create(
         tenant_id=tenant_id, actor=str(user_id or "system"), action=action,
         target_type="a11y_conformance", target_id=row.id,
+        project_id=row.project_id,      # S.No 230 — this path bypasses tools.log_event
         payload={"project_id": str(row.project_id), **payload},
     )

@@ -26,11 +26,19 @@ CAPABILITIES = {"docstore", "tasktracker", "codehost", "designsource", "testmgmt
 # nothing a human could usefully fill in — presenting them on the "connect your tools" screen
 # would be a control that only looks like a control (team decision, 2026-08-12).
 #
-# `codeintel` is deliberately NOT here. It is credential-free too, but today it is connected
-# by the user from the Integrations page, and silently changing that would alter a journey
-# that is currently under test. If the team later wants the same treatment for it, adding the
-# pair here plus a backfill migration is the whole change.
-AUTO_PROVISIONED = (("a11yai", "builtin"),)
+# `codeintel` joined them on 2026-09-10 (Bugs S.No N1), which is the change this comment used to
+# describe as "adding the pair here plus a backfill migration is the whole change". Three things
+# settled it:
+#   - Nothing in the platform resolves code intelligence through this registry. There is no
+#     `get_capability(..., "codeintel")` anywhere: the analyser is constructed directly, with no
+#     credentials, on the developer's own machine — as an MCP subprocess for the agent path
+#     (`runner/companion/codeintel_mcp.py`) or in the daemon for the mechanical one.
+#   - The Integrations page hardcoded the card as permanently "Connected / Built-in", so it was
+#     never a control a user could act on in the first place.
+#   - Real workspaces were only ever auto-provisioned `a11yai`; the codeintel row came from the
+#     demo seed. So a real tenant could have no row at all while its card claimed Connected —
+#     the screen was stating something untrue.
+AUTO_PROVISIONED = (("a11yai", "builtin"), ("codeintel", "builtin"))
 
 
 def provision_builtin_capabilities(tenant) -> list[IntegrationConnection]:

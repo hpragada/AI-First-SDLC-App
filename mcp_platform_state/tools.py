@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import logging
+from datetime import UTC, datetime
 
 from apps.clarifications.models import Clarification
 from apps.ledger.models import Event
@@ -22,6 +23,10 @@ from apps.tenancy.context import tenant_context
 from apps.workitems.models import WorkItem
 
 logger = logging.getLogger(__name__)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
 # ── serialization (JSON-safe dicts) ─────────────────────────────────
@@ -47,6 +52,7 @@ def _artifact(a: Artifact) -> dict:
         "version": a.version,
         "created_at": _dt(a.created_at),
         "updated_at": _dt(a.updated_at),
+        "published_at": _dt(a.published_at),
     }
 
 
@@ -277,11 +283,31 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
             base_qs.exclude(id__in=required_ids).order_by("-created_at")[:_SITUATIONAL_TAIL]
         )
         artifacts = required + tail
-        events = (
-            Event.objects.filter(tenant_id=tenant_id)
+        # Recent history, scoped to THIS project (Bugs S.No 230). It used to be scoped to the
+        # whole workspace, so an agent could be handed the last 20 events from a project it has
+        # nothing to do with — a different client's work, in a shared-database tenant.
+        #
+        # Clarification events are scoped tighter still, to this work item, and only when we
+        # know which work item that is. A question is the one kind of event an agent reasons
+        # FROM: seeing "a question was asked" with no answer beside it — belonging to another
+        # work item, from a run that has since been deleted — is what was actually observed on a
+        # brand-new work item, and is how an agent comes to believe something was already
+        # settled when it was not. The answered clarifications replayed below are the honest
+        # channel for that, and they carry their answers.
+        #
+        # Events written before this column existed carry no project and so fall out. That is
+        # the intent: they are stale noise from runs nobody can trace any more.
+        events_qs = (
+            Event.objects.filter(tenant_id=tenant_id, project_id=project_id)
             .exclude(action__in=_MANIFEST_MUTED_ACTIONS)
-            .order_by("-ts")[:20]
         )
+        if wi is not None:
+            events_qs = events_qs.exclude(
+                Q(target_type="clarification") & ~Q(work_item_id=wi.id)
+            )
+        else:
+            events_qs = events_qs.exclude(target_type="clarification")
+        events = events_qs.order_by("-ts")[:20]
         query = " ".join(filter(None, [phase, getattr(wi, "title", ""),
                                        getattr(wi, "description", "")]))
         # Answered clarifications for this work item are replayed into the manifest so a
@@ -362,6 +388,50 @@ def _assert_body_not_shared(tenant_id, run, type, s3_key, title) -> None:
         )
 
 
+#: Where an artifact's STABLE identity lives on its pointer, per type, most trusted key first
+#: (Bugs S.No 183).
+#:
+#: Artifact identity used to be the `title` the agent wrote — free text. A retried phase that
+#: re-words a title by one character forked a second artifact at v1 beside the first instead of
+#: superseding it. Worst on phases that register many artifacts at once (a security run files one
+#: per finding), but the rule lives in the shared registration path, so every phase had it.
+#:
+#: The identifiers below already exist and are already used elsewhere: the security defect loop
+#: reads `finding_id`/`id` off exactly these rows, and `apps.workitems.test_cases` matches test
+#: cases on `tc_id`/`id`. Versioning simply never looked at them.
+#:
+#: `identity` is the deliberate escape hatch, honoured for every type: a caller that knows what
+#: makes two registrations the same thing can say so outright.
+#:
+#: `code` is deliberately absent. Its title is machine-composed (`Code — {work item}`), so
+#: title-versioning is already reliable there, and a build registers several `code` pointers per
+#: run on purpose — the remediation cycles — which the build path distinguishes by PR ref, not by
+#: version. Nothing about that needs changing and it is the one path not to disturb.
+_IDENTITY_REF_KEYS: dict[str, tuple[str, ...]] = {
+    "security_finding": ("identity", "finding_id", "id"),
+    "test_case": ("identity", "tc_id", "id"),
+}
+_DEFAULT_IDENTITY_REF_KEYS: tuple[str, ...] = ("identity",)
+
+#: Types that register many DISTINCT rows sharing (phase, type) in one run. These are the ones
+#: most exposed to title drift, so a registration with no stable identifier is worth a line in
+#: the server log — a developer diagnostic, never anything a user sees.
+_PER_ITEM_TYPES = frozenset({"adr", "test_case", "security_finding", "code_review",
+                             "test_report"})
+
+
+def _identity_ref(type, external_ref) -> tuple[str, object] | None:
+    """The `(external_ref key, value)` that identifies this artifact, or None to use the title."""
+    ref = external_ref or {}
+    if not isinstance(ref, dict):
+        return None
+    for key in _IDENTITY_REF_KEYS.get(type, _DEFAULT_IDENTITY_REF_KEYS):
+        value = ref.get(key)
+        if value not in (None, ""):
+            return key, value
+    return None
+
+
 def register_artifact(
     tenant_id, project_id, run_id, phase, type, sor,
     content_hash, s3_key=None, external_ref=None, repo_id=None, title="", supersedes=None,
@@ -381,11 +451,18 @@ def register_artifact(
         # character of drift silently forks a second artifact instead of versioning the first.
         # Naming the target id instead makes the link explicit: the platform reads the identity
         # off the target rather than trusting the caller to restate it.
+        superseded_ref = None
         if supersedes:
             target = Artifact.objects.get(id=supersedes, tenant_id=tenant_id)
             if str(target.project_id) != str(project.id):
                 raise ValueError("supersedes must name an artifact in the same project")
             phase, type, title = target.phase, target.type, target.title
+            # …and its identity too (S.No 183). `supersedes` means "this is the next version of
+            # THAT row", so the version counter must key off the target's identity, not off
+            # whatever pointer this registration happens to carry — otherwise naming the target
+            # explicitly would still fork a v1, which is the exact failure `supersedes` exists
+            # to prevent.
+            superseded_ref = target.external_ref
         run = Run.objects.get(id=run_id, tenant_id=tenant_id) if run_id else None
         repo = (
             Repository.objects.get(id=repo_id, tenant_id=tenant_id) if repo_id else None
@@ -401,12 +478,35 @@ def register_artifact(
         # v2, v3, … of the SAME artifact. But per-item types (adr, test_case, security_finding,
         # code, code_review, test_report) register many DISTINCT rows sharing (phase, type) in one
         # run — versioning by (phase, type) alone falsely numbered them as supersessions of each
-        # other (Bugs S.No 120, Part C-1). Scope the counter to the human `title` when present so
-        # distinct siblings each start at v1; fall back to (phase, type) for untitled/singletons.
+        # other (Bugs S.No 120, Part C-1). Scope the counter to the item's own identity so distinct
+        # siblings each start at v1; fall back to (phase, type) for untitled singletons.
+        #
+        # Prefer a STABLE identifier off the pointer over the title (Bugs S.No 183). The title is
+        # free text the agent wrote, so a retry that re-words it by one character used to fork a
+        # duplicate at v1 instead of superseding — while `finding_id`, sitting on the very same
+        # row and already read by the security defect loop, said plainly that it was the same
+        # finding. Prefer-then-fall-back rather than *requiring* an identifier: raising here would
+        # happen inside a live run and turn a duplicate artifact into a failed phase, which is a
+        # worse outcome than the bug.
         version_filter = {"tenant_id": tenant_id, "project": project,
                           "phase": phase, "type": type}
-        if title:
+        identity = _identity_ref(type, superseded_ref if supersedes else external_ref)
+        if identity:
+            version_filter[f"external_ref__{identity[0]}"] = identity[1]
+        elif title:
             version_filter["title"] = title
+        if supersedes and identity and (external_ref or {}).get(identity[0]) in (None, ""):
+            # Carry the target's identity onto this version's own pointer, or the chain breaks at
+            # the NEXT registration: this row would be v2 of that identity while carrying no
+            # trace of it, and v3 would start over at v1.
+            external_ref = {**(external_ref or {}), identity[0]: identity[1]}
+        if identity is None and type in _PER_ITEM_TYPES:
+            logger.info(
+                "artifact registered with no stable identifier: type=%s phase=%s project=%s "
+                "run=%s title=%r — versioning falls back to the title, so a re-run that re-words "
+                "it will register a duplicate rather than a new version",
+                type, phase, project_id, run_id, title,
+            )
         last = (
             Artifact.objects.filter(**version_filter)
             .order_by("-version")
@@ -597,6 +697,13 @@ def update_artifact(
         if status is not None:
             if status not in Artifact.Status.values:
                 raise ValueError(f"invalid status: {status}")
+            # Stamp the moment it became published (Bugs S.No 224). Here rather than at each
+            # caller because this is the choke point every `tools.*` status write goes through —
+            # gate approval, the build's post-merge publish, the PR-merged webhook and both
+            # onboarding paths all land on this line. Only on the TRANSITION into published, so
+            # a later edit of an already-published artifact never re-dates its publication.
+            if status == Artifact.Status.PUBLISHED and artifact.published_at is None:
+                artifact.published_at = _now()
             artifact.status = status
         if sor is not None:
             if sor not in Artifact.SoR.values:
@@ -912,8 +1019,85 @@ def finish_a11y_journey(tenant_id, run_id) -> dict:
     return finish_journey(tenant_id=tenant_id, run_id=run_id)
 
 
-def log_event(tenant_id, actor, action, target_type, target_id, payload=None) -> dict:
+#: How an event's target resolves to the project — and, where the target has one, the work item
+#: — that it belongs to (Bugs S.No 230). `(app.Model, project path, work-item path)`, as ORM
+#: lookups from that target's own model.
+#:
+#: Resolved here, once, rather than threaded through the hundred-odd `log_event` call sites. Most
+#: of those callers do have the ids to hand, but editing every one of them — half of them inside
+#: the build and orchestration paths — is a large diff with real regression risk for a fact the
+#: platform can look up itself.
+#:
+#: Several target types resolve to a project and no work item, because they genuinely have none:
+#: a repository, a code-index job and an accessibility conformance statement all belong to a
+#: project directly. And three types carry no id at all — `branch` and `commit` deliberately pass
+#: None (the ref lives in the payload), and one caller passes a runtime value for `target_type` —
+#: so anything absent from this table simply resolves to nothing.
+_EVENT_SCOPE: dict[str, tuple[str, str, str | None]] = {
+    "run": ("runs.Run", "work_item__project_id", "work_item_id"),
+    "work_item": ("workitems.WorkItem", "project_id", "id"),
+    "approval": ("gates.Approval", "work_item__project_id", "work_item_id"),
+    "clarification": ("clarifications.Clarification", "work_item__project_id", "work_item_id"),
+    # An artifact's run is nullable, so its work item may legitimately be unknown.
+    "artifact": ("registry.Artifact", "project_id", "run__work_item_id"),
+    "repository": ("projects.Repository", "project_id", None),
+    "source_document": ("integrations.SourceDocument", "project_id", None),
+    "drift_record": ("integrations.DriftRecord", "project_id", None),
+    "test_execution": ("quality.TestExecution", "project_id", "work_item_id"),
+    "test_quarantine": ("quality.TestQuarantine", "project_id", None),
+    "preview_env": ("quality.PreviewEnv", "project_id", "work_item_id"),
+    "code_intel_job": ("runs.CodeIntelJob", "project_id", None),
+    "a11y_finding": ("a11y.A11yFinding", "project_id", None),
+    "a11y_conformance": ("a11y.A11yConformanceStatement", "project_id", None),
+}
+
+
+def _event_scope(tenant_id, target_type, target_id) -> tuple[str | None, str | None]:
+    """The `(project_id, work_item_id)` an event belongs to, or `(None, None)`.
+
+    Never raises, and that is the point: appending to the ledger must not acquire a new way to
+    fail. Several call sites are best-effort error paths where an exception here would turn a
+    logging no-op into the failure being logged about, and `target_id` is a UUID column that
+    three target types never populate.
+    """
+    if target_type == "project":
+        return (str(target_id), None) if target_id else (None, None)
+    scope = _EVENT_SCOPE.get(target_type)
+    if scope is None or not target_id:
+        return None, None
+    model_path, project_path, work_item_path = scope
+    try:
+        from django.apps import apps as django_apps
+
+        model = django_apps.get_model(model_path)
+        paths = [project_path] + ([work_item_path] if work_item_path else [])
+        row = (
+            model.objects.filter(id=target_id, tenant_id=tenant_id)
+            .values_list(*paths)
+            .first()
+        )
+        if row is None:
+            return None, None
+        project = str(row[0]) if row[0] else None
+        work_item = str(row[1]) if work_item_path and row[1] else None
+        return project, work_item
+    except Exception:      # noqa: BLE001 — an event must always be recordable
+        logger.debug("could not scope event target %s:%s", target_type, target_id,
+                     exc_info=True)
+        return None, None
+
+
+def log_event(tenant_id, actor, action, target_type, target_id, payload=None,
+              project_id=None, work_item_id=None) -> dict:
+    """Append one event to the ledger.
+
+    `project_id`/`work_item_id` are optional: a caller that already knows them can say so, and
+    anything left unsaid is resolved from the target (S.No 230). They are what lets the agent
+    briefing show a run its OWN project's history instead of the whole workspace's.
+    """
     with tenant_context(tenant_id):
+        if project_id is None and work_item_id is None:
+            project_id, work_item_id = _event_scope(tenant_id, target_type, target_id)
         event = Event.objects.create(
             tenant_id=tenant_id,
             actor=actor,
@@ -921,6 +1105,8 @@ def log_event(tenant_id, actor, action, target_type, target_id, payload=None) ->
             target_type=target_type,
             target_id=target_id,
             payload=payload or {},
+            project_id=project_id,
+            work_item_id=work_item_id,
         )
         return _event(event)
 

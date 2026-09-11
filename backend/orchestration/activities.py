@@ -327,6 +327,21 @@ def open_gate_core(inp: AgentRunInput) -> str:
         if run.status != Run.Status.AWAITING_GATE:
             run.status = Run.Status.AWAITING_GATE
             run.save(update_fields=["status", "updated_at"])
+        # A gate is now open on what this run drafted, so those drafts are no longer drafts
+        # nobody has looked at: they are waiting on a named person (Bugs S.No 218). Opening a
+        # gate used to leave them reading "Draft", indistinguishable from work nobody had asked
+        # anyone to review. `staged` is the status that already exists for exactly this — the
+        # build path sets it when it opens a PR — and the screen now calls it "Waiting for
+        # approval".
+        #
+        # DRAFT only, so nothing already approved, published or superseded is ever moved
+        # backwards, and a retried activity finds nothing left to change. Both ways out of the
+        # gate still work on a staged row: approval publishes the run's artifacts whatever their
+        # status (`publish_artifacts_core`), and a rejection supersedes everything not published
+        # (`reject_run_core`).
+        Artifact.objects.filter(
+            run_id=inp.run_id, tenant_id=inp.tenant_id, status=Artifact.Status.DRAFT,
+        ).update(status=Artifact.Status.STAGED, updated_at=_now())
         if created:
             tools.log_event(
                 inp.tenant_id, "orchestrator", "gate.opened", "approval", str(approval.id),

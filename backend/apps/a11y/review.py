@@ -504,6 +504,10 @@ def _event(tenant_id, action: str, finding, user_id, payload: dict) -> None:
     Event.objects.create(
         tenant_id=tenant_id, actor=str(user_id or "system"), action=action,
         target_type="a11y_finding", target_id=finding.id,
+        # Written straight to the column rather than resolved from the target (S.No 230): this
+        # bypasses `tools.log_event`, and the finding is already loaded. A finding belongs to a
+        # project, not to a work item — its run links are both nullable by design.
+        project_id=finding.project_id,
         payload={"route": finding.route, "selector": finding.selector,
                  "criterion": finding.criterion, **payload},
     )

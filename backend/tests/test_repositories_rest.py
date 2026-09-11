@@ -190,6 +190,41 @@ def test_member_cannot_set_default_repository(client, project, member):
     assert resp.status_code == 403
 
 
+def test_a_refusal_says_who_can_in_words(client, project, member):
+    """S.No 212: the Repositories screen puts this sentence in front of the person verbatim. It
+    used to name the role by its internal key — "You need the tech_lead or admin role…"."""
+    repo = Repository.objects.create(tenant=project.tenant, project=project, name="acme/web")
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    resp = client.post(_url(project, f"{repo.id}/set-default/"))
+    assert resp.status_code == 403
+    assert resp.data["detail"] == (
+        "Only a tech lead or an admin can change which repository is the default for this "
+        "project.")
+
+    for resp in (client.post(_url(project), {"name": "acme/api"}, format="json"),
+                 client.delete(_url(project, f"{repo.id}/")),
+                 client.patch(_url(project, f"{repo.id}/"), {"preview_url": ""},
+                              format="json")):
+        assert resp.status_code == 403
+        assert resp.data["detail"].startswith("Only a tech lead or an admin can ")
+        assert "tech_lead" not in resp.data["detail"]
+
+
+def test_the_sibling_project_write_rule_speaks_the_same_way(project, member):
+    """The same role rule guards cancelling a work item and editing the profile; its sentence
+    carried the same internal key, so it is fixed with the class rather than left behind."""
+    from rest_framework.exceptions import PermissionDenied
+
+    from apps.tenancy.services import require_project_write_role
+
+    with pytest.raises(PermissionDenied) as exc:
+        require_project_write_role(tenant_id=str(project.tenant_id), project_id=str(project.id),
+                                   user_id=member.id, what="close or cancel a work item")
+    assert str(exc.value.detail) == (
+        "Only a tech lead or an admin on this project can close or cancel a work item.")
+
+
 # ── preview URL (P3-09bR): create + inline edit ─────────────────────────
 def test_add_repository_accepts_preview_url(client, project, tech_lead):
     _login(client, "lead@acme.com", "lead-pass!")

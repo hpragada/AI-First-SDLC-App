@@ -1127,3 +1127,116 @@ def test_linking_strays_never_touches_the_real_pr_row(world, monkeypatch):
     pr_row.refresh_from_db()
     assert pr_row.external_ref == before
     assert ba._code_artifact(_inp(world)).id == pr_row.id       # merge still finds the same PR
+
+
+# ── S.No 132: the sdlc/build check must reach a terminal state ───────────────────────────────
+#
+# It was posted as `pending` when the PR opened and NOTHING ever moved it. Harmless while the
+# check is optional; a permanent block on every merge the moment anyone makes it required on
+# GitHub, because it could never reach green.
+def _final_status(fake):
+    """The last sdlc/build status posted, or None."""
+    ours = [s for s in fake.statuses if s.get("context") == "sdlc/build"]
+    return ours[-1] if ours else None
+
+
+def test_a_merged_build_finishes_the_commit_check(world, monkeypatch):
+    fake = _FakeCodeHost()
+    _use_fake_codehost(monkeypatch, fake)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+    assert _final_status(fake)["state"] == "pending"
+
+    ba.merge_build_pr_core(_inp(world))
+
+    final = _final_status(fake)
+    assert final["state"] == "success" and final["sha"] == "abc"
+
+
+def test_a_failed_build_finishes_the_commit_check(world, monkeypatch):
+    fake = _FakeCodeHost()
+    _use_fake_codehost(monkeypatch, fake)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+    ba.mark_build_failed_core(_inp(world), "compiler error")
+
+    final = _final_status(fake)
+    assert final["state"] == "failure" and final["sha"] == "abc"
+
+
+def test_a_taken_over_build_finishes_the_commit_check(world, monkeypatch):
+    fake = _FakeCodeHost()
+    _use_fake_codehost(monkeypatch, fake)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+    ba.mark_takeover_core(_inp(world))
+
+    assert _final_status(fake)["state"] == "failure"
+
+
+def test_a_merge_conflict_leaves_the_check_pending(world, monkeypatch):
+    """The merge gate re-opens for a resolve-then-retry — the build is still live, so `pending`
+    is the honest state and must NOT be finished."""
+    fake = _FakeCodeHost()
+    _use_fake_codehost(monkeypatch, fake)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+    ba.reopen_merge_gate_core(_inp(world), "merge conflict: the branch conflicts with its base")
+
+    assert _final_status(fake)["state"] == "pending"
+
+
+def test_nothing_is_posted_when_no_commit_was_ever_pushed(world, monkeypatch):
+    """A secret-blocked build never pushed a branch, so there is no commit to attach a status to.
+    Guessing one would mark a stranger's commit."""
+    fake = _FakeCodeHost()
+    _use_fake_codehost(monkeypatch, fake)
+
+    ba.mark_build_failed_core(_inp(world), "secret detected in the diff")
+
+    assert fake.statuses == []
+
+
+def test_a_status_that_cannot_be_written_never_fails_the_build(world, monkeypatch):
+    class _Broken(_FakeCodeHost):
+        def set_commit_status(self, **kw):
+            raise RuntimeError("GitHub is down")
+
+    fake = _Broken()
+    _use_fake_codehost(monkeypatch, fake)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+
+    out = ba.merge_build_pr_core(_inp(world))       # must not raise
+
+    assert out["merged"] is True
+
+
+# ── S.No 218: a rejected build supersedes its drafts, as the planning path already did ───────
+def test_a_rejected_build_supersedes_its_drafts(world, monkeypatch):
+    """Without this the code artifact sits at STAGED — the status that reads "Waiting for
+    approval" on screen — forever, after a human has already turned it down."""
+    fake = _FakeCodeHost()
+    _use_fake_codehost(monkeypatch, fake)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+    assert Artifact.objects.get(run_id=world.run.id, type="code").status == \
+        Artifact.Status.STAGED
+
+    out = ba.reject_build_core(_inp(world), "not what we asked for")
+
+    assert out["superseded_artifacts"] == 1
+    assert Artifact.objects.get(run_id=world.run.id, type="code").status == \
+        Artifact.Status.SUPERSEDED
+    assert _final_status(fake)["state"] == "failure"
+
+
+def test_rejecting_a_build_never_unpublishes_an_already_merged_artifact(world, monkeypatch):
+    fake = _FakeCodeHost()
+    _use_fake_codehost(monkeypatch, fake)
+    monkeypatch.setattr(ba, "get_object_store", InMemoryObjectStore)
+    ba.open_build_pr_core(_inp(world), BuildReport(branch="feature/ST-1", head_sha="abc"))
+    ba.merge_build_pr_core(_inp(world))
+    ba.publish_build_artifacts_core(_inp(world))
+
+    ba.reject_build_core(_inp(world), "late change of mind")
+
+    assert Artifact.objects.get(run_id=world.run.id, type="code").status == \
+        Artifact.Status.PUBLISHED

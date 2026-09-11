@@ -65,6 +65,14 @@
   /* ---- motion ---- */
   --transition:120ms ease;
   --focus-ring:0 0 0 3px var(--brand-orange-300);
+
+  /* ---- stacking (Bugs S.No 166) ---- */
+  /* The ONE depth every floating popup sits at: dropdown lists, row and account menus,
+     tooltips. They used to sit at 20, 30 and 40 by accident. Above the sticky topbar (20) and,
+     on purpose, above the dialog scrim (100): a popup opened INSIDE a dialog has to draw over
+     that dialog, and one opened outside can never meet an open dialog, because the click that
+     opens a dialog is an outside click, and an outside click closes the popup. */
+  --z-popover:110;
 }
 
 /* ============================================================================

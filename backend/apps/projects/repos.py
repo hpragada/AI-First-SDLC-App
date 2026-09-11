@@ -31,9 +31,14 @@ class RepositoryError(Exception):
         self.status = status
 
 
-def require_repo_manage_role(*, tenant_id, project_id, user_id) -> None:
+def require_repo_manage_role(*, tenant_id, project_id, user_id,
+                             what: str = "manage this project's repositories") -> None:
     """Role check for add/remove/set-default (S-13): the acting user must hold `tech_lead`
-    or project-admin on this project, or be a tenant-admin fallback."""
+    or project-admin on this project, or be a tenant-admin fallback.
+
+    `what` finishes the refusal sentence, because the screen puts that sentence in front of the
+    person verbatim (S.No 212). It used to name the role by its internal key — "You need the
+    tech_lead or admin role…" — which is our word, not theirs."""
     if user_id and Membership.objects.filter(
         tenant_id=tenant_id, user_id=user_id, project_id=project_id,
         role__in=[Role.TECH_LEAD, Role.ADMIN],
@@ -43,10 +48,7 @@ def require_repo_manage_role(*, tenant_id, project_id, user_id) -> None:
         id=user_id, tenant_id=tenant_id, is_tenant_admin=True
     ).exists():
         return
-    raise RepositoryError(
-        "You need the tech_lead or admin role on this project to manage repositories.",
-        status=403,
-    )
+    raise RepositoryError(f"Only a tech lead or an admin can {what}.", status=403)
 
 
 def _codehost_status(tenant_id) -> str:

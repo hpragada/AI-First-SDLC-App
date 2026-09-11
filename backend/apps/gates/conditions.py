@@ -32,6 +32,8 @@ from dataclasses import dataclass
 from .a11ygate import A11Y_GATE_KEY, conditions_for_a11y_phase
 from .a11ygate import evaluate as evaluate_a11y
 from .readiness import conditions_for_readiness_phase
+from .securitygate import SECURITY_GATE_KEY, conditions_for_security_phase
+from .securitygate import evaluate as evaluate_security
 from .testgate import BLOCKING_TESTS_KEY, conditions_for_test_phase
 from .testgate import evaluate as evaluate_blocking_tests
 from .wcag import conditions_for_wcag_phase
@@ -65,6 +67,7 @@ class ConditionContext:
 _DERIVED_EVALUATORS = {
     BLOCKING_TESTS_KEY: evaluate_blocking_tests,
     A11Y_GATE_KEY: evaluate_a11y,
+    SECURITY_GATE_KEY: evaluate_security,
 }
 
 
@@ -80,6 +83,7 @@ def conditions_for_phase(phase: str, *, tenant_id=None, project_id=None) -> list
         conditions_for_wcag_phase(phase, extra=_design_extras(tenant_id, project_id))
         + conditions_for_test_phase(phase)
         + conditions_for_a11y_phase(phase)
+        + conditions_for_security_phase(phase)
         + conditions_for_readiness_phase(phase)
     )
 

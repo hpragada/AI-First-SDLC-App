@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
 import { ApiError } from "../../api";
@@ -19,7 +20,7 @@ import {
   Textarea,
 } from "../../components/ui";
 import type { AutomationStatus, TestCase } from "../../types";
-import { useCreateWorkItem, useTestCases, useTriggerPhase } from "./hooks";
+import { useCreateTestCase, useTestCases, useTriggerPhase } from "./hooks";
 
 // The Test Automation phase key — triggering it on a test_case WI generates its script.
 const TEST_AUTOMATION_KEY = "09b_test_automation";
@@ -61,8 +62,9 @@ const STATUS_BADGE: Record<AutomationStatus, { variant: "neutral" | "running" | 
   ready: { variant: "done", label: "Script ready" },
 };
 
-function GenerateCell({ tc }: { tc: TestCase }) {
+function GenerateCell({ tc, storyId }: { tc: TestCase; storyId: string | undefined }) {
   const trigger = useTriggerPhase(tc.id);
+  const qc = useQueryClient();
   if (tc.automation_status === "generating") {
     return <Link to={`/work-items/${tc.id}`} className="btn btn--ghost btn--sm">View run</Link>;
   }
@@ -82,7 +84,13 @@ function GenerateCell({ tc }: { tc: TestCase }) {
         variant="ghost"
         size="sm"
         disabled={trigger.isPending}
-        onClick={() => trigger.mutate(TEST_AUTOMATION_KEY)}
+        // Starting generation changes this row's automation status, and nothing refreshed the
+        // table, so the button came back as if nothing had happened (S.No 215, same class).
+        onClick={() =>
+          trigger.mutate(TEST_AUTOMATION_KEY, {
+            onSuccess: () => qc.invalidateQueries({ queryKey: ["test-cases", storyId] }),
+          })
+        }
       >
         {trigger.isPending ? "Starting…" : "Generate script"}
       </Button>
@@ -106,7 +114,7 @@ function AddTestCaseForm({ projectId, storyId, onDone }: {
   storyId: string | undefined;
   onDone: () => void;
 }) {
-  const create = useCreateWorkItem(projectId);
+  const create = useCreateTestCase(projectId, storyId);
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState("Medium");
   const [steps, setSteps] = useState("");
@@ -114,10 +122,7 @@ function AddTestCaseForm({ projectId, storyId, onDone }: {
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     try {
-      await create.mutateAsync({
-        type: "test_case", title: title.trim(), parent: storyId, priority,
-        description: steps.trim(),
-      });
+      await create.mutateAsync({ title: title.trim(), priority, description: steps.trim() });
       onDone();
     } catch {
       /* surfaced inline */
@@ -279,7 +284,7 @@ export function TestCases({ forceView }: { forceView?: TestCasesView }) {
               <Badge variant={STATUS_BADGE[tc.automation_status].variant} key="a">
                 {STATUS_BADGE[tc.automation_status].label}
               </Badge>,
-              <GenerateCell tc={tc} key="g" />,
+              <GenerateCell tc={tc} storyId={storyId} key="g" />,
             ])}
           />
         </Panel>

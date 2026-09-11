@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { Badge, Banner, Card, CardBody, Breadcrumb, DocPreview, Markdown, Panel, Spinner } from "../../components/ui";
+import { ApiError } from "../../api";
+import { Badge, Banner, Card, CardBody, Breadcrumb, DocPreview, ErrorState, Markdown, Panel, Spinner } from "../../components/ui";
 import { isPhaseReport, type ArtifactState } from "../../types";
 import { artifactLabel } from "../lifecycle/phases";
-import { artifactStatusBadge } from "./artifactStatus";
+import { artifactStatusBadge, artifactStatusLabel } from "./artifactStatus";
 import { useArtifactPreview } from "./hooks";
 
 // Per-screen wireframes carry one self-contained HTML document per UI state (default,
@@ -91,13 +92,36 @@ function ArtifactPreviewLive() {
     );
   }
 
+  // Bugs S.No 218. "No such document" and "a document whose body can't be read" used to be one
+  // 404, worded as three explanations at once — "doesn't exist, has no body, or you don't have
+  // access" — only one of them true and none of them something the reader could act on. The
+  // server now answers the second normally, with an empty body, and "Preview unavailable" further
+  // down says so. What reaches this point is a document that is not there — or a request that
+  // FAILED, which is a different fact again and gets the app's usual failure panel rather than a
+  // claim that the document is gone.
+  const notFound = preview.error instanceof ApiError && preview.error.status === 404;
+  if (preview.isError && !notFound) {
+    return (
+      <div className="canvas-pad">
+        <Breadcrumb items={[{ label: "Artifacts", href: "/artifacts" }, "Preview"]} />
+        <Panel>
+          <ErrorState
+            title="We couldn't open this document"
+            detail={preview.error}
+            onRetry={() => void preview.refetch()}
+          />
+        </Panel>
+      </div>
+    );
+  }
+
   if (!preview.data) {
     return (
       <div className="canvas-pad">
         <Breadcrumb items={[{ label: "Artifacts", href: "/artifacts" }, "Preview"]} />
         <Panel>
-          <Banner variant="danger" title="Artifact not found">
-            This artifact doesn't exist, has no body, or you don't have access to it.
+          <Banner variant="danger" title="We couldn't find that document">
+            It may have been removed, or you may not have access to this project.
           </Banner>
         </Panel>
       </div>
@@ -212,7 +236,8 @@ function ArtifactPreviewLive() {
                 data.versions.map((v) => (
                   <div className="version-row" key={v.artifact_id}>
                     <span className="version-row__tag">v{v.version}</span>
-                    <span className="t-sm u-strong">{v.status}</span>
+                    {/* In words, from the shared map (S.No 218) — this printed the machine token. */}
+                    <span className="t-sm u-strong">{artifactStatusLabel(v.status)}</span>
                     <span className="u-spacer" />
                     <span className="t-xs u-muted">{new Date(v.created_at).toLocaleDateString()}</span>
                   </div>
@@ -232,7 +257,7 @@ function ArtifactPreviewLive() {
               </span>
               <div className="artifact-row__main">
                 <div className="artifact-row__title">{artifactLabel(data.title, data.artifact_type)} · v{data.version}</div>
-                <div className="artifact-row__meta">{data.status}</div>
+                <div className="artifact-row__meta">{artifactStatusLabel(data.status)}</div>
               </div>
               <a className="sor-chip sor-chip--confluence" href={data.sor_link} target="_blank" rel="noreferrer">
                 <span className="sor-chip__glyph">↗</span>Open source
@@ -254,8 +279,8 @@ function ArtifactPreviewLive() {
             </svg>
             <div className="empty__title">Preview unavailable</div>
             <div className="empty__text">
-              The body couldn't be read from its source right now. The pointer and version are
-              intact.
+              The document couldn't be read from its source right now. Its record and version
+              are intact.
             </div>
           </div>
         </div>
@@ -388,8 +413,8 @@ function ArtifactPreviewGallery({ view }: { view: ArtifactPreviewView }) {
             </svg>
             <div className="empty__title">Preview unavailable</div>
             <div className="empty__text">
-              The body couldn't be read from its source right now. The pointer and version are
-              intact; try the system-of-record link.
+              The document couldn't be read from its source right now. Its record and version
+              are intact; try the system-of-record link.
             </div>
             <a className="sor-chip sor-chip--confluence" href="#">
               <span className="sor-chip__glyph">C</span>Open in Confluence

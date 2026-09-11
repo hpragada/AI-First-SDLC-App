@@ -145,8 +145,12 @@ def _reconcile_pull_request(tenant_id: str, payload: dict) -> dict:
 
     artifacts = _code_artifacts(tenant_id, number=number, repo=repo)
     if not artifacts:
+        # `Event.target_id` is a UUID column and a PR number is not one — passing `str(number)`
+        # here raised on save, so the one path that reports an unmatched PR crashed instead of
+        # reporting it. Same convention as the branch/commit events above: no target id, and the
+        # git identifier travels in the payload (#3).
         tools.log_event(tenant_id, "webhook", "webhook.pr_unmatched", "pull_request",
-                        str(number), {"repo": repo, "action": action})
+                        None, {"repo": repo, "action": action, "number": number})
         return {"reconciled": 0, "action": action, "number": number}
 
     work_items: list[str] = []
