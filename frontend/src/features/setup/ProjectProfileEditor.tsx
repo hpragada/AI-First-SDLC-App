@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
@@ -84,13 +84,25 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
     }
   }, [profile.data]);
 
-  const validationError = forceView === "validation" && !form.description;
+  // Set when Save was pressed with no description. The rule existed before — `onSave` began by
+  // refusing — but the message explaining it had only ever been wired into the design gallery
+  // (`forceView === "validation"`), so in the real app Save simply did nothing: no red field, no
+  // sentence, nothing saved, and every other edit on the page stuck with it. On a brand-new
+  // project, which lands here straight from Create Project, that also meant setup never
+  // continued.
+  const [saveAttempted, setSaveAttempted] = useState(false);
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
+  const missingDescription = !form.description.trim();
+  const validationError = forceView === "validation" || (saveAttempted && missingDescription);
   const view: ProfileView =
     forceView ?? (save.isPending ? "saving" : dirty ? "dirty" : "clean");
 
   const update = (key: keyof FormState) => (value: string) => {
     setForm((f) => ({ ...f, [key]: value }));
     setDirty(true);
+    // Typing into the field that was refused clears the refusal, rather than leaving a red box
+    // around text that now satisfies it.
+    if (key === "description" && value.trim()) setSaveAttempted(false);
   };
 
   const setPhaseTarget = (phase: string, value: string, defaultTarget: string) => {
@@ -104,7 +116,12 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
   };
 
   const onSave = async () => {
-    if (!form.description) return; // validation state
+    if (missingDescription) {
+      // Say what is wrong and put the cursor where it is fixed, instead of stopping in silence.
+      setSaveAttempted(true);
+      descriptionRef.current?.focus();
+      return;
+    }
     await save.mutateAsync({
       description: form.description,
       domain: form.domain,
@@ -172,114 +189,115 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
           <div className="u-stack">
             <Field
               label="Description"
+              required
               error={validationError ? "A description is required — agents rely on it for every phase." : undefined}
             >
               <Textarea
+                ref={descriptionRef}
                 value={form.description}
                 onChange={(e) => update("description")(e.target.value)}
                 aria-invalid={validationError}
                 placeholder="What this project is and what it should achieve, e.g. A web app for individuals to log daily expenses and see where their money goes."
               />
             </Field>
-            {!validationError && (
-              <>
-                <Field label="Domain">
-                  <Input
-                    value={form.domain}
-                    onChange={(e) => update("domain")(e.target.value)}
-                    placeholder="e.g. Personal finance, Healthcare, E-commerce"
-                  />
-                </Field>
-                <Field label="Tech stack">
-                  <Textarea
-                    rows={6}
-                    placeholder={
-                      "One item per line, e.g.\nFrontend: TypeScript 5.x, Next.js 14\nBackend: Python 3.12, Django 5.x + DRF\nDatabase: PostgreSQL 16"
-                    }
-                    value={form.tech_stack}
-                    onChange={(e) => update("tech_stack")(e.target.value)}
-                  />
-                </Field>
-                <Field label="Coding standards">
-                  <Textarea
-                    value={form.coding_standards}
-                    onChange={(e) => update("coding_standards")(e.target.value)}
-                    placeholder={"e.g.\nPython: ruff + mypy strict, 100-char lines\nTypeScript: ESLint + Prettier, no any\nTests required for every change"}
-                  />
-                </Field>
-                <div className="grid grid--2">
-                  <Field label="NFRs">
-                    <Textarea
-                      value={form.nfrs}
-                      onChange={(e) => update("nfrs")(e.target.value)}
-                      placeholder={"e.g.\nAPI response < 300ms (P95)\n99.9% uptime\nWCAG 2.2 AA accessibility"}
-                    />
-                  </Field>
-                  <Field label="Constraints">
-                    <Textarea
-                      value={form.constraints}
-                      onChange={(e) => update("constraints")(e.target.value)}
-                      placeholder={"e.g.\nMust run on the free hosting tier\nNo third-party analytics\nLaunch by end of Q3"}
-                    />
-                  </Field>
-                </div>
-                <Field label="Glossary">
-                  <Textarea
-                    value={form.glossary}
-                    onChange={(e) => update("glossary")(e.target.value)}
-                    placeholder={"Project terms agents should know, e.g.\nMAU — monthly active users\nSoR — system of record"}
-                  />
-                </Field>
-                <Field label="Important context">
-                  <Textarea
-                    value={form.important_context}
-                    onChange={(e) => update("important_context")(e.target.value)}
-                    placeholder="Anything else every agent should keep in mind — key decisions already made, existing systems to integrate with, things to avoid."
-                  />
-                </Field>
-                <Field
-                  label="Export policy"
-                  help="Where each phase's artifacts may be exported by the user. Exports are always manual — gate approval never auto-publishes to external tools."
-                >
-                  <div className="u-stack" style={{ gap: "var(--space-2)" }}>
-                    {EXPORT_PHASES.map((p) => {
-                      const defaultTarget = policy.data?.defaults?.[p.key] ?? "internal";
-                      const override = overrides[p.key];
-                      const value = override ?? `default:${defaultTarget}`;
-                      // Clean, bracket-free label, e.g. "Default — Confluence".
-                      const defaultShort =
-                        TARGET_OPTIONS.find((t) => t.value === defaultTarget)?.short ?? "Internal only";
-                      return (
-                        <div className="u-row" key={p.key}>
-                          <span className="t-sm" style={{ minWidth: "160px" }}>{p.label}</span>
-                          <Select
-                            aria-label={`Export target for ${p.label}`}
-                            value={value}
-                            onChange={(e) => setPhaseTarget(p.key, e.target.value, defaultTarget)}
-                            style={{ maxWidth: "320px" }}
-                          >
-                            <option value={`default:${defaultTarget}`}>
-                              Default — {defaultShort}
-                            </option>
-                            {TARGET_OPTIONS.filter(
-                              (t) => !(p.key === "ux_design" && t.value !== "internal"),
-                            ).map((t) => (
-                              <option key={t.value} value={t.value}>
-                                {t.label}
-                              </option>
-                            ))}
-                          </Select>
-                          {p.key === "ux_design" && (
-                            <span className="t-xs u-muted">Figma export coming later</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </Field>
-                {view === "dirty" && <p className="field__help">Saving will create v{savedVersion + 1}.</p>}
-              </>
-            )}
+            {/* Every other field stays on screen while the description is being asked for. The
+                refusal hid them all, so a user who had typed a tech stack watched it disappear
+                and had no way to tell whether it had been kept. */}
+            <Field label="Domain">
+              <Input
+                value={form.domain}
+                onChange={(e) => update("domain")(e.target.value)}
+                placeholder="e.g. Personal finance, Healthcare, E-commerce"
+              />
+            </Field>
+            <Field label="Tech stack">
+              <Textarea
+                rows={6}
+                placeholder={
+                  "One item per line, e.g.\nFrontend: TypeScript 5.x, Next.js 14\nBackend: Python 3.12, Django 5.x + DRF\nDatabase: PostgreSQL 16"
+                }
+                value={form.tech_stack}
+                onChange={(e) => update("tech_stack")(e.target.value)}
+              />
+            </Field>
+            <Field label="Coding standards">
+              <Textarea
+                value={form.coding_standards}
+                onChange={(e) => update("coding_standards")(e.target.value)}
+                placeholder={"e.g.\nPython: ruff + mypy strict, 100-char lines\nTypeScript: ESLint + Prettier, no any\nTests required for every change"}
+              />
+            </Field>
+            <div className="grid grid--2">
+              <Field label="NFRs">
+                <Textarea
+                  value={form.nfrs}
+                  onChange={(e) => update("nfrs")(e.target.value)}
+                  placeholder={"e.g.\nAPI response < 300ms (P95)\n99.9% uptime\nWCAG 2.2 AA accessibility"}
+                />
+              </Field>
+              <Field label="Constraints">
+                <Textarea
+                  value={form.constraints}
+                  onChange={(e) => update("constraints")(e.target.value)}
+                  placeholder={"e.g.\nMust run on the free hosting tier\nNo third-party analytics\nLaunch by end of Q3"}
+                />
+              </Field>
+            </div>
+            <Field label="Glossary">
+              <Textarea
+                value={form.glossary}
+                onChange={(e) => update("glossary")(e.target.value)}
+                placeholder={"Project terms agents should know, e.g.\nMAU — monthly active users\nSoR — system of record"}
+              />
+            </Field>
+            <Field label="Important context">
+              <Textarea
+                value={form.important_context}
+                onChange={(e) => update("important_context")(e.target.value)}
+                placeholder="Anything else every agent should keep in mind — key decisions already made, existing systems to integrate with, things to avoid."
+              />
+            </Field>
+            <Field
+              label="Export policy"
+              help="Where each phase's artifacts may be exported by the user. Exports are always manual — gate approval never auto-publishes to external tools."
+            >
+              <div className="u-stack" style={{ gap: "var(--space-2)" }}>
+                {EXPORT_PHASES.map((p) => {
+                  const defaultTarget = policy.data?.defaults?.[p.key] ?? "internal";
+                  const override = overrides[p.key];
+                  const value = override ?? `default:${defaultTarget}`;
+                  // Clean, bracket-free label, e.g. "Default — Confluence".
+                  const defaultShort =
+                    TARGET_OPTIONS.find((t) => t.value === defaultTarget)?.short ?? "Internal only";
+                  return (
+                    <div className="u-row" key={p.key}>
+                      <span className="t-sm" style={{ minWidth: "160px" }}>{p.label}</span>
+                      <Select
+                        aria-label={`Export target for ${p.label}`}
+                        value={value}
+                        onChange={(e) => setPhaseTarget(p.key, e.target.value, defaultTarget)}
+                        style={{ maxWidth: "320px" }}
+                      >
+                        <option value={`default:${defaultTarget}`}>
+                          Default — {defaultShort}
+                        </option>
+                        {TARGET_OPTIONS.filter(
+                          (t) => !(p.key === "ux_design" && t.value !== "internal"),
+                        ).map((t) => (
+                          <option key={t.value} value={t.value}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </Select>
+                      {p.key === "ux_design" && (
+                        <span className="t-xs u-muted">Figma export coming later</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </Field>
+            {view === "dirty" && <p className="field__help">Saving will create v{savedVersion + 1}.</p>}
           </div>
         )}
       </Panel>

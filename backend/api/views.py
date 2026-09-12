@@ -1112,14 +1112,32 @@ class ProjectViewSet(
         each node carrying its SoR pointer/url so the UI can deep-link to the live
         Confluence page / Jira issue. The requirement→PRD→epic→story chain walks these."""
         project = self.get_object()
-        artifacts = Artifact.objects.filter(tenant_id=self.tenant_id, project=project)
+        # `run__work_item` so every node can say WHICH WORK ITEM it belongs to (P3). The map's
+        # own question — "what came out of this piece of work" — could not be asked of it before:
+        # a node carried its phase, type and status but nothing tying it to a work item, so the
+        # screen had no way to follow one item's chain. The link already exists on every record
+        # (an artifact names the run that produced it, and a run always has a work item); this
+        # follows it in the same query instead of adding one per node.
+        #
+        # `run` is nullable, and that is not a fault: documents adopted during brownfield
+        # onboarding were never produced by a run, so they genuinely belong to no work item.
+        # They report empty values here, and the screen offers "Not tied to a work item" for
+        # them rather than leaving them unreachable by the filter.
+        artifacts = (
+            Artifact.objects.filter(tenant_id=self.tenant_id, project=project)
+            .select_related("run__work_item")
+        )
         nodes = []
         for a in artifacts:
             ext = a.external_ref or {}
+            work_item = a.run.work_item if a.run_id else None
             nodes.append({
                 "id": str(a.id), "kind": "artifact", "phase": a.phase, "type": a.type,
                 "title": a.title, "status": a.status, "sor": a.sor,
                 "external_ref": ext or None, "url": ext.get("url"),
+                "work_item": str(work_item.id) if work_item else None,
+                "work_item_key": (work_item.key or "") if work_item else "",
+                "work_item_title": (work_item.title or "") if work_item else "",
             })
         edges = TraceEdge.objects.filter(
             tenant_id=self.tenant_id, from_artifact__project=project
@@ -1352,7 +1370,9 @@ class ProjectViewSet(
             pending_gates_q.select_related("work_item").order_by("created_at")[:20])
         pending_clarifications = list(
             pending_clarifications_q.select_related("work_item").order_by("created_at")[:20])
-        my_runs = list(my_runs_q.select_related("agent_spec")[:10])
+        # `work_item` as well as `agent_spec`: every row below now names its work item the way
+        # the rest of the product does (P2), and the gates/questions lists above already load it.
+        my_runs = list(my_runs_q.select_related("agent_spec", "work_item")[:10])
 
         # Filtered on when it was PUBLISHED, not when it was drafted (Bugs S.No 224). Drafting
         # and publishing are separated by a review gate, so they are routinely days apart: on
@@ -1365,6 +1385,12 @@ class ProjectViewSet(
             ).order_by("-published_at")[:5]
         )
 
+        # Every row carries its work item's NUMBER and TITLE, not only the internal id (P2). The
+        # queue is the first thing a client reads each morning, and it used to name each item by
+        # eight characters of a UUID — a string that matches nothing they can search for, quote or
+        # recognise, and which the same row sometimes printed twice. The work item is already
+        # loaded beside each row (`select_related` above), so this passes on what is in hand
+        # rather than asking the database again.
         return Response({
             "needs_me": {
                 "gates": [
@@ -1372,6 +1398,8 @@ class ProjectViewSet(
                         "approval_id": str(a.id),
                         "gate": a.gate_type,
                         "work_item": str(a.work_item_id),
+                        "work_item_key": a.work_item.key or "",
+                        "work_item_title": a.work_item.title or "",
                         "role": a.required_role,
                     }
                     for a in pending_gates
@@ -1380,6 +1408,8 @@ class ProjectViewSet(
                     {
                         "id": str(c.id),
                         "work_item": str(c.work_item_id),
+                        "work_item_key": c.work_item.key or "",
+                        "work_item_title": c.work_item.title or "",
                         "question": (c.questions[0]["text"] if c.questions else ""),
                         "waiting_s": int((timezone.now() - c.created_at).total_seconds()),
                     }
@@ -1390,7 +1420,12 @@ class ProjectViewSet(
                         "run_id": str(r.id),
                         "phase": r.agent_spec.key if r.agent_spec_id else "",
                         "work_item": str(r.work_item_id),
+                        "work_item_key": r.work_item.key or "",
+                        "work_item_title": r.work_item.title or "",
                         "status": r.status,
+                        # How long it has been going, so the row can say that instead of
+                        # reprinting an id nobody can read.
+                        "started_s": int((timezone.now() - r.created_at).total_seconds()),
                     }
                     for r in my_runs
                 ],
@@ -1880,6 +1915,8 @@ class WorkItemViewSet(
         """P4.8-T1 bucket-B gap B: artifact_count/owner/needs the board + detail cards render,
         computed here rather than on the plain model serializer (they aren't columns). Keyed
         by str(id) throughout — serializer output carries string ids, model FK attributes UUIDs."""
+        from apps.gates.services import gate_roles_decidable_by
+
         ids = [w.id for w in work_items]
         counts = {
             str(row["id"]): row["artifact_count"]
@@ -1893,12 +1930,41 @@ class WorkItemViewSet(
                 tenant_id=self.tenant_id, work_item_id__in=ids, status="pending"
             ).values_list("work_item_id", flat=True)
         }
+        # The gate's REQUIRED ROLE travels with its type, so each card can say whether the
+        # person looking may decide it (S.No 117 follow-up). Without it the board called every
+        # pending gate "Waiting for you" — to a Designer looking at a build gate only a Tech Lead
+        # can approve, and at the same moment the dashboard told them nothing was waiting.
         needs_gate = {
-            str(a.work_item_id): a.gate_type
+            str(a.work_item_id): (a.gate_type, a.required_role)
             for a in Approval.objects.filter(
                 tenant_id=self.tenant_id, work_item_id__in=ids, decision="pending"
             )
         }
+        # Who is looking, and what they may act on. Both answers come from the platform's own
+        # rules — `gate_roles_decidable_by`, which `decide_gate` enforces with, and project
+        # membership, which is exactly what `answer_clarification` checks — so the board, the
+        # dashboard and the Approve/Answer buttons can never disagree. Resolved once per project
+        # on the board (normally one), never per card.
+        viewer = current_user(getattr(self, "request", None))
+        decidable_cache: dict[str, frozenset[str] | None] = {}
+        member_cache: dict[str, bool] = {}
+
+        def _may_decide(project_id: str, required_role: str) -> bool:
+            if viewer is None:
+                return False
+            if project_id not in decidable_cache:
+                decidable_cache[project_id] = gate_roles_decidable_by(
+                    tenant_id=self.tenant_id, user_id=viewer.id, project_id=project_id)
+            roles = decidable_cache[project_id]
+            return roles is None or required_role in roles
+
+        def _may_answer(project_id: str) -> bool:
+            if viewer is None:
+                return False
+            if project_id not in member_cache:
+                member_cache[project_id] = Membership.objects.filter(
+                    tenant_id=self.tenant_id, user_id=viewer.id, project_id=project_id).exists()
+            return member_cache[project_id]
         # The item's CURRENT lifecycle phase = its latest run's agent phase (Bugs.xlsx
         # rows 49/50: the board/list showed the feature stream as "Phase"). One query,
         # newest run per work item.
@@ -1912,7 +1978,11 @@ class WorkItemViewSet(
         for r in (
             Run.objects.filter(tenant_id=self.tenant_id, work_item_id__in=ids)
             .select_related("agent_spec")
-            .order_by("work_item_id", "-created_at")
+            # `-id` is a tie-break, not a claim about recency: two runs created inside the same
+            # clock tick (a double trigger, or a coarse system clock) otherwise left "the latest
+            # run" undefined, so the card could take either run's phase and status from one page
+            # load to the next. Arbitrary but stable beats arbitrary and changing.
+            .order_by("work_item_id", "-created_at", "-id")
             .distinct("work_item_id")
         ):
             spec = r.agent_spec
@@ -1923,10 +1993,14 @@ class WorkItemViewSet(
         out = {}
         for w in work_items:
             wid = str(w.id)
+            project_id = str(w.project_id)
             if wid in needs_clarification:
-                needs = {"clarification": True, "label": "Needs answer"}
+                needs = {"clarification": True, "label": "Needs answer",
+                         "yours": _may_answer(project_id)}
             elif wid in needs_gate:
-                needs = {"gate": True, "label": humanize_gate(needs_gate[wid])}
+                gate_type, required_role = needs_gate[wid]
+                needs = {"gate": True, "label": humanize_gate(gate_type),
+                         "yours": _may_decide(project_id, required_role)}
             else:
                 needs = None
             out[wid] = {

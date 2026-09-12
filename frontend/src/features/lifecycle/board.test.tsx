@@ -12,6 +12,13 @@
  * The team chose option B: a Backlog column, and a status pill on each card saying what its phase
  * is doing — Running · Waiting for you · Done · Failed (four, because a phase that has finished
  * but waits for a person is not "Done").
+ *
+ * The follow-up the team then chose (option A): "Waiting for you" is a claim about the person
+ * READING the board, and the board never checked. It said that to everyone — so a Designer read it
+ * on a build gate only a Tech Lead can approve, while their own dashboard, which does check, said
+ * nothing was waiting. Each waiting card now carries `needs.yours`, decided by the same rule as
+ * the Approve and Answer buttons; work that is somebody else's still shows as waiting, in the
+ * quiet grey, because the FACT is true and only the claim about whose it was is not.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
@@ -37,7 +44,8 @@ const STORIES = [
   card({ id: "s2", key: "ST-101", title: "Discount codes", current_phase: "01_ideation",
          run_status: "running" }),
   card({ id: "s3", key: "ST-098", title: "Basket totals", current_phase: "02_requirements",
-         run_status: "awaiting_gate", needs: { gate: true, label: "Requirements gate" } }),
+         run_status: "awaiting_gate",
+         needs: { gate: true, label: "Requirements gate", yours: true } }),
   card({ id: "s4", key: "ST-093", title: "Gift vouchers", current_phase: "02_requirements",
          run_status: "failed" }),
   card({ id: "s5", key: "ST-090", title: "Address book", current_phase: "03_prd",
@@ -158,7 +166,53 @@ describe("what each card says (option B, a status pill)", () => {
     renderWithProviders(<WorkItemsBoard />);
 
     await waitFor(() => expect(screen.getByText("Awaiting sign-off")).toBeDefined());
-    expect(pillOn("Awaiting sign-off")).toBe("Waiting for you");
+    // The run is at a gate, but no pending approval reached this card, so there is nobody to
+    // name: it states the fact and claims nothing about whose it is.
+    expect(pillOn("Awaiting sign-off")).toBe("Waiting for approval");
+  });
+
+  it("says 'Waiting for you' only on a gate this person may actually decide", async () => {
+    stub([
+      card({ id: "m1", title: "Mine to approve", current_phase: "02_requirements",
+             run_status: "awaiting_gate",
+             needs: { gate: true, label: "Requirements gate", yours: true } }),
+      card({ id: "m2", title: "Someone else's gate", current_phase: "07_implementation",
+             run_status: "awaiting_gate",
+             needs: { gate: true, label: "Build gate", yours: false } }),
+    ]);
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Mine to approve")).toBeDefined());
+    expect(pillOn("Mine to approve")).toBe("Waiting for you");
+    // Still honestly waiting — just not on this person.
+    expect(pillOn("Someone else's gate")).toBe("Waiting for review");
+  });
+
+  it("does the same for a question: mine, or waiting for an answer", async () => {
+    stub([
+      card({ id: "q1", title: "Mine to answer", current_phase: "02_requirements",
+             run_status: "running",
+             needs: { clarification: true, label: "Needs answer", yours: true } }),
+      card({ id: "q2", title: "Not my project's question", current_phase: "02_requirements",
+             run_status: "running",
+             needs: { clarification: true, label: "Needs answer", yours: false } }),
+    ]);
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Mine to answer")).toBeDefined());
+    expect(pillOn("Mine to answer")).toBe("Waiting for you");
+    expect(pillOn("Not my project's question")).toBe("Waiting for an answer");
+  });
+
+  it("keeps the neutral wording when an older API sends no 'yours' at all", async () => {
+    stub([card({ id: "o1", title: "Older API gate", current_phase: "02_requirements",
+                 run_status: "awaiting_gate",
+                 needs: { gate: true, label: "Requirements gate" } })]);
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Older API gate")).toBeDefined());
+    // Unknown is not the same as yours: it must not guess in the flattering direction.
+    expect(pillOn("Older API gate")).toBe("Waiting for review");
   });
 
   it("keeps the work item's own badge when an older API sends no run status", async () => {

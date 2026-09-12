@@ -4,6 +4,8 @@ data: `PATCH /api/work-items/{id}/` (title/description/type only, S-15/S-16 "Edi
 `artifact_count`/`owner`/`needs` card fields the board/detail screens render — none of which
 the `WorkItemViewSet` actually served despite the frontend already sending/expecting them.
 """
+from datetime import UTC, datetime
+
 import pytest
 from rest_framework.test import APIClient
 
@@ -58,8 +60,21 @@ def _agent_spec(tenant, key="04_architecture"):
     return AgentSpec.objects.create(tenant=tenant, key=key, body_ref=f"agents/{key}.md")
 
 
-def _run(tenant, work_item, agent_spec):
-    return Run.objects.create(tenant=tenant, work_item=work_item, agent_spec=agent_spec)
+def _run(tenant, work_item, agent_spec, **kwargs):
+    return Run.objects.create(
+        tenant=tenant, work_item=work_item, agent_spec=agent_spec, **kwargs)
+
+
+def _created_at(run, when):
+    """Stamp a run's creation time.
+
+    `created_at` is `auto_now_add`, so it cannot be passed to `create()` — and on a coarse system
+    clock two runs made back to back land on the SAME timestamp, which left "the item's latest
+    run" a coin toss and this file's phase assertions intermittently red. Saying when each run
+    happened is what makes these tests about recency rather than about luck.
+    """
+    Run.objects.filter(id=run.id).update(created_at=when)
+    return run
 
 
 def _list(client, tenant, project):
@@ -142,8 +157,8 @@ def test_current_phase_is_latest_runs_phase(client, tenant, project, dev, epic):
     phase (latest run's agent), not the feature stream; empty when nothing has run."""
     spec_arch = _agent_spec(tenant, "04_architecture")
     spec_prd = AgentSpec.objects.create(tenant=tenant, key="03_prd", body_ref="agents/03.md")
-    _run(tenant, epic, spec_prd)              # older
-    _run(tenant, epic, spec_arch)             # newest → current phase
+    _created_at(_run(tenant, epic, spec_prd), datetime(2026, 9, 1, tzinfo=UTC))    # older
+    _created_at(_run(tenant, epic, spec_arch), datetime(2026, 9, 2, tzinfo=UTC))   # newest
     fresh = WorkItem.objects.create(tenant=tenant, project=project, type="task", title="New")
     _login(client, "dev@acme.com", "dev-pass!")
 
@@ -159,10 +174,10 @@ def test_run_status_travels_with_the_current_phase(client, tenant, project, dev,
     the SAME run the phase does, so the two can never describe different runs."""
     spec_prd = AgentSpec.objects.create(tenant=tenant, key="03_prd", body_ref="agents/03.md")
     spec_arch = _agent_spec(tenant, "04_architecture")
-    Run.objects.create(tenant=tenant, work_item=epic, agent_spec=spec_prd,
-                       status=Run.Status.COMPLETED)                          # older
-    Run.objects.create(tenant=tenant, work_item=epic, agent_spec=spec_arch,
-                       status=Run.Status.FAILED)                             # newest
+    _created_at(_run(tenant, epic, spec_prd, status=Run.Status.COMPLETED),
+                datetime(2026, 9, 1, tzinfo=UTC))                            # older
+    _created_at(_run(tenant, epic, spec_arch, status=Run.Status.FAILED),
+                datetime(2026, 9, 2, tzinfo=UTC))                            # newest
     fresh = WorkItem.objects.create(tenant=tenant, project=project, type="task", title="New")
     _login(client, "dev@acme.com", "dev-pass!")
 
@@ -187,7 +202,9 @@ def test_needs_reflects_pending_clarification_over_gate(client, tenant, project,
     _login(client, "dev@acme.com", "dev-pass!")
     resp = _list(client, tenant, project)
     row = next(r for r in resp.data if r["id"] == str(epic.id))
-    assert row["needs"] == {"clarification": True, "label": "Needs answer"}
+    # `yours` is True because answering a question needs project membership and nothing more —
+    # exactly what `answer_clarification` checks. Dev is a member.
+    assert row["needs"] == {"clarification": True, "label": "Needs answer", "yours": True}
 
 
 def test_needs_reflects_pending_gate_when_no_clarification(client, tenant, project, dev, epic):
@@ -198,8 +215,58 @@ def test_needs_reflects_pending_gate_when_no_clarification(client, tenant, proje
     _login(client, "dev@acme.com", "dev-pass!")
     resp = _list(client, tenant, project)
     row = next(r for r in resp.data if r["id"] == str(epic.id))
-    # Humanised gate label (Bugs.xlsx rows 54-58): capitalised, single "gate".
-    assert row["needs"] == {"gate": True, "label": "Architecture gate"}
+    # Humanised gate label (Bugs.xlsx rows 54-58): capitalised, single "gate". `yours` is False:
+    # Dev is a tech lead, and this gate needs an architect — the board used to tell them it was
+    # "Waiting for you" and the Approve button then refused them.
+    assert row["needs"] == {"gate": True, "label": "Architecture gate", "yours": False}
+
+
+# ── who a waiting card is actually waiting on (S.No 117 follow-up) ──────────────
+def _pending_gate(tenant, project, epic, required_role):
+    spec = _agent_spec(tenant)
+    run = _run(tenant, epic, spec)
+    return Approval.objects.create(
+        tenant=tenant, run=run, work_item=epic, gate_type=required_role,
+        required_role=required_role, decision="pending",
+    )
+
+
+def test_gate_is_yours_when_you_hold_the_role_it_needs(client, tenant, project, dev, epic):
+    _pending_gate(tenant, project, epic, "tech_lead")
+    _login(client, "dev@acme.com", "dev-pass!")
+    row = next(r for r in _list(client, tenant, project).data if r["id"] == str(epic.id))
+    assert row["needs"]["yours"] is True
+
+
+def test_an_admin_may_decide_any_gate_so_every_gate_is_theirs(client, tenant, project, epic):
+    """The platform lets a project admin or a tenant admin decide any gate, so hiding those
+    behind the neutral wording would understate work that genuinely is theirs."""
+    boss = User.objects.create_user(
+        email="boss@acme.com", name="Boss", tenant=tenant, password="boss-pass!",
+        is_tenant_admin=True,
+    )
+    Membership.objects.create(tenant=tenant, user=boss, project=project, role="product_owner")
+    _pending_gate(tenant, project, epic, "security_engineer")
+    _login(client, "boss@acme.com", "boss-pass!")
+    row = next(r for r in _list(client, tenant, project).data if r["id"] == str(epic.id))
+    assert row["needs"]["yours"] is True
+
+
+def test_a_question_is_not_yours_without_membership(client, tenant, project, dev, epic):
+    """A tenant admin who is not on the project may not answer its questions — that function
+    has no admin fallback — so the card must not claim the question is theirs."""
+    spec = _agent_spec(tenant)
+    run = _run(tenant, epic, spec)
+    Clarification.objects.create(tenant=tenant, run=run, work_item=epic, phase="04_architecture",
+                                 status="pending", questions=[{"id": "q1", "text": "?"}])
+    outsider = User.objects.create_user(
+        email="outsider@acme.com", name="Outsider", tenant=tenant, password="out-pass!",
+        is_tenant_admin=True,
+    )
+    assert not Membership.objects.filter(user=outsider, project=project).exists()
+    _login(client, "outsider@acme.com", "out-pass!")
+    row = next(r for r in _list(client, tenant, project).data if r["id"] == str(epic.id))
+    assert row["needs"] == {"clarification": True, "label": "Needs answer", "yours": False}
 
 
 def test_needs_is_none_when_nothing_pending(client, tenant, project, dev, epic):

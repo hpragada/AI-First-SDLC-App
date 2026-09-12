@@ -24,6 +24,26 @@ function waitingOnYou(count: number): string {
   return count > 0 ? `${count} waiting on you` : "nothing waiting on you";
 }
 
+/** Names the work item a queue row is about, the way the rest of the product names it (P2).
+ *
+ * Every row here used to identify its work item by the first eight characters of an internal id
+ * — "Merge gate · 3f2a9c1b" — on the first screen a client reads each morning. That string
+ * matches nothing they can search for, quote in a meeting, or recognise anywhere else, and the
+ * run rows printed one twice. The number and title now travel with each row; an older API sends
+ * neither, and then the row simply carries no name rather than an unreadable one.
+ */
+function itemName(row: { work_item_key?: string; work_item_title?: string }): string {
+  return [row.work_item_key, row.work_item_title].filter(Boolean).join(" ") || "a work item";
+}
+
+/** "6m · " — how long a run has been going, in place of its own id. Under a minute reads as
+ *  "just started", because "0m" says nothing. */
+function runAge(run: { started_s?: number }): string {
+  if (run.started_s === undefined) return "";
+  const minutes = Math.floor(run.started_s / 60);
+  return minutes < 1 ? "just started · " : `started ${minutes}m ago · `;
+}
+
 // ── Live: the real needs-me rollup + health for the selected project ───────
 function DashboardLive() {
   const { selectedProject } = useAuth();
@@ -149,7 +169,7 @@ function DashboardLive() {
                   key={g.approval_id}
                   icon="▲"
                   type="gate"
-                  title={`${gateLabel(g.gate)} · ${g.work_item.slice(0, 8)}`}
+                  title={`${gateLabel(g.gate)} · ${itemName(g)}`}
                   meta={`required role: ${roleLabel(g.role)}`}
                   action={
                     // N2: the rollup already carries the approval id. "Review" beside a NAMED
@@ -166,7 +186,7 @@ function DashboardLive() {
                   key={c.id}
                   icon="?"
                   type="clar"
-                  title={`Question · ${c.work_item.slice(0, 8)}`}
+                  title={`Question · ${itemName(c)}`}
                   meta={`"${c.question}" · waiting ${Math.round(c.waiting_s / 60)}m`}
                   action={
                     // Same shape, and worse consequence: the question's own text is printed
@@ -182,8 +202,8 @@ function DashboardLive() {
                   key={r.run_id}
                   icon="▶"
                   type="run"
-                  title={`Run ${r.run_id.slice(0, 8)} · ${phaseLabel(r.phase)}`}
-                  meta={`${r.work_item.slice(0, 8)} · ${statusLabel(r.status)}`}
+                  title={`${phaseLabel(r.phase)} run · ${itemName(r)}`}
+                  meta={`${runAge(r)}${statusLabel(r.status)}`}
                   action={
                     <Link to={`/runs/${r.run_id}`} className="btn btn--ghost btn--sm">
                       View

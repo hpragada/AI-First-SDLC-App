@@ -69,6 +69,16 @@
 
 .btn:disabled, .btn[aria-disabled="true"] { cursor: not-allowed; }
 
+/* A control that reads as a link inside a sentence — it moves the reader within THIS page
+   (the roles warning pointing at the coverage box below it), so it is a button, not an anchor:
+   nothing is being navigated to. Inherits the sentence's size and line-height so the line it
+   sits in does not shift. */
+.btn-link {
+  padding: 0; border: 0; background: none; font: inherit; color: var(--info);
+  text-decoration: underline; cursor: pointer;
+}
+.btn-link:hover { color: var(--brand-navy-700); }
+
 /* ============================================================================
    3. Form fields
    ========================================================================== */
@@ -87,6 +97,12 @@
 .input::placeholder, .textarea::placeholder { color: var(--text-faint); }
 .input:focus, .select:focus, .textarea:focus { outline: none; border-color: var(--brand-orange); box-shadow: var(--focus-ring); }
 .textarea { resize: vertical; min-height: 88px; }
+/* A filter dropdown sizes itself to the choice it is showing.
+   `.select` is `width: 100%`, so every filter row had to cap each box with a fixed `max-width`
+   picked by eye — and the box then cut the chosen value with no ellipsis and no way to read it
+   ("Intelligent Context Extra…"). `width: auto` + `max-width: 100%` lets the box be as wide as
+   its text and no wider, and the rows that hold them already wrap on a narrow window. */
+.select--fit { width: auto; max-width: 100%; }
 .select { appearance: none; background-image:
   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%236B7385' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px;
@@ -118,6 +134,20 @@
    (`FloatingLayer`) and placed by `useFloatingPosition`, which writes top/left — and width or
    max-height when it needs to. A panel's `overflow: hidden` used to cut these off. */
 .popover-layer { position: fixed; top: 0; left: 0; z-index: var(--z-popover); }
+
+/* The cut-off label, opened out over the row that cut it (the work-item picker enhancement).
+   `max-content` so it is exactly as wide as its words, capped so a sentence-long title wraps
+   instead of running off the window — the cap is in `vw` as well as `px` because a narrow window
+   is the case that needs it. The orange edge and the deeper shadow say "this is the same row,
+   showing more", rather than a new menu. */
+.peek {
+  width: max-content; max-width: min(560px, 80vw);
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--bg-surface); border: 1px solid var(--brand-orange-300);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-strong);
+  white-space: normal; overflow-wrap: anywhere;
+}
 
 /* ChoiceSelect (Bugs S.No 184) — the clarification answer control. Borrows the .select frame and
    chevron so it sits exactly like the fields around it; unlike the browser's own dropdown, its

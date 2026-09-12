@@ -1,8 +1,9 @@
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import { EmptyState, ErrorState, GraphCanvas, Panel, Spinner } from "../../components/ui";
-import type { TraceGraph } from "../../types";
+import type { TraceGraph, TraceNode } from "../../types";
 import { phaseLabel, artifactLabel } from "../lifecycle/phases";
 import { ARTIFACT_STATUSES, artifactStatusColor, artifactStatusLabel } from "./artifactStatus";
 import { useTraceability } from "./hooks";
@@ -10,6 +11,10 @@ import { useTraceability } from "./hooks";
 // S-30 view states: small (default) · highlighted (WI-492 lineage) · large-cluster
 // · empty.
 export type TraceabilityViewState = "small" | "highlighted" | "large-cluster" | "empty";
+
+/** The Highlight choice for documents that belong to no work item (adopted in onboarding).
+ *  A UUID can never collide with it. */
+const UNTIED = "untied";
 
 // Node colours and the legend that explains them come from the shared status map (Bugs S.No 218).
 // This screen kept its own three-way copy that knew only "published" and a status nothing ever
@@ -37,6 +42,67 @@ function TraceabilityLive() {
   const projectId = selectedProject?.project_id;
   const graph = useTraceability(projectId);
 
+  // Filters this screen was drawn with and never given (P3). They existed only in the component
+  // gallery, wired to nothing and offering a work item invented during the build ("WI-492"); the
+  // real screen shipped with the legend alone. On a project with a few hundred documents that is
+  // a wall of boxes with no way in, and no way to answer the question the map exists for: what
+  // came out of THIS piece of work.
+  //
+  // Phase and type NARROW the map; a work item HIGHLIGHTS instead — its documents stay lit and
+  // everything else dims rather than disappearing, so the chain is readable without losing the
+  // surrounding shape. Options are the values actually present, the same rule the Artifacts
+  // screen follows, so a filter can never offer something that matches nothing.
+  const [phase, setPhase] = useState("");
+  const [type, setType] = useState("");
+  const [highlight, setHighlight] = useState("");
+  const nodes = graph.data?.nodes ?? [];
+
+  const phaseOptions = useMemo(
+    () => [...new Set(nodes.map((n) => n.phase))].filter(Boolean).sort(), [nodes]);
+  const typeOptions = useMemo(
+    () => [...new Set(nodes.map((n) => n.type))].filter(Boolean).sort(), [nodes]);
+  // One entry per work item on the map, plus — when the project has any — the documents that
+  // belong to no work item at all. Those are the ones adopted during brownfield onboarding: no
+  // run produced them, so they have no work item, and leaving them out of the list would make
+  // them the one group the filter could never reach.
+  const workItemOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    let untied = false;
+    for (const n of nodes) {
+      if (n.work_item) {
+        byId.set(n.work_item, [n.work_item_key, n.work_item_title].filter(Boolean).join(" ")
+          || "Untitled work item");
+      } else {
+        untied = true;
+      }
+    }
+    const list = [...byId].map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    if (untied) list.push({ value: UNTIED, label: "Not tied to a work item" });
+    return list;
+  }, [nodes]);
+
+  const shown = useMemo(
+    () => nodes.filter((n) => (!phase || n.phase === phase) && (!type || n.type === type)),
+    [nodes, phase, type],
+  );
+  // Dimmed, not hidden: the answer to "what belongs to this work item" is clearer when the rest
+  // of the map is still in view behind it.
+  const dimmed = useMemo(() => {
+    if (!highlight) return undefined;
+    const lit = (n: TraceNode) =>
+      highlight === UNTIED ? !n.work_item : n.work_item === highlight;
+    return new Set(shown.filter((n) => !lit(n)).map((n) => n.id));
+  }, [shown, highlight]);
+
+  const filtered: TraceGraph = useMemo(() => {
+    const ids = new Set(shown.map((n) => n.id));
+    return {
+      nodes: shown,
+      edges: (graph.data?.edges ?? []).filter((e) => ids.has(e.from) && ids.has(e.to)),
+    };
+  }, [shown, graph.data]);
+
   return (
     <div className="canvas-pad">
       <div className="page-head">
@@ -50,6 +116,46 @@ function TraceabilityLive() {
       </div>
 
       <div className="u-row u-wrap" style={{ marginBottom: "var(--space-4)" }}>
+        <select
+          className="select select--fit"
+          aria-label="Filter by phase"
+          value={phase}
+          onChange={(e) => setPhase(e.target.value)}
+        >
+          <option value="">Phase: All</option>
+          {phaseOptions.map((p) => (
+            <option key={p} value={p}>{phaseLabel(p)}</option>
+          ))}
+        </select>
+        <select
+          className="select select--fit"
+          aria-label="Filter by type"
+          value={type}
+          onChange={(e) => setType(e.target.value)}
+        >
+          <option value="">Type: All</option>
+          {typeOptions.map((t) => (
+            <option key={t} value={t}>{phaseLabel(t)}</option>
+          ))}
+        </select>
+        <select
+          className="select select--fit"
+          aria-label="Highlight work item"
+          value={highlight}
+          onChange={(e) => setHighlight(e.target.value)}
+        >
+          <option value="">Highlight: none</option>
+          {workItemOptions.map((w) => (
+            <option key={w.value} value={w.value}>{w.label}</option>
+          ))}
+        </select>
+        {/* The number is the honest part of a filtered view: a map showing 12 of 340 documents
+            looks much like a small project unless it says so. */}
+        {(phase || type) && nodes.length > 0 && (
+          <span className="t-sm u-muted">
+            {shown.length} of {nodes.length} shown
+          </span>
+        )}
         <span className="u-spacer" />
         {LEGEND}
       </div>
@@ -76,14 +182,23 @@ function TraceabilityLive() {
             text="Once phases produce artifacts and tasks, their relationships render here as a graph."
           />
         </Panel>
+      ) : filtered.nodes.length === 0 ? (
+        // The project HAS lineage; this filter matched none of it. Saying "no lineage yet" here
+        // would be the same untruth the Artifacts screen was fixed for.
+        <Panel>
+          <EmptyState
+            title="Nothing matches these filters"
+            text="Clear the phase or type filter to see the whole map."
+          />
+        </Panel>
       ) : (
-        <LineageGraph graph={graph.data} />
+        <LineageGraph graph={filtered} dimmed={dimmed} />
       )}
     </div>
   );
 }
 
-function LineageGraph({ graph }: { graph: TraceGraph }) {
+function LineageGraph({ graph, dimmed }: { graph: TraceGraph; dimmed?: Set<string> }) {
   const navigate = useNavigate();
   const cols = 4;
   const boxW = 150;
@@ -139,7 +254,9 @@ function LineageGraph({ graph }: { graph: TraceGraph }) {
               <g
                 key={n.id}
                 transform={`translate(${pos.x},${pos.y})`}
-                style={{ cursor: "pointer" }}
+                // Outside the highlighted work item's chain: still there, still clickable, just
+                // quiet.
+                style={{ cursor: "pointer", opacity: dimmed?.has(n.id) ? 0.28 : 1 }}
                 role="button"
                 tabIndex={0}
                 onClick={go}
@@ -177,17 +294,11 @@ function TraceabilityGallery({ view }: { view: TraceabilityViewState }) {
         </div>
       </div>
 
+      {/* The three dropdowns that used to sit here are gone. They were wired to nothing, and one
+          offered "Highlight: WI-492 lineage" — a work item invented during the build, which
+          exists in no project. The live screen above has the real filters; a gallery state is
+          for showing the map's own states, not for pretending controls work. */}
       <div className="u-row u-wrap" style={{ marginBottom: "var(--space-4)" }}>
-        <select className="select" style={{ maxWidth: "170px" }} aria-label="Filter by phase">
-          <option>Phase: All</option>
-        </select>
-        <select className="select" style={{ maxWidth: "150px" }} aria-label="Filter by type">
-          <option>Type: All</option>
-        </select>
-        <select className="select" style={{ maxWidth: "200px" }} aria-label="Highlight work item">
-          <option>Highlight: WI-492 lineage</option>
-          <option>None</option>
-        </select>
         <span className="u-spacer" />
         {LEGEND}
       </div>

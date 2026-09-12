@@ -98,8 +98,14 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
   };
 
   const activeWorkItem = workItems.data?.find((wi) => wi.id === activeWorkItemId);
+  // One name for one work item, everywhere on this screen (P1). The picker called it "WI-159",
+  // this line called the same item "3f2a9c1b" — eight characters of an internal id that appears
+  // nowhere else a user can see — and the Runs panel called it neither, showing the bare title.
+  // An item with no number falls back to its title, never to the id.
+  const workItemName = (wi: { key?: string; title?: string; type?: string }) =>
+    [wi.key, wi.title || wi.type].filter(Boolean).join(" · ");
   const workItemLabel = activeWorkItem
-    ? `${activeWorkItem.id.slice(0, 8)} · ${activeWorkItem.title || activeWorkItem.type}`
+    ? workItemName(activeWorkItem)
     : "No work item selected";
 
   return (
@@ -222,7 +228,7 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
         actions={
           view === "offline" ? undefined : (
             <span className="t-sm u-muted">
-              {forceView ? "WI-492" : (activeWorkItem?.title ?? activeWorkItemId?.slice(0, 8) ?? "—")}
+              {forceView ? "WI-492" : (activeWorkItem ? workItemName(activeWorkItem) : "—")}
             </span>
           )
         }

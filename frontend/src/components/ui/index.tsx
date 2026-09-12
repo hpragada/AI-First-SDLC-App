@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type {
   ButtonHTMLAttributes,
   CSSProperties,
@@ -103,13 +103,23 @@ export function useFloatingPosition(
   open: boolean,
   anchor: RefObject<HTMLElement | null>,
   floating: RefObject<HTMLElement | null>,
-  { align = "start", matchWidth = false, preferAbove = false, gap = 4 }: {
+  { align = "start", matchWidth = false, preferAbove = false, gap = 4, overlay = false }: {
     /** Which edge of the trigger the popup lines up with: menus hang from the right. */
     align?: "start" | "end" | "center";
     /** Same width as the trigger — a dropdown list under its field. */
     matchWidth?: boolean;
     preferAbove?: boolean;
     gap?: number;
+    /**
+     * Draw the popup OVER the trigger rather than beside it, growing rightwards and downwards
+     * from the trigger's own corner and never narrower than it.
+     *
+     * This is how a cut-off row shows the rest of its text: the row appears to open out where it
+     * already is, so the eye does not have to travel and the list underneath does not reflow.
+     * `align`, `gap` and `preferAbove` do not apply — the trigger's top-left IS the position,
+     * clamped so the popup stays on screen.
+     */
+    overlay?: boolean;
   } = {},
 ) {
   const place = useCallback(() => {
@@ -118,6 +128,17 @@ export function useFloatingPosition(
     if (!trigger || !popup) return;
     const box = trigger.getBoundingClientRect();
     const margin = 8;
+    if (overlay) {
+      popup.style.minWidth = `${box.width}px`;
+      const width = popup.offsetWidth;
+      const height = popup.offsetHeight;
+      const room = (space: number, size: number) => Math.max(margin, space - size - margin);
+      popup.style.top =
+        `${Math.min(Math.max(box.top, margin), room(window.innerHeight, height))}px`;
+      popup.style.left =
+        `${Math.min(Math.max(box.left, margin), room(window.innerWidth, width))}px`;
+      return;
+    }
     if (matchWidth) popup.style.width = `${box.width}px`;
     popup.style.maxHeight = "";               // measure at its natural (CSS-capped) height
     const height = popup.offsetHeight;
@@ -138,7 +159,7 @@ export function useFloatingPosition(
     const furthest = Math.max(margin, window.innerWidth - width - margin);
     popup.style.left = `${Math.min(Math.max(wanted, margin), furthest)}px`;
     popup.dataset.side = up ? "above" : "below";
-  }, [anchor, floating, align, matchWidth, preferAbove, gap]);
+  }, [anchor, floating, align, matchWidth, preferAbove, gap, overlay]);
 
   useLayoutEffect(() => {
     if (open) place();
@@ -167,6 +188,43 @@ export function closeOnTab(close: () => void, trigger: RefObject<HTMLElement | n
     trigger.current?.focus();
     close();
   };
+}
+
+/** True when an element is showing less text than it holds — i.e. the CSS cut it off. */
+export function isCut(el: HTMLElement | null | undefined): boolean {
+  return !!el && el.scrollWidth > el.clientWidth + 1;
+}
+
+/** Shows a cut-off label in full, drawn over the thing that cut it.
+ *
+ * A dropdown row is one line as wide as its field, so a long label is cut with an ellipsis and
+ * the rest is simply unreachable — no hover, no wrap. That is fine for the platform's own short
+ * choices and wrong for work items, whose titles agents write from findings: they are long, and
+ * the words that tell two of them apart are at the END ("ExpenseResponse missing created_at" vs
+ * "ExpenseResponse missing currency"). Picking the wrong one starts a phase run on the wrong work
+ * item.
+ *
+ * It opens only when the label is ACTUALLY cut, so short labels behave exactly as before, and it
+ * follows the arrow keys as well as the pointer — a keyboard user cannot hover. `aria-hidden`
+ * because nothing here is new to a screen reader: the full text is already the row's accessible
+ * name, only visually clipped, so announcing it again would just repeat it.
+ */
+function TruncationPeek({ text, element }: { text: string; element: HTMLElement | null }) {
+  // A plain box holding the current anchor, written during render: `useFloatingPosition` reads it
+  // in a layout effect, after this render has committed.
+  const anchor = useRef<HTMLElement | null>(null);
+  anchor.current = element;
+  const peek = useRef<HTMLDivElement>(null);
+  const open = Boolean(element && text);
+  useFloatingPosition(open, anchor, peek, { overlay: true });
+  if (!open) return null;
+  return (
+    <FloatingLayer>
+      <div ref={peek} className="popover-layer peek" aria-hidden="true">
+        {text}
+      </div>
+    </FloatingLayer>
+  );
 }
 
 export type RowMenuItem =
@@ -348,9 +406,13 @@ export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...props} className={cx("select", props.className)} />;
 }
 
-export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea {...props} className={cx("textarea", props.className)} />;
-}
+/** Forwards its ref, so a screen that refuses a save can put the cursor in the field it is
+ *  asking about (the project profile's description). */
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
+  function Textarea(props, ref) {
+    return <textarea {...props} ref={ref} className={cx("textarea", props.className)} />;
+  },
+);
 
 export type ComboboxOption = { value: string; label: string };
 
@@ -386,6 +448,19 @@ export function Combobox({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const selected = options.find((o) => o.value === value) ?? null;
+  // The row (or the closed field) whose full text is being shown, and that text.
+  const [peekEl, setPeekEl] = useState<HTMLElement | null>(null);
+  const [peekText, setPeekText] = useState("");
+  const rowEls = useRef(new Map<number, HTMLLIElement>());
+  const hidePeek = () => setPeekEl(null);
+  const peekAt = (el: HTMLElement | null | undefined, text: string) => {
+    if (el && isCut(el)) {
+      setPeekEl(el);
+      setPeekText(text);
+    } else {
+      setPeekEl(null);
+    }
+  };
 
   // While closed the box shows the current selection; typing filters the list.
   const text = open ? query : selected?.label ?? "";
@@ -399,6 +474,7 @@ export function Combobox({
   const close = useCallback(() => {
     setOpen(false);
     setQuery("");
+    setPeekEl(null);
   }, []);
   useDismissable(open, close, rootRef, undefined, listRef);
   useFloatingPosition(open, inputRef, listRef, { matchWidth: true });
@@ -407,6 +483,7 @@ export function Combobox({
     onChange(option.value);
     setOpen(false);
     setQuery("");
+    setPeekEl(null);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -418,7 +495,11 @@ export function Combobox({
         return;
       }
       const step = e.key === "ArrowDown" ? 1 : -1;
-      setActive((i) => (matches.length ? (i + step + matches.length) % matches.length : 0));
+      const next = matches.length ? (active + step + matches.length) % matches.length : 0;
+      setActive(next);
+      // The highlight is the keyboard's pointer, so the full title follows it the same way it
+      // follows the mouse. The row is already on the page, so it can be measured now.
+      peekAt(rowEls.current.get(next), matches[next]?.label ?? "");
     } else if (e.key === "Enter") {
       if (open && matches[active]) {
         e.preventDefault();
@@ -427,6 +508,7 @@ export function Combobox({
     } else if (e.key === "Escape") {
       setOpen(false);
       setQuery("");
+      setPeekEl(null);
     }
   };
 
@@ -448,11 +530,19 @@ export function Combobox({
           setQuery(e.target.value);
           setActive(0);
           setOpen(true);
+          setPeekEl(null);        // the rows under it have just changed
         }}
         onFocus={() => {
           setOpen(true);
           setQuery("");
+          setPeekEl(null);
         }}
+        // Closed and showing a chosen title too long for the field: hovering the field shows it
+        // in full, the same way a row does.
+        onMouseEnter={(e) => {
+          if (!open && selected) peekAt(e.currentTarget, selected.label);
+        }}
+        onMouseLeave={hidePeek}
         onKeyDown={onKeyDown}
       />
       {open && (
@@ -462,6 +552,7 @@ export function Combobox({
             className="popover-layer combobox__list"
             role="listbox"
             id={id ? `${id}-listbox` : undefined}
+            onMouseLeave={hidePeek}
           >
             {matches.length === 0 ? (
               <li className="combobox__empty">{emptyText}</li>
@@ -471,12 +562,19 @@ export function Combobox({
                   key={o.value}
                   role="option"
                   aria-selected={o.value === value}
+                  ref={(el) => {
+                    if (el) rowEls.current.set(i, el);
+                    else rowEls.current.delete(i);
+                  }}
                   className={cx(
                     "combobox__option",
                     i === active && "combobox__option--active",
                     o.value === value && "combobox__option--selected",
                   )}
-                  onMouseEnter={() => setActive(i)}
+                  onMouseEnter={(e) => {
+                    setActive(i);
+                    peekAt(e.currentTarget, o.label);
+                  }}
                   // mousedown (not click): the input's blur would close the list first.
                   onMouseDown={(e) => {
                     e.preventDefault();
@@ -490,6 +588,8 @@ export function Combobox({
           </ul>
         </FloatingLayer>
       )}
+      {/* Outside the list, because the closed field can be cut off too. */}
+      <TruncationPeek text={peekText} element={peekEl} />
     </div>
   );
 }

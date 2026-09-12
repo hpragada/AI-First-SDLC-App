@@ -93,15 +93,29 @@ function phasePill(card: WorkItemCard) {
   // Cancelled outranks everything, for the reason `statusBadge` gives.
   if (card.state === "cancelled") return <Badge variant="cancelled">Cancelled</Badge>;
   if (!card.current_phase) return <Badge variant="queued">Not started</Badge>;
-  if (card.needs?.gate || card.needs?.clarification) {
-    return <Badge variant="gate">Waiting for you</Badge>;
+  // "Waiting for you" only when it really is yours (`needs.yours`, decided by the same rule as
+  // the Approve and Answer buttons). It used to say that to everyone, so a Designer read it on a
+  // build gate only a Tech Lead can decide — while their dashboard, which does ask, said nothing
+  // was waiting. Work that is someone else's still shows as waiting, in the quiet grey: the fact
+  // is true, the claim about WHO was not.
+  if (card.needs?.clarification) {
+    return card.needs.yours
+      ? <Badge variant="needs-answer">Waiting for you</Badge>
+      : <Badge variant="neutral">Waiting for an answer</Badge>;
+  }
+  if (card.needs?.gate) {
+    return card.needs.yours
+      ? <Badge variant="gate">Waiting for you</Badge>
+      : <Badge variant="neutral">Waiting for review</Badge>;
   }
   switch (card.run_status) {
     case "pending":
     case "running":
       return <Badge variant="running">Running</Badge>;
     case "awaiting_gate":
-      return <Badge variant="gate">Waiting for you</Badge>;
+      // The run says it is at a gate but no pending approval reached this card, so there is
+      // nobody to name: state the fact and claim nothing about whose it is.
+      return <Badge variant="neutral">Waiting for approval</Badge>;
     case "approved":
     case "completed":
       return <Badge variant="done">Done</Badge>;
@@ -370,9 +384,10 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          {/* Sized to the longest phase name rather than capped by eye: "Intelligent Context
+              Extraction" used to be cut in the closed box with no way to read it. */}
           <select
-            className="select"
-            style={{ maxWidth: "150px" }}
+            className="select select--fit"
             aria-label="Filter by phase"
             value={phaseFilter}
             onChange={(e) => setPhaseFilter(e.target.value)}
@@ -397,8 +412,7 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
             ))}
           </span>
           <select
-            className="select"
-            style={{ maxWidth: "160px" }}
+            className="select select--fit"
             aria-label="Filter by role"
             value={roleFilter}
             onChange={(e) => setRoleFilter(e.target.value)}
@@ -411,8 +425,7 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
             ))}
           </select>
           <select
-            className="select"
-            style={{ maxWidth: "150px" }}
+            className="select select--fit"
             aria-label="Filter by status"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}

@@ -198,3 +198,33 @@ def test_the_queue_is_worked_oldest_first(world):
     later = world["gate"]("qa_lead")
     ids = [g["approval_id"] for g in _needs(world, "qa")["gates"]]
     assert ids == [str(world["qa_gate"].id), str(later.id)]
+
+
+# ── what each row CALLS its work item (P2) ───────────────────────────
+# Every row named its work item by the first eight characters of an internal id — "Merge gate ·
+# 3f2a9c1b" — on the first screen a client reads each morning. That string matches nothing they
+# can search for, quote in a meeting, or recognise anywhere else in the product, and the run rows
+# printed one twice. The number and title now travel with each row.
+def test_every_row_carries_its_work_items_number_and_title(world):
+    Run.objects.create(tenant=world["t"], work_item=world["wi"], agent_spec=world["spec"],
+                       status=Run.Status.RUNNING, triggered_by=world["qa"])
+    needs = _needs(world, "qa")
+    wi = world["wi"]
+    assert wi.key == "WI-1" and wi.title == "Basket totals"
+
+    rows = needs["gates"] + needs["clarifications"] + needs["my_runs"]
+    assert len(rows) == 3
+    for row in rows:
+        assert row["work_item_key"] == wi.key
+        assert row["work_item_title"] == wi.title
+        # The id is still there for links; it is simply no longer what the row is CALLED.
+        assert row["work_item"] == str(wi.id)
+
+
+def test_a_run_row_says_how_long_it_has_been_going(world):
+    """In place of reprinting an id: "started 6m ago" is what the reader wanted from that space."""
+    Run.objects.create(tenant=world["t"], work_item=world["wi"], agent_spec=world["spec"],
+                       status=Run.Status.RUNNING, triggered_by=world["qa"])
+    row = _needs(world, "qa")["my_runs"][0]
+    assert row["started_s"] >= 0
+    assert row["phase"] == "09_testing"

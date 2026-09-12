@@ -155,9 +155,10 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            {/* Each filter is as wide as the choice it shows (see `.select--fit`): the fixed
+                widths here cut "Waiting for approval" and the longer phase names. */}
             <select
-              className="select"
-              style={{ maxWidth: "170px" }}
+              className="select select--fit"
               aria-label="Filter by phase"
               value={phase}
               onChange={(e) => setPhase(e.target.value)}
@@ -170,8 +171,7 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
               ))}
             </select>
             <select
-              className="select"
-              style={{ maxWidth: "170px" }}
+              className="select select--fit"
               aria-label="Filter by type"
               value={type}
               onChange={(e) => setType(e.target.value)}
@@ -184,8 +184,7 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
               ))}
             </select>
             <select
-              className="select"
-              style={{ maxWidth: "160px" }}
+              className="select select--fit"
               aria-label="Filter by status"
               value={status}
               onChange={(e) => setStatus(e.target.value)}

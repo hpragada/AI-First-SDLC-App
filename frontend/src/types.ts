@@ -270,6 +270,13 @@ export interface TraceNode {
   sor: string;
   external_ref: Record<string, unknown> | null;
   url: string | null; // deep-link to the live SoR (Confluence page / Jira issue)
+  // Which work item this document came out of, so the map can follow one item's chain (P3).
+  // Null/blank for documents adopted during brownfield onboarding: they were never produced by
+  // a run, so they belong to no work item — the Highlight filter offers them as a group of
+  // their own rather than leaving them unreachable.
+  work_item?: string | null;
+  work_item_key?: string;
+  work_item_title?: string;
 }
 
 export interface TraceGraphEdge {
@@ -559,7 +566,12 @@ export interface WorkItemCard extends WorkItem {
   artifact_count?: number;
   owner?: string;
   parent?: string | null;
-  needs?: { clarification?: boolean; gate?: boolean; label?: string };
+  // `yours` answers "may the person looking act on this?" — the gate's required role (or admin)
+  // for a gate, project membership for a question, decided by the same rules as the Approve and
+  // Answer buttons. Without it the board called every pending gate "Waiting for you", including
+  // gates the viewer is refused on. Absent from an API too old to send it, which reads as
+  // "not known to be yours" and keeps the neutral wording.
+  needs?: { clarification?: boolean; gate?: boolean; label?: string; yours?: boolean };
   // The item's current lifecycle phase (latest run's agent key, e.g. "03_prd");
   // empty when no phase has run yet. Bugs.xlsx rows 49/50.
   current_phase?: string;
@@ -971,6 +983,11 @@ export interface DashboardGateItem {
   gate: string;
   work_item: string;
   role: string;
+  // The work item's NUMBER and TITLE, so a queue row can name it the way the rest of the product
+  // does instead of printing eight characters of an internal id (P2). Optional: a response from
+  // an older API has neither, and the row falls back to its title-less shape.
+  work_item_key?: string;
+  work_item_title?: string;
 }
 
 export interface DashboardClarificationItem {
@@ -978,6 +995,8 @@ export interface DashboardClarificationItem {
   work_item: string;
   question: string;
   waiting_s: number;
+  work_item_key?: string;
+  work_item_title?: string;
 }
 
 export interface DashboardRunItem {
@@ -985,6 +1004,10 @@ export interface DashboardRunItem {
   phase: string;
   work_item: string;
   status: string;
+  work_item_key?: string;
+  work_item_title?: string;
+  // How long the run has been going, so the row says that rather than reprinting an id.
+  started_s?: number;
 }
 
 export interface DashboardRollup {

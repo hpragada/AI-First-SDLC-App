@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+﻿import { useRef, useState } from "react";
 
 import { ApiError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
@@ -63,7 +63,45 @@ export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
         : "gap-warning");
 
   const list = users.data ?? [];
-  const blockedRoles = coverage.data?.roles.filter((r) => r.gate_blocked) ?? [];
+  // Every gate role nobody on this project holds — not only the ones the platform calls
+  // "blocked".
+  //
+  // The warning used to be drawn from `gate_blocked`, which means "nobody holds it AND no admin
+  // could approve instead". Only a workspace admin can open this screen, and the platform counts
+  // any workspace admin as backup for every gate — so whoever is reading this page IS the backup,
+  // `gate_blocked` was false for them, and the warning could never appear. A workspace cannot
+  // lose its last admin either, so it could not appear anywhere. An unfilled role was reported
+  // only as a red line at the bottom of the page, under a ten-column table, while its gates
+  // quietly fell to the admins.
+  const uncovered = coverage.data?.roles.filter((r) => !r.covered) ?? [];
+  // The genuine hard block is still worth its own, stronger wording: nobody holds the role and
+  // there is no admin either, so that gate cannot be approved by anyone.
+  const blocked = uncovered.filter((r) => r.gate_blocked);
+  const coverageRef = useRef<HTMLDivElement>(null);
+  const showCoverage = () => {
+    coverageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    coverageRef.current?.focus();
+  };
+  // The team's option B+: ONE line however many roles are empty, so a new project — which starts
+  // with nearly all eight unfilled — cannot turn this into a wall of text that pushes the table
+  // off the screen. It names the roles while one or two are missing (the steady state once a
+  // project is staffed, where naming them saves the trip down the page) and counts them beyond
+  // that.
+  const names = uncovered.map((r) => roleLabel(r.role));
+  const gapTitle =
+    names.length === 1
+      ? `Nobody holds ${names[0]} on ${projectName}.`
+      : names.length === 2
+        ? `Nobody holds ${names[0]} or ${names[1]} on ${projectName}.`
+        : `${names.length} roles have nobody on ${projectName}.`;
+  const gapDetail =
+    blocked.length > 0
+      ? names.length === 1
+        ? "That gate cannot be approved by anyone until someone holds the role."
+        : "Those gates cannot be approved by anyone until someone holds the roles."
+      : names.length === 1
+        ? "That gate falls to an admin meanwhile —"
+        : "Those gates fall to an admin meanwhile —";
 
   const toggleRole = (u: AdminUser, roleKey: string) => {
     setPending({ name: u.name, role: roleKey });
@@ -111,13 +149,16 @@ export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
         <div className="page-head__titles">
           <h1 className="t-h1">Roles & memberships</h1>
           <p className="page-head__sub">
-            Per-project role grants. Each role gates specific decisions — uncovered gate roles make
-            their gate unactionable.
+            Per-project role grants. Each role gates specific decisions — a role nobody holds
+            leaves its gate to an admin.
           </p>
         </div>
-        <select className="select" style={{ maxWidth: "220px" }} aria-label="Project">
-          <option>{projectName}</option>
-        </select>
+        {/* The project these roles belong to, as a plain line. It was a dropdown holding exactly
+            one option and no handler, two inches under the top bar's project switcher, which is
+            the real one — two pickers on one screen, only one of which worked. */}
+        <p className="t-sm u-muted">
+          Project <strong className="u-strong">{projectName}</strong>
+        </p>
       </div>
 
       {view === "saving" && (
@@ -153,11 +194,19 @@ export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
 
       {view === "gap-warning" && (
         <>
-          {blockedRoles.length > 0 && (
+          {uncovered.length > 0 && (
             <div style={{ marginBottom: "var(--space-4)" }}>
-              <Banner variant="warning" title={`No reviewer on ${projectName}`}>
-                {blockedRoles.map((r) => r.note).filter(Boolean).join(" ") ||
-                  "The merge gate & code-review gate will be unactionable until someone holds the reviewer role."}
+              <Banner variant={blocked.length > 0 ? "danger" : "warning"}>
+                <strong className="u-strong">{gapTitle}</strong> {gapDetail}
+                {blocked.length === 0 && (
+                  <>
+                    {" "}
+                    <button type="button" className="btn-link" onClick={showCoverage}>
+                      see gate-role coverage
+                    </button>
+                    .
+                  </>
+                )}
               </Banner>
             </div>
           )}
@@ -167,7 +216,15 @@ export function RolesMatrix({ forceView }: { forceView?: RolesView }) {
             </div>
           </Panel>
 
-          <div style={{ marginTop: "var(--space-4)" }}>
+          {/* `tabIndex={-1}` so the warning's link can put the cursor here, not just scroll the
+              page: a keyboard user following it lands in the box rather than back at the top.
+              `Panel` does not forward an id, so the wrapper carries it. */}
+          <div
+            id="gate-role-coverage"
+            ref={coverageRef}
+            tabIndex={-1}
+            style={{ marginTop: "var(--space-4)", scrollMarginTop: "var(--space-6)" }}
+          >
             <Panel title="Gate-role coverage">
               <div className="u-stack">
                 {(coverage.data?.roles ?? []).map((r) => (

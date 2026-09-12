@@ -324,6 +324,25 @@ class ProjectProfileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "project", "version"]
 
+    def validate_description(self, value):
+        """The briefing's one required field, enforced here as well as on the screen.
+
+        The editor refused to save without a description and said nothing about it — the message
+        it was meant to show had only ever been wired into the design gallery, so Save stopped
+        silently and took every other edit on the page with it. The screen now says so, and the
+        rule lives here too, in the same words, so a direct API call cannot blank the field the
+        editor refuses to blank.
+
+        Scoped to requests that actually SEND a description: the endpoint takes partial writes,
+        and a future screen saving only the accessibility block should not have to restate the
+        briefing. The editor always sends it, so the user-facing path is covered.
+        """
+        text = (value or "").strip()
+        if not text:
+            raise serializers.ValidationError(
+                "A description is required — agents rely on it for every phase.")
+        return text
+
     def validate_scan(self, value):
         """Bugs S.No 185: the registries a security scan may reach. Validated here, at the point
         of writing, for the same reason `a11y` is — it is read while a phase is being dispatched,
