@@ -106,10 +106,13 @@ that one file — it came back in eight others.
 - **`POST /api/runners/` stays open to anonymous callers.** Gating it breaks the documented CLI
   onboarding, which has no session to present. Recorded against **S.No 35** with its three siblings;
   see ADR 0004.
-- **S.No 183** (artifact registration has no natural-key idempotency) is untouched. It means a
-  resumed planning run can register a second version of what the failed run produced. Untidy, not
-  corrupting — `register_artifact` versions rather than duplicates. Losing three hours of a security
-  scan was the worse outcome, so S.No 182 shipped ahead of it.
+- **S.No 183** (artifact registration has no natural-key idempotency) was held here, and S.No 182
+  shipped ahead of it because losing three hours of a security scan was the worse outcome.
+  **Update 2026-09-15: fixed in `4ac75f9` (P2/P3 batch, below).** `register_artifact` now counts
+  versions by a stable id taken from the artifact's pointer (`external_ref`) — `identity`, then
+  `finding_id`/`id` for security findings, `tc_id`/`id` for test cases — and only falls back to
+  the title when no such id is present. A re-run that re-words a title no longer creates a
+  duplicate (`mcp_platform_state/tools.py`, `_IDENTITY_REF_KEYS`).
 - **`/a11y/finding/:findingId`** is built and still has no inbound link. There is no findings list
   in the UI to link it from, so where it belongs is a product decision.
 
@@ -136,7 +139,8 @@ Found during the inventory that preceded this work, reported, and **not** action
 today to P1 + N2:
 
 - `TESTING_PHASE_BUGS_HANDOFF.md` header still says `**Status:** open`; all four bugs in it verify
-  as fixed.
+  as fixed. **Update 2026-09-15:** the header now carries a dated status note (fixed in `e70fd9e`;
+  S.No 132 fixed in `4ac75f9`).
 - Roughly a dozen Bugs.xlsx rows record work that is already done (S.No 181, 189, 104, 81, 197
   among them), plus brownfield S4-10 and S4-25 and one QA audit case.
 - `multi_project_recon.md` §2.6 overstates its finding: the track *is* read, at `tools.py:175`.
@@ -344,5 +348,85 @@ are fixed in this commit.
   platform **writing** to a system of record on its own initiative, which needs a gate under
   non-negotiable #5, not a one-line filter. Logged rather than folded in.
 - **"Set default" on the Repositories screen does nothing.** There is no endpoint behind it yet.
+  **Correction and update 2026-09-15:** the endpoint did exist (`set_default_repository`, behind
+  the project's repositories API); the screen was not using it properly. **Fixed in `4ac75f9`
+  (S.No 212):** Set default works and the default marker moves to the chosen row.
 - **The Jira reconciler matches an existing issue by exact title**, so two work items with identical
   titles would both adopt the same issue (S.No 236).
+
+---
+---
+
+# P2 / P3 batch — same branch (2026-09-11), commit `4ac75f9`
+
+**Status:** built and committed; **all three migrations applied** to the shared database on
+11 Sep 2026 (verified). **Scope as agreed:** 16 Bugs.xlsx rows plus "Show the whole registry", each
+screen built as the team chose from the mockup pack. Per-item detail is in the Bugs.xlsx rows; this
+is the batch view.
+
+## What shipped — screens
+
+| Row | What was wrong | What it does now |
+|---|---|---|
+| S.No 117 | Work items nothing had run on sat in the first phase column, and a card never said what its phase was doing | A new **Backlog** column holds them; code-review tasks land in **Review**; every card has a status pill (Not started, Running, Waiting for you, Done, Failed). The API adds `run_status` to each card |
+| S.No 166 | Dropdowns and the Work Items row menu were cut off by the panel they opened in | Every popup is drawn above the page (a shared floating layer) and flips upwards near the bottom of the window |
+| S.No 184 | Long clarification answer options overflowed the card | The answer dropdown is drawn by the app, so long options wrap inside the card; keyboard use and the "something else" box are unchanged |
+| S.No 212 | Repositories: Set default did nothing, and refusals showed internal role names | Set default works and the marker moves; the topology shown is the platform's; the add form closes; refusals read "Only a tech lead or an admin can …" |
+| S.No 218 | A document waiting at a gate showed a machine word, and a rejected build left its code waiting forever | Opening a gate marks its documents "Waiting for approval" on the Artifacts list, the preview and the traceability map; the preview says either "can't be found" or "preview unavailable", whichever is true; a rejected build supersedes its drafts |
+| S.No 222, N2 | The needs-you tiles listed every pending gate and question, whoever they were for, and counted a list cut at 20 | The tiles count only what the reader can act on (the same rules as the Approve and Answer buttons), with true totals (`needs_me.counts`) and "N waiting on you". The bell opens the Needs-me queue |
+| S.No 225 | An unknown admin address landed on a developer placeholder page | It goes to Users & invitations; the placeholder page is deleted |
+| N1 | The Integrations grid showed Code intelligence as a card nobody could act on, and a real workspace could have no connection behind it | The card is removed. Code intelligence is now set up automatically for every workspace (like accessibility); old links to it go back to the grid |
+| S.No 215 | A new test case did not appear until the page was reloaded | It appears straight away, and "Generating..." updates by itself |
+| — | "Show the whole registry" left the filter a gate's Preview link had set | It clears that filter |
+
+## What shipped — behind the scenes
+
+| Row | What it does now |
+|---|---|
+| S.No 85 | The Testing agent (09) is **planning-only**: it writes the test plan and test cases and hands them to Test Automation (09b), which writes, runs and reports the tests. 09 never registers a `test_report`; 09b's run produces the only one |
+| S.No 132 | The GitHub `sdlc/build` check now finishes as success or failure instead of staying pending forever |
+| S.No 178 | The security gate cannot be approved while any Critical or High finding is open. The platform checks this itself when someone decides the gate (`apps/gates/securitygate.py`) |
+| S.No 183 | Re-runs version documents by their stable id (from the pointer) before the title, so reworded titles no longer create duplicates |
+| S.No 224 | "Published this week" counts by the date a document was **published** (new `published_at`), not the date it was drafted |
+| S.No 230 | The agent briefing only shows events from its own project, and questions only from its own work item |
+
+Also fixed along the way: a webhook crash on pull-request numbers, a resumed run's events never
+refreshing, and refusal messages that showed the internal role name.
+
+## Migrations — DONE
+
+All three were applied to the shared database on **11 Sep 2026** and verified.
+
+```bash
+docker compose run --rm backend python manage.py migrate registry       # 0008_artifact_published_at          ✅ applied
+docker compose run --rm backend python manage.py migrate ledger         # 0003_event_project_and_work_item    ✅ applied
+docker compose run --rm backend python manage.py migrate integrations   # 0011_codeintel_autoprovision        ✅ applied
+```
+
+- **`registry/0008`** adds the publish date and fills it in for documents already published.
+- **`ledger/0003`** adds the project and work-item columns to events, so a briefing can be scoped.
+- **`integrations/0011`** gives every existing workspace the built-in Code intelligence connection.
+  It skips workspaces that already have one, so it is safe to re-run.
+
+---
+---
+
+# Nine follow-ups (2026-09-12), commit `b40c557`
+
+**Status:** built and committed. **No migrations.** Each item was built as the team chose from the
+mockups.
+
+| Ref | What was wrong | What it does now |
+|---|---|---|
+| E1 | A work-item title too long for the picker was cut off with no way to read it | The row opens out over itself showing the whole title — on hover and on arrow-key highlight, and only when the text is really cut. Fixed in the shared dropdown, so the two history filters get it too |
+| F1 | The Roles & memberships warning about roles nobody holds could never appear (it needed "no admin could approve", and only an admin can open the page) | It shows whenever a gate role is empty, in one line: it names the roles while one or two are missing and counts them beyond that (option B+) |
+| F2 | Project profile: Save stopped silently while the description was empty | The field is marked required; Save says why and puts the cursor there; other typed fields stay. The server applies the same rule: a blank description returns 400 "A description is required — agents rely on it for every phase." |
+| F3 | The board said "Waiting for you" on every pending gate and question | Only on gates this person may decide and questions they may answer (same rules as the Approve and Answer buttons). Other waiting work shows in grey as "Waiting for review" / "Waiting for an answer". The API adds `needs.yours` to each card |
+| N | Filter boxes on Work Items and Artifacts cut their choice off | They size themselves to their longest choice (`.select--fit`) |
+| P1 | Phases & Runs named one work item three different ways | All three places read "WI-159 · title" |
+| P2 | The dashboard queue named its work by database id | Each row carries `work_item_key` and `work_item_title`; a run row says how long it has been going (`started_s`) |
+| P3 | Traceability had no filters on the client's screen (only in the developer gallery, with an invented "WI-492") | The map filters by phase and type and can highlight one work item's chain, dimming the rest; documents adopted during onboarding are a group of their own, "Not tied to a work item". Each node now carries `work_item`, `work_item_key`, `work_item_title`. The dead gallery controls are deleted |
+| P4 | Roles & memberships had a dead project dropdown beside the title | It is a plain line of text |
+
+Found in passing: two runs created in the same clock tick left "the item's latest run" undefined,
+so a card could take either run's phase and status. The query now has a stable tie-break.

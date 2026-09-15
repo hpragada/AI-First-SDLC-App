@@ -351,7 +351,14 @@ project, so run TS-03 TC-037 before them.
 **Expected**
 - At step 1 the `Reviewer` line reads, in full:
   `Reviewer — nobody (no Reviewer assigned — an admin can approve the merge gate)`.
-- At step 3 the matrix and the coverage panel are **replaced** by an info banner reading
+- At step 1 a single yellow warning line sits above the matrix, because at least one gate role
+  (`Reviewer`) has nobody. Its bold opening depends on how many gate roles are empty on the project:
+  one → `Nobody holds Reviewer on Payment Gateway v2.`; two → `Nobody holds {Role} or {Role} on
+  Payment Gateway v2.`; three or more → `{N} roles have nobody on Payment Gateway v2.` It continues
+  `That gate falls to an admin meanwhile —` (one role) or `Those gates fall to an admin meanwhile —`
+  (two or more), followed by a link button **see gate-role coverage**. It is one line, never a list.
+- Clicking **see gate-role coverage** scrolls the page to the `Gate-role coverage` panel.
+- At step 3 the matrix, the warning line and the coverage panel are **replaced** by an info banner reading
   `Saving role change for QA Alpha Engineer (Reviewer @ Payment Gateway v2)…` — naming the real user
   and role, not a sample. The matrix returns when the save settles.
 - After step 4 the coverage panel shows `Reviewer` with a green `✓` and
@@ -373,8 +380,17 @@ project, so run TS-03 TC-037 before them.
   (`— an admin can approve the {gate}`) because a tenant admin can decide any gate. A bare
   `Reviewer — nobody` with no parenthetical would be the defect.
 - **The banner and the matrix are mutually exclusive** — while saving, the screen renders only the
-  banner. That is why step 2 throttles: without it the banner is one frame and you will report it
-  missing.
+  saving banner (no matrix, no gate-role warning line, no coverage panel). That is why step 2
+  throttles: without it the banner is one frame and you will report it missing.
+- **The warning line appears whenever any gate role is empty**, even though you (an admin) are the
+  backup. A red variant exists for the case where nobody holds the role **and** no admin could
+  approve it: it reads `That gate cannot be approved by anyone until someone holds the role.` (or
+  `Those gates cannot be approved by anyone until someone holds the roles.`) and has **no**
+  **see gate-role coverage** link. A workspace always keeps at least one admin (TC-031), so you
+  should not see the red variant here — raise it if you do.
+- The warning's count follows the coverage panel, not the matrix's ten columns: only the gate roles
+  listed in `Gate-role coverage` are counted. After step 4 the count drops by one (or the line
+  disappears entirely if `Reviewer` was the only empty role); after step 6 it returns.
 - If P1's top-bar project selector shows `Payment Gateway v2` more than once, that is the known
   duplicate-option defect covered by TC-521 — do not raise it here.
 - Leave the reviewer role **off** at the end so the workspace's role state matches what TS-03 and
@@ -426,7 +442,7 @@ project, so run TS-03 TC-037 before them.
 
 ---
 
-### TC-033 · The project select on the roles screen is inert
+### TC-033 · The roles screen names its project as plain text, following the top-bar selector
 
 | Field | Value |
 |---|---|
@@ -443,26 +459,30 @@ project, so run TS-03 TC-037 before them.
   only have one).
 
 **Steps**
-1. Go to `/admin/roles`.
-2. Open the project select at the right of the page header.
-3. Read the options offered.
+1. With `Payment Gateway v2` selected in the top-bar project selector, go to `/admin/roles`.
+2. Read the line at the right of the page header, and try clicking it.
+3. Switch the top-bar project selector to the other project.
+4. Read the header line again.
+5. Switch the top-bar selector back to `Payment Gateway v2`.
 
 **Expected**
-- The select shows only the currently selected project (`Payment Gateway v2`) — the workspace's
-  other projects are not listed.
-- There is no way to switch the matrix to another project from this control.
+- At step 2 the header shows the plain text `Project Payment Gateway v2` (the project name in
+  bold). It is **not** a dropdown: clicking it opens nothing.
+- There is no second project picker anywhere on the page — the top-bar selector is the only one.
+- After step 3 the header line names the other project, and the matrix and coverage panel follow it.
 
 **Pass / Fail**
-- PASS if the control behaves as described (single, unchangeable option).
-- FAIL if it lists other projects but selecting one does not change the matrix — that would be worse
-  than being visibly inert and should be raised.
+- PASS if the project is shown as non-interactive text and it changes only with the top-bar selector.
+- FAIL if a project dropdown or select is rendered on the roles screen, or if the header line names
+  a different project from the one selected in the top bar.
 
 **Test data**
 - *(none)*
 
 **Notes**
-- **Known inert control** (plan §10). The matrix always follows the globally selected project from
-  the top bar. Confirm and move on; do not raise a new defect.
+- This case used to check a project select that listed only one project and did nothing. That
+  control was replaced by this plain line; the plan §10 "known inert" entry for it is superseded.
+- If the top-bar selector lists `Payment Gateway v2` twice, that is TC-521 — do not raise it here.
 
 ---
 
@@ -636,7 +656,7 @@ project, so run TS-03 TC-037 before them.
 
 ---
 
-### TC-522 · An unknown /admin/* URL renders a developer placeholder
+### TC-522 · An unknown /admin/* URL goes to Users & invitations
 
 | Field | Value |
 |---|---|
@@ -652,30 +672,29 @@ project, so run TS-03 TC-037 before them.
 
 **Steps**
 1. Paste `http://localhost:5173/admin/billing` into the address bar and press Enter.
-2. Read the heading, the sub-line and the panel.
+2. Read the address bar and the page heading.
 3. Repeat with `http://localhost:5173/admin/does-not-exist`.
-4. For contrast, paste `http://localhost:5173/does-not-exist` (outside `/admin`) and note where you
-   land.
+4. Repeat with `http://localhost:5173/admin` (nothing after it).
+5. Click the browser Back button once.
 
 **Expected**
-- An unknown `/admin/*` URL should behave like every other unknown route and redirect to `/`.
-- Actual behaviour today: steps 1–3 render a page headed `Workspace Admin` with the sub-line
-  `Foundation route mounted. Feature screens land in T2-T5.` and a panel titled
-  `Ready for screen implementation` containing `No screen built yet`.
-- Step 4 redirects to `/` — so the placeholder is specific to the `/admin` subtree.
+- Steps 1, 3 and 4 each land on `/admin/users` — the address bar changes to `/admin/users` and the
+  users screen (TC-023) renders.
+- No developer placeholder is shown at any point: no `Foundation route mounted`, no `T2-T5`, no
+  `Ready for screen implementation`, no `No screen built yet`.
+- At step 5 Back does not return to the mistyped address — the redirect replaced it in history.
 
 **Pass / Fail**
-- **Expect this case to fail today.**
-- PASS only if an unknown `/admin/*` URL redirects to `/` like any other unknown route.
-- FAIL if internal build language (`Foundation route mounted`, `T2-T5`) is rendered to a user —
-  which is what the current build does.
+- PASS if every unknown or bare `/admin` address redirects to `/admin/users` with no placeholder copy.
+- FAIL if any placeholder or internal build language renders, if the page is blank, or if you land
+  anywhere other than `/admin/users`.
 
 **Test data**
-- `/admin/billing` · `/admin/does-not-exist` · `/does-not-exist`
+- `/admin/billing` · `/admin/does-not-exist` · `/admin`
 
 **Notes**
-- Raise once, **Low** severity. It leaks internal phase/task naming to anyone who mistypes an admin
-  URL, but it is behind the admin guard, so a non-admin gets the `Admin access needed` panel instead
-  (TC-034) and never sees it.
-- Step 4 is what makes the defect specific and actionable — without it the report reads as "unknown
-  routes are broken", which is not true.
+- The destination is deliberately the admin landing page, not `/`: someone who mistyped an admin
+  address stays inside admin. This replaces the earlier expectation of a redirect to `/`; the
+  placeholder page was deleted.
+- A non-admin still gets the `Admin access needed` panel (TC-034) for these addresses — the admin
+  guard is checked first.

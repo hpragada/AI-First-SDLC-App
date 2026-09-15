@@ -185,7 +185,8 @@ produces a red `Trigger failed` banner (TS-14 TC-217), not a queued run.
   roles", which a single-invite case structurally cannot make. Do not re-verify invite expiry,
   resend or revoke here — that is TS-02.
 - **Time estimate: 40 minutes** — inbox round-trips dominate.
-- The project select on `/admin/roles` is a known inert control (plan §10). Do not raise it.
+- `/admin/roles` names the project as a plain line of text (`Project {name}`), not a dropdown, since
+  commit b40c557. Roles are switched per project from the top-bar project select.
 - A user holding two roles appears **twice** in the top-bar project selector (one option per role
   grant). Expect it; it is a tracked defect, not a finding for this case.
 - Full coverage here is what makes the rest of the suite possible: every gate from TC-203 onward
@@ -227,18 +228,20 @@ produces a red `Trigger failed` banner (TS-14 TC-217), not a queued run.
   → `Awaiting gate`.
 - A clarification, if raised, appears on `/clarifications` and the run resumes after it is answered
   — the same run id, not a new one.
-- Before approval, the ideation artifact's badge reads `Draft`.
+- Before approval (run at `Awaiting gate`), the ideation artifact's badge reads
+  `Waiting for approval`.
 - P2 sees the Ideation gate as actionable — **enabled** `Approve` and `Reject` buttons and a
-  `Comment (optional)` field, not a read-only card.
+  `Comment (optional to approve or reject)` field, not a read-only card.
 - After approving, the gate leaves the `Pending (N)` tab (reload to confirm) and the run console
   badge reads `Completed`.
 - The ideation artifact's badge in `/artifacts` now reads **`Published`**.
 
 **Pass / Fail**
-- PASS if the artifact goes `Draft` → `Published` through a Product Owner decision, with the run
-  reaching its gate first.
+- PASS if the artifact goes `Waiting for approval` → `Published` through a Product Owner decision,
+  with the run reaching its gate first.
 - FAIL if the artifact reaches `Published` **before** the gate is approved, if the gate is decidable
-  before the run reaches it, or if the artifact stays `Draft` after approval.
+  before the run reaches it, or if the artifact still reads `Waiting for approval` or `Draft` after
+  approval.
 - **Blocked** (not Fail) if the run has not reached `Awaiting gate` within **40 minutes**. Record
   the run id.
 
@@ -248,14 +251,15 @@ produces a red `Trigger failed` banner (TS-14 TC-217), not a queued run.
 **Notes**
 - **Time estimate: 60 minutes** — the run itself is 20–30 minutes. **Max wait: 40 minutes** to
   `Awaiting gate`.
-- **There is no observable `Approved` state — approval publishes.** Gate approval and publication
-  happen in the same transaction (`backend/orchestration/activities.py:299-302` sets the artifact
-  to `PUBLISHED` with an internal system-of-record), and the registry renders that as the badge
-  `Published` (`frontend/src/features/observability/ArtifactsRegistry.tsx:21`). Do **not** look for
-  an `Approved` badge or an `Approved` option in the Status filter — neither exists, and the filter
-  options are built from statuses actually present. This is the platform's real design, not a
-  defect: nothing reaches a system of record before its gate, and the gate approval *is* the
-  publish. The rest of this suite asserts `Published` throughout.
+- **The badge sequence is `Draft` → `Waiting for approval` → `Published`.** When the run opens its
+  gate, the run's draft artifacts are marked staged, which every screen shows as
+  `Waiting for approval` (`open_gate_core` in `backend/orchestration/activities.py`; words from
+  `frontend/src/features/observability/artifactStatus.tsx`; since commit 4ac75f9). Gate approval and
+  publication then happen in the same transaction (`publish_artifacts_core`), so there is no
+  observable `Approved` state on this path. Do **not** look for an `Approved` badge or an `Approved`
+  option in the Status filter — the filter options are built from statuses actually present. Nothing
+  reaches a system of record before its gate, and the gate approval *is* the publish. The rest of
+  this suite asserts `Published` after each approval.
 - Do not kill a silent run. A long phase can show no console output for 20+ minutes (Bug 3).
 - A phase can reach its gate with an empty phase document (Bug 4). If the artifact previews empty,
   reference that bug in the tracker rather than raising a new defect — this case is about the state
@@ -290,7 +294,8 @@ produces a red `Trigger failed` banner (TS-14 TC-217), not a queued run.
 10. Open `/runs`, select the epic, and count the run rows.
 
 **Expected**
-- Each phase produces exactly one run, and one `Draft` artifact before its gate.
+- Each phase produces exactly one run, and one artifact reading `Waiting for approval` while its gate
+  is open.
 - P2 can decide both gates; each shows enabled **Approve** and **Reject** buttons.
 - After each approval, that phase's artifact reads **`Published`** in `/artifacts`.
 - The epic's lifecycle rail shows Ideation, Requirements and PRD as completed nodes, in order.
@@ -299,7 +304,7 @@ produces a red `Trigger failed` banner (TS-14 TC-217), not a queued run.
 **Pass / Fail**
 - PASS if both phases run, gate and approve under the Product Owner role, and the rail reflects all
   three plan phases.
-- FAIL if an approval leaves the artifact `Draft`, if an artifact reads `Published` before its gate
+- FAIL if an approval leaves the artifact `Waiting for approval`, if an artifact reads `Published` before its gate
   is approved, or if the rail loses a completed phase.
 - **Blocked** (not Fail) if either run has not reached `Awaiting gate` within **40 minutes**.
 
@@ -694,7 +699,9 @@ restart from sub-cycle A to "be safe" — re-running a completed phase replaces 
 *Sub-cycle A — Security*
 1. As P1, trigger **Security** on the work item; **record the run id**; follow to `Awaiting gate`.
 2. Log in as **P9 DevOps**, reload `/gates`, open the Security gate and confirm it is read-only.
-3. Log in as **P8 Security Engineer**, reload `/gates`, and approve the Security gate.
+3. Log in as **P8 Security Engineer**, reload `/gates`, open the Security gate and read its
+   `Required checklist` block. If it is met, approve the Security gate. If it is not met, record the
+   open findings it names and follow TS-09 TC-906 until they are resolved, then approve.
 4. **Mark sub-cycle A complete in your notes.**
 
 *Sub-cycle B — CI/CD*
@@ -713,6 +720,10 @@ restart from sub-cycle A to "be safe" — re-running a completed phase replaces 
 
 **Expected**
 - The Security gate is decidable by P8 and read-only for P9 (banner `Awaiting security_engineer`).
+- The Security gate carries exactly one required item,
+  `No unresolved Critical or High security finding — every one the security review raised has been
+  fixed`. P8's `Approve` is disabled (`Approve (1 remaining)`) while any Critical or High security
+  finding is open, and the item shows as met by itself once none is (commit 4ac75f9; see TC-906).
 - The CI/CD gate is decidable by P9 and read-only for P8 (banner `Awaiting devops`).
 - The Deployment criteria screen lists **7 required readiness criteria** — code quality, testing,
   security, migrations, rollback, on-call, deliverables.
@@ -724,7 +735,9 @@ restart from sub-cycle A to "be safe" — re-running a completed phase replaces 
 **Pass / Fail**
 - PASS if each of the three gates is decided only by its own role, and Deployment requires all 7
   criteria.
-- FAIL if a role can decide another role's gate, or Deployment approves with criteria outstanding.
+- FAIL if a role can decide another role's gate, Deployment approves with criteria outstanding, or
+  the Security gate is approved while a Critical or High security finding is still open
+  (**Critical**).
 - **Blocked** (not Fail) if any run has not reached `Awaiting gate` within **45 minutes**. Record
   which sub-cycle blocked, so a re-run resumes there.
 
@@ -738,7 +751,8 @@ restart from sub-cycle A to "be safe" — re-running a completed phase replaces 
   read-only on the other. A per-gate case cannot catch a role mapping that is right in isolation
   but swapped between two neighbouring phases, which is the specific failure here. The Deployment
   checklist is included because it is a *different* checklist (readiness, 7) from TC-206's (WCAG,
-  9), and a shared bug would show as the wrong count.
+  22 by default — `DESIGN_CHECKS` in `backend/apps/gates/wcag.py`), and a shared bug would show as
+  the wrong count.
 - **Time estimate: 90 minutes** — three runs plus four persona switches. **Max wait: 45 minutes per
   run.**
 - Deployment is a **doc-producing planning phase**: approving it does not deploy anything, and no
@@ -761,16 +775,16 @@ restart from sub-cycle A to "be safe" — re-running a completed phase replaces 
 
 **Preconditions**
 - TC-210 passed — the plan and build chain for `Payment Gateway v2` is through its gates.
-- **You need one artifact still at `Draft`.** Every gated artifact is already `Published` by now, so
+- **You need one artifact that is not gate-approved.** Every gated artifact is already `Published` by now, so
   create the fixture the cheap way: perform **TC-212 step 1 only** (as P1, trigger **Ideation** on a
   new epic `Refunds API` and let it reach `Awaiting gate`), then come back here. TC-212 needs that
   run anyway, so this costs nothing extra. Do **not** let P2 decide its gate until TC-212.
 - No document connector is configured (the greenfield default for this cycle).
-- **Checkpoint — record:** the draft artifact's id, and the PRD artifact's id.
+- **Checkpoint — record:** the ungated artifact's id, and the PRD artifact's id.
 
 **Steps**
-1. Open `/artifacts` and find the `Draft`-badged ideation artifact for `Refunds API`. Read its row's
-   action cell.
+1. Open `/artifacts` and find the ideation artifact for `Refunds API`, badged
+   `Waiting for approval`. Read its row's action cell.
 2. Click **Preview** on that row and copy its id from the URL (`/artifacts/<id>`). Now navigate
    directly to `/artifacts/<id>/publish`.
 3. Read the panel. Do not attempt to force the button.
@@ -785,11 +799,12 @@ restart from sub-cycle A to "be safe" — re-running a completed phase replaces 
 10. Open `/traceability` and find the node for that artifact.
 
 **Expected**
-- **Step 1:** the `Draft` row offers **Preview only** — there is **no Export action**. The UI itself
-  withholds the route to publishing for an ungated artifact.
+- **Step 1:** the `Waiting for approval` row offers **Preview only** — there is **no Export action**.
+  The UI itself withholds the route to publishing for an ungated artifact.
 - **Step 3:** reached by URL, the publish screen refuses it — a danger banner titled
-  `Can't publish — not gate-approved` reads `This artifact is still draft. Approve its gate first;
-  manual publish never bypasses a gate.` with an `Open gate ↗` link, and the **Publish** button is
+  `Can't publish — not gate-approved` reads `This artifact is still staged. Approve its gate first;
+  manual publish never bypasses a gate.` (this banner prints the raw status token) with an
+  `Open gate ↗` link, and the **Publish** button is
   **disabled**. Only **Cancel** is actionable.
 - **Step 4:** the `Published` PRD row offers both **Preview** and **Export**.
 - **Step 5:** the `Target capability` select is preselected to the phase's **external** target,
@@ -839,11 +854,12 @@ restart from sub-cycle A to "be safe" — re-running a completed phase replaces 
   Confluence; task_breakdown → Jira; testing / test_automation → Xray; `ux_design` is internal-only
   and its publish screen shows `This phase publishes internally only per the project's export
   policy.` instead of a target picker. A missing destination on `ux_design` is correct.
-- **`Recent publishes` and `Published this week` filter on the artifact's `created_at`, not on when
-  it was published** (`backend/api/views.py:525-530, 570-574`). In a fresh cycle everything was
-  created this week, so step 9 passes. On a long-lived workspace an artifact created more than 7
-  days ago and published today will never appear — if you see that, it is a real defect (audit
-  Part 6, item 14) and not a failure of this publish. The 7-day window is not a publish-time window.
+- **`Recent publishes` and `Published this week` filter on the date the artifact was published**
+  (`published_at`, `backend/api/views.py` dashboard rollup; since commit 4ac75f9 — audit Part 6,
+  item 14 is fixed). The PRD was first published when its gate was approved in TC-204, and the
+  internal re-publish in step 7 does not move that date. So step 9 passes when TC-204 was within the
+  last 7 days; if it was earlier, the PRD correctly drops out of both surfaces — record that rather
+  than failing the case.
 
 ---
 
@@ -868,7 +884,8 @@ restart from sub-cycle A to "be safe" — re-running a completed phase replaces 
 1. If not already done for TC-211: as P1, trigger **Ideation** on `Refunds API` and follow the run
    to `Awaiting gate`. **Record the run id.**
 2. Log in as **P2 Product Owner**, reload `/gates`, open the gate, type a written reason in
-   `Comment (optional)`, and click **Reject**.
+   the comment field (`Comment (optional to approve or reject)`, which reads `Comment` once you
+   type), and click **Reject** — not **Request changes**, which would start a new attempt itself.
 3. Open the rejected run's console and read its state.
 4. Go to `/runs`, select `Refunds API`, and read the run history.
 5. Check `/artifacts` for the ideation artifact's badge.
@@ -882,7 +899,8 @@ restart from sub-cycle A to "be safe" — re-running a completed phase replaces 
 - The rejected run's console shows a danger banner titled `Gate rejected` whose body reads
   `The gate was rejected. Re-trigger to try again.`
 - `/runs` still lists the rejected run in history — it is not deleted or overwritten.
-- After the rejection the ideation artifact still reads **`Draft`** — it is **not** `Published`.
+- After the rejection the first run's ideation artifact reads **`Superseded`** — it is **not**
+  `Published`. (While the gate was open it read `Waiting for approval`.)
 - The re-trigger in step 6 is accepted (a rejected run does not block a new one) and creates a
   **second, distinct** run id.
 - After P2 approves the second run's gate, the `Refunds API` ideation artifact reads **`Published`**
@@ -890,7 +908,7 @@ restart from sub-cycle A to "be safe" — re-running a completed phase replaces 
 - The TC-211 PRD artifact is still `Published` and untouched by this case.
 
 **Pass / Fail**
-- PASS if rejection is durable and visible, the artifact stays `Draft`, and a second attempt can be
+- PASS if rejection is durable and visible, the rejected run's artifact reads `Superseded`, and a second attempt can be
   run and approved to `Published`.
 - FAIL if the rejected run vanishes from history, the artifact reaches `Published` despite the
   rejection, or the re-trigger is blocked with no way forward.

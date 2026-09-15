@@ -105,7 +105,8 @@ Steps:
    - **Code Host (GitHub):** GitHub App installation
    - **Design Source (Figma):** OAuth token
    - **Test Mgmt (Xray):** API key
-   - **Code Intel (builtin):** No secret needed
+   - *(Code intelligence has no tile any more — since 2026-09-11 (`4ac75f9`, N1) it is set up
+     automatically for every workspace, like accessibility.)*
 3. Each → `POST /api/integrations/{id}/test-connection/` → `{ ok: true, detail: "..." }`
 
 Business rules:
@@ -304,9 +305,12 @@ Business rules:
 
 **Actor:** Carlos Reyes (qa_lead)
 
-- Trigger `09_testing`
+- Trigger `09_testing` — **planning only**: it writes the `test_plan` and one `test_case` per case
+  and never registers a `test_report`
 - Gate role: `qa_lead`
-- If Xray unavailable: note failure, test report artifact still created internally
+- Then `09b` (Test Automation) writes and runs the tests; its run produces the only `test_report`,
+  imports results to Xray, and a failing test opens a defect
+- If Xray unavailable: note failure; test artifacts are still created internally
 
 ---
 
@@ -317,6 +321,8 @@ Business rules:
 - Trigger `10_security`
 - Gate role: `security_engineer`
 - Security report artifact created
+- The security gate **cannot be approved while any Critical or High finding is open** — the
+  platform checks this when the gate is decided (`apps/gates/securitygate.py`)
 
 ---
 
@@ -384,11 +390,16 @@ Business rules:
 After all phases complete:
 
 1. `GET /api/projects/{id}/traceability/` → graph of artifact → artifact edges
-2. Each node has `sor`, `phase`, `type`, `status`, `url` (Confluence deep link if connected)
-3. Dashboard: `GET /api/projects/{id}/dashboard/`
-   - `needs_me.gates` → empty (all decided)
+2. Each node has `sor`, `phase`, `type`, `status`, `url` (Confluence deep link if connected), and
+   `work_item`, `work_item_key`, `work_item_title` (empty for documents adopted in onboarding)
+3. Dashboard: `GET /api/projects/{id}/dashboard/` — personalised to the signed-in user
+   - `needs_me.gates` → only gates this user may decide (empty once all are decided)
+   - `needs_me.clarifications` → only if this user is a member of the project
+   - every gate / question / run row carries `work_item_key` and `work_item_title`; run rows add
+     `started_s` (seconds since the run started)
+   - `needs_me.counts` → true totals (`gates`, `clarifications`, `my_runs`), not capped by the list
    - `health.work_items` → count
-   - `health.published_week` → count of published artifacts
+   - `health.published_week` → count of artifacts **published** in the last 7 days (by `published_at`)
    - `recent_publishes` → list
 
 ---

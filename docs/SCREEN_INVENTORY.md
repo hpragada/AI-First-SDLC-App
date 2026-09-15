@@ -57,6 +57,7 @@
 ### S-08 · Roles & memberships matrix (admin) — J6
 - **Elements:** per-project **role matrix** (rows = users, cols = the 10 roles, toggles), plus a **role-coverage panel** flagging uncovered gate roles ("⚠ No reviewer on Payment Gateway v2 — merge gate will be unactionable").
 - **States:** full coverage, gap warning, last-admin guard, saving.
+- **As built (2026-09-12, `b40c557`, option B+):** the gap warning shows whenever any gate role on the project has nobody — one line however many are empty. It names the roles while one or two are missing ("Nobody holds Reviewer on Payment Gateway v2." / "Nobody holds Reviewer or Designer on …") and counts them beyond that ("7 roles have nobody on …"), then says either "That gate falls to an admin meanwhile" or, when no admin can cover it, "That gate cannot be approved by anyone until someone holds the role." The project beside the title is a plain line of text, not a dropdown.
 
 ---
 
@@ -72,7 +73,8 @@
 - **Sample:** Description "Card payment gateway handling Stripe + Adyen…", Tech stack "Django, React, Postgres".
 
 ### S-11 · Integrations — capability grid (admin) — J9
-- **Elements:** grid of capability cards — Documentation store, Task tracker, Design source, Code host, Test management, Code intelligence — each showing connected vendor + status or "Not connected" + Connect.
+- **Elements:** grid of capability cards — Documentation store, Task tracker, Design source, Code host, Test management — each showing connected vendor + status or "Not connected" + Connect.
+- **As built (2026-09-11, `4ac75f9`, N1):** there is **no Code intelligence card**. It is set up automatically for every workspace (like accessibility), and an old `/integrations/codeintel` link returns to the grid.
 - **States:** mixed (some connected), all empty, connection-failed card (red, reason).
 - **Sample:** Documentation store → **Confluence ● Connected**; Task tracker → **Jira ● Connected**; Design source → **Figma ● Connected**; Code host → **GitHub ● Connected**; Test management → **Xray ○ Not connected**.
 
@@ -94,6 +96,7 @@
 ### S-14 · Work Items board — J11  **★ signature screen**
 - **Elements:** header + "New Work Item"; filters (Phase, **Level: Epics/Tasks/Defects**, Role, Status) + Board/List toggle; **Kanban columns = phases** with count chips; cards = work items (title, level chip, status chip, artifact count, owner avatar, "needs you" flags).
 - **States:** populated board, list view, filtered (e.g., Tasks only), empty project, a card with "1 Clarification" and another "Gate: PM Approval Req.".
+- **As built (2026-09-11/12, `4ac75f9` + `b40c557`):** the first column is **Backlog** — work items nothing has run on yet — followed by the lifecycle phases; the Tasks view is Backlog · Implementation · Review. Every card has a **status pill** for what its phase is doing: Not started, Running, **Waiting for you** (only on a gate this person may decide or a question they may answer), Waiting for review / Waiting for an answer / Waiting for approval (grey, when it is someone else's), Done, Failed, Cancelled. The filter boxes size themselves to their longest choice.
 - **Sample columns/cards:**
   - *1. Ideation* → WI-508 "Customer Loyalty Program" (Epic, Draft); WI-521 "Dark Mode UI Theme" (Feature, Draft).
   - *2. Requirements* → WI-510 "Analytics Dashboard PRD" (AI compiling…, 1 Clarification); WI-511 "Fix Session Timeout Logic" (Task, Gate: PM Approval Req.); WI-499 "Multi-Currency Support" (Phase complete, 3 artifacts).

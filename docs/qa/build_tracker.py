@@ -1,9 +1,13 @@
 """Build the QA execution tracker from the Markdown test-case suites.
 
     python docs/qa/build_tracker.py
+    python docs/qa/build_tracker.py --out Greenfield_Test_Execution_Tracker_V1.xlsx
 
 Parses every ``docs/qa/suites/TS-*.md`` file, extracts one row per test case, and
-writes ``docs/qa/Greenfield_Test_Execution_Tracker.xlsx``.
+writes ``docs/qa/Greenfield_Test_Execution_Tracker.xlsx`` — or, with ``--out``, a new
+workbook beside it under that name, leaving the original untouched. Logged results are
+read from the target if it already exists, otherwise from the original, so a first
+versioned build starts from everything already recorded.
 
 Re-running is safe: execution results already logged in the workbook are carried
 over by TC-ID, and the Defects and Daily Log sheets are preserved verbatim. New
@@ -13,6 +17,7 @@ drops out of the Test Cases sheet but its defects stay.
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -114,12 +119,12 @@ def parse_suites() -> list[dict]:
     return cases
 
 
-def read_existing() -> tuple[dict[str, list], list[list], list[list]]:
+def read_existing(source: Path = OUT) -> tuple[dict[str, list], list[list], list[list]]:
     """Pull forward logged results, the Defects sheet, and the Daily Log."""
-    if not OUT.exists():
+    if not source.exists():
         return {}, [], []
 
-    book = load_workbook(OUT)
+    book = load_workbook(source)
     results: dict[str, list] = {}
     if "Test Cases" in book.sheetnames:
         sheet = book["Test Cases"]
@@ -428,11 +433,19 @@ def build_summary(book: Workbook, cases: list[dict]) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Build the QA execution tracker.")
+    parser.add_argument("--out", help="write a new workbook with this file name in docs/qa "
+                                      "instead of overwriting the original")
+    args = parser.parse_args()
+    target = QA_DIR / args.out if args.out else OUT
+    if target.parent != QA_DIR or target.suffix != ".xlsx":
+        sys.exit("--out takes a plain .xlsx file name, written beside the original.")
+
     cases = parse_suites()
     if not cases:
         sys.exit("No test cases found — write the suite files first.")
 
-    carried, defects, daily = read_existing()
+    carried, defects, daily = read_existing(target if target.exists() else OUT)
     per_owner: dict[str, int] = {}
     for case in cases:
         owner = SUITE_OWNER.get(case["suite"], "?")
@@ -445,9 +458,9 @@ def main() -> None:
     build_defects(book, defects)
     build_daily_log(book, daily)
     build_summary(book, cases)
-    book.save(OUT)
+    book.save(target)
 
-    print(f"Wrote {OUT.relative_to(QA_DIR.parent.parent)}")
+    print(f"Wrote {target.relative_to(QA_DIR.parent.parent)}")
     print(f"  {len(cases)} test cases across {len({c['suite'] for c in cases})} suites")
     for owner in sorted(per_owner):
         print(f"  Tester {owner}: {per_owner[owner]}")

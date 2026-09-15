@@ -52,7 +52,10 @@ shared epic must be prepared sequentially** — never in parallel to save time.
 **Expected**
 - The h1 is `Phases & Runs`.
 - The first panel is titled `Trigger a phase` and shows a `Work item` field, not the offline warning.
-- Below the field, the label reads `All phases — {first 8 chars of the work item id} · {title}`.
+- Below the field, the label reads `All phases — {work item key} · {title}` (e.g.
+  `All phases — WI-1 · Stripe Webhook Integration`) — never eight characters of an internal id.
+  With no work item selected it reads `All phases — No work item selected`.
+- The work-item name at the right of the `Runs` panel header uses the same `{key} · {title}` form.
 - A row of buttons is shown, one per phase, each labelled `▶ {Phase}` — including `▶ Ideation`,
   `▶ Requirements`, `▶ PRD`, `▶ Architecture`, `▶ UX Design`, `▶ Task Breakdown`.
 - A second panel titled `Runs` is present below.
@@ -130,8 +133,10 @@ shared epic must be prepared sequentially** — never in parallel to save time.
 - The empty field shows the placeholder `Search work items…`.
 - Typing `Stripe` narrows the list to work items whose key or title contains `Stripe`.
 - Typing `zzzzz` shows `No work items match`.
-- Selecting the epic updates the label below to `All phases — {id8} · Stripe Webhook Integration`
-  and updates the work-item name shown on the right of the `Runs` panel header.
+- Each option in the list reads `{key} · {title}`, e.g. `WI-1 · Stripe Webhook Integration`.
+- Selecting the epic updates the label below to `All phases — {key} · Stripe Webhook Integration`
+  and the work-item name on the right of the `Runs` panel header to `{key} · Stripe Webhook Integration`
+  — the picker, the label and the header all name the item the same way.
 
 **Test data**
 - Search terms: `Stripe`, `zzzzz`
@@ -139,8 +144,17 @@ shared epic must be prepared sequentially** — never in parallel to save time.
 **Pass / Fail**
 - PASS if the field filters as you type, shows `No work items match` for a non-matching term, and
   the selection drives the phase-list label.
-- FAIL if the field is a plain non-filtering dropdown, or if selecting an item does not change the
-  label.
+- FAIL if the field is a plain non-filtering dropdown, if selecting an item does not change the
+  label, or if the label or `Runs` header shows an 8-character id instead of the item's key.
+
+**Notes**
+- **Long titles.** If a work item's title is too long for the field, hovering its row in the open
+  list — or moving the highlight onto it with ↑ / ↓ — shows the full title in a box drawn over that
+  row. Hovering the closed field does the same for the chosen item. The box appears only when the
+  text is actually cut off; short titles show nothing extra. To check it, create a work item with a
+  long title (e.g. `ExpenseResponse is missing the created_at field on every list endpoint`) and
+  narrow the browser window. A cut-off title with no way to read it in full is a defect.
+- The same full-title box applies to the other searchable dropdowns built on this picker.
 
 ---
 

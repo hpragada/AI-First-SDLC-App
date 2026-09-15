@@ -33,7 +33,8 @@ to queue them up gets a red `Trigger failed` banner (TS-07 TC-701), not a second
 session accordingly — five gates is five sequential runs.
 
 **Personas.** You need more than one login. P1 Owner-Admin, P2 `product_owner`, P3 `architect`,
-P4 `designer`, P7 `qa_lead`, P9 `devops` and P10 `engineer` are all used below. Switch identity by
+P4 `designer`, P7 `qa_lead`, P8 `security_engineer`, P9 `devops` and P10 `engineer` are all used
+below. Switch identity by
 logging out and logging back in — never by editing data.
 
 ---
@@ -70,8 +71,8 @@ logging out and logging back in — never by editing data.
   nothing reaches a system-of-record without one.`
 - The tabs read `Pending (1)` and `Decided history`.
 - The sidebar `Gates` item carries a count badge matching the pending count.
-- The dashboard shows a tile with the pending count and the label `Gates need your approval`, with a
-  sub-line naming the required role.
+- The dashboard shows a tile with the pending count and the label `Gates need your approval`, with the
+  sub-line `1 waiting on you` (or `{n} waiting on you` for the true count).
 
 **Pass / Fail**
 - PASS if the gate appears on `/gates` with a matching count on the sidebar and the dashboard tile.
@@ -84,9 +85,12 @@ logging out and logging back in — never by editing data.
 - **Reload before judging any count on `/gates`.** The screen has no auto-refresh; it only refetches
   on mount and when the browser window regains focus. A stale count on a screen you left open is
   expected, not a defect.
-- The dashboard gates tile is **not** filtered to gates you personally can decide, and it is capped
-  at 20. A count that does not match "gates needing me" is a known product defect — do not raise it
-  from this case, which only asserts the counts agree with the number of pending rows.
+- The dashboard gates tile and the sidebar `Gates` badge count only the gates **the signed-in person
+  may decide** — the gate's required role on this project, or the project `admin` role, or tenant
+  admin — and the count is the true total, not capped. P1 is a tenant admin, so for P1 both equal
+  `Pending (n)`. Signed in as a persona who holds only some gate roles, the tile and badge can
+  legitimately read lower than `Pending (n)`, because `/gates` lists every pending gate on the
+  project. (Changed in commit 4ac75f9 — the tile used to count every gate and stop at 20.)
 
 ---
 
@@ -156,7 +160,9 @@ logging out and logging back in — never by editing data.
 - The `Gate` cell is a clickable label — for a plan-phase gate it reads `Phase gate`.
 - `Required role` shows a chip with the humanised role — `Product Owner` for the Ideation gate.
 - `Work item` shows the epic's key and title.
-- `Artifact` shows a link reading `Preview ↗` which navigates to the artifacts registry.
+- `Artifact` shows a link reading `Preview ↗` which opens `/artifacts` narrowed to that gate's run —
+  the address carries `run=`, and a banner titled `Showing part of the registry` reads
+  `Everything one run produced, including superseded versions.`
 - Clicking a row's `Gate` cell selects that gate and highlights the row.
 
 **Pass / Fail**
@@ -190,31 +196,41 @@ logging out and logging back in — never by editing data.
 1. Log out of P1 and log in as P2 (`qa+<x>.po@edvensoft.com` / `QaTest-2026!`).
 2. Go to `/gates` and select the Ideation gate row.
 3. Read the card on the right.
-4. Click `Preview artifact under review ↗`, then navigate back.
-5. Read the buttons and the footer line.
+4. Click `Preview artifact under review ↗`, read the screen, then navigate back.
+5. Read the comment field, the buttons and the footer line. Hover `Request changes`.
+6. Type `x` in the comment field, re-read the field label and `Request changes`, then clear the text.
 
 **Expected**
 - The card header reads `▲ Phase gate · required role: Product Owner`, followed by the work item's
   key and title as a sub-heading.
-- A link reads `Preview artifact under review ↗` and navigates to the artifacts registry
-  (`/artifacts`) — the whole list, filtered to nothing.
-- A field labelled `Comment (optional)` with the placeholder `Add context for your decision…` is
-  present and editable.
-- Two enabled buttons are shown: `Approve` (primary) and `Reject` (danger).
-- The footer line reads `Decision logged with your role & comment.`
+- Two links sit under it: `Preview artifact under review ↗` and `Open work item ↗`.
+- `Preview artifact under review ↗` opens `/artifacts` narrowed to this gate's run: the address
+  carries `run=`, a banner titled `Showing part of the registry` reads
+  `Everything one run produced, including superseded versions.`, and the Ideation artifact is listed.
+- With the box empty the field is labelled `Comment (optional to approve or reject)`, with the
+  placeholder `Add context for your decision — or say what you want changed…`.
+- Three buttons are shown: `Approve` (primary, enabled), `Request changes` (secondary) and `Reject`
+  (danger, enabled).
+- With the box empty, `Request changes` is **disabled**, and hovering it shows
+  `Write what you want changed first — the agent re-runs on this text`.
+- Once text is typed, the label reads just `Comment` and `Request changes` becomes enabled.
+- The footer line reads `Decisions are recorded with your name and role.`
 - No read-only banner is shown.
 
 **Pass / Fail**
-- PASS if the role holder gets an actionable card with both buttons enabled.
+- PASS if the role holder gets an actionable card with `Approve` and `Reject` enabled, the preview
+  link opens this run's artifacts, and `Request changes` enables only once a comment is written.
 - FAIL if the role holder sees the read-only card, if `Approve` is disabled for a gate with no
-  checklist, or if the preview link is missing or dead.
+  checklist, if the preview link is missing, dead or opens the unfiltered registry, or if
+  `Request changes` can be pressed with an empty comment.
 
 **Notes**
-- **`Preview artifact under review ↗` does not open the artifact under review** — it links to the
-  registry index, exactly like the `Preview ↗` cell in the pending table (TC-125). The reviewer must
-  find the right artifact themselves. That mismatch between the link's copy and its destination is
-  a known product defect and is tracked separately: assert only that the link navigates to
-  `/artifacts`, and do not raise a duplicate.
+- **Changed since this case was written.** The preview link used to open the whole registry; it now
+  opens the run's artifacts (commit 6d85ec9). A run can register several artifacts, so it is scoped
+  to the run rather than to a single artifact. The `Request changes` button and the current comment
+  and footer wording came with the rework-request feature.
+- Do not press `Request changes` in this case — it sends the phase back for another attempt and
+  consumes the gate. TC-127 approves this gate.
 
 ---
 
@@ -265,7 +281,7 @@ logging out and logging back in — never by editing data.
 
 ---
 
-### TC-128 · The artifact stops being a draft only once its gate is approved
+### TC-128 · While its gate is open the artifact reads `Waiting for approval`, and it publishes only once approved
 
 | Field | Value |
 |---|---|
@@ -277,7 +293,8 @@ logging out and logging back in — never by editing data.
 | Automation | No |
 
 **Preconditions**
-- Record the artifact's state on `/artifacts` **before** approving (do this during TC-126).
+- Record the artifact's state on `/artifacts` **before** approving (do this during TC-126, while the
+  Ideation gate is still pending).
 - TC-127 has approved the Ideation gate.
 
 **Steps**
@@ -290,33 +307,41 @@ logging out and logging back in — never by editing data.
 6. Re-open the `Filter by status` dropdown, select `Published`, and confirm the artifact is listed.
 
 **Expected**
-- **Before approval:** the artifact's `Status` badge reads `Draft`, and its only action is
-  `Preview` — there is no `Export` button.
-- Before approval, the `Filter by status` dropdown offers `Status: All` and `Draft`. It does **not**
-  offer `Published` yet.
+- **Before approval (gate open):** the artifact's `Status` badge reads `Waiting for approval`, and its
+  only action is `Preview` — there is no `Export` button.
+- Before approval, the `Filter by status` dropdown offers `Status: All` and `Waiting for approval`
+  (plus `Draft` or other statuses only if other artifacts in the project carry them). It does
+  **not** offer `Published` unless some other artifact is already published.
+- The dropdown's option text is the same wording as the badge — `Waiting for approval`, never the
+  word `Staged`.
 - **After approval:** the same artifact's `Status` badge reads `Published`, and an `Export` button
   is now offered next to `Preview`.
-- After approval the dropdown offers `Published` as well, and selecting it lists this artifact.
+- After approval the dropdown offers `Published`, and selecting it lists this artifact.
 
 **Pass / Fail**
-- PASS if the badge moves `Draft` → `Published` and the `Export` action appears only after the gate
-  is approved.
-- FAIL if `Export` is offered while the gate is still pending, or if the artifact reaches
-  `Published` with no approved gate (**Critical** — this is the non-negotiable the product exists to
-  enforce).
+- PASS if the badge reads `Waiting for approval` while the gate is open, moves to `Published` on
+  approval, and the `Export` action appears only after the gate is approved.
+- FAIL if the artifact still reads `Draft` while its gate is open, if `Export` is offered while the
+  gate is still pending, or if the artifact reaches `Published` with no approved gate (**Critical** —
+  this is the non-negotiable the product exists to enforce).
 
 **Notes**
-- **There is no observable `Approved` state.** Approving a gate publishes the artifact in the same
-  transaction, so it goes straight from `Draft` to `Published`. The `Filter by status` dropdown is
-  built from the statuses actually present in the registry, so an `Approved` option can never appear
-  — do not look for one, and do not raise its absence.
+- **Opening a gate marks the run's drafts `Waiting for approval`.** When a run reaches its gate, every
+  artifact of that run still in draft is moved to the staged status, which every screen shows as
+  `Waiting for approval` (changed in commit 4ac75f9 — before it, an artifact at an open gate read
+  `Draft`, indistinguishable from one nobody had been asked to review). Already published or
+  superseded artifacts are never moved back.
+- **There is no observable `Approved` state on this path.** Approving a gate publishes the artifact in
+  the same transaction, so it goes straight from `Waiting for approval` to `Published`. The
+  `Filter by status` dropdown is built from the statuses actually present in the registry, so an
+  `Approved` option will not appear here — do not look for one, and do not raise its absence.
 - The `System of record` cell reads `internal` in a chip for these artifacts, both before and after
   approval — **not** `Platform only`. `Platform only` renders only when an artifact carries no
   system-of-record value at all, which a phase artifact never does. Do not raise the chip as a
   premature publish: `internal` means the platform itself is the system of record. Pushing to an
   external SoR (Confluence) is a separate, explicit action covered by TS-10.
 - Publishing to an external system is TS-10. This case only proves that the gate decision is what
-  moves the artifact off `Draft`.
+  moves the artifact from `Waiting for approval` to `Published`.
 
 ---
 
@@ -394,7 +419,7 @@ logging out and logging back in — never by editing data.
   `You don't hold the architect role on this project, so this is read-only.` and disabled `Approve`
   and `Reject` buttons — even though P2 could decide the *product_owner* gates.
 - As P3: the actionable card is shown with header `▲ Phase gate · required role: Architect`, an
-  editable `Comment (optional)` field and enabled `Approve` / `Reject` buttons.
+  editable `Comment (optional to approve or reject)` field and enabled `Approve` / `Reject` buttons.
 
 **Pass / Fail**
 - PASS if the same gate is read-only for the Product Owner and actionable for the Architect.
@@ -529,22 +554,25 @@ logging out and logging back in — never by editing data.
   reload** the gate has left the `Pending` tab and appears on `Decided history` badged `Rejected`.
 - The run console badge reads `Failed`.
 - A red banner titled `Gate rejected` reads `The gate was rejected. Re-trigger to try again.`
-- On `/artifacts`, the artifact from that run still badges `Draft` and offers only `Preview` — no
-  `Export` action, and it never reaches `Published`.
+- On `/artifacts` (reload), the artifact from that run badges `Superseded` and offers only
+  `Preview` — no `Export` action, and it never reaches `Published`.
 
 **Test data**
 - Comment: `Rejected — the retry policy for failed webhooks is missing.`
 
 **Pass / Fail**
 - PASS if the rejection is recorded and the run shows `Failed` with the `Gate rejected` banner.
-- FAIL if the run completes anyway, if the artifact reaches `Published` or gains `Export`, or if the
-  rejection errors.
+- FAIL if the run completes anyway, if the artifact reaches `Published` or gains `Export`, if it is
+  still `Waiting for approval` after the rejection, or if the rejection errors.
 - **BLOCKED** (not Failed) if the rejection records cleanly but the run console has not reached
   `Failed` after a **max wait of 10 minutes**.
 
 **Notes**
 - Rejection is **never** blocked by unmet criteria — only Approve is. Rejecting a checklist gate
   with nothing ticked is valid and should succeed.
+- A rejection marks every artifact of the run that was not published as superseded, shown as the
+  grey `Superseded` badge. Before the rejection the same artifact read `Waiting for approval`
+  (TC-128). Neither word is a defect.
 
 ---
 
@@ -933,12 +961,13 @@ logging out and logging back in — never by editing data.
 **Steps**
 1. Go to `/gates` and select the Task Breakdown gate row (the `Gate` cell reads `Phase gate`;
    identify it by `Required role: Tech Lead`).
-2. Read the card. Between the checklist area and the `Comment (optional)` field, find the
+2. Read the card. Between the checklist area and the comment field, find the
    repository-assignment review block.
 3. Read the proposed tasks listed there and the repository each has been assigned.
 4. Find a task the planner flagged as low confidence and read the banner above the reassurance line.
 5. Change one task's repository to a different connected repo using its control.
-6. Read the line directly above `Comment (optional)`.
+6. Read the line directly above the comment field (labelled
+   `Comment (optional to approve or reject)`).
 7. Approve the gate, then go to `/work-items` and open the task you re-pointed in step 5.
 
 **Expected**
@@ -1064,7 +1093,7 @@ logging out and logging back in — never by editing data.
   `You don't hold the reviewer role on this project, so this is read-only.` and both buttons
   disabled.
 - As the reviewer: the actionable card is shown, headed
-  `▲ Merge gate · required role: Reviewer`, with an editable `Comment (optional)` field and enabled
+  `▲ Merge gate · required role: Reviewer`, with an editable `Comment (optional to approve or reject)` field and enabled
   `Approve` / `Reject` buttons.
 
 **Pass / Fail**
@@ -1172,8 +1201,9 @@ logging out and logging back in — never by editing data.
   `The gate was rejected. Re-trigger to try again.`
 - The task's `State` returns to `In progress` — a rejected merge does **not** mark the task done and
   does **not** archive or lock it.
-- **None** of that run's artifacts reach `Published`; they still badge `Draft` and offer no `Export`
-  action. In particular the `code` artifact is not published.
+- **None** of that run's artifacts reach `Published`; after a reload they badge `Superseded` and offer
+  no `Export` action. In particular the `code` artifact is not published, and none is left reading
+  `Waiting for approval`.
 
 **Pass / Fail**
 - PASS if the rejection is recorded, the run shows `Failed` / `Gate rejected`, the task returns to
@@ -1189,3 +1219,91 @@ logging out and logging back in — never by editing data.
 - This is the rejection path with the widest blast radius: a plan-tier rejection only strands a
   document, while this one has already pushed a branch and opened a PR. The assertion that matters
   most is the last one — nothing publishes.
+
+---
+
+### TC-906 · The Security gate cannot be approved while a Critical or High security finding is open
+
+| Field | Value |
+|---|---|
+| Suite | TS-09 Gates |
+| Type | Negative |
+| Priority | Critical |
+| Screen | `/gates` · `/work-items` |
+| Persona | P8 Security Engineer |
+| Automation | No |
+
+**Preconditions**
+- A Security run on the work item has reached `Awaiting gate`, so a gate with required role
+  `security_engineer` is pending. **Needs its own completed run: 20–30 minutes typical, max wait 45
+  minutes.**
+- **Sequential only.** The work item's previous gate must already be decided before the Security run
+  can be triggered — only one run may be live per work item.
+- P8 exists with the `security_engineer` role on `Payment Gateway v2`.
+- Before deciding, go to `/work-items` and note whether the work item has defect children whose
+  titles start with `Security:` and are still open. The security review opens one such defect for
+  every Critical or High finding it reports. This tells you which half of the case this run can
+  exercise.
+
+**Steps**
+1. Log in as P8 (`qa+<x>.sec@edvensoft.com`) and go to `/gates`. **Reload** the page.
+2. Select the Security gate and read the `Required checklist` block, its counter and the `Approve`
+   button.
+3. **If open `Security:` defects exist:** click the checklist item to tick it by hand, then click
+   `Approve`, and read the banner that appears.
+4. Reload `/gates` and confirm the gate is still on the `Pending` tab.
+5. Get every open `Security:` defect resolved: fix the code and re-run Security on the work item so
+   the review reports the findings as resolved. When that run reaches its gate again, go back to
+   `/gates`, reload, select the new Security gate and read the checklist and `Approve` button.
+6. Click `Approve`.
+
+**Expected**
+- The checklist has exactly **one** required item, marked with `*`:
+  `No unresolved Critical or High security finding — every one the security review raised has been
+  fixed`.
+- **While a Critical or High finding is open:** the counter reads `0 of 1 met` and `Approve` is
+  disabled, reading `Approve (1 remaining)`. `Reject` stays enabled.
+- Ticking the item by hand does **not** get the gate through. `Approve` becomes clickable, but the
+  attempt shows a danger banner titled `Couldn't record the decision` whose text reads exactly
+  `cannot approve: 1 required gate condition(s) unmet: no_blocking_security_findings ({n} security
+  finding(s) still open: {Severity} — {title}; …)`. Here `{n}` is the number open, the word is
+  `finding` for one and `findings` for more, each finding is `{Severity} — {title}` (Critical first),
+  and after five it ends `; and {m} more`. Example with two open:
+  `cannot approve: 1 required gate condition(s) unmet: no_blocking_security_findings (2 security findings still open: Critical — SQL injection in refunds search; High — Webhook secret logged)`.
+- After the refused attempt the gate is still pending and nothing is recorded.
+- **Once no Critical or High finding is open:** the item shows as met without anyone ticking it, the
+  counter reads `1 of 1 met`, the button reads plainly `Approve` and is enabled, and approving
+  records the decision. The gate leaves `Pending` after a reload.
+
+**Pass / Fail**
+- PASS if approval is refused while blocking security defects are open (a hand tick does not change
+  that), and the same condition goes green by itself once they are resolved.
+- FAIL — **Critical** — if the Security gate can be approved while a Critical or High `Security:`
+  defect on the work item is still open.
+- FAIL if the condition stays unmet after every blocking finding is resolved, which would make the
+  gate impossible to approve.
+
+**Notes**
+- **New behaviour in commit 4ac75f9.** Until then the Security gate had no rule at all and was a
+  plain human approval. The condition is **derived**: the platform works it out from the open
+  security defects every time the checklist is read and again when someone decides, so a reviewer's
+  tick is ignored. It is the same kind of rule as the Testing gate's (TC-139).
+- Only security defects count. Test defects and accessibility defects hold their own gates and have
+  no effect here.
+- A Security gate that was already pending **before** this rule was added still gets the condition
+  when it is next opened or decided. Seeing the item on an older gate is correct.
+- The banner text is the server's own sentence, shown unchanged (`services.py:251-253` → `views.py:2857`
+  → `api.ts:236` → `Gates.tsx:488-489`). It is written for developers — the lower-case start, the
+  `(s)` and the machine key are what ship today. That is a known client-copy issue raised with the
+  team; record it, but it is not this case's failure. The finding titles in the example are
+  illustrative: yours are whatever the security review wrote.
+- If a finding has no title, it reads `{Severity} — the security review recorded no title for this
+  one`.
+- If the run reported no Critical or High findings, the condition is already met at step 2. Record
+  that outcome, mark steps 3–4 as not exercisable on this run, and note it — do not mark the case
+  Failed.
+- Cancelling an open security defect from its row menu on `/work-items` (`Cancel…`) also releases
+  this condition. It adds a second required item to the pending gate instead, reading
+  `Reviewed the cancelled defect WI-<n> — Security: <title> (cancelled by <name>: <reason>)`, which
+  the reviewer must tick. Step 5 uses the re-run route because it proves the finding was actually
+  fixed.

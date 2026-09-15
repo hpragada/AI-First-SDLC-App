@@ -9,13 +9,15 @@ approved gate* — so TC-151 is the single most important case in the file.
 least one completed phase run from TS-07, and TC-146 onwards need at least one artifact whose gate
 has been approved in TS-09.
 
-**Read this before you start — it changes what several cases assert.** Approving a phase gate
-**publishes** the phase's artifacts in the same transaction. There is therefore no observable
-`Approved` artifact state anywhere in the product: an artifact is `Draft` until its gate is
-approved and `Published` the instant it is. The manual publish screen (TC-152 onwards) is a
-**re-publish** of an already-published artifact, not the thing that first publishes it. Any
-expectation that a gate-approved artifact reads `Approved`, or that the registry offers an
-`Approved` filter option, is wrong.
+**Read this before you start — it changes what several cases assert.** When a run reaches its
+gate, its draft artifacts are marked **`Waiting for approval`** (since commit 4ac75f9; before that
+they kept reading `Draft`). Approving the gate **publishes** them in the same transaction, and
+rejecting it marks them **`Superseded`**. So on the plan path an artifact reads `Draft` while its
+run is still working, `Waiting for approval` while its gate is open, and `Published` the instant the
+gate is approved. There is no observable `Approved` state on that path. The manual publish screen
+(TC-152 onwards) is a **re-publish** of an already-published artifact, not the thing that first
+publishes it. Any expectation that a gate-approved artifact reads `Approved`, or that the registry
+offers an `Approved` filter option, is wrong.
 
 Everything here is done as **P1 Owner-Admin** unless a case says otherwise — a tenant admin can
 approve any gate, which keeps the suite from stalling behind a persona swap.
@@ -81,7 +83,7 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 
 ---
 
-### TC-142 · Only Draft and Published status badges are reachable — `Pending gate` never renders
+### TC-142 · Each status badge matches the artifact's gate state — `Waiting for approval`, `Published`, `Superseded`
 
 | Field | Value |
 |---|---|
@@ -96,40 +98,43 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 - TC-141 passed.
 - At least two artifacts exist in different states: one from a phase whose gate is still open on
   `/gates`, and one from a phase whose gate has been approved in TS-09.
+- Optional, for the third badge: one artifact from a run whose gate was **rejected** (TS-09 TC-133).
 
 **Steps**
 1. Go to `/gates` and, on the **Pending** tab, note the work item and gate of every gate that is
-   still open. These are the phases whose artifacts have *not* been through a gate.
+   still open. These are the phases whose artifacts are waiting on a decision.
 2. Go to `/artifacts` and read the `Status` cell of every row.
 3. Find the row for a phase you listed in step 1 and read its badge.
 4. Find the row for a phase whose gate was approved and read its badge.
-5. Note which rows also offer an **Export** action.
+5. If you have one, find the row for the run whose gate was rejected and read its badge.
+6. Note which rows also offer an **Export** action.
 
 **Expected**
-- Every `Status` cell shows either `Draft` or `Published`. No third badge appears anywhere in the
-  table, however many artifacts are listed.
-- The artifact of a phase whose gate is still open (step 1) reads `Draft` and offers **Preview**
-  only.
+- The artifact of a phase whose gate is still open (step 1) reads `Waiting for approval` and offers
+  **Preview** only.
 - The artifact of a phase whose gate was approved reads `Published` and offers **Preview** and
   **Export**.
-- No cell shows a raw token such as `pending_gate`, `staged` or `approved`.
+- The artifact of a run whose gate was rejected reads `Superseded` (grey) and offers **Preview**
+  only.
+- An artifact whose run is still working and has not reached its gate reads `Draft`.
+- Every badge is one of those words (or `Run output` on a run's closing-message row). No cell shows
+  a raw token such as `staged`, `pending_gate`, `superseded` or `approved`, and no `Pending gate`
+  badge appears anywhere.
 
 **Pass / Fail**
-- PASS if only `Draft` and `Published` appear, and each maps to the gate state you established on
+- PASS if every badge is one of the words above and each maps to the gate state you established on
   `/gates` in step 1.
-- FAIL if any raw underscore token is rendered, if a still-gated artifact reads `Published`, or if
-  a gate-approved artifact still reads `Draft`.
-- FAIL — and this is the interesting one — if a `Pending gate` badge appears on any row. See Notes:
-  observing it would mean the app has grown a status the backend does not define.
+- FAIL if any raw underscore or lower-case token is rendered, if a still-gated artifact reads
+  `Published` or `Draft`, if a gate-approved artifact does not read `Published`, or if a rejected
+  run's artifact reads `Draft` or `Waiting for approval`.
 
 **Notes**
-- A `Pending gate` badge exists in the code but is **dead** — the artifact status vocabulary is
-  `draft / staged / approved / published` only, and there is no `pending_gate` value to trigger it.
-  That dead branch is already tracked as a product defect; **do not raise it**. This case exists to
-  confirm it stays unreachable.
-- There is likewise no observable `Approved` badge: approving a gate publishes the artifact in the
-  same transaction, so an artifact goes straight from `Draft` to `Published`. That is why **Export**
-  and `Published` always appear together.
+- **Changed in commit 4ac75f9.** Opening a gate now marks the run's draft artifacts as staged, shown
+  as `Waiting for approval`. The old `Pending gate` badge, which nothing could ever trigger, was
+  deleted, so the note that used to sit here about a "dead" badge no longer applies.
+- There is no observable `Approved` badge on the gate path: approving a gate publishes the artifact
+  in the same transaction, so it goes straight from `Waiting for approval` to `Published`. That is
+  why **Export** and `Published` always appear together here.
 
 ---
 
@@ -162,6 +167,8 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 - Typing in `Search artifacts…` narrows the table to rows whose name, type or phase contains the
   text, case-insensitively.
 - Clearing the search restores the full row count from step 1.
+- Each of the three selects is as wide as the option it is showing. With `Waiting for approval` or a
+  long phase name selected, the whole word is visible in the closed select — nothing is cut off.
 
 **Pass / Fail**
 - PASS if all four controls change the visible rows and clearing them restores the full list.
@@ -172,9 +179,13 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 - Search term: the first word of any artifact name in the table.
 
 **Notes**
-- Each select's options are built from the values actually present, so `Status: All` will offer
-  only `Draft` and/or `Published`. There is deliberately **no** `Approved` and no `Pending Gate`
-  option — those statuses never reach the registry (see TC-142). Their absence is not a defect.
+- Each select's options are built from the values actually present, so `Status: All` offers only
+  the statuses in the registry — typically `Draft`, `Waiting for approval`, `Published` and
+  `Superseded`, in the same words as the badges. There is deliberately **no** `Pending Gate` option,
+  and `Approved` appears only if some artifact actually carries that status (see TC-142). An absent
+  option is not a defect.
+- The selects sizing themselves to their text is new in commit b40c557; they used to be fixed-width
+  and cut `Waiting for approval` short.
 - All four controls filter **client-side over the rows already fetched**; there is no pagination,
   so the row count in step 1 is the whole registry. See TC-244.
 
@@ -275,7 +286,7 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 
 **Expected**
 - The row for the still-open gate (step 1) shows **Preview** only — no **Export** — and its status
-  badge reads `Draft`.
+  badge reads `Waiting for approval`.
 - The row for the approved gate (step 2) shows both **Preview** and **Export**, and its status
   badge reads `Published`.
 - Clicking **Export** opens `/artifacts/{id}/publish` with the heading
@@ -290,9 +301,9 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 **Notes**
 - The button is deliberately hidden rather than disabled, so the user can never land on a status
   rejection from the registry.
-- `/gates` is the oracle for this case, not the registry. `Draft` on `/artifacts` covers both
-  "never gated" and "sitting at an open gate" — the two are not distinguishable from the registry
-  alone, which is why step 1 exists.
+- `/gates` is the oracle for this case, and the registry now agrees with it: since commit 4ac75f9 an
+  artifact at an open gate reads `Waiting for approval`, not `Draft`. Step 1 stays, because the
+  assertion is that the registry and the gates list tell the same story.
 
 ---
 
@@ -319,13 +330,14 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 
 **Expected**
 - The breadcrumb reads `Artifacts / Preview`.
-- The heading reads `{artifact name} · v{n}` with a status badge beside it. The badge on this
-  screen carries the **raw** status token (`published` or `draft`, lower case), unlike the
-  humanized badge on `/artifacts` — that inconsistency is already tracked; do not raise it.
+- The heading reads `{artifact name} · v{n}` with a status badge beside it. The badge uses the same
+  words and colours as `/artifacts` — `Published`, `Waiting for approval`, `Draft` or `Superseded`,
+  never a lower-case token.
 - An info banner reads exactly
   `Read-through from the system-of-record. This preview is never an editor.`
 - The right column shows a card titled `Version history`. With only one version registered it reads
-  `No prior versions.`; with more, it lists one row per version tagged `v{n}`.
+  `No prior versions.`; with more, it lists one row per version tagged `v{n}`, each with its status in
+  words (for example `Superseded`), not a lower-case token.
 - The body is not editable — clicking into it places no cursor and typing changes nothing. There is
   no Save/Edit control anywhere on the screen.
 - If the artifact has been published to Confluence, an `Open source` chip appears next to the
@@ -376,54 +388,60 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 
 ---
 
-### TC-149 · A listed artifact with no readable body shows `Artifact not found`
+### TC-149 · A listed artifact with no readable body shows `Preview unavailable`, not "not found"
 
 | Field | Value |
 |---|---|
 | Suite | TS-10 Artifacts & Publish |
 | Type | UX |
 | Priority | Medium |
-| Screen | `/artifacts/:id` |
+| Screen | `/artifacts` · `/traceability` · `/artifacts/:id` |
 | Persona | P1 Owner-Admin |
 | Automation | No |
 
 **Preconditions**
-- An artifact exists whose body cannot be read back — in practice, a pointer registered by a run
-  that failed or was parked before it reported a body (TS-07/TS-14 produce these). Open previews
-  from `/artifacts` one at a time until you find one; do not force the state any other way.
+- An internal artifact exists whose body cannot be read back. On `/artifacts` such a row shows the
+  muted text `Nothing to preview` in its actions cell instead of a **Preview** link. Runs that failed
+  or were parked before reporting a body (TS-07/TS-14) are the usual source. Do not force the state
+  any other way.
 
 **Steps**
-1. Go to `/artifacts` and note the row you are about to open — its name, phase and status.
-2. Click **Preview** on an artifact produced by a run that failed or was parked.
-3. Read the panel.
-4. Go back to `/artifacts` and confirm the row is still listed.
+1. Go to `/artifacts` and find a row whose actions cell reads `Nothing to preview`. Note its name,
+   phase and status.
+2. Click **View traceability** in the page header.
+3. Find the node carrying that artifact's name and click it.
+4. Read the screen.
+5. Go back to `/artifacts` and confirm the row is still listed.
 
 **Expected**
-- A danger banner titled `Artifact not found` with the text
-  `This artifact doesn't exist, has no body, or you don't have access to it.`
-- The breadcrumb `Artifacts / Preview` is still shown — the screen has not errored out or blanked.
+- Step 3 opens `/artifacts/{id}` in the same tab (an internal artifact has no external link).
+- The breadcrumb `Artifacts / Preview` is shown.
+- In place of a document, an empty state titled `Preview unavailable` reads
+  `The document couldn't be read from its source right now. Its record and version are intact.`
+- **No** `We couldn't find that document` banner appears — the document exists, so the screen must
+  not say it is missing.
 - No raw error text, stack trace or status code is visible.
-- The row is still present in the registry after step 4 — the pointer is intact, only its body is
+- The row is still present in the registry after step 5 — the record is intact, only its body is
   unreadable.
 
 **Pass / Fail**
-- PASS if the not-found banner renders inside the normal shell and the registry row survives.
-- FAIL if the screen blanks, shows a raw error or status code, or redirects away from
-  `/artifacts/:id`.
+- PASS if `Preview unavailable` renders inside the normal shell and the registry row survives.
+- FAIL if the screen says the document cannot be found, blanks, shows a raw error or status code, or
+  redirects away from `/artifacts/:id`.
 
 **Notes**
-- **Read this before deciding the verdict.** `Artifact not found` is the *correct current
-  behaviour*, even though the copy is misleading for an artifact you can see listed one screen
-  earlier. A platform-internal artifact with no readable body is reported as missing by the
-  preview endpoint, so the more helpful `Preview unavailable` empty state that exists in the code
-  can never render for one. That misleading copy is already tracked as a product defect — record
-  what you saw and **do not raise it again**.
-- If every artifact in your registry has a body, mark this case **Not Run** with the reason rather
-  than manufacturing the state outside the product.
+- **Changed in commit 4ac75f9.** The screen used to answer this artifact with the same
+  `Artifact not found` banner as a document that does not exist, and `Preview unavailable` could
+  never render. The server now answers a readable-but-empty artifact normally, so the two cases show
+  different screens. TC-150 covers the not-found half.
+- The registry hides **Preview** on these rows on purpose, so the traceability map is the in-product
+  route to the preview address. It is not a workaround for a bug.
+- If no row in your registry reads `Nothing to preview`, mark this case **Not Run** with the reason
+  rather than manufacturing the state outside the product.
 
 ---
 
-### TC-150 · An unknown artifact id shows `Artifact not found`
+### TC-150 · An unknown artifact id shows `We couldn't find that document`
 
 | Field | Value |
 |---|---|
@@ -443,9 +461,10 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 3. Read the panel.
 
 **Expected**
-- A danger banner titled `Artifact not found` with the text
-  `This artifact doesn't exist, has no body, or you don't have access to it.`
+- A danger banner titled `We couldn't find that document` with the text
+  `It may have been removed, or you may not have access to this project.`
 - The breadcrumb `Artifacts / Preview` still renders and the app shell is intact.
+- The `Preview unavailable` state from TC-149 does **not** appear.
 
 **Pass / Fail**
 - PASS if the not-found banner renders inside the normal shell.
@@ -453,6 +472,13 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 
 **Test data**
 - Artifact id: `00000000-0000-0000-0000-000000000000`
+
+**Notes**
+- The banner copy changed in commit 4ac75f9. The old `Artifact not found` /
+  `This artifact doesn't exist, has no body, or you don't have access to it.` text no longer exists.
+- If the request **fails** rather than finding nothing (for example the backend is down), the screen
+  shows a different panel titled `We couldn't open this document` with a retry control. That is a
+  separate state, not this case's result.
 
 ---
 
@@ -485,7 +511,9 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 - A modal titled `Publish artifact` shows a disabled `Artifact` field, and a red banner titled
   `Can't publish — not gate-approved` reading
   `This artifact is still {status}. Approve its gate first; manual publish never bypasses a gate.`
-  with the artifact's current status in bold.
+  with the artifact's current status in bold. For an artifact whose run is at `Awaiting gate`,
+  `{status}` is the lower-case token `staged` — this banner prints the raw status, while the
+  registry badge for the same artifact reads `Waiting for approval`.
 - The **Publish** button is disabled and clicking it does nothing — no request, no navigation, no
   change of state.
 - **Open gate ↗** navigates to the gates screen.
@@ -499,6 +527,13 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
   link appears, or the **Publish** button is live for a non-approved artifact.
 
 **Notes**
+- The bold status in the banner is the raw token (`staged`, `draft`) because the banner prints the
+  stored value (`ExportPublish.tsx:129`), while every other screen says `Waiting for approval` /
+  `Draft`. This banner is reached only by typing the `/publish` address — the registry offers
+  **Export** on approved or published rows only. The approved branch has the same fault in its
+  `Artifact` field, which ends `· approved` or `· published` in lower case (`ExportPublish.tsx:152`),
+  and that one IS on the normal Export path. That is a **known client-copy issue raised with the team**; assert what ships today and
+  do not raise a duplicate.
 - This is the load-bearing case of the suite. Deep-linking to `/publish` is a legitimate way to
   reach the screen through the product (the URL is reachable from the address bar); it is not an
   API call or a state hack.
@@ -751,7 +786,7 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 
 ---
 
-### TC-241 · A failed registry request renders as an empty registry, not as an error
+### TC-241 · A failed registry request shows an error panel with `Try again`, not an empty registry
 
 | Field | Value |
 |---|---|
@@ -777,38 +812,40 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 3. **Without reloading**, use the top-bar project select to switch to the second project. This
    forces a fresh registry request for a project the browser has never fetched.
 4. Wait about 15 seconds — the app retries a failed request a few times before giving up — then
-   read the whole screen. Note the exact heading, any empty-state title and text, and whether the
-   search box and the three filter selects are present.
-5. Record, in one sentence, whether anything on the screen tells you the request failed.
-6. **Cleanup — mandatory.** Restart the backend, wait for it to come up, and switch the project
-   select back to `Payment Gateway v2`. Confirm the rows from step 1 return.
+   read the whole screen. Note the heading, the panel's title and text, and whether the search box
+   and the three filter selects are present.
+5. Click **Try again** while the backend is still down, and read the screen again.
+6. **Cleanup — mandatory.** Restart the backend, wait for it to come up, click **Try again**, then
+   switch the project select back to `Payment Gateway v2`. Confirm the rows from step 1 return.
 
 **Expected**
-- The screen shows **no** error banner, no retry control, and no text mentioning a failure, a
-  network problem or a status code.
-- Instead it renders the ordinary registry chrome — the `Artifacts` heading, the **View
-  traceability** link, the `Search artifacts…` box and the `Phase: All` / `Type: All` /
-  `Status: All` selects — and in place of the table an empty state titled
-  `No artifacts match these filters` with the text
-  `Clear the search or filters to see the full registry.`
-- Step 5's honest answer is **nothing**: the screen is indistinguishable from a healthy project
-  whose filters happen to exclude every row.
-- Step 6 restores the original rows.
+- The `Artifacts` heading, its sub-heading and the **View traceability** link still render.
+- In place of the filter bar and the table, a danger banner titled
+  `Can't reach the SDLC app right now` reads `Your browser couldn't connect.`, followed by a
+  **Try again** button and the line
+  `This screen is empty because it didn't load — not because there is nothing here.`
+- The `Search artifacts…` box and the three filter selects are **not** shown, and neither
+  `No artifacts yet` nor `No artifacts match these filters` appears.
+- No status code, raw error text or stack trace is visible.
+- Step 5: with the backend still down, the same panel returns after the retries.
+- Step 6: after **Try again** with the backend up, the second project's registry (or its
+  `No artifacts yet` state) renders, and switching back restores the rows from step 1.
 
 **Pass / Fail**
-- PASS if the screen renders a filter-empty state with no failure signal of any kind. That is the
-  current behaviour, and recording it is the point of this case.
-- FAIL if the app blanks, crashes, shows a raw error body, or redirects to `/login` — those would
-  be different and worse defects than the one under test.
+- PASS if a failed registry request shows the `Can't reach the SDLC app right now` panel with a
+  working **Try again**, and never an empty-registry or filtered-empty message.
+- FAIL if the failure renders as `No artifacts yet` or `No artifacts match these filters`, if the
+  panel has no **Try again**, or if the app blanks, crashes, shows a raw error body, or redirects to
+  `/login`.
 
 **Notes**
-- **Do not raise a new defect from this case.** "A failed request renders as an empty or zero
-  state" is already tracked as a product defect across the dashboard, artifacts, traceability,
-  repositories and the admin user list. This case exists so the pack carries a reproducible
-  observation of it, and so it is on record that TC-144 and TC-145 both pass on a broken backend.
-- The only distinguishing signal is a subtle one: the *truly*-empty state (`No artifacts yet`,
-  TC-145) requires a request that **succeeded** and returned nothing, so a broken backend produces
-  the *filtered*-empty copy instead. No user would read that difference as "the server is down".
+- **Rewritten for commit 6d85ec9.** This case used to record that a failed request looked exactly
+  like an empty, filtered registry. The screen now checks for a failed request before anything else
+  (`ArtifactsRegistry.tsx:116-123`), so that defect is fixed and this case guards it.
+- The title and line depend on **why** the request failed. Stopping the backend is a lost
+  connection, which gives the copy above. A server fault would instead read
+  `Something went wrong on our side` / `The app couldn't load this. Nothing you did caused it.`
+  Record the title you actually saw.
 
 ---
 
@@ -890,7 +927,8 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
   read-through banner, formatted body, `Version history` card — plus an `Open source` chip beside
   the heading.
 - **If the body could not be read back but the external link is known**, the screen instead shows a
-  single card carrying the artifact's name and version, its raw status underneath, an `Open source`
+  single card carrying the artifact's name and version, its status in words underneath (for example
+  `Published`), an `Open source`
   chip on the right, and an info banner reading
   `This artifact is owned by its system of record. Open it there for the live, editable copy.`
 - Either way the chip opens the Confluence page in a **new tab** and leaves `/artifacts/:id` on
@@ -958,3 +996,50 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
   defects.
 - If the list has grown long enough to be genuinely hard to work with, that is worth one **Low**
   usability observation against this TC-ID, recorded once with the row count you saw.
+
+---
+
+### TC-245 · `Show the whole registry` clears the filter a gate's Preview link set
+
+| Field | Value |
+|---|---|
+| Suite | TS-10 Artifacts & Publish |
+| Type | Functional |
+| Priority | Medium |
+| Screen | `/gates` → `/artifacts?run=…` → `/artifacts` |
+| Persona | P1 Owner-Admin |
+| Automation | No |
+
+**Preconditions**
+- At least one gate is pending on `/gates`.
+- The project has artifacts from **more than one** run, so the whole registry has more rows than the
+  one run's view.
+
+**Steps**
+1. Go to `/artifacts` with no filter and note the total number of rows.
+2. Go to `/gates`, select a pending gate, and click `Preview ↗` in its `Artifact` cell.
+3. Read the address bar, the banner above the table, and the number of rows.
+4. Click **Show the whole registry** in that banner.
+5. Read the address bar, look for the banner, and count the rows again.
+
+**Expected**
+- Step 2 opens `/artifacts` with a `run` value in the address.
+- Step 3: an info banner titled `Showing part of the registry` reads
+  `Everything one run produced, including superseded versions.` and carries a
+  **Show the whole registry** button. The table lists only that run's artifacts — fewer rows than
+  step 1.
+- Step 5: the address bar reads plain `/artifacts` with no `run` value, the
+  `Showing part of the registry` banner is gone, and the row count is back to the step 1 total —
+  without a page reload.
+
+**Pass / Fail**
+- PASS if **Show the whole registry** removes both the scope in the address and the narrowed list,
+  in one click.
+- FAIL if the address changes but the list stays narrowed to the one run, or if the banner stays on
+  screen after the click.
+
+**Notes**
+- **Fixed in commit 4ac75f9.** Before it, the click changed the address to `/artifacts` but the
+  screen kept showing the one run's artifacts, so the button looked dead.
+- If a scoped view matches nothing, the empty state `Nothing matched this filter` carries its own
+  **Show the whole registry** button. It must behave the same way — check it if you reach that state.

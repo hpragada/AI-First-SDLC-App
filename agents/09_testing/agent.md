@@ -19,7 +19,9 @@ Critical or High defects may remain open before the security phase.
 Test Automation agent (09b), which generates the scripts, runs them against the live
 application, and reports the results the platform turns into defects. This agent is the
 specification half of that pair and owns no working copy: it reasons from the requirements, the
-PRD, the architecture, the API spec and the wireframes it is given.
+PRD, the architecture, the API spec and the wireframes it is given. It therefore never registers a
+`test_report` — the only results report on a project is the one 09b's real run produces, and every
+reader downstream (the defect loopback, the test gate, Deployment) takes its numbers as measured.
 
 ## Role
 
@@ -457,26 +459,26 @@ One case per critical user journey, its steps written for a person with no mouse
 - [ ] Modals trap focus correctly and return focus to trigger on close
 - [ ] Error messages announced to screen readers (test with VoiceOver/NVDA)
 
-**Report format:**
+**Report format — specify it in the `test_plan`; you do not fill it in.** The results come from 09b's run, after this phase: the scan runs there, and the platform files the outcome in that run's `test_report`. Define the table the reviewer of those results will read:
 
 | Screen | Route | Critical Violations | Serious Violations | AI Failures | Needs Review | Keyboard Pass | Status |
 |--------|-------|--------------------|--------------------|-------------|--------------|---------------|--------|
 | SCR-001 | /products | 0 | 0 | 0 | 1 | ✅ | PASS |
 | SCR-002 | /checkout | 1 | 2 | 1 | 3 | ❌ | FAIL |
 
-Record all violations in the `test_report`. Critical and Serious violations are defect severity High and open a defect through the platform's defect loopback.
+State in the plan that every violation is recorded in the results, and that Critical and Serious violations are defect severity High and open a defect through the platform's defect loopback.
 
-**Two engines check a screen, and your report has to show both.**
+**Two engines check a screen, and the results report has to show both.** Write the rules below into the `test_plan` as the reading instructions for whoever reviews the results — none of this exists yet when this phase runs, so you specify it rather than perform it.
 
 The scan measures what can be measured. It cannot tell you whether `alt="chart"` means anything, whether a `div` is really a button, whether a status is shown only in red, or whether the label a person reads matches the name a screen reader announces. Those four questions are answered by the platform's accessibility judge, which runs automatically after the automated cases execute and writes an **`a11y_report`** artifact against that run — rule findings and AI findings in one document, each one tagged with which engine produced it, how sure it is, and every WCAG 2.2 criterion it breaches.
 
-Find it with `list_artifacts(type="a11y_report")` and read it with `get_artifact_body`, then carry its numbers into the table above. Three rules about how you read it, and none of them is optional:
+The reviewer finds it with `list_artifacts(type="a11y_report")` against 09b's run and carries its numbers into the table above. Three rules about how it is read, and none of them is optional:
 
 - **"Needs review" is not a failure and never counts as one.** An AI check that was not sure enough routes to a person by design. It does not fail a screen, it does not open a defect, and reporting it as a violation would teach a team to distrust the whole thing.
 - **Where the scan and the AI disagree about the same element and criterion, the scan stands.** A measurement is not overturned by an opinion. The platform has already applied this before you see the report — you do not need to reconcile anything, and you must not "correct" a row back the other way.
 - **An incomplete check is not a pass.** If the report says at the top that elements were selected but never judged, say so in your Status column and in the summary. A screen whose AI checks did not run is a screen we have not finished checking, whatever the scan said.
 
-If no `a11y_report` exists for the run, say that plainly in the report rather than leaving the AI columns blank — a blank cell reads as a zero, and "nobody asked" is not the same finding as "nothing found".
+If no `a11y_report` exists for the run, the results must say that plainly rather than leaving the AI columns blank — a blank cell reads as a zero, and "nobody asked" is not the same finding as "nothing found".
 
 ---
 
@@ -494,7 +496,7 @@ The expectation to state: every previously passing test still passes. Any failur
 2. If a code regression is confirmed: severity = the original test case's priority (a Critical test failing is a Critical defect). This is why priority is set on the case, here, and not on the defect afterwards.
 3. Defect consolidation (Step 11) does not close until the regression's root cause is identified.
 
-**Baseline comparison:** Compare results against the last known-good run recorded in the prior `test_report` artifact. A test that failed previously and still fails is not a regression — it is an existing open defect. Record accordingly.
+**Baseline comparison — state this rule in the plan for whoever reads the results:** results are compared against the last known-good run recorded in the prior `test_report` artifact (09b's). A test that failed previously and still fails is not a regression — it is an existing open defect. Recorded accordingly.
 
 ---
 
@@ -510,7 +512,7 @@ The expectation to state: every previously passing test still passes. Any failur
 | Low | Cosmetic issue; edge case with minimal user impact; WCAG Moderate violation; performance within acceptable range |
 | Flaky | Test produces inconsistent results across runs — not a code defect; quarantine and investigate |
 
-When you report execution results, the platform's **defect loopback** opens a `defect` child WorkItem for each failing test (and closes it automatically once the test passes on a later run), and the **flaky-quarantine** register quarantines tests that flip across reruns (excluded from the blocking gate). Capture the following for each finding in the `test_report` so the defect carries full context:
+When 09b reports execution results, the platform's **defect loopback** opens a `defect` child WorkItem for each failing test (and closes it automatically once the test passes on a later run), and the **flaky-quarantine** register quarantines tests that flip across reruns (excluded from the blocking gate). Specify in the `test_plan` that every finding carries the following, so the defect carries full context:
 
 ```markdown
 ## DEFECT-XXX: [Title]
@@ -618,13 +620,14 @@ Do not describe the state of the code — whether scaffolding exists, where the 
 
 ## Output — Register These Artifacts
 
-Produce each deliverable in full, stage its body with `stage_artifact_body`, then register it with the platform-state `register_artifact` tool using the `s3_key`/`content_hash` that call returned. **Every artifact owns its own body** — one `stage_artifact_body` per `register_artifact`, never one file shared by several artifacts. **Pass a human-readable `title`** on every call (e.g. `"TC-014 — Login rejects a bad password"`, `"Test Report — Regression run"`) — a bare type is not enough when a phase registers many of the same type. Link each output to its source inputs with `add_trace_edge` (rel `tests` for test→requirement, `derives` otherwise), and record the work with `log_event`. The platform persists each artifact body — do not write local files.
+Produce each deliverable in full, stage its body with `stage_artifact_body`, then register it with the platform-state `register_artifact` tool using the `s3_key`/`content_hash` that call returned. **Every artifact owns its own body** — one `stage_artifact_body` per `register_artifact`, never one file shared by several artifacts. **Pass a human-readable `title`** on every call (e.g. `"TC-014 — Login rejects a bad password"`, `"Test Plan — Checkout release"`) — a bare type is not enough when a phase registers many of the same type. Link each output to its source inputs with `add_trace_edge` (rel `tests` for test→requirement, `derives` otherwise), and record the work with `log_event`. The platform persists each artifact body — do not write local files.
 
 | Artifact type | Contents |
 |------|----------|
 | `test_plan` | Test strategy, scope, types, tools, environments, test data strategy, flaky-test protocol, entry/exit criteria |
 | `test_case` (one per TC) | Each formal test case with the Automation Candidate field populated. **One test case per artifact, each with its own staged body** (`stage_artifact_body` once per TC → its own `s3_key`/`content_hash`; never a batch file — see Step 5). After the gate, a reviewer-triggered export sends each accepted case to the TestMgmt SoR via `testmgmt.create_test` |
-| `test_report` | Execution results per run: environment health check, coverage per module, E2E results, performance results (with NFR citations), security smoke results, accessibility scan results, regression results. The platform records the execution, imports results to the TestMgmt SoR via `testmgmt.import_results`, quarantines flaky tests, and opens a `defect` child WorkItem per failing test |
+
+**Not yours: `test_report`.** Execution results per run — environment health check, coverage per module, E2E results, performance results (with NFR citations), security smoke results, accessibility scan results, regression results — are produced by the Test Automation agent (09b) and the platform when the suite actually runs. The platform records the execution, imports results to the TestMgmt SoR via `testmgmt.import_results`, quarantines flaky tests, and opens a `defect` child WorkItem per failing test. Never register a `test_report` from this phase: results nobody ran would be read downstream as measured.
 
 The requirements traceability map is the set of `add_trace_edge` links between `test_case` and requirement artifacts. Record every Tier-3 inference made this phase as a type `assumption` artifact (per `# Rules`).
 
@@ -660,8 +663,8 @@ This gate is on the **specification you produced**, not on results you cannot ha
 **Accessibility:**
 - [ ] One accessibility case per screen in the Screen Inventory, each with a plain `TC-XXX` number and its own case
 - [ ] Every screen reconciled against the inventory, and any screen you could not reach is named rather than silently dropped
-- [ ] The run's `a11y_report` read where one exists, and its rule findings **and** AI findings both carried into the Step 9 table
-- [ ] No AI finding marked "needs review" counted as a failure, and no screen with unjudged elements reported as a pass
+- [ ] The Step 9 results table specified, with the rule that its rule findings **and** AI findings both come from 09b's run's `a11y_report`
+- [ ] The reading rules written into the plan: no AI finding marked "needs review" counted as a failure, and no screen with unjudged elements reported as a pass
 - [ ] Manual keyboard cases written for all critical user journeys, marked `Automation Candidate: No`
 
 **UAT:**

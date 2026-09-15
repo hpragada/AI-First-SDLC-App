@@ -2,7 +2,7 @@
 
 Pure ReportLab (Platypus). Glyph-safe for the built-in Helvetica/Courier (WinAnsi):
 em/en dashes and bullets are fine; arrows are written "->"; no emoji/checkmarks.
-Run:  ../.venv/Scripts/python docs/build_platform_guide.py
+Run from the repository root:  .venv/Scripts/python docs/build_platform_guide.py
 Out:  docs/AI-First-SDLC-Platform-Guide.pdf
 """
 from __future__ import annotations
@@ -468,7 +468,8 @@ def section_2():
          "Profile flow verbatim into the manifest — one theme, no per-tenant code fork."],
         ["TestMgmt connector (Xray)", "Authors test cases as Xray tests and imports execution "
          "results (idempotently). Headless, per-tenant, rate-governed."],
-        ["Result import + defect loopback", "A test run records a <tt>TestExecution</tt> + a "
+        ["Result import + defect loopback", "A test run (Test Automation, <tt>09b</tt> &mdash; "
+         "the only phase that produces one) records a <tt>TestExecution</tt> + a "
          "<tt>test_report</tt> artifact; a <b>failing test opens a linked, traced defect</b> "
          "(a child WorkItem tied to the test and traced to the code); a later pass closes it."],
         ["Test-impact selection", "Given a changed piece of code, walks the traceability graph to "
@@ -1066,8 +1067,10 @@ def section_5():
          "<tt>--repo-path/--worktrees</tt>)."],
         ["Code Review — <tt>08_code_review</tt>", "reviewer", "Runs on your companion; findings "
          "become child WorkItems; the 07&lt;-&gt;08 loop re-runs until clean."],
-        ["Testing — <tt>09_testing</tt>", "qa_lead", "<b>Tests author to Xray</b> + results "
-         "import; a failing test opens a linked, traced defect that closes on a clean re-run."],
+        ["Testing — <tt>09_testing</tt>", "qa_lead", "<b>Authors the test plan and test cases</b> "
+         "(planning only; a reviewer exports accepted cases to Xray). <b>Test Automation "
+         "(<tt>09b</tt>)</b> then runs the tests, imports results to Xray, and a failing test opens "
+         "a linked, traced defect that closes on a clean re-run."],
         ["Merge", "reviewer", "Approve the merge gate -> the <b>GitHub PR merges</b>; the "
          "WorkItem moves to <tt>done</tt>."],
     ], [5.6 * cm, 2.8 * cm, 8.0 * cm])

@@ -157,6 +157,26 @@ def test_09_is_planning_only_and_owns_no_working_copy():
     assert rides_build("09b_test_automation") is True
 
 
+def test_09_never_registers_a_results_report():
+    """Left behind by S.No 85: after the opening was rewritten to "does not run tests", four
+    passages further down still told 09 to register a `test_report` of execution results, record
+    scan violations in it, compare it against a baseline and capture defects in it. 09 runs
+    nothing, so any report it wrote would be invented — and it would be filed under the same type
+    as 09b's real one, which the defect loopback, the test gate and Deployment read as measured."""
+    body = _body("09_testing")
+    outputs = body.split("## Output — Register These Artifacts")[1].split("## Quality Gate")[0]
+    table_rows = [line for line in outputs.splitlines() if line.startswith("| `")]
+    assert [row.split("`")[1] for row in table_rows] == ["test_plan", "test_case"]
+    assert "Never register a `test_report` from this phase" in outputs
+    # none of the old instructions to write results survives anywhere in the body
+    for stale in ("Record all violations in the `test_report`",
+                  "Capture the following for each finding in the `test_report`",
+                  "When you report execution results",
+                  "your report has to show both",
+                  "The run's `a11y_report` read where one exists"):
+        assert stale not in body, stale
+
+
 def test_09_requires_one_staged_body_per_test_case():
     """Testing-phase bug 1: a run registered 90 test cases against 4 batched bodies, which the
     TestMgmt export would have collapsed into 4 issues (create_test is idempotent by the summary

@@ -173,16 +173,18 @@ that does, it runs last, and it needs no companion — see the case for what to 
 3. Note the count badge on each column heading.
 
 **Expected**
-- Thirteen columns render in this exact order: `1. Ideation`, `2. Requirements`, `3. PRD`,
-  `4. Architecture`, `5. UX Design`, `6. Task Breakdown`, `7. Implementation`, `8. Code Review`,
-  `9. Testing`, `10. Test Automation`, `11. Security`, `12. CI/CD`, `13. Deployment`.
+- Fourteen columns render in this exact order: `Backlog` (first, with no number), then the thirteen
+  lifecycle phases `1. Ideation`, `2. Requirements`, `3. PRD`, `4. Architecture`, `5. UX Design`,
+  `6. Task Breakdown`, `7. Implementation`, `8. Code Review`, `9. Testing`, `10. Test Automation`,
+  `11. Security`, `12. CI/CD`, `13. Deployment`.
 - The board scrolls horizontally to reach the later columns; the page itself does not break layout.
 - Each column heading carries a count of the cards in it.
 
 **Pass / Fail**
-- PASS if all thirteen columns appear with those labels, numbers and order.
-- FAIL if a column is missing, renumbered, out of order, or shows a raw key such as
-  `06_task_breakdown` or `task_breakdown`.
+- PASS if `Backlog` comes first, followed by all thirteen phase columns with those labels, numbers
+  and order.
+- FAIL if `Backlog` is missing or not first, if a phase column is missing, renumbered, out of order,
+  or shows a raw key such as `06_task_breakdown` or `task_breakdown`.
 
 **Test data**
 - None.
@@ -193,7 +195,7 @@ that does, it runs last, and it needs no companion — see the case for what to 
 
 ---
 
-### TC-083 · A newly created work item lands in the first column as a draft
+### TC-083 · A newly created work item lands in Backlog as not started
 
 | Field | Value |
 |---|---|
@@ -210,28 +212,32 @@ that does, it runs last, and it needs no companion — see the case for what to 
 **Steps**
 1. Go to `/work-items` with `All levels` and `Board` active.
 2. Find the card for `Stripe Webhook Integration`.
-3. Read the card's id, badge, title and chips.
+3. Read the card's id, status pill, title and chips.
 4. Click the card.
 
 **Expected**
-- The card sits in the `1. Ideation` column — a work item with no phase yet falls into the first
-  column, it is not hidden.
-- The card shows its key (e.g. `WI-1`), the badge `Draft`, the title `Stripe Webhook Integration`,
-  a chip reading `Epic`, and a footer reading `0 artifacts`.
+- The card sits in the `Backlog` column — a work item nothing has run on yet is in Backlog, not in
+  `1. Ideation`, and it is not hidden.
+- The card shows its key (e.g. `WI-1`), the status pill `Not started`, the title
+  `Stripe Webhook Integration`, a chip reading `Epic`, and a footer reading `0 artifacts`.
 - Clicking the card opens `/work-items/{id}`.
 
 **Pass / Fail**
-- PASS if the new epic appears in `1. Ideation` with the `Draft` badge and the `Epic` chip.
-- FAIL if the card is missing from the board, appears in a later column, or shows `Phase complete`
-  or `AI compiling…` before anything has run.
+- PASS if the new epic appears in `Backlog` with the `Not started` pill and the `Epic` chip.
+- FAIL if the card is missing from the board, appears in `1. Ideation` or any later column, or shows
+  `Running`, `Done` or any `Waiting…` pill before anything has run.
 
 **Test data**
 - None.
 
 **Notes**
-- Every work item is created in state `proposed`, which the board renders as `Draft`. There is no UI
-  anywhere for changing a work item's state by hand — state only moves as phases run. Do not look
-  for a state control on the detail screen.
+- Every work item is created in state `proposed`. The **card** pill describes what its phase is doing
+  (`Not started` until a phase runs); the **List** view's `Status` column shows the work item's state
+  badge, which reads `Draft` for `proposed` (TC-084). There is no UI anywhere for changing a work
+  item's state by hand — state only moves as phases run. Do not look for a state control on the
+  detail screen.
+- The item stays in `Backlog` whichever level chip is active — it does not jump columns when you
+  filter to `Tasks` (TC-088).
 
 ---
 
@@ -261,7 +267,8 @@ that does, it runs last, and it needs no companion — see the case for what to 
 - The epic's row shows its key under `ID`, `Stripe Webhook Integration` under `Title`, a chip `Epic`
   under `Level`, `Not started` under `Phase`, the badge `Draft` under `Status`, `0` under
   `Artifacts` and `—` under `Owner`.
-- Clicking **Board** restores the thirteen-column board with the same item.
+- Clicking **Board** restores the fourteen-column board (`Backlog` plus the thirteen phases) with
+  the same item.
 
 **Pass / Fail**
 - PASS if both views render as described and the toggle switches cleanly in both directions.
@@ -334,15 +341,15 @@ that does, it runs last, and it needs no companion — see the case for what to 
 **Steps**
 1. Go to `/work-items` with `All levels` and `Board` active.
 2. Open the dropdown labelled `Phase: All` and read **every** option in it, top to bottom.
-3. Close it, then read the board's thirteen column headings.
+3. Close it, then read the board's column headings.
 4. Compare the two lists.
 
 **Expected**
 - The dropdown contains **exactly one option**: `Phase: All`. It is not populated with the thirteen
   lifecycle phases, and it is not empty.
 - No option anywhere in it reads a raw key such as `01_ideation`, `03_prd` or `ux_design`.
-- The board still shows all thirteen columns behind it — the *columns* are the fixed lifecycle, the
-  *filter options* are derived from the items.
+- The board still shows all fourteen columns behind it (`Backlog` plus the thirteen phases), with
+  every card in `Backlog` — the *columns* are fixed, the *filter options* are derived from the items.
 
 **Pass / Fail**
 - PASS if `Phase: All` is the only option while no item has phase history.
@@ -360,6 +367,9 @@ that does, it runs last, and it needs no companion — see the case for what to 
 - The multi-option behaviour — human labels like `Ideation` / `PRD`, and selecting one to filter the
   board — is verified in **TC-096**, which is the case that legitimately depends on TS-07. Do not
   duplicate that check here.
+- The `Phase`, `Role` and `Status` filter boxes size themselves to their longest option, so the longest
+  phase a greenfield board can show, `Test Automation`, is never cut off in the closed box. A cut-off
+  label in a closed filter box is a defect.
 
 ---
 
@@ -409,7 +419,7 @@ that does, it runs last, and it needs no companion — see the case for what to 
 
 ---
 
-### TC-088 · The `Tasks` chip switches the board to the two build columns
+### TC-088 · The `Tasks` chip switches the board to the build columns
 
 | Field | Value |
 |---|---|
@@ -430,24 +440,29 @@ that does, it runs last, and it needs no companion — see the case for what to 
 4. Click **All levels** again.
 
 **Expected**
-- The board redraws with exactly two columns: `Implementation` and `Review` — the thirteen
-  lifecycle columns are replaced, not appended to.
+- The board redraws with exactly three columns, in order: `Backlog`, `Implementation`, `Review` —
+  the fourteen-column lifecycle board is replaced, not appended to.
 - The note above the board reads
   `Showing tasks from the build tier — fanned out by Task Breakdown.`
-- The task card appears in `Implementation`.
-- Clicking `All levels` restores the thirteen lifecycle columns and hides the note.
+- The task card (`Refunds API`, never run) appears in `Backlog`, with the pill `Not started`.
+- Clicking `All levels` restores the fourteen columns (`Backlog` plus the thirteen phases), hides
+  the note, and the task card is still in `Backlog`.
 
 **Pass / Fail**
-- PASS if the columns swap to `Implementation` / `Review` under `Tasks` and swap back under
-  `All levels`.
-- FAIL if the thirteen columns remain, if the note is missing, or if the task card vanishes rather
-  than landing in `Implementation`.
+- PASS if the columns swap to `Backlog` / `Implementation` / `Review` under `Tasks`, the never-run
+  task sits in `Backlog` in both views, and the board swaps back under `All levels`.
+- FAIL if the lifecycle columns remain, if the note is missing, if the task card vanishes, or if a
+  never-run task lands in `Implementation`.
 
 **Test data**
 - None.
 
 **Notes**
 - `Defects` does **not** change the columns — only `Tasks` does. That asymmetry is intentional.
+- A task in code review sits in `Review`, and a task in implementation sits in `Implementation`.
+  Checking that needs a task that has run (TS-07 / TS-14 data); it is not required here.
+- If a task is in a later build phase that has no column in this view (e.g. Testing), the board adds
+  a column named after that phase, in lifecycle order, rather than misplacing the card.
 
 ---
 
@@ -808,7 +823,7 @@ that does, it runs last, and it needs no companion — see the case for what to 
 
 **Steps**
 1. On `/work-items` in the workspace that has the phased epic, find its card.
-2. Note which column the card sits in and what badge it shows.
+2. Note which column the card sits in and what status pill it shows.
 3. Switch to **List** and read that item's `Phase` and `Status` cells.
 4. Open the item and read the `Lifecycle — Plan tier` panel and the `Latest run` panel.
 5. Open the `Phase: All` and `Role: All` dropdowns and read their options (the populated half of
@@ -818,12 +833,17 @@ that does, it runs last, and it needs no companion — see the case for what to 
 
 **Expected**
 - The card sits in the column matching its current phase — e.g. an item whose latest phase is
-  Requirements sits under `2. Requirements`, not under `1. Ideation`.
-- Its badge reflects the live state and reads one of exactly these: `Draft`, `AI compiling…`,
-  `Needs answer`, or a gate label of the form `{Something} gate` — for a normal phase gate the card
-  reads `Phase gate`.
+  Requirements sits under `2. Requirements`, not under `1. Ideation` and not under `Backlog`.
+- Its status pill describes the latest run of that phase and reads one of exactly these:
+  `Running`, `Done`, `Failed`, `Cancelled`, or a waiting pill. A waiting pill reads
+  `Waiting for you` **only** when the open question or gate is one you (P1) may answer or decide;
+  otherwise it reads, in grey, `Waiting for an answer` (open question), `Waiting for review` (open
+  gate) or `Waiting for approval` (the run is at its gate but no approval has reached the card).
+  `Not started` must not appear once a phase has run.
 - In **List**, `Phase` shows the same human-readable phase name (never `Not started`, never a raw
-  key) and `Status` matches the badge.
+  key). `Status` shows the work item's state badge — the same badge as before this change, not the
+  card's pill — so it may read e.g. `Draft`, `Needs answer` or `Phase gate` while the card says
+  `Waiting for you` or `Done`.
 - `Phase: All` is now followed by one human-labelled option per phase items are in (`Ideation`,
   `PRD`, `UX Design` — never `03_prd`), and `Role: All` by human role labels (`Product Owner`,
   `Architect` — never `product_owner`). Selecting one filters the board; resetting restores it.
@@ -834,11 +854,12 @@ that does, it runs last, and it needs no companion — see the case for what to 
   reload of the browser tab beyond revisiting the board.
 
 **Pass / Fail**
-- PASS if the board column, the list `Phase` cell, the two filter dropdowns and the detail rail all
-  agree with the item's real current phase, before and after it advances.
-- FAIL if the card stays in `1. Ideation` after a phase completes, if the board and the list
-  disagree, if a dropdown shows a raw underscored key, or if `View run console ↗` does not open the
-  run.
+- PASS if the board column, the card pill, the list `Phase` cell, the two filter dropdowns and the
+  detail rail all agree with the item's real current phase, before and after it advances.
+- FAIL if the card stays in `Backlog` or `1. Ideation` after a later phase completes, if the board
+  column and the list `Phase` cell disagree, if the card reads `Waiting for you` on a gate or
+  question you may not decide or answer, if a dropdown shows a raw underscored key, or if
+  `View run console ↗` does not open the run.
 - **Blocked, not Failed**, if step 6's run has not reached its gate within 40 minutes, or if C has
   no completed phase to show you at all.
 
@@ -846,13 +867,16 @@ that does, it runs last, and it needs no companion — see the case for what to 
 - C's epic `Stripe Webhook Integration` in `QA Charlie`.
 
 **Notes**
-- **Two badges you should not expect.** `Awaiting gate` is never rendered on a card — an open phase
-  gate reads `Phase gate`. And `Phase complete` cannot appear on a plan-tier epic: nothing in the
-  plan tier ever moves an epic to the `done` state, so the badge stays `Draft` between runs. Both
-  are known and separately tracked; do not raise them.
-- A live run does **not** put a card into an `AI compiling…` state by itself either — the work item
-  moves to `in_progress`, which the board renders as `Draft`. Treat `AI compiling…` as a
-  nice-to-have, not a required observation.
+- **Card pill vs list badge.** The card's pill comes from the latest run; the list's `Status` badge
+  comes from the work item's own state. `Awaiting gate` is never rendered on either — an open gate
+  reads `Waiting for you` / `Waiting for review` on the card and `Phase gate` in the list. And
+  `Phase complete` cannot appear in the list for a plan-tier epic: nothing in the plan tier ever
+  moves an epic to the `done` state, so the list badge stays `Draft` between runs. That is known and
+  separately tracked; do not raise it.
+- **Whose turn it is.** The `Waiting for you` rule matches the **Approve** and **Answer** buttons:
+  if P1 would see **Approve** on the gate or **Answer** on the question, the card says
+  `Waiting for you`. To see the grey variant, look at the same card while signed in as a user who
+  cannot decide that gate (e.g. an engineer).
 - The board reads the item's *current phase*, not its feature stream. If you see items grouped by
   something that looks like a stream name, that is a regression worth a defect.
 - Agent phases take 20–30 minutes and the console can be silent for long stretches (a known issue

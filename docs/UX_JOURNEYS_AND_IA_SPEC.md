@@ -183,6 +183,7 @@ Standard. Login lands on Dashboard; logout clears session. Reset = email link �
 ### J9 — Connect integrations (tenant-admin)
 **Actor:** admin. **Entry:** Admin → Integrations.
 1. **Capability grid** — one card per capability: Documentation store, Task tracker, Design source, Code host, Test management, Code intelligence. Each shows **connected vendor + status** or **"Not connected"**.
+   > *Annotation 2026-09-15 (as built, `4ac75f9`, Bugs N1): the Code intelligence card has been removed. Code intelligence is set up automatically for every workspace, so the grid shows five capabilities.*
 2. **Connect flow per capability** — choose vendor (Confluence/Jira/Figma/GitHub/Xray/built-in), enter the binding config (space key, project key, repo, file key…), and credentials.
    - **Credentials handling — DECISION-4:** today creds live in server `.env`. For a product, design a **secure credential entry** (write-only secret fields, "configured ✓" never echoing the value). *Backend to confirm secret storage.*
 3. **Test connection** button → green/red result with the error reason.
@@ -303,6 +304,7 @@ Same trigger→gate pattern as J12/J14, surfaced on **the task's** lifecycle rai
 **Actor:** any member. **Entry:** Traceability tab.
 1. **Lineage graph** — nodes = artifacts (phase/type/status/SoR), edges = relationships (`derives`, `story→requirement`, defect links). Click a node → deep-link/preview.
 2. Filters by phase/type; highlight a work item's lineage.
+   > *Annotation 2026-09-15 (as built, `b40c557`): these filters are now live on the client's screen — Phase, Type, and Highlight work item, which dims the rest of the map rather than hiding it. Documents adopted during onboarding appear as "Not tied to a work item".*
 **States:** empty (no artifacts yet), large-graph (pan/zoom, cluster).
 
 ### J21 — Offline takeover & recovery

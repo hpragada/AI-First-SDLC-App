@@ -226,24 +226,36 @@ defect, covered by TC-801 — do not raise it from the other cases in this suite
 
 **Steps**
 1. For a **confirm** question, look at the control under the question text.
-2. For a **choice** question, open the select and read the first option.
-3. In a choice question that offers an "Other"-style option, select it and look below the select.
-4. For a plain **text** question, read the input's placeholder.
+2. For a **choice** question, read the closed dropdown, then click it and read the list.
+3. With the list open, find the longest option and check how it is laid out.
+4. Close the list, press Tab until the dropdown has focus, and press ↓. Move with ↓ / ↑, press Home
+   and End, then press Escape. Open it again and press Enter on an option.
+5. In a choice question that offers an "Other"-style option, pick it and look below the dropdown.
+6. For a plain **text** question, read the input's placeholder.
 
 **Expected**
 - A confirm question renders a checkbox labelled `Yes`.
-- A choice question renders a dropdown whose first option is `Choose one…`, followed by the agent's
-  options.
+- A choice question renders a dropdown that reads `Choose one…` (in faint text) until something is
+  picked. Opening it shows only the agent's options — `Choose one…` is not itself an option in the
+  list.
+- The list is as wide as the dropdown and stays inside the card: a long option wraps onto several
+  lines rather than running off the card on one line. A long chosen answer wraps in the closed
+  dropdown too.
+- Keyboard: Tab reaches the dropdown; ↓ or ↑ opens it; ↓ / ↑ move the highlight; Home and End jump to
+  the first and last option; Enter (or Space) picks the highlighted option and closes the list;
+  Escape closes it without changing the answer.
 - Selecting an "Other"-style option (e.g. `Other`, `Other (please specify)`, `d) Other`) reveals a
-  free-text input below the select with the placeholder `Please specify…` and the accessible name
+  free-text input below the dropdown with the placeholder `Please specify…` and the accessible name
   `Please specify`.
 - A text question renders a single-line input with the placeholder `Type your answer…`.
 - When a clarification has more than one question, each label is numbered `1 · `, `2 · `, … .
 
 **Pass / Fail**
-- PASS if each kind you encounter renders exactly the control described.
-- FAIL if a choice question renders as free text, if `Choose one…` is missing so an option is
-  pre-selected, or if picking `Other` gives no way to type the actual answer.
+- PASS if each kind you encounter renders exactly the control described, long options wrap inside
+  the card, and the keyboard steps work.
+- FAIL if a choice question renders as free text, if the closed dropdown shows an option instead of
+  `Choose one…` before anything is picked, if a long option runs off the card, if the dropdown cannot
+  be operated from the keyboard, or if picking `Other` gives no way to type the actual answer.
 
 **Notes**
 - The "Other" match tolerates a leading enumerator (`a) `, `3. `, `- `). If a clearly

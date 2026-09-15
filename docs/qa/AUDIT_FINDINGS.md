@@ -74,6 +74,11 @@ The `Pending gate` badge (`ArtifactsRegistry.tsx:20-24`) and the matching tracea
 **Fix:** rewrite TC-142/TC-158 to assert the badge/legend entry is *unreachable* and raise the dead code
 as a product defect. Give TC-146 a real oracle (the Gates screen).
 
+> **Fixed in 4ac75f9.** The dead `pending_gate` badge and legend entry were deleted. Opening a gate now
+> marks the run's drafts `staged` (`open_gate_core`), shown everywhere as `Waiting for approval`
+> (`artifactStatus.tsx`), so an artifact at its gate *is* distinguishable. TC-142, TC-146 and TC-158 were
+> rewritten to match.
+
 ### S3 · The trigger guard is per **work item**, not per **phase** — 3 cases
 
 - UI blocks on the same phase: `PhasesAndRuns.tsx:82-92` — `latestRunForPhase(phase.agent_key)`
@@ -124,20 +129,20 @@ Grouped by why a tester would get the wrong answer.
 | **TC-006** | "The meter fills further at 2 → 3 → 4" — `abc` scores **0**, identical to empty. | `identity/hooks.ts:147-156` |
 | **TC-018** | "Re-opening the reset link shows `This reset link is invalid`" — it shows the **form**; the invalid card needs a failed submit first. | `ResetPassword.tsx:25-40` |
 | **TC-030** | Expects `Reviewer — nobody`; actual is `Reviewer — nobody (no Reviewer assigned — an admin can approve the merge gate)`. | `RolesMatrix.tsx:182-184`, `tenancy/services.py:396` |
-| **TC-032** | The gap banner **can never render** — `gate_blocked` requires no admin fallback, and P1 always exists. The case has no object. | `tenancy/services.py:374-389`, `RolesMatrix.tsx:156` |
-| **TC-043** | The `A description is required` error is gallery-only; on `/profile` **Save** silently no-ops. | `ProjectProfileEditor.tsx:87, 107` |
-| **TC-050** | The topology chip does **not** flip at step 3 — `showAdd` is never reset, so the view stays `add-form` and reads `single` with two repos. | `Repositories.tsx:171-174, 83-92` |
+| **TC-032** | The gap banner **can never render** — `gate_blocked` requires no admin fallback, and P1 always exists. The case has no object. **Fixed in b40c557** — the banner now shows whenever a gate role is empty. | `tenancy/services.py:374-389`, `RolesMatrix.tsx:156` |
+| **TC-043** | The `A description is required` error is gallery-only; on `/profile` **Save** silently no-ops. **Fixed in b40c557** — Save now shows the error on the field. | `ProjectProfileEditor.tsx:87, 107` |
+| **TC-050** | The topology chip does **not** flip at step 3 — `showAdd` is never reset, so the view stays `add-form` and reads `single` with two repos. **Fixed in 4ac75f9** — the add form closes and the topology shown is the platform's. | `Repositories.tsx:171-174, 83-92` |
 | **TC-063** | `fail_reason` is not in the serializer, so the hardcoded 401 string always renders — even for a 404/429. | `serializers.py:152-153`, `Integrations.tsx:86` |
 | **TC-087** | The board's Defect chip is **navy**, not orange. Orange is the detail screen only. | `WorkItemsBoard.tsx:61` |
 | **TC-096** | Both expected badges are unreachable: `"running"` is not a WorkItem state (a live run sets `in_progress` → renders `Draft`), and a plan-tier epic never reaches `done`. `Awaiting gate` is also never produced — cards read `Phase gate`. | `WorkItemsBoard.tsx:40-42`, `workitems/models.py:21-27`, `views.py:847-855` |
 | **TC-101/102** | `claude · local` is gallery copy. Real value is `claude · claude-sonnet-4-6`. | `catalog.py:23`, `trigger.py:206` |
 | **TC-126** | `Preview artifact under review ↗` opens the **whole registry**, not the artifact. | `Gates.tsx:338` |
 | **TC-138** | The not-found branch renders **no breadcrumb**. | `CriteriaGate.tsx:51-61` |
-| **TC-149** | `Preview unavailable` is unreachable for an internal artifact — it 404s and renders `Artifact not found`, which the case calls a FAIL. | `integrations/preview.py:305-309` |
+| **TC-149** | `Preview unavailable` is unreachable for an internal artifact — it 404s and renders `Artifact not found`, which the case calls a FAIL. **Fixed in 4ac75f9** — the endpoint answers with an empty body (`allow_empty`) and the screen shows `Preview unavailable`. | `integrations/preview.py:305-309` |
 | **TC-152** | The capability select does **not** default to Internal for phases with an export target — following the step verbatim publishes **externally**. | `ExportPublish.tsx:55, 161-164` |
-| **TC-168** | The Gates badge is **not** "gates needing you" — no user or role filter, and capped at 20. | `api/views.py:508-511` |
+| **TC-168** | The Gates badge is **not** "gates needing you" — no user or role filter, and capped at 20. **Fixed in 4ac75f9** — filtered by `gate_roles_decidable_by`, true totals. | `api/views.py:508-511` |
 | **TC-177** | A Companion card **is** rendered in the no-project state, contradicting TC-173's note. One of the two is always wrong. | `Dashboard.tsx:23-25, 370-378` |
-| **TC-183** | "the row appears without a manual refresh" — the create mutation invalidates `["work-items"]`; the table reads `["test-cases"]`. Nothing invalidates it. | `lifecycle/hooks.ts:37, 45` |
+| **TC-183** | "the row appears without a manual refresh" — the create mutation invalidates `["work-items"]`; the table reads `["test-cases"]`. Nothing invalidates it. **Fixed in 4ac75f9** — `useCreateTestCase` invalidates both. | `lifecycle/hooks.ts:37, 45` |
 | **TC-187** | `/runs` filters to one selected work item (defaulting to the first in the project) — the tester must select the test-case item first. | `PhasesAndRuns.tsx:24-30` |
 | **TC-207** | The heading counts **all** children, not just tasks — it drifts once TC-209 creates test cases. | `TaskBreakdown.tsx:19, 57` |
 
@@ -154,7 +159,7 @@ Grouped by why a tester would get the wrong answer.
 | **TC-090/111/122/124** | FAIL criteria referencing demo rows (`WI-492`, `RUN-42`, `awaiting_gate`…) that exist only behind `forceView`. Cannot fire. |
 | **TC-016** | `RedirectIfAuthed` does not consume `isLoading`, so a signed-in user **does** briefly see the login card. Flaky by construction. `routes.tsx:73-77` |
 | **TC-020** | The email field is pre-filled (`ResetPassword.tsx:19`), so the "PASS only if empty" branch is dead. It is a defect-confirmation dressed as a pass/fail. |
-| **TC-051** | The Notes blame a missing endpoint. `POST .../set-default` **exists** (`api/views.py:647-648`); the gap is purely unwired frontend. Filing it "known inert, do not raise" buries a real defect. |
+| **TC-051** | The Notes blame a missing endpoint. `POST .../set-default` **exists** (`api/views.py:647-648`); the gap is purely unwired frontend. Filing it "known inert, do not raise" buries a real defect. **Fixed in 4ac75f9** — Set default is wired. |
 
 ---
 
@@ -278,6 +283,7 @@ criteria-gate cases). Each should declare what it adds beyond sequencing.
 - `Published this week` / `Recent publishes` filter on **`created_at`**, not publish time
   (`api/views.py:525-530, 570-574`). An artifact created 8 days ago and published today never appears —
   a legitimate FAIL for TC-176 on any long-lived workspace, and TC-211's parenthetical is wrong.
+  **Fixed in 4ac75f9** — both now filter on `published_at`.
 
 ### Low
 
@@ -287,7 +293,8 @@ criteria-gate cases). Each should declare what it adds beyond sequencing.
   (`routes.tsx:120-125`).
 - Inert "Request a new invite" / "Request a new link" buttons (`AcceptInvite.tsx:83-103`).
 - `/admin/anything` falls through to a developer placeholder reading "Foundation route mounted.
-  Feature screens land in T2-T5." (`routes.tsx:101-115`) — reachable in production.
+  Feature screens land in T2-T5." (`routes.tsx:101-115`) — reachable in production. **Fixed in
+  4ac75f9** — unknown admin routes redirect to `/admin/users`; the placeholder is deleted.
 - `RequireAdmin` copy says "manages workspace users and roles" but also guards `/test-reporting`
   (`routes.tsx:86-90, 160`).
 - TC-123's `Screen` field says `/dashboard`; the route is `/` (`routes.tsx:131`).
@@ -319,23 +326,27 @@ Then re-run `python docs/qa/build_tracker.py`.
 These are bugs in the **app**, not the pack. Worth logging in `docs/Bugs.xlsx` independently of the QA cycle.
 
 1. No uniqueness constraint on project name — duplicates are created silently.
-2. `set-default` repository endpoint exists but no frontend caller — an unwired control.
+2. `set-default` repository endpoint exists but no frontend caller — an unwired control. **Fixed in 4ac75f9.**
 3. Lifecycle endpoint computes `tier` and never applies it — tasks show plan phases.
 4. `create`/`profile`/work-item/trigger/takeover/enroll endpoints inherit `AllowAny`.
-5. Test-case creation invalidates the wrong query key — the new row needs a manual reload.
+5. Test-case creation invalidates the wrong query key — the new row needs a manual reload. **Fixed in 4ac75f9.**
 6. `takeover_flag` is set and released but never read as a guard.
 7. `/recovery?run=` is inert; there is no way to take over a *named* run.
 8. Dead code: the `pending_gate` artifact badge, the `"running"` work-item badge, the roles gap banner,
    the `A description is required` validation, the `Preview unavailable` state for internal artifacts.
+   **Mostly fixed:** the `pending_gate` badge and the `Preview unavailable` state in 4ac75f9; the roles
+   gap banner and the description validation in b40c557. The `"running"` work-item badge is also
+   resolved in 4ac75f9: the board card's status pill now reads `Running` from the card's latest run
+   (`WorkItemsBoard.tsx:112-114`), so running work is no longer shown as `Draft`.
 9. Silent failure paths: invite resend/revoke, repository 403, `GenerateCell` trigger errors, short
    passwords on accept-invite and reset, blank signup name.
 10. Failed requests render as empty/zero states across the dashboard, artifacts, traceability,
     repositories and the admin user list.
 11. `/onboarding` is in the greenfield sidebar and hardcodes brownfield copy.
-12. Dashboard "gates" badge is unfiltered by role and capped at 20.
+12. Dashboard "gates" badge is unfiltered by role and capped at 20. **Fixed in 4ac75f9.**
 13. Companion enrollment ignores the project multi-select.
-14. `Published this week` filters on `created_at`, not publish time.
-15. Developer placeholder reachable at `/admin/<anything>`.
+14. `Published this week` filters on `created_at`, not publish time. **Fixed in 4ac75f9.**
+15. Developer placeholder reachable at `/admin/<anything>`. **Fixed in 4ac75f9.**
 
 ---
 
@@ -353,7 +364,8 @@ Recorded so nobody re-litigates them. Each was re-opened against source while ap
 - **The build-tier gate is not mis-roled.** Implementation's merge gate correctly requires `tech_lead`
   and 09b's requires `qa_lead`; the `reviewer` default is unreachable through the UI.
 - **`/admin/<anything>` is admin-only.** Still a defect, but it sits behind the admin guard — a
-  non-admin gets the access panel, not the placeholder.
+  non-admin gets the access panel, not the placeholder. (The placeholder itself was removed in
+  4ac75f9.)
 - **Companion revoke's `AllowAny` is real but not browser-reachable** — `/connect` lists only your own
   enrollments, so there is no UI path to revoke someone else's machine. Documented in a case's Notes
   rather than written as an unexecutable case.
