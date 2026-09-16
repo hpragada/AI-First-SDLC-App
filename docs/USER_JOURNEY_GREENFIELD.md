@@ -5,7 +5,11 @@ that a team experiences when running a brand-new project through the Edvensoft A
 platform from zero to first deployment.
 
 **Platform version:** Phase 4.8 (Hi-Fi React UI + Phase 4.7 backend)
-**Last updated:** 2026-07-01
+**Last updated:** 2026-09-16
+**What changed in this revision:** corrected against the code — the seeded agent count, the
+artifact type names, the code-review gate role, the new project redirect, the build/PR/merge
+flow for the phases that write code, the accessibility judge and journey phases, the checklists
+on the design and deployment gates, "Request changes", and the `stalled` run status.
 
 ---
 
@@ -38,7 +42,8 @@ Steps:
 
 Expected:
 - Backend creates `Tenant("Acme Corp")` + `User(is_tenant_admin=True)` atomically
-- `seed_agent_specs(tenant)` seeds all 16 AgentSpec rows
+- `seed_agent_specs(tenant)` seeds all 19 active AgentSpec rows (the whole catalogue except the
+  retired `00d_context_snapshot`)
 - Session cookie set; response: `{ user: { is_tenant_admin: true }, tenant: { name: "Acme Corp" }, memberships: [] }`
 - Frontend reads `user.is_tenant_admin` → `AuthContext.isAdmin = true`
 - Redirects to `/setup` (SetupChecklist)
@@ -131,7 +136,8 @@ Steps:
 3. Track = "greenfield"
 4. Repo topology = "single"
 5. Submits → `POST /api/projects/` `{ name, track: "greenfield", repo_topology: "single" }`
-6. Redirects to `/setup` → sets up Project Profile
+6. A new greenfield project lands straight on its profile: `/profile?project={id}&setup=1`
+   (a brownfield project goes to `/onboarding` instead)
 
 Profile step:
 - `PUT /api/projects/{id}/profile/` with description, domain, tech_stack, nfrs, constraints, glossary
@@ -221,10 +227,15 @@ Business rules enforced:
 - `tech_lead` attempting → 403 (GateRoleError)
 - `decision: "approved"` with required condition unsatisfied → 400 (GateError)
 - `decision: "rejected"` → run terminates; work item stays `in_progress`; re-trigger allowed
+- **Request changes** is a rejection the reviewer wants acted on: `decision: "rejected"` with
+  `revise: true` and a comment saying what to change. The comment is required, and `revise` on
+  anything other than a rejection is refused. The platform starts the revising run itself, with
+  the review conversation carried into it — the reviewer does not re-trigger the phase by hand
 
 After approval:
 - Temporal workflow resumes, run → `completed`
-- `Artifact` created: `phase="01_ideation", type="brief", status="approved"`
+- `Artifact` created: `phase="ideation", type="ideation", status="approved"` (the phase label and
+  the artifact types are the bare lifecycle names — no `NN_` prefix, no `_doc` suffix)
 
 ---
 
@@ -234,9 +245,9 @@ Same pattern as A-7/A-8 for each phase:
 
 | Phase | Agent key | Gate role | Artifact type |
 |-------|-----------|-----------|---------------|
-| Requirements | `02_requirements` | product_owner | requirements_doc |
+| Requirements | `02_requirements` | product_owner | requirements |
 | PRD | `03_prd` | product_owner | prd |
-| Architecture | `04_architecture` | architect (Marcus) | architecture_doc |
+| Architecture | `04_architecture` | architect (Marcus) | architecture (plus `adr`, `data_model`, `api_spec`) |
 
 Architecture gate — Marcus approves:
 - `POST /api/approvals/{id}/decide/` as Marcus (architect role)
@@ -275,6 +286,12 @@ Business rules:
 
 - Trigger `05_ux_design`
 - Gate approval by Priya (designer role)
+- The design gate carries the **WCAG 2.2 AA checklist** — 22 questions a designer can settle from
+  the design itself (alt text intent, colour not carrying meaning alone, contrast, focus order,
+  visible focus, tap target size, labelled fields, error wording, and so on). Every item is
+  required, and one left unticked blocks approval. Five further questions can be switched on per
+  project in its accessibility settings. The wording of each item comes from the WCAG 2.2 rows
+  loaded into the database, so a new release of the standard is a data reload, not a code change
 - If Figma integration unavailable: note failure, agent still produces internal design spec artifact
 
 ---
@@ -293,10 +310,22 @@ Business rules:
 
 ### A-13 · Phase 07–08 — Implementation & Code Review
 
-**Actor:** Aisha (engineer triggers), Dev approves code review  
+**Actor:** Aisha (engineer triggers); the code-review and merge gates are decided by a holder of
+the `reviewer` role (or a tenant admin)  
 
-- `07_implementation` → companion writes code to branch
-- `08_code_review` → code review gate (tech_lead: Dev)
+- `07_implementation` **rides the build**: triggering it starts the build workflow, not a plain
+  phase run. The companion works in a git worktree, commits, pushes the branch and the platform
+  opens a **draft pull request**
+- `08_code_review` is dispatched **inside** that build loop — it is not a standalone trigger. Its
+  gate role is `reviewer` (not `tech_lead`), and the implementation and review agents loop on
+  remediation until the review is clean
+- The build then waits on the **merge gate**: a reviewer approves, and only then does the platform
+  merge the PR. Rejecting ends the build with the branch and PR left in place; "Request changes"
+  re-enters the loop — the PR is reconciled to the new head, the remediation loop runs again and
+  the gate re-opens. A merge conflict parks the build rather than failing it, so a reviewer can
+  resolve it in GitHub and approve again without a rebuild
+- `09b_test_automation` and `11_cicd` ride the same build flow for the same reason: they write
+  code into the worktree
 - If GitHub unavailable: note failure, implementation artifact still created internally
 
 ---
@@ -311,6 +340,25 @@ Business rules:
 - Then `09b` (Test Automation) writes and runs the tests; its run produces the only `test_report`,
   imports results to Xray, and a failing test opens a defect
 - If Xray unavailable: note failure; test artifacts are still created internally
+- The testing gate also carries a **derived accessibility condition**: "no unresolved
+  accessibility failure". It is computed when the gate is decided, from the open accessibility
+  defects on this work item, and a reviewer cannot tick it by hand. If nothing is blocking it
+  still says what it found — problems the keyboard journey raised (tracked, never blocking),
+  accessibility debt inherited from a baseline audit, or that no accessibility check has run for
+  this work item at all
+
+---
+
+### A-14b · Accessibility phases 09c and 09d
+
+Two platform-native phases sit beside testing, both gated by `qa_lead`:
+
+- `09c_a11y_judge` — judges what a rule scanner cannot decide (is this alt text meaningful, is
+  this `div` really a button) against the loaded WCAG 2.2 wording. It registers no artifacts: its
+  output is one verdict per element, so the platform checks its coverage instead
+- `09d_a11y_journey` — operates the application with a keyboard through a critical journey and
+  watches what focus does and what assistive technology is told. Its findings are recorded,
+  reported and ticketed, but they never fail a gate
 
 ---
 
@@ -330,8 +378,14 @@ Business rules:
 
 **Actor:** Jordan Kim (devops)
 
-- Trigger `11_cicd` → `12_deployment`
+- Trigger `11_cicd` (rides the build — worktree, PR, merge gate) → `12_deployment`
 - Gate role: `devops`
+- The deployment gate carries a **readiness checklist** the DevOps reviewer attests item by item:
+  CI-passing PRs and coverage, Critical/High test cases passed with UAT signed off, zero open
+  Critical or High security findings, migrations tested on staging with a rollback script,
+  a documented and tested rollback procedure, an on-call engineer named and the window
+  communicated, and release notes plus the version-specific rollback runbook registered. Every
+  item is required; one left unticked blocks approval
 - Final artifact published to SoR
 
 **Artifact publish flow:**
@@ -404,6 +458,25 @@ After all phases complete:
 
 ---
 
+## Where accessibility sits in this journey
+
+Accessibility is not a phase of its own; it is four things attached to the lifecycle the team
+already runs:
+
+1. **The design gate (05)** carries the WCAG 2.2 AA checklist — the questions a designer can
+   answer from the design. Unticked required items block the gate (A-11)
+2. **The judge and journey phases (09c, 09d)** check the built pages and a keyboard journey
+   (A-14b)
+3. **The testing gate (09)** carries a derived accessibility condition the platform computes
+   from the open accessibility defects on the work item — a reviewer cannot attest it (A-14)
+4. **The conformance statement** is a separate, signed document: the platform lays out all 55
+   Level A and AA criteria with the evidence beside each one, suggests a level only where the
+   evidence supports it, and then stops. Only the accessibility reviewer on the project — the
+   `qa_lead` — can sign it, and the claim belongs to the person who signs. It is produced from
+   `/a11y/conformance`
+
+---
+
 ## Known integration failure points
 
 | Integration | Failure scenario | Platform behaviour |
@@ -439,4 +512,10 @@ awaiting_gate → approved (gate approved)
 awaiting_gate → rejected (gate rejected)
 approved → completed (workflow finishes)
 running → failed (agent error)
+running → stalled (no companion report before the timeout)
+stalled → running / awaiting_gate (a companion that only slept comes back and reports)
+stalled → failed (an explicit human takeover, or a reported failure)
 ```
+
+`stalled` is not terminal. It means the run is parked for a human to take over, and a late
+companion report still reconciles it through the normal gate path.

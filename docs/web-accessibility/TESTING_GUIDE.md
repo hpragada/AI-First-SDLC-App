@@ -141,17 +141,25 @@ don't do it, or run a free browser plugin, find nothing, and assume they are fin
 
 ⚠️ **The previous guide's numbers here were wrong, and this is the correction.** It said the AI
 half covers "11 of 55". Eleven is how many criteria the platform's own registry
-(`apps/a11y/data/ownership.json`) *classifies* as AI-owned. Only **four checkers are built**, and
-they cover **five** criteria. The other six are Phase 2 — which the task backlog has said all
-along, in QA‑02b's known limitations. The guide simply quoted the wrong number.
+(`apps/a11y/data/ownership.json`) *classifies* as AI-owned. **Six checkers are built**, and they
+cover **six** criteria. The rest are Phase 2 — which the task backlog has said all along, in
+QA‑02b's known limitations. The guide simply quoted the wrong number.
+
+**Updated 16 September 2026.** This section said four checkers covering five criteria. It has been
+six since `structure` was added on 24 August and `graphics` on 27 August (`A11Y_CHECKER_CRITERIA`
+in `backend/integrations/types.py`, `CHECKERS` in `backend/apps/a11y/checkers/rules.py`).
 
 | Checker | What it is | Criteria it can speak to **today** | Registry says it owns |
 |---|---|---|---|
 | **Rule scanner** | The industry-standard **axe** engine, running inside the page and measuring things | **14** | 14 |
-| **AI checks** | Four checks that read a captured element and form a judgement: `alt`, `semantics`, `color`, `label` | **5** — 1.1.1, 1.3.1, 1.4.1, 2.5.3, 4.1.2 | 11 |
+| **AI checks** | Six checks that read a captured element and form a judgement: `alt`, `semantics`, `structure`, `color`, `label`, `graphics` | **6** — 1.1.1, 1.3.1, 1.4.1, 1.4.11, 2.5.3, 4.1.2 | 11 |
 | **Keyboard journey** | An agent that operates the running application with only the keyboard | **8** — 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 3.2.1, 3.2.2, 4.1.3 | 8 |
 
 **So the honest total: 27 of the 55 criteria have some automated evidence today. 28 do not.**
+1.4.11 is counted once, in both of the first two rows: the scanner measures whether you can see
+where the controls are, and `graphics` judges whether the meaningful parts of icons and diagrams
+can be made out. Neither half covers the criterion alone. `semantics` and `structure` likewise
+share 1.3.1, asking different questions about it.
 
 Of those 28: **five** are AI-owned criteria whose checker is not built yet (Phase 2), and
 **twenty-three** can only ever be assessed by a person. (The previous guide said 22. It is 23 —
@@ -325,9 +333,14 @@ sign up → setup checklist → connect machine → invite people → connect Ji
        → artifacts, traceability, publish
 ```
 
-Accessibility enters at **Test Automation** and is not a phase of its own. There is no
-"accessibility" button on the phase picker and there should not be — the evidence is a
+Accessibility **evidence** enters at **Test Automation** and is not a phase of its own. There is
+no "accessibility" button on the phase picker and there should not be — the evidence is a
 by-product of the suite that was going to run anyway.
+
+One thing does happen earlier, and it is not automated: the **UX Design** gate carries a
+22-question WCAG 2.2 checklist (`backend/apps/gates/wcag.py`), plus 5 criteria a project can
+switch on, answered by the reviewer looking at the design. Nothing reads a wireframe and judges
+it — see `USER_JOURNEYS.md` J2.
 
 ### Brownfield — an application that already exists
 
@@ -397,7 +410,7 @@ rather than carried on the run report.
    - *inapplicable* — the rule ran, and there was nothing on this page for it to apply to
    - *incomplete* — **axe looked and cannot decide; a person must**
 2. **The scanner's version**, read from the module the project imported.
-3. **Every element** the four AI checks might apply to — its markup, the text around it, six
+3. **Every element** the six AI checks might apply to — its markup, the text around it, six
    computed style properties, and the browser's own computed accessible name.
 4. **One full-page screenshot**, and each element's exact rectangle on it.
 
@@ -419,7 +432,7 @@ only.
 
 ### A4 — The AI pass ✅
 
-The platform picks up what was captured, selects the elements each of the four checks applies to,
+The platform picks up what was captured, selects the elements each of the six checks applies to,
 and dispatches a judging run. The judge is a real agent run through the normal driver — there is
 no direct model call anywhere in this build.
 
@@ -1216,9 +1229,10 @@ is not connected and `✓` when it is, so the numbered list reads 1–7 with not
 
 ### #11 — The coverage numbers everyone was quoting were wrong ✅
 
-*"The AI half covers 11 of 55"* is the ownership **registry's** classification. Four checkers are
-built and they cover **five**; the other six are Phase 2, which the task backlog has said all
-along. And *"22 criteria only a person can assess"* is **23** — 2.4.7 is registry-owned by `ai`
+*"The AI half covers 11 of 55"* is the ownership **registry's** classification. Four checkers were
+built at the time and they covered **five**; the rest were Phase 2, which the task backlog has
+said all along. (**Since 27 August it is six checkers covering six criteria** — `structure` and
+`graphics` were added after this finding was written; §2 carries the current figure.) And *"22 criteria only a person can assess"* is **23** — 2.4.7 is registry-owned by `ai`
 and covered by the keyboard journey, so counting it in both makes the human remainder one too
 small.
 
@@ -2860,7 +2874,8 @@ more honest state. 43 of 173 records were scored against a floor of 30 per check
 
 ### 10.3 What is proven by tests, and how much
 
-Measured on this branch on **31 August**, after §9.25:
+Measured on this branch on **31 August**, after §9.25. **The failure counts in this table were
+superseded on 1 September** — see the note under it, and #62 and #65:
 
 | Ran | Result |
 |---|---|
@@ -2871,14 +2886,19 @@ Measured on this branch on **31 August**, after §9.25:
 | The fixture harness (`npm run check`) | **all 8 checks green**, 94 routes, 173 records, 0 never-collected |
 | `ruff` on `apps/a11y` | clean. `mypy` reports 3 errors, all pre-existing on the same lines |
 
-⚠️ **14 tests were already failing on this branch before any of this work started**, and they fail
-identically with every change stashed. All of them trace to the `graphics` / 1.4.11 checker added
-on 27 August and never wired into the capability interface, the selection corpus, or several test
-expectations that enumerate checkers. One may be a real gap rather than a stale test — there is no
-`check_graphics`, so 1.4.11 cannot be asked through the capability at all. **Logged as its own
-task rather than fixed in passing:** the corpus entries need writing properly and the capability
-question needs a decision. One of the fourteen was fixed, because it sat in a file this work was
-already changing.
+⚠️ **Superseded on 1 September, and kept here because the count is the point.** This paragraph
+recorded 14 tests failing before the work started, all tracing to the `graphics` / 1.4.11 checker
+added on 27 August and never wired into the capability interface, the selection corpus, or the
+test expectations that enumerate checkers — and it said there is no `check_graphics`, so 1.4.11
+could not be asked through the capability at all.
+
+**Both halves of that are now out of date.** Sweeping all thirty-three a11y test files found
+**21 failing, not 14** (#62), and they were all naming one fact — the correction of 27 August that
+never reached the data (#65). `check_graphics` exists on the capability
+(`backend/integrations/a11yai/builtin.py`), `graphics` is in the live checker list
+(`backend/apps/a11y/checkers/rules.py`), and the a11y suite is reported at **1,765 passing and
+zero failing** across those thirty-three files. What is still open is the answer key: #64 records
+that nobody outside the checker's author has signed it, and no code change satisfies that.
 
 Every number here was **measured on the day this section was written**, not carried forward. An
 earlier version of this table quoted 390 backend and 374 frontend tests from 21 August; both had

@@ -55,8 +55,21 @@ def _body(key: str) -> str:
 
 
 # ── AC1: the agent bodies name 2.2, and nothing names 2.1 ──────────────
+#: What "names an older standard" actually means. A bare `"2.1"` search cannot tell the version
+#: of the standard from a criterion NUMBER: 2.1.1 Keyboard and 2.1.2 No Keyboard Trap are
+#: current WCAG 2.2 criteria, and an agent that names them is right to. The blunt search stood
+#: only while no accessibility agent body happened to cite them; on 2026-09-16, 09 was corrected
+#: to point keyboard cases at the journey agent — which checks exactly 2.1.1 and 2.1.2 — and the
+#: assertion failed on correct content. Tightened to the version strings themselves.
+_OLD_STANDARD = ("WCAG 2.1", "2.1 AA", "2.1 Level AA", "WCAG 2.0")
+
+
+def _names_an_older_standard(body: str) -> list[str]:
+    return [token for token in _OLD_STANDARD if token in body]
+
+
 def test_09_testing_carries_no_wcag_21_reference():
-    assert "2.1" not in _body("09_testing")
+    assert _names_an_older_standard(_body("09_testing")) == []
     assert "WCAG 2.2 AA" in _body("09_testing")
 
 
@@ -81,10 +94,21 @@ def test_09b_names_the_current_standard_and_no_older_one():
     assert "WCAG 2.1" not in body
 
 
-def test_the_design_agent_is_deliberately_untouched():
-    """05 still writes its accessibility spec at 2.1 — that is OP-01 in the other backlog.
-    Pinned so that moving it is a decision someone makes, not a side effect of this task."""
-    assert "WCAG 2.1 AA" in _body("05_ux_design")
+def test_the_design_agent_names_the_current_standard():
+    """**Uplifted on 2026-09-16, deliberately.** This used to pin 05 at WCAG 2.1 so that moving
+    it would be somebody's decision rather than a side effect. The team made that decision: the
+    platform, its gate and agents 09/09b/09c/09d all work to 2.2, and a live project was found
+    registering an accessibility spec that said "WCAG 2.1" while the gate asked 2.2 questions.
+    The guard is not weakened — it still fails if anyone puts 2.1 back.
+
+    Note what this does NOT assert: 05 covers nine criteria in its own Step 7 table, and naming
+    2.2 does not by itself make it teach the six criteria new in 2.2 (2.4.11, 2.5.7, 2.5.8,
+    3.2.6, 3.3.7, 3.3.8). Those are asked of the designer at this gate, and widening the agent's
+    own table is part of the shift-left work, not of this correction.
+    """
+    body = _body("05_ux_design")
+    assert "WCAG 2.2 AA" in body
+    assert "WCAG 2.1" not in body
 
 
 # ── AC4: the §8 reference sweep stays clean on the edited body ─────────

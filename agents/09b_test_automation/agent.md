@@ -600,7 +600,7 @@ python -m pytest             # pytest
 
 **If the suite cannot run at all** (the app will not come up, the browser is missing, dependencies will not install), say so plainly and name the reason. An absent report is read by the platform as "nothing ran" — which is correct and safe — while a report that says everything passed because nothing executed would be the one failure mode that matters.
 
-> The report is **collected from the worktree by the platform before teardown**, and `test-results/` is in the `.gitignore` from Step 3 — so it reaches the platform without ever being committed. Both are deliberate: do not "fix" the ignore rule to commit results, and do not move the report out of the conventional path to keep it. The same is true of `test-results/a11y-candidates.json` from Step 5a: collected from that directory, never committed, gone with the worktree if it was not written.
+> The report is **collected from the worktree by the platform before teardown**, and `test-results/` is in the `.gitignore` from Step 3 — so it reaches the platform without ever being committed. Both are deliberate: do not "fix" the ignore rule to commit results, and do not move the report out of the conventional path to keep it. The same is true of `test-results/a11y-candidates.json` from Step 5b: collected from that directory, never committed, gone with the worktree if it was not written.
 
 ---
 
@@ -646,7 +646,7 @@ The platform commits the generated scripts in the worktree, pushes the branch, a
 - [ ] Dry run attempted — compile/type check passes
 - [ ] The suite was **run** against the live application, and a JUnit report exists at the conventional path (or the reason it could not run is reported)
 - [ ] For an `Accessibility` case: the scan is scoped to WCAG 2.2 AA, fails on critical/serious, and its message leads with the violation totals
-- [ ] For **every** script: `test-results/a11y-candidates.json` was written — one entry per distinct screen the test visited, one full-page screenshot per screen, each element carrying its box, the browser's **computed** accessible name, and all six `styles` / `parent_styles` keys
+- [ ] For **every** script: `test-results/a11y-candidates.json` was written — one entry per distinct screen the test visited, one full-page screenshot per screen, each element carrying its box, the browser's **computed** accessible name, and every `styles` / `parent_styles` key listed in Step 5b
 - [ ] For **every** script: that same file carries `axe_violations` for each screen — **every** violation the scan reported, not only the ones that landed on a captured element — or `axe_error` saying why no scan ran there
 - [ ] For **every** script: each scanned screen also carries the scan's other three answers — `axe_passes`, `axe_inapplicable` and `axe_incomplete` — plus `scanner_version`; the capture scan was scoped to the WCAG 2.2 tags, and no rule was moved between channels
 - [ ] No functional test was failed by an accessibility finding; the scan enriches the capture and the platform's gate does the blocking

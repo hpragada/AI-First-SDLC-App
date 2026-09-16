@@ -5,7 +5,12 @@ registering legacy artifacts, running a gap report, and resuming the lifecycle f
 resume phase through to deployment.
 
 **Platform version:** Phase 4.8 (Hi-Fi React UI + Phase 4.7 backend)
-**Last updated:** 2026-07-01
+**Last updated:** 2026-09-16
+**What changed in this revision:** corrected against the code — the connect-machine step and the
+onboarding agents (00c, 00e, 00_onboarding), the artifact types documents are adopted as, the gap
+report's actual response shape, what the lifecycle rail really reads, what an adopted document's
+status is, the fact that brownfield runs the same twelve phases as greenfield (design included),
+the brownfield-only route guard, and where accessibility sits.
 
 ---
 
@@ -28,10 +33,24 @@ documentation.
 
 ### BF-A-0 · Workspace + project creation
 
-Same as Greenfield A-0 and A-1. Sarah signs up, invites team, connects machine.
+Same as Greenfield A-0 and A-1. Sarah signs up and invites the team.
+
+**Connect a companion machine (Greenfield A-2) is not optional here.** Two of the onboarding
+steps below run on a person's enrolled local companion and fail closed without one: indexing the
+code reads a git worktree, and both onboarding agents can stop to ask a question. With no
+companion enrolled the platform refuses the agent path with "start your companion" rather than
+running it server-side, and falls back to the mechanical path where there is one.
 
 Create project with **brownfield track:**
 - `POST /api/projects/` `{ name: "Legacy Billing Modernisation", track: "brownfield", repo_topology: "multi" }`
+- Creating a brownfield project lands on `/onboarding`
+
+The three onboarding screens (`/onboarding`, `/onboarding/documents`,
+`/onboarding/gap-report`) are **brownfield-only**: opening any of them on a project whose track is
+`greenfield` shows "Nothing to onboard yet" and points at the dashboard and the project profile
+instead. The guard sits on the routes, not in the screens, so a typed or bookmarked URL behaves
+the same as the hidden sidebar link. A project whose track is not known — an API too old to send
+it — is let through rather than locked out.
 
 Multi-repo topology:
 - `POST /api/projects/{id}/repositories/` `{ name: "acme/billing-monolith", role: "backend", base_branch: "main" }`
@@ -61,7 +80,9 @@ Steps:
    - Files: "Legacy Billing Requirements v3.pdf", "Architecture Decision Records 2021.pdf"
 4. Backend: `ingest_source_document()` → S3 upload → extraction pipeline → SourceDocument row
 5. SourceDocument `status`: `uploaded → extracting → extracted`
-6. Extracted artifacts created (type="requirements_doc", "architecture_doc")
+6. Extracted draft artifacts created. The types are the bare lifecycle names — `ideation`,
+   `requirements`, `prd`, `architecture`, `ux_design` and the other document-authored types — not
+   `requirements_doc` / `architecture_doc`
 
 Screen states observed:
 - `empty` → after upload → `uploading` → `extracted`
@@ -79,7 +100,7 @@ Business rules:
 
 Steps:
 1. Review the extracted draft artifact
-2. Choose the document's type in the "Adopt as …" picker (Requirements / PRD / Architecture / UX Design / Ideation — pre-filled from the filename, editable), then click "Adopt"
+2. Choose the document's type in the "Adopt as …" picker (pre-filled from the filename, editable), then click "Adopt". The picker offers **every phase's document types** — Ideation, Requirements, PRD, Architecture (plus ADR, data model, API spec, tech stack, security architecture), UX Design (plus user journey, wireframe, design system, accessibility), Task Breakdown, Code Review, test cases and reports, security review and threat model, CI/CD and deployment. The one exclusion is the implementation phase: a running codebase is proven from git, never from an uploaded file
 3. `POST /api/source-documents/{id}/adopt/` `{ target_type: "requirements" }` (session-authenticated; `user_id` is an optional pre-auth/test fallback)
 4. Platform:
    - Reclassifies the extracted draft into `Artifact(type=<target_type>, status="published", sor="internal")` — so the gap report recognises it as phase evidence
@@ -90,8 +111,22 @@ Screen state: `adopt-gate` (awaiting product_owner) → `adopted`
 
 Business rules:
 - Only `product_owner` (or a project-admin / tenant-admin, who may approve any gate) may adopt (403 otherwise)
-- `target_type` must be one of the document-authored lifecycle types (`ideation`, `requirements`, `prd`, `architecture`, `ux_design`)
+- `target_type` must be one of the adoptable lifecycle types listed above
 - Re-adopting an already-adopted document is **idempotent** — it returns `200 {"idempotent": true}` and changes nothing
+
+---
+
+### BF-A-2b · Document vision reads the pages (00e)
+
+Adopting a document also starts the **document-vision agent** (`00e_document_vision`) on the
+adopting user's companion, for that one document. It reads the page images the platform preserved
+at upload and writes faithful markdown for the things text extraction cannot carry — diagrams,
+screenshots, tables — and that is applied automatically as a **new version of the same artifact**.
+
+- There is **no gate**: the person already adopted these pages, so the result is published without
+  a second approval
+- It fails closed and quietly: with no companion enrolled the adopt simply skips this step and the
+  document stays adopted with its extracted text
 
 ---
 
@@ -134,8 +169,16 @@ Steps:
 1. Select repository "acme/billing-monolith" in dropdown
 2. Click "Start code intelligence"
 3. `POST /api/projects/{id}/code-intel/` `{ repo_id: <billing_monolith_repo_id> }`
-4. Backend: `record_code_intel_index()` → companion analyses codebase structure
-5. Polling: `GET /api/projects/{id}/onboarding/` shows:
+4. Backend: `record_code_intel_index()` → companion analyses codebase structure. Where a companion
+   is enrolled, this runs as the **00c code-intelligence agent** (`00c_intelligent_context_extractor`)
+   in a read-only worktree; without one, the mechanical indexer is the fallback
+5. The 00c run is hosted on a **carrier work item** the platform creates per project, hidden from
+   the backlog and from Phases & Runs — it exists only to give the run something to hang off
+6. It runs **headless: there is no gate**. Indexing is a setup step, not a lifecycle phase anyone
+   signs off, and the Onboarding hub reporting its progress and what it produced is the review
+   surface. It publishes internally only — exporting anything to a system of record stays a
+   deliberate human action
+7. Polling: `GET /api/projects/{id}/onboarding/` shows:
    - `index.status: "running"`, `files_indexed: 284`, `total_files: 1284`
    - Eventually: `index.status: "done"`, `files_indexed: 1284`
 
@@ -155,18 +198,25 @@ Business rules:
 **Actor:** Sarah
 
 Steps:
-1. `POST /api/projects/{id}/gap-report/` → triggers gap analysis
+1. `POST /api/projects/{id}/gap-report/` → runs the **00_onboarding assessment agent** on the
+   triggering user's companion, against the same hidden carrier work item 00c used. With no
+   companion enrolled the platform refuses and keeps the deterministic assessment as the fallback
 2. Poll: `GET /api/projects/{id}/gap-report/`
-3. Response:
+3. Response — phase keys are the bare lifecycle names (`ideation`, not `01_ideation`), each with
+   its human `label`, and `evidence` is a list of the artifacts the assessment actually relied on:
    ```json
    {
+     "gap_report_id": "…",
+     "resume_phase": "prd",
+     "resume_label": "PRD",
+     "intel_present": true,
      "phases": [
-       { "phase": "01_ideation",     "assessment": "complete",  "evidence": "source doc covers scope" },
-       { "phase": "02_requirements", "assessment": "partial",   "evidence": "requirements doc v3 found" },
-       { "phase": "03_prd",          "assessment": "missing",   "evidence": "no PRD found" },
-       { "phase": "04_architecture", "assessment": "complete",  "evidence": "ADR document found" }
+       { "phase": "ideation",     "label": "1. Ideation",     "assessment": "complete",
+         "evidence": [{ "artifact_id": "…", "type": "ideation", "sor": "internal", "status": "published" }] },
+       { "phase": "requirements", "label": "2. Requirements", "assessment": "partial",  "evidence": [ … ] },
+       { "phase": "prd",          "label": "3. PRD",          "assessment": "missing",  "evidence": [] },
+       { "phase": "architecture", "label": "4. Architecture", "assessment": "complete", "evidence": [ … ] }
      ],
-     "resume_phase": "03_prd",
      "blocking": []
    }
    ```
@@ -175,9 +225,15 @@ Steps:
 
 Screen states: `partial` (resuming mid-lifecycle) / `empty` (nothing done) / `mature` (well-covered)
 
+**This one IS gated, unlike 00c and 00e.** The gap report is a judgement about the client's
+project — which phases are done, where to resume — so a `product_owner` owns it before the
+pipeline acts on it. The report is registered as a **draft** and the gate approval is what
+publishes it; the gate appears on the Gates screen and on the dashboard like any other, even
+though its carrier work item is hidden from the backlog.
+
 Business rules:
-- Gap report `resume_phase` = first phase with `assessment != "complete"`
-- `blocking` = phases required but have no evidence AND no predecessor
+- Gap report `resume_phase` = first phase whose assessment is not `complete`
+- `blocking` = phases still `missing` at or before the resume point
 
 ---
 
@@ -189,14 +245,25 @@ Business rules:
 Steps:
 1. Create epic: `POST /api/work-items/` `{ type: "epic", title: "Billing Microservice Extract", feature_stream: "core" }`
 2. Navigate to epic lifecycle rail: `GET /api/work-items/{id}/lifecycle/`
-3. Phases 01 (ideation) and 04 (architecture) show as "complete" based on gap report evidence
-4. Phase 03 (PRD) shows as "not_started" — this is the resume point
+3. Every phase on the rail starts at "not_started", including the ones the gap report called
+   complete. **The rail reads runs, not the gap report**: a node's state comes from this work
+   item's latest run for that phase, plus any pending gate or clarification on it. The gap report
+   is a project-level assessment and the rail is per work item, so nothing carries across
+4. The resume point is what the gap report screen says, not something the rail shows
 5. Trigger PRD: `POST /api/work-items/{id}/trigger/` `{ agent_key: "03_prd" }`
-6. Agent runs with context from gap report + adopted artifacts
+6. The agent works from the adopted artifacts, which are in the registry like any other artifact
+   and reach the run through the normal context assembly
 
 Business rules:
-- Triggering a "complete" phase is still allowed (re-run with new context)
-- Gap report evidence is passed as `inputs` to the agent run
+- Triggering a phase the gap report called complete is still allowed (re-run with new context)
+- The whole lifecycle is a DAG, so no phase order is enforced
+
+**Brownfield runs the same twelve phases as greenfield — design included.** The track decides what
+onboarding a project gets; it does not change the phase list. Nothing in the platform varies the
+phases, the gates or the gate roles by `Project.track`, so a brownfield work item goes through
+ideation, requirements, PRD, architecture, UX design, task breakdown, implementation, code review,
+testing, security, CI/CD and deployment exactly as a greenfield one does. What differs is only
+where it starts: the gap report says which of them the client already has evidence for.
 
 ---
 
@@ -241,9 +308,11 @@ Business rules:
 **Actor:** Sarah
 
 Artifacts accumulated:
-- `requirements_doc` (from source doc adoption) — status: staged
+- `requirements` (from source doc adoption) — status: published, `sor: "internal"` (adoption
+  publishes the document; it is not left staged, because the gap report only counts published
+  evidence)
 - `prd` (from phase 03) — status: approved
-- `architecture_doc` (from gap report evidence) — status: approved
+- `architecture` (adopted from the ADR document) — status: published
 
 **Traceability graph:**
 - `GET /api/projects/{id}/traceability/`
@@ -320,6 +389,36 @@ contract are flagged as `impacted`.
 
 ---
 
+## Where accessibility sits in this journey
+
+Accessibility is not an onboarding step and is not started by it. Five things touch a brownfield
+project:
+
+1. **The baseline audit** — the answer to "how bad is what we already have?". A person starts it
+   from the accessibility screens (`/a11y/pages`) against a registered list of routes; onboarding
+   never triggers it. It is project-level, and it is **not brownfield-only** — any project can run
+   one. The server never opens a browser: the platform freezes the route list and hands out a
+   manifest, the companion visits the routes and posts what it saw, and the platform reconciles
+   what came back against what was asked for. A route that was asked for and never reported is
+   recorded as unreachable, with that as its stated reason
+2. **The design gate (phase 05)** carries the WCAG 2.2 AA checklist — the questions a designer can
+   settle from the design. Required items unticked block the gate
+3. **The testing gate (phase 09)** carries a derived accessibility condition the platform computes
+   from the open accessibility defects on the work item; a reviewer cannot tick it by hand. The
+   problems a brownfield project inherited from its baseline audit sit on the project's
+   accessibility backlog rather than on any story, so by default they are **reported at the gate
+   but do not block it** — a team is not stopped on day one by problems they inherited. A project
+   can choose to be held to them in its accessibility settings
+4. **Phases 09c and 09d** — the accessibility judge (what a scanner cannot decide) and the
+   keyboard journey (operating the application and watching focus). Both are gated by `qa_lead`,
+   and the journey's findings are tracked without ever blocking a gate
+5. **The conformance statement** lays out all 55 Level A and AA criteria with the evidence beside
+   each one, and is signed by the accessibility reviewer — the `qa_lead`. The platform suggests a
+   level only where the evidence supports it and never asserts one; the claim belongs to the
+   person who signs
+
+---
+
 ## Integration failure log (expected)
 
 | Integration | Screen | Failure type | Platform response |
@@ -327,8 +426,8 @@ contract are flagged as `impacted`.
 | Confluence | `/onboarding` | `CapabilityUnavailable` | Continue with internal-only |
 | Jira | `/onboarding` | `CapabilityUnavailable` | Skip registration; platform-only |
 | GitHub | `/onboarding/gap-report` | Webhook not received | Manual drift input required |
-| Figma | N/A (brownfield has no design phase by default) | — | — |
-| Xray | N/A | — | — |
+| Figma | `/runs` (phase 05 UX Design) | Invalid token | UX Design artifact created internally |
+| Xray | `/runs` (phases 09 / 09b) | API key expired | Test report as internal artifact |
 | Confluence (publish) | `/artifacts/{id}/publish` | Network error | `sor: "internal"`, `sor_link: null` |
 
 ---

@@ -145,7 +145,7 @@
 
 ---
 
-## 7. Accessibility (WCAG 2.1 AA — the product gates on it, so the product itself must pass)
+## 7. Accessibility (WCAG 2.2 AA — the product gates on it, so the product itself must pass)
 
 - Text contrast ≥ 4.5:1 (≥3:1 for ≥18px/bold). Verify orange-on-white only for large text or non-text use; for body, use navy/gray text.
 - Never encode meaning by color alone — pair status color with a label/icon (the badges already do this).

@@ -51,7 +51,7 @@ _FORBIDDEN = [
 _REASONING = {
     "05_ux_design": [
         "Senior UX/UI Designer and Design Systems Architect", "Double Diamond",
-        "Atomic Design", "Cognitive Walkthrough", "WCAG 2.1 AA", "Nielsen Norman",
+        "Atomic Design", "Cognitive Walkthrough", "WCAG", "Nielsen Norman",
         "a wireframe without states is not a wireframe", "Loading State Classification",
     ],
     # 09 reads "WCAG 2.2 AA" since QA-11. The *version* of a standard is a data reference (the

@@ -12,13 +12,15 @@
 
 | The question | Where the answer lives | Today's answer |
 |---|---|---|
-| **PLAN** — who *should* decide this criterion? | [ownership.json:35-49](../../backend/apps/a11y/data/ownership.json) `counts.by_owner` | rule **14** · AI **11** · human **30** |
+| **PLAN** — who *should* decide this criterion? | [ownership.json:35-49](../../backend/apps/a11y/data/ownership.json) `counts.by_owner` | the file says rule **14** · AI **11** · human **30**; routing is rule **13** · AI **12** · human **30** |
 | **SCHEDULE** — when is a check *meant* to ship? | same file, `counts.by_tier` | POC **19** · Phase 2 **21** · human **15** |
 | **REALITY** — what engine actually runs today? | the code, section 2 below | covered **27** · partial flag **5** · nothing **23** |
 
 **All three are correct answers to different questions.** The confusion was never a mistake; it was three answers wearing one name.
 
 > **Quote REALITY.** If you need the plan, say "the plan" out loud. The registry describes what the research report concluded was *possible*; it has never described what is *built*.
+
+**The two PLAN numbers, and why there are two (noted 16 September 2026).** `ownership.json` is a derivation, rebuilt from the committed research report, so the team's corrections are applied as a layer over it rather than edited into it: `ENGINEERING_OVERRIDES` in [ownership.py](../../backend/apps/a11y/ownership.py) moves **1.4.11 Non-text Contrast** from `rule` to `ai` (correction **R14**, agreed 2026‑08‑27), recording `page_rules` as the rule engine's contribution. So every routing question — which criteria does the AI decide, which does the rule engine — is answered **13 rule / 12 AI**, while the data file's own `counts.by_owner` still reads 14 / 11 and will keep reading that until the registry is reconciled during the build. Quote whichever you mean, and say which one it is.
 
 ---
 

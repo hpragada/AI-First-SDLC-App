@@ -247,7 +247,7 @@ For each primary persona from the `stakeholder_map` artifact:
 | Reliability | Uptime SLA | 99.9% |
 | Security | Authentication | OAuth 2.0 + PKCE + MFA |
 | Security | Data Encryption | TLS 1.3 in transit, AES-256 at rest |
-| Usability | Accessibility | WCAG 2.1 AA |
+| Usability | Accessibility | WCAG 2.2 AA |
 | Compatibility | API Standard | REST / OpenAPI 3.1 |
 
 Full specification: the `requirements` artifact §4

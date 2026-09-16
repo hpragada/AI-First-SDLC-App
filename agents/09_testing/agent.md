@@ -429,14 +429,14 @@ Give every security case a severity per the definitions in Step 11, so that when
 
 ### Step 9: Accessibility Testing
 
-> **Standard:** WCAG 2.2 AA — defined as the compliance target in the UX design phase. Phase 9 is where compliance is verified against the implemented product, not the wireframes.
+> **Standard:** WCAG 2.2 AA — the project's accessibility target, carried forward from the UX design phase's accessibility specification. Phase 9 is where conformance is verified against the implemented product, not the wireframes.
 
 **Automated scan — required against every screen in the Screen Inventory (see below for where it is).** The scan itself is an axe-core assertion the Test Automation agent generates from your case and runs against the route; what you specify is which screens must be scanned and what counts as a pass.
 
 **Automated scan requirements:**
-- Zero Critical violations (WCAG Level A failures — color contrast, missing alt text, missing form labels)
-- Zero Serious violations (WCAG Level AA failures)
-- Report all Moderate and Minor violations for tracking but do not block the quality gate
+- Zero violations the project's accessibility policy blocks on — by default every confirmed WCAG Level A and Level AA failure.
+- **axe's impact words are not WCAG levels.** `critical`, `serious`, `moderate` and `minor` are the scanner's own estimate of user impact and say nothing about conformance: 1.4.3 Contrast is Level AA and axe usually reports it as `serious`, while a `moderate` finding can be a Level A failure. Take the level from the criterion the finding cites, never from the impact word.
+- Report every other violation for tracking; it does not block the quality gate.
 
 **Write one Accessibility test case per screen — this is what makes the scan run.**
 
@@ -447,10 +447,10 @@ The scan does not happen by itself: the Test Automation agent (09b) automates **
 - **Type:** `Accessibility`, and **Automation Candidate:** `Yes` — 09b turns it into a real axe assertion against that route.
 - **A plain `TC-XXX` number from the same sequence as every other case.** Never a decorated id such as `TC-ACC-001`: the platform recovers a test case's identity from the test's name, and a decorated id does not resolve to a case — the defect that opens for it then loses its priority and lands as Critical whatever the finding was.
 - **Its own case per screen.** Never attach the accessibility check to a screen's functional case: results are identified by test case, so a passing functional test and a failing accessibility test sharing one id read to the platform as one test that flipped — which is the definition of a flaky test, and a flaky test is quarantined and **stops blocking the gate**. A real accessibility failure would disappear from the gate. One screen, one accessibility case, its own number.
-- **Priority set from the WCAG level the screen is held to**, because the defect that opens inherits it: a Level A failure is `Critical`, a Level AA failure is `High`. State it in the case so the severity of any defect is decided here, by you, and not by a fallback.
-- **Expected Result:** zero Critical and zero Serious violations at WCAG 2.2 AA on that route; Moderate and Minor are reported but do not fail the case.
+- **Priority set from the WCAG level of the criterion that failed**, because the defect that opens inherits it, and it must match the platform's own severity rule: Level A is `Critical`, Level AA is `High`, Level AAA is `Medium`. State it in the case so the severity of any defect is decided here, by you, and not by a fallback.
+- **Expected Result:** no blocking WCAG 2.2 AA violation on that route — by default no Level A or Level AA failure; anything else is reported but does not fail the case.
 
-**Manual keyboard navigation checks — write these as manual `TC-XXX` cases (`Automation Candidate: No`), because they genuinely cannot be automated:**
+**Keyboard navigation checks — write these as `TC-XXX` cases marked `Type: E2E`.** The platform's keyboard-journey agent (`09d_a11y_journey`) walks an E2E case with the keyboard alone and checks 2.1.1 Keyboard, 2.1.2 No Keyboard Trap, 2.4.3 Focus Order, 2.4.7 Focus Visible, 2.4.11 Focus Not Obscured, 3.2.1 On Focus, 3.2.2 On Input and 4.1.3 Status Messages, so write these to be walked rather than assuming a person must do it. Mark `Automation Candidate: No` — 09b does not script them; the journey agent drives them.
 
 One case per critical user journey, its steps written for a person with no mouse:
 - [ ] All interactive elements reachable via Tab key in logical order
@@ -466,11 +466,11 @@ One case per critical user journey, its steps written for a person with no mouse
 | SCR-001 | /products | 0 | 0 | 0 | 1 | ✅ | PASS |
 | SCR-002 | /checkout | 1 | 2 | 1 | 3 | ❌ | FAIL |
 
-State in the plan that every violation is recorded in the results, and that Critical and Serious violations are defect severity High and open a defect through the platform's defect loopback.
+State in the plan that every violation is recorded in the results, and that each blocking violation opens a defect through the platform's defect loopback at the severity its WCAG level gives it — Level A `Critical`, Level AA `High`.
 
 **Two engines check a screen, and the results report has to show both.** Write the rules below into the `test_plan` as the reading instructions for whoever reviews the results — none of this exists yet when this phase runs, so you specify it rather than perform it.
 
-The scan measures what can be measured. It cannot tell you whether `alt="chart"` means anything, whether a `div` is really a button, whether a status is shown only in red, or whether the label a person reads matches the name a screen reader announces. Those four questions are answered by the platform's accessibility judge, which runs automatically after the automated cases execute and writes an **`a11y_report`** artifact against that run — rule findings and AI findings in one document, each one tagged with which engine produced it, how sure it is, and every WCAG 2.2 criterion it breaches.
+The scan measures what can be measured. It cannot tell you whether `alt="chart"` means anything, whether a `div` is really a button, whether a status is shown only in red, or whether the label a person reads matches the name a screen reader announces. Those questions — six of them today: meaningful alt text, real versus faked semantics, whether a page's visible structure exists in its markup, colour used as the only cue, whether the accessible name contains the visible label, and whether graphics carry enough contrast — are answered by the platform's accessibility judge, which runs automatically after the automated cases execute and writes an **`a11y_report`** artifact against that run — rule findings and AI findings in one document, each one tagged with which engine produced it, how sure it is, and every WCAG 2.2 criterion it breaches.
 
 The reviewer finds it with `list_artifacts(type="a11y_report")` against 09b's run and carries its numbers into the table above. Three rules about how it is read, and none of them is optional:
 
@@ -506,10 +506,10 @@ The expectation to state: every previously passing test still passes. Any failur
 
 | Severity | Criteria |
 |---|---|
-| Critical | Data loss; authentication bypass; system unavailable; production data corrupted; WCAG Level A violation blocking core journey |
-| High | Core user journey broken with no workaround; security finding allowing privilege escalation; WCAG Level AA violation on core journey; performance NFR missed by >50% |
-| Medium | Feature broken but workaround exists; WCAG Level AA violation on non-core screen; performance degraded but within 2× NFR |
-| Low | Cosmetic issue; edge case with minimal user impact; WCAG Moderate violation; performance within acceptable range |
+| Critical | Data loss; authentication bypass; system unavailable; production data corrupted; WCAG Level A violation |
+| High | Core user journey broken with no workaround; security finding allowing privilege escalation; WCAG Level AA violation; performance NFR missed by >50% |
+| Medium | Feature broken but workaround exists; WCAG Level AAA violation; performance degraded but within 2× NFR |
+| Low | Cosmetic issue; edge case with minimal user impact; performance within acceptable range |
 | Flaky | Test produces inconsistent results across runs — not a code defect; quarantine and investigate |
 
 When 09b reports execution results, the platform's **defect loopback** opens a `defect` child WorkItem for each failing test (and closes it automatically once the test passes on a later run), and the **flaky-quarantine** register quarantines tests that flip across reruns (excluded from the blocking gate). Specify in the `test_plan` that every finding carries the following, so the defect carries full context:

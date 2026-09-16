@@ -37,7 +37,7 @@ software lifecycle with AI agents and human approval gates).
 - Status/lifecycle colors MUST follow the design system's run-state color map.
 - Never show an editable artifact body (previews are read-only). Never imply the AI runs
   in the browser. Pair every status color with a text label (accessibility).
-- WCAG 2.1 AA: ≥4.5:1 text contrast, visible orange focus rings, ≥40px hit targets.
+- WCAG 2.2 AA: ≥4.5:1 text contrast, visible orange focus rings, hit targets at least 24×24px (2.5.8) and ≥40px by house style.
 
 == SCREEN TO DESIGN ==
 - Screen id & name: {{e.g., S-15 · Work Item Detail — Epic level}}

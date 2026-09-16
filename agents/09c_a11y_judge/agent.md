@@ -405,6 +405,8 @@ they apply to `fail` only, never to `pass` or `uncertain`:
 | `color` | the **missing second cue**, in `suggested_fix`. e.g. "add the word Overdue beside the red dot", "underline links inside body text". |
 | `label` | **both strings, quoted**, in `evidence` — the visible label and the accessible name. e.g. `visible label "Buy now", accessible name "Purchase"`. One alone is not a mismatch anyone can check. |
 | `semantics` | nothing extra — but name the criteria that actually broke, and quote the markup in `evidence`. |
+| `structure` | the **markup that would carry the structure**, in `suggested_fix` — the header row rewritten with `<th>` and a `scope`, the list rebuilt as `<ul><li>`, the group given its `<fieldset>` and `<legend>`. A structure failure a developer cannot act on is the same dead end as an alt failure without replacement text. |
+| `graphics` | the **measured pair**, in `evidence` — the graphic's own colour and the colour immediately behind or beside it, with the ratio, e.g. `icon #9CA3AF on #FFFFFF, 2.5:1`. The judged half of 1.4.11 is a comparison, so the comparison has to be shown. |
 
 If a call is rejected, read the message: it names exactly what was wrong. Correct it and call
 again. Do not move on leaving an element unreported.
