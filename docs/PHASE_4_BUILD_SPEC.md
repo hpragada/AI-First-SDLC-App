@@ -82,7 +82,9 @@ def retrieve(tenant_id, *, project_id, query, repo=None, k=8) -> list[dict]: ...
 Every new table carries `tenant_id` + the standard forced-RLS `tenant_isolation` policy from its first migration (#6), with a DB-level isolation test.
 
 - **`KnowledgeChunk`** (new): `tenant, project, artifact(FK), repo(FK, null), ordinal, text, token_count, embedding(Vector(settings.EMBEDDING_DIM), null), source`. The Knowledge Index; written during code-intel + artifact registration; read by `retrieve()`.
-- **`DriftRecord`** (new): `tenant, project, repo(FK, null), kind(contract|pointer_hash), source(webhook delivery id / scan), summary, payload(json), impacted(json — artifact/repo ids from the traceability walk), status(open|accepted|rejected|auto_reconciled), required_role, decided_by(user, null), decided_at`. The drift-gate lifecycle (§6) — the control-plane analog of `Approval` for changes that arrive **without** an agent run (so it does not distort `Approval`, which is bound to a `Run`/workflow).
+- **`DriftRecord`**: `tenant, project, **artifact(FK)**, kind(contract|pointer_hash), required_role, status(open|accepted|rejected), **detail**(json — hashes/semver/source), impacted(json — artifact/repo ids from the traceability walk), decided_by(user, null), decided_at, **comment**`.
+
+  > *Field list corrected 2026-09-17 against `backend/apps/integrations/models.py:94-130`, which is what was built.* Four differences, all of which would break code written to this spec: it hangs off **`artifact`**, not `repo`; `source` and `summary` were never built — that content lives inside **`detail`**; there is a **`comment`** field this line omitted; and **`auto_reconciled` is not a status** — `Status` is `open · accepted · rejected` only, because nothing is silently applied to a system of record. The drift-gate lifecycle (§6) — the control-plane analog of `Approval` for changes that arrive **without** an agent run (so it does not distort `Approval`, which is bound to a `Run`/workflow).
 - **Artifact** — new **types** (free-text, no schema change): `codebase_intelligence`, `dependency_graph`, `git_analytics`, `dead_code`, `architecture_decisions` (the five 00c layers), **`api_contract`** (versioned cross-repo contract — M2), `gap_report` (00 onboarding output). `api_contract` is `sor=internal`, registry-versioned; consumers read it **read-through** via `get_artifact` (no copied file).
 - **Repository** (exists since P0; now fully exercised): `role` (frontend/backend/service), `stack_overrides`, `provenance`, `scopes`, `default_base`, `connector` — drive **per-repo manifest scoping** and the split/multi topology. No migration.
 - **Cross-repo DAG edges (D5):** modeled with the **existing `TraceEdge`** between artifacts whose `repo_id` differs — e.g. a consumer repo's `code`/`api_spec` artifact `implements` the provider repo's `api_contract` artifact — plus **`WorkItem.depends_on`** (already a repo-agnostic UUID list) across repos. No new edge table.
@@ -103,6 +105,15 @@ Same **75 / 15 / 10** discipline + **§8 reference sweep** that gated every prio
 ---
 
 ## 5. Full onboarding orchestration + multi-repo + the API-Contract (the front door)
+
+> ⚠️ **Built differently — noted 2026-09-17.** **There is no `OnboardingWorkflow`.** No Temporal
+> workflow of that name exists anywhere in the tree. What shipped instead is **agent-driven
+> onboarding on the ordinary agent-run path**: `00c_intelligent_context_extractor` reads the
+> codebase and `00_onboarding` judges phase completeness and produces the `gap_report`, with a
+> deterministic Python fallback when no companion is enrolled (`orchestration/trigger.py:267`
+> raises `NoCompanionError` and the REST layer falls back). The **steps below still describe what
+> onboarding does** — discover, register, reconcile, gap-fill, report and resume — so they remain
+> useful as the intent; only the "durable saga sibling to `BuildWorkflow`" framing is wrong.
 
 - **OnboardingWorkflow (Temporal):** a durable saga (sibling to `AgentRunWorkflow`/`BuildWorkflow`), idempotent by run/onboarding id, that runs for each repo in the project:
   1. **Discover** — connected SoRs (Atlassian pages/issues via P1 `register_atlassian`), static files (P1 extraction), and **code intelligence** (dispatch a code-intel task to the **companion**, 00c).

@@ -14,7 +14,7 @@
 
 | Element | Contents | Notes |
 |---|---|---|
-| **Sidebar** | Logo (edvensoft) · Workspace Dashboard · Work Items · Phases & Runs · Gates (count) · Clarifications (count) · Artifacts & Traceability · **Accessibility (count)** · — Settings — · Workspace Admin | Active = orange left-bar + lighter navy. Admin section only for tenant-admin. Companion pill pinned bottom. |
+| **Sidebar** | Logo (edvensoft) · Workspace Dashboard · Work Items · Phases & Runs · Gates (count) · Clarifications (count) · Artifacts & Traceability · **Accessibility (count)** · — **Project** — Project Profile · Onboarding *(brownfield only)* · Integrations · Repositories · Test Reporting *(admin only)* · Connect Machine · — **Admin** — Workspace Admin | Active = orange left-bar + lighter navy. Admin section only for tenant-admin. Companion pill pinned bottom. *Corrected 2026-09-17 against `AppShell.tsx:63-112`: the second group is headed **Project**, not Settings, and it holds six items this row never listed.* |
 | **Top bar** | Tenant switcher ("AC Acme Corp ▾") · Project switcher ("⚑ Payment Gateway v2 ▾") · spacer · Companion pill ("● Companion: Ready") · Bell (badge "4") · Avatar menu | Breadcrumb style for tenant/project. |
 | **Sample identities** | Tenant: **Acme Corp**. Projects: **Payment Gateway v2** (greenfield), **Legacy Billing** (brownfield). Users: **Sarah Chen** (product_owner), **Marcus Lee** (architect), **Priya Nair** (designer), **Dan Ortiz** (tech_lead), **Aisha Khan** (qa_lead), **Tom Reyes** (reviewer), **You** (tenant-admin + engineer). | Reuse across all screens for consistency. |
 
@@ -109,6 +109,10 @@
 - **Sample:** WI-492 "Stripe Webhook Integration"; rail Requirements ✓ Approved · Architecture ● Gate Pending · Build/QA/Deploy upcoming; artifacts "PRD: Stripe Webhook Integration v1.2 (Confluence)", "System Sequence Diagram v0.9 (Figma, Pending Architecture Gate)"; run console "Compiling requirements… [OK] / Generating sequence diagrams… [OK] / Validating against security rules… [OK] / Run completed. Awaiting gate."
 
 ### S-16 · Work Item Detail — TASK / STORY level — J16
+> ⚠️ **`story` is disputed** (noticed 2026-09-17, undecided): the shipped endpoint routes a story to
+> the **plan** rail, not the build rail — `backend/api/views.py:2184`. See the boxed note in
+> `UX_JOURNEYS_AND_IA_SPEC.md` §6.0. A **task** is on the build rail in both, so the description
+> below is correct for tasks either way.
 - **Elements:** same shell but **build-tier rail only** (Implementation→Review→Test→Merge — **no plan phases**); **parent epic backlink**; **child defects/remediations** list; **linked PR** card (draft/open/merged); run console.
 - **States:** implementation running, review loop (Review→back to Implementation, show the loop edge), test failed (defect child created), awaiting merge gate, done.
 - **Sample:** WI-540 "Verify Stripe signing secret" (parent WI-492); PR #218 (draft) on `acme/payments-api`; child defect WI-547 "Signature check rejects valid test events".
@@ -131,7 +135,7 @@
 - **Sample:** WI-510 / Requirements — "Should the analytics dashboard support CSV export in v1?" (confirm); context "Affects the data-export NFR scope."
 
 ### S-21 · Gates — list + decision — J14
-- **Elements:** pending approvals table (gate type, required role, run/work item, **Preview artifact** link); decision panel (Approve primary / Reject secondary + comment); role-gated (non-holders see read-only "awaiting <role>").
+- **Elements:** pending approvals table (gate type, required role, run/work item, **Preview artifact** link); decision panel — **three actions: Approve (primary) / Reject / Request changes** + comment; role-gated (non-holders see read-only "awaiting <role>"). *`Request changes` was added after this row was written and listed here 2026-09-17: it rejects **and** re-runs the phase with the comment as the agent's direction, so it is disabled until a comment is typed — the comment **is** the request.*
 - **States:** can-decide (your role), cannot-decide (permission, show who can), empty, decided history tab.
 - **Sample:** "Architecture gate · required role architect · WI-492 · preview System Sequence Diagram"; count badge "3".
 
@@ -172,7 +176,7 @@
 ## Group E — Observability & recovery (J19–J22)
 
 ### S-28 · Artifacts registry — J19
-- **Elements:** table (type icon, title, phase, version, status draft/published, SoR chip + deep-link, **Preview**); filters (phase/type/status).
+- **Elements:** table (type icon, title, phase, version, status, SoR chip + deep-link, **Preview**); filters (phase/type/status). **Status is one of five** — `draft · staged · approved · published · superseded` (`backend/apps/registry/models.py:36-46`). *Corrected 2026-09-17: this row said "draft/published". `superseded` is the newest and the one most easily missed — it marks a draft whose gate was **rejected**, kept as the record but no longer served to downstream phases.*
 - **States:** populated, internal-only (no link), published-with-link, empty.
 
 ### S-29 · Artifact preview (read-only) — J19

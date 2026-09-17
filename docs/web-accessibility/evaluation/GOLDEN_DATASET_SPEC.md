@@ -4,8 +4,27 @@
 the accessibility AI checkers are right. Doc A (`PROVING_GROUND_APP_SPEC.md`) is the application it
 labels.
 
-**Status:** proposed · **Delivers:** QA-09 (build the golden set) and QA-10 (the accuracy harness)
-· **Edvensoft-internal — never ships to a tenant**
+**Status (updated 2026-09-17): BUILT.** The golden set exists beside this spec in `golden/` — five
+files, 173 labelled items (1.1.1 ×32, 1.3.1 ×37, 1.4.1 ×35, 2.5.3 ×42, 4.1.2 ×27) plus
+`manifest.json` — and the harness and scorer are in `harness/` and `scorer/`. · **Delivers:** QA-09
+(build the golden set) and QA-10 (the accuracy harness) · **Edvensoft-internal — never ships to a
+tenant**
+
+> ⚠️ **Checker names in this spec are the old spelling and match nothing in the code or the data.**
+> They lost their hyphens and shortened during the build, and two checkers were added afterwards.
+> The live names, used by both `backend/apps/a11y/checkers/rules.py` and the `golden/` files
+> themselves, are:
+>
+> | This spec says | The code and the data say |
+> |---|---|
+> | `meaningful-alt` | **`alt`** |
+> | `fake-semantics` | **`semantics`** |
+> | `colour-only` | **`color`** |
+> | `label` | `label` *(unchanged)* |
+> | — | **`structure`** *(added later; appears in the 1.3.1 golden file)* |
+> | — | **`graphics`** *(added later)* |
+>
+> So there are **six** checkers, not four. Take names and counts from the code, not from this page.
 
 ---
 
@@ -80,7 +99,9 @@ composite key:
 - **`app_version`** — from the Proving Ground's `package.json`. Doc A §11 requires a bump on any
   page change, and the harness refuses to score a mismatched pair.
 - **`route`** — the path from `routes.json`.
-- **`checker`** — one of `meaningful-alt`, `fake-semantics`, `colour-only`, `label`. The same
+- **`checker`** — one of `alt`, `semantics`, `structure`, `color`, `label`, `graphics` *(this line
+  originally read `meaningful-alt`, `fake-semantics`, `colour-only`, `label`; corrected 2026-09-17
+  to the names the code and the `golden/` files actually use — see the note at the top)*. The same
   element can be a candidate for more than one checker and carries a separate label for each.
 - **`selector`** — a stable CSS selector. **Author the pages with explicit `id`s on every labelled
   element** so the selector never depends on DOM position. `#cover-tidewater`, not
@@ -120,7 +141,7 @@ docs/web-accessibility/evaluation/golden/
   "app_version": "1.4.0",
   "route": "/catalogue/new-arrivals",
   "selector": "#cover-tidewater",
-  "checker": "meaningful-alt",
+  "checker": "alt",
   "criterion": "1.1.1",
 
   "truth": "fail",
@@ -176,7 +197,7 @@ see §8.
 
 ## 5. Sizing
 
-Per **R7 / D5**, the POC judges five criteria. The `fake-semantics` checker produces verdicts on two
+Per **R7 / D5**, the POC judges five criteria. The `semantics` checker produces verdicts on two
 of them (1.3.1 and 4.1.2), so score per-criterion *and* per-checker.
 
 ### Why size matters more than it looks

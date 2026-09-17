@@ -49,8 +49,9 @@
 |---|---|---|
 | `--success` | `#1FA971` | Approved, published, companion online, passing |
 | `--success-bg` | `#E5F5EE` | Success chip/banner background |
-| `--warning` | `#E0961B` | Awaiting gate, needs attention, partial |
+| `--warning` | `#E0961B` | Awaiting gate, needs attention, partial. **Fill and border only — never text** |
 | `--warning-bg` | `#FBF1DE` | Warning chip/banner background |
+| `--warning-ink` | `#7A4E06` | **Amber text.** Use this wherever warning-coloured *text* or a figure is needed. `--warning` as text measures 2.19:1 on the tint and 2.46:1 on white — both fail WCAG AA at any size. This measures 6.42:1 and 7.19:1 |
 | `--danger` | `#DC2626` | Rejected, failed, blocked, offline, critical defect |
 | `--danger-bg` | `#FCEAEA` | Danger chip/banner background |
 | `--info` | `#2563EB` | Running, informational, links |
@@ -65,7 +66,7 @@
 | dispatched / waiting | `--info-bg` | `--info` |
 | running | `--info-bg` (animated) | `--info` |
 | needs answer (clarification) | `--accent-purple-bg` | `--accent-purple` |
-| awaiting gate | `--warning-bg` | `--warning` |
+| awaiting gate | `--warning-bg` | `--warning-ink` *(not `--warning` — see §2.3)* |
 | approved / published / done | `--success-bg` | `--success` |
 | rejected / failed / blocked | `--danger-bg` | `--danger` |
 | parked for takeover | `--danger-bg` (striped) | `--danger` |
@@ -178,6 +179,9 @@ Not required for v1 hi-fi. If introduced: keep navy chrome, flip `--bg-app` to `
   /* semantic */
   --success:#1FA971; --success-bg:#E5F5EE;
   --warning:#E0961B; --warning-bg:#FBF1DE;
+  /* Amber INK, for warning-coloured TEXT and figures. `--warning` is a fill/border colour and
+     must not be used as text: 2.19:1 on the tint, 2.46:1 on white. This is 6.42:1 and 7.19:1. */
+  --warning-ink:#7A4E06;
   --danger:#DC2626;  --danger-bg:#FCEAEA;
   --info:#2563EB;    --info-bg:#E7EEFD;
   --accent-purple:#7C5CD6; --accent-purple-bg:#EFEAFB;

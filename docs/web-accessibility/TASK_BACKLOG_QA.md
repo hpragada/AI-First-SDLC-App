@@ -3,6 +3,16 @@
 **Total Tasks:** 31 (QA‑01 … QA‑24, plus QA‑02a, QA‑10a, QA‑11a, QA‑11b, QA‑12a, QA‑15a, QA‑23a)
 **Estimates:** deferred by team decision — this backlog carries detail + dependencies, not story points or sprints.
 
+> **17 September 2026 — "the four checkers" in the task blocks below means six today.** QA‑05 and
+> several neighbouring blocks describe **four** AI checks — *meaningful‑alt*, *fake‑semantics*,
+> *colour‑only*, *label*. That is what was specified and built at the time, and the blocks are left
+> as written because they are the record of that scope. **Two more shipped afterwards**, and the
+> live set is six: `alt`, `semantics`, `structure`, `color`, `label`, `graphics`
+> (`backend/apps/a11y/checkers/rules.py`). Note also that the names lost their hyphens and
+> shortened on the way into the code — `meaningful-alt` is `alt`, `fake-semantics` is `semantics`,
+> `colour-only` is `color` — so the hyphenated spellings in these blocks match nothing in the
+> source. Counts and names taken from this backlog will be wrong; take them from the code.
+
 > **Read `RESEARCH_CORRECTIONS.md` first.** A source-level check of the platform (2026‑08‑12) found that several things the research reports said "already exist" do not — most importantly, **the testing agent has never run an accessibility scan**. Seven tasks were added and five re-scoped as a result. Every affected block below says so in its Description. Building to an uncorrected block will produce a task that passes its tests and demonstrates nothing.
 
 > **20 August 2026 — the reachability gaps are closed, and what a tick here means now.** Every task below passed its own acceptance criteria. Those criteria tested **units, not reachability**: they asked whether a function behaved as specified, never whether a person could get to it. A journey-level trace on 19 August found **eleven gaps** in exactly that space — endpoints with no screen, an agent with no caller, a capture contract updated on one side of a seam and not the other, plumbing objects showing on the user's board. All eleven were built and closed between 19 and 20 August; `GAP_FIX_BUILD_PLAN.md` carries each one with what the plan itself got wrong along the way. **The ticks below now mean both things: the task behaves as specified, and a person can reach it from a screen.**

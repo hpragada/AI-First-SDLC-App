@@ -223,6 +223,15 @@ A work item is **the unit a phase runs on** — and that unit lives at **differe
 3. **Work item detail — the type-adaptive lifecycle rail:**
    - **Epic / Feature** → the **plan-tier** rail (Ideation → Requirements → PRD → Architecture → UX → Task Breakdown) **plus a "Child tasks" section** listing the work items it fanned out into.
    - **Task / Story** → the **build-tier** rail (Implementation → Review → Test → Deploy/Merge) **only** — never the plan phases — plus a link to its **parent epic** and any **child defects/remediations**.
+
+   > ⚠️ **Spec and code disagree about `story`, noticed 2026-09-17 — the team has not yet decided
+   > which is right, so nothing has been changed on either side.** This spec puts **story on the
+   > build tier**; the shipped endpoint puts it on the **plan** tier —
+   > `backend/api/views.py:2184`, `tier_map = {"epic": "plan", "story": "plan", "task": "build",
+   > "defect": "remediation"}`. `epic`, `task` and `defect` match the spec exactly; `story` is the
+   > only disagreement. Whichever way it is settled, `SCREEN_INVENTORY.md` S-16 and
+   > `SCREEN_BUILD_MAP.md`'s type-adaptive-rail note say the same thing as this line and must move
+   > with it.
    - **Defect / Remediation** → its minimal rail (Fix → Review → Test) + a link to the **parent** that spawned it.
    Each step shows its state (not started / running / needs answer / awaiting gate / published), and the rail must be able to depict **loops** (review↔fix) and **child branches**, not just a straight line.
 **States:** empty project (no work items → "create your first"); per-phase states on the rail; child-items list (empty until Task Breakdown runs); parent backlink on child items.
@@ -296,7 +305,7 @@ Same trigger→gate pattern as J12/J14, surfaced on **the task's** lifecycle rai
 
 ### J19 — Browse artifacts & preview
 **Actor:** any member. **Entry:** Artifacts tab.
-1. **Artifact registry list** — type, phase, version, status (`draft/published`), SoR, **deep-link** to the live tool (Confluence page / Jira issue) when external.
+1. **Artifact registry list** — type, phase, version, status (`draft · staged · approved · published · superseded`), SoR, **deep-link** to the live tool (Confluence page / Jira issue) when external. *(`superseded` = a draft whose gate was rejected: kept as the record, no longer served downstream. Added to this line 2026-09-17.)*
 2. **Preview** — read-only rendered body (read-through). Never an editor. Version history visible.
 **States:** empty, internal-only (no external link), published-with-link.
 

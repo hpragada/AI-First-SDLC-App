@@ -178,6 +178,13 @@ Existing source-doc `upload`+`adopt/` and `onboard-atlassian/` are surfaced in t
 > `summary` supplied, so a chunk always exists). Real dispatch (companion claims → runs
 > `BuiltinCodeIntel().index()` in its worktree → reports this same `{index, summary}` shape) is
 > a follow-up once the companion CLI's tool surface is built out.
+>
+> **That follow-up has since happened — noted 2026-09-17.** The deferral above is history, not the
+> current position. Onboarding is now **agent-driven**: `00c_intelligent_context_extractor` runs on
+> the companion and reads the codebase for real, and `00_onboarding` produces the gap report, with
+> the deterministic path kept only as the no-companion fallback (`orchestration/trigger.py:267`).
+> The "already-computed result" POST described above still exists and still works; it is no longer
+> the only way in. Do not read this paragraph as a statement that real dispatch is unbuilt.
 > `GET/POST .../gap-report/` share one wire shape (`read_gap_report`): POST rebuilds
 > (`build_gap_report`) then re-reads through, so there is one representation for the resource,
 > not two. `evidence` is light refs (`{artifact_id,type,sor,status}`, capped at 10/phase) — never

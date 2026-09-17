@@ -75,8 +75,12 @@ component in every variant.
   a branded split panel; no sidebar/top bar.
 
 ### `shellMount(navId, opts?)`
-`navId` ∈ `dashboard · work-items · runs · gates · clarifications · artifacts · profile ·
+`navId` ∈ `dashboard · work-items · runs · gates · clarifications · artifacts · a11y · profile ·
 onboarding · integrations · repositories · admin` (activates that sidebar item).
+*`a11y` was added to `shell.js` by the accessibility build and was missing from this list until
+2026-09-17. Note that the gallery shell does not carry the shipped app's `Test Reporting` (admin
+only) or `Connect Machine` items, and its `Onboarding` is unconditional where the app now hides it
+on greenfield — see the drift note in `reviews/`.*
 `opts` (all optional, sample-data defaults): `{ tenant:"Acme Corp",
 project:"Payment Gateway v2", companion:"ready"|"offline"|"connecting", bell:4, user:"You",
 admin:true }`.
@@ -164,7 +168,7 @@ you" (`.needs--clar/--gate`); `.status-dot`; `.avatar` (+ `--sm/--lg`, `.avatar-
   decisions locked, now **fully built**.
 - **Batch 5 — Accessibility (QA-23a)** ✅ S-36 review queue, S-37 conformance/VPAT. Adds the `.shot` component and the `.grid--console` layout (rail + workspace). These are the UI half of QA-23 and QA-24.
 
-**Gallery:** S-00 + S-01…S-37 (plus S-23b) = **39 files**. The "35/35 complete" line here was written before S-23b, S-35, S-36 and S-37 arrived and is corrected as of 2026-08-18.
+**Gallery:** S-00 + S-01…S-38 (plus S-23b) = **40 files**. The "35/35 complete" line here was written before S-23b, S-35, S-36 and S-37 arrived and was corrected on 2026-08-18; **S-38 (accessibility pages & audit) then arrived and was missed, taking the count to 40 — corrected 2026-09-17.**
 
 > These mockups define the **new** design target. Phase 4.8 replaces the current
 > `frontend/src/styles.css` (dark-blue) shell + tokens to match this gallery.

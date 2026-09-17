@@ -190,7 +190,7 @@ This distinction is the hinge of the whole proposal: **§6 adds a derived condit
 
 But `_profile()` in `mcp_platform_state/tools.py:176-193` builds the dictionary every agent sees, and its keys are: `project_id, name, track, repo_topology, description, domain, tech_stack, coding_standards, nfrs, constraints, glossary, theme, important_context, version`. **`a11y` is not among them**, and `backend/manifest/composer.py` does not render it.
 
-**So no agent is ever told the project's accessibility target.** Five agents hardcode WCAG 2.1 (05, 08, 03, 02, 00e); four hardcode 2.2 (09, 09b, 09c, 09d). The platform contradicts itself, and a client who needs AAA for one product has no way to say so. **This is a two-line fix and it is the prerequisite for everything else** (§6 Step U1).
+**So no agent is ever told the project's accessibility target.** ~~Five agents hardcode WCAG 2.1 (05, 08, 03, 02, 00e); four hardcode 2.2 (09, 09b, 09c, 09d).~~ **Corrected 2026-09-17: those five were fixed by commit `db3be69` — the same commit that added this document — so every agent now names WCAG 2.2.** The version contradiction is closed; **the finding that matters is not.** A client who needs AAA for one product, or AA for another, still has no way to say so, because the target never reaches any agent — every one of them names a *hardcoded* version rather than the project's own. **This is a two-line fix and it is the prerequisite for everything else** (§6 Step U1).
 
 ---
 
@@ -321,9 +321,9 @@ It has an accessibility dimension (`08:7`) with a seven-item Step 11 checklist (
 |---|---|---|
 | **Machinery** (data, engines, gates, reports) | **~70% directly** | WCAG 2.2 dataset and grounding; ownership registry; contrast maths; axe runner; reflow rule; capture format; judge dispatch and caching; triage thresholds; finding ledger and auto-closing defects; derived-gate framework; project policy block; conformance statement |
 | **Agent content** | **~20%** | 09c and 09d verbatim; 09b's capture contract; 09's structure once its mappings are fixed; 05's HTML-wireframe mechanism as the carrier for annotations |
-| **Early-phase content** | **~0%** | It does not exist, and where it does it teaches the wrong version |
+| **Early-phase content** | **~0%** | It largely does not exist. *(This row also said "where it does, it teaches the wrong version" — no longer true as of `db3be69`, 2026-09-16: every agent now names WCAG 2.2. What is missing is the content itself, not the version on it.)* |
 
-**Verdict on quality.** The testing and audit layer is genuinely strong — more honest than most commercial tools, because it reports silence instead of guessing, refuses claims it cannot support, and makes a human sign. The early-lifecycle layer scores 4/10 at best, is absent in eight agents, and currently teaches the wrong standard. **The missing piece is wiring, not intelligence.** The team built the hard part.
+**Verdict on quality.** The testing and audit layer is genuinely strong — more honest than most commercial tools, because it reports silence instead of guessing, refuses claims it cannot support, and makes a human sign. The early-lifecycle layer scores 4/10 at best and is absent in eight agents. *(It no longer teaches the wrong standard — that was corrected on 2026-09-16.)* **The missing piece is wiring, not intelligence.** The team built the hard part.
 
 ---
 

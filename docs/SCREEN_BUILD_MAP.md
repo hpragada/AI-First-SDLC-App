@@ -60,7 +60,9 @@ Legend — endpoints: `4.7-Tn` = Phase 4.7 task; `B` = Phase 4.8 bucket-B; `(exi
 
 - **Type-adaptive rail (S-15/16/17):** the `lifecycle/` endpoint returns `tier` — render the plan rail
   for epics, the build rail (only) for tasks, the remediation rail for defects. Never show plan phases
-  on a task (the §6.0 rule in the journeys spec).
+  on a task (the §6.0 rule in the journeys spec). **A `story` is disputed** — the endpoint returns
+  `plan` for it (`backend/api/views.py:2184`) while the journeys spec says build; noticed 2026-09-17
+  and not yet decided, so build to the endpoint and see the boxed note in §6.0 of that spec.
 - **S-33/S-34 new endpoints** are the only net-new backend in Phase 4.8 beyond bucket B — decided this
   session (DECISION-7 persist transcript read; DECISION-8 manual gate-respecting publish). Their
   contracts are stubbed in the 4.8 spec §3; build the read/publish endpoints alongside the screen.
