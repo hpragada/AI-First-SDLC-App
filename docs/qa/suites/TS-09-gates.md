@@ -836,7 +836,7 @@ logging out and logging back in — never by editing data.
 
 ---
 
-### TC-139 · The Testing gate carries one platform-derived condition
+### TC-139 · The Testing gate carries two platform-derived conditions
 
 | Field | Value |
 |---|---|
@@ -858,32 +858,44 @@ logging out and logging back in — never by editing data.
 **Steps**
 1. Log in as P7 (`qa+<x>.qa@edvensoft.com`) and go to `/gates`.
 2. Select the Testing gate and read the `Required checklist` block.
-3. If the condition shows as unmet, tick it and click `Approve`.
+3. If either condition shows as unmet, tick it and click `Approve`.
 4. Read any error banner.
 
 **Expected**
-- The checklist has exactly **one** required item:
-  `No failing blocking test — every failing test's defect is resolved, or the test is quarantined as
-  flaky`, with a counter reading `0 of 1 met` or `1 of 1 met`.
+- The checklist has exactly **two** required items, and the counter is out of **2** — `0 of 2 met`,
+  `1 of 2 met` or `2 of 2 met`:
+  1. `No failing blocking test — every failing test's defect is resolved, or the test is
+     quarantined as flaky`
+  2. `No unresolved accessibility failure — every WCAG 2.2 finding that blocks under this
+     project's accessibility policy is fixed`
 - If the work item has open test defects, `Approve` is blocked. Ticking the item by hand does
   **not** unlock it: the attempt returns the banner `Couldn't record the decision` whose message
   names the unmet condition (`no_blocking_test_failures`) and lists the open test defects.
-- If the work item has no open test defects, the condition is already satisfied and `Approve`
-  succeeds.
+- The same is true of the accessibility item — it is `no_blocking_a11y_failures`, and a tick on it
+  is refused in exactly the same way.
+- If the work item has neither open test defects nor blocking accessibility findings, both
+  conditions are already satisfied and `Approve` succeeds.
 - The gate stays pending after a blocked attempt — nothing is recorded.
 
 **Pass / Fail**
-- PASS if the single condition renders and a reviewer's tick cannot substitute for real state when
-  test defects are open.
-- FAIL — **Critical** — if ticking the box lets a gate through while blocking test defects are still
-  open on the work item.
+- PASS if **both** conditions render, the counter reads out of 2, and a reviewer's tick cannot
+  substitute for real state when test defects are open.
+- FAIL — **Critical** — if ticking a box lets a gate through while blocking test defects or blocking
+  accessibility findings are still open on the work item.
+- FAIL — **High** — if only one condition renders, or the counter reads out of 1.
 
 **Notes**
-- This condition is **derived**: the platform recomputes it from live state at decide time, so a
+- Both conditions are **derived**: the platform recomputes them from live state at decide time, so a
   reviewer's tick is deliberately ignored. Seeing your tick "not take" is the feature working.
+- **Corrected 2026-09-17.** This case previously expected a single condition and a `0 of 1 met`
+  counter, which no correct build could produce — the accessibility condition has been on the
+  Testing gate since it shipped (`backend/apps/gates/a11ygate.py:65`, `_A11Y_GATED_PHASES =
+  {"testing"}`, alongside `testgate.py:29`). A tester following the old text would have raised a
+  defect against working behaviour.
 - The blocked approve is the assertion here. If the run produced no failing tests, the condition will
   simply already be met — record that outcome and note that the negative half could not be exercised
-  on this run.
+  on this run. The same applies to the accessibility condition on a project with no blocking
+  findings.
 
 ---
 
@@ -1057,7 +1069,7 @@ logging out and logging back in — never by editing data.
 
 ---
 
-### TC-903 · The merge gate requires the Reviewer role (08 Code Review)
+### TC-903 · The merge gate requires the Tech Lead role (08 Code Review)
 
 | Field | Value |
 |---|---|
@@ -1065,7 +1077,7 @@ logging out and logging back in — never by editing data.
 | Type | Permission |
 | Priority | High |
 | Screen | `/gates` |
-| Persona | P10 Engineer · a `reviewer` account |
+| Persona | P10 Engineer · P5 Tech Lead |
 | Automation | No |
 
 **Preconditions**
@@ -1074,38 +1086,45 @@ logging out and logging back in — never by editing data.
   clones a repo, runs the code-review loop and opens a PR, so it is slower than a plan phase). If it
   has not opened a gate by then, record **Blocked**.
 - The project has a repository connected and the companion is online.
-- An account holding the `reviewer` role on `Payment Gateway v2` exists — invite
-  `qa+<x>.reviewer@edvensoft.com` from `/admin/users`, grant it the `Reviewer` role, accept the
-  invite and set the password `QaTest-2026!`.
+- **P5 holds the `tech_lead` role** on `Payment Gateway v2` (the standard persona — no extra account
+  needs creating for this case).
 - P10 holds `engineer` only.
 
 **Steps**
 1. Log in as P10 and go to `/gates`.
 2. Find the new gate and read its `Gate` and `Required role` cells.
 3. Select it and read the card.
-4. Log out and log in as the reviewer account.
+4. Log out and log in as P5 (`qa+<x>.lead@edvensoft.com`).
 5. Select the same gate and read the card.
 
 **Expected**
 - The gate's `Gate` cell reads `Merge gate` — not `Phase gate` — and `Required role` shows the chip
-  `Reviewer`.
-- As P10: the read-only card is shown, with the banner `Awaiting reviewer` /
-  `You don't hold the reviewer role on this project, so this is read-only.` and both buttons
-  disabled.
-- As the reviewer: the actionable card is shown, headed
-  `▲ Merge gate · required role: Reviewer`, with an editable `Comment (optional to approve or reject)` field and enabled
-  `Approve` / `Reject` buttons.
+  `Tech Lead`.
+- As P10: the read-only card is shown, with a banner saying the gate is awaiting the Tech Lead and
+  that P10 does not hold that role on this project, and both buttons disabled.
+- As P5: the actionable card is shown, headed `▲ Merge gate · required role: Tech Lead`, with an
+  editable `Comment (optional to approve or reject)` field and enabled `Approve` / `Reject` buttons.
 
 **Pass / Fail**
-- PASS if the merge gate is labelled `Merge gate`, requires `Reviewer`, and is actionable only for
-  the reviewer (and admins).
-- FAIL — **Critical** — if an Engineer can decide the merge gate, or if the reviewer is locked out
+- PASS if the merge gate is labelled `Merge gate`, requires `Tech Lead`, and is actionable only for
+  the Tech Lead (and admins).
+- FAIL — **Critical** — if an Engineer can decide the merge gate, or if the Tech Lead is locked out
   of it.
+- FAIL — **High** — if the chip reads `Reviewer`. That would mean a build was started through the
+  `/build` endpoint rather than the UI (see Notes).
 
 **Notes**
+- **Corrected 2026-09-17.** This case previously expected the `Reviewer` role and told the tester to
+  create a `reviewer` account. That is unreachable through the UI and the case could not pass. The
+  merge gate's role is the **triggering phase's** gate role from the agent catalog
+  (`catalog.py:101`): Implementation → `tech_lead`, and 09b Test Automation → `qa_lead`. The
+  `reviewer` default exists only on `trigger_build`'s signature and the `/build` REST endpoint,
+  which the UI never calls — `api.ts:449` posts to `/trigger/` with `agent_key` alone, so the server
+  fills the role from the catalog. This pack's own `AUDIT_FINDINGS.md:363` records the same
+  conclusion, and `GREENFIELD_TEST_PLAN.md:379` lists Implementation's gate as Tech Lead.
 - The 08 Code Review phase is **never triggered on its own** — it runs inside the build loop, and
-  the human checkpoint it produces is this merge gate, which is why its `reviewer` role only ever
-  surfaces here. Do not look for a `▶ Code Review` button on `/runs` and do not raise its absence.
+  the human checkpoint it produces is this merge gate. Do not look for a `▶ Code Review` button on
+  `/runs` and do not raise its absence.
 - If the merge gate card carries a warning banner titled
   `Merge paused — conflict needs resolving`, the merge hit a conflict on an earlier approval. That
   is a different state — record it in the notes and it does not change this case's assertions, which
@@ -1174,13 +1193,14 @@ logging out and logging back in — never by editing data.
 | Type | Functional |
 | Priority | Critical |
 | Screen | `/gates` · `/runs/:id` · `/work-items/:id` |
-| Persona | a `reviewer` account |
+| Persona | P5 Tech Lead |
 | Automation | No |
 
 **Preconditions**
 - A pending **merge gate** on an Implementation run — TC-903's precondition. **Max wait 90 minutes**
   for the build to open the gate; record **Blocked** beyond that.
-- You are logged in as the `reviewer` account (or P1, a tenant admin).
+- You are logged in as P5, who holds `tech_lead` (or as P1, a tenant admin). *Corrected 2026-09-17
+  alongside TC-903 — an Implementation merge gate requires `tech_lead`, not `reviewer`.*
 - Note the run's short reference and the task's work-item id before deciding.
 - **This consumes the merge gate and abandons the build.** Schedule it after TC-903, and do not run
   it on a build you still need for TS-15.

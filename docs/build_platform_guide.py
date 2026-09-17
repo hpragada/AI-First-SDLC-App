@@ -461,8 +461,9 @@ def section_2():
         ["Design-System / tokens + Code Connect", "Aggregates the current design into a "
          "<tt>design_system</tt> artifact (tokens) and a <tt>code_connect</tt> mapping that links "
          "design components to code components."],
-        ["a11y (WCAG) gate", "The accessibility review is enforced as a <b>checklist of WCAG 2.1 "
-         "AA conditions on the design Approval</b> — an approve is blocked until every required "
+        ["a11y (WCAG) gate", "The accessibility review is enforced as a <b>checklist of WCAG 2.2 "
+         "AA conditions on the design Approval</b> — 22 required criteria, plus up to 5 optional "
+         "AAA criteria a project can switch on. An approve is blocked until every required "
          "criterion is satisfied. It is a control-plane gate, not a prompt rule."],
         ["Per-tenant theming", "Design tokens + responsive breakpoints stored on the Project "
          "Profile flow verbatim into the manifest — one theme, no per-tenant code fork."],

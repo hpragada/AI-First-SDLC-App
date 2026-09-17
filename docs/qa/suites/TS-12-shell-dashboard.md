@@ -30,13 +30,16 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
 
 **Preconditions**
 - Logged in as P1 (a workspace admin, so every sidebar item is visible) with a project selected.
+- **Note which track the selected project is.** `Onboarding` is shown only on a **brownfield**
+  project. On `Payment Gateway v2` (greenfield) it is correctly absent — see the Notes.
 
 **Steps**
 1. Read the sidebar top to bottom and note the brand text, the group headers and every item label.
 2. Click each item in turn and record the resulting URL and which item is highlighted:
    `Workspace Dashboard`, `Work Items`, `Phases & Runs`, `Gates`, `Clarifications`,
-   `Artifacts & Traceability`, `Project Profile`, `Onboarding`, `Integrations`, `Repositories`,
-   `Test Reporting`, `Connect Machine`, `Workspace Admin`.
+   `Artifacts & Traceability`, `Accessibility`, `Project Profile`, `Integrations`, `Repositories`,
+   `Test Reporting`, `Connect Machine`, `Workspace Admin` — plus `Onboarding` if the selected
+   project is brownfield.
 3. Now type these routes into the address bar one at a time and note which sidebar item is
    highlighted for each: `/transcripts`, `/traceability`, `/contracts`, `/setup`.
 
@@ -45,28 +48,37 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
 - The first group has **no** section header. The second group is headed `Project`. The third group is
   headed `Admin`.
 - Each item lands on its route and becomes the highlighted item:
-  `/`, `/work-items`, `/runs`, `/gates`, `/clarifications`, `/artifacts`, `/profile`, `/onboarding`,
+  `/`, `/work-items`, `/runs`, `/gates`, `/clarifications`, `/artifacts`, `/a11y/pages`, `/profile`,
   `/integrations`, `/repositories`, `/test-reporting`, `/connect`, and `Workspace Admin` →
-  `/admin/users`.
+  `/admin/users`. On a brownfield project, `Onboarding` → `/onboarding`.
+- **`Accessibility` is always present**, on every project and before any audit has ever run, and it
+  lands on `/a11y/pages` — the Pages & audit tab, **not** `/a11y` and not the review queue.
 - Exactly one item is highlighted at a time.
 - On the four routes in step 3 the highlight falls on the parent item: `/transcripts` highlights
   `Phases & Runs`; `/traceability` highlights `Artifacts & Traceability`; `/contracts` highlights
   `Repositories`; `/setup` highlights `Connect Machine`.
 
 **Pass / Fail**
-- PASS if all thirteen items navigate correctly and the four parent-highlight routes behave as
-  listed.
+- PASS if all thirteen items on a greenfield project (fourteen on brownfield, with `Onboarding`)
+  navigate correctly and the four parent-highlight routes behave as listed.
 - FAIL if any item 404s, lands on the wrong route, or leaves no item highlighted; or if two items are
   highlighted at once.
+- FAIL — **High** — if `Accessibility` is missing, or if it lands on the review queue rather than
+  Pages & audit.
+- FAIL — **Medium** — if `Onboarding` appears on a greenfield project.
 
 **Notes**
+- **Corrected 2026-09-17.** This case previously omitted `Accessibility` and listed `Onboarding` as
+  always present. Both are wrong against the shipped shell: `Accessibility` is a permanent item
+  (`AppShell.tsx:80`) and `Onboarding` is now conditional on `track !== "greenfield"`
+  (`AppShell.tsx:96`, S.No 221). A tester following the old text would have raised a defect for the
+  missing Onboarding item and missed the Accessibility one entirely.
+- The `Onboarding` condition is written as **not greenfield** rather than **is brownfield** on
+  purpose, so a project whose track is unknown still shows the item rather than hiding it from the
+  people who need it. If you see it on a project with no track set, that is intended.
 - `/traceability`, `/transcripts`, `/contracts`, `/recovery`, `/setup`, `/projects/new`,
   `/gates/:id/criteria` and `/admin/roles` deliberately have **no** sidebar entry. Their absence
   from the sidebar is not a defect.
-- `Onboarding` is in the sidebar for **every** project, greenfield included, and the screen it
-  routes to is hardcoded brownfield surface. For this case, confirm only that it routes to
-  `/onboarding` and takes the highlight. The screen's contents are covered by TC-262 — do not
-  assert anything about them here, and do not raise a defect from this case for the copy you see.
 - The `Workspace Admin` item's own href is `/admin`, which immediately redirects to `/admin/users`.
   Landing on `/admin/users` with the item highlighted is correct.
 
@@ -720,7 +732,7 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
 
 ---
 
-### TC-262 · `/onboarding` tells a greenfield project it is brownfield
+### TC-262 · Onboarding is hidden on greenfield, and the screen behind it is still brownfield-only
 
 | Field | Value |
 |---|---|
@@ -736,37 +748,45 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
   Greenfield in TS-03; confirm on `/profile` that its track reads Greenfield before you start.
 
 **Steps**
-1. With the greenfield project selected, confirm `Onboarding` is present in the sidebar's `Project`
-   group.
-2. Click it.
+1. With the greenfield project selected, read the sidebar's `Project` group and confirm
+   `Onboarding` is **not** listed.
+2. Type `/onboarding` directly into the address bar and load it.
 3. Read the page heading, the sub-heading and the badge on the right of the page head.
 4. Read the numbered steps in the card below.
 5. Return to `/` and confirm nothing about the project changed as a result of visiting the screen.
+6. Switch the top bar to a **brownfield** project and confirm `Onboarding` reappears in the sidebar.
 
 **Expected**
-- `Onboarding` is present in the sidebar for this greenfield project and routes to `/onboarding`.
-- The heading reads `Onboarding — {project name}`.
-- The sub-heading reads
-  `Brownfield project. Let's assess what already exists, then resume the lifecycle at the right phase. We store analysis + pointers — never your source.`
-- A `Brownfield` badge is rendered on the right of the page head.
-- The steps below describe uploading existing resources and assessing an existing codebase.
+- `Onboarding` is **absent** from the sidebar on a greenfield project, and present again as soon as a
+  brownfield project is selected.
+- Typing the route directly still loads the screen — it is hidden from navigation, not blocked — and
+  the screen still renders brownfield copy:
+  - heading `Onboarding — {project name}`
+  - sub-heading `Brownfield project. Let's assess what already exists, then resume the lifecycle at
+    the right phase. We store analysis + pointers — never your source.`
+  - a `Brownfield` badge on the right of the page head
+  - steps describing uploading existing resources and assessing an existing codebase.
 - Nothing on the project changed merely from opening the screen — the track on `/profile` is still
   Greenfield, and the dashboard is unchanged.
 
 **Pass / Fail**
-- PASS if the screen renders that exact brownfield copy and badge on a greenfield project, **and**
-  merely visiting it changes nothing about the project. That is the current behaviour and this case
-  exists to pin it down.
+- PASS if the item is hidden on greenfield, returns on brownfield, and the directly-loaded screen is
+  **inert** — visiting it changes nothing about the project.
 - FAIL — severity **High** — if opening the screen, or any control on it, changes the project's
   track, creates an onboarding record, or alters anything visible on `/profile` or `/`.
-- FAIL if the screen errors or blanks on a greenfield project.
+- FAIL — severity **Medium** — if `Onboarding` still appears in the sidebar on a greenfield project.
+- FAIL if the screen errors or blanks.
 
 **Notes**
-- **The defect here is already tracked: `/onboarding` is in the sidebar for every project and
-  hardcodes brownfield copy with no track check.** Do not raise it again. Record what you saw and
+- **Corrected 2026-09-17.** This case was written before `ae34363`, when `Onboarding` was in the
+  sidebar for every project. Half of it is now fixed and half is not, and the case has been split to
+  match: **the sidebar item is now conditional** (`AppShell.tsx:96`, S.No 221), but **the screen
+  itself still has no track check** — `OnboardingHub.tsx:572` hardcodes "Brownfield project." and the
+  `Brownfield` badge, and there is no route guard. So the confusing copy is now only reachable by
+  typing the URL.
+- **The remaining half is still a tracked defect.** Do not raise it again. Record what you saw and
   move on. Its severity is about user confusion, not data corruption — which is exactly why step 5
-  exists: this case's real job is to confirm the confusing screen is *inert* for a greenfield
-  project.
+  exists: this case's real job is to confirm the screen is *inert* for a greenfield project.
 - Do not click through the wizard's actions (upload, connect, index) on a greenfield project. This
   case observes the landing screen only. Brownfield onboarding as a feature is out of scope this
   cycle.

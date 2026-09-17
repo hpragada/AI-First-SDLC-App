@@ -628,11 +628,13 @@ produces a red `Trigger failed` banner (TS-14 TC-217), not a queued run.
    against one of them. **Resume point:** restart at step 7; the fan-out is durable.
 
 **Expected**
-- The Testing gate shows **exactly 1 derived condition**, labelled `No failing blocking test —
-  every failing test's defect is resolved, or the test is quarantined as flaky`, and the gate is
-  decidable by P7.
-- That condition shows as **satisfied**, and it is **not tickable** — it is platform-evaluated, not
-  reviewer-attested, so the checkbox rejects a manual change.
+- The Testing gate shows **exactly 2 derived conditions** — `No failing blocking test — every
+  failing test's defect is resolved, or the test is quarantined as flaky` and `No unresolved
+  accessibility failure — every WCAG 2.2 finding that blocks under this project's accessibility
+  policy is fixed` — and the gate is decidable by P7. *(Corrected 2026-09-17 alongside TS-09
+  TC-139: the accessibility condition has been on this gate since it shipped.)*
+- Both conditions show as **satisfied**, and neither is **tickable** — they are platform-evaluated,
+  not reviewer-attested, so the checkbox rejects a manual change.
 - The Product Owner would see a read-only card for this gate (spot-check if time allows).
 - After approval, the run reads `Completed`.
 - `/artifacts` lists one or more `test_case` artifacts registered by the run.

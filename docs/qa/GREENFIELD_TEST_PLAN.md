@@ -362,7 +362,7 @@ unique, and no scheme that satisfies both is also pretty.
 
 Verified against the code, because several published docs are out of date.
 
-**The 18 phases in the catalog and who decides their gate:**
+**The 19 phases in the catalog and who decides their gate:**
 
 | Phase (button label) | `agent_key` | Gate role |
 |---|---|---|
@@ -378,24 +378,29 @@ Verified against the code, because several published docs are out of date.
 | Task Breakdown | `06_task_breakdown` | Tech Lead |
 | Implementation | `07_implementation` | Tech Lead *(build)* |
 | Code Review | `08_code_review` | Reviewer *(dispatched inside the build loop — not triggered directly)* |
-| Testing | `09_testing` | QA Lead *(1 derived condition: no blocking test failures)* |
+| Testing | `09_testing` | QA Lead *(2 derived conditions: no blocking test failures · no blocking accessibility failures)* |
 | Test Automation | `09b_test_automation` | QA Lead *(build)* |
 | Accessibility Judge | `09c_a11y_judge` | QA Lead *(platform-native; dispatched by the accessibility pass)* |
+| Accessibility Journey | `09d_a11y_journey` | QA Lead *(platform-native; dispatched by the accessibility pass)* |
 | Security | `10_security` | Security Engineer *(1 derived condition: no unresolved Critical/High security finding)* |
 | CI/CD | `11_cicd` | DevOps *(build)* |
 | Deployment | `12_deployment` | DevOps *(7 required readiness criteria)* |
 
-> **Two of these are platform-native and are not meant to be triggered by hand.**
-> `00e_document_vision` and `09c_a11y_judge` have no migrated legacy body — they were authored fresh
-> for the platform. `09c` is dispatched by the accessibility pass, the way `08_code_review` is
-> dispatched inside the build loop. They nevertheless **appear in the phase list**, because the
+> **Three of these are platform-native and are not meant to be triggered by hand.**
+> `00e_document_vision`, `09c_a11y_judge` and `09d_a11y_journey` have no migrated legacy body — they
+> were authored fresh for the platform. `09c` and `09d` are dispatched by the accessibility pass, the
+> way `08_code_review` is dispatched inside the build loop. They nevertheless **appear in the phase
+> list**, because the
 > catalog seeds every non-retired agent and the API buckets them by key prefix
-> (`backend/api/views.py:1896`). Seeing them on `/runs` is expected. **Triggering `09c` by hand is
-> not a supported path** — if you do it, treat whatever happens as exploratory, not as a defect,
-> and note it for the team.
+> (`backend/api/views.py:1896`). Seeing them on `/runs` is expected. **Triggering `09c` or `09d` by
+> hand is not a supported path** — if you do it, treat whatever happens as exploratory, not as a
+> defect, and note it for the team.
 >
-> The old count of 16 in this table was wrong twice over: `00e` was missing before this cycle, and
-> `09c` was added by the accessibility build in August 2026.
+> **Count history.** The old count of 16 was wrong twice over: `00e` was missing before this cycle,
+> and `09c` was added by the accessibility build in August 2026. The count was then 18 and still
+> missed `09d_a11y_journey`, the keyboard-journey agent from the same build — **corrected to 19 on
+> 2026-09-17**, verified against `backend/apps/registry/catalog.py` (20 definitions, of which
+> `00d_context_snapshot` is `retired=True` and never seeded).
 
 **Run statuses:** `pending` · `running` · `awaiting_gate` · `approved` · `rejected` · `failed` ·
 `completed` · `stalled`. Shown in the console as `Dispatched · waiting`, `Running`, `Needs answer`,
