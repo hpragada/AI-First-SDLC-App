@@ -82,4 +82,4 @@ Runs locally via `docker compose up` + `make dev`; the phase's thin-slice demo w
 - `/docs/AGENT_MIGRATION_SPEC.md` — **how to migrate the `/legacy_suite/` agents, rules, commands (read before any agent task)**.
 - `/BUILD_PLAN.md` — the ordered task backlog across all phases (with legacy-suite coverage map).
 - `/docs/SDLC_Platform_Master_Build_Blueprint.md` — full architecture + concern→resolution ledger (the "why/what").
-- `/docs/SESSION_SUMMARY_and_Continuation_Brief.md` — how we got here; locked decisions.
+- `/docs/SESSION_SUMMARY_and_Continuation_Brief.md` — **historical**: the pre-build architecture sessions. Its §3 locked decisions still bind (and are mirrored here + in the blueprint's §B3.1); its "where we are" and "next steps" sections describe July 2026 and are superseded by `/BUILD_PLAN.md`. Do not resume from it.

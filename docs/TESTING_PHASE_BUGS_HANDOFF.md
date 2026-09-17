@@ -1,6 +1,10 @@
 # Testing Phase (09_testing) — Bug Handoff Brief
 
-**Status:** open · **Written:** 2026-07-17 · **Owner:** (whoever picks this up)
+**Status:** **CLOSED** — all four bugs resolved in `e70fd9e`, plus the publishing drift (see the
+status note below) · **Written:** 2026-07-17 · **Closed:** confirmed 2026-09-17
+
+> The header said `open` until 2026-09-17 while the note immediately below it said every bug was
+> resolved. The note was right; the header had simply never been changed.
 
 > **Status note (2026-09-15).** The brief below is kept as written. Since then:
 > - **Bugs 1–4 are resolved** in commit `e70fd9e` ("Testing phase: wire the test loop + fix the 4

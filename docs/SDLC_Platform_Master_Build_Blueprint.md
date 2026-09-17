@@ -119,6 +119,28 @@ Transform the existing local/Git-coupled SDLC command suite (17 agents + rules +
   - **Static files** (Word/PDF/Excel at onboarding): extract → structure → adopt as internal SoR, provenance to originals, review gate. Upgrade path = re-point `sor` later, no agent change.
 - **Gate policy (LOCKED):** **every** artifact type is `gate-then-publish` — all artifacts are reviewed, gated, and only then published. No `auto-publish` in v1.
 
+### B3.1 Export policy — exports are user-triggered and phase-scoped *(team flow decision, 2026-07-07; LOCKED)*
+
+Gate approval publishes artifacts **internal-only** (S3 snapshot + `published` status). **It never
+pushes to an external tool.** The user exports manually via `POST /artifacts/{id}/publish/` (screen
+S-34), governed by a **phase-scoped export policy**: defaults in
+`backend/integrations/export_policy.py`, per-project overrides in `ProjectProfile.export_policy`,
+editable on S-10.
+
+| Phase | Export target |
+|---|---|
+| Ideation · Requirements · PRD · Architecture · Security · CI-CD | **docstore** (Confluence today; SharePoint/Drive later) |
+| Task Breakdown | **tasktracker** (backlog reconciliation into Jira) |
+| Testing / Test Automation `test_case` artifacts | **testmgmt** (Xray today; TestRail/Zephyr later) |
+| UX Design | **internal**, until the Figma write seam ships — this narrows the earlier "Figma write" decision to that one deferred seam. Figma **read** is unaffected |
+| Everything else | internal |
+
+A **docstore** export transfers the system of record. **tasktracker** and **testmgmt** exports are
+*projections*: the artifact keeps `sor=internal` and the export is recorded under
+`external_ref.export`.
+
+*Moved here on 2026-09-17 from the continuation brief's §3, which is now a historical record.*
+
 ## B4. Context model (CLAUDE.md replacement)
 **Project Profile (DB record, human-maintained)** → **Manifest Composer** assembles per-run context `{profile core + relevant registry pointers + recent ledger events + retrieved knowledge}` → rendered to **AGENTS.md** (+ thin CLAUDE.md for Claude-specifics) inside the runner → agent reads it → discarded after run. Always current (generated, not maintained); scoped (per phase/repo); governed (versioned). Freeform `important_context` always flows in verbatim.
 
