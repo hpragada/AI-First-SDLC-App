@@ -538,6 +538,20 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
    ========================================================================== */
 .board { display: flex; gap: var(--space-4); overflow-x: auto; padding-bottom: var(--space-3); align-items: flex-start; }
 .board__col { flex: 0 0 248px; background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius-md); }
+
+/* Board screen: the board fills what is left of the viewport and scrolls INSIDE itself, so its
+   horizontal scrollbar is always on screen. Before this the columns grew without limit — a
+   122-card Backlog made the board thousands of pixels tall, and its scrollbar sat at the bottom
+   of all that, reachable only by scrolling the whole page down past every card.
+   `min-height: 0` on both the page and the board is what lets a flex child shrink below its
+   content; without it the board keeps its full content height and the cap does nothing. */
+.canvas-pad--board { display: flex; flex-direction: column; min-height: 0; height: calc(100vh - var(--topbar-h)); }
+.canvas-pad--board .board { flex: 1 1 auto; min-height: 0; overflow-y: hidden; }
+/* Columns stay content-sized (an empty column is not a tall empty box) but never outgrow the
+   board; the cards scroll within, and the column header stays put while they do. */
+.canvas-pad--board .board__col { max-height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.canvas-pad--board .board__col-head { flex: none; }
+.canvas-pad--board .board__list { overflow-y: auto; min-height: 0; }
 .board__col-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
 .board__col-head svg { width: 16px; height: 16px; color: var(--text-muted); }
 .board__col-title { font-size: var(--fs-sm); font-weight: 700; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

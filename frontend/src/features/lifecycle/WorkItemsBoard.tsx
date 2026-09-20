@@ -358,8 +358,13 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
     return map;
   }, [list, columns]);
 
+  // Only the BOARD gets the fixed-height treatment: it is the view whose columns grow without
+  // limit (a 122-card Backlog made the page thousands of pixels tall and put the board's own
+  // horizontal scrollbar below the fold). The list and empty views scroll the page as before.
+  const boardShown = view !== "empty" && view !== "list";
+
   return (
-    <div className="canvas-pad">
+    <div className={boardShown ? "canvas-pad canvas-pad--board" : "canvas-pad"}>
       <div className="page-head">
         <div className="page-head__titles">
           <h1 className="t-h1">Work Items</h1>

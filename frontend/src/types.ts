@@ -85,6 +85,11 @@ export interface WorkItem {
     url?: string;
     // The Task Breakdown agent's draft repo suggestion — the reviewer confirms/overrides it.
     repo_assignment?: RepoAssignment;
+    // `test_case` items: the pointer to the artifact that holds the case itself. The steps,
+    // preconditions and test data live THERE, not on the work item — materialize_test_cases
+    // copies the title and this pointer and nothing else.
+    test_case_artifact_id?: string;
+    tc_id?: string;
   } | null;
 }
 
