@@ -385,6 +385,55 @@ def test_is_merge_conflict_detects_typed_cause_and_message():
     assert is_merge_conflict(RuntimeError("plain error")) is False
 
 
+def test_is_review_failed_detects_typed_cause_and_message():
+    """The workflow decides park-vs-raise with is_review_failed. Same two-way detection as its
+    siblings, and it must NOT fire on an ordinary review that merely found problems."""
+    from orchestration.build_types import is_review_failed
+
+    assert is_review_failed(SimpleNamespace(cause=SimpleNamespace(type="ReviewFailed"))) is True
+    assert is_review_failed(
+        SimpleNamespace(cause=RuntimeError("code review did not complete: exit code 1")))
+    assert is_review_failed(SimpleNamespace(cause=RuntimeError("CHANGES_REQUIRED"))) is False
+    assert is_review_failed(RuntimeError("plain error")) is False
+
+
+def test_a_failed_review_is_raised_non_retryable_not_counted_as_clean(world, monkeypatch):
+    """A review the engine never completed must stop the build, not read as zero findings.
+    Non-retryable because the usual cause is a usage limit, which an immediate retry only
+    walks back into."""
+    _open_pr(world, monkeypatch)
+
+    class _DeadEngine:
+        def review(self, inp, pr_ref):
+            from orchestration.review_provider import ReviewUnavailableError
+            raise ReviewUnavailableError("code review did not complete: exit code 1")
+
+    monkeypatch.setattr(ba, "get_review_provider", lambda: _DeadEngine())
+    with pytest.raises(ApplicationError) as exc:
+        ba.run_code_review_core(_inp(world))
+    assert exc.value.type == "ReviewFailed"
+    assert exc.value.non_retryable is True
+    assert "exit code 1" in str(exc.value)
+    # No gate may be opened off the back of it, and no artifact may claim a clean review.
+    assert not Artifact.objects.filter(run_id=world.run.id, type="code_review").exists()
+
+
+def test_the_artifact_never_claims_no_findings_for_a_review_that_failed(world):
+    """Belt-and-braces on the rendering itself: same empty body, opposite meaning."""
+    world.run.outputs = {"review_body": "", "review_status": "failed",
+                         "review_error": "Command failed with exit code 1"}
+    world.run.save(update_fields=["outputs"])
+    body = ba._review_body_for_artifact(_inp(world), [])
+    assert "No findings were raised" not in body
+    assert "did not complete" in body and "exit code 1" in body
+
+
+def test_the_artifact_still_says_no_findings_for_a_genuinely_clean_review(world):
+    world.run.outputs = {"review_body": "", "review_status": "ok"}
+    world.run.save(update_fields=["outputs"])
+    assert "No findings were raised" in ba._review_body_for_artifact(_inp(world), [])
+
+
 def test_remediation_description_reads_as_a_real_brief(world):
     """S.No 147: the remediation work item was created with a title and NO description at all —
     every word of the reviewer's explanation was discarded. It must now carry the problem, the

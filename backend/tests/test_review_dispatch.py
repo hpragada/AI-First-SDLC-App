@@ -191,6 +191,90 @@ def test_record_review_report_stores_body(world):
     assert world.run.outputs["review_body"] == _VERDICT
 
 
+# ── a review that never ran must never read as a clean one ──────────
+# The companion posts {"status": "failed"} with no body when the engine dies mid-review. That
+# empty body is not None, so the poll accepted it as a delivered verdict, it parsed to zero
+# findings, and the merge gate opened over an artifact reading "No findings were raised in this
+# review cycle." The cause travelled in `message`, which the report endpoint threw away.
+
+def test_record_review_report_keeps_the_failure_cause(world):
+    record_review_report(tenant_id=str(world.t.id), run_id=str(world.run.id), body="",
+                         status="failed", message="Command failed with exit code 1")
+    world.run.refresh_from_db()
+    assert world.run.outputs["review_status"] == "failed"
+    assert world.run.outputs["review_error"] == "Command failed with exit code 1"
+
+
+def test_record_review_report_scrubs_nul_from_the_failure_cause(world):
+    """Engine stderr can carry NUL; a raw NUL in the json column fails the write and parks the
+    run (the same trap dispatch_review_task guards)."""
+    record_review_report(tenant_id=str(world.t.id), run_id=str(world.run.id), body="",
+                         status="failed", message="engine stderr\x00tail")
+    world.run.refresh_from_db()
+    assert world.run.outputs["review_error"] == "engine stderrtail"
+
+
+def test_review_report_endpoint_keeps_the_failure_message(world):
+    r = APIClient().post(f"/api/runner/reviews/{world.run.id}/report/",
+                         {"status": "failed", "message": "usage limit reached"},
+                         format="json", **_auth(world))
+    assert r.status_code == 200
+    world.run.refresh_from_db()
+    assert world.run.outputs["review_error"] == "usage limit reached"
+
+
+def _failing_provider(poll_body=""):
+    return CompanionReviewProvider(
+        get_capability=lambda tid, cap: _FakeCodeHost(),
+        compose_manifest=lambda inp: "# Project\n",
+        dispatch=lambda inp, **kw: None,
+        poll=lambda inp, **kw: poll_body,
+    )
+
+
+def test_companion_provider_raises_when_the_review_failed(world):
+    record_review_report(tenant_id=str(world.t.id), run_id=str(world.run.id), body="",
+                         status="failed", message="Command failed with exit code 1")
+    with pytest.raises(rp.ReviewUnavailableError) as exc:
+        _failing_provider().review(_inp(world), "acme/api#7")
+    assert "exit code 1" in str(exc.value)
+
+
+def test_a_failed_review_without_a_message_still_raises(world):
+    record_review_report(tenant_id=str(world.t.id), run_id=str(world.run.id), body="",
+                         status="failed")
+    with pytest.raises(rp.ReviewUnavailableError):
+        _failing_provider().review(_inp(world), "acme/api#7")
+
+
+def test_a_timed_out_review_still_returns_no_findings(world):
+    """S.No 110 must not regress: a TIMEOUT posts no report at all, so there is no `failed`
+    status to find — it stays zero findings with the human merge gate still standing."""
+    assert _failing_provider(poll_body=None).review(_inp(world), "acme/api#7") == []
+
+
+def test_an_ok_review_with_an_empty_body_does_not_raise(world):
+    record_review_report(tenant_id=str(world.t.id), run_id=str(world.run.id), body="",
+                         status="ok")
+    assert _failing_provider().review(_inp(world), "acme/api#7") == []
+
+
+def test_dispatch_clears_a_prior_cycles_failure(world):
+    """Without this, a Resume (or the re-review after remediation) would read the PREVIOUS
+    cycle's `failed` and raise on a review that actually succeeded — parking the run in a loop
+    it could never leave."""
+    record_review_report(tenant_id=str(world.t.id), run_id=str(world.run.id), body="",
+                         status="failed", message="engine died")
+    dispatch_review_task(_inp(world), manifest="# PR diff", agent_body="08 BODY")
+    world.run.refresh_from_db()
+    assert "review_status" not in world.run.outputs
+    assert "review_error" not in world.run.outputs
+    # …and the next cycle's verdict parses normally.
+    record_review_report(tenant_id=str(world.t.id), run_id=str(world.run.id), body=_VERDICT)
+    findings = _failing_provider(poll_body=_VERDICT).review(_inp(world), "acme/api#7")
+    assert [f.rem for f in findings] == ["REM-C1", "REM-S1"]
+
+
 def test_poll_does_a_final_grace_read_before_timeout(world):
     """S.No 110: the 08 verdict often lands moments after the last poll tick. poll_review_body
     must do one final read on timeout so a just-late report still drives the remediation loop

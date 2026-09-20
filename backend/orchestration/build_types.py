@@ -198,6 +198,22 @@ def is_engine_exit(message: str) -> bool:
     return any(marker in text for marker in _ENGINE_EXIT_MARKERS)
 
 
+def is_review_failed(exc) -> bool:
+    """True when an ActivityError was a REVIEW THAT NEVER RAN — the companion reported the 08
+    review as failed (the engine died before posting a verdict), rather than the review returning
+    findings the build must act on.
+
+    Resumable like a merge error, and for the same reason: the branch, the PR and the imported
+    test results are all still good; only the review needs re-running, and whatever stopped the
+    engine (a usage limit, most often) is a matter of waiting rather than of rebuilding. Same
+    detection shape as `is_empty_build`/`is_merge_conflict` — prefer the structured
+    ApplicationError `type`, fall back to the message."""
+    cause = getattr(exc, "cause", None)
+    if getattr(cause, "type", "") == "ReviewFailed":
+        return True
+    return "code review did not complete" in failure_reason(exc).lower()
+
+
 def is_merge_conflict(exc) -> bool:
     """True when an ActivityError was a MERGE CONFLICT (Bugs S.No 141 / ENH-2), so the build can
     re-open the merge gate for a resolve-then-retry instead of failing. Prefers the structured

@@ -993,10 +993,20 @@ def _review_body_for_artifact(inp: BuildInput, findings: list) -> str:
     `read_artifact_preview` exactly as before."""
     with tenant_context(inp.tenant_id):
         run = Run.objects.filter(id=inp.run_id, tenant_id=inp.tenant_id).only("outputs").first()
-    prose = ((run.outputs if run else None) or {}).get("review_body") or ""
+    outputs = ((run.outputs if run else None) or {})
+    prose = outputs.get("review_body") or ""
     if prose.strip():
         return prose
     header = f"# Code Review — {display_name(inp)}\n"
+    # A FAILED review has no prose and no findings, which used to render as the same
+    # "No findings were raised" as a genuinely clean one — a review that never happened,
+    # presented to the approver as a review that found nothing. The guard in
+    # `run_code_review_core` means this should no longer be reachable for the companion
+    # provider; it stays because the artifact must be honest on its own, whatever the caller.
+    if outputs.get("review_status") == "failed":
+        why = (outputs.get("review_error") or "").strip() or "no reason was reported"
+        return (header + "\n**This review did not complete, so the code was not reviewed.**\n\n"
+                f"Reason: {why}\n")
     if not findings:
         return header + "\nNo findings were raised in this review cycle.\n"
     lines = [header]
@@ -1020,7 +1030,17 @@ def run_code_review_core(inp: BuildInput) -> dict:
         raise RuntimeError(f"no opened PR to review for run {inp.run_id}")
     pr_ref = f"{code.external_ref['repo']}#{code.external_ref['number']}"
 
-    findings = list(get_review_provider().review(inp, pr_ref))
+    # Imported here, not at module scope: review_provider imports from this module.
+    from .review_provider import ReviewUnavailableError
+
+    try:
+        findings = list(get_review_provider().review(inp, pr_ref))
+    except ReviewUnavailableError as exc:
+        # NON-RETRYABLE on purpose. The usual cause is the engine hitting a usage limit, which no
+        # amount of immediate retrying fixes — Temporal's retry would just re-dispatch the review
+        # into the same wall and burn the budget. The workflow parks instead, so a human resumes
+        # when the engine is available again and nothing already built is thrown away.
+        raise ApplicationError(str(exc), type="ReviewFailed", non_retryable=True) from exc
     blocking = {f.rem: f for f in findings if f.severity in _BLOCKING}
 
     # STAGE THE BODY. This artifact is `sor="internal"` — "Platform only" — so unlike a `code`
