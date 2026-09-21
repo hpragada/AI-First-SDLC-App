@@ -537,6 +537,16 @@ export function Combobox({
           setQuery("");
           setPeekEl(null);
         }}
+        // A pick leaves focus in the field, so opening on focus alone meant a second click on the
+        // field did nothing — you had to click away and back (found live, 2026-09-21). A click
+        // anywhere on the field opens it.
+        onClick={() => {
+          if (!open) {
+            setOpen(true);
+            setQuery("");
+            setPeekEl(null);
+          }
+        }}
         // Closed and showing a chosen title too long for the field: hovering the field shows it
         // in full, the same way a row does.
         onMouseEnter={(e) => {

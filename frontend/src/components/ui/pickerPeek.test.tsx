@@ -17,6 +17,7 @@
  * is claiming are cut.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -198,5 +199,25 @@ describe("resting the pointer on the opened-out title", () => {
     const css = readFileSync("src/styles/components.css", "utf-8");
     const rule = /\.peek\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(rule).toMatch(/pointer-events:\s*none/);
+  });
+});
+
+describe("changing your mind", () => {
+  // Found live by the team (2026-09-21): after a pick, focus stays in the field, and the list
+  // opened only when the field GAINED focus — so clicking the field again did nothing.
+  it("reopens the list when you click the field again after a pick", async () => {
+    stubNothingCut();
+    const user = userEvent.setup();
+    function Picker() {
+      const [v, setV] = useState("");
+      return <Combobox id="wi" options={OPTIONS} value={v} onChange={setV} />;
+    }
+    render(<Picker />);
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("option", { name: LONG }));
+    expect(screen.queryByRole("listbox")).toBeNull();
+
+    await user.click(screen.getByRole("combobox"));
+    expect(screen.getByRole("listbox")).not.toBeNull();
   });
 });
