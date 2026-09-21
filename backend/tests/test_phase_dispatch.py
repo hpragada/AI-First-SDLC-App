@@ -342,7 +342,10 @@ def test_resume_stalled_run_explains_a_workflow_that_already_closed(world):
     def _gone(_wf):
         raise RuntimeError("workflow execution already completed")
 
-    with pytest.raises(ResumeError, match="no longer running"):
+    # Screen Words group 5 reworded this: "this run's workflow is no longer running" dropped the
+    # word "workflow", which a client has never heard of, and turned the aside about re-triggering
+    # into the instruction. Still the same behaviour — a plain refusal, not a 500.
+    with pytest.raises(ResumeError, match="already finished"):
         resume_stalled_run(tenant_id=world["tenant_id"], run_id=world["run_id"],
                            signal_sender=_gone)
 

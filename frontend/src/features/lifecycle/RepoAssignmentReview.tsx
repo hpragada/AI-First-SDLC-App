@@ -5,6 +5,7 @@
 // grouped by repo). Nothing is committed until the gate is approved.
 import { useState } from "react";
 
+import { repoRoleLabel } from "../../labels";
 import type { Repository, WorkItemCard } from "../../types";
 
 const roleClass = (role: string) =>
@@ -49,10 +50,11 @@ function AssignRow({
         onChange={(e) => onOverride(item.id, e.target.value)}
         aria-label={`Repository for ${item.key || item.id}`}
       >
-        <option value="">— unassigned —</option>
+        {/* Screen Words group 4: the stored role word through the shared map. */}
+        <option value="">— Not assigned —</option>
         {repos.map((r) => (
           <option key={r.id} value={r.id}>
-            {r.name} · {r.role}
+            {r.name} · {repoRoleLabel(r.role)}
           </option>
         ))}
       </select>
@@ -105,7 +107,8 @@ export function RepoAssignmentReview({
           const r = repoOf(repos, id === "unassigned" ? undefined : id);
           return (
             <span key={id} className={`chip ${r ? roleClass(r.role) : ""}`}>
-              {r ? r.role : "unassigned"} · {ws.length}
+              {/* Screen Words group 4 */}
+              {r ? repoRoleLabel(r.role) : "Not assigned"} · {ws.length}
             </span>
           );
         })}
@@ -142,9 +145,9 @@ export function RepoAssignmentReview({
             >
               <span aria-hidden style={{ fontFamily: "var(--font-mono)" }}>{isOpen ? "▾" : "▸"}</span>
               {r ? (
-                <span className={`chip ${roleClass(r.role)}`}>{r.role}</span>
+                <span className={`chip ${roleClass(r.role)}`}>{repoRoleLabel(r.role)}</span>
               ) : (
-                <span className="chip">unassigned</span>
+                <span className="chip">Not assigned</span>
               )}
               <span className="t-sm u-strong" style={{ fontFamily: "var(--font-mono)" }}>{r?.name ?? "—"}</span>
               <span className="t-xs u-muted">· {ws.length} tasks · all confident</span>

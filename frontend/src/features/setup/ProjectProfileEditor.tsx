@@ -2,7 +2,7 @@
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Button, Field, Panel, Select, Textarea, Input } from "../../components/ui";
+import { Button, Field, Panel, Select, Textarea, Input, WriteError } from "../../components/ui";
 import type { ProjectProfile } from "../../types";
 import { useExportPolicy, useProfile, useSaveProfile } from "./hooks";
 
@@ -122,17 +122,30 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
       descriptionRef.current?.focus();
       return;
     }
-    await save.mutateAsync({
-      description: form.description,
-      domain: form.domain,
-      tech_stack: { value: form.tech_stack },
-      coding_standards: { value: form.coding_standards },
-      nfrs: { value: form.nfrs },
-      constraints: { value: form.constraints },
-      glossary: { value: form.glossary },
-      export_policy: overrides,
-      important_context: form.important_context,
-    });
+    // Screen Words group 6a. This `await` had nothing around it: when the server refused the
+    // save — not a Tech Lead or admin, an expired session, the server down — the rejection went
+    // nowhere, the form fell back to "Unsaved changes" and said NOTHING. What had been typed
+    // looked saved until the page was reloaded and it was gone.
+    //
+    // Caught here so the rejection is handled, and shown by the `WriteError` banner below (the
+    // same one Repositories uses). `setDirty(false)` and the navigate stay inside the success
+    // path: a failed save must keep both the typed values and the unsaved marker.
+    try {
+      await save.mutateAsync({
+        description: form.description,
+        domain: form.domain,
+        tech_stack: { value: form.tech_stack },
+        coding_standards: { value: form.coding_standards },
+        nfrs: { value: form.nfrs },
+        constraints: { value: form.constraints },
+        glossary: { value: form.glossary },
+        export_policy: overrides,
+        important_context: form.important_context,
+      });
+    } catch {
+      // `save.error` carries it to the banner; nothing more to do here.
+      return;
+    }
     setDirty(false);
     if (inSetup) navigate("/setup");
   };
@@ -185,6 +198,13 @@ export function ProjectProfileEditor({ forceView }: { forceView?: ProfileView })
           </>
         }
       >
+        {/* Screen Words group 6a: the refusal, in the words the server used, above the form that
+            still holds what was typed. */}
+        {save.isError && (
+          <div style={{ marginBottom: "var(--space-4)" }}>
+            <WriteError title="Your changes weren't saved" detail={save.error} />
+          </div>
+        )}
         {view === "saving" ? null : (
           <div className="u-stack">
             <Field

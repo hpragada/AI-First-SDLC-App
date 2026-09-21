@@ -1793,13 +1793,18 @@ export function ErrorState({
  * again, and a "Try again" that quietly re-sends an invitation is its own bug. The control
  * that failed is still on screen — that is the retry.
  */
-export function WriteError({
-  title = "That didn't work",
-  detail,
-}: {
-  title?: ReactNode;
-  detail?: unknown;
-}) {
+/** The sentence a failed write should show, for the places a whole banner does not fit.
+ *
+ * Screen Words group 5 asked for ONE rule for every error banner. `WriteError` had that rule in
+ * its body, so the handful of screens that show a failure as a line of red text under a compact
+ * form — the clarification answer, Create work item, Disconnect machine — could not share it and
+ * printed `error.message` instead. Which means those were exactly the places still showing the
+ * browser's `Failed to fetch` and `500 Internal Server Error`.
+ *
+ * `fallback` replaces only the last case (a 4xx that gave no reason), where a screen usually has
+ * a better sentence than the generic one because it knows what was being attempted.
+ */
+export function writeErrorSentence(detail?: unknown, fallback?: string): string {
   // `detail` is whatever the mutation threw, so it is `unknown` on purpose. An ApiError's
   // message is already humanized by `humanizeError` in api.ts — DRF's nested validation shape
   // has been walked down to the leaf sentences a person can actually act on.
@@ -1817,17 +1822,32 @@ export function WriteError({
          "")
       : "") ||
     "";
-  const message =
-    failure === "offline"
-      ? "Your browser couldn't connect, so nothing was saved. Try again."
-      : failure === "server"
-        ? "Something went wrong on our side, so nothing was saved. Nothing you did caused it."
-        : failure === "denied"
-          ? said || "You don't have permission to do that."
-          : said || "That wasn't accepted, and no reason was given. Nothing was changed.";
+  if (failure === "offline") {
+    return "Your browser couldn't connect, so nothing was saved. Try again.";
+  }
+  if (failure === "server") {
+    return "Something went wrong on our side, so nothing was saved. Nothing you did caused it.";
+  }
+  if (failure === "denied") {
+    return said || "You don't have permission to do that.";
+  }
+  return (
+    said || fallback || "That wasn't accepted, and no reason was given. Nothing was changed."
+  );
+}
+
+export function WriteError({
+  title = "That didn't work",
+  detail,
+  fallback,
+}: {
+  title?: ReactNode;
+  detail?: unknown;
+  fallback?: string;
+}) {
   return (
     <Banner variant="danger" title={title}>
-      <div className="empty__text">{message}</div>
+      <div className="empty__text">{writeErrorSentence(detail, fallback)}</div>
     </Banner>
   );
 }

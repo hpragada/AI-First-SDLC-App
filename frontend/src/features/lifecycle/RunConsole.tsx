@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { Badge, Banner, Breadcrumb, Button, Console, Panel, Spinner } from "../../components/ui";
+import { Badge, Banner, Breadcrumb, Button, Console, Panel, Spinner, WriteError } from "../../components/ui";
+import { engineLabel } from "../../labels";
 import { isTerminalState, workerStalled, type RunEvent } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
 import { phaseLabel } from "./phases";
@@ -187,7 +188,9 @@ function RunConsoleLive() {
               Run ID <strong>{id.slice(0, 8)}</strong>
             </span>
             <span className="meta-item">
-              Engine <strong>{run.data.engine} · {run.data.model}</strong>
+              {/* Screen Words group 4, Option A: kept, but as the product and model name —
+                  `claude · claude-opus-5` told a client nothing. */}
+              Engine <strong>{engineLabel(run.data.engine, run.data.model)}</strong>
             </span>
           </div>
         </div>
@@ -322,9 +325,7 @@ function RunConsoleLive() {
         {view === "parked" && isResumable && (
           <>
             {resume.isError && (
-              <Banner variant="danger" title="Couldn't resume">
-                {resume.error instanceof Error ? resume.error.message : "Unknown error"}
-              </Banner>
+              <WriteError title="Couldn't resume" detail={resume.error} />
             )}
             <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
               <Button

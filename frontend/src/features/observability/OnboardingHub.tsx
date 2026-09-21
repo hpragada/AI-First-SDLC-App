@@ -4,7 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Spinner, Tooltip, WriteError } from "../../components/ui";
+import { Badge, Button, Card, CardBody, Chip, ConnStatus, Input, Panel, Spinner, Tooltip, WriteError, writeErrorSentence } from "../../components/ui";
+import { documentStatusLabel } from "../../labels";
 import type { Capability, OnboardingRegister, OnboardingRepoIndex } from "../../types";
 import { useRunners } from "../identity/hooks";
 import { ConnectCapability } from "../setup/ConnectCapability";
@@ -235,7 +236,12 @@ function ConfluenceLinkForm({ projectId }: { projectId: string }) {
       setResult({ linked: out.linked.length, errors: out.errors });
       if (out.errors.length === 0) setRows([{ page: "" }]);
     } catch (e) {
-      setResult({ linked: 0, errors: [{ page: "", error: e instanceof Error ? e.message : "Could not bring those pages in." }] });
+      // Screen Words group 5: shared handling, so a lost connection here reads the same as it
+      // does everywhere else rather than showing the browser's own wording.
+      setResult({
+        linked: 0,
+        errors: [{ page: "", error: writeErrorSentence(e, "Could not bring those pages in.") }],
+      });
     }
   };
 
@@ -606,7 +612,9 @@ function OnboardingHubLive() {
               <div className="u-row u-wrap" style={{ marginTop: "var(--space-2)" }}>
                 {data.upload.map((doc) => (
                   <Chip key={doc.id} variant={doc.status === "extracting" ? "running" : doc.status === "failed" ? undefined : "done"}>
-                    {doc.filename} · {doc.status}
+                    {/* Screen Words group 4: "Spec.pdf · extracted" -> "Spec.pdf · Ready to
+                        adopt". Same map as the Source documents screen this chip links to. */}
+                    {doc.filename} · {documentStatusLabel(doc.status)}
                   </Chip>
                 ))}
                 <Link to="/onboarding/documents" className="t-sm">

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Banner, EmptyState, ErrorState, Panel, Table } from "../../components/ui";
+import { sorChipClass, sorGlyph, sorLabel } from "../../labels";
 import { isPhaseReport } from "../../types";
 import { phaseLabel, artifactLabel } from "../lifecycle/phases";
 import { artifactStatusBadge, artifactStatusLabel } from "./artifactStatus";
@@ -255,10 +256,13 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
                       ) : (
                         artifactStatusBadge(artifact.status)
                       ),
+                      // Screen Words group 4. Every row wore the Confluence "C" and printed the
+                      // stored key, so a file in GitHub and a page in Confluence were drawn
+                      // identically and neither was named in words a client uses.
                       artifact.sor ? (
-                        <span className="sor-chip sor-chip--confluence" key="sor">
-                          <span className="sor-chip__glyph">C</span>
-                          {artifact.sor}
+                        <span className={sorChipClass(artifact.sor)} key="sor">
+                          <span className="sor-chip__glyph">{sorGlyph(artifact.sor)}</span>
+                          {sorLabel(artifact.sor)}
                         </span>
                       ) : (
                         <span className="t-xs u-muted" key="sor">

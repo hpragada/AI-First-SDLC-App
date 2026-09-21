@@ -8,8 +8,13 @@ import { AuthSplit, Banner, Button, Field, Input, Spinner } from "../../componen
 const TAGLINE = "Welcome back.";
 const SUB = "Pick up your lifecycle where you left off.";
 
-// S-02 view states: default · invalid · locked · submitting.
-export type LoginView = "default" | "invalid" | "locked" | "submitting";
+// S-02 view states: default · invalid · locked · unreachable · submitting.
+//
+// Screen Words group 6c. `unreachable` is new. Every failure except "too many attempts" used to
+// land on `invalid`, so a server that was down, a dropped connection or a 500 all told the user
+// "Incorrect password." — about a password the server never checked. Someone typing the right
+// password was told it was wrong, which sends them to reset a password that works.
+export type LoginView = "default" | "invalid" | "locked" | "unreachable" | "submitting";
 
 export function Login({ forceView }: { forceView?: LoginView }) {
   const { login } = useAuth();
@@ -22,9 +27,24 @@ export function Login({ forceView }: { forceView?: LoginView }) {
   const [submitting, setSubmitting] = useState(false);
 
   const locked = forceView === "locked" || error?.status === 429;
-  const invalid = forceView === "invalid" || (Boolean(error) && !locked);
+  // `failure` is `classify(status)` from api.ts: "offline" for a connection that never landed,
+  // "server" for a 5xx. Neither one checked the password, so neither may say it was wrong.
+  const unreachable =
+    forceView === "unreachable" ||
+    (!locked && (error?.failure === "offline" || error?.failure === "server"));
+  // What is left is a real refusal from the server: 401/403, or a 4xx about the credentials.
+  const invalid = forceView === "invalid" || (Boolean(error) && !locked && !unreachable);
   const view: LoginView =
-    forceView ?? (submitting ? "submitting" : locked ? "locked" : invalid ? "invalid" : "default");
+    forceView ??
+    (submitting
+      ? "submitting"
+      : locked
+        ? "locked"
+        : unreachable
+          ? "unreachable"
+          : invalid
+            ? "invalid"
+            : "default");
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -76,6 +96,12 @@ export function Login({ forceView }: { forceView?: LoginView }) {
         <h1 className="auth-card__title">Log in</h1>
         {view === "invalid" ? (
           <Banner variant="danger">Email or password is incorrect.</Banner>
+        ) : view === "unreachable" ? (
+          // Screen Words group 6c: says whose fault it is and that the password is untouched,
+          // so nobody resets a working password over a server that was briefly down.
+          <Banner variant="danger" title="Can't reach the SDLC app right now">
+            Your password wasn't checked. Try again in a moment.
+          </Banner>
         ) : (
           <p className="auth-card__sub">Welcome back.</p>
         )}

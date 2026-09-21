@@ -263,9 +263,12 @@ describe("BF-A-9 ExportPublish — gate-respecting publish", () => {
     expect(screen.getAllByText(/Published to Confluence/i).length).toBeGreaterThan(0);
   });
 
-  it("blocked state shows Can't publish gate-not-approved error", () => {
+  it("blocked state says publishing can't happen yet, and why", () => {
     renderWithProviders(<ExportPublish forceView="blocked" />);
-    expect(screen.getAllByText(/Can't publish — not gate-approved/i).length).toBeGreaterThan(0);
+    // Screen Words group 2 reworded this banner and made the status a label ("Waiting for
+    // approval") rather than the stored token. The test below still checks it names the gate.
+    expect(screen.getAllByText(/Can't publish yet/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Waiting for approval/i).length).toBeGreaterThan(0);
   });
 
   it("blocked state clearly explains why publishing is blocked", () => {

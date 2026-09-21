@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { ApiError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Button, Card, CardBody, Chip, EmptyState, ErrorState, Field, Input, Panel, Select, Table, WriteError } from "../../components/ui";
+import { repoRoleLabel, repoStatusLabel, repoStatusTone } from "../../labels";
 import type { Repository } from "../../types";
 import {
   useCreateRepository,
@@ -140,8 +141,10 @@ function AddRepoForm({
           </Field>
           <Field label="Role" style={{ marginBottom: 0, minWidth: "140px" }}>
             <Select value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="backend">backend</option>
-              <option value="frontend">frontend</option>
+              {/* Screen Words group 4: the value the backend stores stays lower-case; what the
+                  person picking it reads does not. */}
+              <option value="backend">{repoRoleLabel("backend")}</option>
+              <option value="frontend">{repoRoleLabel("frontend")}</option>
               <option value="infra">infra</option>
             </Select>
           </Field>
@@ -295,7 +298,8 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
                 <span className="table__id" key="n">
                   {repo.name}
                 </span>,
-                <Chip key="r">{repo.role}</Chip>,
+                // Screen Words group 4: the stored word ("backend") through the shared map.
+                <Chip key="r">{repoRoleLabel(repo.role)}</Chip>,
                 // Where the eye already is — the team's option A for S.No 212. Choosing a new
                 // default moves this marker to that row and removes its button; the table's
                 // own change is the confirmation, with nothing extra to read past or dismiss.
@@ -304,8 +308,11 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
                   {repo.is_default && <Badge variant="done">default</Badge>}
                 </span>,
                 <PreviewUrlCell key="p" projectId={projectId} repo={repo} />,
-                <Badge variant="done" key="s">
-                  {repo.status}
+                // Screen Words group 4. This was `variant="done"` for every status, so a
+                // repository the platform cannot reach was drawn in the same green as a
+                // connected one. The tone now comes from the status.
+                <Badge variant={repoStatusTone(repo.status)} key="s">
+                  {repoStatusLabel(repo.status)}
                 </Badge>,
                 <span className="u-row-tight" key="a">
                   {canChooseDefault && !repo.is_default && (

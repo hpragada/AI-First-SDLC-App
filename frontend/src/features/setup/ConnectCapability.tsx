@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 
-import { Badge, Banner, Breadcrumb, Button, Drawer, Field, Input, Modal, Select, Spinner } from "../../components/ui";
+import { Badge, Banner, Breadcrumb, Button, Drawer, Field, Input, Modal, Select, Spinner, writeErrorSentence } from "../../components/ui";
 import type { Capability, ConnectorVendor } from "../../types";
 import { CAP_LABEL, isCapability } from "./Integrations";
 import {
@@ -155,9 +155,11 @@ export function ConnectCapability({
       // B3-1: let an embedding host (onboarding drawer) refresh its state + close on connect.
       onConnected?.();
     } catch (err) {
+      // Screen Words group 5: the same offline/server handling as every other failed write, so
+      // a connector saved with no network no longer reports the browser's "Failed to fetch".
       setSaveResult({
         ok: false,
-        detail: err instanceof Error ? err.message : "Could not save the connection.",
+        detail: writeErrorSentence(err, "Could not save the connection."),
       });
     }
   };

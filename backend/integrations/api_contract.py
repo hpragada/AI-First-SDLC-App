@@ -78,7 +78,7 @@ def export_api_contract(*, tenant_id, project_id, body, change="minor",
     unchanged body; otherwise bumps semver per `change` and resets the artifact to *draft*
     so the architect gate re-approves the new version (gate-then-publish, #5)."""
     if change not in _CHANGE:
-        raise ApiContractError(f"invalid change kind: {change!r}")
+        raise ApiContractError("That isn't a kind of contract change the platform recognises.")
     from apps.projects.models import Project
     from apps.tenancy.context import tenant_context
     from storage import content_hash
@@ -145,10 +145,13 @@ def record_implements(*, tenant_id, from_artifact_id, project_id=None,
 
     if contract_artifact_id is None:
         if project_id is None:
-            raise ApiContractError("project_id or contract_artifact_id is required")
+            raise ApiContractError("Say which project, or which contract, this applies to.")
         cur = _current(tenant_id, project_id)
         if cur is None:
-            raise ApiContractError("no api_contract registered to implement")
+            raise ApiContractError(
+                "This project has no API contract yet, so there is nothing to implement "
+                "against."
+            )
         contract_artifact_id = str(cur.id)
 
     with tenant_context(tenant_id):

@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { Breadcrumb, Banner, Button, ConnStatus, Field, Input, Modal, Select, Spinner } from "../../components/ui";
+import { Breadcrumb, Banner, Button, ConnStatus, Field, Input, Modal, Select, Spinner, WriteError } from "../../components/ui";
+import { gateLink } from "../../links";
 import { artifactLabel } from "../lifecycle/phases";
+import { artifactStatusLabel } from "./artifactStatus";
 import { useArtifactPreview, usePublishArtifact } from "./hooks";
 
 // S-34 view states: choose-target · publishing · success · blocked (not gate-approved).
@@ -125,9 +127,17 @@ function ExportPublishLive() {
             <Field label="Artifact">
               <Input value={`${artifactLabel(data?.title, data?.artifact_type)} · v${data?.version ?? "?"}`} disabled />
             </Field>
-            <Banner variant="danger" title="Can't publish — not gate-approved">
-              This artifact is still <strong>{data?.status}</strong>. Approve its gate first;
-              manual publish never bypasses a gate. <Link to="/gates">Open gate ↗</Link>
+            {/* Screen Words group 2. Two faults here: the stored status was printed raw
+                ("staged", which the client has never seen), and "Open gate" went to the whole
+                Gates list. The status now uses the same words as the Artifacts list, and the
+                link goes to this document's own gate — or is left out when there isn't one,
+                because a draft still being written has no gate to open. */}
+            <Banner variant="danger" title="Can't publish yet">
+              This document is <strong>{artifactStatusLabel(data?.status ?? "")}</strong>.
+              Publishing is possible once its gate is approved.{" "}
+              {data?.gate_approval_id && (
+                <Link to={gateLink(data.gate_approval_id)}>Open its gate ↗</Link>
+              )}
             </Banner>
           </Modal>
         ) : (
@@ -149,7 +159,12 @@ function ExportPublishLive() {
             }
           >
             <Field label="Artifact">
-              <Input value={`${artifactLabel(data?.title, data?.artifact_type)} · v${data?.version} · ${data?.status}`} disabled />
+              {/* Screen Words group 2: the status here was the stored word. Same label as the
+                  list behind this screen, so one document cannot read two ways. */}
+              <Input
+                value={`${artifactLabel(data?.title, data?.artifact_type)} · v${data?.version} · ${artifactStatusLabel(data?.status ?? "")}`}
+                disabled
+              />
             </Field>
             <Banner variant="success" title="Gate approved">
               Eligible to publish.
@@ -185,9 +200,7 @@ function ExportPublishLive() {
               </ConnStatus>
             )}
             {publish.isError && (
-              <Banner variant="danger" title="Publish failed">
-                {publish.error instanceof Error ? publish.error.message : "Unknown error"}
-              </Banner>
+              <WriteError title="Publish failed" detail={publish.error} />
             )}
           </Modal>
         )}
@@ -296,10 +309,11 @@ function ExportPublishGallery({ view }: { view: PublishView }) {
             <Field label="Artifact">
               <Input value="System Sequence Diagram v0.9" disabled />
             </Field>
-            <Banner variant="danger" title="Can't publish — not gate-approved">
-              This artifact is still <strong>Pending Architecture gate</strong>. Approve the gate
-              first; manual publish never bypasses a gate.{" "}
-              <Link to="/gates">Open gate ↗</Link>
+            {/* Kept in step with the live banner above (Screen Words group 2) — the gallery is
+                what the team reviews, so it must not show wording that no longer ships. */}
+            <Banner variant="danger" title="Can't publish yet">
+              This document is <strong>Waiting for approval</strong>. Publishing is possible once
+              its gate is approved. <Link to={gateLink("ap-demo")}>Open its gate ↗</Link>
             </Banner>
           </Modal>
         )}

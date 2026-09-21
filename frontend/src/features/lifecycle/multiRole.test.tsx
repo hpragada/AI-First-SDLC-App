@@ -74,8 +74,10 @@ describe("a gate whose required role is the user's SECOND role", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /^Approve/ })).not.toHaveProperty(
         "disabled", true));
-    // ...and the wrong answer, in the words a person actually saw, is gone.
-    expect(screen.queryByText(/don't hold the/i)).toBeNull();
+    // ...and the wrong answer, in the words a person actually saw, is gone. Matched on the
+    // CURRENT refusal sentence (Screen Words group 3) — asserting the absence of wording that no
+    // longer exists anywhere would pass for the wrong reason.
+    expect(screen.queryByText(/can decide this gate/i)).toBeNull();
   });
 
   it("still refuses someone who genuinely lacks the role", async () => {
@@ -85,7 +87,13 @@ describe("a gate whose required role is the user's SECOND role", () => {
     stub(multiRole, [{ ...approval, required_role: "tech_lead" }]);
     renderWithProviders(<Gates />);
 
-    await waitFor(() => expect(screen.getByText(/don't hold the/i)).toBeDefined());
+    // Screen Words group 3 reworded the refusal from "you don't hold the tech_lead role" to
+    // "Only a Tech Lead on this project, or an admin, can decide this gate." The guard being
+    // tested is the same one; only the sentence changed.
+    // The body sentence wraps the role in <strong>, so it is split across elements; the banner
+    // title carries the same fact in one node.
+    await waitFor(() =>
+      expect(screen.getAllByText(/Waiting for a Tech Lead/i).length).toBeGreaterThan(0));
     // Present but unpressable — the screen explains rather than hiding the control.
     expect(screen.getByRole("button", { name: /^Approve/ })).toHaveProperty("disabled", true);
   });
@@ -98,7 +106,7 @@ describe("a gate whose required role is the user's SECOND role", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /^Approve/ })).not.toHaveProperty(
         "disabled", true));
-    expect(screen.queryByText(/don't hold the/i)).toBeNull();
+    expect(screen.queryByText(/can decide this gate/i)).toBeNull();
   });
 });
 

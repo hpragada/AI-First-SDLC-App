@@ -43,7 +43,10 @@ class XrayTestMgmt:
     def _project_key(self, project: str | None) -> str:
         project = project or self._project
         if not project:
-            raise CapabilityError("no project specified and no default project configured")
+            raise CapabilityError(
+                "No test-management project was named, and the connection has no default. "
+                "Add one in the connection settings."
+            )
         return project
 
     def _graphql(self, query: str, variables: dict) -> dict:
@@ -85,7 +88,11 @@ class XrayTestMgmt:
             "results"
         ) or []
         if not results:
-            raise CapabilityError(f"test not found: {test_ref}", status=404)
+            raise CapabilityError(
+                f"Test {test_ref} wasn't found in test management. It may have been "
+                "deleted there.",
+                status=404,
+            )
         t = results[0]
         steps = [
             TestStep(action=s.get("action", ""), data=s.get("data", ""),

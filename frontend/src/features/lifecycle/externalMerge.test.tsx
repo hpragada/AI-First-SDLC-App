@@ -134,7 +134,9 @@ describe("the merge gate on a pull request merged outside the platform", () => {
     stub([mergeGate({ external_merge: MERGED })], undefined, onlooker);
     renderWithProviders(<Gates />, { route: "/gates" });
 
-    await waitFor(() => expect(screen.getByText(/read-only/)).toBeDefined());
+    // Screen Words group 3 reworded this banner: it names the role properly and says an admin
+    // can decide too. What this test is about is unchanged — an onlooker is told they may read it.
+    await waitFor(() => expect(screen.getByText(/You can read it/)).toBeDefined());
     expect(screen.getByText(/Already merged on GitHub/)).toBeDefined();
     expect(document.body.textContent ?? "").toContain("alex-w");
   });

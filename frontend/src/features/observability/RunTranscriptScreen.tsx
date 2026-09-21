@@ -2,6 +2,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Banner, Breadcrumb, EmptyState, Panel, Spinner, Table, Transcript, Turn } from "../../components/ui";
+import { engineLabel, runStatusLabel, runStatusTone } from "../../labels";
 import { useRuns } from "../lifecycle/hooks";
 import { phaseLabel } from "../lifecycle/phases";
 import { useRunTranscript } from "./hooks";
@@ -58,11 +59,13 @@ function RunTranscriptLive() {
           </div>
         </div>
         <Panel
-          title={`${data.run_id} · ${phaseLabel(data.phase)}`}
+          // Screen Words group 4: the title was the 36-character run id. The transcript payload
+          // carries no work item, so the phase leads, with the short run reference used elsewhere.
+          title={`${phaseLabel(data.phase)} run · ${data.run_id.slice(0, 8)}`}
           actions={
             <>
               <span className="meta-item">
-                Engine <strong>{data.engine}</strong>
+                Engine <strong>{engineLabel(data.engine)}</strong>
               </span>
               <Badge variant="done">{data.cost ? `$${data.cost}` : "—"}</Badge>
             </>
@@ -128,8 +131,9 @@ function RunTranscriptLive() {
               <span className="table__id" key="w">
                 {r.work_item.slice(0, 8)}
               </span>,
-              <Badge variant="done" key="s">
-                {r.status}
+              // Screen Words group 4: status words and colour from the shared map.
+              <Badge variant={runStatusTone(r.status)} key="s">
+                {runStatusLabel(r.status)}
               </Badge>,
               <Link to={`/transcripts/${r.id}`} className="btn btn--ghost btn--sm" key="a">
                 Open transcript

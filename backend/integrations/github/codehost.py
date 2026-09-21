@@ -27,7 +27,7 @@ def _split_pr_ref(pr_ref: str) -> tuple[str, int]:
     """"owner/name#123" -> ("owner/name", 123)."""
     repo, _, number = pr_ref.rpartition("#")
     if not repo or not number.isdigit():
-        raise CapabilityError(f"malformed pr_ref: {pr_ref!r} (expected 'owner/name#N')")
+        raise CapabilityError("That pull request reference isn't in the expected form.")
     return repo, int(number)
 
 
@@ -48,7 +48,10 @@ class GithubCodeHost:
     def _repo(self, repo: str | None) -> str:
         repo = repo or self._default_repo
         if not repo:
-            raise CapabilityError("no repo specified and no default_repo configured")
+            raise CapabilityError(
+                "No repository was named, and the connection has no default repository. "
+                "Add one in the connection settings."
+            )
         return repo
 
     def _pr(self, repo: str, data: dict) -> PullRequest:
@@ -136,7 +139,8 @@ class GithubCodeHost:
         node_id = (data or {}).get("node_id")
         if not node_id:
             raise CapabilityError(
-                f"cannot resolve node_id for {pr_ref} to mark ready-for-review"
+                f"GitHub didn't recognise pull request {pr_ref}, so it couldn't be marked "
+                "ready for review."
             )
         self._rest.graphql(
             "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id})"

@@ -2,10 +2,11 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Banner, Button, Combobox, EmptyState, Field, Modal, Panel, Select, Spinner, Table } from "../../components/ui";
+import { Badge, Banner, Button, Combobox, EmptyState, Field, Modal, Panel, Select, Spinner, Table, WriteError } from "../../components/ui";
+import { engineLabel, runStatusLabel, runStatusTone } from "../../labels";
 import { useRunners } from "../identity/hooks";
 import { roleLabel } from "../identity/roles";
-import { phaseLabel, statusLabel } from "./phases";
+import { phaseLabel } from "./phases";
 import { usePhaseCatalog, useRuns, useTriggerPhase, useWorkItems } from "./hooks";
 import type { PhaseCatalogEntry, Run } from "../../types";
 
@@ -202,9 +203,7 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
                 </div>
                 {trigger.isError && (
                   <div style={{ marginTop: "var(--space-3)" }}>
-                    <Banner variant="danger" title="Trigger failed">
-                      {trigger.error instanceof Error ? trigger.error.message : "Unknown error"}
-                    </Banner>
+                    <WriteError title="Trigger failed" detail={trigger.error} />
                   </div>
                 )}
                 {trigger.isSuccess && (
@@ -254,8 +253,12 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
                   Run {shortRef(r.id)} ↗
                 </Link>,
                 <span className="table__primary" key="p">{phaseLabel(r.agent_phase ?? r.agent_key)}</span>,
-                <Badge variant={statusVariant(r.status)} key="s">{statusLabel(r.status)}</Badge>,
-                `${r.engine} · ${r.model}`,
+                // Screen Words group 4: was a local copy of the status-to-colour rules, which is
+                // how "unlinked" ended up green on another screen. One shared map now.
+                <Badge variant={runStatusTone(r.status)} key="s">{runStatusLabel(r.status)}</Badge>,
+                // Screen Words group 4, Option A (team's pick 18 Sep): the line stays, written
+                // as the product and model name rather than `claude · claude-opus-5`.
+                engineLabel(r.engine, r.model),
                 <span className="table__id" title={r.temporal_workflow_id} key="w">
                   {shortRef(r.temporal_workflow_id)}
                 </span>,
@@ -328,13 +331,6 @@ const sampleRuns: Run[] = [
   },
 ];
 
-function statusVariant(status: string) {
-  if (status === "done" || status === "completed" || status === "approved") return "done" as const;
-  if (status === "gate" || status === "awaiting_gate") return "gate" as const;
-  if (status === "failed" || status === "rejected") return "failed" as const;
-  if (status === "running") return "running" as const;
-  return "queued" as const;
-}
 
 // A short human reference for any long id ("82a4ff91-…" -> "82a4ff91",
 // "agent-run-82a4ff91-…" -> "agent-run-82a4ff91"); short values pass through.

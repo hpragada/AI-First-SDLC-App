@@ -166,6 +166,32 @@ class TenantScopedMixin:
     def get_queryset(self):
         return super().get_queryset().filter(tenant_id=self.tenant_id)
 
+    def get_object(self):
+        """Screen Words group 5: DRF's own 404 text is written for whoever wrote the query.
+
+        A deleted run, or a link pasted from another project, answered
+        `No Run matches the given query.` — which names the Python model, says "query" to someone
+        who typed no query, and gives them nothing to do next. One override here rather than a
+        message per viewset, so every scoped resource says it the same way.
+
+        Deliberately does NOT say "or you don't have access to it". That wording was tried and
+        read as a permissions problem, sending people to ask an admin for access to something
+        that simply no longer exists.
+        """
+        from django.http import Http404
+
+        try:
+            return super().get_object()
+        except Http404 as exc:
+            try:
+                noun = str(self.get_queryset().model._meta.verbose_name)
+            except Exception:  # noqa: BLE001 — never let the message-builder become the failure
+                noun = "item"
+            raise NotFound(
+                f"That {noun} no longer exists. It may have been deleted, or the link may "
+                "point at a different project."
+            ) from exc
+
 
 # ── Tenant (bootstrap — no tenant context exists yet) ───────────────
 class TenantCreateView(APIView):
@@ -301,7 +327,7 @@ class ProjectViewSet(
         """
         name = (request.data.get("name") or "").strip()
         if name and Project.objects.filter(tenant_id=self.tenant_id, name__iexact=name).exists():
-            return Response(
+            return Response(  # noqa: CLIENT-TEXT — repeats the name the person just typed
                 {"detail": f'A project named "{name}" already exists in this workspace.'},
                 status=status.HTTP_409_CONFLICT,
             )
@@ -770,9 +796,9 @@ class ProjectViewSet(
             tenant_id=self.tenant_id, project_id=project.id, id=audit_id).first()
         if audit is None:
             return Response({"detail": "no such audit in this project"},
-                            status=status.HTTP_404_NOT_FOUND)
+                            status=status.HTTP_404_NOT_FOUND)  # noqa: CLIENT-TEXT — Group 8
         if audit.status not in CLOSED_STATUSES:
-            return Response(
+            return Response(  # noqa: CLIENT-TEXT — Group 8 (accessibility), on hold
                 {"detail": "this audit has not finished yet, so what it has not looked at is "
                            "still changing. Wait for it to close."},
                 status=status.HTTP_409_CONFLICT)
@@ -809,7 +835,7 @@ class ProjectViewSet(
             refs = request.data.get("test_refs")
             if refs is not None and not isinstance(refs, list | tuple):
                 return Response({"detail": "test_refs must be a list of test case ids"},
-                                status=status.HTTP_400_BAD_REQUEST)
+                                status=status.HTTP_400_BAD_REQUEST)  # noqa: CLIENT-TEXT — Group 8
             try:
                 out = queue_journeys(
                     tenant_id=self.tenant_id, project_id=str(project.id),
@@ -1161,7 +1187,7 @@ class ProjectViewSet(
 
         upload = request.FILES.get("file")
         if upload is None:
-            raise ValidationError({"file": "a multipart 'file' is required"})
+            raise ValidationError({"file": "Choose a file to upload."})
         try:
             out = ingest_source_document(
                 tenant_id=self.tenant_id, project_id=str(project.id),
@@ -1256,7 +1282,7 @@ class ProjectViewSet(
         except RepositoryError as exc:
             return Response({"detail": str(exc)}, status=exc.status)
         except Repository.DoesNotExist:
-            return Response({"detail": "unknown repository for this project"},
+            return Response({"detail": "That repository isn't part of this project."},
                             status=status.HTTP_404_NOT_FOUND)
         return Response(out, status=status.HTTP_202_ACCEPTED)
 
@@ -1584,12 +1610,15 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         from storage import s3_from_settings
 
         src = self.get_object()
+        # Screen Words group 5: both of these reach a person who clicked "view my upload", so they
+        # start with a capital and say which case it is. The two are genuinely different — one
+        # document never had a file kept, the other had one that is now gone.
         if not src.s3_key:
-            raise NotFound("no original file stored for this document")
+            raise NotFound("The original file wasn't kept for this document.")
         try:
             data = s3_from_settings().get(src.s3_key)
         except Exception as exc:  # noqa: BLE001 — missing object → 404, not 500
-            raise NotFound("original file is unavailable") from exc
+            raise NotFound("That file isn't stored any more, so it can't be shown.") from exc
         resp = HttpResponse(data, content_type=src.mime or "application/octet-stream")
         resp["Content-Disposition"] = f'inline; filename="{src.filename}"'
         return resp
@@ -1612,11 +1641,11 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         images = ((art.external_ref or {}).get("page_images") if art else None) or []
         match = next((im for im in images if im.get("name") == name), None)
         if not match or not match.get("s3_key"):
-            raise NotFound("no such page image")
+            raise NotFound("That page image doesn't exist.")
         try:
             data = s3_from_settings().get(match["s3_key"])
         except Exception as exc:  # noqa: BLE001
-            raise NotFound("page image is unavailable") from exc
+            raise NotFound("That page image isn't stored any more, so it can't be shown.") from exc
         resp = HttpResponse(data, content_type=match.get("mime") or "image/png")
         resp["Content-Disposition"] = f'inline; filename="{name}"'
         return resp
@@ -1633,7 +1662,7 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         ser.is_valid(raise_exception=True)
         actor = resolve_actor(request, ser.validated_data.get("user_id"))
         if not actor:
-            raise ValidationError({"user_id": "an authenticated session or user_id is required"})
+            raise ValidationError({"user_id": "Sign in to do this."})
         target_type = ser.validated_data.get("target_type") or None
         try:
             out = adopt_source_document(
@@ -1870,7 +1899,7 @@ class WorkItemViewSet(
     def perform_create(self, serializer):
         project_id = self.request.data.get("project")
         if not Project.objects.filter(id=project_id, tenant_id=self.tenant_id).exists():
-            raise ValidationError({"project": "unknown project for this tenant"})
+            raise ValidationError({"project": "That project isn't in this workspace."})
         # A manually-added test case carries its priority in external_ref (the model has no
         # priority column); the steps live in `description` (rendered into the 09b manifest).
         extra = {}
@@ -1884,7 +1913,7 @@ class WorkItemViewSet(
         a repo from another project (RLS already blocks another tenant's). Clearing (null) is ok."""
         repo = serializer.validated_data.get("repo")
         if repo is not None and str(repo.project_id) != str(serializer.instance.project_id):
-            raise ValidationError({"repo": "repository is not on this work item's project"})
+            raise ValidationError({"repo": "That repository belongs to a different project."})
         serializer.save()
 
     @action(detail=True, methods=["get"], url_path="test-cases")
@@ -2111,7 +2140,10 @@ class WorkItemViewSet(
         except ActiveRunError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except TriggerError as exc:
-            raise ValidationError({"agent_key": str(exc)}) from exc
+            # Screen Words group 5: filed as a non-field error. Under `agent_key` every trigger
+            # refusal reached the screen with that key as a prefix — including the friendly
+            # "start your companion" one — and `agent_key` is not a field anybody can see.
+            raise ValidationError(str(exc)) from exc
         return Response(
             {"run_id": result.run_id, "workflow_id": result.workflow_id},
             status=status.HTTP_202_ACCEPTED,
@@ -2533,7 +2565,7 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         result = read_artifact_preview(
             tenant_id=self.tenant_id, artifact_id=str(artifact.id), raw=raw, allow_empty=True)
         if result is None:
-            raise NotFound("artifact has no body to preview")
+            raise NotFound("This document has nothing to preview yet.")
         return Response(result, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
@@ -2557,9 +2589,14 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             Artifact.Status.APPROVED, Artifact.Status.PUBLISHED,
         )
         if not exportable:
+            # Screen Words group 2: this sentence reaches a person, so it names the status in
+            # the same words the Artifacts list and the publish screen use, not the stored key.
+            from apps.labels import artifact_status_label
+
             raise ValidationError(
-                "Artifact must be gate-approved before publishing. "
-                f"Current status: {artifact.status}"
+                "This document can't be published yet — it is "
+                f"{artifact_status_label(artifact.status).lower()}. "
+                "Publishing is possible once its gate is approved."
             )
         target_capability = request.data.get("target_capability", "internal")
         destination = request.data.get("destination", "")
@@ -2576,11 +2613,19 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         profile = getattr(artifact.project, "profile", None)
         allowed = export_target_for(profile, artifact.phase)
         if target_capability != allowed:
+            # Screen Words group 2: the phase and both capabilities get their own names. A
+            # client reading this cannot act on "docstore" or "06_task_breakdown".
+            from apps.labels import capability_label, phase_label
+
+            where = phase_label(artifact.phase) or "this phase"
+            allowed_text = (
+                f"only to {capability_label(allowed)}" if allowed
+                else "inside the platform only"
+            )
             raise ValidationError(
-                f"Export policy for phase '{artifact.phase}' allows "
-                + (f"only '{allowed}'" if allowed else "internal publishing only")
-                + f"; requested '{target_capability}'. Adjust the project profile's "
-                "export policy to change this."
+                f"{where} documents can be published {allowed_text}, so they can't go to "
+                f"{capability_label(target_capability)}. A Tech Lead can change this in the "
+                "project profile's export policy."
             )
 
         # Body via the same read-through the preview uses (own S3 draft → inline draft →
@@ -2606,7 +2651,7 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             # Re-export of an already-published-internal artifact: succeeding without an
             # actual push would be a no-op lie — fail honestly with guidance.
             raise ValidationError(str(exc)) from exc
-        raise ValidationError(f"Unknown export capability '{target_capability}'.")
+        raise ValidationError("Documents can't be published to that destination.")
 
     def _publish_docstore(self, artifact, body_md, destination):
         """Docstore transfers the SoR: the page holds the full body → sor + external_ref
@@ -2701,7 +2746,7 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 
         if artifact.type != "test_case":
             raise ValidationError(
-                "Only test_case artifacts export to the test-management system; "
+                "Only test cases can be published to test management; "
                 "test plans and reports stay internal."
             )
         if not body_md and not (artifact.external_ref or {}).get("steps"):
@@ -2841,7 +2886,7 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         ser.is_valid(raise_exception=True)
         user_id = resolve_actor(request, ser.validated_data.get("user_id"))
         if user_id is None:
-            raise ValidationError({"user_id": "required when not authenticated"})
+            raise ValidationError({"user_id": "Sign in to do this."})
         try:
             result = decide_gate(
                 tenant_id=self.tenant_id,
@@ -2876,7 +2921,7 @@ class DriftRecordViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         ser.is_valid(raise_exception=True)
         user_id = resolve_actor(request, ser.validated_data.get("user_id"))
         if user_id is None:
-            raise ValidationError({"user_id": "required when not authenticated"})
+            raise ValidationError({"user_id": "Sign in to do this."})
         try:
             result = decide_drift(
                 tenant_id=self.tenant_id, drift_id=str(rec.id), user_id=user_id,
@@ -2944,7 +2989,7 @@ class ClarificationViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         ser.is_valid(raise_exception=True)
         user_id = resolve_actor(request, ser.validated_data.get("user_id"))
         if user_id is None:
-            raise ValidationError({"user_id": "required when not authenticated"})
+            raise ValidationError({"user_id": "Sign in to do this."})
         try:
             result = answer_clarification(
                 tenant_id=self.tenant_id,

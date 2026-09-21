@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import re
 from html.parser import HTMLParser
+
+logger = logging.getLogger(__name__)
 
 
 class ExtractionError(Exception):
@@ -313,7 +316,14 @@ def extract(*, filename: str, mime: str, content: bytes) -> tuple[str, str, list
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     kind = _kind(mime, ext)
     if kind is None:
-        raise ExtractionError(f"unsupported file type: {filename!r} ({mime!r})")
+        # Screen Words group 5. A person who drags a .zip onto the dropzone saw
+        # "file: unsupported file type: 'x.zip' ('application/zip')" — the field key, the quoted
+        # filename, the MIME type, and no hint of what WOULD work. Naming the accepted kinds is
+        # the whole point of the message.
+        raise ExtractionError(
+            "That file type can't be read. Upload a Word document, a PDF, a spreadsheet, "
+            "a text file or an HTML page."
+        )
     extractor = {
         "docx": _extract_docx, "xlsx": _extract_xlsx, "pdf": _extract_pdf,
         "txt": _extract_txt, "html": _extract_html,
@@ -323,6 +333,14 @@ def extract(*, filename: str, mime: str, content: bytes) -> tuple[str, str, list
     except ExtractionError:
         raise
     except Exception as exc:  # noqa: BLE001 — surface any parse failure as ExtractionError
-        raise ExtractionError(f"failed to extract {filename!r}: {exc}") from exc
+        # Screen Words group 5. A corrupt upload is reachable by anyone, and this handed the
+        # reader the library's own exception text — "Package not found", "invalid literal for
+        # int()" — which tells them nothing about their own file. The detail belongs in the log,
+        # where a developer will look; the sentence belongs to the person who uploaded it.
+        logger.warning("Extraction failed for %r (%s): %s", filename, mime, exc)
+        raise ExtractionError(
+            "That file couldn't be read — it may be corrupt, password-protected, or saved in "
+            "an unusual format. Try re-saving it and uploading again."
+        ) from exc
     title = filename.rsplit(".", 1)[0] if "." in filename else filename
     return title, body, images

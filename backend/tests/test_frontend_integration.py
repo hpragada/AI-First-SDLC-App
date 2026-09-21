@@ -629,13 +629,16 @@ def test_publish_policy_rejects_wrong_target_per_phase(client, project, admin):
     _login(client, "boss@acme.com", "admin-pass!")
     r = client.post(f"/api/artifacts/{art('06_task_breakdown').id}/publish/",
                     {"target_capability": "docstore"}, format="json")
-    assert r.status_code == 400 and "tasktracker" in str(r.data)
+    # Screen Words group 5: the refusal names the target in the reader's words ("the task
+    # tracker", "the documentation store", "inside the platform"), never the capability key.
+    assert r.status_code == 400 and "task tracker" in str(r.data), r.data
+    assert "tasktracker" not in str(r.data) and "docstore" not in str(r.data), r.data
     r = client.post(f"/api/artifacts/{art('03_prd').id}/publish/",
                     {"target_capability": "tasktracker"}, format="json")
-    assert r.status_code == 400 and "docstore" in str(r.data)
+    assert r.status_code == 400 and "documentation store" in str(r.data), r.data
     r = client.post(f"/api/artifacts/{art('05_ux_design').id}/publish/",
                     {"target_capability": "docstore"}, format="json")
-    assert r.status_code == 400 and "internal" in str(r.data).lower()
+    assert r.status_code == 400 and "inside the platform" in str(r.data).lower(), r.data
     # Internal publish is always allowed regardless of policy.
     r = client.post(f"/api/artifacts/{art('05_ux_design').id}/publish/",
                     {"target_capability": "internal"}, format="json")
@@ -660,7 +663,7 @@ def test_publish_policy_honors_project_profile_override(client, project, admin):
     _login(client, "boss@acme.com", "admin-pass!")
     r = client.post(f"/api/artifacts/{a.id}/publish/",
                     {"target_capability": "docstore"}, format="json")
-    assert r.status_code == 400 and "internal" in str(r.data).lower()
+    assert r.status_code == 400 and "inside the platform" in str(r.data).lower(), r.data
 
 
 def test_publish_tasktracker_reconciles_backlog(client, project, admin, monkeypatch):
@@ -768,7 +771,8 @@ def test_publish_testmgmt_exports_test_case(client, project, admin, monkeypatch)
     )
     r = client.post(f"/api/artifacts/{plan.id}/publish/",
                     {"target_capability": "testmgmt"}, format="json")
-    assert r.status_code == 400 and "test_case" in str(r.data)
+    # Screen Words group 5: "Only test_case artifacts…" printed the type key.
+    assert r.status_code == 400 and "Only test cases" in str(r.data), r.data
 
 
 def test_artifact_reexport_no_connector_is_clear_400(client, project, admin):

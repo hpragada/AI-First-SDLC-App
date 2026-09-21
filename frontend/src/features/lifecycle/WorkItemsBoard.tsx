@@ -16,6 +16,7 @@ import {
   RowMenu,
   Select,
   Table,
+  writeErrorSentence,
 } from "../../components/ui";
 import type { BadgeVariant } from "../../components/ui";
 import { isTerminalState, PLANNING_PHASES } from "../../types";
@@ -230,7 +231,7 @@ function CreateWorkItemDrawer({
         </Field>
         {createWorkItem.isError && (
           <p className="t-sm" style={{ color: "var(--danger)" }}>
-            {createWorkItem.error instanceof Error ? createWorkItem.error.message : "Couldn't create this work item."}
+            {writeErrorSentence(createWorkItem.error, "Couldn't create this work item.")}
           </p>
         )}
       </form>

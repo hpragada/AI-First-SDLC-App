@@ -198,11 +198,13 @@ def decide_gate(
     authoritative direction. It is meaningless without a comment (there would be nothing to act on)
     and meaningless on an approval, so both are refused rather than silently ignored."""
     if decision not in _VALID_DECISIONS:
-        raise GateError(f"invalid decision: {decision!r}")
+        raise GateError("That isn't a decision this gate accepts.")
     if revise and decision != "rejected":
-        raise GateError("revise applies only to a rejection")
+        raise GateError("Requesting changes can't be combined with approving.")
     if revise and not (comment or "").strip():
-        raise GateError("revise needs a comment saying what to change")
+        raise GateError(
+            "Say what needs to change — the comment is what the next run works from."
+        )
     signal_sender = signal_sender or _default_signal_sender
 
     with tenant_context(tenant_id):
@@ -210,7 +212,10 @@ def decide_gate(
             id=approval_id, tenant_id=tenant_id
         )
         if approval.decision != Approval.Decision.PENDING:
-            raise GateError(f"approval already decided: {approval.decision}")
+            raise GateError(
+                "Someone has already decided this gate — it was "
+                f"{approval.get_decision_display().lower()}. Refresh to see the latest."
+            )
 
         # Role check: the deciding user must hold the required role on this project — OR be
         # an admin who can approve any gate (project-admin = Membership(role="admin"), or
@@ -221,8 +226,13 @@ def decide_gate(
             tenant_id=tenant_id, user_id=user_id,
             project_id=approval.work_item.project_id, required_role=approval.required_role,
         ):
+            # Screen Words group 5. Named role, no internal user id. "Or an admin" is true here:
+            # `may_decide_gate` lets a project or workspace admin decide any gate.
+            from apps.labels import role_label
+
             raise GateRoleError(
-                f"user {user_id} lacks role '{approval.required_role}' for this gate"
+                f"Only a {role_label(approval.required_role)} on this project, or an admin, "
+                "can decide this gate."
             )
 
         # Fold in the reviewer's checklist updates, re-derive the platform-evaluated ones from
@@ -248,13 +258,16 @@ def decide_gate(
                     str(c.get("key")) + (f" ({c['detail']})" if c.get("detail") else "")
                     for c in unmet
                 )
-                raise GateConditionsError(
+                raise GateConditionsError(  # noqa: CLIENT-TEXT — Group 1, on hold for the team
                     f"cannot approve: {len(unmet)} required gate condition(s) unmet: {reasons}"
                 )
 
         workflow_id = approval.run.temporal_workflow_id
         if not workflow_id:
-            raise GateError("run has no temporal_workflow_id; cannot resume the workflow")
+            raise GateError(
+                "This gate's run is no longer active, so the decision can't reach it. "
+                "Start the phase again."
+            )
 
         approval.decision = (
             Approval.Decision.APPROVED if decision == "approved" else Approval.Decision.REJECTED

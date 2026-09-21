@@ -894,6 +894,10 @@ export interface ArtifactPreview {
   phase?: string;
   artifact_type?: string;
   export_target?: string | null;
+  // The PENDING gate on the run that produced this document, so "Open its gate" goes to that
+  // gate instead of the whole list (Screen Words group 2). Null when there is no open gate —
+  // the screen then shows no link rather than one that goes nowhere.
+  gate_approval_id?: string | null;
   // Multi-state artifacts (per-screen wireframes) carry one self-contained HTML document per
   // UI state; the preview renders them behind a state switcher. Empty for single-body ones.
   states?: ArtifactState[];

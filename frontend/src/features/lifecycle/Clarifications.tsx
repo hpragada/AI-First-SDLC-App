@@ -17,6 +17,7 @@ import {
   Select,
   Spinner,
   Tabs,
+  writeErrorSentence,
 } from "../../components/ui";
 import { isRunListening, type Clarification, type ClarificationQuestion } from "../../types";
 import { Pager, PhaseFilter, WorkItemFilter } from "./HistoryControls";
@@ -539,7 +540,7 @@ function ClarificationsLive() {
             </div>
             {answer.isError && (
               <p className="t-sm" style={{ color: "var(--danger)", marginTop: "var(--space-2)" }}>
-                {answer.error instanceof Error ? answer.error.message : "Couldn't submit the answer."}
+                {writeErrorSentence(answer.error, "Couldn't submit the answer.")}
               </p>
             )}
           </CardBody>

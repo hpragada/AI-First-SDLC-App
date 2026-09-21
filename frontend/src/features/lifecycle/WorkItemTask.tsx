@@ -20,6 +20,8 @@ import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./pha
 import { useApprovals, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
 import { artifactsForWorkItem, gateLink } from "../../links";
 import { useArtifactPreview } from "../observability/hooks";
+import { repoRoleLabel, workItemTypeLabel } from "../../labels";
+import { roleLabel } from "../identity/roles";
 import { useRepositories } from "../setup/hooks";
 import type { WorkItemCard } from "../../types";
 
@@ -220,7 +222,8 @@ function WorkItemTaskLive() {
                 <div className="artifact-row" key={c.id}>
                   <div className="artifact-row__main">
                     <div className="artifact-row__title">{c.title || c.id.slice(0, 8)}</div>
-                    <div className="artifact-row__meta">{c.type} · {phaseLabel(c.phase)}</div>
+                    {/* Screen Words group 4: `test_case` -> `Test case`. */}
+                    <div className="artifact-row__meta">{workItemTypeLabel(c.type)} · {phaseLabel(c.phase)}</div>
                   </div>
                   <Link to={`/work-items/${c.id}`} className="btn btn--ghost btn--sm">
                     Open
@@ -235,7 +238,8 @@ function WorkItemTaskLive() {
           {pendingGate ? (
             <Card attention>
               <CardBody>
-                <span className="gate-panel__role">▲ {gateLabel(pendingGate.gate_type)} · required role: {pendingGate.required_role}</span>
+                {/* Screen Words group 3 — see the same line on the Epic screen. */}
+                <span className="gate-panel__role">▲ {gateLabel(pendingGate.gate_type)} · decided by a {roleLabel(pendingGate.required_role)}</span>
                 <h3 className="t-h3">Awaiting your decision</h3>
                 <div className="gate-panel__actions">
                   <Button
@@ -371,8 +375,9 @@ function RepoAssignmentCard({ workItem, buildStarted }: { workItem: WorkItemCard
           >
             <option value="">— default repository —</option>
             {list.map((r) => (
+              // Screen Words group 4: the repository picker's role word.
               <option key={r.id} value={r.id}>
-                {r.name} · {r.role}
+                {r.name} · {repoRoleLabel(r.role)}
               </option>
             ))}
           </select>

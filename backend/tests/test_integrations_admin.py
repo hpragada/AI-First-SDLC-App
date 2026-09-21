@@ -455,4 +455,9 @@ def test_test_connection_fails_for_unregistered_vendor(client, admin):
     resp = client.post(f"/api/integrations/{conn_id}/test-connection/")
     assert resp.status_code == 200
     assert resp.data["ok"] is False
-    assert "no connector registered" in resp.data["detail"].lower()
+    # Screen Words group 5 reworded this ("no connector registered for 'docstore':'notion'" named
+    # both internal keys). The test's point is unchanged: an unknown vendor fails the connection
+    # test with a reason the admin can act on, and that reason says to reconnect.
+    detail = resp.data["detail"].lower()
+    assert "isn't supported" in detail and "reconnect" in detail, resp.data
+    assert "docstore" not in detail and "'notion'" not in detail, resp.data

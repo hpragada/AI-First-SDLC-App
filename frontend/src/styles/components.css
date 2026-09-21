@@ -650,7 +650,12 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .sor-chip--figma .sor-chip__glyph { background: #7C5CD6; }
 .sor-chip--github .sor-chip__glyph { background: #1B2440; }
 .sor-chip--xray .sor-chip__glyph { background: #1FA971; }
+/* Screen Words group 4. Every artifact used to wear the Confluence glyph whatever system it
+   lived in; `internal` now has its own. The platform is not an external system, so it also
+   drops the deep-link arrow below — there is nowhere to go. */
+.sor-chip--platform .sor-chip__glyph { background: var(--brand-navy-500); }
 .sor-chip::after { content: "\2197"; color: var(--text-faint); font-weight: 700; } /* external deep-link */
+.sor-chip--platform::after { content: none; }
 
 /* ============================================================================
    15. Run console (dark)

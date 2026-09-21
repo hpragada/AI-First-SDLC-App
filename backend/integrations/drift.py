@@ -116,7 +116,12 @@ def detect_contract_drift(*, tenant_id, contract_artifact_id, new_semver=None,
     with tenant_context(tenant_id):
         art = Artifact.objects.get(id=contract_artifact_id, tenant_id=tenant_id)
         if art.type != "api_contract":
-            raise DriftError("not an api_contract artifact")
+            # Screen Words group 5. Reached through the push webhook rather than by a person, so
+            # this is the one message here a client is unlikely to meet — but it is worded
+            # for one anyway, because "unlikely" is not a guarantee and the cost is a sentence.
+            raise DriftError(
+                "That document isn't an API contract, so contract drift doesn't apply to it."
+            )
         project_id = str(art.project_id)
         semver = new_semver or (art.external_ref or {}).get("semver")
     rec, created = _open_drift(
@@ -168,7 +173,9 @@ def decide_drift(*, tenant_id, drift_id, user_id, decision, comment="") -> dict:
     from apps.tenancy.models import Membership
 
     if decision not in ("accept", "reject"):
-        raise DriftError(f"invalid decision: {decision!r}")
+        # Screen Words group 5: echoed the rejected value back. The two choices the screen
+        # offers are the useful thing to say.
+        raise DriftError("A drift decision has to be either accept or reject.")
     with tenant_context(tenant_id):
         rec = DriftRecord.objects.get(id=drift_id, tenant_id=tenant_id)
         if rec.status != DriftRecord.Status.OPEN:
@@ -177,8 +184,13 @@ def decide_drift(*, tenant_id, drift_id, user_id, decision, comment="") -> dict:
             tenant_id=tenant_id, user_id=user_id, project_id=rec.project_id,
             role=rec.required_role).exists()
         if not has_role:
+            # Screen Words group 3. This sentence reaches the person who clicked Accept, so it
+            # names the role rather than its key and drops the internal user id — which told
+            # the reader nothing about themselves and everything about our storage.
+            from apps.labels import role_label
+
             raise DriftRoleError(
-                f"user {user_id} lacks role '{rec.required_role}' for this drift gate")
+                f"Only a {role_label(rec.required_role)} on this project can decide this drift.")
         new_status = (DriftRecord.Status.ACCEPTED if decision == "accept"
                       else DriftRecord.Status.REJECTED)
         rec.status = new_status

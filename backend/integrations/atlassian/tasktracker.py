@@ -192,7 +192,10 @@ class AtlassianTaskTracker:
                 tid = tr["id"]
                 break
         if tid is None:
-            raise CapabilityError(f"no transition to {to_state!r} for {issue_ref}")
+            raise CapabilityError(
+                f"Jira won't let {issue_ref} move to that status from where it is now. "
+                "Its workflow may need that step added."
+            )
         self._rest.request(
             "POST", f"/rest/api/3/issue/{issue_ref}/transitions",
             body={"transition": {"id": tid}},

@@ -12,6 +12,7 @@ import {
   Panel,
   Spinner,
   Textarea,
+  WriteError,
 } from "../../components/ui";
 import { useDecideApproval, useGateCriteria } from "./hooks";
 
@@ -202,9 +203,7 @@ function CriteriaGateLive() {
               </Button>
             </div>
             {decideApproval.isError && (
-              <Banner variant="danger" title="Couldn't record the decision">
-                {decideApproval.error instanceof Error ? decideApproval.error.message : "Unknown error"}
-              </Banner>
+              <WriteError title="Couldn't record the decision" detail={decideApproval.error} />
             )}
           </CardBody>
         </Card>

@@ -58,8 +58,10 @@ describe("S-25 source doc — honest status badge (A4)", () => {
     status: "extracted", extracted_artifact_ids: [], provenance: {}, created_at: "",
     has_original: true, page_images: [], fidelity: "text", vision: null,
   };
-  it("distinguishes text / images-only / empty instead of a blanket 'Extracted'", () => {
-    expect(badgeFor({ ...base, fidelity: "text" }).label).toBe("Extracted");
+  it("distinguishes text / images-only / empty instead of one blanket label", () => {
+    // Screen Words group 4: "Extracted" said what the platform did; "Ready to adopt" says what
+    // the reader can now do. Same word as the onboarding hub, which is where most people see it.
+    expect(badgeFor({ ...base, fidelity: "text" }).label).toBe("Ready to adopt");
     expect(badgeFor({ ...base, fidelity: "images_only" }).label).toBe("Needs AI read");
     expect(badgeFor({ ...base, fidelity: "empty" }).label).toBe("No text found");
     expect(badgeFor({ ...base, status: "adopted" }).label).toBe("Adopted");
@@ -348,7 +350,9 @@ describe("S-34 Export / publish", () => {
     expect(screen.getByText("Published to Confluence")).toBeDefined();
 
     rerender(<ExportPublish forceView="blocked" />);
-    expect(screen.getByText("Can't publish — not gate-approved")).toBeDefined();
+    // Screen Words group 2: the banner no longer uses "gate-approved" as a compound adjective,
+    // and the status inside it is a label rather than the stored word.
+    expect(screen.getByText("Can't publish yet")).toBeDefined();
   });
 });
 

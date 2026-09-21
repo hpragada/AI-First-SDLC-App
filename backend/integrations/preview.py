@@ -584,7 +584,26 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
         export_target = export_target_for(
             getattr(artifact.project, "profile", None), artifact.phase)
 
+        # Screen Words group 2: the publish screen's "Open its gate" used to point at the whole
+        # Gates list, which is no help on a project with thirty open gates. The gate a document
+        # is waiting at is the PENDING approval on the run that produced it. None when there is
+        # no such gate (a draft still being written), and the screen then offers no link rather
+        # than a dead one.
+        gate_approval_id = None
+        if artifact.run_id:
+            from apps.gates.models import Approval
+
+            pending = (
+                Approval.objects
+                .filter(tenant_id=tenant_id, run_id=artifact.run_id, decision="pending")
+                .order_by("-created_at")
+                .values_list("id", flat=True)
+                .first()
+            )
+            gate_approval_id = str(pending) if pending else None
+
         return {
+            "gate_approval_id": gate_approval_id,
             "body": body, "content_type": content_type, "status": artifact.status,
             "version": artifact.version,
             "title": artifact.title,  # human name (S.No 120); blank → UI humanizes type

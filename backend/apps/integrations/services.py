@@ -12,8 +12,12 @@ mistyped token or host now fails the test instead of passing a constructible-onl
 """
 from __future__ import annotations
 
+import logging
+
 from apps.integrations.crypto import encrypt_secrets
 from apps.integrations.models import IntegrationConnection
+
+logger = logging.getLogger(__name__)
 
 # The fixed capability set (DECISION-4 / spec §3 T6) — independent of which vendors are
 # builder-wired yet, so an admin can record a connection ahead of `register_connector` support.
@@ -75,7 +79,7 @@ def create_integration(
     """Connect a capability (S-12 drawer submit). One connection per (tenant, capability) —
     reconnecting to a different vendor is a PATCH, not a second POST."""
     if capability not in CAPABILITIES:
-        raise IntegrationError(f"Unsupported capability {capability!r}.")
+        raise IntegrationError("That kind of connection isn't supported.")
     if IntegrationConnection.objects.filter(
         tenant_id=tenant.id, capability=capability
     ).exists():
@@ -132,9 +136,12 @@ def probe_connection(conn: IntegrationConnection) -> dict:
 
     builder = get_builder(conn.capability, conn.connector)
     if builder is None:
+        # Screen Words group 5: "No connector registered for docstore:notion." printed two stored
+        # keys at an admin. Same words as the registry's refusal for the same situation.
         return {
             "ok": False,
-            "detail": f"No connector registered for {conn.capability}:{conn.connector}.",
+            "detail": "The platform can't use this connection — its service isn't supported. "
+                      "Reconnect it and choose a supported service.",
             "fix_hint": "Choose a supported vendor for this capability.",
         }
     if not conn.is_configured:
@@ -146,7 +153,14 @@ def probe_connection(conn: IntegrationConnection) -> dict:
     try:
         connector = builder(conn)  # constructs the connector object — no network call
     except Exception as exc:  # this endpoint always returns {ok, detail}, never a 500
-        return {"ok": False, "detail": f"Could not build the connector: {exc}"}
+        # Screen Words group 5: the exception text went straight to the admin's screen. It goes
+        # to the log, where a developer will look; the admin gets what to check.
+        logger.warning("Building the %s:%s connector failed: %s",
+                       conn.capability, conn.connector, exc)
+        return {"ok": False,
+                "detail": "The connection settings couldn't be used. Check each field, "
+                          "then test again.",
+                "fix_hint": "Check the credentials and the site/host you entered, then re-test."}
 
     ping = getattr(connector, "ping", None)
     if not callable(ping):
@@ -195,7 +209,7 @@ def test_credentials(*, tenant, capability: str, vendor: str, binding: dict | No
     were wrong. This builds a throwaway in-memory connection and probes it — **it is never
     saved**, and nothing here writes to the database."""
     if capability not in CAPABILITIES:
-        raise IntegrationError(f"Unsupported capability {capability!r}.")
+        raise IntegrationError("That kind of connection isn't supported.")
     scratch = IntegrationConnection(
         tenant=tenant, capability=capability, connector=vendor,
         scopes=binding or {}, token_ref="secret_store",
