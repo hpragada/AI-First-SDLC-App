@@ -472,7 +472,7 @@ on any new server refusal that breaks the rule.
   S-14 — the team confirmed they have drifted) are recorded there. The mockups were **not** edited:
   they are the approval record.
 
-## Tracked task — 22 backend tests that fail on the committed code
+## Tracked task — 26 backend tests that fail on the committed code
 
 **Owner: the team, later.** Not caused by this batch: each was checked against the commit before
 it and fails there the same way. Re-verified on 2026-09-21 after pulling `7346321`: these
@@ -497,6 +497,19 @@ it and fails there the same way. Re-verified on 2026-09-21 after pulling `734632
 | `test_guardrails::test_run_build_clean_change_reports_ok` | `git push -u origin` failed: no `origin` | Depends on the machine's clone having an `origin` remote |
 | `test_a11y_axe_execution` (line 61) | Expects "Level A failure is `Critical`" in the Testing agent's instructions | The agent text was reworded in `db3be69` (WCAG 2.2 sweep) and the test was not; this batch changed no agent file |
 | `test_security_phase::test_classify_phase_failure_maps_bare_exit_code` | The message now says "The AI engine…" | Asserts old wording of the phase-failure message |
+| **Added 2026-09-21** — `test_build_workflow` ×3 (merge conflict re-opens the gate; merge error parks then resumes; parked build abandons) | Two time out waiting for the park; one raises `SynchronousOnlyOperation` (a database read from async code in the test's `_run_status`) | The park tests' 20-second poll may be shorter than the merge retry policy. Same result on `f870dea`, before the dev's commits |
+| **Added 2026-09-21** — `test_acceptance_phase2::test_acceptance_build_slice_two_repos` | `git push -u origin` failed: no `origin` | Same machine dependency as the guardrails test |
+
+**How the build-workflow tests are run.** They need a **local** Temporal (`docker compose up -d
+temporal`) and skip without one, which is why the three above went unnoticed. Until 2026-09-21 they
+also hung: `backend/conftest.py` turns the gate-decision signal into a no-op in every test, so an
+approved merge gate never reached the workflow. `test_build_workflow.py` now restores the real
+signal for its own tests only (pointed at the local server, never the shared one), and gained
+`test_build_workflow_a_review_that_never_ran_parks_then_resumes_only_the_review` for S.No 266.
+
+**Flaky, not failing** (pass on rerun): `test_a11y_scope_rest` line 405 (below); the companion's
+`test_the_engine_log_captures…` (failed once, only when run beside other files — order-dependent);
+and one build-workflow run.
 
 ## Also found, not fixed
 
@@ -509,3 +522,16 @@ it and fails there the same way. Re-verified on 2026-09-21 after pulling `734632
 - **The accessibility judge's failure reason was left as it is.** It carries the raw cause
   ("temporal is down") into the audit report on purpose — `test_a11y_report*` pin that the report
   says *why* — and it was outside group 8's approved scope.
+
+## Run-console failure wording (2026-09-21, S.No 281) — team chose option A
+
+Found while reviewing the dev's S.No 266 commit (`44ac215`), and on two screenshots the team shared.
+`classify_build_failure` now returns a plain sentence and a short cause (`describe_build_failure`):
+a rejected token (401), a usage or **session** limit with its reset time, an engine that closed
+early, and a review with no reason each read as the approved sentence, and a stopped **review** is
+named as the review — decided by the step being resumed (`run_code_review`), not by the message's
+words. A failed (not paused) run is never told to Resume. The raw text is stored as
+`outputs.error_detail` and shown under a closed "Technical details"; `outputs.kept` says what a
+paused build keeps. **Not changed:** the planning-phase classifier in `orchestration/activities.py`
+(agent runs) still pastes the engine's output — the same fix applies there, but it was not in the
+approved scope.

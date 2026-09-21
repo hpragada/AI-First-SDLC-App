@@ -425,7 +425,9 @@ def test_the_artifact_never_claims_no_findings_for_a_review_that_failed(world):
     world.run.save(update_fields=["outputs"])
     body = ba._review_body_for_artifact(_inp(world), [])
     assert "No findings were raised" not in body
-    assert "did not complete" in body and "exit code 1" in body
+    assert "did not complete" in body
+    # Option A: the approver reads why in words; the raw engine error stays on the run.
+    assert "closed before it finished" in body and "exit code 1" not in body
 
 
 def test_the_artifact_still_says_no_findings_for_a_genuinely_clean_review(world):
@@ -916,15 +918,15 @@ def test_review_survives_duplicate_pre_pr_code_pointer(world, monkeypatch):
 @pytest.mark.parametrize("raw,expect_substr", [
     # a usage/rate limit surfaced via the driver-captured engine stderr tail
     ("Command failed with exit code 1\nEngine stderr (tail):\nClaude usage limit reached. "
-     "Your limit will reset at 5pm.", "usage or rate limit"),
-    ("Error: 429 Too Many Requests", "usage or rate limit"),
-    ("The engine is overloaded, try again", "usage or rate limit"),
+     "Your limit will reset at 5pm.", "reached its usage limit"),
+    ("Error: 429 Too Many Requests", "reached its usage limit"),
+    ("The engine is overloaded, try again", "reached its usage limit"),
     # engine could not launch on the companion
     ("Failed to start Claude Code: open_process() got an unexpected keyword argument 'user'",
-     "could not start"),
+     "couldn't start"),
     # bare non-zero exit with no captured stderr (the exact WI-32 symptom) still reads clearly
     ("Command failed with exit code 1 (exit code: 1)\nError output: Check stderr output for "
-     "details", "exited before finishing"),
+     "details", "closed before it finished"),
 ])
 def test_classify_build_failure_engine_reasons(raw, expect_substr):
     assert expect_substr in ba.classify_build_failure(raw).lower()
@@ -955,26 +957,26 @@ _ENGINE_FAILURE_CORPUS = [
     ("usage limit, with a reset time the notice carried",
      "Command failed with exit code 1 (exit code: 1)\nEngine output (tail):\n"
      "[engine] Skipping non-JSON line from CLI stdout: Claude AI usage limit reached|1755432000",
-     ["usage or rate limit", "resets at", "2025-08-17"], []),
+     ["reached its usage limit", "resets 2025-08-17"], []),
     ("usage limit with no timestamp — still named, just no reset time",
      "Engine output (tail):\n[engine] Claude AI usage limit reached",
-     ["usage or rate limit"], ["resets at"]),
+     ["reached its usage limit"], ["(resets"]),
     ("bare exit, nothing captured — must NOT invent a cause",
      "Command failed with exit code 1 (exit code: 1)\nError output: Check stderr output for "
      "details",
-     ["exited before finishing", "exit code 1"], ["most common cause", "usage or rate limit"]),
+     ["closed before it finished"], ["most common cause", "usage limit"]),
     ("engine died 12 seconds in, before producing anything",
      "Command failed with exit code 1 (exit code: 1)\n"
      "Engine progress before the failure: 0 message(s).",
-     ["0 message(s)"], ["usage or rate limit"]),
+     ["closed before it finished"], ["usage limit"]),
     ("engine died 12 minutes in, after real work — must read differently from the row above",
      "Command failed with exit code 1 (exit code: 1)\nEngine progress before the failure: "
      "214 message(s), 2 artifact(s) registered.\nLast agent output: …applying the review fix to "
      "auth.service.ts",
-     ["214 message(s)", "auth.service.ts"], ["usage or rate limit"]),
+     ["closed before it finished"], ["usage limit"]),
     ("could not launch at all",
      "Failed to start Claude Code: open_process() got an unexpected keyword argument 'user'",
-     ["could not start"], ["usage or rate limit"]),
+     ["couldn't start"], ["usage limit"]),
 ]
 
 
@@ -987,34 +989,39 @@ def test_engine_failure_corpus(label, raw, must, must_not):
         assert phrase.lower() in low, f"{label}: missing {phrase!r} in {out!r}"
     for phrase in must_not:
         assert phrase.lower() not in low, f"{label}: must not claim {phrase!r} — {out!r}"
+    # Option A (2026-09-21): the engine's own output is not in the sentence; it is kept whole in
+    # the technical detail beside it, where a developer opens it.
+    assert ba._technical_detail(raw, out) == raw.strip(), f"{label}: the evidence was dropped"
 
 
 def test_two_different_engine_failures_never_render_identically():
-    """The defect in one line: a 12-second failure and a 12-minute one used to produce the same
-    string, which is why nine occurrences looked like one bug."""
-    fast = ba.classify_build_failure(
-        "Command failed with exit code 1 (exit code: 1)\n"
-        "Engine progress before the failure: 0 message(s).")
-    slow = ba.classify_build_failure(
-        "Command failed with exit code 1 (exit code: 1)\n"
-        "Engine progress before the failure: 214 message(s), 2 artifact(s) registered.")
-    assert fast != slow
+    """A 12-second failure and a 12-minute one used to produce the same string, which is why nine
+    occurrences looked like one bug. They may share a SENTENCE now (both are "the engine closed
+    early"); what a developer reads — the technical detail stored beside it — must still differ."""
+    fast_raw = ("Command failed with exit code 1 (exit code: 1)\n"
+                "Engine progress before the failure: 0 message(s).")
+    slow_raw = ("Command failed with exit code 1 (exit code: 1)\n"
+                "Engine progress before the failure: 214 message(s), 2 artifact(s) registered.")
+    fast = ba._technical_detail(fast_raw, ba.classify_build_failure(fast_raw))
+    slow = ba._technical_detail(slow_raw, ba.classify_build_failure(slow_raw))
+    assert fast != slow and "0 message(s)" in fast and "214 message(s)" in slow
 
 
-def test_the_classified_reason_never_points_only_at_the_companion_terminal():
-    """The old message told the user to check a terminal that no longer existed by the time they
-    read it. It must name the log file the companion now writes."""
+def test_the_sentence_never_points_at_a_terminal_or_a_file_path():
+    """The old message sent the reader to a terminal that no longer existed, and later to a log
+    path on the developer's machine. The client-facing sentence names neither (option A)."""
     out = ba.classify_build_failure(
         "Command failed with exit code 1 (exit code: 1)\n"
         "Error output: Check stderr output for details")
-    assert "companion-engine.log" in out
+    assert "terminal" not in out and "<worktrees>" not in out and "stderr" not in out
 
 
-def test_an_unrecognised_engine_shape_still_shows_the_raw_output():
-    """Never drop evidence in favour of a sentence we made up — an unknown shape is shown as-is."""
-    out = ba.classify_build_failure(
-        "processerror: the engine said something we have never seen before, verbatim")
-    assert "something we have never seen before" in out
+def test_an_unrecognised_engine_shape_still_keeps_the_raw_output():
+    """Never drop evidence in favour of a sentence we made up — an unknown shape is kept whole in
+    the technical detail beside the sentence."""
+    raw = "processerror: the engine said something we have never seen before, verbatim"
+    assert "something we have never seen before" in ba._technical_detail(
+        raw, ba.classify_build_failure(raw))
 
 
 def test_the_planning_path_classifies_the_same_way():
@@ -1289,3 +1296,82 @@ def test_rejecting_a_build_never_unpublishes_an_already_merged_artifact(world, m
 
     assert Artifact.objects.get(run_id=world.run.id, type="code").status == \
         Artifact.Status.PUBLISHED
+
+
+# ── run-console wording (2026-09-21, option A): one row per case in the approved table ─────────
+_TOKEN_401 = ("pr/gate setup failed: CapabilityError: GitHub GET "
+              "/repos/TARUN51/medslot-single-repo/pulls -> 401")
+_SESSION_LIMIT = ("code review did not complete: Command failed with exit code 1 (exit code: 1) "
+                  "Last agent output: ...You've hit your session limit · resets 1:20am "
+                  "(Asia/Kolkata) Engine output (tail): [engine] Fatal error")
+
+
+@pytest.mark.parametrize("raw,subject,sentence", [
+    (_TOKEN_401, "",
+     "GitHub didn't accept the access token, so the pull request couldn't be opened. Ask your "
+     "admin to reconnect GitHub in Integrations, then Resume."),
+    (_SESSION_LIMIT, "review",
+     "The code review stopped because the AI engine reached its usage limit (resets 1:20 AM, "
+     "Asia/Kolkata). The code has not been reviewed yet. Resume once the limit resets."),
+    ("code review did not complete: Command failed with exit code 1 Engine output (tail): x",
+     "review",
+     "The code review stopped because the AI engine closed before it finished. The code has not "
+     "been reviewed yet. Resume to run the review again."),
+    ("code review did not complete: the companion reported no reason", "review",
+     "The code review stopped before it finished, and no reason was reported. The code has not "
+     "been reviewed yet. Resume to run the review again."),
+    ("Command failed with exit code 2 Engine output (tail): x", "",
+     "The build stopped because the AI engine closed before it finished. Resume to carry on "
+     "from the step that stopped."),
+])
+def test_each_failure_reads_as_the_approved_sentence(raw, subject, sentence):
+    assert ba.classify_build_failure(raw, subject=subject) == sentence
+
+
+def test_a_token_rejected_while_merging_says_merging():
+    out = ba.classify_build_failure("merge failed: GitHub PUT /repos/x/pulls/3/merge -> 401")
+    assert "couldn't be merged" in out and "401" not in out
+
+
+def test_a_failed_run_is_never_told_to_resume():
+    out = ba.classify_build_failure(_TOKEN_401, parked=False)
+    assert "Resume" not in out and out.endswith("then try again.")
+
+
+def test_a_parked_review_stores_the_sentence_the_detail_and_what_is_kept(world):
+    """The step being resumed says it was the REVIEW — not the words of the message."""
+    world.wi.state = WorkItem.State.IN_PROGRESS
+    world.wi.save(update_fields=["state"])
+    ba.park_build_core(_inp(world), "Command failed with exit code 1 Engine output (tail): boom",
+                       "run_code_review")
+    world.run.refresh_from_db()
+    out = world.run.outputs
+    assert out["error"].startswith("The code review stopped because the AI engine closed")
+    assert "boom" in out["error_detail"] and "boom" not in out["error"]
+    assert out["kept"] == ba.BUILD_KEPT
+    ev = Event.objects.filter(target_id=str(world.run.id), action="build.parked").latest("ts")
+    assert ev.payload["reason"] == "code review stopped: the AI engine closed before it finished"
+
+
+def test_resume_clears_the_detail_and_the_kept_line(world):
+    ba.park_build_core(_inp(world), _TOKEN_401, "open_build_pr")
+    ba.resume_build_core(_inp(world))
+    world.run.refresh_from_db()
+    for key in ("error", "error_detail", "kept", "resumable"):
+        assert key not in world.run.outputs
+
+
+def test_the_console_lines_say_paused_and_stopped_not_the_raw_text(world):
+    from api.serializers import EventSerializer
+    from orchestration.review_provider import record_review_report
+
+    record_review_report(tenant_id=str(world.t.id), run_id=str(world.run.id), body="",
+                         status="failed", message="Command failed with exit code 1 (x)")
+    ba.park_build_core(_inp(world), "code review did not complete: exit code 1",
+                       "run_code_review")
+    lines = {e.action: EventSerializer(e).data["message"]
+             for e in Event.objects.filter(target_id=str(world.run.id))}
+    assert lines["review.reported"] == \
+        "Code review stopped — the AI engine closed before it finished"
+    assert lines["build.parked"].startswith("Build paused — code review stopped:")
+    assert "Command failed" not in " ".join(lines.values())

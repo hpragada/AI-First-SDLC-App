@@ -18,7 +18,7 @@ import { CancelWorkItem } from "./CancelWorkItem";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
-import { artifactsForWorkItem, gateLink } from "../../links";
+import { artifactLink, artifactsForWorkItem, gateLink } from "../../links";
 import { useArtifactPreview } from "../observability/hooks";
 import { repoRoleLabel, workItemTypeLabel } from "../../labels";
 import { roleLabel } from "../identity/roles";
@@ -30,7 +30,7 @@ import type { WorkItemCard } from "../../types";
 // same text 09b reads when it writes the script, and it cannot drift when Testing re-runs.
 function TestCasePanel({ artifactId }: { artifactId: string }) {
   const preview = useArtifactPreview(artifactId);
-  const link = <Link to={`/artifacts/${artifactId}`} className="t-sm">View artifact</Link>;
+  const link = <Link to={artifactLink(artifactId)} className="t-sm">View artifact</Link>;
   return (
     <Panel title="Test case" actions={link}>
       {preview.isLoading ? (

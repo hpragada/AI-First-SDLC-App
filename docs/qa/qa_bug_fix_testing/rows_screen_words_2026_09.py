@@ -210,6 +210,36 @@ ROWS = {
  "PASS: headed 'Lifecycle - Planning'.\n"
  "FAIL: the word 'tier' in any heading, or a story showing a repository, branch or merge gate."),
 
+281: ("SET UP FIRST",
+ "When a build paused on an error, the run console showed the raw failure: a rejected GitHub "
+ "token read 'pr/gate setup failed: CapabilityError: GitHub GET ... -> 401', run straight into "
+ "the next sentence. A code review stopped by the AI engine's session limit was called a failed "
+ "build and followed by ten lines of the engine's own output.",
+ "The banner now says one plain sentence - what stopped, why, and what to do - and names the "
+ "code review when it was the review that stopped. 'Nothing you've done is lost' is its own line. "
+ "The raw text is kept under a closed 'Technical details'. The log lines read 'Build paused' and "
+ "'Code review stopped'.",
+ "SET UP A: a project whose GitHub connection uses a token you can revoke.\n"
+ "1. Start a build; once it is running, revoke the token on GitHub.\n"
+ "2. Let the build reach the step that opens the pull request, then open its run console.\n"
+ "PASS: 'GitHub didn't accept the access token, so the pull request couldn't be opened. Ask your "
+ "admin to reconnect GitHub in Integrations, then Resume.'\n"
+ "PASS: 'Nothing you've done is lost - the build, branch and pull request are kept.' on its own "
+ "line.\n"
+ "PASS: 'Technical details' is closed; opening it shows the GitHub call and the 401.\n"
+ "FAIL: 'pr/gate setup failed', 'CapabilityError' or '401' in the sentence itself.\n"
+ "SET UP B: a build whose code review stops part way (stop the companion during the review, or "
+ "let the AI engine reach its usage limit).\n"
+ "3. Open the run console.\n"
+ "PASS: the sentence starts 'The code review stopped because ...' and says 'The code has not "
+ "been reviewed yet.' A usage limit also gives the time it resets.\n"
+ "PASS: the log lines read 'Code review stopped - ...' and 'Build paused - code review "
+ "stopped: ...', with no engine output in them.\n"
+ "FAIL: 'The AI engine exited before finishing the build', 'review already completed', or "
+ "lines of engine output in the banner or the log.\n"
+ "4. Click Resume.\n"
+ "PASS: only the review runs again."),
+
 280: ("DEV CHECK",
  "When a phase ran again, the human's earlier answers to its questions were fed back to the agent "
  "- but the same set of answers could be fed back twice, and the list was oldest first while the "

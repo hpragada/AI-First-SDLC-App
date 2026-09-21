@@ -24,6 +24,23 @@ from orchestration.build_workflow import BuildWorkflow
 
 _TEMPORAL = "localhost:7233"
 
+# The real gate -> workflow signal, captured at import: `conftest.py` swaps it for a no-op in
+# EVERY test (so gate tests run without a cluster), and that no-op meant a merge-gate approval
+# here never reached the workflow — each test that approves a gate waited for ever once a local
+# Temporal was up (and simply skipped when it was not, which is how nobody noticed).
+from apps.gates import services as _gate_services  # noqa: E402
+
+_REAL_GATE_SIGNAL = _gate_services._default_signal_sender
+
+
+@pytest.fixture(autouse=True)
+def _real_gate_signal(_noop_gate_signal_sender, monkeypatch):
+    """These tests drive a real (local) workflow, so a gate decision must really signal it. Only
+    this module: every other test keeps the no-op and never reaches a Temporal server. The
+    signal goes to `settings.TEMPORAL_HOST`, which `_skip_if_no_temporal` points at the LOCAL
+    server — never the shared one in `.env`."""
+    monkeypatch.setattr(_gate_services, "_default_signal_sender", _REAL_GATE_SIGNAL)
+
 
 class _FakeCodeHost:
     def __init__(self):
@@ -359,6 +376,60 @@ def test_build_workflow_remediation_loop(monkeypatch):
     assert result["status"] == "completed"
     child = WorkItem.objects.get(parent_id=wi.id, type=WorkItem.Type.TASK)
     assert child.external_ref["rem"] == "REM-C1" and child.state == WorkItem.State.DONE
+
+
+@pytest.mark.django_db(transaction=True)
+def test_build_workflow_a_review_that_never_ran_parks_then_resumes_only_the_review(monkeypatch):
+    """Bugs S.No 266: a review the companion reports as FAILED (the engine died before a verdict)
+    must never pass as a clean review. The run parks, resumable, with no merge gate opened; Resume
+    re-runs ONLY the review — the build is not re-dispatched — and a clean re-review then reaches
+    the merge gate as normal."""
+    _skip_if_no_temporal(monkeypatch)
+    monkeypatch.setattr("integrations.registry.get_capability", lambda tid, cap: _FakeCodeHost())
+
+    from orchestration import build_activities as ba
+    from orchestration.review_provider import ReviewUnavailableError
+
+    calls = {"review": 0}
+
+    class _DiesOnceThenClean:
+        def review(self, inp, pr_ref):
+            calls["review"] += 1
+            if calls["review"] == 1:
+                raise ReviewUnavailableError("code review did not complete: session limit")
+            return []
+
+    monkeypatch.setattr(ba, "get_review_provider", lambda: _DiesOnceThenClean())
+    tenant, _project, wi, run, reviewer, inp = _seed()
+
+    async def _drive():
+        client = await _temporal_client()
+        task_queue = f"build-{uuid.uuid4()}"
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            async with await _worker_ctx(client, task_queue, executor):
+                handle = await client.start_workflow(
+                    BuildWorkflow.run, inp, id=f"build-run-{run.id}", task_queue=task_queue,
+                )
+                await _poll(lambda: _run_status(str(run.id)) == Run.Status.RUNNING)
+                await handle.signal("build_reported", BuildReport(
+                    status="ok", branch="feature/ST-1", head_sha="abc",
+                    changed_files=["login.py"]))
+                await _poll(lambda: _parked(str(run.id)))
+                assert await handle.query("status") == "parked"
+                # Parked on the review: no merge gate was opened over the review that never ran.
+                assert await asyncio.to_thread(_pending_merge_approval, str(run.id)) is None
+                await handle.signal("resume_run")
+                approval_id = await _poll(lambda: _pending_merge_approval(str(run.id)))
+                await asyncio.to_thread(_approve, str(tenant.id), approval_id, str(reviewer.id))
+                return await handle.result()
+
+    result = asyncio.run(_drive())
+    assert result["status"] == "completed"
+    assert calls["review"] == 2          # the review ran again on resume, once
+    run.refresh_from_db()
+    assert run.status == Run.Status.COMPLETED
+    # Resume did not rebuild: exactly one code artifact, from the one build.
+    assert Artifact.objects.filter(run_id=run.id, type="code").count() == 1
 
 
 @pytest.mark.django_db(transaction=True)

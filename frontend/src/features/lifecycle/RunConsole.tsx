@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { Badge, Banner, Breadcrumb, Button, Console, Panel, Spinner, WriteError } from "../../components/ui";
+import { Badge, Banner, Breadcrumb, Button, Console, Disclosure, Panel, Spinner, WriteError } from "../../components/ui";
 import { engineLabel } from "../../labels";
 import { isTerminalState, workerStalled, type RunEvent } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
@@ -140,6 +140,23 @@ function RunConsoleLive() {
   const lastError = [...(events.data ?? [])].reverse().find((e) => e.kind === "err")?.message;
   const failureReason =
     (typeof outputsError === "string" && outputsError) || lastError || undefined;
+  // Run-console wording (2026-09-21, option A): the sentence above is for the reader; the raw
+  // text behind it (the engine's output, the HTTP call) is `error_detail`, shown only under a
+  // closed "Technical details". `kept` is what the platform says a paused run keeps — a build
+  // keeps its build, branch and pull request; other runs fall back to the general line.
+  const outputsRecord =
+    run.data.outputs && typeof run.data.outputs === "object"
+      ? (run.data.outputs as Record<string, unknown>)
+      : {};
+  const errorDetail =
+    typeof outputsRecord.error_detail === "string" ? outputsRecord.error_detail : "";
+  const kept =
+    typeof outputsRecord.kept === "string" ? outputsRecord.kept : "the work already finished is kept";
+  const technicalDetails = errorDetail ? (
+    <Disclosure summary="Technical details">
+      <pre className="t-mono u-wrap-pre">{errorDetail}</pre>
+    </Disclosure>
+  ) : null;
   // A run parked at an ERROR is resumable from the step that failed (Bugs S.No 157) — its
   // workflow is still alive and waiting. That's what distinguishes it from a companion-offline
   // park (S.No 89), which is only recoverable via reconnect/takeover.
@@ -252,6 +269,7 @@ function RunConsoleLive() {
                 : // "The engine exited before reporting. No artifact was registered." — three of
                   // our words in one sentence, for the case where we have no reason to give.
                   "This task stopped before it finished. Nothing was saved from it — it can be run again."}
+            {run.data.status !== "rejected" && technicalDetails}
           </Banner>
         )}
         {view === "failed" && typeof retryRunId === "string" && (
@@ -266,10 +284,15 @@ function RunConsoleLive() {
         )}
         {view === "parked" && isResumable && (
           <Banner variant="warning" title="Paused on an error — you can carry on from here">
-            {failureReason ? `Reason: ${failureReason}` : "This run hit an error and paused."}
-            {" "}Nothing you've done is lost — the work already finished is kept. Fix the cause if
-            you need to, then <strong>Resume</strong> to continue from the step that failed
-            instead of starting the phase over. Or take over to end this run.
+            {/* Two paragraphs: the reason used to run straight into "Nothing you've done is
+                lost" ("…-> 401 Nothing you've done…"). */}
+            <p>{failureReason || "This run hit an error and paused."}</p>
+            <p>
+              Nothing you&apos;ve done is lost — {kept}. <strong>Resume</strong> continues from
+              the step that stopped instead of starting the phase over, or take over to end this
+              run.
+            </p>
+            {technicalDetails}
           </Banner>
         )}
 

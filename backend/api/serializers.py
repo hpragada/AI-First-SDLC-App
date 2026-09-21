@@ -549,6 +549,13 @@ class EventSerializer(serializers.ModelSerializer):
         label = (obj.action or "event").replace(".", " ").replace("_", " ").strip()
         label = label[:1].upper() + label[1:]
         payload = obj.payload or {}
+        # Run-console fix (2026-09-21, option A): two lines named the machinery, not what the
+        # reader sees. The banner above them says "Paused", and a failed review report is a
+        # review that STOPPED, not a report that arrived.
+        if obj.action == "build.parked":
+            label = "Build paused"
+        elif obj.action == "review.reported" and payload.get("status") == "failed":
+            label = "Code review stopped"
         # `reason` covers build.failed/build.takeover (Bugs S.No 139 — the classified failure
         # reason); without it the console showed a bare "Build failed" with no explanation.
         for key in ("message", "detail", "error", "reason", "comment", "phase",

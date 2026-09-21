@@ -24,7 +24,7 @@ PASSES = {
    [45,56,58,70,189,195,249,250,218,222,263,273],
  "11. Build, code review and merge":
    [72,73,86,87,88,110,111,114,115,116,127,128,129,130,133,134,136,137,139,141,
-    144,161,162,199,200,201,203,207,208,239,240,241,243,132,266,267],
+    144,161,162,199,200,201,203,207,208,239,240,241,243,132,266,267,281],
  "12. Security, testing, CI/CD and deployment phases":
    [176,177,179,180,185,186,193,194,85,178,215,278],
  "13. Failure, recovery and resilience":
@@ -38,7 +38,7 @@ if __name__ == "__main__":
                   209,210,213,216,
                   270,271}   # Screen Words groups 1 and 1b - on hold, no code behind them
     SKIP = {145, 146}
-    expected = {n for n in range(1, 281) if n not in TRULY_OPEN and n not in SKIP}
+    expected = {n for n in range(1, 282) if n not in TRULY_OPEN and n not in SKIP}
     got, dupes = set(), []
     for k, v in PASSES.items():
         for n in v:

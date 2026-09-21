@@ -520,8 +520,17 @@ def record_review_report(*, tenant_id, run_id, body, status="ok", message="") ->
         run.outputs = {**(run.outputs or {}), "review_body": body or "",
                        "review_status": status, "review_error": error}
         run.save(update_fields=["outputs", "updated_at"])
-        tools.log_event(tenant_id, "companion", "review.reported", "run", str(run_id),
-                        {"status": status, "error": error[:500]})
+        payload = {"status": status}
+        if status == "failed":
+            # The run console prints this event as a line; it used to print the engine's raw
+            # output ("Command failed with exit code 1 …"). The line gets the cause in words,
+            # the raw text is kept under `technical` for the ledger (run-console fix 2026-09-21).
+            from .build_activities import describe_build_failure
+
+            payload["reason"] = describe_build_failure(error, subject="review",
+                                                       parked=True).cause
+            payload["technical"] = error[:500]
+        tools.log_event(tenant_id, "companion", "review.reported", "run", str(run_id), payload)
     return {"run_id": str(run_id), "recorded": True}
 
 
