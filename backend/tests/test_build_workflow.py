@@ -24,22 +24,9 @@ from orchestration.build_workflow import BuildWorkflow
 
 _TEMPORAL = "localhost:7233"
 
-# The real gate -> workflow signal, captured at import: `conftest.py` swaps it for a no-op in
-# EVERY test (so gate tests run without a cluster), and that no-op meant a merge-gate approval
-# here never reached the workflow — each test that approves a gate waited for ever once a local
-# Temporal was up (and simply skipped when it was not, which is how nobody noticed).
-from apps.gates import services as _gate_services  # noqa: E402
-
-_REAL_GATE_SIGNAL = _gate_services._default_signal_sender
-
-
-@pytest.fixture(autouse=True)
-def _real_gate_signal(_noop_gate_signal_sender, monkeypatch):
-    """These tests drive a real (local) workflow, so a gate decision must really signal it. Only
-    this module: every other test keeps the no-op and never reaches a Temporal server. The
-    signal goes to `settings.TEMPORAL_HOST`, which `_skip_if_no_temporal` points at the LOCAL
-    server — never the shared one in `.env`."""
-    monkeypatch.setattr(_gate_services, "_default_signal_sender", _REAL_GATE_SIGNAL)
+# These tests approve gates on a real LOCAL workflow, so a decision must really signal it (see
+# `real_gate_signal` in conftest.py). `_skip_if_no_temporal` points TEMPORAL_HOST at localhost.
+pytestmark = pytest.mark.usefixtures("real_gate_signal")
 
 
 class _FakeCodeHost:

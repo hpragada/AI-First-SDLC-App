@@ -363,6 +363,7 @@ async def _poll(fn, *, tries=120, delay=0.2):
     raise AssertionError("condition not met before timeout")
 
 
+@pytest.mark.usefixtures("real_gate_signal")  # approves a gate on a LOCAL workflow
 @pytest.mark.django_db(transaction=True)
 def test_acceptance_design_phase_wcag_gate_live(monkeypatch):
     _skip_if_no_temporal(monkeypatch)

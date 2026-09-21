@@ -496,8 +496,9 @@ it and fails there the same way. Re-verified on 2026-09-21 after pulling `734632
 | `test_companion_runner` ×2 | Fake transport takes 3 arguments, now called with 4 | `state_client` gained a parameter; the fakes did not |
 | `test_guardrails::test_run_build_clean_change_reports_ok` | `git push -u origin` failed: no `origin` | Depends on the machine's clone having an `origin` remote |
 | `test_a11y_axe_execution` (line 61) | Expects "Level A failure is `Critical`" in the Testing agent's instructions | The agent text was reworded in `db3be69` (WCAG 2.2 sweep) and the test was not; this batch changed no agent file |
-| `test_security_phase::test_classify_phase_failure_maps_bare_exit_code` | The message now says "The AI engine…" | Asserts old wording of the phase-failure message |
+| ~~`test_security_phase::test_classify_phase_failure_maps_bare_exit_code`~~ | **Fixed 2026-09-21** with the agent-run wording change — it now checks the new sentence | — |
 | **Added 2026-09-21** — `test_build_workflow` ×3 (merge conflict re-opens the gate; merge error parks then resumes; parked build abandons) | Two time out waiting for the park; one raises `SynchronousOnlyOperation` (a database read from async code in the test's `_run_status`) | The park tests' 20-second poll may be shorter than the merge retry policy. Same result on `f870dea`, before the dev's commits |
+| **Added 2026-09-21** — `test_acceptance_slice::test_phase0_acceptance_slice` | `WriteCompletenessError` — "gate never opened" | Same cause as the phase 4.5 / 4.7 acceptance tests above. It used to hang (see below), so this failure was never seen |
 | **Added 2026-09-21** — `test_acceptance_phase2::test_acceptance_build_slice_two_repos` | `git push -u origin` failed: no `origin` | Same machine dependency as the guardrails test |
 
 **How the build-workflow tests are run.** They need a **local** Temporal (`docker compose up -d
@@ -509,7 +510,16 @@ signal for its own tests only (pointed at the local server, never the shared one
 
 **Flaky, not failing** (pass on rerun): `test_a11y_scope_rest` line 405 (below); the companion's
 `test_the_engine_log_captures…` (failed once, only when run beside other files — order-dependent);
-and one build-workflow run.
+and `test_build_workflow_request_changes_revises_in_place_then_merges`, which timed out into
+"takeover" once under load and passes on its own.
+
+**The same hang, in four more places, fixed the same way.** `test_gate_service`'s real-signal
+test and the live acceptance tests (`test_acceptance_phase2` two-repo slice,
+`test_acceptance_slice`, `test_acceptance_phase3` live WCAG gate) approve gates through
+`decide_gate` and hung whenever a local Temporal was up. `conftest.py` now offers an OPT-IN
+`real_gate_signal` fixture; each of those tests — and `test_build_workflow.py` — opts in
+individually, and every one of them points Temporal at the LOCAL server first. Nothing opts in
+file-wide, so no other test can reach a Temporal server this way.
 
 ## Also found, not fixed
 
@@ -532,6 +542,9 @@ early, and a review with no reason each read as the approved sentence, and a sto
 named as the review — decided by the step being resumed (`run_code_review`), not by the message's
 words. A failed (not paused) run is never told to Resume. The raw text is stored as
 `outputs.error_detail` and shown under a closed "Technical details"; `outputs.kept` says what a
-paused build keeps. **Not changed:** the planning-phase classifier in `orchestration/activities.py`
-(agent runs) still pastes the engine's output — the same fix applies there, but it was not in the
-approved scope.
+paused build keeps. **Agent runs, same day (team: "apply the same fix to the agent runs too").**
+`classify_phase_failure` now uses the same sentences, naming the phase ("The PRD phase stopped
+because the AI engine reached its usage limit (resets 1:20 AM, Asia/Kolkata). Resume once the limit
+resets."). All three agent-run paths store `error_detail` for "Technical details" — including the
+**park path, which had stored its reason exactly as raised, never rewritten at all**. Log lines
+read "Run paused — stopped: …" and "Run failed — …".

@@ -238,7 +238,14 @@ ROWS = {
  "FAIL: 'The AI engine exited before finishing the build', 'review already completed', or "
  "lines of engine output in the banner or the log.\n"
  "4. Click Resume.\n"
- "PASS: only the review runs again."),
+ "PASS: only the review runs again.\n"
+ "SET UP C: a planning phase (for example PRD) that stops part way - stop the companion during "
+ "the run, or let the AI engine reach its usage limit.\n"
+ "5. Open that run's console.\n"
+ "PASS: the sentence names the phase, e.g. 'The PRD phase stopped because the AI engine ...', "
+ "with 'Technical details' closed underneath, and the log line reads 'Run paused - ...' or "
+ "'Run failed - ...'.\n"
+ "FAIL: engine output or 'exit code' in the sentence."),
 
 280: ("DEV CHECK",
  "When a phase ran again, the human's earlier answers to its questions were fed back to the agent "

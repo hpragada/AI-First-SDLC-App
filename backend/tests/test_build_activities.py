@@ -1031,10 +1031,38 @@ def test_the_planning_path_classifies_the_same_way():
 
     raw = ("Command failed with exit code 1 (exit code: 1)\nEngine output (tail):\n"
            "[engine] Claude AI usage limit reached|1755432000")
-    out = classify_phase_failure(raw)
-    assert "usage or rate limit" in out.lower() and "resets at" in out.lower()
+    out = classify_phase_failure(raw, phase="ux")
+    assert out.startswith("The UX phase stopped because the AI engine reached its usage limit")
+    assert "resets 2025-08-17" in out
     bare = classify_phase_failure("Command failed with exit code 1 (exit code: 1)")
-    assert "most common cause" not in bare.lower() and "companion-engine.log" in bare
+    assert "most common cause" not in bare.lower() and "closed before it finished" in bare
+
+
+def test_a_paused_phase_reads_like_a_paused_build_and_keeps_the_raw_text(world):
+    """The agent-run park stored its reason exactly as raised — the one path never rewritten.
+    It now says one sentence, keeps the raw text for "Technical details", and clears both on
+    resume (team: "apply the same fix to the agent runs too", 2026-09-21)."""
+    from orchestration.activities import park_run_core, resume_run_state_core
+    from orchestration.types import AgentRunInput
+
+    inp = AgentRunInput(run_id=str(world.run.id), tenant_id=str(world.t.id),
+                        project_id=str(world.p.id), work_item_id=str(world.wi.id),
+                        agent_spec_id=str(world.spec.id), phase="prd")
+    raw = ("Command failed with exit code 1 Last agent output: You've hit your session limit"
+           " · resets 1:20am (Asia/Kolkata)")
+    park_run_core(inp, raw, "execute_agent")
+    world.run.refresh_from_db()
+    assert world.run.outputs["error"] == (
+        "The PRD phase stopped because the AI engine reached its usage limit (resets 1:20 AM, "
+        "Asia/Kolkata). Resume once the limit resets.")
+    assert world.run.outputs["error_detail"] == raw
+    ev = Event.objects.filter(target_id=str(world.run.id), action="run.parked").latest("ts")
+    from api.serializers import EventSerializer
+    assert EventSerializer(ev).data["message"] == \
+        "Run paused — stopped: the AI engine reached its usage limit"
+    resume_run_state_core(inp)
+    world.run.refresh_from_db()
+    assert "error" not in world.run.outputs and "error_detail" not in world.run.outputs
 
 
 # ── an engine exit must PARK, not kill the run (Bugs S.No 146, second pass) ──────────────────

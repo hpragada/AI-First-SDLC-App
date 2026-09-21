@@ -177,6 +177,7 @@ def _patch_cores(monkeypatch, calls):
     monkeypatch.setattr(activities, "reject_run_core", rec("reject", {"status": "rejected"}))
 
 
+@pytest.mark.usefixtures("real_gate_signal")   # the REAL sender is what is under test
 async def test_default_signal_sender_resumes_real_workflow(monkeypatch):
     from django.conf import settings
     from temporalio.client import Client

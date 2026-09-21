@@ -554,6 +554,8 @@ class EventSerializer(serializers.ModelSerializer):
         # review that STOPPED, not a report that arrived.
         if obj.action == "build.parked":
             label = "Build paused"
+        elif obj.action == "run.parked":
+            label = "Run paused"
         elif obj.action == "review.reported" and payload.get("status") == "failed":
             label = "Code review stopped"
         # `reason` covers build.failed/build.takeover (Bugs S.No 139 — the classified failure

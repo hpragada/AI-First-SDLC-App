@@ -635,11 +635,14 @@ def _reset_hint(reason: str) -> str:
     return ""
 
 
-def describe_build_failure(reason: str, *, subject: str = "", parked: bool = True) -> FailureText:
+def describe_build_failure(reason: str, *, subject: str = "", parked: bool = True,
+                           what: str = "") -> FailureText:
     """Map a raw failure reason to what the reader is told (Bugs S.No 139, 146, 266).
 
     `subject` is "review" when the code REVIEW stopped and "build" otherwise; when omitted it is
-    read from the workflow's step prefix. `parked` says whether the run can be resumed - a failed
+    read from the workflow's step prefix. `what` names the thing that stopped for a caller
+    that is not a build ("The PRD phase" — the agent-run path). `parked` says whether the run
+    can be resumed - a failed
     run cannot, so it is never told to press Resume.
 
     What changed on 2026-09-21: the engine's raw output and HTTP calls used to be pasted into this
@@ -648,7 +651,7 @@ def describe_build_failure(reason: str, *, subject: str = "", parked: bool = Tru
     notice were not recognised at all. The raw text is now kept apart by the caller."""
     step, rest = _split_step(reason)
     subject = subject or ("review" if step == "review" else "build")
-    what = "The code review" if subject == "review" else "The build"
+    what = what or ("The code review" if subject == "review" else "The build")
     unreviewed = " The code has not been reviewed yet." if subject == "review" else ""
     again = ("Resume to run the review again." if subject == "review"
              else "Resume to carry on from the step that stopped.")
@@ -709,8 +712,9 @@ def describe_build_failure(reason: str, *, subject: str = "", parked: bool = Tru
         tail = f"{unreviewed} {again}" if parked else unreviewed
         return FailureText("The code review stopped before it finished, and no reason was "
                            f"reported.{tail}".rstrip(), "no reason was reported")
-    if r.strip() in ("", "build reported failed", "remediation build failed"):
-        return FailureText("The build agent failed without reporting a specific reason.",
+    if r.strip() in ("", "build reported failed", "remediation build failed",
+                     "phase reported failed"):
+        return FailureText(f"{what} stopped without reporting a specific reason.",
                            "no reason was reported")
     if step:
         # An unrecognised failure at a step we know: name the step; the rest is in the details.
