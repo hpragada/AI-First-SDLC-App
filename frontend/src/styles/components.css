@@ -147,6 +147,11 @@
   box-shadow: var(--shadow-lg);
   font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-strong);
   white-space: normal; overflow-wrap: anywhere;
+  /* The pointer passes through to the row underneath. Drawn over that row, the peek used to take
+     the pointer itself: the list saw a mouse-leave, closed it, the row saw the mouse again, opened
+     it — a flicker on every movement, and a click on it picked nothing (2026-09-21). It is only
+     ever read, never clicked, so nothing is lost. */
+  pointer-events: none;
 }
 
 /* ChoiceSelect (Bugs S.No 184) — the clarification answer control. Borrows the .select frame and

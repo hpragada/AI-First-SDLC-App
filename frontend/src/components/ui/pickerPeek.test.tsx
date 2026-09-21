@@ -187,3 +187,16 @@ describe("picking", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 });
+
+describe("resting the pointer on the opened-out title", () => {
+  // The flicker the team saw (2026-09-21). The peek is drawn OVER the row, so if it takes the
+  // pointer, the list sees a mouse-leave and closes it, the row sees the mouse again and reopens
+  // it — on every movement. jsdom has no hit-testing, so the loop cannot be driven here; what
+  // prevents it is one style rule, and this pins it.
+  it("lets the pointer through to the row, so it neither flickers nor swallows a click", async () => {
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync("src/styles/components.css", "utf-8");
+    const rule = /\.peek\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toMatch(/pointer-events:\s*none/);
+  });
+});

@@ -261,4 +261,23 @@ ROWS = {
  "PASS: both pass.\n"
  "FAIL: either fails."),
 
+282: ("SET UP FIRST",
+ "On Phases & Runs, hovering a work item whose title was too long for the dropdown made the full "
+ "title flash on and off with every movement of the mouse, and a click could pick nothing. The "
+ "run history filters had the same problem.",
+ "The full title now sits still over the row while the mouse rests on it, and clicking it picks "
+ "that row. Nothing else about how it looks has changed.",
+ "SET UP: a project with at least one work item whose title is too long to fit in the picker.\n"
+ "1. Open Phases & Runs and open the Work item picker.\n"
+ "2. Rest the mouse on a row whose title ends in '...', then move it slowly across the row.\n"
+ "PASS: the full title shows in one box over the row and stays steady.\n"
+ "FAIL: the title flickers, jumps, or disappears while the mouse is still on the row.\n"
+ "3. Click while the full title is showing.\n"
+ "PASS: that work item is picked and the list closes.\n"
+ "4. Move to the next long row.\n"
+ "PASS: the box moves with you; on a short row no box opens.\n"
+ "5. Pick a long title, close the list, then hover the closed field.\n"
+ "PASS: the full title shows steadily over the field.\n"
+ "6. Open a run's history and repeat step 2 in both searchable filter pickers.\n"
+ "PASS: same steady behaviour."),
 }
