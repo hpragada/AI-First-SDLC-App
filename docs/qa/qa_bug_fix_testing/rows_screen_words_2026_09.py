@@ -279,5 +279,8 @@ ROWS = {
  "5. Pick a long title, close the list, then hover the closed field.\n"
  "PASS: the full title shows steadily over the field.\n"
  "6. Open a run's history and repeat step 2 in both searchable filter pickers.\n"
- "PASS: same steady behaviour."),
+ "PASS: same steady behaviour.\n"
+ "7. Pick a work item, then click anywhere on the field again (not only the arrow).\n"
+ "PASS: the list opens straight away, so you can change to another work item.\n"
+ "FAIL: nothing happens until you click somewhere else first or on the arrow."),
 }
