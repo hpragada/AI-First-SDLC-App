@@ -169,7 +169,7 @@ function WorkItemTaskLive() {
 
       <Panel
         flush
-        title="Lifecycle — Build tier"
+        title="Lifecycle — Delivery"
         actions={<span className="t-sm u-muted">Task · build phases only</span>}
       >
         {nodes.length === 0 ? (
@@ -458,7 +458,7 @@ function WorkItemTaskGallery({ view }: { view: TaskView }) {
 
       <Panel
         flush
-        title="Lifecycle — Build tier"
+        title="Lifecycle — Delivery"
         actions={
           view !== "loop-failed" && <span className="t-sm u-muted">Task · build phases only</span>
         }

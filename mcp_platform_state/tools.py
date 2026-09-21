@@ -312,11 +312,14 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
                                        getattr(wi, "description", "")]))
         # Answered clarifications for this work item are replayed into the manifest so a
         # re-dispatched run (e.g. after a companion restart) never re-asks (req #2 durability).
+        # NEWEST FIRST (truncation T13): the section is capped and cut from the tail, so oldest-
+        # first discarded the latest human decision and kept the stalest. On the 2026-08-05 run
+        # the four answers that defined a pivot were exactly the ones that fell off the end.
         answered = (
             Clarification.objects.filter(
                 tenant_id=tenant_id, work_item_id=wi.id,
                 status=Clarification.Status.ANSWERED,
-            ).order_by("answered_at")
+            ).order_by("-answered_at")
             if wi is not None else []
         )
         return {

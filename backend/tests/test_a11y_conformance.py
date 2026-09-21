@@ -429,7 +429,7 @@ def test_the_reviewers_word_always_wins(world):
 def test_a_nonsense_level_from_a_client_is_ignored_not_stored(world):
     rows = criterion_rows(world["t"], world["p"], verdicts={"1.1.1": {"level": "totally_fine"}})
     assert {r["criterion"]: r for r in rows}["1.1.1"]["verdict"] is None
-    with pytest.raises(ConformanceError, match="not a conformance level"):
+    with pytest.raises(ConformanceError, match="isn't a conformance level"):
         save_draft(tenant_id=world["t"], project_id=world["p"], user_id=world["aisha"].id,
                    verdicts={"1.1.1": {"level": "totally_fine"}})
 
@@ -463,10 +463,10 @@ def test_the_prose_and_the_table_cannot_disagree(world):
 # ===========================================================================================
 
 def test_only_the_accessibility_reviewer_may_edit_or_sign(world):
-    with pytest.raises(ConformanceRoleError, match="qa_lead"):
+    with pytest.raises(ConformanceRoleError, match="QA Lead"):
         save_draft(tenant_id=world["t"], project_id=world["p"], user_id=world["dev"].id,
                    scope="mine now")
-    with pytest.raises(ConformanceRoleError, match="qa_lead"):
+    with pytest.raises(ConformanceRoleError, match="QA Lead"):
         _sign(world, user_id=world["dev"].id)
 
 
@@ -481,9 +481,9 @@ def test_signing_records_the_person_the_wording_and_the_evidence(world):
 
 
 def test_signing_needs_a_name_and_an_acknowledgement(world):
-    with pytest.raises(ConformanceError, match="sign with your name"):
+    with pytest.raises(ConformanceError, match="Sign with your name"):
         _sign(world, name="   ")
-    with pytest.raises(ConformanceError, match="confirm you have read"):
+    with pytest.raises(ConformanceError, match="Confirm you have read"):
         _sign(world, acknowledged=False)
     assert A11yConformanceStatement.objects.filter(signed_at__isnull=False).count() == 0
 

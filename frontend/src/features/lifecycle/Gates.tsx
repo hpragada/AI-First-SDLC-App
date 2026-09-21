@@ -116,8 +116,8 @@ function GatesLive() {
   const criteriaList = criteria.data?.criteria ?? [];
   useEffect(() => {
     setSatisfied(Object.fromEntries(criteriaList.map((c) => [c.id, c.satisfied])));
-    // reset when the selected gate (and thus its criteria payload) changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Reset when the selected gate (and thus its criteria payload) changes — deliberately not
+    // on `criteriaList`, which is rebuilt each render and would wipe the reviewer's ticks.
   }, [criteria.data, selected?.id]);
 
   // The confirmation belongs to one decision, not to the screen. Picking another gate clears it,

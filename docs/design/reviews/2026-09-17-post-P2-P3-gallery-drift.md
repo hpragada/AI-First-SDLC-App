@@ -1,5 +1,15 @@
 # Gallery drift after the P2/P3 batches — 17 September 2026
 
+> **Team decision, 21 September 2026: LEAVE — record it and move on, for every item below.**
+> - Items 1–3 (the side menu, the gate panel's *Request changes*, the registry's five statuses):
+>   the differences are accepted as they ship; the mockups are **not** edited.
+> - S-06 Connect your machine, S-11 Integrations grid, S-14 Work Items board: the team compared each
+>   mockup with the running screen and **confirmed they have drifted**; same decision — recorded,
+>   not re-drawn.
+>
+> So the gallery is knowingly behind the app in these six places. Anyone using a mockup here as a
+> spec for new work should check the running screen first.
+
 **Status:** report only. **No mockup file has been edited**, and none should be until the team says
 so, per item by item.
 

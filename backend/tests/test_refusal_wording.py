@@ -55,6 +55,14 @@ REACHABLE = [
     "integrations/github/rest.py",
     "integrations/xray/rest.py",
     "integrations/xray/testmgmt.py",
+    # The accessibility product (Screen Words group 8, team decision 2026-09-21: same rules, this
+    # batch). A tester reaches these by pasting a page list, running an audit, reviewing a finding,
+    # recording a journey or signing the conformance statement.
+    "apps/a11y/routes.py",
+    "apps/a11y/baseline.py",
+    "apps/a11y/review.py",
+    "apps/a11y/journeys.py",
+    "apps/a11y/conformance.py",
 ]
 # Deliberately NOT listed, so nobody adds them thinking they were forgotten:
 #   - api/runner_views.py — the companion's API, not the browser's. Its callers are the companion
@@ -63,6 +71,14 @@ REACHABLE = [
 #     gate"). Rewriting those as client prose would weaken what the agent is told. The rest land in
 #     the companion's terminal log, read by the developer running it — worth a pass of their own,
 #     but a different audience from the screens this group is about.
+#     Team decision 2026-09-21 (Option A): these stay as they are. Text read by the companion and
+#     by the developer running it may be technical; only what reaches a client's screen is held
+#     to this check.
+#   - apps/a11y/journey.py — its raises answer the agent walking a journey, through its MCP tools,
+#     and name those tools on purpose. What the journeys PANEL shows comes from the module's
+#     reason constants, which `test_the_journey_panel_reasons_read_as_sentences` checks below.
+#   - apps/a11y/policy.py — its messages are about the policy file's own settings
+#     (`gate.min_confidence`), read by the admin who wrote that file; naming the setting is the fix.
 #   - management commands (apps/*/management/commands) — a developer's terminal, not a screen.
 #   - orchestration/*activities*, build_report, phase_report, review_provider — they run inside
 #     Temporal workers; a failure there becomes a run's recorded outcome, which the run console
@@ -82,7 +98,15 @@ CLIENT_FACING = {
     "IntegrationError", "RepositoryError", "ApiContractError",
     "InvitationError", "ResetError", "RoleError", "SignupError",
     "CapabilityError", "CapabilityUnavailable",
+    # The accessibility product (group 8).
+    "RouteError", "BaselineError", "ReviewError", "ReviewRoleError", "ReviewLockError",
+    "JourneyRunError", "JourneyRoleError", "JourneyError",
+    "ConformanceError", "ConformanceRoleError",
 }
+
+#: Module helpers that raise one of the classes above for their caller — `_reject("…")` in the
+#: accessibility modules. A raise hidden behind one of these is still a refusal a person reads.
+REJECT_HELPERS = {"_reject"}
 
 ALLOW = "noqa: CLIENT-TEXT"
 
@@ -160,6 +184,13 @@ def _client_messages(path: Path) -> list[tuple[int, str]]:
                 for key, value in zip(node.args[0].keys, node.args[0].values, strict=True):
                     if isinstance(key, ast.Constant) and key.value in ("detail", "error", "reason"):
                         found.extend((node.lineno, text) for text in _sentences(value))
+            continue
+        if (isinstance(node, ast.Call) and getattr(node.func, "id", "") in REJECT_HELPERS):
+            start = node.lineno - 1
+            end = min(getattr(node, "end_lineno", node.lineno), len(lines))
+            if not any(ALLOW in lines[i] for i in range(start, end)):
+                for arg in node.args:
+                    found.extend((node.lineno, text) for text in _sentences(arg))
             continue
         if not isinstance(node, ast.Raise) or node.exc is None:
             continue
@@ -272,3 +303,19 @@ def test_a_refusal_quotes_no_raw_value_or_id(rel, line, text):
     assert not QUOTES_A_VALUE.search(text), (
         f"{rel}:{line} quotes a raw value; name the thing rather than echoing it: {text!r}"
     )
+
+
+def test_the_journey_panel_reasons_read_as_sentences():
+    """Group 8: the journeys panel shows these constants as its "why not" line. They are not
+    raised, so the scan above cannot see them; this holds them to the same three rules."""
+    from apps.a11y import journey
+
+    names = ["NO_JOURNEY_AGENT", "NO_COMPANION", "NO_JOURNEY", "DISPATCH_FAILED", "ALREADY_WALKING",
+             "NOT_THE_REVIEWER", "NO_ADDRESS", "RUN_ENDED_UNFINISHED", "NO_REASON_GIVEN",
+             "NOT_ASKED", "NOTHING_TO_REPORT"]
+    for name in names:
+        text = getattr(journey, name)
+        first = text.lstrip()[:1]
+        assert first == "{" or first.isupper(), f"journey.{name} starts lower-case: {text!r}"
+        assert not INTERNAL_KEYS.search(text), f"journey.{name} names a stored key: {text!r}"
+        assert not QUOTES_A_VALUE.search(text), f"journey.{name} quotes a raw value: {text!r}"

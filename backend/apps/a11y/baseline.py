@@ -68,7 +68,7 @@ def _audit(tenant_id, audit_id):
     with tenant_context(tenant_id):
         audit = A11yBaselineAudit.objects.filter(id=audit_id, tenant_id=tenant_id).first()
     if audit is None:
-        _reject(f"no baseline audit {str(audit_id)!r} in this tenant")
+        _reject("That audit wasn't found in this project.")
     return audit
 
 
@@ -106,7 +106,7 @@ def start_baseline_audit(*, tenant_id, project_id, base_url: str = "", routes=No
         paths = route_paths(tenant_id, project_id)
     else:
         if not isinstance(routes, list | tuple):
-            _reject(f"routes must be a list, not {type(routes).__name__}")
+            _reject("The pages must be given as a list.")
         try:
             paths = [normalise_path(route) for route in routes]
         except RouteError as exc:
@@ -116,7 +116,7 @@ def start_baseline_audit(*, tenant_id, project_id, base_url: str = "", routes=No
     ordered = list(dict.fromkeys(paths))
     if not ordered:
         _reject(
-            "this project has no routes registered, so there is nothing to audit. Register the "
+            "This project has no pages listed, so there is nothing to audit. List the "
             "pages to check first — an audit that visits no pages would report no problems, "
             "which reads exactly like an application with none."
         )

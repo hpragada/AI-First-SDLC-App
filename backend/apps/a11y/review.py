@@ -20,12 +20,15 @@ the object store on demand and hands the bytes straight out. It is never copied 
 """
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from apps.tenancy.context import tenant_context
+
+logger = logging.getLogger(__name__)
 
 #: How long one reviewer holds an item before it returns to the queue by itself (team decision
 #: C1, 2026-08-18). Renewed every time they load the item, so it only lapses when they have
@@ -410,7 +413,7 @@ def open_item(*, tenant_id, project_id, finding_id, user_id, take_lock=True) -> 
             # module write a decision and never project it, so only this one needs the relations.
         ).select_related("last_seen_run__work_item", "first_seen_run__work_item").first()
         if finding is None:
-            raise ReviewError("no such finding on this project")
+            raise ReviewError("That finding wasn't found in this project.")
 
         may = can_review(tenant_id=tenant_id, project_id=project_id, user_id=user_id)
         locked_out = ""
@@ -538,16 +541,16 @@ def adjudicate(*, tenant_id, project_id, finding_id, user_id, decision: str, not
 
     decision = (decision or "").strip().lower()
     if decision not in DECISIONS:
-        raise ReviewError(f"decision must be one of {DECISIONS}, not {decision!r}")
+        raise ReviewError("Choose whether to confirm or reject the finding.")
     note = (note or "").strip()
     if decision == REJECT and not note:
         raise ReviewError(
-            "say why this is fine. Rejecting overrules the evidence on the screen, and the note "
+            "Say why this is fine. Rejecting overrules the evidence on the screen, and the note "
             "is the only record of the reason."
         )
     if not can_review(tenant_id=tenant_id, project_id=project_id, user_id=user_id):
         raise ReviewRoleError(
-            "only the accessibility reviewer (QA Lead) on this project can answer these."
+            "Only the accessibility reviewer (QA Lead) on this project can answer these."
         )
 
     with tenant_context(tenant_id):
@@ -555,7 +558,7 @@ def adjudicate(*, tenant_id, project_id, finding_id, user_id, decision: str, not
             tenant_id=tenant_id, project_id=project_id, id=finding_id,
         ).first()
         if finding is None:
-            raise ReviewError("no such finding on this project")
+            raise ReviewError("That finding wasn't found in this project.")
         holder = lock_holder(finding)
         if holder is not None and str(holder) != str(user_id):
             state = lock_state(finding, user_id=user_id)
@@ -565,7 +568,8 @@ def adjudicate(*, tenant_id, project_id, finding_id, user_id, decision: str, not
             )
         if finding.adjudication != A11yFinding.Adjudication.PENDING:
             raise ReviewError(
-                f"this was already {finding.adjudication} and a decision is not a draft. "
+                f"This was already {finding.get_adjudication_display().lower()}, and a "
+                f"decision is not a draft. "
                 f"Nothing was changed."
             )
 
@@ -632,14 +636,14 @@ def screenshot(*, tenant_id, project_id, finding_id, kind: str = PAGE, object_st
 
     kind = (kind or PAGE).strip().lower()
     if kind not in (PAGE, ELEMENT):
-        raise ReviewError(f"kind must be {PAGE!r} or {ELEMENT!r}, not {kind!r}")
+        raise ReviewError("Choose a picture of the whole page or of one element.")
 
     with tenant_context(tenant_id):
         finding = A11yFinding.objects.filter(
             tenant_id=tenant_id, project_id=project_id, id=finding_id,
         ).first()
         if finding is None:
-            raise ReviewError("no such finding on this project")
+            raise ReviewError("That finding wasn't found in this project.")
         ev = evidence_for(finding)
 
     key = ev["page_ref"] if kind == PAGE else ev["element_ref"]
@@ -651,7 +655,7 @@ def screenshot(*, tenant_id, project_id, finding_id, kind: str = PAGE, object_st
             )
         )
     if not _own_key(tenant_id, project_id, key):
-        raise ReviewError("that image does not belong to this project")
+        raise ReviewError("That picture doesn't belong to this project.")
 
     store = object_store
     if store is None:
@@ -661,4 +665,7 @@ def screenshot(*, tenant_id, project_id, finding_id, kind: str = PAGE, object_st
     try:
         return store.get(key), "image/png"
     except Exception as exc:  # noqa: BLE001 — a missing object is a message, not a 500
-        raise ReviewError(f"the picture could not be read from storage ({exc})") from exc
+        # Screen Words group 8: the storage error went to the screen; it goes to the log.
+        logger.warning("Reading review picture %s failed: %s", key, exc)
+        raise ReviewError("The picture couldn't be loaded. Try again; if it keeps "
+                          "happening, tell your admin.") from exc

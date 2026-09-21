@@ -207,8 +207,8 @@ A work item is **the unit a phase runs on** — and that unit lives at **differe
 
 | Tier | Phases | Granularity | Driven by | Shape |
 |---|---|---|---|---|
-| **Tier 1 — Plan** | Ideation → Requirements → PRD → Architecture → UX → **Task Breakdown** | the **project / release / epic** (one pass) | product_owner, architect, designer | mostly **linear**, each gated |
-| **Tier 2 — Build** | Implementation → Review → Testing → Deploy/Merge | the **individual task / story / defect** (many, in parallel) | engineer, reviewer, qa_lead | **parallel + loops** |
+| **Tier 1 — Plan** | Ideation → Requirements → PRD → Architecture → UX → **Task Breakdown** | the **project / release / epic / story** (one pass) | product_owner, architect, designer | mostly **linear**, each gated |
+| **Tier 2 — Build** | Implementation → Review → Testing → Deploy/Merge | the **individual task / defect** (many, in parallel) | engineer, reviewer, qa_lead | **parallel + loops** |
 
 - **Task Breakdown is the fan-out:** it decomposes the approved plan into **N task work items** (the stories/tasks pushed to Jira). *That is where the granular work items are born.* Everything upstream is project/epic-level; everything downstream is per-task.
 - **Phases are user-triggered one at a time** (the platform never auto-advances) — but they are **not stateless**: each phase consumes the *approved* output of an earlier one (PRD reads Requirements; Implementation reads Tasks + Architecture; Review reads the code; a failing Test spawns a Defect). The work item's **lifecycle is the state model** that (a) confirms the inputs exist, (b) enforces the gate, (c) records provenance — it is **not** a forced wizard.
@@ -221,17 +221,19 @@ A work item is **the unit a phase runs on** — and that unit lives at **differe
 1. **Work Items board/list** — the board columns are **phases**; cards are work items, **filterable/groupable by level** (Epics vs Tasks vs Defects) so the two tiers don't visually collide. Each card shows title, type, current phase, parent (if a child), and any **"needs you"** flags.
 2. **New work item** — type (epic / feature / story / task / defect), feature stream, optional parent. (Most *task*-level items are created automatically by **Task Breakdown**, not by hand — see J16.)
 3. **Work item detail — the type-adaptive lifecycle rail:**
-   - **Epic / Feature** → the **plan-tier** rail (Ideation → Requirements → PRD → Architecture → UX → Task Breakdown) **plus a "Child tasks" section** listing the work items it fanned out into.
-   - **Task / Story** → the **build-tier** rail (Implementation → Review → Test → Deploy/Merge) **only** — never the plan phases — plus a link to its **parent epic** and any **child defects/remediations**.
+   - **Epic / Feature / Story** → the **plan-tier** rail (Ideation → Requirements → PRD → Architecture → UX → Task Breakdown) **plus a "Child tasks" section** listing the work items it fanned out into.
+   - **Task** → the **build-tier** rail (Implementation → Review → Test → Deploy/Merge) **only** — never the plan phases — plus a link to its **parent epic** and any **child defects/remediations**.
 
-   > ⚠️ **Spec and code disagree about `story`, noticed 2026-09-17 — the team has not yet decided
-   > which is right, so nothing has been changed on either side.** This spec puts **story on the
-   > build tier**; the shipped endpoint puts it on the **plan** tier —
-   > `backend/api/views.py:2184`, `tier_map = {"epic": "plan", "story": "plan", "task": "build",
-   > "defect": "remediation"}`. `epic`, `task` and `defect` match the spec exactly; `story` is the
-   > only disagreement. Whichever way it is settled, `SCREEN_INVENTORY.md` S-16 and
-   > `SCREEN_BUILD_MAP.md`'s type-adaptive-rail note say the same thing as this line and must move
-   > with it.
+   > **Settled 2026-09-21 — a story is a planning item (Screen Words group 9, Option A).** This spec
+   > used to put a story on the build tier while the shipped code put it on the plan tier
+   > (`backend/api/views.py`, `tier_map = {"epic": "plan", "story": "plan", "task": "build",
+   > "defect": "remediation"}`). The team chose the code: Task Breakdown fans a story out into
+   > tasks, and it is the tasks that carry a repository, a branch and a merge gate — a story on the
+   > build rail would show a branch it does not own. A story therefore opens the Epic-shaped screen
+   > (S-15) with its children. The rail headings no longer say "tier", which is internal
+   > vocabulary: the plan rail is headed **"Lifecycle — Planning"** and the build rail
+   > **"Lifecycle — Delivery"**. `SCREEN_INVENTORY.md` S-15/S-16 and `SCREEN_BUILD_MAP.md`'s
+   > type-adaptive-rail note were corrected in the same change.
    - **Defect / Remediation** → its minimal rail (Fix → Review → Test) + a link to the **parent** that spawned it.
    Each step shows its state (not started / running / needs answer / awaiting gate / published), and the rail must be able to depict **loops** (review↔fix) and **child branches**, not just a straight line.
 **States:** empty project (no work items → "create your first"); per-phase states on the rail; child-items list (empty until Task Breakdown runs); parent backlink on child items.

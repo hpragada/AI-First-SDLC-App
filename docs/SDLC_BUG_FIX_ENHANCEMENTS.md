@@ -430,3 +430,82 @@ mockups.
 
 Found in passing: two runs created in the same clock tick left "the item's latest run" undefined,
 so a card could take either run's phase and status. The query now has a stable tie-break.
+
+---
+
+# Screen Words Sweep (2026-09-18 and 2026-09-21), commits `014e4b7` and the follow-up
+
+**Status:** built and committed. **No migrations.** Unit tests pass; **the live check is QA's** —
+their rows are in `docs/qa/QA_Bug_Fix_Testing.xlsx`, combined with the P2/P3 batches' pass
+(team decision 2026-09-21), so QA tests once.
+
+**The rule behind all of it:** a client never reads a stored value, an internal key, an id or a
+developer's sentence. One shared list of labels (`frontend/src/labels.ts`, `backend/apps/labels.py`)
+is the only place a stored value becomes a word, and `backend/tests/test_refusal_wording.py` fails
+on any new server refusal that breaks the rule.
+
+| Group | Row | What it does now |
+|---|---|---|
+| 1 · Gate checklist | S.No 270 | **On hold** (team, 2026-09-21). Logged as open. |
+| 1b · Counter sentence | S.No 271 | **On hold**, to be decided together with group 1. Logged as open. |
+| 2 · Publish page | S.No 272 | Status in the Artifacts list's words; "Open its gate" opens this document's gate |
+| 3 · Role names | S.No 273 | Every role named from the shared list |
+| 4 · Stored values | S.No 274 | Every status, phase, drift kind, repository role and type through the shared map. **Option A**: the run console's engine line stays, as product + model |
+| 5 · Server messages | S.No 275 | ~60 refusals rewritten; detail to the log; the wording check guards new ones |
+| 6 · Silent failures | S.No 276 | Profile save, invitation and login-when-down each say what happened |
+| 7 · Hidden screens | S.No 277 | **Option A.** Repositories links to Contracts & drift (split / multi-repo only); a completed or approved run links to its transcript; the pre-4.8 app tree (`App.tsx` + 7 components under `components/`) is deleted — nothing imported it since the app moved to `routes.tsx` |
+| 8 · Accessibility product | S.No 278 | **Included in this batch.** Same rules for the pages list, audit, review, journeys and conformance statement; the wording check covers those modules |
+| 9 · Where a story belongs | S.No 279 | **Option A: a story is a planning item.** The code was right; `UX_JOURNEYS_AND_IA_SPEC.md` §6.0, `SCREEN_INVENTORY.md` S-15/S-16 and `SCREEN_BUILD_MAP.md` were corrected. Rail headings read "Lifecycle — Planning" / "Lifecycle — Delivery" |
+| Truncation T9 + T13 | S.No 280 | Answered clarifications replayed once each, newest first (`truncation_issues_resolve.md`) |
+
+## Decisions the team took, so they are not re-opened
+
+- **Companion messages stay technical (option A).** The ~32 refusals in `api/runner_views.py` are read
+  by the companion program and the agent inside it — several are instructions to the agent — and by
+  the developer running it. They are deliberately outside the wording check; the reason is written
+  at the top of `test_refusal_wording.py`. The same applies to `apps/a11y/journey.py`'s raises,
+  which answer the agent through its MCP tools, and `apps/a11y/policy.py`, which names the policy
+  file's own settings to the admin who wrote it.
+- **Design gallery drift: leave, and record.** The three differences in
+  `docs/design/reviews/2026-09-17-post-P2-P3-gallery-drift.md` (the side menu, the gate panel's
+  third button, the registry's five statuses) and the three screens a person compared (S-06, S-11,
+  S-14 — the team confirmed they have drifted) are recorded there. The mockups were **not** edited:
+  they are the approval record.
+
+## Tracked task — 22 backend tests that fail on the committed code
+
+**Owner: the team, later.** Not caused by this batch: each was checked against the commit before
+it and fails there the same way. Re-verified on 2026-09-21 after pulling `7346321`: these
+22 still fail, and the other tests in the same files that were run alongside them pass.
+
+> ⚠️ **Read before running any of these.** The three journey tests and the five
+> `test_orchestration_activities` tests **connect to Temporal for real**. The repo's `.env` points
+> `TEMPORAL_HOST` at the server shared with the whole team, so running them as they are would start
+> real workflows there. Run them only with `TEMPORAL_HOST=localhost:1` (a dead port), which is how
+> they were checked here. The setting is `TEMPORAL_HOST`, not `TEMPORAL_ADDRESS`.
+
+| Tests | How they fail | Likely cause (not investigated) |
+|---|---|---|
+| `test_journey_brownfield` ×2, `test_journey_greenfield::test_trigger_creates_run` | Cannot connect to Temporal | They trigger a phase without patching the workflow starter. **A safety fix, not just a red test** — see the warning above |
+| `test_orchestration_activities` ×5 (retrigger / revision / conversation) | Cannot connect to Temporal | Same: the retrigger path starts a workflow and the tests do not inject a fake. May also hide a real change in how a revision run is started — worth a look, not a guess |
+| `test_acceptance_phase1` ×3 | `Artifact has no body to export`; `IndexError`; `register_atlassian() got an unexpected keyword argument 'docstore'` | Written against an older connector-registration signature and a stored body that is not there (the greenfield one is the S3 `NoSuchKey` seen earlier — needs someone with bucket access) |
+| `test_acceptance_phase3` ×1 | Expected gate conditions `['no_blocking_test_failures']`, got a longer list | An accessibility gate condition was added later and the test was never updated |
+| `test_acceptance_phase45` ×3 | `WriteCompletenessError` (run registered no artifacts); `403 == 202`; `'stalled' == FAILED` | Written before the write-completeness check, the anonymous-endpoint authorization (S.No 214) and the "stalled" status |
+| `test_acceptance_phase47::test_p47_acceptance_slice` | `WriteCompletenessError` | Same as above |
+| `test_a11y_defects::test_exactly_one_gate_reads_these_defects` | Found `a11ygate.py` **and** `securitygate.py` | A source-scan assertion that predates the security gate |
+| `test_companion_runner` ×2 | Fake transport takes 3 arguments, now called with 4 | `state_client` gained a parameter; the fakes did not |
+| `test_guardrails::test_run_build_clean_change_reports_ok` | `git push -u origin` failed: no `origin` | Depends on the machine's clone having an `origin` remote |
+| `test_a11y_axe_execution` (line 61) | Expects "Level A failure is `Critical`" in the Testing agent's instructions | The agent text was reworded in `db3be69` (WCAG 2.2 sweep) and the test was not; this batch changed no agent file |
+| `test_security_phase::test_classify_phase_failure_maps_bare_exit_code` | The message now says "The AI engine…" | Asserts old wording of the phase-failure message |
+
+## Also found, not fixed
+
+- **59 older ruff findings elsewhere in the backend** (`ruff check .` from `backend/`). The four the
+  team asked for (`Gates.tsx:120`, three in `api/views.py`) and those in
+  `tests/test_frontend_integration.py` are fixed; the rest are in files this batch did not touch.
+- **`test_a11y_scope_rest::…older audit…` (line 405) is flaky**: it failed once in a 12-minute run
+  and passed on two reruns. Two audits created in the same clock tick make "the newest" ambiguous —
+  the same class as the board's tie-break fixed in `b40c557`.
+- **The accessibility judge's failure reason was left as it is.** It carries the raw cause
+  ("temporal is down") into the audit report on purpose — `test_a11y_report*` pin that the report
+  says *why* — and it was outside group 8's approved scope.

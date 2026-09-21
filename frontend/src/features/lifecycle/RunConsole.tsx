@@ -14,7 +14,7 @@ import {
   useTriggerPhase,
   useWorkItem,
 } from "./hooks";
-import { clarificationLink, recoveryLink, runLink } from "../../links";
+import { clarificationLink, recoveryLink, runLink, transcriptLink } from "../../links";
 
 // S-19 view states: dispatched · running · needs-answer · awaiting-gate · completed ·
 // failed · parked.
@@ -202,7 +202,19 @@ function RunConsoleLive() {
         // the h1 above already names that, and swapping one duplicate for another is no fix.
         // What this panel actually holds is the task's progress.
         title="Progress"
-        actions={<Badge variant={BADGE_VARIANT[view]}>{BADGE_LABEL[view]}</Badge>}
+        actions={
+          <span className="u-row">
+            {/* Screen Words group 7 (Option A): the transcript screen was built but nothing
+                linked to it. It lists completed and approved runs, so the link appears on
+                exactly those — a running or failed run has no transcript page to open. */}
+            {(run.data.status === "completed" || run.data.status === "approved") && (
+              <Link to={transcriptLink(run.data.id)} className="t-sm">
+                Full transcript →
+              </Link>
+            )}
+            <Badge variant={BADGE_VARIANT[view]}>{BADGE_LABEL[view]}</Badge>
+          </span>
+        }
       >
         {/* "It will start as soon as your companion claims it" described our machinery competing
             for work. What the reader needs is that it begins on its own. */}

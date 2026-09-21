@@ -96,7 +96,7 @@ function WorkItemEpicLive() {
 
       <Panel
         flush
-        title="Lifecycle — Plan tier"
+        title="Lifecycle — Planning"
         actions={<span className="t-sm u-muted">{itemType} · one pass through plan phases</span>}
       >
         {nodes.length === 0 ? <p className="t-sm u-muted">No phases run yet.</p> : <LifecycleRail nodes={nodes} />}
@@ -278,7 +278,7 @@ function WorkItemEpicGallery({ view }: { view: EpicView }) {
 
       <Panel
         flush
-        title="Lifecycle — Plan tier"
+        title="Lifecycle — Planning"
         actions={<span className="t-sm u-muted">Epic · one pass through plan phases</span>}
       >
         <LifecycleRail nodes={nodes} />

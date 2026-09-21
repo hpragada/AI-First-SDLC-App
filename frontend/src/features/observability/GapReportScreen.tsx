@@ -249,7 +249,7 @@ const RESUME_COPY: Record<GapReportView, { phase: string; body: string; cta: str
   },
   mature: {
     phase: "Task Breakdown",
-    body: "Plan tier is well-covered — fan out into task work items.",
+    body: "Planning is well covered — fan out into task work items.",
     cta: "Resume at Task Breakdown",
   },
 };

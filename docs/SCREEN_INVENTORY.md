@@ -103,16 +103,15 @@
   - *3. Architecture* → WI-492 "Stripe Webhook Integration" (selected, Review Architecture Gate, Jira STR-14).
   - *4. UX Design* → WI-487 "Checkout Flow Redesign" (AI compiling…).
 
-### S-15 · Work Item Detail — EPIC / FEATURE level — J11  **★ signature screen**
-- **Elements:** breadcrumb (Work Items › WI-492), title + ⚡icon, meta (Created 2d ago, Owner Sarah Chen, Jira STR-14), **Edit / [phase] Gate** action; **plan-tier lifecycle rail** (Ideation→Requirements→PRD→Architecture→UX→Task Breakdown with states); **Description & context** panel; **Linked Artifacts** panel (rows with SoR chips + View Traceability link); **Latest AI Run** console snippet (+ View Full Run Console); **Child tasks** section (the fan-out — list of task work items it produced); right-side **attention card** when a gate is pending.
+### S-15 · Work Item Detail — EPIC / FEATURE / STORY level — J11  **★ signature screen**
+- **Elements:** breadcrumb (Work Items › WI-492), title + ⚡icon, meta (Created 2d ago, Owner Sarah Chen, Jira STR-14), **Edit / [phase] Gate** action; **plan-tier lifecycle rail**, headed "Lifecycle — Planning" (Ideation→Requirements→PRD→Architecture→UX→Task Breakdown with states); **Description & context** panel; **Linked Artifacts** panel (rows with SoR chips + View Traceability link); **Latest AI Run** console snippet (+ View Full Run Console); **Child tasks** section (the fan-out — list of task work items it produced); right-side **attention card** when a gate is pending.
 - **States:** mid-pipeline (Architecture = Gate Pending — like the mockup), gate-pending attention card visible, a phase running (console live), needs-answer badge, all-phases-complete.
 - **Sample:** WI-492 "Stripe Webhook Integration"; rail Requirements ✓ Approved · Architecture ● Gate Pending · Build/QA/Deploy upcoming; artifacts "PRD: Stripe Webhook Integration v1.2 (Confluence)", "System Sequence Diagram v0.9 (Figma, Pending Architecture Gate)"; run console "Compiling requirements… [OK] / Generating sequence diagrams… [OK] / Validating against security rules… [OK] / Run completed. Awaiting gate."
 
-### S-16 · Work Item Detail — TASK / STORY level — J16
-> ⚠️ **`story` is disputed** (noticed 2026-09-17, undecided): the shipped endpoint routes a story to
-> the **plan** rail, not the build rail — `backend/api/views.py:2184`. See the boxed note in
-> `UX_JOURNEYS_AND_IA_SPEC.md` §6.0. A **task** is on the build rail in both, so the description
-> below is correct for tasks either way.
+### S-16 · Work Item Detail — TASK level — J16
+> **A story is not on this screen** — settled 2026-09-21 (Screen Words group 9, Option A): a story is
+> a planning item and opens S-15, where its children are listed. See `UX_JOURNEYS_AND_IA_SPEC.md`
+> §6.0. The rail on this screen is headed "Lifecycle — Delivery".
 - **Elements:** same shell but **build-tier rail only** (Implementation→Review→Test→Merge — **no plan phases**); **parent epic backlink**; **child defects/remediations** list; **linked PR** card (draft/open/merged); run console.
 - **States:** implementation running, review loop (Review→back to Implementation, show the loop edge), test failed (defect child created), awaiting merge gate, done.
 - **Sample:** WI-540 "Verify Stripe signing secret" (parent WI-492); PR #218 (draft) on `acme/payments-api`; child defect WI-547 "Signature check rejects valid test events".

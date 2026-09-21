@@ -41,6 +41,7 @@ import hashlib
 
 from django.utils import timezone
 
+from apps.labels import role_label
 from apps.tenancy.context import tenant_context
 from integrations.types import A11Y_HELD_BACK_CLAIMS
 
@@ -694,8 +695,8 @@ def save_draft(*, tenant_id, project_id, user_id, scope=None, body=None, verdict
     """
     if not can_sign(tenant_id=tenant_id, project_id=project_id, user_id=user_id):
         raise ConformanceRoleError(
-            f"only the accessibility reviewer ({ACCESSIBILITY_REVIEWER_ROLE}) on this project "
-            f"can edit the conformance statement."
+            f"Only the accessibility reviewer ({role_label(ACCESSIBILITY_REVIEWER_ROLE)}) on "
+            f"this project can edit the conformance statement."
         )
     row = _statement(tenant_id, project_id)
     changed = False
@@ -710,8 +711,8 @@ def save_draft(*, tenant_id, project_id, user_id, scope=None, body=None, verdict
                 level = (value or {}).get("level")
                 if level is not None and level not in LEVELS:
                     raise ConformanceError(
-                        f"{level!r} is not a conformance level. Use one of: "
-                        f"{', '.join(LEVELS)}."
+                        f"That isn't a conformance level. Use one of: "
+                        f"{', '.join(LEVEL_WORDS[k] for k in LEVELS)}."
                     )
                 merged[str(number)] = {"level": level,
                                        "note": str((value or {}).get("note") or "")}
@@ -749,14 +750,14 @@ def sign(*, tenant_id, project_id, user_id, name: str, acknowledged: bool = Fals
 
     if not can_sign(tenant_id=tenant_id, project_id=project_id, user_id=user_id):
         raise ConformanceRoleError(
-            f"only the accessibility reviewer ({ACCESSIBILITY_REVIEWER_ROLE}) on this project "
-            f"can sign a conformance statement."
+            f"Only the accessibility reviewer ({role_label(ACCESSIBILITY_REVIEWER_ROLE)}) on "
+            f"this project can sign a conformance statement."
         )
     if not (name or "").strip():
-        raise ConformanceError("sign with your name as it should appear on the statement.")
+        raise ConformanceError("Sign with your name as it should appear on the statement.")
     if not acknowledged:
         raise ConformanceError(
-            "confirm you have read the statement and the evidence behind it, including how "
+            "Confirm you have read the statement and the evidence behind it, including how "
             "many criteria were not evaluated. Signing is the whole point of this document."
         )
 

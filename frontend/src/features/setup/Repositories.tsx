@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 
 import { ApiError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
@@ -275,6 +276,14 @@ export function Repositories({ forceView }: { forceView?: RepositoriesView }) {
           {topology && (
             <div className="u-row" style={{ marginBottom: "var(--space-3)" }}>
               <Chip variant={topology === "single" ? undefined : "navy"}>Topology: {topology}</Chip>
+              {/* Screen Words group 7 (Option A): the contracts & drift screen was built with no
+                  way in. Contracts only exist between repositories, so a single-repo project
+                  has nothing there and gets no link. */}
+              {topology !== "single" && (
+                <Link to="/contracts" className="t-sm" style={{ marginLeft: "auto" }}>
+                  API contracts &amp; drift →
+                </Link>
+              )}
             </div>
           )}
           <Panel flush>

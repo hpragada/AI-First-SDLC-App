@@ -46,7 +46,9 @@ from apps.projects.repos import (
     set_default_repository,
     update_repository,
 )
+from apps.registry.catalog import ACTIVE_AGENT_CATALOG as _ACTIVE_CATALOG
 from apps.registry.catalog import gate_role_for
+from apps.registry.catalog import get_by_key as _catalog_get
 from apps.registry.catalog import rides_build as catalog_rides_build
 from apps.registry.models import AgentSpec, Artifact, TraceEdge
 from apps.runs.models import Run
@@ -795,12 +797,12 @@ class ProjectViewSet(
         audit = A11yBaselineAudit.objects.filter(
             tenant_id=self.tenant_id, project_id=project.id, id=audit_id).first()
         if audit is None:
-            return Response({"detail": "no such audit in this project"},
-                            status=status.HTTP_404_NOT_FOUND)  # noqa: CLIENT-TEXT — Group 8
+            return Response({"detail": "That audit wasn't found in this project."},
+                            status=status.HTTP_404_NOT_FOUND)
         if audit.status not in CLOSED_STATUSES:
-            return Response(  # noqa: CLIENT-TEXT — Group 8 (accessibility), on hold
-                {"detail": "this audit has not finished yet, so what it has not looked at is "
-                           "still changing. Wait for it to close."},
+            return Response(
+                {"detail": "This audit hasn't finished yet, so what it hasn't looked at is "
+                           "still changing. Wait for it to finish, then try again."},
                 status=status.HTTP_409_CONFLICT)
         out = rejudge_capture(
             tenant_id=self.tenant_id, project_id=str(project.id), run_id=str(audit.id),
@@ -834,8 +836,8 @@ class ProjectViewSet(
         if request.method == "POST":
             refs = request.data.get("test_refs")
             if refs is not None and not isinstance(refs, list | tuple):
-                return Response({"detail": "test_refs must be a list of test case ids"},
-                                status=status.HTTP_400_BAD_REQUEST)  # noqa: CLIENT-TEXT — Group 8
+                return Response({"detail": "Choose the journeys to start as a list."},
+                                status=status.HTTP_400_BAD_REQUEST)
             try:
                 out = queue_journeys(
                     tenant_id=self.tenant_id, project_id=str(project.id),
@@ -1656,7 +1658,8 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         document into its lifecycle type (Brownfield B2-1). The acting user is the session user
         when present (Brownfield B2-2), falling back to the `user_id` body for pre-auth/test
         callers; the service still enforces the product_owner/admin gate role on that actor.
-        (Hard authentication-gating of this endpoint is tracked separately as X-1, not this batch.)"""
+        (Hard authentication-gating of this endpoint is tracked separately as X-1, not this
+        batch.)"""
         src = self.get_object()
         ser = AdoptSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
@@ -3005,8 +3008,6 @@ class ClarificationViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 
 
 # ── Phase catalog (S-18 trigger picker, gap C) ──────────────────────
-from apps.registry.catalog import ACTIVE_AGENT_CATALOG as _ACTIVE_CATALOG
-from apps.registry.catalog import get_by_key as _catalog_get
 
 # Tier bucket membership — derived from ACTIVE_AGENT_CATALOG so it never drifts.
 # Plan  : onboarding/context phases (00_*) + strategy phases (01_–04_).

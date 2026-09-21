@@ -34,10 +34,8 @@ from apps.integrations.crypto import encrypt_secrets
 from apps.integrations.models import IntegrationConnection
 from apps.projects.models import Project, Repository
 from apps.registry.models import AgentSpec
-from apps.runs.models import Run, RunnerEnrollment
-from apps.tenancy.models import Invitation, Membership, Tenant, User
-from apps.tenancy.services import create_invitation
-
+from apps.runs.models import Run
+from apps.tenancy.models import Membership, Tenant, User
 
 # ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -181,7 +179,8 @@ class TestCsrfEnforcement:
 # ── Runners (S-05 / S-06) ────────────────────────────────────────────────────
 
 class TestRunnerShape:
-    """Frontend Runner type: { id, machine, last_seen, online, projects: [{project_id, project_name}] }
+    """Frontend Runner type:
+      { id, machine, last_seen, online, projects: [{project_id, project_name}] }
     Frontend createRunner body: { project_id: string, label?: string }  (NOT { projects: string[] })
     """
 
@@ -390,7 +389,6 @@ def test_approval_phase_is_the_gate_agent_key(client, project, admin):
     them on a later merge/phase gate (Bugs S.No 106 follow-up)."""
     from apps.gates.models import Approval
     from apps.registry.catalog import seed_agent_specs
-    from apps.runs.models import Run
     from apps.workitems.models import WorkItem
 
     seed_agent_specs(project.tenant)
@@ -477,7 +475,6 @@ def test_phases_catalog_endpoint_exists(client, db):
 def test_gate_criteria_endpoint_exists(client, project, admin):
     """S-22: GET /approvals/{id}/criteria/ → { criteria[], met, total, approve_enabled }"""
     from apps.gates.models import Approval
-    from apps.runs.models import Run
     from apps.workitems.models import WorkItem
     wi = WorkItem.objects.create(
         tenant=admin.tenant, project=project, type="epic", state="in_progress",
@@ -816,7 +813,6 @@ def test_artifact_publish_blocked_without_gate(client, project, admin):
 
 def test_run_takeover_via_run_id(client, project, member):
     """S-32: POST /runs/{id}/take-over/ delegates to work-item takeover service."""
-    from apps.workitems.models import WorkItem
     # We can only call this if a Run exists; test the 404 path is clean
     _login(client, "sarah@acme.com", "s3cret-pass!")
     r = client.post(

@@ -106,7 +106,7 @@ def test_an_edit_survives_the_round_trip_and_a_bad_level_is_refused(world):
 
     bad = client.put(f"{world['base']}/", {"verdicts": {"1.1.1": {"level": "great"}}},
                      format="json")
-    assert bad.status_code == 400 and "not a conformance level" in bad.json()["detail"]
+    assert bad.status_code == 400 and "isn't a conformance level" in bad.json()["detail"]
 
 
 def test_export_is_refused_while_unsigned(world):
@@ -135,7 +135,7 @@ def test_signing_without_the_acknowledgement_is_refused(world):
     response = _client("aisha@acme.test").post(
         f"{world['base']}/sign/", {"name": "Aisha Khan"}, format="json")
     assert response.status_code == 400
-    assert "confirm you have read" in response.json()["detail"]
+    assert 'Confirm you have read' in response.json()["detail"]
 
 
 def test_editing_after_signing_clears_the_signature_over_http(world):

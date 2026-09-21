@@ -25,6 +25,7 @@ confidently on a page nobody asked about.
 from __future__ import annotations
 
 import json
+import logging
 from typing import NoReturn
 
 from apps.tenancy.context import tenant_context
@@ -65,6 +66,9 @@ ENTRY_KEYS = {
 }
 
 
+logger = logging.getLogger(__name__)
+
+
 class RouteError(ValueError):
     """A registered route the platform cannot audit. Carries what was wrong, for a human."""
 
@@ -77,19 +81,20 @@ def normalise_path(raw) -> str:
     """One route path, checked. Raises `RouteError` rather than guessing what was meant."""
     path = str(raw or "").strip()
     if not path:
-        _reject("a route has no path — give the page's path, for example `/checkout`")
+        _reject("A page has no path. Give the page's path, for example /checkout.")
     if "://" in path or path.startswith("//"):
         _reject(
-            f"route {path!r} looks like a full URL. Register the path alone (`/checkout`); "
-            f"where the app is running is recorded on the audit, not on the route, because it "
-            f"changes between machines and the route does not."
+            f"{path} looks like a full web address. Enter the page's path only, such as "
+            f"/checkout — where the app is running is set on the audit, because it changes "
+            f"between machines and the page does not."
         )
     if not path.startswith("/"):
-        _reject(f"route {path!r} must start with `/` — paths are relative to the app's root")
+        _reject(f"{path} must start with a slash, such as /checkout — pages are listed from "
+                f"the app's root.")
     if len(path) > MAX_PATH_CHARS:
-        _reject(f"route {path[:60]!r}… is longer than {MAX_PATH_CHARS} characters")
+        _reject(f"The page {path[:60]}… is longer than {MAX_PATH_CHARS} characters. Shorten it.")
     if any(ch in path for ch in ("\n", "\r", "\t")):
-        _reject(f"route {path!r} contains a line break")
+        _reject("One of the pages contains a line break. Put each page on its own line.")
     # A trailing slash is a different URL to a server and the same page to most routers. Kept
     # exactly as given for that reason — see the module docstring on refusals over repairs —
     # except for the root, where stripping it would leave an empty string.
@@ -104,7 +109,7 @@ def _read_entries(routes) -> dict:
     disagreement would appear as a confirmation screen that did not describe what happened.
     """
     if not isinstance(routes, list | tuple):
-        _reject(f"routes must be a list, not {type(routes).__name__}")
+        _reject("The pages must be given as a list.")
 
     seen: dict[str, dict] = {}
     ignored: dict[str, int] = {}
@@ -114,7 +119,8 @@ def _read_entries(routes) -> dict:
         elif isinstance(raw, str):
             entry = {"path": raw}
         else:
-            _reject(f"entry {index} of {len(routes)} is a {type(raw).__name__}, not a page")
+            _reject(f"Page {index} of {len(routes)} in the list isn't a path. Give each page "
+                    f"as a path, such as /checkout.")
         for key in entry:
             if key not in ENTRY_KEYS:
                 ignored[str(key)] = ignored.get(str(key), 0) + 1
@@ -124,8 +130,8 @@ def _read_entries(routes) -> dict:
             # the answer, so they are handed back rather than described.
             keys = ", ".join(f"`{k}`" for k in entry) or "none"
             _reject(
-                f"entry {index} of {len(routes)} has no `path`. The keys on it are: {keys}. "
-                f"Rename the one holding the page's path to `path`. Nothing was registered."
+                f"Page {index} of {len(routes)} in the list has no path. Its fields are: {keys}. "
+                f"Name the field that holds the page's address `path`. Nothing was added."
             )
         path = normalise_path(entry.get("path"))
         # Last one wins rather than raising: a list naming the same page twice is a
@@ -213,13 +219,13 @@ def register_routes(*, tenant_id, project_id, routes, source: str = "manual",
     from .models import A11yRoute
 
     if source not in A11yRoute.Source.values:
-        _reject(f"`source` is {source!r} — it is one of {', '.join(A11yRoute.Source.values)}")
+        _reject("That isn't a way pages can be added. Nothing was added.")
 
     read = _read_entries(routes)
     seen, ignored = read["seen"], read["ignored"]
     if len(seen) > MAX_ROUTES:
         _reject(
-            f"{len(seen)} routes were given, over the limit of {MAX_ROUTES}. Nothing was "
+            f"{len(seen)} pages were given, over the limit of {MAX_ROUTES}. Nothing was "
             f"stored — audit the pages that matter rather than every page that exists; the "
             f"judgment cap would stop the first pass long before it reached the end of this."
         )
@@ -335,13 +341,13 @@ def _read_lines(raw: str) -> list:
             continue
         if any(ch.isspace() for ch in entry):
             _reject(
-                f"line {number} ({entry!r}) contains a space, so it is not a single path. One "
+                f"Line {number} ({entry}) contains a space, so it is not a single path. One "
                 f"path per line — `/checkout` — or paste a JSON list if you also want to give "
                 f"each page a name."
             )
         paths.append(entry)
     if not paths:
-        _reject("nothing was pasted, so there are no pages to register")
+        _reject("Nothing was pasted, so there are no pages to add.")
     return paths
 
 
@@ -373,22 +379,25 @@ def parse_routes_text(text) -> list:
         return text
     raw = str(text or "").strip()
     if not raw:
-        _reject("nothing was pasted, so there are no pages to register")
+        _reject("Nothing was pasted, so there are no pages to add.")
     if raw[0] not in "[{":
         return _read_lines(raw)
     try:
         parsed = json.loads(raw)
     except ValueError as exc:
+        # Screen Words group 8: the parser's own words ("Expecting value: line 1 column 1")
+        # went to the screen. They go to the log; the person gets what to paste instead.
+        logger.info("A pasted page list was not valid JSON: %s", exc)
         _reject(
-            f"this could not be read as a list of pages ({exc}). Paste a list of paths — "
-            f'["/", "/catalogue"] — or a list of entries carrying `path`.'
+            "This couldn't be read as a list of pages. Paste a list of paths — "
+            '["/", "/catalogue"] — or a list of entries carrying `path`.'
         )
     if isinstance(parsed, dict):
         return [parsed]
     if not isinstance(parsed, list):
         _reject(
-            f"this is a single {type(parsed).__name__}, not a list of pages. Paste a list of "
-            f'paths — ["/", "/catalogue"] — or a list of entries carrying `path`.'
+            "This is a single value, not a list of pages. Paste a list of "
+            'paths — ["/", "/catalogue"] — or a list of entries carrying `path`.'
         )
     return parsed
 
@@ -525,15 +534,15 @@ def update_route(*, tenant_id, project_id, route_id, fields: dict, actor=None) -
     unknown = sorted(set(fields) - set(EDITABLE))
     if unknown:
         _reject(
-            f"{', '.join(repr(k) for k in unknown)} cannot be edited on a page. "
-            f"You can change: {', '.join(EDITABLE)}."
+            f"{', '.join(unknown)} can't be changed on a page. You can change: "
+            f"{', '.join(k.replace('_', ' ') for k in EDITABLE)}. Nothing was changed."
         )
 
     with tenant_context(tenant_id):
         row = A11yRoute.objects.filter(
             tenant_id=tenant_id, project_id=project_id, id=route_id).first()
         if row is None:
-            _reject("that page is not registered on this project")
+            _reject("That page isn't listed on this project.")
 
         before = {key: getattr(row, key) for key in EDITABLE}
         after = dict(before)
@@ -559,7 +568,7 @@ def update_route(*, tenant_id, project_id, route_id, fields: dict, actor=None) -
                 # page under a description nobody wrote for it.
                 _reject(
                     f"{after['path']} is already registered on this project"
-                    f"{f' as {clash.label!r}' if clash.label else ''}. Edit that page instead, "
+                    f"{f' as “{clash.label}”' if clash.label else ''}. Edit that page instead, "
                     f"or take this one out of scope."
                 )
 
@@ -595,7 +604,7 @@ def delete_route(*, tenant_id, project_id, route_id, actor=None) -> dict:
         row = A11yRoute.objects.filter(
             tenant_id=tenant_id, project_id=project_id, id=route_id).first()
         if row is None:
-            _reject("that page is not registered on this project")
+            _reject("That page isn't listed on this project.")
         path, source = row.path, row.source
 
     history = history_for(tenant_id, project_id).get(path) or {}

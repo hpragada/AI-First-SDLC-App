@@ -236,7 +236,7 @@ def test_asking_for_a_journey_that_does_not_exist_says_what_was_available(world,
 
     monkeypatch.setattr(journeys_mod, "journeys_for_project",
                         lambda *a, **k: {"journeys": [], "skipped": [], "over_cap": []})
-    with pytest.raises(JourneyError, match="available: none"):
+    with pytest.raises(JourneyError, match="The ones that can: none"):
         journey_for(world["t"], world["p"], "TC-999")
 
 
@@ -1332,7 +1332,7 @@ def test_a_name_this_project_does_not_have_comes_back_named(world, monkeypatch):
 
     assert [j["name"] for j in out["started"]] == ["TC-031"]
     assert [r["name"] for r in out["refused"]] == ["tc-404"]
-    assert "no walkable journey" in out["refused"][0]["reason"]
+    assert 'can be walked in this project' in out["refused"][0]["reason"]
 
 
 @pytest.mark.django_db

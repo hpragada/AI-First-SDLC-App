@@ -100,6 +100,26 @@ def test_answered_clarifications_rendered_when_present():
         < md.find("# Relevant Artifacts")
 
 
+def test_the_same_questions_answered_twice_are_replayed_once_with_the_newest_answer():
+    """Truncation T9: a duplicate gate left the identical ten questions answered twice, and the
+    replay alone pushed the section over its cap. Input arrives newest first (T13), so the first
+    copy seen is the one kept."""
+    q = [{"id": "carryover_cap", "text": "Carry-over cap?"},
+         {"id": "half_day", "text": "Half days?"}]
+    ctx = _context(answered_clarifications=[
+        {"phase": "prd", "context": "", "questions": q,
+         "answers": {"carryover_cap": "10 days", "half_day": "yes"}},              # newest
+        {"phase": "prd", "context": "", "questions": list(reversed(q)),
+         "answers": {"carryover_cap": "5 days", "half_day": "no"}},               # older copy
+        {"phase": "prd", "context": "", "questions": [{"id": "pricing", "text": "Pricing?"}],
+         "answers": {"pricing": "per seat"}},                                     # different set
+    ])
+    md = compose_manifest(context=ctx, work_item=_work_item(), phase="prd")
+    assert md.count("Carry-over cap?") == 1
+    assert "10 days" in md and "5 days" not in md
+    assert "per seat" in md
+
+
 def test_answered_clarifications_omitted_when_none():
     md = compose_manifest(context=_context(), work_item=_work_item(), phase="prd")
     assert "# Answered Clarifications" not in md

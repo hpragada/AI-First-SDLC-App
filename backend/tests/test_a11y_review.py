@@ -305,7 +305,7 @@ def test_a_key_outside_this_project_is_refused(world):
     store = InMemoryObjectStore()
     store.put("a11y/some-other-tenant/some-other-project/pages/x.png", b"secret")
 
-    with pytest.raises(ReviewError, match="does not belong to this project"):
+    with pytest.raises(ReviewError, match="doesn't belong to this project"):
         screenshot(tenant_id=world["t"], project_id=world["p"],
                    finding_id=str(_finding(world).id), object_store=store)
 
@@ -324,17 +324,17 @@ def test_an_unreadable_object_is_reported_not_swallowed(world):
     _record(world, run, _row())
     key = f"a11y/{world['t']}/{world['p']}/pages/gone.png"
     _capture(world, run, page_ref=key)
-    with pytest.raises(ReviewError, match="could not be read from storage"):
+    with pytest.raises(ReviewError, match="couldn't be loaded"):
         screenshot(tenant_id=world["t"], project_id=world["p"],
                    finding_id=str(_finding(world).id), object_store=InMemoryObjectStore())
 
 
 def test_screenshot_rejects_an_unknown_kind_and_an_unknown_finding(world):
-    with pytest.raises(ReviewError, match="kind must be"):
+    with pytest.raises(ReviewError, match="whole page or of one element"):
         screenshot(tenant_id=world["t"], project_id=world["p"], finding_id="x", kind="thumbnail")
     run = _run(world)
     _record(world, run, _row())
-    with pytest.raises(ReviewError, match="no such finding"):
+    with pytest.raises(ReviewError, match="finding wasn't found"):
         screenshot(tenant_id=world["t"], project_id=world["p"],
                    finding_id="00000000-0000-0000-0000-000000000000")
 
@@ -395,7 +395,7 @@ def test_rejecting_demands_a_reason_and_confirming_does_not(world):
     """Asymmetric on purpose: rejecting overrules the evidence, and the note is the only record."""
     run = _run(world)
     _record(world, run, _row())
-    with pytest.raises(ReviewError, match="say why this is fine"):
+    with pytest.raises(ReviewError, match="Say why this is fine"):
         adjudicate(tenant_id=world["t"], project_id=world["p"],
                    finding_id=str(_finding(world).id), user_id=world["aisha"].id,
                    decision=REJECT, note="   ")
@@ -409,7 +409,7 @@ def test_rejecting_demands_a_reason_and_confirming_does_not(world):
 def test_an_unknown_decision_word_is_refused(world):
     run = _run(world)
     _record(world, run, _row())
-    with pytest.raises(ReviewError, match="decision must be one of"):
+    with pytest.raises(ReviewError, match="confirm or reject"):
         adjudicate(tenant_id=world["t"], project_id=world["p"],
                    finding_id=str(_finding(world).id), user_id=world["aisha"].id,
                    decision="maybe")
@@ -583,10 +583,10 @@ def test_every_decision_is_audit_logged(world):
 
 def test_an_unknown_item_is_refused_by_both_doors(world):
     ghost = "00000000-0000-0000-0000-000000000000"
-    with pytest.raises(ReviewError, match="no such finding"):
+    with pytest.raises(ReviewError, match="finding wasn't found"):
         open_item(tenant_id=world["t"], project_id=world["p"], finding_id=ghost,
                   user_id=world["aisha"].id)
-    with pytest.raises(ReviewError, match="no such finding"):
+    with pytest.raises(ReviewError, match="finding wasn't found"):
         adjudicate(tenant_id=world["t"], project_id=world["p"], finding_id=ghost,
                    user_id=world["aisha"].id, decision=CONFIRM)
 

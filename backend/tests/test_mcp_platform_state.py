@@ -841,6 +841,28 @@ def test_get_context_replays_answered_clarifications(world):
     assert answered[0]["answers"] == {"scope": "auth only"}
 
 
+def test_answered_clarifications_come_newest_first(world):
+    """Truncation T13: the section is cut from the tail, so oldest-first threw away the latest
+    human decision. Newest first means an overflow loses old context instead."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.clarifications.models import Clarification
+
+    t, project, wi, run = world["t"], world["project"], world["wi"], world["run"]
+    now = timezone.now()
+    for qid, answered_at in (("old", now - timedelta(hours=4)), ("new", now)):
+        Clarification.objects.create(
+            tenant=t, run=run, work_item=wi, phase="prd",
+            questions=[{"id": qid, "text": f"{qid}?"}], answers={qid: "yes"},
+            status=Clarification.Status.ANSWERED, answered_at=answered_at,
+        )
+
+    ctx = tools.get_context(t.id, project.id, phase="prd", work_item_id=str(wi.id))
+    assert [c["questions"][0]["id"] for c in ctx["answered_clarifications"]] == ["new", "old"]
+
+
 def test_detect_drift_is_stub(world):
     t, project, run = world["t"], world["project"], world["run"]
     a = tools.register_artifact(t.id, project.id, run.id, "prd", "prd", "internal", "h1")

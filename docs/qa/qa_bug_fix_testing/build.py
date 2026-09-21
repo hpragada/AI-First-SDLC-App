@@ -42,6 +42,7 @@ import rows_pass_09_10    # noqa: E402
 import rows_pass_11       # noqa: E402
 import rows_pass_12_14    # noqa: E402
 import rows_batch_2026_09 # noqa: E402
+import rows_screen_words_2026_09  # noqa: E402
 
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 BUGS = os.path.join(REPO, "docs", "Bugs.xlsx")
@@ -69,7 +70,8 @@ COLS = [
 def load_content():
     content = {}
     for mod in (rows_pass_01_04, rows_pass_05_07, rows_pass_08,
-                rows_pass_09_10, rows_pass_11, rows_pass_12_14, rows_batch_2026_09):
+                rows_pass_09_10, rows_pass_11, rows_pass_12_14, rows_batch_2026_09,
+                rows_screen_words_2026_09):
         for sno, row in mod.ROWS.items():
             if sno in content:
                 raise SystemExit("two modules both define S.No %s" % sno)
