@@ -1,6 +1,23 @@
 # Testing Phase (09_testing) — Bug Handoff Brief
 
-**Status:** open · **Written:** 2026-07-17 · **Owner:** (whoever picks this up)
+**Status:** **CLOSED** — all four bugs resolved in `e70fd9e`, plus the publishing drift (see the
+status note below) · **Written:** 2026-07-17 · **Closed:** confirmed 2026-09-17
+
+> The header said `open` until 2026-09-17 while the note immediately below it said every bug was
+> resolved. The note was right; the header had simply never been changed.
+
+> **Status note (2026-09-15).** The brief below is kept as written. Since then:
+> - **Bugs 1–4 are resolved** in commit `e70fd9e` ("Testing phase: wire the test loop + fix the 4
+>   handoff bugs", 2026-07-17). The agent now stages one body per test case
+>   (`agents/09_testing/agent.md`, Output table), each registration emits an
+>   `artifact.registered` progress event (`mcp_platform_state/tools.py`), and an empty phase
+>   document is caught before a gate opens (`backend/orchestration/activities.py`, `phase.empty_result`).
+> - **The "publishing is manual" drift is resolved:** the agent body now says a reviewer triggers
+>   the export after the gate, which matches the code.
+> - **S.No 132** (`sdlc/build` check stuck at pending) is resolved in commit `4ac75f9` — the check
+>   now finishes as success or failure.
+> - **09_testing is now planning-only** (S.No 85, `4ac75f9`): it writes the test plan and cases and
+>   never registers a `test_report`; Test Automation (09b) runs the tests and produces the only one.
 
 This brief is self-contained: it carries the evidence, root causes, and acceptance criteria so you
 can act without the originating chat session.
@@ -257,3 +274,6 @@ Two sub-defects:
   bug** — fix the agent body or the code so they agree.
 - Related known bugs in `docs/Bugs.xlsx`: **S.No 120** (register_artifact title), **S.No 132**
   (`sdlc/build` commit status stuck pending), **S.No 138** (shared enrollment `32db7f5f`).
+  *(2026-09-15: S.No 132 resolved in `4ac75f9`; the publishing drift above resolved — the agent
+  body now describes a reviewer-triggered export. S.No 138 is folded into the Connect Machine
+  spec, not built.)*

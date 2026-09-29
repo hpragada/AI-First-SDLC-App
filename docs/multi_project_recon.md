@@ -3,6 +3,32 @@
 **Date:** 2026-08-06 · **Branch:** `brownfield-agent-onboarding` (tip `2977caf`) · **Status:** recon only,
 no code changed.
 
+> ## Status as of 2026-09-17 — partly closed, NOT finished
+>
+> Re-checked against the current code, finding by finding. **This file is still live** — do not
+> archive it.
+>
+> **Closed since it was written (5):**
+>
+> | Finding | Now |
+> |---|---|
+> | §2.2 Connect Machine could only ever enroll the *first* project | Fixed |
+> | §2.4 No project-name uniqueness | Fixed |
+> | §2.6 `Project.track` is write-only | **The finding was overstated** — the track *is* read, at `mcp_platform_state/tools.py:175` |
+> | R2 Clarifications inbox repeating the bug Gates had already fixed | Fixed |
+> | R3 `/me` returning one row per (user, project, role) | Fixed |
+>
+> **Still open — including the question that started this recon:**
+>
+> - **§2.1 — there is still no way to create a second project from inside the app.** The only
+>   "Create project" control in the tree is `frontend/src/components/TenantProjectBar.tsx`, a
+>   development-era bar that shows raw tenant ids and is not part of the shipped shell. **The
+>   team's original complaint is not fixed.**
+> - §2.3 one running companion serves one project · §2.5 no archive, rename or delete
+> - R1, R4, R5, R6
+> - §8 — the per-project companion decision (not yet taken)
+> - §9 — making the execution mode visible and deliberate (recommendation, not built)
+
 **The question the team asked:** a user creates one project — greenfield or brownfield — and then wants
 a second one. Today there is no way to do that from inside the app, the Project Profile and Onboarding
 screens each show one project, and nobody knows whether the top-bar project switcher genuinely re-scopes
@@ -469,8 +495,6 @@ that means a hosted runner — which cannot use a personal Claude subscription a
 API. Commercial decision, not a technical one.
 
 ### 9.5 Sizing
-
-### 9.4 Sizing
 
 - **Move to cloud as it stands:** configuration only — hosting, TLS, env vars, and telling users a
   different `--api-url`. Days, not weeks, and no code change.

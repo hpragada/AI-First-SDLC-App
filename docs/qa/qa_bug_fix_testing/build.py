@@ -41,6 +41,8 @@ import rows_pass_08       # noqa: E402
 import rows_pass_09_10    # noqa: E402
 import rows_pass_11       # noqa: E402
 import rows_pass_12_14    # noqa: E402
+import rows_batch_2026_09 # noqa: E402
+import rows_screen_words_2026_09  # noqa: E402
 
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 BUGS = os.path.join(REPO, "docs", "Bugs.xlsx")
@@ -68,7 +70,8 @@ COLS = [
 def load_content():
     content = {}
     for mod in (rows_pass_01_04, rows_pass_05_07, rows_pass_08,
-                rows_pass_09_10, rows_pass_11, rows_pass_12_14):
+                rows_pass_09_10, rows_pass_11, rows_pass_12_14, rows_batch_2026_09,
+                rows_screen_words_2026_09):
         for sno, row in mod.ROWS.items():
             if sno in content:
                 raise SystemExit("two modules both define S.No %s" % sno)
@@ -141,6 +144,13 @@ def main():
     content, planned = load_content()
     meta = load_meta(planned)
     carried = read_existing()
+    # The guide quotes these numbers; derive them so the text cannot drift from the content.
+    open_count = len(set(meta) - set(planned) - {145, 146})
+    last_sno = max(meta)
+    dev = sum(1 for s in planned if content[s][0] == "DEV CHECK")
+    words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+    counts = {"<ROWS>": str(len(planned)), "<OPEN>": str(open_count),
+              "<DEV>": words.get(dev, str(dev))}
 
     orphans = sorted(set(carried) - set(planned))
     if orphans and not args.drop_orphans:
@@ -169,6 +179,8 @@ def main():
     gu.sheet_properties.tabColor = ORANGE
     gu.column_dimensions["A"].width = 118
     for i, (kind, text) in enumerate(GUIDE, start=1):
+        for token, value in counts.items():
+            text = text.replace(token, value)
         c = gu.cell(i, 1)
         if kind == "H":
             c.value, c.font = text, Font(bold=True, size=20, color=ORANGE)
@@ -276,11 +288,11 @@ def main():
     sm.cell(r, 1, "Not in this sheet").font = Font(bold=True, size=13)
     r += 1
     for line in [
-        "40 rows are genuinely open with no code written yet - they stay Open in Bugs.xlsx.",
+        "%d rows are genuinely open with no code written yet - they stay Open in Bugs.xlsx." % open_count,
         "S. No 145 is a numbered row in Bugs.xlsx with every other cell blank.",
         "S. No 146 is superseded by S. No 240, which IS in this sheet.",
-        "Built %s against docs/Bugs.xlsx as at S. No 253."
-        % datetime.date.today().isoformat(),
+        "Built %s against docs/Bugs.xlsx as at S. No %d."
+        % (datetime.date.today().isoformat(), last_sno),
         "Rebuild: .venv/Scripts/python.exe docs/qa/qa_bug_fix_testing/build.py",
     ]:
         c = sm.cell(r, 1, line)
@@ -296,14 +308,14 @@ def main():
 GUIDE = [
     ("H", "QA_Bug_Fix_Testing"),
     ("P", "Every fix made to the SDLC platform that has been written in code but has NOT yet been "
-          "confirmed by a QA member using the app on a real tenant account. 211 rows."),
+          "confirmed by a QA member using the app on a real tenant account. <ROWS> rows."),
     ("", ""),
     ("H2", "What is in here, and what is not"),
     ("P", "IN: every P1, P2 and P3 row of docs/Bugs.xlsx whose fix exists in the code - whether the "
           "row currently reads Fixed or Open. Rows already marked Fixed are included because almost "
           "none of them was ever signed off by your side; they were verified by tests, or by a "
           "browser pass done by the developer, which is not the same thing."),
-    ("P", "OUT: 40 rows that are genuinely open with no code behind them yet, plus one numbered row "
+    ("P", "OUT: <OPEN> rows that are genuinely open with no code behind them yet, plus one numbered row "
           "with no content and one row superseded by another. Those stay Open in Bugs.xlsx and are "
           "nothing to do with this pass."),
     ("", ""),
@@ -321,7 +333,7 @@ GUIDE = [
     ("B", "SET UP FIRST - you have to create a condition before you can see it: stop the app, "
           "restart the worker, delete a Jira issue, sign in as somebody without a role. The steps "
           "say exactly how."),
-    ("B", "DEV CHECK - genuinely not reachable from the app. There are only two of these. Mark them "
+    ("B", "DEV CHECK - genuinely not reachable from the app. There are only <DEV> of these. Mark them "
           "'Not applicable' unless the team asks otherwise; they are listed so the sheet accounts "
           "for every row rather than quietly skipping one."),
     ("", ""),

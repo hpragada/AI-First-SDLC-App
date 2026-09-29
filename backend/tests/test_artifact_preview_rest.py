@@ -124,14 +124,39 @@ def test_preview_multistate_wireframe_returns_states_and_default_body(project, m
     assert "DEFAULT" in payload["body"]
 
 
-def test_preview_missing_internal_body_is_404(client, project, member):
+def test_preview_missing_internal_body_says_so_instead_of_404(client, project, member, caplog):
+    """CHANGED for Bugs S.No 218. This used to assert a 404 — the same answer as "no such
+    artifact" — and the screen worded that 404 as "doesn't exist, has no body, or you don't have
+    access to it": three explanations, one true, none actionable. The artifact exists, so it
+    answers normally with an empty body and the screen shows "Preview unavailable". The fault
+    behind it is ours, so it goes to the server log rather than to the person."""
+    import logging
+
     artifact = Artifact.objects.create(
         tenant=project.tenant, project=project, phase="prd", type="prd",
         sor="internal", status="draft", s3_key="", version=1,
     )
     _login(client, "dev@acme.com", "dev-pass!")
-    resp = client.get(_preview_url(artifact.id))
-    assert resp.status_code == 404
+    with caplog.at_level(logging.WARNING, logger="integrations.preview"):
+        resp = client.get(_preview_url(artifact.id))
+    assert resp.status_code == 200
+    assert resp.data["body"] == ""
+    assert resp.data["status"] == "draft"
+    assert not resp.data["sor_link"]
+    assert str(artifact.id) in caplog.text
+
+
+def test_a_publish_still_never_sees_an_empty_body_as_a_body(project):
+    """`allow_empty` is the preview endpoint's alone. Everything else keeps the old contract, so
+    an export can never push an empty page."""
+    from integrations.preview import read_artifact_preview
+
+    artifact = Artifact.objects.create(
+        tenant=project.tenant, project=project, phase="prd", type="prd",
+        sor="internal", status="approved", s3_key="", version=1,
+    )
+    assert read_artifact_preview(
+        tenant_id=str(project.tenant_id), artifact_id=str(artifact.id)) is None
 
 
 def _run_for(project, phase="ideation", outputs=None):
@@ -258,8 +283,9 @@ def test_preview_prefers_runs_staged_draft_over_raw_report(client, project, memb
 
 
 def test_preview_missing_s3_object_degrades_not_500(client, project, member):
-    """A pointer at an S3 key that no longer exists must degrade (404 'no body'), never
-    crash the endpoint with an unhandled boto error (Bugs.xlsx row 59)."""
+    """A pointer at an S3 key that no longer exists must degrade, never crash the endpoint with
+    an unhandled boto error (Bugs.xlsx row 59). Degrading now means an empty body rather than a
+    404 (S.No 218) — the document exists; it is its body that cannot be read."""
     artifact = Artifact.objects.create(
         tenant=project.tenant, project=project, phase="prd", type="prd",
         sor="internal", status="draft", s3_key="test-preview/definitely-missing.md",
@@ -267,7 +293,8 @@ def test_preview_missing_s3_object_degrades_not_500(client, project, member):
     )
     _login(client, "dev@acme.com", "dev-pass!")
     resp = client.get(_preview_url(artifact.id))
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    assert resp.data["body"] == ""
 
 
 def test_preview_unknown_artifact_is_404(client, project, member):
@@ -459,8 +486,11 @@ def test_a_row_the_list_calls_previewable_actually_previews(client, project, mem
     bad = _artifact(project, type="code_review", content_hash="d1")
     _login(client, "dev@acme.com", "dev-pass!")
 
-    assert client.get(_preview_url(good.id)).status_code == 200
-    assert client.get(_preview_url(bad.id)).status_code == 404
+    assert client.get(_preview_url(good.id)).data["body"] == "# Review"
+    # Not previewable, and the endpoint agrees: it exists, and there is nothing to show
+    # (S.No 218 — this was a 404 before, the same answer as a document that does not exist).
+    resp = client.get(_preview_url(bad.id))
+    assert resp.status_code == 200 and resp.data["body"] == ""
 
 
 # ── S.No 187: the SBOM renders for people, and ONLY for people ──────

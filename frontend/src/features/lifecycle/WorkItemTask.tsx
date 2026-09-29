@@ -18,9 +18,35 @@ import { CancelWorkItem } from "./CancelWorkItem";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
-import { artifactsForWorkItem, gateLink } from "../../links";
+import { artifactLink, artifactsForWorkItem, gateLink } from "../../links";
+import { useArtifactPreview } from "../observability/hooks";
+import { repoRoleLabel, workItemTypeLabel } from "../../labels";
+import { roleLabel } from "../identity/roles";
 import { useRepositories } from "../setup/hooks";
 import type { WorkItemCard } from "../../types";
+
+// ── The test case itself, read from the artifact the work item points at ────
+// Deliberately a pointer, not a copy: the artifact is the source of truth (#1/#3), it is the
+// same text 09b reads when it writes the script, and it cannot drift when Testing re-runs.
+function TestCasePanel({ artifactId }: { artifactId: string }) {
+  const preview = useArtifactPreview(artifactId);
+  const link = <Link to={artifactLink(artifactId)} className="t-sm">View artifact</Link>;
+  return (
+    <Panel title="Test case" actions={link}>
+      {preview.isLoading ? (
+        <p className="t-body u-muted">
+          <Spinner /> Loading the test case…
+        </p>
+      ) : preview.data?.body ? (
+        <Markdown className="prose md-body">{preview.data.body}</Markdown>
+      ) : (
+        // Never silently blank: say the case could not be read and offer the artifact, so an
+        // unreadable body is visibly different from a case with nothing in it.
+        <p className="t-body u-muted">This test case could not be read. {link}</p>
+      )}
+    </Panel>
+  );
+}
 
 // S-16 view states: review-loop+test-failed (default) · implementation-running ·
 // merge-gate · done.
@@ -84,6 +110,14 @@ function WorkItemTaskLive() {
   const cancelled = workItem.data.state === "cancelled";
   const nodes = visibleLifecycleNodes(lifecycle.data?.nodes ?? []).map((n, i) => railNodeView(n, i));
   const loops = lifecycle.data?.loops ?? [];
+  // A test case's steps live in the artifact it points at, never on the work item, so the
+  // Description panel had nothing to show and said "No description yet" on every auto-created
+  // case. Read the case from its artifact instead — test cases only; every other type keeps
+  // the ordinary Description panel.
+  const testCaseArtifactId =
+    workItem.data.type === "test_case"
+      ? workItem.data.external_ref?.test_case_artifact_id
+      : undefined;
 
   return (
     <div className="canvas-pad">
@@ -135,7 +169,7 @@ function WorkItemTaskLive() {
 
       <Panel
         flush
-        title="Lifecycle — Build tier"
+        title="Lifecycle — Delivery"
         actions={<span className="t-sm u-muted">Task · build phases only</span>}
       >
         {nodes.length === 0 ? (
@@ -150,13 +184,17 @@ function WorkItemTaskLive() {
 
       <div className="grid grid--detail" style={{ marginTop: "var(--space-5)" }}>
         <div className="u-stack">
-          <Panel title="Description">
-            {workItem.data.description ? (
-              <Markdown className="prose md-body">{workItem.data.description}</Markdown>
-            ) : (
-              <p className="t-body u-muted">No description yet.</p>
-            )}
-          </Panel>
+          {testCaseArtifactId ? (
+            <TestCasePanel artifactId={testCaseArtifactId} />
+          ) : (
+            <Panel title="Description">
+              {workItem.data.description ? (
+                <Markdown className="prose md-body">{workItem.data.description}</Markdown>
+              ) : (
+                <p className="t-body u-muted">No description yet.</p>
+              )}
+            </Panel>
+          )}
 
           {latestRun && (
             <Panel
@@ -184,7 +222,8 @@ function WorkItemTaskLive() {
                 <div className="artifact-row" key={c.id}>
                   <div className="artifact-row__main">
                     <div className="artifact-row__title">{c.title || c.id.slice(0, 8)}</div>
-                    <div className="artifact-row__meta">{c.type} · {phaseLabel(c.phase)}</div>
+                    {/* Screen Words group 4: `test_case` -> `Test case`. */}
+                    <div className="artifact-row__meta">{workItemTypeLabel(c.type)} · {phaseLabel(c.phase)}</div>
                   </div>
                   <Link to={`/work-items/${c.id}`} className="btn btn--ghost btn--sm">
                     Open
@@ -199,7 +238,8 @@ function WorkItemTaskLive() {
           {pendingGate ? (
             <Card attention>
               <CardBody>
-                <span className="gate-panel__role">▲ {gateLabel(pendingGate.gate_type)} · required role: {pendingGate.required_role}</span>
+                {/* Screen Words group 3 — see the same line on the Epic screen. */}
+                <span className="gate-panel__role">▲ {gateLabel(pendingGate.gate_type)} · decided by a {roleLabel(pendingGate.required_role)}</span>
                 <h3 className="t-h3">Awaiting your decision</h3>
                 <div className="gate-panel__actions">
                   <Button
@@ -335,8 +375,9 @@ function RepoAssignmentCard({ workItem, buildStarted }: { workItem: WorkItemCard
           >
             <option value="">— default repository —</option>
             {list.map((r) => (
+              // Screen Words group 4: the repository picker's role word.
               <option key={r.id} value={r.id}>
-                {r.name} · {r.role}
+                {r.name} · {repoRoleLabel(r.role)}
               </option>
             ))}
           </select>
@@ -417,7 +458,7 @@ function WorkItemTaskGallery({ view }: { view: TaskView }) {
 
       <Panel
         flush
-        title="Lifecycle — Build tier"
+        title="Lifecycle — Delivery"
         actions={
           view !== "loop-failed" && <span className="t-sm u-muted">Task · build phases only</span>
         }

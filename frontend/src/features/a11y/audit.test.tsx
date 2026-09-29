@@ -562,7 +562,7 @@ describe("S-38 pages and audit", () => {
       .toBeGreaterThan(0);
   });
 
-  // One of the four checks not running at all is a different, worse sentence than part of the
+  // One of the checks not running at all is a different, worse sentence than part of the
   // capture going unasked - and it must never read as "the application has no label problems",
   // because nothing looked for any.
   it("an audit whose machine could not read any name says that check did not run", async () => {

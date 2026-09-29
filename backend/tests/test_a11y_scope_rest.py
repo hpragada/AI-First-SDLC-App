@@ -346,7 +346,7 @@ def test_asking_again_about_an_audit_that_has_not_finished_is_refused_by_name(wo
     audit = _closed_audit(world, status="judging")
     resp = _client("lead@acme.test").post(_rejudge_url(world, audit), {}, format="json")
     assert resp.status_code == 409
-    assert "has not finished yet" in resp.json()["detail"]
+    assert "hasn't finished yet" in resp.json()["detail"]
 
 
 def test_asking_again_about_another_projects_audit_is_a_404(world):

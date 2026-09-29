@@ -2,7 +2,7 @@
 
 This repo builds a multi-tenant, web-delivered, **engine-agnostic agentic SDLC platform** (Django + React + Postgres) that operates clients' real tools-of-record (Confluence/Jira/Figma/Xray/Git) and runs the full lifecycle with human review gates.
 
-**Before writing any code, read `/docs/PHASE_2_BUILD_SPEC.md` for the current phase, and follow `/BUILD_PLAN.md` task by task.** (Phases 0 and 1 are complete — `/docs/PHASE_0_BUILD_SPEC.md` and `/docs/PHASE_1_BUILD_SPEC.md` are the finished-phase references.) The "why" lives in `/docs/SDLC_Platform_Master_Build_Blueprint.md`. Keep this file lean — detail belongs in `/docs`.
+**Before writing any code, read `/docs/PHASE_4.8_BUILD_SPEC.md` for the current phase, and follow `/BUILD_PLAN.md` task by task.** (Phases 0 through 4.7 are complete — their specs, `/docs/PHASE_0_BUILD_SPEC.md` through `/docs/PHASE_4.7_BUILD_SPEC.md`, are finished-phase references. *Corrected 2026-09-17: this line still named Phase 2 as current, while the "How we work" section below correctly named 4.7 and 4.8.*) The "why" lives in `/docs/SDLC_Platform_Master_Build_Blueprint.md`. Keep this file lean — detail belongs in `/docs`.
 
 ---
 
@@ -33,6 +33,7 @@ This repo builds a multi-tenant, web-delivered, **engine-agnostic agentic SDLC p
 backend/        Django: control + state planes, REST API
   config/       Django project (settings, urls, asgi)
   apps/         tenancy · projects · workitems · registry · ledger · runs · gates · integrations
+                · a11y · clarifications · knowledge · quality        (12 today; the first 8 are P0's)
   orchestration/  Temporal workflows + activities
   drivers/      ExecutionDriver interface + ClaudeDriver
   manifest/     Manifest Composer (Project Profile → AGENTS.md)
@@ -76,10 +77,12 @@ make lint                       # ruff + mypy + eslint
 Runs locally via `docker compose up` + `make dev`; the phase's thin-slice demo works end-to-end; tests pass; `tenant_id`/RLS enforced; gates enforced; `/BUILD_PLAN.md` checkboxes updated; `/docs` updated if a decision changed.
 
 ## Reference docs
-- `/docs/PHASE_2_BUILD_SPEC.md` — build-grade contracts for the **current** phase (**read before coding**).
+- `/docs/PHASE_4.8_BUILD_SPEC.md` — build-grade contracts for the **current** phase (**read before coding**), with `/docs/SCREEN_BUILD_MAP.md` for the per-screen map.
+- `/docs/PHASE_4.7_BUILD_SPEC.md` — Phase 4.7 contracts (complete).
+- `/docs/PHASE_2_BUILD_SPEC.md` — Phase 2 contracts (complete; build execution + local companion).
 - `/docs/PHASE_1_BUILD_SPEC.md` — Phase 1 contracts (complete; Atlassian SoR + brownfield-lite + rate governor).
 - `/docs/PHASE_0_BUILD_SPEC.md` — Phase 0 contracts (complete; the spine these phases build on).
 - `/docs/AGENT_MIGRATION_SPEC.md` — **how to migrate the `/legacy_suite/` agents, rules, commands (read before any agent task)**.
 - `/BUILD_PLAN.md` — the ordered task backlog across all phases (with legacy-suite coverage map).
 - `/docs/SDLC_Platform_Master_Build_Blueprint.md` — full architecture + concern→resolution ledger (the "why/what").
-- `/docs/SESSION_SUMMARY_and_Continuation_Brief.md` — how we got here; locked decisions.
+- `/docs/SESSION_SUMMARY_and_Continuation_Brief.md` — **historical**: the pre-build architecture sessions. Its §3 locked decisions still bind (and are mirrored here + in the blueprint's §B3.1); its "where we are" and "next steps" sections describe July 2026 and are superseded by `/BUILD_PLAN.md`. Do not resume from it.

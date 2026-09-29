@@ -361,7 +361,29 @@ exposes `run_status`, and the screen distinguishes a live wait (`pending`/`runni
 ended one: the card shows *"This run has ended"* and explains that answering still helps
 because the answers replay on the next run. Nothing is cancelled; only the promise changed.
 
-## 12. Defect H — the connection churn itself  ✅ FIXED
+## 12. Defect H — the connection churn itself  ✅ FIXED — ⚠️ **the fix was REVERTED on 2026-08-05**
+
+> **Read this before acting on anything in this section.** The fix recorded below —
+> `CONN_MAX_AGE = 60` — **was reverted on 2026-08-05 and must not be reapplied.** It caused a
+> worse outage than the one it cured: `CONN_MAX_AGE` does not bound how many connections exist,
+> and under ASGI an idle thread holds its connection open forever. Measured that day: **92 of 97
+> usable slots consumed**, one idle connection 1h46m old, and every developer sharing this
+> database — which also hosts Temporal — locked out with
+> `FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute`.
+>
+> The live setting is **`CONN_MAX_AGE = 0`** (`backend/config/settings.py:137`), which carries a
+> "DO NOT raise this again" note and the correct alternative: a **bounded pool**
+> (`OPTIONS = {"pool": {"min_size": 1, "max_size": 5, "timeout": 10}}`), sized against the 97
+> shared slots and shipped with a test asserting a connection **ceiling**.
+>
+> What survives from this section and is still live: `CONN_HEALTH_CHECKS`, the
+> `_enter_tenant_scope` retry, the RLS release/discard invariant, and
+> `tests/test_persistent_connection_rls.py` — whose own docstring now records this reversal. That
+> test suite proved reuse was *safe*; it never proved it was *bounded*, which is how this reached
+> everyone.
+>
+> The original text is kept below unedited, because the reasoning that led to the wrong fix is
+> the point of an incident record.
 
 `CONN_MAX_AGE = 0` and `CONN_HEALTH_CHECKS = False` meant Django opened and closed a brand-new
 connection for **every request** — ~320ms of TCP+TLS+auth each, against a Postgres reached over

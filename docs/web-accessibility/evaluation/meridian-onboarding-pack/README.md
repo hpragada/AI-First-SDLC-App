@@ -1,8 +1,13 @@
 # Meridian onboarding pack
 
 Nine client-authored documents for **Meridian Library** — the county public-library web
-application (borrower catalogue + staff console) that lives at
-`C:\Users\Msi\projects\Web-Accessibility\meridian-library-web-accessibility`.
+application (borrower catalogue + staff console) used as the accessibility fixture.
+
+> *Corrected 2026-09-17.* This line used to give the app's location as
+> `C:\Users\Msi\projects\Web-Accessibility\meridian-library-web-accessibility` — one developer's
+> machine, which nobody else has. The fixture app is its own repository and is **not** in this tree;
+> ask the team for the current clone path or remote. Note also that its git history was deliberately
+> rewritten so nothing reveals that its defects are planted — never write that back in.
 
 They are test data for the **brownfield onboarding flow**: upload them, extract them, review
 them, adopt each as a lifecycle artifact. They are written in the voice of Meridian County

@@ -191,39 +191,30 @@ def compose_manifest_core(inp: AgentRunInput) -> str:
 _EXECUTED_STATES = {Run.Status.AWAITING_GATE, Run.Status.APPROVED, Run.Status.COMPLETED}
 
 
-def classify_phase_failure(reason: str) -> str:
-    """Turn a raw planning/review failure into a plain-language reason (Bugs S.No 146, planning
-    path). Build failures already go through classify_build_failure; planning phases (including
-    10_security) wrote the raw exception verbatim — e.g. a bare 'Command failed with exit code 1
-    / Check stderr output for details' — so the run console showed no usable reason. An already
-    specific message passes through unchanged (never lost)."""
-    r = (reason or "").lower()
-    from .build_activities import (
-        _ENGINE_LOG_NAME,
-        _engine_detail,
-        _exit_code_hint,
-        _usage_reset_hint,
-    )
+def _technical_detail(raw: str, sentence: str) -> str:
+    from .build_activities import _technical_detail as detail
 
-    if ("usage limit" in r or "usage_limit" in r or "rate limit" in r or "rate-limit" in r
-            or "429" in r or "too many requests" in r or "overloaded" in r or "quota" in r):
-        return ("The AI engine hit its usage or rate limit, so the phase could not finish. "
-                f"{_usage_reset_hint(reason)}Re-trigger the phase once the limit resets.")
-    if ("failed to start claude code" in r or "claude code not found" in r
-            or "open_process()" in r):
-        return ("The AI engine (Claude Code) could not start on the companion — check the engine "
-                "install on the dev machine, then re-trigger.")
-    # Same correction as the build path: report what happened instead of asserting a cause we
-    # have not established, and show the engine's own output rather than pointing at a terminal
-    # that is gone by the time anyone reads this.
-    if ("exit code" in r or "command failed" in r or "processerror" in r
-            or "engine stderr" in r or "engine output" in r):
-        return (f"The AI engine exited before finishing the phase{_exit_code_hint(reason)}. "
-                "The engine's own output is below; the full log is on the companion at "
-                f"`<worktrees>/{_ENGINE_LOG_NAME}`.\n\n{_engine_detail(reason)}")
-    if r.strip() in ("", "phase reported failed"):
-        return "The phase agent failed without reporting a specific reason."
-    return reason
+    return detail(raw, sentence)
+
+
+def describe_phase_failure(reason: str, *, phase: str = "", parked: bool = False):
+    """A planning/review phase's failure, said the way a build's is (run-console wording fix,
+    2026-09-21, option A — team: "apply the same fix to the agent runs too").
+
+    Same sentences as `describe_build_failure`, naming the phase ("The PRD phase stopped
+    because …"). The engine's raw output is NOT in the sentence: callers keep it as
+    `outputs.error_detail`, shown under a closed "Technical details" (Bugs S.No 146 kept)."""
+    from apps.labels import phase_label
+
+    from .build_activities import describe_build_failure
+
+    what = f"The {phase_label(phase)} phase" if phase else "The phase"
+    return describe_build_failure(reason, subject="build", parked=parked, what=what)
+
+
+def classify_phase_failure(reason: str, *, phase: str = "", parked: bool = False) -> str:
+    """The banner sentence for a phase failure — see `describe_phase_failure`."""
+    return describe_phase_failure(reason, phase=phase, parked=parked).sentence
 
 
 def execute_agent_core(inp: AgentRunInput, manifest: str) -> dict:
@@ -252,16 +243,18 @@ def execute_agent_core(inp: AgentRunInput, manifest: str) -> dict:
     except Exception as exc:
         # Plain-language reason for the run console (Bugs S.No 146, planning path) — the raw
         # 'Command failed with exit code 1 / Check stderr' told the user nothing.
-        error_message = classify_phase_failure(str(exc))
+        said = describe_phase_failure(str(exc), phase=inp.phase)
+        error_message = said.sentence
         with tenant_context(inp.tenant_id):
             run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
             run.status = Run.Status.FAILED
             run.ended_at = _now()
-            run.outputs = {**(run.outputs or {}), "error": error_message}
+            run.outputs = {**(run.outputs or {}), "error": error_message,
+                           "error_detail": _technical_detail(str(exc), error_message)}
             run.save(update_fields=["status", "outputs", "ended_at", "updated_at"])
             tools.log_event(
                 inp.tenant_id, "orchestrator", "run.failed", "run", inp.run_id,
-                {"error": error_message},
+                {"error": said.cause},
             )
         recover_unread_document_core(inp)  # a failed vision pass must not leave a document empty
         raise
@@ -327,6 +320,21 @@ def open_gate_core(inp: AgentRunInput) -> str:
         if run.status != Run.Status.AWAITING_GATE:
             run.status = Run.Status.AWAITING_GATE
             run.save(update_fields=["status", "updated_at"])
+        # A gate is now open on what this run drafted, so those drafts are no longer drafts
+        # nobody has looked at: they are waiting on a named person (Bugs S.No 218). Opening a
+        # gate used to leave them reading "Draft", indistinguishable from work nobody had asked
+        # anyone to review. `staged` is the status that already exists for exactly this — the
+        # build path sets it when it opens a PR — and the screen now calls it "Waiting for
+        # approval".
+        #
+        # DRAFT only, so nothing already approved, published or superseded is ever moved
+        # backwards, and a retried activity finds nothing left to change. Both ways out of the
+        # gate still work on a staged row: approval publishes the run's artifacts whatever their
+        # status (`publish_artifacts_core`), and a rejection supersedes everything not published
+        # (`reject_run_core`).
+        Artifact.objects.filter(
+            run_id=inp.run_id, tenant_id=inp.tenant_id, status=Artifact.Status.DRAFT,
+        ).update(status=Artifact.Status.STAGED, updated_at=_now())
         if created:
             tools.log_event(
                 inp.tenant_id, "orchestrator", "gate.opened", "approval", str(approval.id),
@@ -1079,15 +1087,23 @@ def park_run_core(inp: AgentRunInput, reason: str, resume_from: str) -> dict:
     Also closes a silent-failure gap: `verify_writes` runs with maximum_attempts=1, so when it
     raised, the workflow crashed BEFORE any fail_run — nothing ever wrote `run.outputs.error`, and
     the run console (which reads exactly that field) showed a failed run with no reason at all.
-    Parking always records the reason. Idempotent."""
+    Parking always records the reason. Idempotent.
+
+    The reason used to be stored exactly as raised — the only failure path that was never
+    rewritten for the reader. It now reads like a paused build's (run-console fix, 2026-09-21)."""
+    raw = reason
+    said = describe_phase_failure(raw, phase=inp.phase, parked=True)
+    reason = said.sentence
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         run.status = Run.Status.STALLED
         run.outputs = {**(run.outputs or {}), "error": reason,
+                       "error_detail": _technical_detail(raw, reason),
                        "resume_from": resume_from, "resumable": True}
         run.save(update_fields=["status", "outputs", "updated_at"])
         tools.log_event(inp.tenant_id, "orchestrator", "run.parked", "run", inp.run_id,
-                        {"reason": reason, "resume_from": resume_from, "resumable": True})
+                        {"reason": f"stopped: {said.cause}", "resume_from": resume_from,
+                         "resumable": True})
     return {"status": "parked", "reason": reason, "resume_from": resume_from}
 
 
@@ -1098,7 +1114,7 @@ def resume_run_state_core(inp: AgentRunInput) -> dict:
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         outputs = {**(run.outputs or {})}
         resume_from = outputs.get("resume_from", "")
-        for key in ("error", "resume_from", "resumable"):
+        for key in ("error", "error_detail", "resume_from", "resumable"):
             outputs.pop(key, None)
         run.status = Run.Status.RUNNING
         run.outputs = outputs
@@ -1189,15 +1205,18 @@ def fail_run_core(inp: AgentRunInput, reason: str) -> dict:
     # Plain-language reason for the run console (Bugs S.No 146, planning path): the companion
     # reports the raw engine error (e.g. 'Command failed with exit code 1'); classify it here so
     # a security/planning failure reads like a build failure does, not as a raw exit code.
-    reason = classify_phase_failure(reason)
+    raw = reason
+    said = describe_phase_failure(raw, phase=inp.phase)
+    reason = said.sentence
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         run.status = Run.Status.FAILED
         run.ended_at = _now()
-        run.outputs = {**(run.outputs or {}), "error": reason}
+        run.outputs = {**(run.outputs or {}), "error": reason,
+                       "error_detail": _technical_detail(raw, reason)}
         run.save(update_fields=["status", "outputs", "ended_at", "updated_at"])
         tools.log_event(inp.tenant_id, "orchestrator", "run.failed", "run", inp.run_id,
-                        {"error": reason})
+                        {"error": said.cause})
     recover_unread_document_core(inp)   # a failed vision pass must not leave a document empty
     # …and a failed journey pass must not leave a walk saying it is still walking (G6a). This is
     # the path a crashed agent takes, and it never reaches the write-completeness check above,

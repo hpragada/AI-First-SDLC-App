@@ -1,6 +1,25 @@
 # SDLC Platform — Session Summary & Continuation Brief
 
-> **Read this first when resuming in a new session.** It recaps everything done so far, the locked decisions, and the exact next steps. For full detail, open the companion file **`SDLC_Platform_Master_Build_Blueprint.md`** (the master blueprint) and **`Enterprise_SDLC_Platform_Architecture.md`** (the earlier architecture doc).
+> ## ⚠️ Historical record — do not resume from this file
+>
+> **Status as of 2026-09-17.** This is the hand-off note from the **architecture sessions that ran
+> before any platform code existed**. It is kept because it records how the design was reached and
+> what was locked. It is **not** a description of where the project is now.
+>
+> **Still binding:** **§3 Locked decisions** and **§9 Key principles** — though both are now also
+> carried in `/CLAUDE.md` (the twelve non-negotiables) and, for decision 9's export policy, in the
+> blueprint's **§B3.1**. **§6** is superseded in detail by `docs/AGENT_MIGRATION_SPEC.md`.
+>
+> **Out of date, and left unedited on purpose:** **§1** ("No platform code has been written yet"),
+> **§5** ("about to start Phase 0"), **§7** (deliverables, all long since built) and **§8** (an open
+> question answered in July 2026). Phases 0 through 4.7 are complete and 4.8 is in progress.
+>
+> **To resume work, read instead:** `/CLAUDE.md` → `/AGENTS.md` → `/BUILD_PLAN.md` → the current
+> phase's build spec. For the architecture and the "why", open
+> **`SDLC_Platform_Master_Build_Blueprint.md`**; **`Enterprise_SDLC_Platform_Architecture.md`** is
+> the earlier architecture doc.
+
+*Everything below this line is the file as written at the time, kept unedited as the record.*
 
 ---
 

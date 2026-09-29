@@ -56,3 +56,6 @@ runner/workdir/
 
 # Claude Code: machine-local permission grants stay local; launch.json is shared
 .claude/settings.local.json
+
+# Spreadsheet backups made before XML-in-zip surgery on Bugs.xlsx — local only.
+*.bak

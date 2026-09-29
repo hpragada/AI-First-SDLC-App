@@ -16,6 +16,7 @@ import {
   Table,
   Tabs,
   Textarea,
+  WriteError,
 } from "../../components/ui";
 import type { Approval } from "../../types";
 import { roleLabel } from "../identity/roles";
@@ -115,8 +116,8 @@ function GatesLive() {
   const criteriaList = criteria.data?.criteria ?? [];
   useEffect(() => {
     setSatisfied(Object.fromEntries(criteriaList.map((c) => [c.id, c.satisfied])));
-    // reset when the selected gate (and thus its criteria payload) changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Reset when the selected gate (and thus its criteria payload) changes — deliberately not
+    // on `criteriaList`, which is rebuilt each render and would wipe the reviewer's ticks.
   }, [criteria.data, selected?.id]);
 
   // The confirmation belongs to one decision, not to the screen. Picking another gate clears it,
@@ -485,9 +486,7 @@ function GatesLive() {
                     </Button>
                   </div>
                   {decideApproval.isError && (
-                    <Banner variant="danger" title="Couldn't record the decision">
-                      {decideApproval.error instanceof Error ? decideApproval.error.message : "Unknown error"}
-                    </Banner>
+                    <WriteError title="Couldn't record the decision" detail={decideApproval.error} />
                   )}
                   {/* No confirmation banner here. There used to be one, and it was the third
                       telling of a single click: the page-level banner above, then "Decision
@@ -511,9 +510,12 @@ function GatesLive() {
                   <span className="gate-panel__role" style={{ color: "var(--text-muted)" }}>
                     {gateLabel(selected.gate_type)} · {workItemLabel(selected.work_item, selected.work_item_title)}
                   </span>
-                  <Banner variant="info" title={`Awaiting ${selected.required_role}`}>
-                    You don't hold the <strong>{selected.required_role}</strong> role on this
-                    project, so this is read-only.
+                  {/* Screen Words group 3. Two lines above, this same file already prints the
+                      readable role, so the page mixed both. It also never said that an admin can
+                      decide, which is true and is the one thing a blocked reader most needs. */}
+                  <Banner variant="info" title={`Waiting for a ${roleLabel(selected.required_role)}`}>
+                    Only a <strong>{roleLabel(selected.required_role)}</strong> on this project, or
+                    an admin, can decide this gate. You can read it.
                   </Banner>
                   {/* Whoever is LOOKING at this gate needs to know the merge already happened,
                       not only whoever can decide it. Leaving it out here would keep the

@@ -130,30 +130,25 @@ thing, not for the app being slow. A silent console is not evidence of a hang
 **Expected**
 - While the request is in flight the button label reads `Adding…`.
 - The form closes and no error text is shown.
-- **At step 6 (before the reload) the new row does NOT appear** — the screen still shows the
-  `No test cases yet` empty state. This is the known defect below; it is the expected observation,
-  not a pass condition for the feature.
-- After the reload at step 7, the table appears with headers `TC-ID`, `Title`, `Priority`,
-  `Automation` and one trailing blank header cell.
+- **At step 6, without any reload,** the `No test cases yet` empty state is replaced by the table,
+  with headers `TC-ID`, `Title`, `Priority`, `Automation` and one trailing blank header cell.
 - A row shows the title `Checkout with saved card` and priority `High`.
 - The `+ Add test case` button is visible again in the header.
+- After the reload at step 7 the same row is still there — it was saved, not only drawn.
 
 **Pass / Fail**
-- PASS if the case is created (it is there after the reload) with the title and priority entered,
-  and the form closed cleanly with no error.
-- FAIL if the case is not created at all, the form stays open, the priority shows as `—`, or an
-  error is displayed.
-- Do **not** fail this case because the row needed a reload — see Notes.
+- PASS if the new row appears straight away without a reload, with the title and priority entered,
+  survives the reload, and the form closed cleanly with no error.
+- FAIL if the row only appears after a manual reload, the case is not created at all, the form stays
+  open, the priority shows as `—`, or an error is displayed.
 
 **Test data**
 - Title: `Checkout with saved card` · Priority: `High`
 
 **Notes**
-- **Known defect, do not raise a duplicate.** The create mutation invalidates the `work-items`
-  query, but this table reads a separate `test-cases` query that nothing invalidates
-  (`frontend/src/features/lifecycle/hooks.ts:37, 45`), so a hand-added case only appears after a
-  manual reload. Tracked as a product defect in the audit (Part 6, item 5). Note it against this
-  case's DEFECT-ID column if one has been raised; otherwise raise it **once**.
+- **Fixed in commit 4ac75f9.** A hand-added case used to be saved but not shown until a manual
+  reload, which made it look like the add had failed. The table now refreshes as soon as the case is
+  created. A row that needs a reload to appear is a regression — raise it.
 - The `Priority` select offers exactly `High`, `Medium`, `Low` and defaults to `Medium` — confirm
   the three options while the form is open.
 - A hand-added case has no TC-ID stamped by the Testing agent, so the `TC-ID` cell falls back to the
@@ -288,6 +283,9 @@ thing, not for the app being slow. A silent console is not evidence of a hang
 - You will normally only see `Not automated` on a first pass. Re-run this case after TC-187 to
   observe `Generating…`, and again once Tester C's Test Automation run reaches its gate to observe
   `Script ready`.
+- While any row reads `Generating…`, the table refreshes itself every few seconds, so a row moves on
+  to `Script ready` without a reload once its run reaches that point (since commit 4ac75f9). When no
+  row is generating, the table does not refresh on its own.
 - Badge text `Generating…` and `Script ready` use a real ellipsis character — check the copy, not
   just the presence of a badge.
 
@@ -312,7 +310,8 @@ thing, not for the app being slow. A silent console is not evidence of a hang
 **Steps**
 1. Open the test-cases screen for `Stripe Webhook Integration`.
 2. On the `Checkout with saved card` row, click **Generate script**.
-3. Wait for the request to complete, then reload the page.
+3. Wait for the request to complete **without reloading**, and read the row. Then reload the page and
+   read it again.
 4. Open `/runs` in the sidebar (`Phases & Runs`).
 5. **The `/runs` screen filters to one selected work item, and it defaults to the first work item
    in the project — not the test case you just triggered.** In the work-item selector, select the
@@ -322,8 +321,8 @@ thing, not for the app being slow. A silent console is not evidence of a hang
 
 **Expected**
 - While the trigger is in flight the button label changes to `Starting…`.
-- After the reload, the row's `Automation` badge reads `Generating…` and its last cell is a
-  **View run** link.
+- As soon as the request completes — before any reload — the row's `Automation` badge reads
+  `Generating…` and its last cell is a **View run** link. It still reads that after the reload.
 - The counter line's first number has **not** increased (an in-flight run is not "automated").
 - On `/runs`, **with the test case selected**, a run row exists for phase `Test Automation` with
   status `Dispatched · waiting`.
@@ -335,6 +334,8 @@ thing, not for the app being slow. A silent console is not evidence of a hang
 - PASS if a Test Automation run is created for that test case and the badge flips to `Generating…`.
 - FAIL if nothing happens, the run is created against the parent story instead of the test case, or
   the badge stays `Not automated` after a reload.
+- FAIL if the badge flips only after a manual reload — since commit 4ac75f9 the table refreshes as
+  soon as generation starts.
 - **Blocked** (not Fail) if the trigger request itself never returns within **2 minutes**.
 
 **Test data**
@@ -347,10 +348,10 @@ thing, not for the app being slow. A silent console is not evidence of a hang
 - This is the 09b Test Automation phase riding the ordinary **build** path (`rides_build` in
   `backend/apps/registry/catalog.py`) — there is no special endpoint for it. Its gate role is
   QA Lead, so it will sit at `Awaiting gate` once a companion actually executes it.
-- **Known limitation, do not raise here:** a failing **Generate script** trigger has no error
-  surface on this screen — the button simply returns to its label. If nothing happens, check
-  `/runs` before concluding the trigger failed silently, and raise the missing error surface as a
-  UX defect once.
+- If the trigger is refused (for example no machine connected, no permission, or the phase already
+  running), the button returns to `Generate script` and a red line appears under it with the
+  server's reason, or `Couldn't start the run.` when the server gave none
+  (`TestCases.tsx:101-106`). A refusal with no red line is a defect — raise it.
 - Do not kill the run if the console stays silent — a long run producing no output for 20+ minutes
   is known behaviour (`docs/TESTING_PHASE_BUGS_HANDOFF.md` Bug 3).
 
@@ -612,7 +613,7 @@ thing, not for the app being slow. A silent console is not evidence of a hang
 - The run console header names the **test case** work item and the phase `Test Automation`.
 - The badge progresses `Dispatched · waiting` → `Running` → `Awaiting gate`.
 - On `/gates`, the gate is listed for that work item and is **decidable by P7** — enabled
-  **Approve** and **Reject** buttons and a `Comment (optional)` field.
+  **Approve** and **Reject** buttons and a `Comment (optional to approve or reject)` field.
 - The gate panel shows **no criteria checklist** — the blocking-test condition binds to the
   `testing` phase only, never to `test_automation`.
 - After approving, the gate leaves the `Pending (N)` tab (reload to confirm) and the run console

@@ -67,30 +67,32 @@ JOURNEY_PHASE = "a11y_journey"
 #: Every reason this check can be unavailable, said in words a person can act on. Same
 #: discipline as `dispatch.NO_JUDGE_AGENT` (D-A11Y-3): an unavailable check is reported, never
 #: quietly skipped, because a skipped check and a passed check look identical in a report.
+# Screen Words group 8: these are the reasons the journeys panel shows, so they are sentences for
+# the tester reading it — capitalised, no stored keys, nothing they cannot do themselves.
 NO_JOURNEY_AGENT = (
-    "no `{key}` agent is registered for this workspace, so no journey can be keyboard-tested. "
-    "Seed the agent catalog for this tenant."
+    "Keyboard journeys aren't set up in this workspace yet, so none can be tested. Ask your "
+    "admin to set them up."
 )
 NO_COMPANION = (
-    "there is no connected companion to run the journey on. The application under test runs on "
+    "There is no connected companion to run the journey on. The application under test runs on "
     "a machine the platform cannot reach, so the walk happens there or not at all."
 )
 NO_JOURNEY = (
-    "this project has no walkable journey. A journey is a test case the testing phase wrote "
-    "with `Type: E2E` and readable steps; run the testing phase, or check that its E2E cases "
+    "This project has no journey that can be walked. A journey is an end-to-end test case the "
+    "testing phase wrote with readable steps; run the testing phase, or check that its E2E cases "
     "have a Test Steps section."
 )
-DISPATCH_FAILED = "the journey run could not be started ({detail}), so nothing was walked."
+DISPATCH_FAILED = "The journey couldn't be started, so nothing was walked. {detail}"
 ALREADY_WALKING = (
     "{name} is already being walked. Wait for that run to finish before starting it again — "
     "two browsers walking one journey at once would each see what the other did."
 )
 NOT_THE_REVIEWER = (
-    "only the accessibility reviewer (QA Lead) on this project can start a keyboard journey. "
+    "Only the accessibility reviewer (QA Lead) on this project can start a keyboard journey. "
     "You can see everything here; starting one is a decision to spend a real browser on it."
 )
 NO_ADDRESS = (
-    "no address was given for the application, so there is nowhere to walk. A journey is a real "
+    "No address was given for the application, so there is nowhere to walk. A journey is a real "
     "browser operating a running application: start the application and give the address it "
     "answers on (e.g. http://127.0.0.1:5173)."
 )
@@ -101,22 +103,22 @@ NO_ADDRESS = (
 #: progress. Said in the pass's own words rather than as a status, because "it stopped" and "it
 #: found nothing" must never look the same.
 RUN_ENDED_UNFINISHED = (
-    "the run that was walking this journey ended without closing it, so this is what had been "
+    "The run that was walking this journey ended without closing it, so this is what had been "
     "recorded when it stopped. Steps nothing was reported about were never walked."
 )
 
 #: A blocked step must say what blocked it. Recorded rather than rejected when the agent leaves
 #: it out — refusing the call would lose the fact that the step was blocked at all, which is the
 #: more valuable half.
-NO_REASON_GIVEN = "the agent reported this step as blocked without saying what blocked it"
+NO_REASON_GIVEN = "The agent reported this step as blocked without saying what blocked it"
 
 #: Why a check has no stored answer, in the two opposite cases `stored_journey_judgments`
 #: must not confuse. Both are `uncertain`, never `pass`.
 NOT_ASKED = (
-    "no step of this journey was walked, so this check was never asked. It has not passed."
+    "No step of this journey was walked, so this check was never asked. It has not passed."
 )
 NOTHING_TO_REPORT = (
-    "the last pass walked this journey and recorded nothing for this check — either it found "
+    "The last pass walked this journey and recorded nothing for this check — either it found "
     "no problem, or the check did not apply to any step it reached. Read the pass's step "
     "accounting to tell which."
 )
@@ -136,7 +138,7 @@ def _journey_run(tenant_id, run_id):
     with tenant_context(tenant_id):
         row = A11yJourneyRun.objects.filter(tenant_id=tenant_id, run_id=run_id).first()
     if row is None:
-        raise JourneyRunError(
+        raise JourneyRunError(  # noqa: CLIENT-TEXT — read by the agent through its MCP tool, not a person
             f"no accessibility journey is attached to run {run_id} — this run was not started "
             "by `start_journey_check`, so there is nothing to report against."
         )
@@ -150,7 +152,7 @@ def journey_available(tenant_id, project_id, triggered_by=None) -> str:
 
     with tenant_context(tenant_id):
         if not AgentSpec.objects.filter(tenant_id=tenant_id, key=JOURNEY_AGENT_KEY).exists():
-            return NO_JOURNEY_AGENT.format(key=JOURNEY_AGENT_KEY)
+            return NO_JOURNEY_AGENT
         if _resolve_enrollment(tenant_id, project_id, triggered_by) is None:
             return NO_COMPANION
     return ""
@@ -499,7 +501,7 @@ def queue_journeys(*, tenant_id, project_id, base_url, test_refs=None, user_id=N
              for v in (journey_handle(j).lower(), j.test_ref.lower(), j.title.lower())}
     for missing in sorted(wanted - known):
         refused.append({"name": missing, "test_ref": missing,
-                        "reason": f"no walkable journey {missing!r} in this project"})
+                        "reason": f"No journey {missing} can be walked in this project."})
 
     return {"started": started, "refused": refused,
             "over_cap": found["over_cap"], "unwalkable": found["skipped"],
@@ -554,7 +556,7 @@ def record_step(*, tenant_id, run_id, number, outcome, reason="") -> dict:
     row = _journey_run(tenant_id, run_id)
     outcome = str(outcome or "").strip().lower()
     if outcome not in (A11Y_STEP_WALKED, A11Y_STEP_BLOCKED):
-        raise JourneyRunError(
+        raise JourneyRunError(  # noqa: CLIENT-TEXT — read by the agent through its MCP tool, not a person
             f"step outcome must be {A11Y_STEP_WALKED!r} or {A11Y_STEP_BLOCKED!r}, got "
             f"{outcome!r} — `{A11Y_STEP_NOT_REACHED}` is written by the platform for steps "
             "nothing was reported about, and cannot be claimed."
@@ -562,12 +564,12 @@ def record_step(*, tenant_id, run_id, number, outcome, reason="") -> dict:
     try:
         number = int(number)
     except (TypeError, ValueError) as exc:
-        raise JourneyRunError(f"step number must be a whole number, got {number!r}") from exc
+        raise JourneyRunError(f"step number must be a whole number, got {number!r}") from exc  # noqa: CLIENT-TEXT — read by the agent through its MCP tool, not a person
 
     text, route = _step_text(row, number)
     if not text:
         known = ", ".join(str(s.get("number")) for s in row.steps or []) or "none"
-        raise JourneyRunError(
+        raise JourneyRunError(  # noqa: CLIENT-TEXT — read by the agent through its MCP tool, not a person
             f"this journey has no step {number} — its steps are {known}. Report against the "
             "numbers `get_a11y_journey` gave you, not the numbering in the test case body."
         )
@@ -628,17 +630,17 @@ def record_journey_finding(*, tenant_id, run_id, step, checker, verdict, confide
     row = _journey_run(tenant_id, run_id)
     checker = str(checker or "").strip()
     if checker not in A11Y_JOURNEY_CRITERIA:
-        raise JourneyRunError(
+        raise JourneyRunError(  # noqa: CLIENT-TEXT — read by the agent through its MCP tool, not a person
             f"{checker!r} is not a journey check — the checks are "
             f"{', '.join(sorted(A11Y_JOURNEY_CRITERIA))}"
         )
     try:
         step = int(step)
     except (TypeError, ValueError) as exc:
-        raise JourneyRunError(f"step must be a whole number, got {step!r}") from exc
+        raise JourneyRunError(f"step must be a whole number, got {step!r}") from exc  # noqa: CLIENT-TEXT — read by the agent through its MCP tool, not a person
     text, step_route = _step_text(row, step)
     if not text:
-        raise JourneyRunError(f"this journey has no step {step}")
+        raise JourneyRunError(f"this journey has no step {step}")  # noqa: CLIENT-TEXT — read by the agent through its MCP tool, not a person
 
     try:
         judgment = A11yJudgment(

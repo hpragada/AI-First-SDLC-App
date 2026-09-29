@@ -324,6 +324,25 @@ class ProjectProfileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "project", "version"]
 
+    def validate_description(self, value):
+        """The briefing's one required field, enforced here as well as on the screen.
+
+        The editor refused to save without a description and said nothing about it — the message
+        it was meant to show had only ever been wired into the design gallery, so Save stopped
+        silently and took every other edit on the page with it. The screen now says so, and the
+        rule lives here too, in the same words, so a direct API call cannot blank the field the
+        editor refuses to blank.
+
+        Scoped to requests that actually SEND a description: the endpoint takes partial writes,
+        and a future screen saving only the accessibility block should not have to restate the
+        briefing. The editor always sends it, so the user-facing path is covered.
+        """
+        text = (value or "").strip()
+        if not text:
+            raise serializers.ValidationError(
+                "A description is required — agents rely on it for every phase.")
+        return text
+
     def validate_scan(self, value):
         """Bugs S.No 185: the registries a security scan may reach. Validated here, at the point
         of writing, for the same reason `a11y` is — it is read while a phase is being dispatched,
@@ -484,6 +503,9 @@ class ArtifactSerializer(serializers.ModelSerializer):
         fields = [
             "id", "project", "repo", "run", "phase", "type", "title", "status", "sor",
             "external_ref", "s3_key", "content_hash", "version", "created_at", "previewable",
+            # When it was published, as distinct from when it was drafted (Bugs S.No 224). Null
+            # until it is published, which is what "not published" means.
+            "published_at",
         ]
         read_only_fields = fields
 
@@ -527,6 +549,15 @@ class EventSerializer(serializers.ModelSerializer):
         label = (obj.action or "event").replace(".", " ").replace("_", " ").strip()
         label = label[:1].upper() + label[1:]
         payload = obj.payload or {}
+        # Run-console fix (2026-09-21, option A): two lines named the machinery, not what the
+        # reader sees. The banner above them says "Paused", and a failed review report is a
+        # review that STOPPED, not a report that arrived.
+        if obj.action == "build.parked":
+            label = "Build paused"
+        elif obj.action == "run.parked":
+            label = "Run paused"
+        elif obj.action == "review.reported" and payload.get("status") == "failed":
+            label = "Code review stopped"
         # `reason` covers build.failed/build.takeover (Bugs S.No 139 — the classified failure
         # reason); without it the console showed a bare "Build failed" with no explanation.
         for key in ("message", "detail", "error", "reason", "comment", "phase",

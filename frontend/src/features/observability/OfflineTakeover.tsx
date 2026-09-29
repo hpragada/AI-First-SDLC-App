@@ -1,7 +1,7 @@
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Banner, Breadcrumb, Button, Card, CardBody, EmptyState, ErrorState, Kv, Panel, Spinner } from "../../components/ui";
+import { Banner, Breadcrumb, Button, Card, CardBody, EmptyState, ErrorState, Kv, Panel, Spinner, WriteError } from "../../components/ui";
 import { useRun, useRuns, useTriggerPhase, useWorkItem } from "../lifecycle/hooks";
 import { phaseLabel } from "../lifecycle/phases";
 import { useTakeOverRun } from "./hooks";
@@ -141,9 +141,7 @@ function OfflineTakeoverLive() {
             fresh — your earlier answers are kept either way.
           </Banner>
           {takeOver.isError && (
-            <Banner variant="danger" title="That didn't work">
-              {takeOver.error instanceof Error ? takeOver.error.message : "Nothing was changed."}
-            </Banner>
+            <WriteError title="That didn't work" detail={takeOver.error} />
           )}
           <div className="gate-panel__actions">
             <Button variant="primary" onClick={handleResume} disabled={takeOver.isPending || retry.isPending}>

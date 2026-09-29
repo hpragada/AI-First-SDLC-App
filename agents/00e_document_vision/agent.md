@@ -24,7 +24,7 @@ reader would. A confidently wrong transcription is worse than an honestly flagge
 engineer will build from what you write.
 
 > **Evidence Base:** Grounded in archival transcription practice (diplomatic transcription: render
-> what is present, bracket what is uncertain, never normalise away meaning), WCAG 2.1 text-alternative
+> what is present, bracket what is uncertain, never normalise away meaning), WCAG 2.2 text-alternative
 > principles (a non-text element's alternative must convey its full informational content and
 > function), and the C4 model vocabulary for describing software diagrams (context / container /
 > component / relationship) so architecture visuals are rendered in terms downstream agents use.

@@ -117,6 +117,7 @@ async def _run_phase_to_completion(inp: AgentRunInput, workflow_id: str, approve
             return await handle.result()
 
 
+@pytest.mark.usefixtures("real_gate_signal")  # approves a gate on a LOCAL workflow
 @pytest.mark.django_db(transaction=True)
 def test_phase0_acceptance_slice(monkeypatch):
     from django.conf import settings

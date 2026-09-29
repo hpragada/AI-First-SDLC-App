@@ -20,7 +20,7 @@ from apps.runs.models import Run
 from apps.tenancy.context import tenant_context
 from apps.workitems.models import WorkItem
 
-from .activities import _boundary, compose_manifest_core, get_object_store
+from .activities import _boundary, _now, compose_manifest_core, get_object_store
 from .build_types import BuildInput, BuildReport, display_name
 
 
@@ -122,6 +122,54 @@ def _is_pr_ref(ref) -> bool:
     The implementation agent registers a *pre-PR* code pointer (branch/files, no PR yet, per its
     §Output contract); that is NOT an opened PR and must not short-circuit open_build_pr."""
     return bool(ref) and "repo" in ref and "number" in ref
+
+
+#: The commit check the platform owns on a build's head commit. `open_build_pr_core` sets it to
+#: `pending`; every path that ENDS a build moves it to a terminal state via `_finish_build_status`.
+_BUILD_STATUS_CONTEXT = "sdlc/build"
+#: GitHub truncates a commit-status description past 140 characters.
+_MAX_STATUS_DESCRIPTION = 140
+
+
+def _build_head_sha(inp: BuildInput) -> str:
+    """The commit this build's check hangs off, or "" when no commit exists.
+
+    `open_build_pr_core` has `report.head_sha` in hand; none of the terminal paths do, so recover
+    it the way the merge path recovers the PR ref — from the run's `code` artifact, which carries
+    the sha in its PR ref and again in `content_hash`. Empty when nothing was ever pushed (a
+    secret-blocked build, or a failure before the PR was opened): there is no commit to mark, and
+    posting is correctly skipped rather than guessed at."""
+    try:
+        artifact = _code_artifact(inp)
+    except Exception:      # noqa: BLE001 — status reporting never fails a build
+        return ""
+    if artifact is None:
+        return ""
+    return str((artifact.external_ref or {}).get("sha") or artifact.content_hash or "")
+
+
+def _finish_build_status(inp: BuildInput, state: str, description: str) -> None:
+    """Move `sdlc/build` off `pending` on a path that ends the build (Bugs S.No 132).
+
+    Nothing used to finish this check: it was posted as `pending` when the PR opened and left
+    there forever. Cosmetic while the check is optional — and a permanent block on EVERY merge the
+    moment anyone makes it required on GitHub, because it could never reach green.
+
+    Best-effort in the same shape as the `pending` post: a status that cannot be written must never
+    fail a build that otherwise succeeded."""
+    sha = _build_head_sha(inp)
+    if not sha:
+        return
+    from integrations.registry import get_capability
+
+    try:
+        codehost = get_capability(inp.tenant_id, "codehost")
+        codehost.set_commit_status(
+            repo=inp.repo, sha=sha, state=state, context=_BUILD_STATUS_CONTEXT,
+            description=description[:_MAX_STATUS_DESCRIPTION],
+        )
+    except Exception:      # noqa: BLE001 — status is best-effort
+        pass
 
 
 def import_build_test_results_core(inp: BuildInput, report: BuildReport) -> dict:
@@ -333,7 +381,8 @@ def open_build_pr_core(inp: BuildInput, report: BuildReport) -> dict:
     if report.head_sha:
         try:
             codehost.set_commit_status(repo=inp.repo, sha=report.head_sha, state="pending",
-                                       context="sdlc/build")
+                                       context=_BUILD_STATUS_CONTEXT,
+                                       description="Build in progress.")
         except Exception:  # noqa: BLE001 — status is best-effort
             pass
     with tenant_context(inp.tenant_id):
@@ -417,6 +466,7 @@ def merge_build_pr_core(inp: BuildInput) -> dict:
                     non_retryable=True,
                 )
         pr = codehost.merge_pull_request(pr_ref=pr_ref)
+    _finish_build_status(inp, "success", "Build merged.")
     with tenant_context(inp.tenant_id):
         tools.log_event(inp.tenant_id, "orchestrator", "build.merged", "run", inp.run_id,
                         {"pr": pr_ref})
@@ -486,6 +536,8 @@ def mark_takeover_core(inp: BuildInput) -> dict:
         )
         tools.log_event(inp.tenant_id, "orchestrator", "build.takeover", "run", inp.run_id,
                         {"reason": "runner offline / no report before timeout"})
+    _finish_build_status(inp, "failure", "The platform stopped this build and handed it to a "
+                                         "person.")
     return {"status": "takeover"}
 
 
@@ -531,57 +583,159 @@ def _engine_detail(reason: str) -> str:
     return detail[:_MAX_ENGINE_DETAIL] if detail else "(the engine produced no output)"
 
 
-def classify_build_failure(reason: str) -> str:
-    """Map a raw failure reason / exception string to a single plain-language, classified reason
-    (Bugs S.No 139). The build.failed reason was populated inconsistently across paths — a bare
-    'build reported failed', a hardcoded 'remediation cycles exhausted', or a raw Temporal
-    exception string ('merge failed: ActivityError...'). This normalizes them so the user sees
-    *why* it failed. An already-good, specific message (e.g. the S.No 130 secret-scan message)
-    passes through unchanged; an unrecognized specific message is kept, never lost."""
-    r = (reason or "").lower()
+#: Internal prefixes the workflow puts on a reason to say WHICH step failed. They are for us -
+#: the reader gets the step in words - so they are matched and stripped, never shown.
+_STEP_PREFIXES = {
+    "pr/gate setup failed:": "open",
+    "merge failed:": "merge",
+    "code review did not complete:": "review",
+}
+#: A clock-style reset from the engine's session notice: "resets 1:20am (Asia/Kolkata)".
+_CLOCK_RESET = re.compile(r"resets?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*[ap]m)(?:\s*\(([^)]+)\))?",
+                          re.IGNORECASE)
+#: What a build keeps when it pauses - said by the platform so the screen never guesses.
+BUILD_KEPT = "the build, branch and pull request are kept"
+
+
+@dataclass(frozen=True)
+class FailureText:
+    """A failure said two ways (run-console wording fix, 2026-09-21, option A).
+
+    `sentence` is the banner: what stopped, why, and what to do. `cause` is the short phrase for a
+    one-line log entry. Neither carries the raw engine output or an HTTP call - that is stored
+    separately (`outputs.error_detail`) and shown under "Technical details", closed by default."""
+    sentence: str
+    cause: str
+
+
+def _split_step(reason: str) -> tuple[str, str]:
+    """(step, rest): the internal step prefix, if any, and the reason without it."""
+    text = (reason or "").strip()
+    for prefix, step in _STEP_PREFIXES.items():
+        if text.lower().startswith(prefix):
+            return step, text[len(prefix):].strip()
+    return "", text
+
+
+def _reset_hint(reason: str) -> str:
+    """' (resets 1:20AM, Asia/Kolkata)' / ' (resets 2026-09-21 14:30 UTC)' - or nothing."""
+    match = _USAGE_RESET.search(reason or "")
+    if match:
+        try:
+            when = datetime.fromtimestamp(int(match.group(1)), tz=UTC)
+            return f" (resets {when:%Y-%m-%d %H:%M} UTC)"
+        except (ValueError, OverflowError, OSError):
+            pass
+    match = _CLOCK_RESET.search(reason or "")
+    if match:
+        clock = match.group(1).replace(" ", "").upper()
+        clock = clock[:-2] + " " + clock[-2:]
+        zone = f", {match.group(2)}" if match.group(2) else ""
+        return f" (resets {clock}{zone})"
+    return ""
+
+
+def describe_build_failure(reason: str, *, subject: str = "", parked: bool = True,
+                           what: str = "") -> FailureText:
+    """Map a raw failure reason to what the reader is told (Bugs S.No 139, 146, 266).
+
+    `subject` is "review" when the code REVIEW stopped and "build" otherwise; when omitted it is
+    read from the workflow's step prefix. `what` names the thing that stopped for a caller
+    that is not a build ("The PRD phase" — the agent-run path). `parked` says whether the run
+    can be resumed - a failed
+    run cannot, so it is never told to press Resume.
+
+    What changed on 2026-09-21: the engine's raw output and HTTP calls used to be pasted into this
+    sentence; a review that died was reported as a failed BUILD (and, on a usage limit, as a review
+    that had "already completed"); a rejected GitHub token (401) and the engine's "session limit"
+    notice were not recognised at all. The raw text is now kept apart by the caller."""
+    step, rest = _split_step(reason)
+    subject = subject or ("review" if step == "review" else "build")
+    what = what or ("The code review" if subject == "review" else "The build")
+    unreviewed = " The code has not been reviewed yet." if subject == "review" else ""
+    again = ("Resume to run the review again." if subject == "review"
+             else "Resume to carry on from the step that stopped.")
+    # Padded so a status code matches at the very start or end too ("403 branch protection").
+    r = f" {(rest or '').lower()} "
+
     if "secret scan" in r or "secret_blocked" in r:
-        return reason  # already a classified, redacted message (S.No 130) — keep it
-    # Engine (Claude Code) failures — Bugs S.No 146. Checked before the merge/permission paths
-    # (different signatures). The usage/rate-limit case is the most common and is transient: the
-    # engine's stderr tail (now captured by the driver) carries the notice.
-    if ("usage limit" in r or "usage_limit" in r or "rate limit" in r or "rate-limit" in r
-            or "429" in r or "too many requests" in r or "overloaded" in r or "quota" in r):
-        return ("The AI engine hit its usage or rate limit, so the build could not finish. "
-                f"{_usage_reset_hint(reason)}Retry the build once the limit resets — the run is "
-                "parked, so the branch, PR and review already completed are kept.")
+        return FailureText(rest, "secret scan blocked the push")  # already redacted (S.No 130)
+    if ("usage limit" in r or "usage_limit" in r or "session limit" in r or "rate limit" in r
+            or "rate-limit" in r or "429" in r or "too many requests" in r or "overloaded" in r
+            or "quota" in r or "hit your limit" in r):
+        when = _reset_hint(rest)
+        tail = ("Resume once the limit resets." if parked
+                else "Start it again once the limit resets.")
+        return FailureText(
+            f"{what} stopped because the AI engine reached its usage limit{when}.{unreviewed} "
+            f"{tail}", "the AI engine reached its usage limit")
     if ("failed to start claude code" in r or "claude code not found" in r
             or "open_process()" in r):
-        return ("The AI engine (Claude Code) could not start on the companion — check the engine "
-                "install and dependencies on the dev machine, then retry.")
+        return FailureText(
+            f"{what} couldn't start because the AI engine didn't start on your machine. Check "
+            "the AI engine is installed there, then " + ("Resume." if parked else "try again."),
+            "the AI engine couldn't start")
+    if "-> 401" in r or " 401 " in r or "unauthorized" in r:
+        github = "github" in r
+        host = "GitHub" if github else "The code host"
+        where = {"merge": "the pull request couldn't be merged",
+                 "open": "the pull request couldn't be opened"}.get(
+                     step, "the platform couldn't reach the repository")
+        tail = ", then Resume." if parked else ", then try again."
+        return FailureText(
+            f"{host} didn't accept the access token, so {where}. Ask your admin to reconnect "
+            f"{'GitHub' if github else 'it'} in Integrations{tail}",
+            f"{host} didn't accept the access token")
     if ("merge conflict" in r or "mergeable_state" in r or "dirty" in r
             or "-> 405" in r or " 405 " in r or "merge_conflict" in r):
-        return ("Merge conflict: the branch conflicts with its base and needs manual "
-                "resolution before it can be merged.")
+        return FailureText("Merge conflict: the branch conflicts with its base and needs manual "
+                           "resolution before it can be merged.", "merge conflict")
     if "-> 403" in r or " 403 " in r or "permission" in r or "forbidden" in r:
-        return ("Permission denied: the GitHub token lacks access, or a branch protection "
-                "rule blocked the action.")
+        return FailureText("Permission denied: the GitHub token lacks access, or a branch "
+                           "protection rule blocked the action.", "permission denied")
     if "remediation cycles exhausted" in r:
-        return ("Remediation exhausted: code review kept finding blocking issues after the "
-                "maximum retry cycles.")
+        return FailureText("Remediation exhausted: code review kept finding blocking issues "
+                           "after the maximum retry cycles.",
+                           "code review kept finding blocking issues")
     if "no changes" in r or "empty build" in r or "nothing to commit" in r:
-        return "Empty build: the agent produced no changes to commit."
-    # Generic engine exit (Bugs S.No 146, second pass) — kept after the specific usage-limit and
-    # launch checks, so it only ever describes a failure we could NOT identify.
-    #
-    # It used to end "The most common cause is a usage/rate limit; check the companion terminal".
-    # That was a guess stated as a finding, and it sent the team looking for a usage limit across
-    # nine failures that lasted anywhere from 12 seconds to 75 minutes — they cannot all have been
-    # one cause. Worse, the terminal it pointed at was the only place the evidence existed, and it
-    # was always gone by the time anyone read the message. Say what is known, show what the engine
-    # actually printed, and name a cause only when the evidence names one.
+        return FailureText("Empty build: the agent produced no changes to commit.",
+                           "no changes to commit")
+    # Generic engine exit (S.No 146) - only what is known; the engine's own words are under
+    # "Technical details", never guessed at here.
     if ("exit code" in r or "command failed" in r or "processerror" in r
             or "engine stderr" in r or "engine output" in r):
-        return (f"The AI engine exited before finishing the build{_exit_code_hint(reason)}. "
-                "The engine's own output is below; the full log is on the companion at "
-                f"`<worktrees>/{_ENGINE_LOG_NAME}`.\n\n{_engine_detail(reason)}")
-    if r.strip() in ("", "build reported failed", "remediation build failed"):
-        return "The build agent failed without reporting a specific reason."
-    return reason  # a specific message we don't need to reclassify
+        tail = f"{unreviewed} {again}" if parked else unreviewed
+        return FailureText(
+            f"{what} stopped because the AI engine closed before it finished.{tail}".rstrip(),
+            "the AI engine closed before it finished")
+    if subject == "review" and (not r.strip() or "reported no reason" in r):
+        tail = f"{unreviewed} {again}" if parked else unreviewed
+        return FailureText("The code review stopped before it finished, and no reason was "
+                           f"reported.{tail}".rstrip(), "no reason was reported")
+    if r.strip() in ("", "build reported failed", "remediation build failed",
+                     "phase reported failed"):
+        return FailureText(f"{what} stopped without reporting a specific reason.",
+                           "no reason was reported")
+    if step:
+        # An unrecognised failure at a step we know: name the step; the rest is in the details.
+        doing = {"open": "opening the pull request", "merge": "merging",
+                 "review": "reviewing the code"}[step]
+        tail = f"{unreviewed} {again}" if parked else unreviewed
+        return FailureText(f"{what} stopped on an unexpected error while {doing}.{tail}".rstrip(),
+                           "an unexpected error")
+    return FailureText(rest, rest)  # already a specific message - kept, never lost
+
+
+def _technical_detail(raw: str, sentence: str) -> str:
+    """The raw failure behind a sentence, for "Technical details" — or "" when the sentence IS
+    the raw text (a specific message passed through), so the same words never show twice."""
+    raw = (raw or "").strip()
+    return "" if raw == (sentence or "").strip() else raw[:4000]
+
+
+def classify_build_failure(reason: str, *, subject: str = "", parked: bool = True) -> str:
+    """The banner sentence for a failure - see `describe_build_failure`."""
+    return describe_build_failure(reason, subject=subject, parked=parked).sentence
 
 
 def handle_secret_block_core(inp: BuildInput, reason: str, findings: list | None = None) -> dict:
@@ -661,15 +815,21 @@ def mark_build_failed_core(inp: BuildInput, reason: str) -> dict:
     in_progress (the branch/draft PR are left for human disposition — register-don't-recreate).
     The reason is classified (S.No 139) and stored on `run.outputs.error` — where the run
     console reads the failure line — as well as the build.failed event payload."""
-    reason = classify_build_failure(reason)
+    raw = reason
+    said = describe_build_failure(raw, parked=False)
+    reason = said.sentence
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         run.status = Run.Status.FAILED
-        run.outputs = {**(run.outputs or {}), "error": reason}
+        # `error` is the sentence the console shows; `error_detail` is the raw text behind it,
+        # shown under "Technical details" (closed) — kept, never pasted into the sentence.
+        run.outputs = {**(run.outputs or {}), "error": reason,
+                       "error_detail": _technical_detail(raw, reason)}
         run.save(update_fields=["status", "outputs", "updated_at"])
         tools.transition_work_item(inp.tenant_id, inp.work_item_id, WorkItem.State.IN_PROGRESS)
         tools.log_event(inp.tenant_id, "orchestrator", "build.failed", "run", inp.run_id,
-                        {"reason": reason})
+                        {"reason": said.cause})
+    _finish_build_status(inp, "failure", reason)
     return {"status": "build_failed", "reason": reason}
 
 
@@ -787,15 +947,23 @@ def park_build_core(inp: BuildInput, reason: str, resume_from: str) -> dict:
     The WorkItem is deliberately NOT transitioned: it is already in_progress, which stays true for
     a paused build (mark_build_failed's transition belongs to the terminal path — the abandon
     branch still runs it). Idempotent: parking an already-parked run rewrites the same fields."""
-    reason = classify_build_failure(reason)
+    raw = reason
+    # The step being resumed says what stopped — the review, or the build — so the wording never
+    # depends on matching the message text (S.No 266 used to be recognised by its words alone).
+    subject = "review" if resume_from == "run_code_review" else ""
+    said = describe_build_failure(raw, subject=subject, parked=True)
+    reason = said.sentence
+    stopped = "code review stopped" if subject == "review" else "stopped"
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         run.status = Run.Status.STALLED
         run.outputs = {**(run.outputs or {}), "error": reason,
+                       "error_detail": _technical_detail(raw, reason), "kept": BUILD_KEPT,
                        "resume_from": resume_from, "resumable": True}
         run.save(update_fields=["status", "outputs", "updated_at"])
         tools.log_event(inp.tenant_id, "orchestrator", "build.parked", "run", inp.run_id,
-                        {"reason": reason, "resume_from": resume_from, "resumable": True})
+                        {"reason": f"{stopped}: {said.cause}", "resume_from": resume_from,
+                         "resumable": True})
     return {"status": "parked", "reason": reason, "resume_from": resume_from}
 
 
@@ -806,7 +974,7 @@ def resume_build_core(inp: BuildInput) -> dict:
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         outputs = {**(run.outputs or {})}
         resume_from = outputs.get("resume_from", "")
-        for key in ("error", "resume_from", "resumable"):
+        for key in ("error", "error_detail", "kept", "resume_from", "resumable"):
             outputs.pop(key, None)
         run.status = Run.Status.RUNNING
         run.outputs = outputs
@@ -817,14 +985,32 @@ def resume_build_core(inp: BuildInput) -> dict:
 
 
 def reject_build_core(inp: BuildInput, comment: str) -> dict:
+    """Rejected at the merge gate: fail the run, hand the work item back, supersede the drafts.
+
+    The supersede half is Bugs S.No 218. The planning path has always done this
+    (`activities.reject_run_core`) and the build path never did, so a rejected build left its
+    `code` artifact sitting at STAGED — the status the platform uses for "waiting at a gate" —
+    forever. That was invisible while STAGED was displayed as the machine word "Staged"; once it
+    reads "Waiting for approval" on screen, leaving it there would have the platform state
+    something false about work a human has already turned down.
+
+    Same rule as the planning path: PUBLISHED artifacts are untouched (a rejected remediation
+    cycle must not un-publish an earlier merged one), nothing is deleted, and `get_context` stops
+    serving the rest downstream as authoritative."""
     with tenant_context(inp.tenant_id):
         Run.objects.filter(id=inp.run_id, tenant_id=inp.tenant_id).update(
             status=Run.Status.REJECTED
         )
+        superseded = Artifact.objects.filter(
+            run_id=inp.run_id, tenant_id=inp.tenant_id,
+        ).exclude(status=Artifact.Status.PUBLISHED).update(
+            status=Artifact.Status.SUPERSEDED, updated_at=_now(),
+        )
         tools.transition_work_item(inp.tenant_id, inp.work_item_id, WorkItem.State.IN_PROGRESS)
         tools.log_event(inp.tenant_id, "orchestrator", "build.rejected", "run", inp.run_id,
-                        {"comment": comment})
-    return {"status": "rejected"}
+                        {"comment": comment, "superseded_artifacts": superseded})
+    _finish_build_status(inp, "failure", "Changes were rejected at the merge gate.")
+    return {"status": "rejected", "superseded_artifacts": superseded}
 
 
 # ── code review + remediation loop (07<->08, build phases §5) ───────
@@ -922,10 +1108,23 @@ def _review_body_for_artifact(inp: BuildInput, findings: list) -> str:
     `read_artifact_preview` exactly as before."""
     with tenant_context(inp.tenant_id):
         run = Run.objects.filter(id=inp.run_id, tenant_id=inp.tenant_id).only("outputs").first()
-    prose = ((run.outputs if run else None) or {}).get("review_body") or ""
+    outputs = ((run.outputs if run else None) or {})
+    prose = outputs.get("review_body") or ""
     if prose.strip():
         return prose
     header = f"# Code Review — {display_name(inp)}\n"
+    # A FAILED review has no prose and no findings, which used to render as the same
+    # "No findings were raised" as a genuinely clean one — a review that never happened,
+    # presented to the approver as a review that found nothing. The guard in
+    # `run_code_review_core` means this should no longer be reachable for the companion
+    # provider; it stays because the artifact must be honest on its own, whatever the caller.
+    if outputs.get("review_status") == "failed":
+        # The approver reads this, so it says why in words; the engine's raw error stays on the
+        # run (`review_error`) and in the log, not in the document (run-console fix, 2026-09-21).
+        why = describe_build_failure(outputs.get("review_error") or "", subject="review",
+                                     parked=False).sentence
+        return (header + "\n**This review did not complete, so the code was not reviewed.**\n\n"
+                f"{why}\n")
     if not findings:
         return header + "\nNo findings were raised in this review cycle.\n"
     lines = [header]
@@ -949,7 +1148,17 @@ def run_code_review_core(inp: BuildInput) -> dict:
         raise RuntimeError(f"no opened PR to review for run {inp.run_id}")
     pr_ref = f"{code.external_ref['repo']}#{code.external_ref['number']}"
 
-    findings = list(get_review_provider().review(inp, pr_ref))
+    # Imported here, not at module scope: review_provider imports from this module.
+    from .review_provider import ReviewUnavailableError
+
+    try:
+        findings = list(get_review_provider().review(inp, pr_ref))
+    except ReviewUnavailableError as exc:
+        # NON-RETRYABLE on purpose. The usual cause is the engine hitting a usage limit, which no
+        # amount of immediate retrying fixes — Temporal's retry would just re-dispatch the review
+        # into the same wall and burn the budget. The workflow parks instead, so a human resumes
+        # when the engine is available again and nothing already built is thrown away.
+        raise ApplicationError(str(exc), type="ReviewFailed", non_retryable=True) from exc
     blocking = {f.rem: f for f in findings if f.severity in _BLOCKING}
 
     # STAGE THE BODY. This artifact is `sor="internal"` — "Platform only" — so unlike a `code`

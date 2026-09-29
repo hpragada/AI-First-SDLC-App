@@ -14,7 +14,7 @@
 
 | Element | Contents | Notes |
 |---|---|---|
-| **Sidebar** | Logo (edvensoft) · Workspace Dashboard · Work Items · Phases & Runs · Gates (count) · Clarifications (count) · Artifacts & Traceability · **Accessibility (count)** · — Settings — · Workspace Admin | Active = orange left-bar + lighter navy. Admin section only for tenant-admin. Companion pill pinned bottom. |
+| **Sidebar** | Logo (edvensoft) · Workspace Dashboard · Work Items · Phases & Runs · Gates (count) · Clarifications (count) · Artifacts & Traceability · **Accessibility (count)** · — **Project** — Project Profile · Onboarding *(brownfield only)* · Integrations · Repositories · Test Reporting *(admin only)* · Connect Machine · — **Admin** — Workspace Admin | Active = orange left-bar + lighter navy. Admin section only for tenant-admin. Companion pill pinned bottom. *Corrected 2026-09-17 against `AppShell.tsx:63-112`: the second group is headed **Project**, not Settings, and it holds six items this row never listed.* |
 | **Top bar** | Tenant switcher ("AC Acme Corp ▾") · Project switcher ("⚑ Payment Gateway v2 ▾") · spacer · Companion pill ("● Companion: Ready") · Bell (badge "4") · Avatar menu | Breadcrumb style for tenant/project. |
 | **Sample identities** | Tenant: **Acme Corp**. Projects: **Payment Gateway v2** (greenfield), **Legacy Billing** (brownfield). Users: **Sarah Chen** (product_owner), **Marcus Lee** (architect), **Priya Nair** (designer), **Dan Ortiz** (tech_lead), **Aisha Khan** (qa_lead), **Tom Reyes** (reviewer), **You** (tenant-admin + engineer). | Reuse across all screens for consistency. |
 
@@ -57,6 +57,7 @@
 ### S-08 · Roles & memberships matrix (admin) — J6
 - **Elements:** per-project **role matrix** (rows = users, cols = the 10 roles, toggles), plus a **role-coverage panel** flagging uncovered gate roles ("⚠ No reviewer on Payment Gateway v2 — merge gate will be unactionable").
 - **States:** full coverage, gap warning, last-admin guard, saving.
+- **As built (2026-09-12, `b40c557`, option B+):** the gap warning shows whenever any gate role on the project has nobody — one line however many are empty. It names the roles while one or two are missing ("Nobody holds Reviewer on Payment Gateway v2." / "Nobody holds Reviewer or Designer on …") and counts them beyond that ("7 roles have nobody on …"), then says either "That gate falls to an admin meanwhile" or, when no admin can cover it, "That gate cannot be approved by anyone until someone holds the role." The project beside the title is a plain line of text, not a dropdown.
 
 ---
 
@@ -72,7 +73,8 @@
 - **Sample:** Description "Card payment gateway handling Stripe + Adyen…", Tech stack "Django, React, Postgres".
 
 ### S-11 · Integrations — capability grid (admin) — J9
-- **Elements:** grid of capability cards — Documentation store, Task tracker, Design source, Code host, Test management, Code intelligence — each showing connected vendor + status or "Not connected" + Connect.
+- **Elements:** grid of capability cards — Documentation store, Task tracker, Design source, Code host, Test management — each showing connected vendor + status or "Not connected" + Connect.
+- **As built (2026-09-11, `4ac75f9`, N1):** there is **no Code intelligence card**. It is set up automatically for every workspace (like accessibility), and an old `/integrations/codeintel` link returns to the grid.
 - **States:** mixed (some connected), all empty, connection-failed card (red, reason).
 - **Sample:** Documentation store → **Confluence ● Connected**; Task tracker → **Jira ● Connected**; Design source → **Figma ● Connected**; Code host → **GitHub ● Connected**; Test management → **Xray ○ Not connected**.
 
@@ -94,18 +96,22 @@
 ### S-14 · Work Items board — J11  **★ signature screen**
 - **Elements:** header + "New Work Item"; filters (Phase, **Level: Epics/Tasks/Defects**, Role, Status) + Board/List toggle; **Kanban columns = phases** with count chips; cards = work items (title, level chip, status chip, artifact count, owner avatar, "needs you" flags).
 - **States:** populated board, list view, filtered (e.g., Tasks only), empty project, a card with "1 Clarification" and another "Gate: PM Approval Req.".
+- **As built (2026-09-11/12, `4ac75f9` + `b40c557`):** the first column is **Backlog** — work items nothing has run on yet — followed by the lifecycle phases; the Tasks view is Backlog · Implementation · Review. Every card has a **status pill** for what its phase is doing: Not started, Running, **Waiting for you** (only on a gate this person may decide or a question they may answer), Waiting for review / Waiting for an answer / Waiting for approval (grey, when it is someone else's), Done, Failed, Cancelled. The filter boxes size themselves to their longest choice.
 - **Sample columns/cards:**
   - *1. Ideation* → WI-508 "Customer Loyalty Program" (Epic, Draft); WI-521 "Dark Mode UI Theme" (Feature, Draft).
   - *2. Requirements* → WI-510 "Analytics Dashboard PRD" (AI compiling…, 1 Clarification); WI-511 "Fix Session Timeout Logic" (Task, Gate: PM Approval Req.); WI-499 "Multi-Currency Support" (Phase complete, 3 artifacts).
   - *3. Architecture* → WI-492 "Stripe Webhook Integration" (selected, Review Architecture Gate, Jira STR-14).
   - *4. UX Design* → WI-487 "Checkout Flow Redesign" (AI compiling…).
 
-### S-15 · Work Item Detail — EPIC / FEATURE level — J11  **★ signature screen**
-- **Elements:** breadcrumb (Work Items › WI-492), title + ⚡icon, meta (Created 2d ago, Owner Sarah Chen, Jira STR-14), **Edit / [phase] Gate** action; **plan-tier lifecycle rail** (Ideation→Requirements→PRD→Architecture→UX→Task Breakdown with states); **Description & context** panel; **Linked Artifacts** panel (rows with SoR chips + View Traceability link); **Latest AI Run** console snippet (+ View Full Run Console); **Child tasks** section (the fan-out — list of task work items it produced); right-side **attention card** when a gate is pending.
+### S-15 · Work Item Detail — EPIC / FEATURE / STORY level — J11  **★ signature screen**
+- **Elements:** breadcrumb (Work Items › WI-492), title + ⚡icon, meta (Created 2d ago, Owner Sarah Chen, Jira STR-14), **Edit / [phase] Gate** action; **plan-tier lifecycle rail**, headed "Lifecycle — Planning" (Ideation→Requirements→PRD→Architecture→UX→Task Breakdown with states); **Description & context** panel; **Linked Artifacts** panel (rows with SoR chips + View Traceability link); **Latest AI Run** console snippet (+ View Full Run Console); **Child tasks** section (the fan-out — list of task work items it produced); right-side **attention card** when a gate is pending.
 - **States:** mid-pipeline (Architecture = Gate Pending — like the mockup), gate-pending attention card visible, a phase running (console live), needs-answer badge, all-phases-complete.
 - **Sample:** WI-492 "Stripe Webhook Integration"; rail Requirements ✓ Approved · Architecture ● Gate Pending · Build/QA/Deploy upcoming; artifacts "PRD: Stripe Webhook Integration v1.2 (Confluence)", "System Sequence Diagram v0.9 (Figma, Pending Architecture Gate)"; run console "Compiling requirements… [OK] / Generating sequence diagrams… [OK] / Validating against security rules… [OK] / Run completed. Awaiting gate."
 
-### S-16 · Work Item Detail — TASK / STORY level — J16
+### S-16 · Work Item Detail — TASK level — J16
+> **A story is not on this screen** — settled 2026-09-21 (Screen Words group 9, Option A): a story is
+> a planning item and opens S-15, where its children are listed. See `UX_JOURNEYS_AND_IA_SPEC.md`
+> §6.0. The rail on this screen is headed "Lifecycle — Delivery".
 - **Elements:** same shell but **build-tier rail only** (Implementation→Review→Test→Merge — **no plan phases**); **parent epic backlink**; **child defects/remediations** list; **linked PR** card (draft/open/merged); run console.
 - **States:** implementation running, review loop (Review→back to Implementation, show the loop edge), test failed (defect child created), awaiting merge gate, done.
 - **Sample:** WI-540 "Verify Stripe signing secret" (parent WI-492); PR #218 (draft) on `acme/payments-api`; child defect WI-547 "Signature check rejects valid test events".
@@ -128,7 +134,7 @@
 - **Sample:** WI-510 / Requirements — "Should the analytics dashboard support CSV export in v1?" (confirm); context "Affects the data-export NFR scope."
 
 ### S-21 · Gates — list + decision — J14
-- **Elements:** pending approvals table (gate type, required role, run/work item, **Preview artifact** link); decision panel (Approve primary / Reject secondary + comment); role-gated (non-holders see read-only "awaiting <role>").
+- **Elements:** pending approvals table (gate type, required role, run/work item, **Preview artifact** link); decision panel — **three actions: Approve (primary) / Reject / Request changes** + comment; role-gated (non-holders see read-only "awaiting <role>"). *`Request changes` was added after this row was written and listed here 2026-09-17: it rejects **and** re-runs the phase with the comment as the agent's direction, so it is disabled until a comment is typed — the comment **is** the request.*
 - **States:** can-decide (your role), cannot-decide (permission, show who can), empty, decided history tab.
 - **Sample:** "Architecture gate · required role architect · WI-492 · preview System Sequence Diagram"; count badge "3".
 
@@ -169,7 +175,7 @@
 ## Group E — Observability & recovery (J19–J22)
 
 ### S-28 · Artifacts registry — J19
-- **Elements:** table (type icon, title, phase, version, status draft/published, SoR chip + deep-link, **Preview**); filters (phase/type/status).
+- **Elements:** table (type icon, title, phase, version, status, SoR chip + deep-link, **Preview**); filters (phase/type/status). **Status is one of five** — `draft · staged · approved · published · superseded` (`backend/apps/registry/models.py:36-46`). *Corrected 2026-09-17: this row said "draft/published". `superseded` is the newest and the one most easily missed — it marks a draft whose gate was **rejected**, kept as the record but no longer served to downstream phases.*
 - **States:** populated, internal-only (no link), published-with-link, empty.
 
 ### S-29 · Artifact preview (read-only) — J19

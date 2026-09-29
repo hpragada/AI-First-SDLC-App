@@ -3,7 +3,15 @@
 **Doc A of two.** This is the *fixture application*: a small web app that is wrong in known,
 deliberate ways. Doc B (`GOLDEN_DATASET_SPEC.md`) is the answer key over it.
 
-**Status:** proposed · **Audience:** whoever builds the fixture · **Internal to Edvensoft**
+**Status (updated 2026-09-17): BUILT** — the fixture exists as Meridian Library and has been audited
+repeatedly; the answer key over it is in `golden/` (see `GOLDEN_DATASET_SPEC.md`). · **Audience:**
+whoever builds or extends the fixture · **Internal to Edvensoft**
+
+> ⚠️ **The checker names used throughout this spec are the old spelling.** `meaningful-alt` is
+> **`alt`**, `fake-semantics` is **`semantics`**, `colour-only` is **`color`**; `label` is
+> unchanged; and two more shipped later — **`structure`** and **`graphics`**, six in all. The
+> tables below are left in the original spelling as the record of what was specified; take live
+> names from `backend/apps/a11y/checkers/rules.py`.
 
 ---
 

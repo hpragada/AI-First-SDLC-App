@@ -129,13 +129,26 @@ def transition(*, tenant_id, work_item_id, to_state, reason="", actor_id=None) -
         from_state = item.state
 
         if to_state not in WorkItem.State.values:
-            raise ValidationError({"to_state": [f"'{to_state}' is not a work item state."]})
+            raise ValidationError({"to_state": ["That isn't a column on this board."]})
         allowed = ALLOWED_TRANSITIONS.get(from_state, frozenset())
         if to_state not in allowed:
-            offer = ", ".join(sorted(allowed)) if allowed else "nothing"
+            # Screen Words group 5. Dragging a card on a board someone else has moved on showed
+            # "A in_progress work item cannot be moved to done." — three stored words and a
+            # broken article. The states are columns the reader can see, so they get the column
+            # names, and the list of where it CAN go is the useful half.
+            from apps.labels import work_item_state_label
+
+            offer = (
+                ", ".join(work_item_state_label(s) for s in sorted(allowed))
+                if allowed else ""
+            )
+            where = (
+                f" From here it can go to: {offer}." if offer
+                else " It can't be moved anywhere from here."
+            )
             raise ValidationError({"to_state": [
-                f"A {from_state} work item cannot be moved to {to_state}. "
-                f"From here you can move it to: {offer}."
+                f"This work item is {work_item_state_label(from_state).lower()}, so it can't "
+                f"move to {work_item_state_label(to_state).lower()}.{where}"
             ]})
         if to_state == WorkItem.State.CANCELLED and not reason:
             raise ValidationError({"reason": [

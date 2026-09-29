@@ -171,6 +171,7 @@ def get_capability(
     builder = _BUILDERS.get((conn.capability, conn.connector))
     if builder is None:
         raise CapabilityError(
-            f"no connector registered for {conn.capability!r}:{conn.connector!r}"
+            "The platform can't use this connection — its service isn't supported. "
+            "Reconnect it from the Integrations screen."
         )
     return builder(conn)

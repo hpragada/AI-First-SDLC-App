@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 
-import { ApiError } from "../../api";
+import { ApiError, fieldError, formError } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import {
   Avatar,
@@ -73,8 +73,22 @@ function InviteDrawer({
   const defaultProjectId = projects[0]?.project_id ?? "";
   const [grants, setGrants] = useState([{ project_id: defaultProjectId, role: "engineer" }]);
 
+  // Screen Words group 6b. This waited for a 409 and nothing else. Inviting an email that
+  // already has an account makes the server answer 400 with the reason filed under `email`, so
+  // the drawer just sat there — no message, no closed drawer, nothing to act on. Invalid emails
+  // and refused role grants were silent for the same reason.
+  //
+  // `duplicate` still means only "this person is already here", because it also hides the rest
+  // of the form and disables Send: an ordinary validation complaint must not do either.
   const duplicate =
     dup || (createInvitation.error instanceof ApiError && createInvitation.error.status === 409);
+  // What the server said about the email field, whichever status it used.
+  const emailError = duplicate
+    ? `${email} is already a member of this workspace.`
+    : fieldError(createInvitation.error, "email");
+  // Anything the server refused that no field on screen owns — a bad role grant, a project the
+  // inviter cannot grant on, an expired session. Previously swallowed entirely.
+  const otherError = formError(createInvitation.error, ["email", "name", "grants"]);
 
   const updateGrant = (i: number, patch: Partial<{ project_id: string; role: string }>) =>
     setGrants((g) => g.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
@@ -120,20 +134,26 @@ function InviteDrawer({
       }
     >
       <form id="invite-form" onSubmit={onSubmit}>
+        {/* Screen Words group 6b: a refusal no field owns, in the drawer rather than nowhere. */}
+        {otherError && (
+          <div style={{ marginBottom: "var(--space-4)" }}>
+            <WriteError title="Couldn't send the invitation" detail={createInvitation.error} />
+          </div>
+        )}
         <Field
           label={
             <>
               Work email <span className="req">*</span>
             </>
           }
-          error={duplicate ? `${email} is already a member of this workspace.` : undefined}
+          error={emailError}
         >
           <Input
             type="email"
             placeholder="name@acme.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            aria-invalid={duplicate}
+            aria-invalid={Boolean(emailError)}
           />
         </Field>
         {!duplicate && (

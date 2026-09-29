@@ -234,7 +234,22 @@ def _render_work_item(work_item: dict, phase: str, budget: TokenBudget) -> str:
 
 def _render_clarifications(clarifications: list[dict], budget: TokenBudget) -> str:
     """Prior human answers to the agent's questions (req #2 durability). Replayed so a
-    re-dispatched run reuses the answer instead of re-asking via `ask_human`."""
+    re-dispatched run reuses the answer instead of re-asking via `ask_human`.
+
+    Arrives newest first (T13). The same set of questions answered twice is shown once, keeping
+    the newest answer (T9): on run `5b4a1bab` a duplicate gate had left the identical ten
+    questions answered twice, and the replay alone pushed this section over its cap. Keyed on the
+    sorted question ids, so it covers any duplicate that reaches the table however it got there.
+    """
+    unique: list[dict] = []
+    seen: set[tuple[str, ...]] = set()
+    for c in clarifications:
+        ids = tuple(sorted(str(q.get("id")) for q in (c.get("questions") or [])))
+        if ids and ids in seen:
+            continue
+        seen.add(ids)
+        unique.append(c)
+    clarifications = unique
     shown = clarifications[: budget.max_clarifications]
     lines = [
         "Questions you already asked were answered by a human — **use these answers; do "

@@ -22,6 +22,7 @@ with workflow.unsafe.imports_passed_through():
         is_empty_build,
         is_engine_exit,
         is_merge_conflict,
+        is_review_failed,
     )
     from .types import GateDecision
 
@@ -224,10 +225,25 @@ class BuildWorkflow:
                 review_activity_timeout = timedelta(seconds=inp.review_timeout_seconds + 600)
                 cycle = 0
                 while True:
-                    review = await workflow.execute_activity(
-                        "run_code_review", inp,
-                        start_to_close_timeout=review_activity_timeout, retry_policy=_RETRY,
-                    )
+                    try:
+                        review = await workflow.execute_activity(
+                            "run_code_review", inp,
+                            start_to_close_timeout=review_activity_timeout, retry_policy=_RETRY,
+                        )
+                    except ActivityError as exc:
+                        # The REVIEW never ran (the engine died before posting a verdict). Park
+                        # here rather than letting this fall to the outer handler: that one is
+                        # for the PR/gate plumbing and labels everything "pr/gate setup failed",
+                        # which would send a reviewer looking at a PR that is perfectly fine.
+                        # Resuming re-runs only the review — the build, branch, PR and imported
+                        # test results are all kept — and the remediation budget is untouched,
+                        # because an engine going away is not the agent failing review.
+                        if not is_review_failed(exc):
+                            raise
+                        if not await self._park(inp, failure_reason(exc), "run_code_review"):
+                            await self._teardown_preview(inp)
+                            return {"status": "build_failed", "run_id": inp.run_id}
+                        continue
                     if review["open_blocking"] == 0:
                         break
                     cycle += 1

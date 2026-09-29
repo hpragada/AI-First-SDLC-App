@@ -2,8 +2,11 @@ import { Link } from "react-router-dom";
 import { useState } from "react";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Assess, Badge, Banner, Button, Card, CardBody, EmptyState, Panel, Spinner, Table, Tabs, Textarea } from "../../components/ui";
+import { Assess, Badge, Banner, Button, Card, CardBody, EmptyState, Panel, Spinner, Table, Tabs, Textarea, WriteError } from "../../components/ui";
+import { driftKindLabel } from "../../labels";
 import type { DriftRecord } from "../../types";
+import { roleLabel } from "../identity/roles";
+import { artifactStatusBadge } from "./artifactStatus";
 import { useApiContracts, useDecideDrift, useDrift } from "./hooks";
 
 // S-27 view states: healthy · drift-pending (cross-repo impact) · wrong-role
@@ -100,9 +103,10 @@ function ContractsDriftLive() {
                   <span className="table__id" key="r">
                     {c.provider_repo ?? "—"}
                   </span>,
-                  <Badge variant="done" key="s">
-                    {c.status}
-                  </Badge>,
+                  // Screen Words group 4: a contract IS a registered document, so it uses the
+                  // same badge as the Artifacts list rather than printing the stored word in
+                  // green whatever it says.
+                  artifactStatusBadge(c.status),
                   <Link to={`/artifacts/${c.artifact_id}`} key="a">
                     View ↗
                   </Link>,
@@ -132,13 +136,15 @@ function ContractsDriftLive() {
           <div className="grid grid--detail">
             <Panel flush title="Drift queue">
               <Table
-                headers={["Kind", "Required role", "Impact", ""]}
+                headers={["What changed", "Decided by", "Impact", ""]}
                 rows={driftList.map((d) => ({
                   cells: [
+                    // Screen Words groups 3 and 4: the drift kind and the role were both stored
+                    // keys. "pointer_hash" is not a sentence anyone can act on.
                     <Badge variant="failed" key="k">
-                      {d.kind}
+                      {driftKindLabel(d.kind)}
                     </Badge>,
-                    d.required_role,
+                    roleLabel(d.required_role),
                     `${d.impacted.length} consumer${d.impacted.length === 1 ? "" : "s"}`,
                     "",
                   ],
@@ -151,8 +157,9 @@ function ContractsDriftLive() {
               (canDecide(selected) ? (
                 <Card attention>
                   <CardBody>
-                    <span className="gate-panel__role">▲ Drift gate · required role: {selected.required_role}</span>
-                    <h3 className="t-h3">{selected.kind} drift</h3>
+                    {/* Screen Words group 3 — same wording as the gate panels elsewhere. */}
+                    <span className="gate-panel__role">▲ Drift gate · decided by a {roleLabel(selected.required_role)}</span>
+                    <h3 className="t-h3">{driftKindLabel(selected.kind)}</h3>
                     <Banner variant="danger" title={`Impacts ${selected.impacted.length} consumer(s)`}>
                       {driftSummary(selected.detail)}
                     </Banner>
@@ -185,9 +192,7 @@ function ContractsDriftLive() {
                       </Button>
                     </div>
                     {decideDrift.isError && (
-                      <Banner variant="danger" title="Couldn't record the decision">
-                        {decideDrift.error instanceof Error ? decideDrift.error.message : "Unknown error"}
-                      </Banner>
+                      <WriteError title="Couldn't record the decision" detail={decideDrift.error} />
                     )}
                   </CardBody>
                 </Card>
@@ -195,10 +200,15 @@ function ContractsDriftLive() {
                 <Card>
                   <CardBody>
                     <span className="gate-panel__role" style={{ color: "var(--text-muted)" }}>
-                      Drift gate · {selected.kind}
+                      Drift gate · {driftKindLabel(selected.kind)}
                     </span>
-                    <Banner variant="info" title={`Awaiting ${selected.required_role}`}>
-                      Only the <strong>{selected.required_role}</strong> role can decide this drift.
+                    {/* Screen Words group 3: the role's own name instead of the key. NOTE: no
+                        "or an admin" here, unlike the Gates banner. `decide_drift` checks the
+                        exact required role and has no admin fallback, so offering one would be
+                        a promise the server does not keep. */}
+                    <Banner variant="info" title={`Waiting for a ${roleLabel(selected.required_role)}`}>
+                      Only a <strong>{roleLabel(selected.required_role)}</strong> on this project
+                      can decide this drift. You can read it.
                     </Banner>
                     <div className="gate-panel__actions">
                       <Button variant="primary" disabled aria-disabled="true">

@@ -9,6 +9,7 @@ import {
   Card,
   CardBody,
   Check,
+  ChoiceSelect,
   EmptyState,
   Field,
   Input,
@@ -16,6 +17,7 @@ import {
   Select,
   Spinner,
   Tabs,
+  writeErrorSentence,
 } from "../../components/ui";
 import { isRunListening, type Clarification, type ClarificationQuestion } from "../../types";
 import { Pager, PhaseFilter, WorkItemFilter } from "./HistoryControls";
@@ -394,18 +396,16 @@ function ClarificationsLive() {
           </Check>
         ) : q.kind === "choice" && q.options?.length ? (
           <>
-            <Select
+            {/* Bugs S.No 184: the browser's own dropdown ran agent-written, sentence-long options
+                off the card on one unbroken line — the operating system draws that list, so
+                nothing here could bound it or wrap it. The answer, and the "Other" box beneath
+                it, behave exactly as before; only who draws the list has changed. */}
+            <ChoiceSelect
               value={(answers[q.id] as string) ?? ""}
-              onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
-              aria-invalid={touched && q.required && resolvedAnswer(q) === undefined}
-            >
-              <option value="">Choose one…</option>
-              {q.options.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </Select>
+              onChange={(v) => setAnswers((a) => ({ ...a, [q.id]: v }))}
+              options={q.options.map((opt) => ({ value: opt, label: opt }))}
+              invalid={touched && q.required && resolvedAnswer(q) === undefined}
+            />
             {typeof answers[q.id] === "string" && isOtherOption(answers[q.id] as string) && (
               <Input
                 type="text"
@@ -540,7 +540,7 @@ function ClarificationsLive() {
             </div>
             {answer.isError && (
               <p className="t-sm" style={{ color: "var(--danger)", marginTop: "var(--space-2)" }}>
-                {answer.error instanceof Error ? answer.error.message : "Couldn't submit the answer."}
+                {writeErrorSentence(answer.error, "Couldn't submit the answer.")}
               </p>
             )}
           </CardBody>

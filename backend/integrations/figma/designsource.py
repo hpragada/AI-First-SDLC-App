@@ -74,7 +74,10 @@ class FigmaDesignSource:
     def _file_key(self, file_key: str | None) -> str:
         file_key = file_key or self._default_file_key
         if not file_key:
-            raise CapabilityError("no file_key specified and no default_file_key configured")
+            raise CapabilityError(
+                "No Figma file was named, and the connection has no default file. Add one "
+                "in the connection settings."
+            )
         return file_key
 
     # ── DesignSource capability ─────────────────────────────────────

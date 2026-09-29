@@ -26,7 +26,9 @@ def request_takeover(*, tenant_id: str, work_item_id: str, actor: str = "develop
     with tenant_context(tenant_id):
         work_item = WorkItem.objects.filter(id=work_item_id, tenant_id=tenant_id).first()
         if work_item is None:
-            raise TakeoverError(f"work item {work_item_id} not found in tenant")
+            raise TakeoverError(
+                "That work item no longer exists, so it can't be taken over."
+            )
         if not work_item.takeover_flag:
             work_item.takeover_flag = True
             work_item.save(update_fields=["takeover_flag", "updated_at"])
@@ -40,7 +42,9 @@ def release_takeover(*, tenant_id: str, work_item_id: str, actor: str = "develop
     with tenant_context(tenant_id):
         work_item = WorkItem.objects.filter(id=work_item_id, tenant_id=tenant_id).first()
         if work_item is None:
-            raise TakeoverError(f"work item {work_item_id} not found in tenant")
+            raise TakeoverError(
+                "That work item no longer exists, so it can't be taken over."
+            )
         if work_item.takeover_flag:
             work_item.takeover_flag = False
             work_item.save(update_fields=["takeover_flag", "updated_at"])
@@ -123,23 +127,29 @@ def resume_stalled_run(*, tenant_id: str, run_id: str, signal_sender=None) -> di
     with tenant_context(tenant_id):
         run = Run.objects.filter(id=run_id, tenant_id=tenant_id).first()
         if run is None:
-            raise ResumeError(f"run {run_id} not found in tenant")
+            raise ResumeError("That run no longer exists.")
         outputs = run.outputs or {}
         if run.status != Run.Status.STALLED or not outputs.get("resumable"):
             raise ResumeError(
-                "this run is not paused at a resumable error, so there is nothing to resume"
+                "This run isn't paused at a step that can be picked up, so there is nothing to "
+                "resume. Start the phase again instead."
             )
         if not run.temporal_workflow_id:
-            raise ResumeError("this run has no live workflow to resume")
+            raise ResumeError(
+                "This run is no longer active, so it can't be picked up. Start the phase again "
+                "instead."
+            )
         workflow_id, resume_from = run.temporal_workflow_id, outputs.get("resume_from", "")
     try:
         signal_sender(workflow_id)
     except Exception as exc:  # noqa: BLE001
         # A workflow that has since closed can't be resumed — say so plainly rather than 500.
         if "already completed" in str(exc).lower() or "not found" in str(exc).lower():
+            # Screen Words group 5: capital, no "workflow" (the reader has never heard of one),
+            # and the thing to do next as an instruction rather than an aside.
             raise ResumeError(
-                "this run's workflow is no longer running, so it can't be resumed — re-trigger "
-                "the phase instead"
+                "This run has already finished, so it can't be picked up. Start the phase "
+                "again instead."
             ) from exc
         raise
     return {"run_id": str(run_id), "resumed": True, "resume_from": resume_from}

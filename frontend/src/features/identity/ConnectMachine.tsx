@@ -13,6 +13,7 @@ import {
   Select,
   TokenReveal,
   WriteError,
+  writeErrorSentence,
 } from "../../components/ui";
 import { useCreateRunner, useRevokeRunner, useRunners } from "./hooks";
 import { SetupReturnLink } from "./SetupReturnLink";
@@ -149,7 +150,7 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
             </div>
             {revokeRunner.isError && (
               <p className="t-sm" style={{ color: "var(--danger)", marginTop: "var(--space-2)" }}>
-                {revokeRunner.error instanceof Error ? revokeRunner.error.message : "Couldn't disconnect this machine."}
+                {writeErrorSentence(revokeRunner.error, "Couldn't disconnect this machine.")}
               </p>
             )}
           </CardBody>

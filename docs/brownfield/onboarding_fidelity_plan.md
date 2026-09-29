@@ -1,6 +1,14 @@
 # Brownfield Onboarding — Lossless Capture Plan (Part A + Part B)
 
-**Status:** plan awaiting approval — no code yet. Everything lands on `brownfield-agent-onboarding`, one slice at a time, tested each step.
+**Status (updated 2026-09-17): BUILT — both parts are in the tree and merged.** Part A's
+high-fidelity extraction and page-image preservation are live (`mcp_platform_state/tools.py`,
+`get_page_images` and the page-image window); Part B shipped as the `00e_document_vision` agent
+(`agents/00e_document_vision/agent.md`, catalogued at
+`backend/apps/registry/catalog.py:159`). The work is no longer on its own branch — it is merged.
+
+*The original header said "plan awaiting approval — no code yet", which stopped being true when the
+first slice landed. The plan text below is kept as written: it is the specification the build
+followed, and the "After Part A / After Part B" notes are what it promised, not what is still owed.*
 
 ## Why (the team's two goals)
 

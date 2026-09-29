@@ -46,7 +46,9 @@ from apps.projects.repos import (
     set_default_repository,
     update_repository,
 )
+from apps.registry.catalog import ACTIVE_AGENT_CATALOG as _ACTIVE_CATALOG
 from apps.registry.catalog import gate_role_for
+from apps.registry.catalog import get_by_key as _catalog_get
 from apps.registry.catalog import rides_build as catalog_rides_build
 from apps.registry.models import AgentSpec, Artifact, TraceEdge
 from apps.runs.models import Run
@@ -165,6 +167,32 @@ class TenantScopedMixin:
 
     def get_queryset(self):
         return super().get_queryset().filter(tenant_id=self.tenant_id)
+
+    def get_object(self):
+        """Screen Words group 5: DRF's own 404 text is written for whoever wrote the query.
+
+        A deleted run, or a link pasted from another project, answered
+        `No Run matches the given query.` — which names the Python model, says "query" to someone
+        who typed no query, and gives them nothing to do next. One override here rather than a
+        message per viewset, so every scoped resource says it the same way.
+
+        Deliberately does NOT say "or you don't have access to it". That wording was tried and
+        read as a permissions problem, sending people to ask an admin for access to something
+        that simply no longer exists.
+        """
+        from django.http import Http404
+
+        try:
+            return super().get_object()
+        except Http404 as exc:
+            try:
+                noun = str(self.get_queryset().model._meta.verbose_name)
+            except Exception:  # noqa: BLE001 — never let the message-builder become the failure
+                noun = "item"
+            raise NotFound(
+                f"That {noun} no longer exists. It may have been deleted, or the link may "
+                "point at a different project."
+            ) from exc
 
 
 # ── Tenant (bootstrap — no tenant context exists yet) ───────────────
@@ -301,7 +329,7 @@ class ProjectViewSet(
         """
         name = (request.data.get("name") or "").strip()
         if name and Project.objects.filter(tenant_id=self.tenant_id, name__iexact=name).exists():
-            return Response(
+            return Response(  # noqa: CLIENT-TEXT — repeats the name the person just typed
                 {"detail": f'A project named "{name}" already exists in this workspace.'},
                 status=status.HTTP_409_CONFLICT,
             )
@@ -769,12 +797,12 @@ class ProjectViewSet(
         audit = A11yBaselineAudit.objects.filter(
             tenant_id=self.tenant_id, project_id=project.id, id=audit_id).first()
         if audit is None:
-            return Response({"detail": "no such audit in this project"},
+            return Response({"detail": "That audit wasn't found in this project."},
                             status=status.HTTP_404_NOT_FOUND)
         if audit.status not in CLOSED_STATUSES:
             return Response(
-                {"detail": "this audit has not finished yet, so what it has not looked at is "
-                           "still changing. Wait for it to close."},
+                {"detail": "This audit hasn't finished yet, so what it hasn't looked at is "
+                           "still changing. Wait for it to finish, then try again."},
                 status=status.HTTP_409_CONFLICT)
         out = rejudge_capture(
             tenant_id=self.tenant_id, project_id=str(project.id), run_id=str(audit.id),
@@ -808,7 +836,7 @@ class ProjectViewSet(
         if request.method == "POST":
             refs = request.data.get("test_refs")
             if refs is not None and not isinstance(refs, list | tuple):
-                return Response({"detail": "test_refs must be a list of test case ids"},
+                return Response({"detail": "Choose the journeys to start as a list."},
                                 status=status.HTTP_400_BAD_REQUEST)
             try:
                 out = queue_journeys(
@@ -1112,14 +1140,32 @@ class ProjectViewSet(
         each node carrying its SoR pointer/url so the UI can deep-link to the live
         Confluence page / Jira issue. The requirement→PRD→epic→story chain walks these."""
         project = self.get_object()
-        artifacts = Artifact.objects.filter(tenant_id=self.tenant_id, project=project)
+        # `run__work_item` so every node can say WHICH WORK ITEM it belongs to (P3). The map's
+        # own question — "what came out of this piece of work" — could not be asked of it before:
+        # a node carried its phase, type and status but nothing tying it to a work item, so the
+        # screen had no way to follow one item's chain. The link already exists on every record
+        # (an artifact names the run that produced it, and a run always has a work item); this
+        # follows it in the same query instead of adding one per node.
+        #
+        # `run` is nullable, and that is not a fault: documents adopted during brownfield
+        # onboarding were never produced by a run, so they genuinely belong to no work item.
+        # They report empty values here, and the screen offers "Not tied to a work item" for
+        # them rather than leaving them unreachable by the filter.
+        artifacts = (
+            Artifact.objects.filter(tenant_id=self.tenant_id, project=project)
+            .select_related("run__work_item")
+        )
         nodes = []
         for a in artifacts:
             ext = a.external_ref or {}
+            work_item = a.run.work_item if a.run_id else None
             nodes.append({
                 "id": str(a.id), "kind": "artifact", "phase": a.phase, "type": a.type,
                 "title": a.title, "status": a.status, "sor": a.sor,
                 "external_ref": ext or None, "url": ext.get("url"),
+                "work_item": str(work_item.id) if work_item else None,
+                "work_item_key": (work_item.key or "") if work_item else "",
+                "work_item_title": (work_item.title or "") if work_item else "",
             })
         edges = TraceEdge.objects.filter(
             tenant_id=self.tenant_id, from_artifact__project=project
@@ -1143,7 +1189,7 @@ class ProjectViewSet(
 
         upload = request.FILES.get("file")
         if upload is None:
-            raise ValidationError({"file": "a multipart 'file' is required"})
+            raise ValidationError({"file": "Choose a file to upload."})
         try:
             out = ingest_source_document(
                 tenant_id=self.tenant_id, project_id=str(project.id),
@@ -1238,7 +1284,7 @@ class ProjectViewSet(
         except RepositoryError as exc:
             return Response({"detail": str(exc)}, status=exc.status)
         except Repository.DoesNotExist:
-            return Response({"detail": "unknown repository for this project"},
+            return Response({"detail": "That repository isn't part of this project."},
                             status=status.HTTP_404_NOT_FOUND)
         return Response(out, status=status.HTTP_202_ACCEPTED)
 
@@ -1308,17 +1354,33 @@ class ProjectViewSet(
         tid = self.tenant_id
         one_week_ago = timezone.now() - timedelta(days=7)
 
-        pending_gates = (
-            Approval.objects.filter(tenant_id=tid, work_item__project=project, decision="pending")
-            .select_related("work_item")[:20]
-        )
-        pending_clarifications = (
-            Clarification.objects.filter(tenant_id=tid, work_item__project=project, status="pending")
-            .select_related("work_item")[:20]
-        )
-        my_runs = []
+        from apps.gates.services import gate_roles_decidable_by
+
+        # Bugs S.No 222. The three tiles read "…your approval", "…awaiting you" and "My runs",
+        # and only the third was filtered to the person reading it: the other two listed every
+        # pending gate and question on the project, whoever they were for. The filters below are
+        # the platform's own rules for who may act, not a second copy of them:
+        #   gates — `gate_roles_decidable_by`, the function `decide_gate` enforces with, so this
+        #     queue can never offer a gate the Approve button then refuses. Admins may decide any
+        #     gate, so they still see every one.
+        #   questions — project membership, which is exactly what `answer_clarification` checks.
+        #     No admin fallback, because that function has none: a tenant admin who is not a
+        #     member would be shown a question and then refused on answering it.
+        pending_gates_q = Approval.objects.none()
+        pending_clarifications_q = Clarification.objects.none()
+        my_runs_q = Run.objects.none()
         if user:
-            my_runs = list(
+            pending_gates_q = Approval.objects.filter(
+                tenant_id=tid, work_item__project=project, decision="pending")
+            decidable = gate_roles_decidable_by(
+                tenant_id=tid, user_id=user.id, project_id=project.id)
+            if decidable is not None:
+                pending_gates_q = pending_gates_q.filter(required_role__in=decidable)
+            if Membership.objects.filter(
+                    tenant_id=tid, user_id=user.id, project=project).exists():
+                pending_clarifications_q = Clarification.objects.filter(
+                    tenant_id=tid, work_item__project=project, status="pending")
+            my_runs_q = (
                 Run.objects.filter(
                     tenant_id=tid, work_item__project=project,
                     triggered_by=user, status__in=["running", "awaiting_gate"],
@@ -1327,16 +1389,36 @@ class ProjectViewSet(
                 # Onboarding hub, not here — counting them made the dashboard claim work needed
                 # the user when the whole point is that it doesn't.
                 .exclude(carrier_q("work_item__"))
-                .select_related("agent_spec")[:10]
             )
+        # The lists stay trimmed; the COUNTS below do not. The tiles used to show the length of
+        # a list cut at 20, so a busy project quietly under-reported — and the number is the one
+        # thing on the screen that has to be right even when the list beside it is incomplete.
+        # Oldest first: a queue is worked from the thing that has waited longest.
+        pending_gates = list(
+            pending_gates_q.select_related("work_item").order_by("created_at")[:20])
+        pending_clarifications = list(
+            pending_clarifications_q.select_related("work_item").order_by("created_at")[:20])
+        # `work_item` as well as `agent_spec`: every row below now names its work item the way
+        # the rest of the product does (P2), and the gates/questions lists above already load it.
+        my_runs = list(my_runs_q.select_related("agent_spec", "work_item")[:10])
 
+        # Filtered on when it was PUBLISHED, not when it was drafted (Bugs S.No 224). Drafting
+        # and publishing are separated by a review gate, so they are routinely days apart: on
+        # `created_at` this list omitted something published this morning because it was drafted
+        # eight days ago, and included something drafted today that nobody has published at all.
         recent_published = list(
             Artifact.objects.filter(
                 tenant_id=tid, project=project,
-                status=Artifact.Status.PUBLISHED, created_at__gte=one_week_ago,
-            ).order_by("-created_at")[:5]
+                status=Artifact.Status.PUBLISHED, published_at__gte=one_week_ago,
+            ).order_by("-published_at")[:5]
         )
 
+        # Every row carries its work item's NUMBER and TITLE, not only the internal id (P2). The
+        # queue is the first thing a client reads each morning, and it used to name each item by
+        # eight characters of a UUID — a string that matches nothing they can search for, quote or
+        # recognise, and which the same row sometimes printed twice. The work item is already
+        # loaded beside each row (`select_related` above), so this passes on what is in hand
+        # rather than asking the database again.
         return Response({
             "needs_me": {
                 "gates": [
@@ -1344,6 +1426,8 @@ class ProjectViewSet(
                         "approval_id": str(a.id),
                         "gate": a.gate_type,
                         "work_item": str(a.work_item_id),
+                        "work_item_key": a.work_item.key or "",
+                        "work_item_title": a.work_item.title or "",
                         "role": a.required_role,
                     }
                     for a in pending_gates
@@ -1352,6 +1436,8 @@ class ProjectViewSet(
                     {
                         "id": str(c.id),
                         "work_item": str(c.work_item_id),
+                        "work_item_key": c.work_item.key or "",
+                        "work_item_title": c.work_item.title or "",
                         "question": (c.questions[0]["text"] if c.questions else ""),
                         "waiting_s": int((timezone.now() - c.created_at).total_seconds()),
                     }
@@ -1362,10 +1448,21 @@ class ProjectViewSet(
                         "run_id": str(r.id),
                         "phase": r.agent_spec.key if r.agent_spec_id else "",
                         "work_item": str(r.work_item_id),
+                        "work_item_key": r.work_item.key or "",
+                        "work_item_title": r.work_item.title or "",
                         "status": r.status,
+                        # How long it has been going, so the row can say that instead of
+                        # reprinting an id nobody can read.
+                        "started_s": int((timezone.now() - r.created_at).total_seconds()),
                     }
                     for r in my_runs
                 ],
+                # True totals for the tiles and the topbar bell (S.No 222) — see above.
+                "counts": {
+                    "gates": pending_gates_q.count(),
+                    "clarifications": pending_clarifications_q.count(),
+                    "my_runs": my_runs_q.count(),
+                },
             },
             "health": {
                 # Carriers are excluded from BOTH of these, because both have a list beside them
@@ -1391,9 +1488,9 @@ class ProjectViewSet(
                 "awaiting_gate": Approval.objects.filter(
                     tenant_id=tid, work_item__project=project, decision="pending"
                 ).count(),
-                "published_week": Artifact.objects.filter(
+                "published_week": Artifact.objects.filter(       # by publish date (S.No 224)
                     tenant_id=tid, project=project,
-                    status=Artifact.Status.PUBLISHED, created_at__gte=one_week_ago,
+                    status=Artifact.Status.PUBLISHED, published_at__gte=one_week_ago,
                 ).count(),
             },
             # N2: the title alone gave the browser nothing to link with, so "recently published"
@@ -1423,7 +1520,8 @@ class ProjectViewSet(
         actor = resolve_actor(request, request.data.get("user_id"))
         try:
             require_repo_manage_role(
-                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
+                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor,
+                what="add a repository to this project",
             )
             result = add_repository(
                 tenant_id=self.tenant_id, project_id=str(project.id),
@@ -1451,7 +1549,9 @@ class ProjectViewSet(
         actor = resolve_actor(request, request.data.get("user_id"))
         try:
             require_repo_manage_role(
-                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
+                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor,
+                what=("change a repository's settings" if request.method == "PATCH"
+                      else "remove a repository from this project"),
             )
             if request.method == "PATCH":
                 ser = RepositoryUpdateSerializer(data=request.data)
@@ -1478,7 +1578,8 @@ class ProjectViewSet(
         actor = resolve_actor(request, request.data.get("user_id"))
         try:
             require_repo_manage_role(
-                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor
+                tenant_id=self.tenant_id, project_id=str(project.id), user_id=actor,
+                what="change which repository is the default for this project",
             )
             set_default_repository(
                 tenant_id=self.tenant_id, project_id=str(project.id), repository_id=rid
@@ -1511,12 +1612,15 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         from storage import s3_from_settings
 
         src = self.get_object()
+        # Screen Words group 5: both of these reach a person who clicked "view my upload", so they
+        # start with a capital and say which case it is. The two are genuinely different — one
+        # document never had a file kept, the other had one that is now gone.
         if not src.s3_key:
-            raise NotFound("no original file stored for this document")
+            raise NotFound("The original file wasn't kept for this document.")
         try:
             data = s3_from_settings().get(src.s3_key)
         except Exception as exc:  # noqa: BLE001 — missing object → 404, not 500
-            raise NotFound("original file is unavailable") from exc
+            raise NotFound("That file isn't stored any more, so it can't be shown.") from exc
         resp = HttpResponse(data, content_type=src.mime or "application/octet-stream")
         resp["Content-Disposition"] = f'inline; filename="{src.filename}"'
         return resp
@@ -1539,11 +1643,11 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         images = ((art.external_ref or {}).get("page_images") if art else None) or []
         match = next((im for im in images if im.get("name") == name), None)
         if not match or not match.get("s3_key"):
-            raise NotFound("no such page image")
+            raise NotFound("That page image doesn't exist.")
         try:
             data = s3_from_settings().get(match["s3_key"])
         except Exception as exc:  # noqa: BLE001
-            raise NotFound("page image is unavailable") from exc
+            raise NotFound("That page image isn't stored any more, so it can't be shown.") from exc
         resp = HttpResponse(data, content_type=match.get("mime") or "image/png")
         resp["Content-Disposition"] = f'inline; filename="{name}"'
         return resp
@@ -1554,13 +1658,14 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         document into its lifecycle type (Brownfield B2-1). The acting user is the session user
         when present (Brownfield B2-2), falling back to the `user_id` body for pre-auth/test
         callers; the service still enforces the product_owner/admin gate role on that actor.
-        (Hard authentication-gating of this endpoint is tracked separately as X-1, not this batch.)"""
+        (Hard authentication-gating of this endpoint is tracked separately as X-1, not this
+        batch.)"""
         src = self.get_object()
         ser = AdoptSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         actor = resolve_actor(request, ser.validated_data.get("user_id"))
         if not actor:
-            raise ValidationError({"user_id": "an authenticated session or user_id is required"})
+            raise ValidationError({"user_id": "Sign in to do this."})
         target_type = ser.validated_data.get("target_type") or None
         try:
             out = adopt_source_document(
@@ -1797,7 +1902,7 @@ class WorkItemViewSet(
     def perform_create(self, serializer):
         project_id = self.request.data.get("project")
         if not Project.objects.filter(id=project_id, tenant_id=self.tenant_id).exists():
-            raise ValidationError({"project": "unknown project for this tenant"})
+            raise ValidationError({"project": "That project isn't in this workspace."})
         # A manually-added test case carries its priority in external_ref (the model has no
         # priority column); the steps live in `description` (rendered into the 09b manifest).
         extra = {}
@@ -1811,7 +1916,7 @@ class WorkItemViewSet(
         a repo from another project (RLS already blocks another tenant's). Clearing (null) is ok."""
         repo = serializer.validated_data.get("repo")
         if repo is not None and str(repo.project_id) != str(serializer.instance.project_id):
-            raise ValidationError({"repo": "repository is not on this work item's project"})
+            raise ValidationError({"repo": "That repository belongs to a different project."})
         serializer.save()
 
     @action(detail=True, methods=["get"], url_path="test-cases")
@@ -1842,6 +1947,8 @@ class WorkItemViewSet(
         """P4.8-T1 bucket-B gap B: artifact_count/owner/needs the board + detail cards render,
         computed here rather than on the plain model serializer (they aren't columns). Keyed
         by str(id) throughout — serializer output carries string ids, model FK attributes UUIDs."""
+        from apps.gates.services import gate_roles_decidable_by
+
         ids = [w.id for w in work_items]
         counts = {
             str(row["id"]): row["artifact_count"]
@@ -1855,33 +1962,77 @@ class WorkItemViewSet(
                 tenant_id=self.tenant_id, work_item_id__in=ids, status="pending"
             ).values_list("work_item_id", flat=True)
         }
+        # The gate's REQUIRED ROLE travels with its type, so each card can say whether the
+        # person looking may decide it (S.No 117 follow-up). Without it the board called every
+        # pending gate "Waiting for you" — to a Designer looking at a build gate only a Tech Lead
+        # can approve, and at the same moment the dashboard told them nothing was waiting.
         needs_gate = {
-            str(a.work_item_id): a.gate_type
+            str(a.work_item_id): (a.gate_type, a.required_role)
             for a in Approval.objects.filter(
                 tenant_id=self.tenant_id, work_item_id__in=ids, decision="pending"
             )
         }
+        # Who is looking, and what they may act on. Both answers come from the platform's own
+        # rules — `gate_roles_decidable_by`, which `decide_gate` enforces with, and project
+        # membership, which is exactly what `answer_clarification` checks — so the board, the
+        # dashboard and the Approve/Answer buttons can never disagree. Resolved once per project
+        # on the board (normally one), never per card.
+        viewer = current_user(getattr(self, "request", None))
+        decidable_cache: dict[str, frozenset[str] | None] = {}
+        member_cache: dict[str, bool] = {}
+
+        def _may_decide(project_id: str, required_role: str) -> bool:
+            if viewer is None:
+                return False
+            if project_id not in decidable_cache:
+                decidable_cache[project_id] = gate_roles_decidable_by(
+                    tenant_id=self.tenant_id, user_id=viewer.id, project_id=project_id)
+            roles = decidable_cache[project_id]
+            return roles is None or required_role in roles
+
+        def _may_answer(project_id: str) -> bool:
+            if viewer is None:
+                return False
+            if project_id not in member_cache:
+                member_cache[project_id] = Membership.objects.filter(
+                    tenant_id=self.tenant_id, user_id=viewer.id, project_id=project_id).exists()
+            return member_cache[project_id]
         # The item's CURRENT lifecycle phase = its latest run's agent phase (Bugs.xlsx
         # rows 49/50: the board/list showed the feature stream as "Phase"). One query,
         # newest run per work item.
+        #
+        # The same run's STATUS travels with it (Bugs S.No 117). The board placed a card by this
+        # run's phase and then never said what that phase was doing, so "running", "waiting on a
+        # reviewer" and "failed an hour ago" all looked identical — and a failed run left in its
+        # column read as though it were still going.
         current_phase = {}
+        run_status = {}
         for r in (
             Run.objects.filter(tenant_id=self.tenant_id, work_item_id__in=ids)
             .select_related("agent_spec")
-            .order_by("work_item_id", "-created_at")
+            # `-id` is a tie-break, not a claim about recency: two runs created inside the same
+            # clock tick (a double trigger, or a coarse system clock) otherwise left "the latest
+            # run" undefined, so the card could take either run's phase and status from one page
+            # load to the next. Arbitrary but stable beats arbitrary and changing.
+            .order_by("work_item_id", "-created_at", "-id")
             .distinct("work_item_id")
         ):
             spec = r.agent_spec
             current_phase[str(r.work_item_id)] = (
                 (spec.key or spec.phase_label) if spec else ""
             )
+            run_status[str(r.work_item_id)] = r.status
         out = {}
         for w in work_items:
             wid = str(w.id)
+            project_id = str(w.project_id)
             if wid in needs_clarification:
-                needs = {"clarification": True, "label": "Needs answer"}
+                needs = {"clarification": True, "label": "Needs answer",
+                         "yours": _may_answer(project_id)}
             elif wid in needs_gate:
-                needs = {"gate": True, "label": humanize_gate(needs_gate[wid])}
+                gate_type, required_role = needs_gate[wid]
+                needs = {"gate": True, "label": humanize_gate(gate_type),
+                         "yours": _may_decide(project_id, required_role)}
             else:
                 needs = None
             out[wid] = {
@@ -1889,6 +2040,7 @@ class WorkItemViewSet(
                 "owner": w.assignee.name if w.assignee_id else None,
                 "needs": needs,
                 "current_phase": current_phase.get(wid, ""),
+                "run_status": run_status.get(wid, ""),
             }
         return out
 
@@ -1898,7 +2050,8 @@ class WorkItemViewSet(
         work_items = page if page is not None else list(qs)
         card_fields = self._card_fields(work_items)
         data = WorkItemSerializer(work_items, many=True).data
-        empty_card = {"artifact_count": 0, "owner": None, "needs": None, "current_phase": ""}
+        empty_card = {"artifact_count": 0, "owner": None, "needs": None, "current_phase": "",
+                      "run_status": ""}
         for row in data:
             row.update(card_fields.get(row["id"], empty_card))
         if page is not None:
@@ -1990,7 +2143,10 @@ class WorkItemViewSet(
         except ActiveRunError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except TriggerError as exc:
-            raise ValidationError({"agent_key": str(exc)}) from exc
+            # Screen Words group 5: filed as a non-field error. Under `agent_key` every trigger
+            # refusal reached the screen with that key as a prefix — including the friendly
+            # "start your companion" one — and `agent_key` is not a field anybody can see.
+            raise ValidationError(str(exc)) from exc
         return Response(
             {"run_id": result.run_id, "workflow_id": result.workflow_id},
             status=status.HTTP_202_ACCEPTED,
@@ -2303,6 +2459,23 @@ class _ExportImpossible(Exception):
     re-export."""
 
 
+def _mark_published(artifact, *fields: str) -> None:
+    """Mark an artifact published and stamp WHEN (Bugs S.No 224), then save.
+
+    One helper rather than the same two lines at each of the publish action's exits, because
+    the thing that is easy to get wrong is the same everywhere: `published_at` is set only on
+    the TRANSITION, so a re-export of an already-published artifact keeps the date it was first
+    published — which is what "published this week" has to mean, or a re-export would silently
+    re-date history into the current week.
+
+    `fields` are the caller's own changed columns (`sor`, `external_ref`).
+    """
+    if artifact.published_at is None:
+        artifact.published_at = timezone.now()
+    artifact.status = Artifact.Status.PUBLISHED
+    artifact.save(update_fields=["status", "published_at", *fields, "updated_at"])
+
+
 class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = ArtifactSerializer
     queryset = Artifact.objects.all().order_by("-created_at")
@@ -2388,10 +2561,14 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         """
         artifact = self.get_object()
         raw = str(request.query_params.get("raw", "")).lower() in {"1", "true", "yes"}
+        # `get_object` has already answered 404 for an artifact that doesn't exist or isn't
+        # visible here. What remains is an artifact that exists, so a missing body comes back as
+        # a normal answer with an empty `body` and the screen says "Preview unavailable" — the
+        # true thing — instead of a 404 worded as though the document were gone (S.No 218).
         result = read_artifact_preview(
-            tenant_id=self.tenant_id, artifact_id=str(artifact.id), raw=raw)
+            tenant_id=self.tenant_id, artifact_id=str(artifact.id), raw=raw, allow_empty=True)
         if result is None:
-            raise NotFound("artifact has no body to preview")
+            raise NotFound("This document has nothing to preview yet.")
         return Response(result, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
@@ -2415,9 +2592,14 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             Artifact.Status.APPROVED, Artifact.Status.PUBLISHED,
         )
         if not exportable:
+            # Screen Words group 2: this sentence reaches a person, so it names the status in
+            # the same words the Artifacts list and the publish screen use, not the stored key.
+            from apps.labels import artifact_status_label
+
             raise ValidationError(
-                "Artifact must be gate-approved before publishing. "
-                f"Current status: {artifact.status}"
+                "This document can't be published yet — it is "
+                f"{artifact_status_label(artifact.status).lower()}. "
+                "Publishing is possible once its gate is approved."
             )
         target_capability = request.data.get("target_capability", "internal")
         destination = request.data.get("destination", "")
@@ -2427,19 +2609,26 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             target_capability = "docstore"
 
         if target_capability == "internal":
-            artifact.status = Artifact.Status.PUBLISHED
-            artifact.save(update_fields=["status", "updated_at"])
+            _mark_published(artifact)
             return Response({"status": "published", "sor_link": None})
 
         # Phase-scoped export policy (defaults + ProjectProfile overrides).
         profile = getattr(artifact.project, "profile", None)
         allowed = export_target_for(profile, artifact.phase)
         if target_capability != allowed:
+            # Screen Words group 2: the phase and both capabilities get their own names. A
+            # client reading this cannot act on "docstore" or "06_task_breakdown".
+            from apps.labels import capability_label, phase_label
+
+            where = phase_label(artifact.phase) or "this phase"
+            allowed_text = (
+                f"only to {capability_label(allowed)}" if allowed
+                else "inside the platform only"
+            )
             raise ValidationError(
-                f"Export policy for phase '{artifact.phase}' allows "
-                + (f"only '{allowed}'" if allowed else "internal publishing only")
-                + f"; requested '{target_capability}'. Adjust the project profile's "
-                "export policy to change this."
+                f"{where} documents can be published {allowed_text}, so they can't go to "
+                f"{capability_label(target_capability)}. A Tech Lead can change this in the "
+                "project profile's export policy."
             )
 
         # Body via the same read-through the preview uses (own S3 draft → inline draft →
@@ -2460,13 +2649,12 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
                 # First publish that can't reach a SoR → internal fallback (blueprint B3):
                 # the publish is still recorded, sor stays internal (provenance never
                 # claims a push that didn't happen).
-                artifact.status = Artifact.Status.PUBLISHED
-                artifact.save(update_fields=["status", "updated_at"])
+                _mark_published(artifact)
                 return Response({"status": "published", "sor_link": None})
             # Re-export of an already-published-internal artifact: succeeding without an
             # actual push would be a no-op lie — fail honestly with guidance.
             raise ValidationError(str(exc)) from exc
-        raise ValidationError(f"Unknown export capability '{target_capability}'.")
+        raise ValidationError("Documents can't be published to that destination.")
 
     def _publish_docstore(self, artifact, body_md, destination):
         """Docstore transfers the SoR: the page holds the full body → sor + external_ref
@@ -2499,12 +2687,11 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
                 "No documentation-store connector is configured for this workspace. "
                 "Connect one on the Integrations page first."
             ) from exc
-        artifact.status = Artifact.Status.PUBLISHED
         artifact.sor = ref.sor
         artifact.external_ref = {
             "sor": ref.sor, "id": ref.id, "url": ref.url, "version": ref.version,
         }
-        artifact.save(update_fields=["status", "sor", "external_ref", "updated_at"])
+        _mark_published(artifact, "sor", "external_ref")
         return Response({"status": "published", "sor_link": ref.url})
 
     def _publish_tasktracker(self, artifact, destination):
@@ -2532,14 +2719,13 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             for r in result["items"]
         ]
         failed = result.get("failed", [])
-        artifact.status = Artifact.Status.PUBLISHED
         artifact.external_ref = {
             **(artifact.external_ref or {}),
             "export": {"sor": "jira", "reconciled": result["reconciled"],
                        "created": result["created"],
                        "skipped": result.get("skipped", 0), "failed": len(failed)},
         }
-        artifact.save(update_fields=["status", "external_ref", "updated_at"])
+        _mark_published(artifact, "external_ref")
         return Response({
             # A partial push is not a clean success — say so honestly (Bugs S.No 143) so the UI can
             # warn instead of showing an all-green "Published" while items silently didn't land.
@@ -2563,7 +2749,7 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 
         if artifact.type != "test_case":
             raise ValidationError(
-                "Only test_case artifacts export to the test-management system; "
+                "Only test cases can be published to test management; "
                 "test plans and reports stay internal."
             )
         if not body_md and not (artifact.external_ref or {}).get("steps"):
@@ -2579,12 +2765,11 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         project_key = destination or ((conn.scopes or {}).get("project_key") if conn else None)
         summary, steps = parse_test_case(artifact, body_md)
         ref = tm.create_test(project=project_key, summary=summary, steps=steps)
-        artifact.status = Artifact.Status.PUBLISHED
         artifact.external_ref = {
             **(artifact.external_ref or {}),
             "export": {"sor": ref.sor, "id": ref.id, "url": ref.url},
         }
-        artifact.save(update_fields=["status", "external_ref", "updated_at"])
+        _mark_published(artifact, "external_ref")
         return Response({"status": "published", "sor_link": ref.url, "test_key": ref.id})
 
 
@@ -2607,7 +2792,12 @@ class EventViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        for field in ("actor", "action", "target_type", "target_id"):
+        # `project_id`/`work_item_id` join the filterable set with the columns themselves
+        # (S.No 230). A filter name this list does not know is applied to nothing and returns
+        # everything, which reads as "the filter did not work" rather than as an error — so a
+        # new column that is never added here is a silently ignored query parameter.
+        for field in ("actor", "action", "target_type", "target_id", "project_id",
+                      "work_item_id"):
             value = self.request.query_params.get(field)
             if value:
                 qs = qs.filter(**{field: value})
@@ -2661,9 +2851,17 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["get"])
     def criteria(self, request, pk=None):
         """S-22 generalized criteria-gate checklist (DECISION-6): exposes the approval's
-        conditions JSONField as typed GateCriterion objects with computed approve_enabled."""
+        conditions as typed GateCriterion objects with computed approve_enabled.
+
+        Read through `current_conditions` rather than straight off the column (S.No 178): a
+        platform-evaluated rule is seeded unsatisfied and recomputed only at decide time, so the
+        stored column shows every one of them as blocking even when nothing is — which greys out
+        Approve on a gate the platform would happily let through. This shows the reviewer what is
+        actually true, and it is what the decide path enforces."""
+        from apps.gates.services import current_conditions
+
         approval = self.get_object()
-        raw = approval.conditions or []
+        raw = current_conditions(approval, tenant_id=self.tenant_id)
         criteria_list = [
             {
                 "id": c.get("key", str(i)),
@@ -2691,7 +2889,7 @@ class ApprovalViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         ser.is_valid(raise_exception=True)
         user_id = resolve_actor(request, ser.validated_data.get("user_id"))
         if user_id is None:
-            raise ValidationError({"user_id": "required when not authenticated"})
+            raise ValidationError({"user_id": "Sign in to do this."})
         try:
             result = decide_gate(
                 tenant_id=self.tenant_id,
@@ -2726,7 +2924,7 @@ class DriftRecordViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         ser.is_valid(raise_exception=True)
         user_id = resolve_actor(request, ser.validated_data.get("user_id"))
         if user_id is None:
-            raise ValidationError({"user_id": "required when not authenticated"})
+            raise ValidationError({"user_id": "Sign in to do this."})
         try:
             result = decide_drift(
                 tenant_id=self.tenant_id, drift_id=str(rec.id), user_id=user_id,
@@ -2794,7 +2992,7 @@ class ClarificationViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         ser.is_valid(raise_exception=True)
         user_id = resolve_actor(request, ser.validated_data.get("user_id"))
         if user_id is None:
-            raise ValidationError({"user_id": "required when not authenticated"})
+            raise ValidationError({"user_id": "Sign in to do this."})
         try:
             result = answer_clarification(
                 tenant_id=self.tenant_id,
@@ -2810,8 +3008,6 @@ class ClarificationViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 
 
 # ── Phase catalog (S-18 trigger picker, gap C) ──────────────────────
-from apps.registry.catalog import ACTIVE_AGENT_CATALOG as _ACTIVE_CATALOG
-from apps.registry.catalog import get_by_key as _catalog_get
 
 # Tier bucket membership — derived from ACTIVE_AGENT_CATALOG so it never drifts.
 # Plan  : onboarding/context phases (00_*) + strategy phases (01_–04_).

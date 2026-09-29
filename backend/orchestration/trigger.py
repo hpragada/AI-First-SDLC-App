@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from mcp_platform_state import tools
 
+from apps.labels import phase_label
 from apps.registry.catalog import gate_role_for, reads_code
 from apps.registry.models import AgentSpec
 from apps.runs.models import Run
@@ -58,9 +59,22 @@ def _guard_no_active_run(tenant_id: str, work_item_id: str) -> None:
         .first()
     )
     if active is not None:
+        # Screen Words group 5. This sentence goes straight onto Phases & Runs, so it starts with
+        # a capital, names the state in the client's words and says what to do next. It used to
+        # read "a run is already in progress for this work item (status: awaiting_gate)." — the
+        # stored status in brackets, which is the platform's vocabulary, not the reader's. And it
+        # said "wait for it to finish" about a run that was waiting on the reader, not working.
+        from apps.labels import run_status_label
+
+        waiting_at_gate = active.status == "awaiting_gate"
+        next_step = (
+            "Decide that gate, or take the run over, before starting another."
+            if waiting_at_gate
+            else "Wait for it to finish, or take it over, before starting another."
+        )
         raise ActiveRunError(
-            f"a run is already in progress for this work item (status: {active.status}). "
-            "Wait for it to finish or take it over before starting a new one."
+            f"This work item already has a run, and it is "
+            f"{run_status_label(active.status).lower()}. {next_step}"
         )
 
 
@@ -153,10 +167,11 @@ def _resolve_work_item_repo(
         # Multi-repo (D5 / Hybrid Option C): NEVER silently default an unpinned work item —
         # its repo is chosen by the planner and confirmed at the Task Breakdown gate.
         if project_repos.count() > 1:
+            # Screen Words group 5: capital, and "repo" spelled out as the word the screen uses.
             raise TriggerError(
-                "this work item has no repository assigned and the project has multiple "
-                "repositories — assign its repo (confirm it at the Task Breakdown gate or set "
-                "the work item's repo) before running."
+                "This work item hasn't been assigned a repository, and the project has more "
+                "than one. Choose its repository on the work item, or confirm the assignment "
+                "at the Task Breakdown gate, before running this phase."
             )
         # Single-repo: fall back to the project's default repository (S-13).
         default_repo = project_repos.filter(is_default=True).first()
@@ -211,7 +226,12 @@ def trigger_phase(
             .first()
         )
         if spec is None:
-            raise TriggerError(f"no AgentSpec registered for key {agent_key!r}")
+            # Screen Words group 5: named a Python class and quoted the key. A phase that is not
+            # registered is a setup problem the reader can act on, said in those terms.
+            raise TriggerError(
+                f"{phase_label(agent_key)} isn't set up for this workspace yet, so it "
+                "can't be run. An admin can add it from the agent registry."
+            )
         work_item = WorkItem.objects.get(id=work_item_id, tenant_id=tenant_id)
         _guard_no_active_run(tenant_id, work_item_id)
 
@@ -438,7 +458,12 @@ def trigger_build(
             .order_by("-semver").first()
         )
         if spec is None:
-            raise TriggerError(f"no AgentSpec registered for key {agent_key!r}")
+            # Screen Words group 5: named a Python class and quoted the key. A phase that is not
+            # registered is a setup problem the reader can act on, said in those terms.
+            raise TriggerError(
+                f"{phase_label(agent_key)} isn't set up for this workspace yet, so it "
+                "can't be run. An admin can add it from the agent registry."
+            )
         work_item = WorkItem.objects.select_related("repo").get(
             id=work_item_id, tenant_id=tenant_id
         )
@@ -450,9 +475,10 @@ def trigger_build(
             tenant_id=tenant_id, project_id=project_id, work_item=work_item, repo=repo, base=base
         )
         if not repo:
+            # Screen Words group 5: capital, and it names the screen the reader needs.
             raise TriggerError(
-                "no target repository for this build — add a repository to the project "
-                "(Repositories) or set the work item's repo."
+                "This build has no repository to work in. Connect one on the project's "
+                "Repositories screen, or choose one on the work item, then try again."
             )
         work_item_key = (
             work_item_key or (work_item.external_ref or {}).get("id")

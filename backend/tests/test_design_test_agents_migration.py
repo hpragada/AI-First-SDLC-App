@@ -51,7 +51,7 @@ _FORBIDDEN = [
 _REASONING = {
     "05_ux_design": [
         "Senior UX/UI Designer and Design Systems Architect", "Double Diamond",
-        "Atomic Design", "Cognitive Walkthrough", "WCAG 2.1 AA", "Nielsen Norman",
+        "Atomic Design", "Cognitive Walkthrough", "WCAG", "Nielsen Norman",
         "a wireframe without states is not a wireframe", "Loading State Classification",
     ],
     # 09 reads "WCAG 2.2 AA" since QA-11. The *version* of a standard is a data reference (the
@@ -120,10 +120,9 @@ def test_05_reroutes_to_designsource_and_artifacts():
 
 def test_09_reroutes_to_testmgmt_and_platform():
     body = _body("09_testing")
-    # inputs rerouted to the manifest + platform reads + the worktree (code under test)
+    # inputs rerouted to the manifest + platform reads
     assert "get_artifact" in body
     assert "# Relevant Artifacts" in body and "# Rules" in body
-    assert "worktree" in body
     # outputs rerouted: test cases/results → platform artifacts + the TestMgmt SoR
     assert "register_artifact" in body and "add_trace_edge" in body
     assert "testmgmt.create_test" in body and "testmgmt.import_results" in body
@@ -133,6 +132,49 @@ def test_09_reroutes_to_testmgmt_and_platform():
     assert "defect loopback" in body and "quarantine" in body.lower()
     # no human-gate / slash-command glue survives (sweep also catches "reply approved")
     assert "/sdlc:security" not in body and "Reply APPROVED" not in body
+
+
+def test_09_is_planning_only_and_owns_no_working_copy():
+    """Bugs S.No 85. 09's body told it to read the codebase, run the suite with coverage, and
+    write E2E files into the working copy — while it is registered as a PLANNING phase, which
+    has no worktree, no shell and no ability to run a command. Its first real run would have
+    failed or produced nothing useful.
+
+    That instruction set also duplicated 09b Test Automation, which already writes and runs
+    tests and already has a worktree — two agents writing tests into the same repository.
+
+    Team decision: 09 authors the specification, 09b executes it. This test used to assert
+    `"worktree" in body`, which is what made the contradiction look intentional."""
+    from apps.registry.catalog import reads_code, rides_build
+
+    body = _body("09_testing")
+    assert "worktree" not in body.lower(), "a planning-only agent has no working copy"
+    assert not reads_code("09_testing") and not rides_build("09_testing")
+    # the handover to 09b is stated, not implied
+    assert "Test Automation agent" in body
+    # …and 09b still owns the execution half
+    assert reads_code("09b_test_automation") is False
+    assert rides_build("09b_test_automation") is True
+
+
+def test_09_never_registers_a_results_report():
+    """Left behind by S.No 85: after the opening was rewritten to "does not run tests", four
+    passages further down still told 09 to register a `test_report` of execution results, record
+    scan violations in it, compare it against a baseline and capture defects in it. 09 runs
+    nothing, so any report it wrote would be invented — and it would be filed under the same type
+    as 09b's real one, which the defect loopback, the test gate and Deployment read as measured."""
+    body = _body("09_testing")
+    outputs = body.split("## Output — Register These Artifacts")[1].split("## Quality Gate")[0]
+    table_rows = [line for line in outputs.splitlines() if line.startswith("| `")]
+    assert [row.split("`")[1] for row in table_rows] == ["test_plan", "test_case"]
+    assert "Never register a `test_report` from this phase" in outputs
+    # none of the old instructions to write results survives anywhere in the body
+    for stale in ("Record all violations in the `test_report`",
+                  "Capture the following for each finding in the `test_report`",
+                  "When you report execution results",
+                  "your report has to show both",
+                  "The run's `a11y_report` read where one exists"):
+        assert stale not in body, stale
 
 
 def test_09_requires_one_staged_body_per_test_case():

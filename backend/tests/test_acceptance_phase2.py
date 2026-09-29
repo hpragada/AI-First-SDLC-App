@@ -241,6 +241,7 @@ def _companion_build(inp, tmp_root, idx) -> BuildReport:
 
 
 # ── the acceptance slice (live Temporal) ────────────────────────────
+@pytest.mark.usefixtures("real_gate_signal")  # approves a gate on a LOCAL workflow
 @pytest.mark.django_db(transaction=True)
 def test_acceptance_build_slice_two_repos(monkeypatch, tmp_path):
     _skip_if_no_temporal(monkeypatch)

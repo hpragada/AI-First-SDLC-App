@@ -2049,12 +2049,18 @@ this standing is about before reading it.
 > counted as passing and not counted as failing. Ask again from the audit screen to carry on
 > from where it stopped.
 
-> **One of the four checks could not run at all.** {the check's own reason} Nothing here says
+> **One of the checks could not run at all.** {the check's own reason} Nothing here says
 > anything about that check, so its silence is not a clean result.
 
 The second is a different failure from the first and worse: the name check needs the browser to
 answer what each element is called, and when that breaks it silently selects nothing — every
-element still arrives, three checks run perfectly, and the fourth reports a clean-looking blank.
+element still arrives, the other checks run perfectly, and that one reports a clean-looking blank.
+
+*Corrected 2026-09-17: this block was drafted as "one of the **four** checks" and "the fourth".
+There are six checks, and what shipped says neither — `backend/apps/a11y/baseline_report.py:278`
+and the audit screen at `A11yAudit.tsx:1157` both say "One of the checks could not run", with no
+number, which is what stops the sentence going stale each time a checker is added. The quote above
+now matches the shipped string.*
 The audit screen has said this since §9.7. The document had not.
 
 #### One definition, deliberately

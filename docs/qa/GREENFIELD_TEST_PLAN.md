@@ -205,12 +205,13 @@ A and B get suites that complete inside a 2-hour window with no waiting.
 | Tester | Hours/day | Suites | Cases | Why |
 |---|---|---|---|---|
 | **A** | 2 | TS-01 Identity · TS-02 Admin & Roles · TS-03 Project Setup | 62 | Self-contained forms and permissions. No companion needed. Each case finishes in minutes. |
-| **B** | 2 | TS-04 Integrations · TS-06 Work Items · TS-11 Traceability & Transcripts · TS-12 Shell & Dashboard · TS-13 Test Cases & Reporting | 81 | Screen-level and state-level testing. Reads the artifacts and runs that C produces, without triggering any. |
-| **C** | 6–8 | TS-05 Companion · TS-07 Runs · TS-08 Clarifications · TS-09 Gates · TS-10 Artifacts · TS-14 Recovery · TS-15 End-to-end | 110 | The lifecycle spine. Needs a running companion and long uninterrupted sessions. |
+| **B** | 2 | TS-04 Integrations · TS-06 Work Items · TS-11 Traceability & Transcripts · TS-12 Shell & Dashboard · TS-13 Test Cases & Reporting | 82 | Screen-level and state-level testing. Reads the artifacts and runs that C produces, without triggering any. |
+| **C** | 6–8 | TS-05 Companion · TS-07 Runs · TS-08 Clarifications · TS-09 Gates · TS-10 Artifacts · TS-14 Recovery · TS-15 End-to-end | 112 | The lifecycle spine. Needs a running companion and long uninterrupted sessions. |
 
-**253 test cases in total** — 60 Critical, 97 High, 81 Medium, 15 Low. (Up from 212 after the
+**256 test cases in total** — 61 Critical, 97 High, 83 Medium, 15 Low. (Up from 212 after the
 pre-execution audit: see [`AUDIT_FINDINGS.md`](AUDIT_FINDINGS.md). C's share grew most, because
-most of what was missing needed a live run.)
+most of what was missing needed a live run. Three more were added for commits 4ac75f9 and b40c557:
+TC-906 Security gate rule, TC-245 `Show the whole registry`, TC-266 the notification bell.)
 
 **The dependency to watch:** B's traceability, transcript and artifact-registry cases need real
 artifacts to look at. C produces those from day 3. B should run TS-04, TS-06 and TS-12 first
@@ -361,7 +362,7 @@ unique, and no scheme that satisfies both is also pretty.
 
 Verified against the code, because several published docs are out of date.
 
-**The 18 phases in the catalog and who decides their gate:**
+**The 19 phases in the catalog and who decides their gate:**
 
 | Phase (button label) | `agent_key` | Gate role |
 |---|---|---|
@@ -377,24 +378,29 @@ Verified against the code, because several published docs are out of date.
 | Task Breakdown | `06_task_breakdown` | Tech Lead |
 | Implementation | `07_implementation` | Tech Lead *(build)* |
 | Code Review | `08_code_review` | Reviewer *(dispatched inside the build loop — not triggered directly)* |
-| Testing | `09_testing` | QA Lead *(1 derived condition: no blocking test failures)* |
+| Testing | `09_testing` | QA Lead *(2 derived conditions: no blocking test failures · no blocking accessibility failures)* |
 | Test Automation | `09b_test_automation` | QA Lead *(build)* |
 | Accessibility Judge | `09c_a11y_judge` | QA Lead *(platform-native; dispatched by the accessibility pass)* |
-| Security | `10_security` | Security Engineer |
+| Accessibility Journey | `09d_a11y_journey` | QA Lead *(platform-native; dispatched by the accessibility pass)* |
+| Security | `10_security` | Security Engineer *(1 derived condition: no unresolved Critical/High security finding)* |
 | CI/CD | `11_cicd` | DevOps *(build)* |
 | Deployment | `12_deployment` | DevOps *(7 required readiness criteria)* |
 
-> **Two of these are platform-native and are not meant to be triggered by hand.**
-> `00e_document_vision` and `09c_a11y_judge` have no migrated legacy body — they were authored fresh
-> for the platform. `09c` is dispatched by the accessibility pass, the way `08_code_review` is
-> dispatched inside the build loop. They nevertheless **appear in the phase list**, because the
+> **Three of these are platform-native and are not meant to be triggered by hand.**
+> `00e_document_vision`, `09c_a11y_judge` and `09d_a11y_journey` have no migrated legacy body — they
+> were authored fresh for the platform. `09c` and `09d` are dispatched by the accessibility pass, the
+> way `08_code_review` is dispatched inside the build loop. They nevertheless **appear in the phase
+> list**, because the
 > catalog seeds every non-retired agent and the API buckets them by key prefix
-> (`backend/api/views.py:1896`). Seeing them on `/runs` is expected. **Triggering `09c` by hand is
-> not a supported path** — if you do it, treat whatever happens as exploratory, not as a defect,
-> and note it for the team.
+> (`backend/api/views.py:1896`). Seeing them on `/runs` is expected. **Triggering `09c` or `09d` by
+> hand is not a supported path** — if you do it, treat whatever happens as exploratory, not as a
+> defect, and note it for the team.
 >
-> The old count of 16 in this table was wrong twice over: `00e` was missing before this cycle, and
-> `09c` was added by the accessibility build in August 2026.
+> **Count history.** The old count of 16 was wrong twice over: `00e` was missing before this cycle,
+> and `09c` was added by the accessibility build in August 2026. The count was then 18 and still
+> missed `09d_a11y_journey`, the keyboard-journey agent from the same build — **corrected to 19 on
+> 2026-09-17**, verified against `backend/apps/registry/catalog.py` (20 definitions, of which
+> `00d_context_snapshot` is `retired=True` and never seeded).
 
 **Run statuses:** `pending` · `running` · `awaiting_gate` · `approved` · `rejected` · `failed` ·
 `completed` · `stalled`. Shown in the console as `Dispatched · waiting`, `Running`, `Needs answer`,
@@ -411,10 +417,11 @@ tenant admin. Everyone else gets a read-only card.
 backend does not block it — the run stalls at its report timeout instead.
 
 **Known inert controls** (do not raise these as new defects; confirm and reference this list):
-the top-bar tenant switcher, the notification bell, `Request a new invite` on an expired
-invitation, `Request a new link` on an expired reset, the project select on `/admin/roles`, and
-`Promote a member` in the last-admin modal.
+the top-bar tenant switcher, `Request a new invite` on an expired invitation,
+`Request a new link` on an expired reset, and `Promote a member` in the last-admin modal.
 
-`Set default` on Repositories was on that list and has been **removed from it**. The backend
-endpoint exists and works; only the frontend handler is a stub. That is a real defect, not an
-unbuilt feature — TC-051 covers it and it should be raised.
+Removed from that list, because they now work (commits 4ac75f9 and b40c557): the **notification
+bell** opens the dashboard's `Needs me` queue (TS-12 TC-266); the **project select on
+`/admin/roles`** was replaced by a plain line naming the project; and **`Set default` on
+Repositories** sets the default and moves the marker to the chosen row (TC-051). A failure of any of
+them is a real defect and should be raised.

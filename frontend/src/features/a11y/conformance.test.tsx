@@ -227,6 +227,14 @@ describe("S-37 conformance statement", () => {
     expect(screen.queryByRole("button", { name: "Export…" })).toBeNull();
   });
 
+  it("names the role that signs in words, not as the stored key (Screen Words group 8)", async () => {
+    vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance()]]));
+    renderWithProviders(<A11yConformanceScreen />);
+    await screen.findByText("Sign this statement");
+    expect(screen.getByText(/required role: QA Lead/)).toBeDefined();
+    expect(screen.queryByText(/qa_lead/)).toBeNull();
+  });
+
   it("will not let anyone sign until they say what they are signing for", async () => {
     vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance()]]));
     renderWithProviders(<A11yConformanceScreen />);
@@ -257,7 +265,7 @@ describe("S-37 conformance statement", () => {
     ]));
     renderWithProviders(<A11yConformanceScreen />);
 
-    await screen.findByText("Signed by Aisha Khan · qa_lead");
+    await screen.findByText("Signed by Aisha Khan · QA Lead");
     expect(screen.getByRole("button", { name: "Export…" })).toBeDefined();
     // D-A11Y-96: the absence is explained, so nobody later reads it as an omission.
     expect(screen.getByText(/deliberately not shown here/)).toBeDefined();

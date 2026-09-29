@@ -165,7 +165,7 @@ def test_the_three_refusals_arrive_as_three_different_status_codes(world):
 
     bad = _client("aisha@acme.test").post(url, {"decision": "reject"}, format="json")
     assert bad.status_code == 400
-    assert "say why this is fine" in bad.json()["detail"]
+    assert 'Say why this is fine' in bad.json()["detail"]
 
     world["finding"].refresh_from_db()
     assert world["finding"].adjudication == "pending", "three refusals, nothing changed"

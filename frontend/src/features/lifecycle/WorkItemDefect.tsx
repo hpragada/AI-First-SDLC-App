@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, Card, CardBody, Kv, LifecycleRail, Markdown, Panel, Spinner } from "../../components/ui";
+import { runStatusLabel, runStatusTone } from "../../labels";
 import { railNodeView } from "./railView";
 import { phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
@@ -140,8 +141,11 @@ function WorkItemDefectLive() {
               </p>
             )}
           </Panel>
+          {/* Screen Words group 4. The badge below was green for every status except `running`,
+              so a FAILED run and a completed one read alike, and it printed the stored word.
+              Both the words and the colour now come from the shared map. */}
           {latestRun && (
-            <Panel title="Latest run" actions={<Badge variant={running ? "running" : "done"}>{latestRun.status}</Badge>}>
+            <Panel title="Latest run" actions={<Badge variant={runStatusTone(latestRun.status)}>{runStatusLabel(latestRun.status)}</Badge>}>
               <Kv rows={[["Phase", phaseLabel(latestRun.agent_phase ?? latestRun.agent_key)]]} />
               <Link to={`/runs/${latestRun.id}`} className="t-sm">
                 View run console ↗

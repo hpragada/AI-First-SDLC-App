@@ -19,14 +19,16 @@
 - **Project**(tenant_id, name, track enum[`greenfield,brownfield`], repo_topology enum[`single,split,multi`], status)
 - **ProjectProfile**(project_id 1:1, description, domain, tech_stack jsonb, coding_standards jsonb, nfrs jsonb, constraints jsonb, glossary jsonb, **important_context text**, version int)
 - **Repository**(project_id, role, code_host_ref, stack_overrides jsonb) — 0..N per project
-- **WorkItem**(project_id, repo_id null, feature_stream, type enum[`epic,story,task`], **state** enum[`proposed,accepted,in_progress,in_review,blocked,done`], parent_id null, depends_on uuid[], assignee_id null, takeover_flag bool)
+- **WorkItem**(project_id, repo_id null, feature_stream, type enum[`epic,story,task,defect,test_case`], **state** enum[`proposed,accepted,in_progress,in_review,blocked,done,cancelled`], parent_id null, depends_on uuid[], assignee_id null, takeover_flag bool)
 - **AgentSpec**(key e.g. `03_prd`, semver, prompt_version, body_ref (path in /agents), recommended_engine, recommended_model, phase_label) — the migrated agent registry
-- **Run**(work_item_id, agent_spec_id, engine, model, prompt_version, temporal_workflow_id, status enum[`pending,running,awaiting_gate,approved,rejected,failed,completed`], cost_usd, inputs jsonb, outputs jsonb, started_at, ended_at)
-- **Artifact**(project_id, repo_id null, run_id, phase, type, **status** enum[`draft,staged,approved,published`], **sor** enum[`internal,confluence,jira,figma,xray,git`], external_ref jsonb null, s3_key, content_hash, version int, embedding vector null)
+- **Run**(work_item_id, agent_spec_id, engine, model, prompt_version, temporal_workflow_id, status enum[`pending,running,awaiting_gate,approved,rejected,failed,completed,stalled`], cost_usd, inputs jsonb, outputs jsonb, started_at, ended_at)
+- **Artifact**(project_id, repo_id null, run_id, phase, type, **status** enum[`draft,staged,approved,published,superseded`], **sor** enum[`internal,confluence,jira,figma,xray,git`], external_ref jsonb null, s3_key, content_hash, version int, embedding vector null)
 - **TraceEdge**(from_artifact_id, to_artifact_id, rel enum[`derives,implements,tests,deploys`])
 - **Event**(actor, action, target_type, target_id, ts, payload jsonb) — append-only; no updates/deletes
 - **Approval**(run_id, gate_type, work_item_id, required_role, approver_id null, decision enum[`pending,approved,rejected`], comment, decided_at null)
 - **IntegrationConnection**(tenant_id, capability, connector, scopes jsonb, token_ref, health) — table exists in P0, used Phase 1+
+
+> **Enum drift, corrected 2026-09-17.** The four enums above are the Phase 0 shapes; each has gained a member since, and this spec is read as a contract, so the additions are folded in above rather than left for a reader to discover. **WorkItem.type** gained `defect` (P3 defect-loopback) and `test_case`. **WorkItem.state** gained `cancelled` — work that will never be done, which must not be recorded as `done`. **Run.status** gained `stalled` — a companion that missed its timeout, parked non-terminally for takeover (Bugs S.No 89). **Artifact.status** gained `superseded` — a draft whose gate was rejected, kept as the record but no longer served to downstream phases. Sources: `apps/workitems/models.py:9-36`, `apps/runs/models.py:9-21`, `apps/registry/models.py:36-46`.
 
 **RLS:** enable on every table; create a Postgres role the app uses (non-superuser, so RLS applies); set `app.tenant_id` at the start of every request and every Temporal activity.
 
@@ -88,7 +90,7 @@ Retries/idempotency: activities idempotent by `run_id`; Temporal handles retry/b
 ---
 
 ## 6. Gate / Approval flow
-A run that reaches a gate creates an `Approval(pending, required_role)`, surfaces in the React gate-approval UI, and the Temporal workflow blocks on the `gate_decision` signal. Only a user whose Membership role == `required_role` may decide. Decision → signal → workflow resumes. (RBAC enforcement is minimal in P0 — role check only; full SoD in Phase 5.)
+A run that reaches a gate creates an `Approval(pending, required_role)`, surfaces in the React gate-approval UI, and the Temporal workflow blocks on the `gate_decision` signal. Only a user whose Membership role == `required_role` may decide — **plus either kind of admin, who may decide any gate**: a project-admin (`Membership(role="admin")`) or a tenant-admin (`User.is_tenant_admin`). *The admin override was added by the P4.7-T4 team decision and is missing from this line; noted 2026-09-17. See `backend/apps/gates/services.py:132-142`.* Decision → signal → workflow resumes. (RBAC enforcement is minimal in P0 — role check only; full SoD in Phase 5.)
 
 ---
 

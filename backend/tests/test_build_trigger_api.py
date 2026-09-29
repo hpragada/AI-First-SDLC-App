@@ -99,7 +99,14 @@ def test_build_endpoint_blocks_second_run_while_one_is_active(client, project, m
 
     second = client.post(f"/api/work-items/{wi.id}/build/", {}, format="json")
     assert second.status_code == 409, second.data
-    assert "in progress" in str(second.data).lower()
+    # Screen Words group 5 reworded this refusal: it no longer says "a run is already in progress
+    # for this work item (status: pending)" with the stored status in brackets. What the test is
+    # about is that the refusal EXPLAINS the clash and offers the way out, so that is what it now
+    # checks — and that no stored key leaked into it.
+    said = str(second.data).lower()
+    assert "already has a run" in said, second.data
+    assert "take it over" in said, second.data
+    assert "awaiting_gate" not in said and "status:" not in said, second.data
     # still exactly one run — no duplicate created
     assert Run.objects.filter(work_item=wi).count() == 1
 
@@ -133,7 +140,13 @@ def test_multi_repo_unpinned_workitem_is_rejected_not_silently_defaulted(client,
     r = client.post(f"/api/work-items/{wi.id}/build/", {}, format="json")
 
     assert r.status_code == 400, r.data
-    assert "multiple repositories" in str(r.data).lower()
+    # Screen Words group 5 reworded this refusal ("multiple repositories" -> "the project has
+    # more than one"). What matters is unchanged: it says the repository is unchosen and points at
+    # the two places it can be chosen, rather than picking one silently.
+    said = str(r.data).lower()
+    assert "repository" in said, r.data
+    assert "more than one" in said, r.data
+    assert "task breakdown gate" in said, r.data
     assert not Run.objects.filter(work_item=wi).exists()
 
 

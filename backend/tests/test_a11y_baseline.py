@@ -137,13 +137,13 @@ def test_a_route_is_a_path_not_a_url():
     assert normalise_path("/checkout") == "/checkout"
     with pytest.raises(RouteError) as err:
         normalise_path("http://localhost:5173/checkout")
-    assert "path alone" in str(err.value)
+    assert "page's path only" in str(err.value)
 
 
 def test_a_route_must_start_at_the_apps_root():
     with pytest.raises(RouteError) as err:
         normalise_path("checkout")
-    assert "must start with `/`" in str(err.value)
+    assert 'must start with a slash' in str(err.value)
 
 
 def test_a_blank_route_is_refused_rather_than_guessed():
@@ -265,7 +265,7 @@ def test_a_bad_route_stops_the_audit_before_it_starts(world):
     with pytest.raises(BaselineError) as err:
         start_baseline_audit(tenant_id=world["t"], project_id=world["p"],
                              routes=["https://example.com/x"])
-    assert "path alone" in str(err.value)
+    assert "page's path only" in str(err.value)
 
 
 def test_routes_given_directly_must_be_a_list(world):
@@ -1805,7 +1805,7 @@ def test_an_entry_with_no_path_names_itself_and_registers_nothing(world):
             {"url": "/catalogue", "name": "Browse", "inScope": True},
         ]))
     message = str(exc.value)
-    assert "entry 2 of 2" in message
+    assert 'Page 2 of 2' in message
     assert "`url`" in message and "`name`" in message and "`inScope`" in message
     assert A11yRoute.objects.filter(tenant_id=world["t"]).count() == 0, "all or nothing"
 
@@ -1844,7 +1844,7 @@ def test_something_that_is_not_a_list_of_pages_says_so_in_those_words(world):
     # A malformed JSON list still gets the JSON answer — line mode must not swallow it.
     with pytest.raises(RouteError) as exc:
         parse_routes_text('["/", "/catalogue"')
-    assert "could not be read as a list of pages" in str(exc.value)
+    assert "couldn't be read as a list of pages" in str(exc.value)
 
 
 # ── One path per line, which is what people actually paste ──────────────────
@@ -1874,7 +1874,7 @@ def test_a_line_with_a_space_is_refused_by_name_and_by_number(world):
 
     with pytest.raises(RouteError) as exc:
         parse_routes_text("/\nHome /catalogue\n/account")
-    assert "line 2" in str(exc.value) and "contains a space" in str(exc.value)
+    assert "Line 2" in str(exc.value) and "contains a space" in str(exc.value)
 
 
 def test_a_half_converted_json_list_still_reads_as_paths(world):
@@ -1886,7 +1886,7 @@ def test_a_half_converted_json_list_still_reads_as_paths(world):
 def test_nothing_pasted_is_still_nothing_pasted(world):
     from apps.a11y.routes import RouteError, parse_routes_text
 
-    with pytest.raises(RouteError, match="nothing was pasted"):
+    with pytest.raises(RouteError, match="Nothing was pasted"):
         parse_routes_text("\n  \n# only a comment\n")
 
 
@@ -1930,7 +1930,7 @@ def test_an_example_is_checked_like_any_other_path(world):
 
     with pytest.raises(RouteError) as exc:
         _paste(world, json.dumps([{"path": "/events/:id", "example": "events/482"}]))
-    assert "must start with `/`" in str(exc.value)
+    assert 'must start with a slash' in str(exc.value)
 
 
 def test_an_example_that_is_the_route_itself_is_not_an_example(world):
@@ -2120,7 +2120,7 @@ def test_a_rename_is_checked_like_any_other_path(world):
     row = _row(world)
     with pytest.raises(RouteError) as exc:
         _edit(world, row, path="catalogue")
-    assert "must start with `/`" in str(exc.value)
+    assert 'must start with a slash' in str(exc.value)
     row.refresh_from_db()
     assert row.path == "/catalogue", "a refused edit changes nothing"
 
@@ -2147,7 +2147,7 @@ def test_a_field_that_is_not_a_page_property_is_refused_by_name(world):
     with pytest.raises(RouteError) as exc:
         _edit(world, row, source="onboarding")
     # Who put a page here is a fact about how it arrived, not something a person edits.
-    assert "'source' cannot be edited" in str(exc.value)
+    assert "source can't be changed" in str(exc.value)
 
 
 def test_an_edit_that_changes_nothing_says_so_rather_than_writing(world):

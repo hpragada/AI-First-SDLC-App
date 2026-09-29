@@ -75,6 +75,19 @@ class Artifact(TenantScopedModel):
     s3_key = models.CharField(max_length=1024, blank=True)
     content_hash = models.CharField(max_length=128, blank=True)
     version = models.IntegerField(default=1)
+    # When this artifact was PUBLISHED — as distinct from when it was registered (Bugs S.No 224).
+    #
+    # The dashboard's "published this week" count and its recent-publishes list both filtered on
+    # `created_at`, which is when the agent drafted the thing. Drafting and publishing are
+    # separated by a review gate, so they are routinely days apart: something drafted last week
+    # and published this morning never appeared in a list of this week's publishes, while
+    # something drafted today and never published did. There was no publish timestamp to filter
+    # on — `updated_at` is `auto_now` and moves on any later edit, so it cannot stand in.
+    #
+    # Nullable, and deliberately so: a NOT NULL column with no database-level default breaks a
+    # rolling deploy, which is the lesson already written down on `Approval.external_merge`
+    # (S.No 185). Null means "not published", which is exactly what it means.
+    published_at = models.DateTimeField(null=True, blank=True, db_index=True)
     embedding = VectorField(dimensions=EMBEDDING_DIM, null=True, blank=True)
 
     def __str__(self) -> str:

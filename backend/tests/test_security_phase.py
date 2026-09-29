@@ -31,14 +31,15 @@ def test_classify_phase_failure_maps_bare_exit_code():
     """The exact message the security run showed must become a plain, actionable reason."""
     raw = ("Command failed with exit code 1 (exit code: 1)\n"
            "Error output: Check stderr output for details")
-    msg = activities.classify_phase_failure(raw)
-    assert "exit code 1" not in msg
-    assert "usage or rate limit" in msg and "re-trigger" in msg
+    msg = activities.classify_phase_failure(raw, phase="security")
+    assert "exit code 1" not in msg and "stderr" not in msg
+    # Says what is known and never guesses a cause (S.No 146); names the phase (2026-09-21).
+    assert msg == "The Security phase stopped because the AI engine closed before it finished."
 
 
 def test_classify_phase_failure_names_usage_limit():
     msg = activities.classify_phase_failure("Claude usage limit reached; try again later")
-    assert "usage or rate limit" in msg
+    assert "reached its usage limit" in msg
 
 
 def test_classify_phase_failure_passes_specific_message_through():

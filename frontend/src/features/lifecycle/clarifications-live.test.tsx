@@ -10,7 +10,8 @@
 // backlog, so its question was counted and then filtered away. The badge said 1, the page said
 // none, and the run waited for an answer the screen would not let anybody give.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { renderWithProviders } from "../../test/utils";
 import { Clarifications } from "./Clarifications";
@@ -124,5 +125,98 @@ describe("S-20 Clarifications · a question from a headless run", () => {
 
     expect(await screen.findByText(/Loading/i)).toBeTruthy();
     expect(screen.queryByText(/Is the interior photo decorative/)).toBeNull();
+  });
+});
+
+// ── Bugs S.No 184 — a sentence-long choice stays on the card, and "Other" still works ──────────
+// The answer control was the browser's own <select>; the operating system draws that list, so an
+// agent's whole-sentence option ran off the card on one line. It is now drawn by the platform. The
+// part that must NOT change is what gets submitted: picking the "something else" option reveals a
+// box, and it is the typed text — never the option's label — that the agent receives.
+const LONG_OPTION =
+  "Create a new backlog task for expenses CRUD router (GET/POST/PATCH/DELETE /api/v1/expenses) " +
+  "and merge TASK-033 as-is";
+
+const CHOICE_QUESTION = {
+  ...CARRIER_QUESTION,
+  id: "c2",
+  work_item_title: "Expenses",
+  context: "",
+  questions: [{
+    id: "q1", text: "How should the expenses backlog be split?", kind: "choice", required: true,
+    options: [LONG_OPTION, "Extend TASK-033 to cover the full router", "Something else — please specify"],
+  }],
+};
+
+function stubRecordingWrites(writes: Array<{ url: string; body: unknown }>) {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const ok = (body: unknown) =>
+      ({ ok: true, status: 200, statusText: "stub", text: async () => JSON.stringify(body) }) as Response;
+    if ((init?.method ?? "GET").toUpperCase() !== "GET") {
+      writes.push({ url, body: JSON.parse(String(init?.body ?? "{}")) });
+      return ok({ ...CHOICE_QUESTION, status: "answered" });
+    }
+    if (/\/auth\/me\//.test(url)) return ok(ME);
+    if (/\/clarifications\//.test(url)) return ok(writes.length ? [] : [CHOICE_QUESTION]);
+    return ok([]);
+  });
+}
+
+describe("S-20 Clarifications · the answer control (S.No 184)", () => {
+  it("is no longer the browser's own dropdown, and shows a long option whole", async () => {
+    vi.stubGlobal("fetch", stubRecordingWrites([]));
+    const user = userEvent.setup();
+    renderWithProviders(<Clarifications />);
+
+    const box = await screen.findByRole("combobox", { name: /expenses backlog/ });
+    expect(document.querySelector("select")).toBeNull();
+    await user.click(box);
+
+    expect(screen.getByRole("option", { name: LONG_OPTION }).textContent).toBe(LONG_OPTION);
+  });
+
+  it("submits what was typed against 'something else', not the option's label", async () => {
+    const writes: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", stubRecordingWrites(writes));
+    const user = userEvent.setup();
+    renderWithProviders(<Clarifications />);
+
+    await user.click(await screen.findByRole("combobox", { name: /expenses backlog/ }));
+    await user.click(screen.getByRole("option", { name: /Something else/ }));
+    await user.type(await screen.findByLabelText("Please specify"), "Split it into two tasks");
+    await user.click(screen.getByRole("button", { name: /Submit answer/ }));
+
+    await waitFor(() => expect(writes.length).toBe(1));
+    expect(writes[0].url).toContain("/clarifications/c2/answer/");
+    expect(writes[0].body).toEqual({ answers: { q1: "Split it into two tasks" } });
+  });
+
+  it("still treats 'something else' with nothing typed as unanswered", async () => {
+    const writes: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", stubRecordingWrites(writes));
+    const user = userEvent.setup();
+    renderWithProviders(<Clarifications />);
+
+    await user.click(await screen.findByRole("combobox", { name: /expenses backlog/ }));
+    await user.click(screen.getByRole("option", { name: /Something else/ }));
+    await user.click(screen.getByRole("button", { name: /Submit answer/ }));
+
+    expect(await screen.findByText(/This answer is required/)).toBeTruthy();
+    expect(writes.length).toBe(0);
+  });
+
+  it("submits an ordinary option exactly as it reads", async () => {
+    const writes: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", stubRecordingWrites(writes));
+    const user = userEvent.setup();
+    renderWithProviders(<Clarifications />);
+
+    await user.click(await screen.findByRole("combobox", { name: /expenses backlog/ }));
+    await user.click(screen.getByRole("option", { name: LONG_OPTION }));
+    await user.click(screen.getByRole("button", { name: /Submit answer/ }));
+
+    await waitFor(() => expect(writes.length).toBe(1));
+    expect(writes[0].body).toEqual({ answers: { q1: LONG_OPTION } });
   });
 });

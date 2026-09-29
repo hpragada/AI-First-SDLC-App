@@ -49,8 +49,9 @@
 |---|---|---|
 | `--success` | `#1FA971` | Approved, published, companion online, passing |
 | `--success-bg` | `#E5F5EE` | Success chip/banner background |
-| `--warning` | `#E0961B` | Awaiting gate, needs attention, partial |
+| `--warning` | `#E0961B` | Awaiting gate, needs attention, partial. **Fill and border only — never text** |
 | `--warning-bg` | `#FBF1DE` | Warning chip/banner background |
+| `--warning-ink` | `#7A4E06` | **Amber text.** Use this wherever warning-coloured *text* or a figure is needed. `--warning` as text measures 2.19:1 on the tint and 2.46:1 on white — both fail WCAG AA at any size. This measures 6.42:1 and 7.19:1 |
 | `--danger` | `#DC2626` | Rejected, failed, blocked, offline, critical defect |
 | `--danger-bg` | `#FCEAEA` | Danger chip/banner background |
 | `--info` | `#2563EB` | Running, informational, links |
@@ -65,7 +66,7 @@
 | dispatched / waiting | `--info-bg` | `--info` |
 | running | `--info-bg` (animated) | `--info` |
 | needs answer (clarification) | `--accent-purple-bg` | `--accent-purple` |
-| awaiting gate | `--warning-bg` | `--warning` |
+| awaiting gate | `--warning-bg` | `--warning-ink` *(not `--warning` — see §2.3)* |
 | approved / published / done | `--success-bg` | `--success` |
 | rejected / failed / blocked | `--danger-bg` | `--danger` |
 | parked for takeover | `--danger-bg` (striped) | `--danger` |
@@ -116,6 +117,12 @@
 - **Table:** white, header row `--bg-subtle` + `--text-xs` uppercase muted; rows divided by `--border`; row hover `--bg-subtle`; primary cell `--text-strong`, meta `--text-muted`; monospace for IDs.
 - **Tabs / Sub-nav:** underline style; active = `--brand-navy-700` text + 2px orange underline.
 - **Input / Select / Textarea:** `--bg-surface`, `--border-strong`, `--radius-sm`, 10×12 padding; label `--text-xs` muted above; error state `--danger` border + helper text.
+  - **Filter selects size to their content** — add `.select--fit` (`width: auto; max-width: 100%`) so a filter box is as wide as its longest choice instead of cutting it. Used on the Work Items, Artifacts and Traceability filter rows (2026-09-12).
+- **Floating popup layer (Bugs S.No 166, 2026-09-11).** Every popup — dropdown lists, row and account menus, tooltips — is drawn at the top of the page so no panel's `overflow: hidden` can cut it off. Built from shared pieces in `frontend/src/components/ui/index.tsx`:
+  - **`FloatingLayer`** — renders its children into `document.body` (a React portal). Give the popup the `.popover-layer` class (`position: fixed`, `z-index: var(--z-popover)`).
+  - **`useFloatingPosition(open, anchor, floating, options)`** — places the popup beside its trigger and re-measures on scroll (including scrolling panels) and resize. Below the trigger by default; **flips above** when it does not fit below and there is more room above; scrolls only when it fits neither way. Options: `align` (`start`/`end`/`center`), `matchWidth` (same width as the trigger — dropdown lists), `preferAbove` (tooltips), `gap`, and **`overlay`** — draw the popup *over* the trigger from its top-left corner, never narrower than it, clamped on screen.
+  - **`--z-popover: 110`** (in `design-system.css`) — the one depth every popup uses: above the sticky top bar (20) and above the dialog scrim (100), so a popup opened inside a dialog draws over it.
+  - **Truncation peek (`.peek`, 2026-09-12).** When a dropdown row's label is actually cut off, the whole text opens out over that row (`overlay` placement) on hover and on arrow-key highlight — shown only when the text is really cut. Styled as the same row showing more: `max-content` width capped at `min(560px, 80vw)`, wraps, `--brand-orange-300` border, `--shadow-lg`. Used by the shared searchable dropdown (the work-item picker and the history filters).
 - **Status pill (companion):** pill with dot — online `--success`, offline `--danger`, connecting `--warning`. Label "Companion: Ready / Offline / Connecting".
 - **Avatar:** 32px circle, navy ring; initials fallback on `--brand-navy-500`.
 - **Notification bell:** icon + `--brand-orange` count badge.
@@ -130,6 +137,7 @@
 
 - **Lifecycle rail** (work item detail): a horizontal stepper of phase nodes connected by a line. Node = circled icon; completed = `--success` filled check; current = `--brand-orange` ring + filled dot + label in orange ("Gate Pending"); upcoming = `--border-strong` outline + muted label. **Must support loops** (a curved back-edge for review↔fix) and a **branch indicator** for child items. **Type-adaptive:** epics show the plan rail, tasks show the build rail only (see SCREEN_INVENTORY §work items).
 - **Board columns = phases:** Kanban columns titled by phase, each with a count chip; cards are work items with title, type/level chip, status chip, artifact count, owner avatar, and "needs you" flags. Column header carries the phase's small icon.
+  - *As built (2026-09-11/12):* a **Backlog** column comes first, for work items nothing has run on yet. Each card carries a **status pill** using the shared Badge: "Not started" (queued), "Running" (running), **"Waiting for you"** (needs-answer or gate colour — only when this person may answer or decide it), grey "Waiting for review" / "Waiting for an answer" / "Waiting for approval" when it is someone else's, "Done" (done), "Failed" (failed), "Cancelled".
 - **"Needs you" affordances:** clarification = purple "● needs answer" chip; gate = orange/amber "Awaiting gate" chip. These appear on cards, run rows, and the global bell.
 - **Gate panel:** the attention card with Approve (primary) / Reject (secondary) and, for **criteria gates** (WCAG), a checklist where Approve stays disabled until all required items are ticked (show "3 of 8 criteria met").
 - **Artifact row:** icon by type, title, version + phase, SoR chip (Confluence/Jira/Figma/Xray with vendor glyph) that is an external deep-link, and a Preview affordance. Bodies are **never** edited inline — Preview opens read-only.
@@ -138,7 +146,7 @@
 
 ---
 
-## 7. Accessibility (WCAG 2.1 AA — the product gates on it, so the product itself must pass)
+## 7. Accessibility (WCAG 2.2 AA — the product gates on it, so the product itself must pass)
 
 - Text contrast ≥ 4.5:1 (≥3:1 for ≥18px/bold). Verify orange-on-white only for large text or non-text use; for body, use navy/gray text.
 - Never encode meaning by color alone — pair status color with a label/icon (the badges already do this).
@@ -171,6 +179,9 @@ Not required for v1 hi-fi. If introduced: keep navy chrome, flip `--bg-app` to `
   /* semantic */
   --success:#1FA971; --success-bg:#E5F5EE;
   --warning:#E0961B; --warning-bg:#FBF1DE;
+  /* Amber INK, for warning-coloured TEXT and figures. `--warning` is a fill/border colour and
+     must not be used as text: 2.19:1 on the tint, 2.46:1 on white. This is 6.42:1 and 7.19:1. */
+  --warning-ink:#7A4E06;
   --danger:#DC2626;  --danger-bg:#FCEAEA;
   --info:#2563EB;    --info-bg:#E7EEFD;
   --accent-purple:#7C5CD6; --accent-purple-bg:#EFEAFB;

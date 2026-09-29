@@ -327,6 +327,11 @@ unbounded paste is a real risk, so the ceiling should stay.
 ---
 
 #### T9 · `answered_clarifications`, 1,200 tokens / 20 items — **observed live 2026-08-05**
+
+> **Built 2026-09-21.** `_render_clarifications` now shows a set of questions once, keeping the
+> newest answer, keyed on the sorted question ids. Test:
+> `test_the_same_questions_answered_twice_are_replayed_once_with_the_newest_answer`.
+
 **Where:** `backend/manifest/composer.py:66`, `composer.py:74`, ordering at
 `mcp_platform_state/tools.py:293`
 **Silent?** Yes. Recoverable via `get_context()`.
@@ -359,6 +364,11 @@ table regardless of how it got there. Pointer line (D1/D2) still applies on top.
 ---
 
 #### T13 · The section is ordered oldest-first and truncates from the tail — **the newest human answer is always the first thing lost**
+
+> **Built 2026-09-21.** `get_context` now orders answered clarifications newest first
+> (`-answered_at`), so an overflow drops the oldest context. Test:
+> `test_answered_clarifications_come_newest_first`.
+
 **Where:** `mcp_platform_state/tools.py:293` (`.order_by("answered_at")`),
 `backend/manifest/composer.py:81` (`_truncate` keeps the head)
 **Silent?** Yes.
@@ -496,16 +506,22 @@ Grouped by blast radius, per D8 (own PR off `develop`).
 
 ## 8. What has NOT been done
 
-Nothing in this document has been implemented — **including T9 and T13, which were observed live on
-2026-08-05 and are the two cheapest wins on the list.** Between them they remove both live
-truncations on run `5b4a1bab` without moving a single cap:
+*Corrected 2026-09-17. This section said "nothing in this document has been implemented", which was
+true the day it was written and has been false since 17 August. **T5 was built on 2026-08-17 and T2
+on 2026-09-03** — both are recorded in their own sections above and in this file's own status line.
+The list below is what genuinely remains.*
 
-1. Dedupe answered clarifications on replay (T9)
-2. Order them newest-first (T13)
-3. Raise `retrieved_knowledge` 1,500 → 2,500 to match retrieval's own `k=8` ceiling (T3), or do the
+**Still outstanding.** *(T9 and T13 were built on 2026-09-21 and are no longer on this list —
+between them they remove both live truncations seen on run `5b4a1bab` without moving a cap.)*
+
+1. Raise `retrieved_knowledge` 1,500 → 2,500 to match retrieval's own `k=8` ceiling (T3), or do the
    budget-aware retrieval that removes the ceiling question entirely
 
-No file was modified to produce this document. The original evidence
+**Already built, and no longer outstanding:** T2 (`current_work_item` no longer truncates the
+description), T5 (secret-scan findings recorded as a registered artifact), and T9 + T13 (answered
+clarifications deduplicated and replayed newest first, 2026-09-21).
+
+No file was modified to produce this document *when it was first written*. The original evidence
 run `6a7ae08e` completed normally — it registered a `code` artifact, opened
 `https://github.com/TARUN51/medslot-single-repo/pull/36`, and proceeded to code review — with the
 `Retrieved Knowledge` truncation described in T3 in effect.

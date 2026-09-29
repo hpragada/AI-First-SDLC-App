@@ -106,7 +106,9 @@ def test_execute_agent_core_marks_run_failed_on_engine_error(monkeypatch, run_in
     assert run.status == Run.Status.FAILED
     # The run console stores a plain-language, classified reason (Bugs S.No 146, planning path),
     # not the raw engine string. The raised exception itself is unchanged (asserted above).
-    assert "could not start" in run.outputs["error"]
+    assert "couldn't start" in run.outputs["error"]
+    # The raw engine text is kept beside the sentence, for "Technical details" (2026-09-21).
+    assert "Claude Code not found" in run.outputs["error_detail"]
 
 
 def test_open_gate_core_creates_pending_and_is_idempotent(wired, run_input):
@@ -118,6 +120,82 @@ def test_open_gate_core_creates_pending_and_is_idempotent(wired, run_input):
     assert approval.decision == Approval.Decision.PENDING
     assert approval.required_role == "product_owner"
     assert Approval.objects.filter(run_id=run_input.run_id).count() == 1
+
+
+# ── Bugs S.No 218: a document at an open gate is waiting on a person, not a draft ──────────
+def _extra_artifact(run_input, status):
+    return Artifact.objects.create(
+        tenant_id=run_input.tenant_id, project_id=run_input.project_id,
+        run_id=run_input.run_id, phase="prd", type=f"note-{status}", sor="internal",
+        status=status, version=1,
+    )
+
+
+def test_open_gate_core_marks_the_runs_drafts_as_waiting(wired, run_input):
+    """Opening a gate used to leave the run's documents reading "Draft", indistinguishable from
+    work nobody had asked anyone to look at. They move to `staged` — shown as "Waiting for
+    approval" — the moment a person is being asked to decide on them."""
+    activities.execute_agent_core(run_input, manifest="# Project\nx")
+    assert set(Artifact.objects.filter(run_id=run_input.run_id)
+               .values_list("status", flat=True)) == {Artifact.Status.DRAFT}
+
+    activities.open_gate_core(run_input)
+
+    assert set(Artifact.objects.filter(run_id=run_input.run_id)
+               .values_list("status", flat=True)) == {Artifact.Status.STAGED}
+
+
+def test_open_gate_core_never_moves_a_decided_artifact_backwards(wired, run_input):
+    published = _extra_artifact(run_input, Artifact.Status.PUBLISHED)
+    approved = _extra_artifact(run_input, Artifact.Status.APPROVED)
+    superseded = _extra_artifact(run_input, Artifact.Status.SUPERSEDED)
+
+    activities.open_gate_core(run_input)
+    activities.open_gate_core(run_input)          # Temporal retries activities — still harmless
+
+    for art, expected in ((published, Artifact.Status.PUBLISHED),
+                          (approved, Artifact.Status.APPROVED),
+                          (superseded, Artifact.Status.SUPERSEDED)):
+        art.refresh_from_db()
+        assert art.status == expected
+
+
+def test_open_gate_core_only_touches_its_own_run(wired, run_input):
+    other_run = Run.objects.create(
+        tenant_id=run_input.tenant_id,
+        work_item_id=run_input.work_item_id,
+        agent_spec_id=run_input.agent_spec_id,
+    )
+    other = Artifact.objects.create(
+        tenant_id=run_input.tenant_id, project_id=run_input.project_id, run=other_run,
+        phase="prd", type="prd", sor="internal", status=Artifact.Status.DRAFT, version=1,
+    )
+
+    activities.open_gate_core(run_input)
+
+    other.refresh_from_db()
+    assert other.status == Artifact.Status.DRAFT
+
+
+def test_a_waiting_document_still_publishes_when_the_gate_is_approved(wired, run_input):
+    activities.execute_agent_core(run_input, manifest="# Project\nx")
+    activities.open_gate_core(run_input)
+
+    result = activities.publish_artifacts_core(run_input)
+
+    assert Artifact.objects.get(id=result["published"][0]).status == Artifact.Status.PUBLISHED
+
+
+def test_a_waiting_document_is_superseded_when_the_gate_is_rejected(wired, run_input):
+    """Otherwise it would say "Waiting for approval" about work a person had already turned
+    down — the relabel would state something false."""
+    activities.execute_agent_core(run_input, manifest="# Project\nx")
+    activities.open_gate_core(run_input)
+
+    activities.reject_run_core(run_input, "Not what we asked for.")
+
+    assert set(Artifact.objects.filter(run_id=run_input.run_id)
+               .values_list("status", flat=True)) == {Artifact.Status.SUPERSEDED}
 
 
 def test_publish_artifacts_core(wired, store, run_input):

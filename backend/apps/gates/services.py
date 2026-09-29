@@ -15,7 +15,7 @@ from django.conf import settings
 from mcp_platform_state import tools
 
 from apps.base import Role
-from apps.gates.conditions import refresh_derived
+from apps.gates.conditions import conditions_for_phase, refresh_derived
 from apps.gates.models import Approval
 from apps.tenancy.context import tenant_context
 from apps.tenancy.models import Membership, User
@@ -57,6 +57,97 @@ def _merge_conditions(existing: list, updates: list | None) -> list:
                 "satisfied": bool(upd.get("satisfied", False)),
             })
     return merged
+
+
+def _phase_of(approval) -> str:
+    """The phase this gate belongs to, named the way `conditions_for_phase` names phases.
+
+    The agent spec's `phase_label`, deliberately — not its `key` with the ordinal stripped. For
+    `00c_intelligent_context_extractor` the label is `context_extraction`, so stripping the
+    prefix produces a phase name that matches nothing. And `gate_type` is a gate KIND
+    ("phase_gate" / "merge_gate"), never a phase.
+    """
+    spec = getattr(approval.run, "agent_spec", None) if approval.run_id else None
+    return (spec.phase_label or spec.key or "") if spec is not None else ""
+
+
+def _top_up_derived_conditions(approval, *, tenant_id) -> list:
+    """Add derived conditions this gate's phase carries that this Approval was never seeded with.
+
+    Conditions are seeded once, when the gate is opened (`open_gate_core`). So a rule added to
+    the platform after a gate opened could never reach that gate: the security rule (Bugs
+    S.No 178) would have guarded every future security gate while leaving every gate already
+    pending approvable with open Criticals — exactly the hole it was written to close.
+
+    **Derived conditions only, and that is the whole point.** A derived condition is computed
+    from live state, so topping one up either blocks for a real reason or goes green immediately
+    and changes nothing. A reviewer-attested checklist is the opposite: adding one to a gate that
+    is already pending would confront a reviewer with questions they were never shown, and the
+    platform has no honest way to answer those on their behalf.
+
+    Existing conditions are never touched — this only appends keys that are absent, so a
+    reviewer's attestations and a derived condition's current state both survive.
+    """
+    current = [dict(c) for c in (approval.conditions or [])]
+    phase = _phase_of(approval)
+    if not phase:
+        return current
+    seen = {c.get("key") for c in current}
+    for condition in conditions_for_phase(
+        phase, tenant_id=tenant_id, project_id=approval.work_item.project_id,
+    ):
+        if condition.get("derived") and condition.get("key") not in seen:
+            current.append(condition)
+    return current
+
+
+def current_conditions(approval, *, tenant_id) -> list:
+    """This gate's checklist as it stands right now — topped up and re-derived, not persisted.
+
+    The read path and the decide path must agree, or the reviewer is told one thing and the
+    platform does another. Stored conditions alone cannot agree with it: a derived condition is
+    seeded `satisfied: False` and only ever recomputed at decide time, so a checklist read
+    straight from the column shows every platform-evaluated rule as unmet even when nothing is
+    actually blocking — which disables Approve in the UI on a gate the backend would let through.
+
+    Harmless to call on a decided approval; it just reports what is true now.
+    """
+    topped_up = _top_up_derived_conditions(approval, tenant_id=tenant_id)
+    return refresh_derived(
+        topped_up, tenant_id=tenant_id, work_item_id=approval.work_item_id,
+        run_id=approval.run_id, project_id=approval.work_item.project_id,
+    )
+
+
+def gate_roles_decidable_by(*, tenant_id, user_id, project_id) -> frozenset[str] | None:
+    """Which gates this person may decide on this project: the `required_role` values they
+    hold, or `None` meaning every gate.
+
+    One definition for the two callers that must never disagree — `decide_gate`, which enforces
+    it, and the dashboard, which lists "Gates need your approval" (Bugs S.No 222). A queue built on
+    a different rule from the check behind its Approve button would show people gates they are
+    then refused on, or hide gates that genuinely are theirs.
+
+    The rule itself is unchanged (team decision, P4.7-T4): the gate's required role on this
+    project, OR project-admin (`Membership(role="admin")`), OR tenant-admin. Either kind of admin
+    may decide any gate, which is why they get `None` rather than a list of roles.
+    """
+    roles = frozenset(
+        Membership.objects.filter(
+            tenant_id=tenant_id, user_id=user_id, project_id=project_id,
+        ).values_list("role", flat=True)
+    )
+    if Role.ADMIN in roles:
+        return None
+    if User.objects.filter(id=user_id, tenant_id=tenant_id, is_tenant_admin=True).exists():
+        return None
+    return roles
+
+
+def may_decide_gate(*, tenant_id, user_id, project_id, required_role) -> bool:
+    """True when `gate_roles_decidable_by` lets this person decide a gate needing `required_role`."""
+    roles = gate_roles_decidable_by(tenant_id=tenant_id, user_id=user_id, project_id=project_id)
+    return roles is None or required_role in roles
 
 
 def _default_signal_sender(
@@ -107,48 +198,53 @@ def decide_gate(
     authoritative direction. It is meaningless without a comment (there would be nothing to act on)
     and meaningless on an approval, so both are refused rather than silently ignored."""
     if decision not in _VALID_DECISIONS:
-        raise GateError(f"invalid decision: {decision!r}")
+        raise GateError("That isn't a decision this gate accepts.")
     if revise and decision != "rejected":
-        raise GateError("revise applies only to a rejection")
+        raise GateError("Requesting changes can't be combined with approving.")
     if revise and not (comment or "").strip():
-        raise GateError("revise needs a comment saying what to change")
+        raise GateError(
+            "Say what needs to change — the comment is what the next run works from."
+        )
     signal_sender = signal_sender or _default_signal_sender
 
     with tenant_context(tenant_id):
-        approval = Approval.objects.select_related("work_item", "run").get(
+        approval = Approval.objects.select_related("work_item", "run", "run__agent_spec").get(
             id=approval_id, tenant_id=tenant_id
         )
         if approval.decision != Approval.Decision.PENDING:
-            raise GateError(f"approval already decided: {approval.decision}")
+            raise GateError(
+                "Someone has already decided this gate — it was "
+                f"{approval.get_decision_display().lower()}. Refresh to see the latest."
+            )
 
         # Role check: the deciding user must hold the required role on this project — OR be
         # an admin who can approve any gate (project-admin = Membership(role="admin"), or
-        # tenant-admin = User.is_tenant_admin). Team decision (P4.7-T4).
-        has_role = Membership.objects.filter(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            project_id=approval.work_item.project_id,
-            role__in=[approval.required_role, Role.ADMIN],
-        ).exists()
-        if not has_role:
-            has_role = User.objects.filter(
-                id=user_id, tenant_id=tenant_id, is_tenant_admin=True
-            ).exists()
-        if not has_role:
+        # tenant-admin = User.is_tenant_admin). Team decision (P4.7-T4). The same function
+        # builds the dashboard's "Gates need your approval" queue (S.No 222), so the queue and
+        # this check cannot drift apart.
+        if not may_decide_gate(
+            tenant_id=tenant_id, user_id=user_id,
+            project_id=approval.work_item.project_id, required_role=approval.required_role,
+        ):
+            # Screen Words group 5. Named role, no internal user id. "Or an admin" is true here:
+            # `may_decide_gate` lets a project or workspace admin decide any gate.
+            from apps.labels import role_label
+
             raise GateRoleError(
-                f"user {user_id} lacks role '{approval.required_role}' for this gate"
+                f"Only a {role_label(approval.required_role)} on this project, or an admin, "
+                "can decide this gate."
             )
 
         # Fold in the reviewer's checklist updates, re-derive the platform-evaluated ones from
         # live state, then enforce required conditions on APPROVE.
         approval.conditions = _merge_conditions(approval.conditions, conditions)
-        # The run and the project travel with the refresh (QA-15a): the blocking-test rule
-        # needs only the work item, but the accessibility gate reads the project's policy and
-        # the run whose findings it is judging, and every evaluator takes the same context.
-        approval.conditions = refresh_derived(
-            approval.conditions, tenant_id=tenant_id, work_item_id=approval.work_item_id,
-            run_id=approval.run_id, project_id=approval.work_item.project_id,
-        )
+        # Top up any derived rule this gate predates (S.No 178), then re-derive the
+        # platform-evaluated ones from live state — the same two steps the read path takes, so
+        # the checklist a reviewer was shown is the checklist that is enforced here. The run and
+        # the project travel with the refresh (QA-15a): the blocking-test rule needs only the
+        # work item, but the accessibility gate reads the project's policy and the run whose
+        # findings it is judging, and every evaluator takes the same context.
+        approval.conditions = current_conditions(approval, tenant_id=tenant_id)
         if decision == "approved":
             unmet = [
                 c for c in (approval.conditions or [])
@@ -162,13 +258,16 @@ def decide_gate(
                     str(c.get("key")) + (f" ({c['detail']})" if c.get("detail") else "")
                     for c in unmet
                 )
-                raise GateConditionsError(
+                raise GateConditionsError(  # noqa: CLIENT-TEXT — Group 1, on hold for the team
                     f"cannot approve: {len(unmet)} required gate condition(s) unmet: {reasons}"
                 )
 
         workflow_id = approval.run.temporal_workflow_id
         if not workflow_id:
-            raise GateError("run has no temporal_workflow_id; cannot resume the workflow")
+            raise GateError(
+                "This gate's run is no longer active, so the decision can't reach it. "
+                "Start the phase again."
+            )
 
         approval.decision = (
             Approval.Decision.APPROVED if decision == "approved" else Approval.Decision.REJECTED

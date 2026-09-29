@@ -30,13 +30,16 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
 
 **Preconditions**
 - Logged in as P1 (a workspace admin, so every sidebar item is visible) with a project selected.
+- **Note which track the selected project is.** `Onboarding` is shown only on a **brownfield**
+  project. On `Payment Gateway v2` (greenfield) it is correctly absent — see the Notes.
 
 **Steps**
 1. Read the sidebar top to bottom and note the brand text, the group headers and every item label.
 2. Click each item in turn and record the resulting URL and which item is highlighted:
    `Workspace Dashboard`, `Work Items`, `Phases & Runs`, `Gates`, `Clarifications`,
-   `Artifacts & Traceability`, `Project Profile`, `Onboarding`, `Integrations`, `Repositories`,
-   `Test Reporting`, `Connect Machine`, `Workspace Admin`.
+   `Artifacts & Traceability`, `Accessibility`, `Project Profile`, `Integrations`, `Repositories`,
+   `Test Reporting`, `Connect Machine`, `Workspace Admin` — plus `Onboarding` if the selected
+   project is brownfield.
 3. Now type these routes into the address bar one at a time and note which sidebar item is
    highlighted for each: `/transcripts`, `/traceability`, `/contracts`, `/setup`.
 
@@ -45,34 +48,43 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
 - The first group has **no** section header. The second group is headed `Project`. The third group is
   headed `Admin`.
 - Each item lands on its route and becomes the highlighted item:
-  `/`, `/work-items`, `/runs`, `/gates`, `/clarifications`, `/artifacts`, `/profile`, `/onboarding`,
+  `/`, `/work-items`, `/runs`, `/gates`, `/clarifications`, `/artifacts`, `/a11y/pages`, `/profile`,
   `/integrations`, `/repositories`, `/test-reporting`, `/connect`, and `Workspace Admin` →
-  `/admin/users`.
+  `/admin/users`. On a brownfield project, `Onboarding` → `/onboarding`.
+- **`Accessibility` is always present**, on every project and before any audit has ever run, and it
+  lands on `/a11y/pages` — the Pages & audit tab, **not** `/a11y` and not the review queue.
 - Exactly one item is highlighted at a time.
 - On the four routes in step 3 the highlight falls on the parent item: `/transcripts` highlights
   `Phases & Runs`; `/traceability` highlights `Artifacts & Traceability`; `/contracts` highlights
   `Repositories`; `/setup` highlights `Connect Machine`.
 
 **Pass / Fail**
-- PASS if all thirteen items navigate correctly and the four parent-highlight routes behave as
-  listed.
+- PASS if all thirteen items on a greenfield project (fourteen on brownfield, with `Onboarding`)
+  navigate correctly and the four parent-highlight routes behave as listed.
 - FAIL if any item 404s, lands on the wrong route, or leaves no item highlighted; or if two items are
   highlighted at once.
+- FAIL — **High** — if `Accessibility` is missing, or if it lands on the review queue rather than
+  Pages & audit.
+- FAIL — **Medium** — if `Onboarding` appears on a greenfield project.
 
 **Notes**
+- **Corrected 2026-09-17.** This case previously omitted `Accessibility` and listed `Onboarding` as
+  always present. Both are wrong against the shipped shell: `Accessibility` is a permanent item
+  (`AppShell.tsx:80`) and `Onboarding` is now conditional on `track !== "greenfield"`
+  (`AppShell.tsx:96`, S.No 221). A tester following the old text would have raised a defect for the
+  missing Onboarding item and missed the Accessibility one entirely.
+- The `Onboarding` condition is written as **not greenfield** rather than **is brownfield** on
+  purpose, so a project whose track is unknown still shows the item rather than hiding it from the
+  people who need it. If you see it on a project with no track set, that is intended.
 - `/traceability`, `/transcripts`, `/contracts`, `/recovery`, `/setup`, `/projects/new`,
   `/gates/:id/criteria` and `/admin/roles` deliberately have **no** sidebar entry. Their absence
   from the sidebar is not a defect.
-- `Onboarding` is in the sidebar for **every** project, greenfield included, and the screen it
-  routes to is hardcoded brownfield surface. For this case, confirm only that it routes to
-  `/onboarding` and takes the highlight. The screen's contents are covered by TC-262 — do not
-  assert anything about them here, and do not raise a defect from this case for the copy you see.
 - The `Workspace Admin` item's own href is `/admin`, which immediately redirects to `/admin/users`.
   Landing on `/admin/users` with the item highlighted is correct.
 
 ---
 
-### TC-168 · The Gates, Clarifications and bell badges match the project's open counts
+### TC-168 · The Gates, Clarifications and bell badges count what the signed-in person can act on
 
 | Field | Value |
 |---|---|
@@ -97,29 +109,33 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
    reloading.
 
 **Expected**
-- The `Gates` badge equals the `Pending (n)` count on `/gates` — every gate open on this project,
-  whoever it is waiting on.
-- The `Clarifications` badge equals the number of open questions on this project.
+- As P1 (a workspace admin, who may decide every gate), the `Gates` badge equals the `Pending (n)`
+  count on `/gates`.
+- The `Clarifications` badge equals the number of open questions on this project (P1 is a member of
+  the project).
 - The bell badge equals the sum of the two.
+- Each badge is the true total — a project with more than 20 open gates shows the real number, not
+  `20`.
 - When a count is zero, no badge is rendered at all on that item — not a `0`.
 - After an item is cleared, the badges drop without a manual page reload (they refresh on a poll —
   allow up to a minute).
 
 **Pass / Fail**
-- PASS if all three badges match the project-wide counts described above.
+- PASS if, for P1, all three badges match the counts described above.
 - FAIL if a badge shows a hardcoded or stale number, if a `0` badge is rendered, or if the bell
   badge is not the sum of the other two.
 - FAIL if a badge counts gates from a project other than the one selected in the top bar.
 
 **Notes**
-- **The `Gates` badge is not "gates needing you".** It counts every pending gate on the selected
-  project regardless of who holds the required role, and it is capped at 20 — a project with more
-  than 20 open gates will show `20` and stop climbing. Both are current behaviour and are already
-  tracked; do not raise them, and do not fail the case because the badge disagrees with how many
-  gates *you personally* could decide. Use the `Pending (n)` count on `/gates` as the oracle, not
-  your own role.
-- The same cap applies to the `Clarifications` badge.
-- The bell itself is inert — see TC-179. Only its *badge* is under test here.
+- **Personalised since commit 4ac75f9.** The `Gates` badge counts only the pending gates the
+  signed-in person may decide: the gate's required role on this project, or the project `admin` role,
+  or workspace admin. The `Clarifications` badge counts open questions only on a project the person
+  is a member of. Neither is capped any more.
+- So for a persona who is not an admin, the `Gates` badge can legitimately be **lower** than
+  `Pending (n)`, because `/gates` lists every pending gate on the project. To check that half, sign in
+  as P10 Engineer (who holds no gate role) with a gate pending: the `Gates` badge must be absent.
+- The bell is no longer inert — clicking it opens the dashboard's `Needs me` queue (TC-266). Only its
+  *badge* is under test here.
 
 ---
 
@@ -378,9 +394,10 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
   project.
 
 **Steps**
-1. Go to `/` and read the labels and numbers on the three tiles.
+1. Go to `/` and read the labels, numbers and sub-lines on the three tiles.
 2. Read the `Needs me` panel's title badge.
-3. Count the rows inside `Needs me` and note each row's action button.
+3. Count the rows inside `Needs me`, and read each row's title, its grey line underneath and its
+   action button.
 4. Click **Review** on a gate row.
 5. Return to `/` and click **Answer** on a question row.
 6. Return to `/` and, if a run row is present, click **View**.
@@ -388,19 +405,37 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
 **Expected**
 - The three tiles are labelled `Gates need your approval`, `Questions awaiting you` and
   `My runs in flight`, each showing a number.
+- The first two tiles' sub-line reads `{n} waiting on you`, or `nothing waiting on you` at zero. The
+  third reads `{n} running`, or `none` when you have no run in flight.
 - The `Needs me` panel's badge reads `{n} items`, where `n` is the total of the three tiles and
   equals the number of rows in the panel.
+- Every row names its work item by number and title — never by a string of letters and digits from an
+  internal id:
+  - a gate row's title reads `{gate} · {WI key} {work item title}` (for example
+    `Phase gate · WI-12 Stripe Webhook Integration`), with the grey line `required role: {Role}`;
+  - a question row's title reads `Question · {WI key} {work item title}`, with the grey line
+    `"{the question}" · waiting {n}m`;
+  - a run row's title reads `{Phase} run · {WI key} {work item title}`, with a grey line that starts
+    `just started · ` (under a minute) or `started {n}m ago · `, followed by the run's status.
 - Gate rows carry a **Review** button, question rows an **Answer** button, and run rows a **View**
   button.
-- **Review** navigates to `/gates`; **Answer** navigates to `/clarifications`; **View** navigates to
-  that run's console at `/runs/{id}`.
+- **Review** opens `/gates` with **that** gate selected (its id is in the address as `gate=`);
+  **Answer** opens `/clarifications` with that question selected (`clarification=` in the address);
+  **View** navigates to that run's console at `/runs/{id}`.
 
 **Pass / Fail**
-- PASS if the tile numbers match the row counts and all three actions navigate to the right screen.
-- FAIL if a tile number disagrees with the rows below it, or any action button is inert or lands on
-  the wrong screen.
+- PASS if the tile numbers match the row counts, every row names its work item as above, and all
+  three actions land on the right item.
+- FAIL if a tile number disagrees with the rows below it, if a row names its work item by an
+  eight-character id, or if any action button is inert or lands on a different item.
 
 **Notes**
+- **Row wording changed in commit b40c557**, and the tile sub-lines in commit 4ac75f9 (they used to
+  name a required role and read `all clear` / `all answered`). A row whose work item has no number
+  reads `a work item` in place of the name — note it, but it is not this case's failure.
+- The gates and questions tiles count only what **you** can act on (see TC-168). The row lists are
+  trimmed (20 gates, 20 questions, 10 runs) while the tiles show true totals, so on a very busy
+  project the badge can exceed the rows. Below those sizes they must agree.
 - `My runs in flight` counts only runs that **the currently signed-in user triggered**, and only
   those that are running or awaiting a gate. A run Tester C triggered will not appear on Tester B's
   dashboard, and a completed or failed run never appears. Verify this deliberately — it is the
@@ -437,31 +472,27 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
   `Awaiting gate`, `Published this week`, each with a number.
 - The `Work items` number matches the number of work items visible on `/work-items` for this
   project.
-- `Recent publishes` reads `Nothing published yet.` when nothing has been published; on a project
-  where an artifact was **registered and published within the last 7 days**, it instead lists a
-  `Published` badge with the artifact's name.
+- `Recent publishes` reads `Nothing published yet.` when nothing has been **published** in the last 7
+  days; otherwise it lists a `Published` badge with each artifact's name, newest publish first.
 
 **Pass / Fail**
 - PASS if the all-caught-up empty state, the four health rows and the correct publishes state all
   render.
 - FAIL if a health row is missing or renamed, if `Work items` disagrees with `/work-items`, or if
   `Recent publishes` claims a publish that did not happen.
-- Do **not** fail this case because a published artifact is missing from `Recent publishes`, or
-  because `Published this week` reads lower than the number of `Published` rows on `/artifacts` —
-  read the Notes first.
+- FAIL if an artifact published within the last 7 days is missing from `Recent publishes` (within its
+  limit of 5) or from the `Published this week` number, because it was **drafted** more than 7 days
+  earlier.
 
 **Notes**
-- **`Published this week` and `Recent publishes` do not measure publishing.** Both count artifacts
-  whose **registration** date falls in the last 7 days and whose status happens to be `Published`.
-  An artifact registered 8 days ago and published today is invisible to both; an artifact
-  registered and gate-approved this morning appears in both. On a fresh workspace the two readings
-  coincide, which is why this case can pass at all — on a long-lived one they will not.
-- This is already tracked as a product defect. Record the discrepancy in your result notes with the
-  artifact name and both dates, and **do not raise it again**.
-- Practical consequence for this case: run it on a project whose artifacts were all produced within
-  the last week, or accept that the two publish surfaces will under-report and note it.
-- Both surfaces are also capped — `Published this week` counts at most the last 7 days and
-  `Recent publishes` lists at most 5 artifacts. A sixth publish not appearing is not a defect.
+- **Both surfaces count by publish date since commit 4ac75f9.** They used to filter on the date the
+  artifact was registered, so something drafted 8 days ago and published today never appeared. That
+  defect is fixed: an artifact drafted long ago and approved today now appears in both, and one
+  drafted today but not yet published appears in neither.
+- A re-publish from the Export screen does not move an artifact's publish date — the date is set the
+  first time it is published.
+- Both surfaces are bounded — `Published this week` counts the last 7 days and `Recent publishes`
+  lists at most 5 artifacts. A sixth publish not appearing in the list is not a defect.
 
 ---
 
@@ -558,7 +589,7 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
 
 ---
 
-### TC-179 · The tenant switcher and the notification bell are inert
+### TC-179 · The tenant switcher is inert
 
 | Field | Value |
 |---|---|
@@ -575,25 +606,24 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
 **Steps**
 1. Click the left-most top-bar button — it shows the workspace name and a caret.
 2. Press `Enter` on it with the keyboard.
-3. Click the bell icon to the right of the companion pill.
-4. Confirm nothing opened, navigated or changed after any of the above.
+3. Confirm nothing opened, navigated or changed after either of the above.
 
 **Expected**
 - The tenant button shows the workspace initials and name with a caret, but clicking it opens no
   menu and changes nothing.
-- The bell shows its unread badge (verified in TC-168) but clicking it opens no panel and changes
-  nothing.
-- Neither control throws a console error or navigates.
+- The control throws no visible error and does not navigate.
 
 **Pass / Fail**
-- PASS if both controls are visibly present and do nothing at all, with no error.
-- FAIL only if clicking one produces an error, a broken half-rendered panel, or an unexpected
+- PASS if the control is visibly present and does nothing at all, with no error.
+- FAIL only if clicking it produces an error, a broken half-rendered panel, or an unexpected
   navigation.
 
 **Notes**
-- Both are on the plan's **known inert controls** list (§10) — confirm and reference it. Do **not**
-  raise a new defect for either. That they *look* clickable while doing nothing is the known
+- The tenant switcher is on the plan's **known inert controls** list (§10) — confirm and reference
+  it. Do **not** raise a new defect for it. That it *looks* clickable while doing nothing is the known
   complaint and is already captured.
+- **This case used to cover the notification bell as well.** Since commit 4ac75f9 the bell opens the
+  `Needs me` queue, so it moved to its own case, TC-266. The bell is no longer an inert control.
 
 ---
 
@@ -640,7 +670,7 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
 
 ---
 
-### TC-261 · A failed dashboard request renders a calm, all-zero dashboard
+### TC-261 · A failed dashboard request shows an error panel with `Try again`, not a calm dashboard
 
 | Field | Value |
 |---|---|
@@ -659,50 +689,50 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
   with the backend down and bounces you to `/login`, and you observe nothing.
 
 **Steps**
-1. Go to `/` with the busy project selected. Record the `h1`, the three tile numbers, the
+1. Go to `/` with the busy project selected. Record the `h1`, the three tile numbers and their
+   sub-lines (`{n} waiting on you` / `nothing waiting on you`, and `{n} running` / `none`), the
    `Needs me` badge, the four `Project health` numbers and the `Recent publishes` contents.
 2. Stop the backend.
-3. Stay on `/` and **do not reload**. The dashboard re-requests its data on a short poll on its own;
-   wait about 30 seconds for it to fail and re-render.
-4. Read the same six things again and compare them with step 1.
+3. Stay on `/` and **do not reload**. The dashboard re-requests its data every few seconds on its
+   own; wait about 30 seconds for the requests to fail and the screen to re-render.
+4. Read the whole dashboard area.
 5. Also read the sidebar `Gates` and `Clarifications` badges and the bell badge.
-6. Record, in one sentence, whether anything on the screen tells you the request failed.
-7. **Cleanup — mandatory.** Restart the backend, wait for it to come up, and confirm the dashboard
-   returns to the step 1 readings without a reload.
+6. **Cleanup — mandatory.** Restart the backend, wait for it to come up, and click **Try again**
+   (or wait a few seconds for the next automatic refresh). Confirm the dashboard returns to the
+   step 1 readings without a page reload.
 
 **Expected**
-- The `h1` changes from `Good morning — here's what needs you` to `Good morning`.
-- All three tiles read `0`, with the sub-labels `all clear`, `all answered` and `none`.
-- The `Needs me` panel's badge reads `0 items` and the panel shows the empty state
-  `You're all caught up` with the text
-  `No gates or questions need you right now. Trigger a phase or start a new work item.`
-- All four `Project health` rows read `0`.
-- `Recent publishes` reads `Nothing published yet.`
-- The sidebar `Gates` and `Clarifications` badges and the bell badge all disappear.
-- The sub-heading still names the project, and the **Trigger phase** and **+ New Work Item**
-  buttons are still present and still navigate.
-- Step 6's honest answer is **nothing**: this is pixel-for-pixel the calm dashboard TC-176 asserts
-  for a healthy but quiet project.
-- Step 7 restores everything.
+- Step 4: the whole dashboard — greeting, tiles, `Needs me`, `Project health` and
+  `Recent publishes` — is replaced by a danger banner titled `Can't reach the SDLC app right now`
+  reading `Your browser couldn't connect.`, a **Try again** button, and the line
+  `This screen is empty because it didn't load — not because there is nothing here.`
+- The dashboard does **not** show `Good morning`, zero tiles, `0 items`, `You're all caught up` or
+  `Nothing published yet.` at any point while the backend is down.
+- No status code or raw error text is visible.
+- Step 5: the sidebar and bell badges keep the numbers they last showed; they do not drop to zero.
+- Step 6 restores every step 1 reading.
 
 **Pass / Fail**
-- PASS if the dashboard degrades silently to the calm/zero state described above. That is the
-  current behaviour and recording it is the point of this case.
-- FAIL if the app blanks, crashes, shows a raw error body, or redirects to `/login`.
-- FAIL if a tile keeps a stale non-zero number while the health rows read zero — a half-stale
-  dashboard is worse than a uniformly zeroed one, and would be a new defect.
+- PASS if the failed dashboard shows the `Can't reach the SDLC app right now` panel with
+  **Try again**, and never a calm or all-zero dashboard.
+- FAIL if a failed request renders as the calm dashboard (zero tiles, `You're all caught up`), if
+  the panel has no **Try again**, or if the app blanks, crashes, shows a raw error body, or redirects
+  to `/login`.
 
 **Notes**
-- **Do not raise a new defect from this case.** "A failed request renders as an empty or zero
-  state" is already tracked across the dashboard, artifacts, traceability, repositories and the
-  admin user list. This case records a reproducible observation.
-- The consequence for the pack is the reason this case is High: **TC-174 and TC-176 both pass on a
-  completely broken backend**, and so do the zero-state halves of TC-168 and TC-175. A tester who
-  sees an all-zero dashboard must confirm the backend is up before recording a pass.
+- **Rewritten for commit 6d85ec9.** This case used to record that a failed request looked exactly
+  like a quiet project, so TC-174 and TC-176 passed on a broken backend. The dashboard now checks for
+  a failure before anything else (`Dashboard.tsx:84-94`). The tile sub-lines in step 1 are from
+  commit 4ac75f9; the old `all clear` / `all answered` wording no longer exists.
+- The badges keep their last values because the app holds on to the last successful answer while
+  it keeps retrying. The dashboard itself does not reuse those numbers. That difference is current
+  behaviour — note it, but it is not this case's failure.
+- Stopping the backend is a lost connection, which gives the copy above. A server fault would read
+  `Something went wrong on our side` / `The app couldn't load this. Nothing you did caused it.`
 
 ---
 
-### TC-262 · `/onboarding` tells a greenfield project it is brownfield
+### TC-262 · Onboarding is hidden on greenfield, and the screen behind it is still brownfield-only
 
 | Field | Value |
 |---|---|
@@ -718,37 +748,45 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
   Greenfield in TS-03; confirm on `/profile` that its track reads Greenfield before you start.
 
 **Steps**
-1. With the greenfield project selected, confirm `Onboarding` is present in the sidebar's `Project`
-   group.
-2. Click it.
+1. With the greenfield project selected, read the sidebar's `Project` group and confirm
+   `Onboarding` is **not** listed.
+2. Type `/onboarding` directly into the address bar and load it.
 3. Read the page heading, the sub-heading and the badge on the right of the page head.
 4. Read the numbered steps in the card below.
 5. Return to `/` and confirm nothing about the project changed as a result of visiting the screen.
+6. Switch the top bar to a **brownfield** project and confirm `Onboarding` reappears in the sidebar.
 
 **Expected**
-- `Onboarding` is present in the sidebar for this greenfield project and routes to `/onboarding`.
-- The heading reads `Onboarding — {project name}`.
-- The sub-heading reads
-  `Brownfield project. Let's assess what already exists, then resume the lifecycle at the right phase. We store analysis + pointers — never your source.`
-- A `Brownfield` badge is rendered on the right of the page head.
-- The steps below describe uploading existing resources and assessing an existing codebase.
+- `Onboarding` is **absent** from the sidebar on a greenfield project, and present again as soon as a
+  brownfield project is selected.
+- Typing the route directly still loads the screen — it is hidden from navigation, not blocked — and
+  the screen still renders brownfield copy:
+  - heading `Onboarding — {project name}`
+  - sub-heading `Brownfield project. Let's assess what already exists, then resume the lifecycle at
+    the right phase. We store analysis + pointers — never your source.`
+  - a `Brownfield` badge on the right of the page head
+  - steps describing uploading existing resources and assessing an existing codebase.
 - Nothing on the project changed merely from opening the screen — the track on `/profile` is still
   Greenfield, and the dashboard is unchanged.
 
 **Pass / Fail**
-- PASS if the screen renders that exact brownfield copy and badge on a greenfield project, **and**
-  merely visiting it changes nothing about the project. That is the current behaviour and this case
-  exists to pin it down.
+- PASS if the item is hidden on greenfield, returns on brownfield, and the directly-loaded screen is
+  **inert** — visiting it changes nothing about the project.
 - FAIL — severity **High** — if opening the screen, or any control on it, changes the project's
   track, creates an onboarding record, or alters anything visible on `/profile` or `/`.
-- FAIL if the screen errors or blanks on a greenfield project.
+- FAIL — severity **Medium** — if `Onboarding` still appears in the sidebar on a greenfield project.
+- FAIL if the screen errors or blanks.
 
 **Notes**
-- **The defect here is already tracked: `/onboarding` is in the sidebar for every project and
-  hardcodes brownfield copy with no track check.** Do not raise it again. Record what you saw and
+- **Corrected 2026-09-17.** This case was written before `ae34363`, when `Onboarding` was in the
+  sidebar for every project. Half of it is now fixed and half is not, and the case has been split to
+  match: **the sidebar item is now conditional** (`AppShell.tsx:96`, S.No 221), but **the screen
+  itself still has no track check** — `OnboardingHub.tsx:572` hardcodes "Brownfield project." and the
+  `Brownfield` badge, and there is no route guard. So the confusing copy is now only reachable by
+  typing the URL.
+- **The remaining half is still a tracked defect.** Do not raise it again. Record what you saw and
   move on. Its severity is about user confusion, not data corruption — which is exactly why step 5
-  exists: this case's real job is to confirm the confusing screen is *inert* for a greenfield
-  project.
+  exists: this case's real job is to confirm the screen is *inert* for a greenfield project.
 - Do not click through the wizard's actions (upload, connect, index) on a greenfield project. This
   case observes the landing screen only. Brownfield onboarding as a feature is out of scope this
   cycle.
@@ -811,14 +849,14 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
 
 ---
 
-### TC-264 · An unknown `/admin/*` route falls through to a developer placeholder
+### TC-264 · An unknown `/admin/*` route redirects to Users & invitations
 
 | Field | Value |
 |---|---|
 | Suite | TS-12 Shell, Navigation & Dashboard |
 | Type | Negative |
 | Priority | Medium |
-| Screen | `/admin/:anything` |
+| Screen | `/admin/:anything` → `/admin/users` |
 | Persona | P1 Owner-Admin |
 | Automation | Yes |
 
@@ -826,38 +864,35 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
 - Signed in as P1, a workspace admin.
 
 **Steps**
-1. Type `http://localhost:5173/admin/users` into the address bar and confirm the real admin screen
-   renders — this proves the admin area is reachable.
+1. Type `http://localhost:5173/admin/users` into the address bar and note the screen that renders —
+   this is the admin landing screen.
 2. Now type `http://localhost:5173/admin/this-does-not-exist` and press Enter.
-3. Read the heading, the sub-heading, and the panel below them.
+3. Read the address bar and the screen.
 4. Note which sidebar item is highlighted and whether the app shell is intact.
 5. Repeat with `/admin/settings` and `/admin/billing`.
 
 **Expected**
-- The address bar keeps the bad path — it is **not** redirected to `/` the way other unknown routes
-  are (contrast TC-178).
-- The heading reads `Workspace Admin` and the sub-heading reads
-  `Foundation route mounted. Feature screens land in T2-T5.`
-- Below it, a panel titled `Ready for screen implementation` contains an empty state titled
-  `No screen built yet` with the text
-  `This route is auth-gated and rendered inside the Phase 4.8 app shell.`
+- The address bar changes to `/admin/users` — the bad path is replaced, not kept.
+- The screen is the same admin users screen you saw in step 1.
 - The sidebar's `Workspace Admin` item is highlighted and the full app shell renders.
+- Nowhere on the screen do the words `Foundation route mounted`, `Ready for screen implementation`,
+  `No screen built yet`, `T2-T5` or `Phase 4.8` appear.
 - Every `/admin/<anything>` path behaves the same way.
 
 **Pass / Fail**
-- PASS if the placeholder renders as described for every unknown admin path.
-- FAIL if the app blanks or throws.
+- PASS if every unknown admin path lands on `/admin/users` inside the normal shell.
+- FAIL if any unknown admin path shows the old developer placeholder, keeps the bad path in the
+  address bar with a blank or different screen, blanks, or throws.
 
 **Notes**
-- **This is an internal build placeholder that ships to production and is reachable by any
-  workspace admin who mistypes an admin URL. It leaks internal build language — "T2-T5", "Phase
-  4.8" — to a customer.** That is already tracked as a product defect; record it against this
-  TC-ID and do not raise a duplicate.
-- The behaviour is also inconsistent with TC-178: an unknown route anywhere else silently redirects
-  to `/`, but an unknown route under `/admin` does not. Note the inconsistency once here rather
-  than raising it separately against TC-178.
-- A **non-admin** who visits the same URL gets the `Admin access needed` panel instead, not this
-  placeholder — that half is covered by TC-265.
+- **Changed in commit 4ac75f9.** An unknown admin address used to render a developer's placeholder
+  page with internal build language ("T2-T5", "Phase 4.8"). That page was deleted; unknown admin
+  addresses now go to the admin landing screen, the same way an unknown address elsewhere goes to the
+  dashboard (TC-178).
+- Going back in the browser after the redirect does not return to the bad path — the redirect
+  replaces it in history.
+- A **non-admin** who visits the same URL gets the `Admin access needed` panel instead — that half is
+  covered by TC-265.
 
 ---
 
@@ -881,8 +916,8 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
 1. Sign in as P10.
 2. Type `/admin/users` into the address bar and read the panel word for word.
 3. Type `/admin/roles` and confirm the same panel renders.
-4. Type `/admin/this-does-not-exist` and confirm the same panel renders — a non-admin never reaches
-   the developer placeholder from TC-264.
+4. Type `/admin/this-does-not-exist` and confirm the same panel renders — a non-admin is refused
+   before the redirect in TC-264 applies.
 5. Type `/test-reporting` and read the panel word for word. Compare it with what you read in step 2.
 6. Click **← Back to the dashboard** and confirm where you land.
 
@@ -894,13 +929,13 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
   users and roles", which is not what that page does. The tester's job is to confirm this, not to
   find different copy.
 - **← Back to the dashboard** navigates to `/` and the dashboard renders for P10.
-- At no point does the real `Test Reporting` screen, the real user list, the roles matrix or the
-  developer placeholder render for P10.
+- At no point does the real `Test Reporting` screen, the real user list or the roles matrix render
+  for P10.
 
 **Pass / Fail**
 - PASS if all four routes are refused with that exact panel and the back link works.
-- FAIL — severity **High** — if any of the four renders the real screen, a blank page, or the
-  developer placeholder for a non-admin.
+- FAIL — severity **High** — if any of the four renders the real screen or a blank page for a
+  non-admin.
 - Do **not** fail this case for the wrong copy on `/test-reporting` — see Notes.
 
 **Notes**
@@ -912,3 +947,53 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
   restriction itself, only note that its explanation is wrong.
 - This case is the negative twin of TC-169, which covers the sidebar visibility. Keep the verdicts
   separate: TC-169 fails if the *item* is visible, this one fails if the *route* is reachable.
+
+---
+
+### TC-266 · The notification bell opens the dashboard's `Needs me` queue
+
+| Field | Value |
+|---|---|
+| Suite | TS-12 Shell, Navigation & Dashboard |
+| Type | Functional |
+| Priority | Medium |
+| Screen | All (app shell) → `/#needs-me` |
+| Persona | P1 Owner-Admin |
+| Automation | No |
+
+**Preconditions**
+- Logged in as P1 with `Payment Gateway v2` selected.
+- For the busy half: Tester C has at least one gate or question waiting that P1 can act on, so the
+  bell shows a badge. For the zero half: a project with nothing waiting (`QA Empty Project`).
+
+**Steps**
+1. Go to `/work-items` (any screen other than the dashboard) and read the bell's badge.
+2. Click the bell icon to the right of the companion pill.
+3. Read the address bar, note which part of the dashboard is in view, and note where the keyboard
+   focus is.
+4. Scroll back to the top of the dashboard and click the bell again.
+5. Switch the project select to the quiet project, go to `/work-items`, and click the bell.
+
+**Expected**
+- Step 1: the bell shows a numeric badge equal to the sidebar `Gates` badge plus the
+  `Clarifications` badge (TC-168).
+- Step 2 navigates to the dashboard with `#needs-me` at the end of the address (`/#needs-me`).
+- Step 3: the page scrolls so the `Needs me` panel is in view, and focus moves to that queue — a
+  keyboard user lands on the queue, not at the top of the page. The panel's badge reads `{n} items`
+  and matches the bell's number.
+- Step 4: clicking the bell while already on the dashboard brings the `Needs me` panel back into view.
+- Step 5: at zero the bell has no badge but **still** navigates to the dashboard, where the `Needs me`
+  panel shows `You're all caught up`.
+- No panel or dropdown opens from the bell, and no error appears.
+
+**Pass / Fail**
+- PASS if the bell always lands on the `Needs me` queue on the dashboard — busy or empty, from another
+  screen or from the dashboard itself.
+- FAIL if clicking the bell does nothing, lands at the top of the dashboard without bringing
+  `Needs me` into view, or does nothing when the count is zero.
+
+**Notes**
+- **New behaviour in commit 4ac75f9.** The bell used to show a count and ignore clicks, and it sat on
+  the plan's known inert controls list. It now opens the existing `Needs me` queue rather than a
+  separate notifications panel — do not raise the absence of a notifications drop-down.
+- The bell's screen-reader name is `Notifications, {n} unread`.

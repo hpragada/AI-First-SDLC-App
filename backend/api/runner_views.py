@@ -717,7 +717,11 @@ class RunnerReviewReportView(APIView):
         try:
             out = record_review_report(
                 tenant_id=str(runner.tenant_id), run_id=str(run_id),
-                body=args.get("body", ""), status=args.get("status", "ok"))
+                body=args.get("body", ""), status=args.get("status", "ok"),
+                # The companion sends its diagnostic here on a failed report. Dropping it left
+                # the platform knowing a review failed but never why — the cause survived only
+                # in the companion's local engine log.
+                message=args.get("message", ""))
         except Run.DoesNotExist:
             return Response({"detail": "run not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(out)

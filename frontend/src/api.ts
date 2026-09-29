@@ -42,6 +42,7 @@ import type {
   Project,
   ProjectProfile,
   PublishResult,
+  RepoTopology,
   Repository,
   ResetRequest,
   RoleCoverage,
@@ -150,22 +151,31 @@ export function formError(error: unknown, shownFields: string[] = []): string | 
 // required."]}]}` — and this used to reach the screen as literal JSON, punctuation and all. That
 // is the error a user cannot understand, cannot act on, and cannot even tell apart from a crash.
 // Walks the structure and keeps the leaf messages, which is the only part written for a human.
-// Field names are kept as a prefix when they exist, since "This field is required" alone doesn't
-// say WHICH field; array indices are dropped, because "1" names nothing on screen.
+//
+// Screen Words group 5. This used to keep the DRF key as a prefix, which meant every error the
+// server filed under an internal name printed that name. The worst was the phase trigger: its
+// errors are filed under `agent_key`, so a client starting a phase while one was running read
+// "agent_key: a run is already in progress…" — and so did the friendly "start your companion"
+// message. The key is storage vocabulary; it was never a field on the screen.
+//
+// So the prefix is gone. A field name belongs on screen ONLY where that field is on screen, and
+// then as its own label — which is what `fieldError` above is for: the raw shape stays on
+// `ApiError.detail`, so a form can still pull its own field's sentence and render it under the
+// input. The cost is that a bare "This field is required." in a form-wide banner no longer says
+// which field; that is the case `fieldError` covers, and a banner is the wrong place for it
+// anyway. Array indices were already dropped, because "1" names nothing on screen.
 function humanizeError(data: unknown, fallback: string): string {
   const msgs: string[] = [];
-  const walk = (node: unknown, label: string) => {
+  const walk = (node: unknown) => {
     if (typeof node === "string") {
-      msgs.push(label ? `${label}: ${node}` : node);
+      msgs.push(node);
     } else if (Array.isArray(node)) {
-      node.forEach((child) => walk(child, label));
+      node.forEach(walk);
     } else if (node && typeof node === "object") {
-      for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
-        walk(child, key === "non_field_errors" || key === "detail" ? label : key);
-      }
+      for (const child of Object.values(node as Record<string, unknown>)) walk(child);
     }
   };
-  walk(data, "");
+  walk(data);
   const unique = [...new Set(msgs.filter((m) => m.trim()))];
   return unique.length ? unique.join(" ") : fallback;
 }
@@ -186,8 +196,30 @@ function getCsrfToken(): string {
 // cookie, and return an object URL for an <iframe>/<img>. A raw cross-origin `<img src>` to the
 // API would not carry the session, so we fetch-with-credentials then hand back a blob URL.
 async function fetchBlobUrl(path: string): Promise<string> {
-  const res = await fetch(BASE + path, { method: "GET", credentials: "include" });
-  if (!res.ok) throw new ApiError(res.status, `Failed to load ${path}`);
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, { method: "GET", credentials: "include" });
+  } catch (e) {
+    // Screen Words group 5: the same offline handling `req` has, so a viewer opened with no
+    // connection says "can't reach the app" rather than the browser's "Failed to fetch".
+    throw new ApiError(0, e instanceof Error ? e.message : "no answer", undefined, "offline");
+  }
+  if (!res.ok) {
+    // Screen Words group 5. This used to throw `Failed to load /source-documents/7f3c…/original/`
+    // — the API path and a document's internal id, shown to a person who clicked "view my
+    // upload". The path stays in the browser's own network log for a developer; the sentence a
+    // reader gets says what happened and whether it is worth retrying.
+    //
+    // No filename here on purpose: this helper serves originals AND page images, so it cannot
+    // honestly name what was being fetched. The screen around it already shows that.
+    const said =
+      res.status === 404
+        ? "That file isn't stored any more, so it can't be shown."
+        : res.status === 401 || res.status === 403
+          ? "You don't have access to that file."
+          : "That file couldn't be loaded. Try again in a moment.";
+    throw new ApiError(res.status, said);
+  }
   return URL.createObjectURL(await res.blob());
 }
 
@@ -361,13 +393,16 @@ export const api = {
 
   // Phase 4.8 T3 — repositories (4.7 T7). Session-derived tenant; member-scoped reads,
   // tech_lead/admin writes.
-  // Backend wraps the list: { repo_topology, repositories: [...] } — unwrap here.
-  listRepositories: async (projectId: string): Promise<Repository[]> => {
-    const data = await req<{ repo_topology: string; repositories: Repository[] }>(
-      "GET", `/projects/${projectId}/repositories/`
-    );
-    return data.repositories;
-  },
+  // Backend wraps the list: { repo_topology, repositories: [...] }. Both halves are kept (S.No
+  // 212): this used to unwrap the list and throw the topology away, and the screen then worked out
+  // a topology of its own from the count, with a rule that disagreed with the platform's.
+  getRepositories: (projectId: string) =>
+    req<{ repo_topology: RepoTopology; repositories: Repository[] }>(
+      "GET", `/projects/${projectId}/repositories/`,
+    ),
+  // Make this repository the project's default (S.No 212). Answers with the refreshed list.
+  setDefaultRepository: (projectId: string, repoId: string) =>
+    req<Repository[]>("POST", `/projects/${projectId}/repositories/${repoId}/set-default/`),
   createRepository: (
     projectId: string,
     body: { name: string; role: string; base_branch: string; preview_url?: string },

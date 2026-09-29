@@ -1,7 +1,7 @@
 # TS-04 · Integrations
 
 Covers the capability grid at `/integrations` and the connect form at `/integrations/:capability`:
-that all six capabilities render, that a vendor can be bound to a capability, that the vendor
+that all five connectable capabilities render, that a vendor can be bound to a capability, that the vendor
 choice drives the form, that secrets are genuinely write-only, and that a connection test reports
 success and failure honestly. **Owner: Tester B**, working as **P1 Owner-Admin** in workspace
 `QA Bravo`. No companion and no phase run is needed for this suite.
@@ -18,7 +18,7 @@ success and failure honestly. **Owner: Tester B**, working as **P1 Owner-Admin**
 
 ---
 
-### TC-056 · The capability grid renders all six capability cards in order
+### TC-056 · The capability grid renders all five capability cards in order
 
 | Field | Value |
 |---|---|
@@ -36,20 +36,20 @@ success and failure honestly. **Owner: Tester B**, working as **P1 Owner-Admin**
 **Steps**
 1. Click **Integrations** in the sidebar's setup section (or go to `http://localhost:5173/integrations`).
 2. Read the page heading and sub-heading.
-3. Read the six cards top-left to bottom-right, in DOM order.
+3. Read the cards top-left to bottom-right, in DOM order.
 
 **Expected**
 - The h1 reads `Integrations`.
 - The sub-heading reads `Capabilities, not vendors — connect a vendor as the current binding for each capability. Phases use whatever is connected.`
-- Exactly six cards render, in this order: `Documentation store`, `Task tracker`, `Design source`,
-  `Code host`, `Test management`, `Code intelligence`.
-- The first five cards show the badge `Not connected` and a link labelled `Connect`.
-- The `Code intelligence` card shows `Built-in` as its vendor and the badge `Connected`.
+- Exactly five cards render, in this order: `Documentation store`, `Task tracker`, `Design source`,
+  `Code host`, `Test management`.
+- All five cards show the badge `Not connected` and a link labelled `Connect`.
+- There is **no** `Code intelligence` card.
 
 **Pass / Fail**
-- PASS if all six cards render in the listed order with the listed badges.
-- FAIL if a card is missing, the order differs, a capability name is wrong, or a card that was
-  never connected shows `Connected`.
+- PASS if exactly five cards render in the listed order, each `Not connected` with a `Connect` link.
+- FAIL if a card is missing, the order differs, a capability name is wrong, a `Code intelligence`
+  card appears, or a card that was never connected shows `Connected`.
 
 **Test data**
 - None.
@@ -57,6 +57,8 @@ success and failure honestly. **Owner: Tester B**, working as **P1 Owner-Admin**
 **Notes**
 - The grid collapses to a single card as soon as any connection is failed (see TC-063). That is why
   this case must run before TC-062.
+- Code intelligence is no longer something you connect: it is set up automatically for every
+  workspace, so it has no card. Its old address is covered by TC-064.
 
 ---
 
@@ -100,8 +102,8 @@ success and failure honestly. **Owner: Tester B**, working as **P1 Owner-Admin**
 
 **Notes**
 - Each capability currently offers exactly one vendor (docstore→Confluence, tasktracker→Jira,
-  designsource→Figma, codehost→GitHub, testmgmt→Xray, codeintel→Built-in analyzer). A single-option
-  dropdown is expected today, not a defect.
+  designsource→Figma, codehost→GitHub, testmgmt→Xray). A single-option dropdown is expected today,
+  not a defect.
 
 ---
 
@@ -363,49 +365,51 @@ success and failure honestly. **Owner: Tester B**, working as **P1 Owner-Admin**
   That mismatch is a real product defect (the card reports a cause it does not know) but it is
   **already tracked separately** — confirm the string, note it, and do not raise a duplicate.
 - **Known behaviour, do not raise as new:** while any capability is in the failed state, the grid
-  renders **only that one card** — the other five capabilities disappear from `/integrations` until
+  renders **only that one card** — the other four capabilities disappear from `/integrations` until
   the failure is cleared. Verify it, note it, and restore a valid token (Replace → Save → Test) at
   the end of this case so the rest of the suite has a full grid again.
 
 ---
 
-### TC-064 · Code intelligence is built in, connected, and needs no credential
+### TC-064 · The old Code intelligence address goes back to the Integrations grid
 
 | Field | Value |
 |---|---|
 | Suite | TS-04 Integrations |
-| Type | Functional |
+| Type | Negative |
 | Priority | Medium |
-| Screen | `/integrations/codeintel` |
+| Screen | `/integrations/codeintel` → `/integrations` |
 | Persona | P1 Owner-Admin |
 | Automation | Yes |
 
 **Preconditions**
-- TC-063 passed and the grid is showing all six cards again.
+- TC-063 passed and the grid is showing all five cards again.
 
 **Steps**
-1. On `/integrations`, read the `Code intelligence` card.
-2. Click its link.
-3. Choose `Built-in analyzer` in the `Vendor` select.
-4. Read the form body, then click **Save**.
+1. Paste `http://localhost:5173/integrations/codeintel` into the address bar and press Enter.
+2. Read the address bar and the page.
+3. Repeat with a mistyped capability, `http://localhost:5173/integrations/not-a-capability`.
+4. Click the browser Back button once.
 
 **Expected**
-- The `Code intelligence` card shows vendor `Built-in` and the badge `Connected` even though nobody
-  connected it.
-- After choosing `Built-in analyzer`, **no** binding fields and **no** secret fields render.
-- An informational banner reads `Built-in analyzer runs locally and needs no credentials — just save to enable it.`
-- **Save** is enabled with nothing filled in, and saving shows the `Saved` banner.
+- Steps 1 and 3 each land on `/integrations`: the address bar changes to `/integrations` and the
+  capability grid from TC-056 renders, with the heading `Integrations`.
+- No `Connect a capability` form renders for either address — no blank title, no empty breadcrumb,
+  no empty `Vendor` select.
+- The grid has no `Code intelligence` card.
+- At step 4 Back does not return to the unknown address — the redirect replaced it in history.
 
 **Pass / Fail**
-- PASS if the card is connected out of the box and the form asks for no credentials.
-- FAIL if the card reads `Not connected`, if a secret field is rendered, or if Save is blocked.
+- PASS if both addresses redirect to the `/integrations` grid.
+- FAIL if either address renders a connect form (with or without a title), a blank page, or an error.
 
 **Test data**
-- Vendor: `Built-in analyzer`
+- `/integrations/codeintel` · `/integrations/not-a-capability`
 
 **Notes**
-- The card reads `Connected` because the code intelligence capability is hardcoded as built-in in
-  the grid, independent of whether a row was ever saved. That is expected.
+- This case used to check a `Code intelligence` card and its connect form. That card was removed:
+  code intelligence is now provisioned automatically for every workspace and needs nothing from you,
+  so an old bookmark to it simply returns to the grid.
 
 ---
 
@@ -531,8 +535,8 @@ success and failure honestly. **Owner: Tester B**, working as **P1 Owner-Admin**
 
 **Expected**
 - P10 can reach `/integrations` — the nav item is not hidden and the route is not blocked.
-- Every card except `Code intelligence` shows `Not connected`, **including the capabilities that are
-  actually connected** — no other tenant's or admin's connection data is exposed.
+- All five cards show `Not connected`, **including the capabilities that are actually connected** —
+  no other tenant's or admin's connection data is exposed.
 - On the connect form the `Vendor` select contains only `Choose a vendor…`; no vendor can be chosen,
   no fields render, and **Save** stays disabled.
 - P10 cannot create, change, or test any connection from the UI.

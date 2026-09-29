@@ -7,7 +7,7 @@ They are NOT strong on dev tooling, so this is written in plain language, but it
 Pure ReportLab (Platypus). Glyph-safe for built-in Helvetica/Courier (WinAnsi):
 arrows are written "->", no emoji/checkmarks; use <b>/<i>/<tt> and &amp; &lt; &gt;.
 
-Run:  ../.venv/Scripts/python docs/build_qa_testing_guide.py
+Run from the repository root:  .venv/Scripts/python docs/build_qa_testing_guide.py
 Out:  docs/AI-First-SDLC-Platform-QA-Testing-Guide.pdf
 """
 from __future__ import annotations
@@ -426,7 +426,8 @@ def section_4():
          "bill. The app shows &ldquo;Companion: Ready&rdquo; when it is running."],
         ["Integration / Capability", "A connection to a real external tool. The app groups them by "
          "<b>capability</b> (doc store, task tracker, code host, design source, test management, "
-         "code intelligence) and binds a vendor (Confluence, Jira, GitHub, Figma, Xray) underneath."],
+         "code intelligence) and binds a vendor (Confluence, Jira, GitHub, Figma, Xray) underneath. "
+         "Code intelligence is built in and set up automatically, so it has no card to connect."],
         ["System of Record (SoR)", "The real external tool that officially owns a piece of content "
          "&mdash; e.g. Jira owns issues, Confluence owns pages. The platform publishes to the SoR "
          "only after a gate is approved."],
@@ -601,20 +602,24 @@ def section_6():
         "and <b>single</b> or <b>multi</b>-repo. Greenfield sends you to the Project Profile; "
         "brownfield sends you to the Onboarding hub. Test all four combinations.",
         "<b>Project Profile</b> &mdash; the important context that guides the AI (what the project "
-        "is, constraints, etc.). Check editing, saving, and that required context is enforced.",
-        "<b>Integrations</b> &mdash; the six capabilities (doc store, task tracker, design source, "
-        "code host, test management, code intelligence). Each shows Connected / Not connected / "
-        "Failed. See 6.3.",
+        "is, constraints, etc.). Check editing, saving, and that required context is enforced: "
+        "<b>Description is required</b> &mdash; Save with it empty should say why, put the cursor "
+        "there, and keep everything else you typed.",
+        "<b>Integrations</b> &mdash; the five capabilities you connect (doc store, task tracker, "
+        "design source, code host, test management). Each shows Connected / Not connected / "
+        "Failed. Code intelligence has no card: it is set up automatically. See 6.3.",
         "<b>Repositories</b> &mdash; add and assign the code repo(s) for the project, mark a "
-        "default, and (multi-repo) pin work items to a repo.",
+        "default with <b>Set default</b> (the default marker should move to that row), and "
+        "(multi-repo) pin work items to a repo.",
         "<b>Connect Machine</b> &mdash; covered in setup (5.7); also test the <b>Disconnect</b> "
         "flow and the offline state.",
     ])
 
     h2("6.3 Connecting real tools (Integrations)")
-    p("Integrations are organised by <b>capability</b>; each capability binds one vendor. All six "
+    p("Integrations are organised by <b>capability</b>; each capability binds one vendor. All five "
       "below are wired to real APIs, so a wrong token should <b>fail the connection test</b> with "
-      "a clear message.")
+      "a clear message. (Code intelligence is built in and set up automatically for every "
+      "workspace, so it is not on this screen; an old link to it should return to the grid.)")
     table([
         ["Capability", "Vendor", "What you enter", "What to test"],
         ["Documentation store", "Confluence", "Space key, base URL, email + API token",
@@ -626,8 +631,6 @@ def section_6():
          "Connect; used by build phases to open PRs."],
         ["Test management", "Xray", "Project key + client id + client secret",
          "Connect + test; used to import test results."],
-        ["Code intelligence", "Built-in", "Nothing (local, no secret)",
-         "Should connect with no credentials."],
     ], [3.4 * cm, 2.0 * cm, 5.4 * cm, 5.6 * cm], font=8.2)
     callout("Good things to try to break here",
             "Enter a clearly wrong token and confirm the <b>Test</b> step fails with a helpful "
@@ -637,9 +640,11 @@ def section_6():
 
     h2("6.4 Work Items")
     bullets([
-        "<b>Work Items board</b> &mdash; create items and move across lifecycle columns "
-        "(Proposed, Accepted, In progress, In review, Blocked, Done). Test creating each type and "
-        "opening a card.",
+        "<b>Work Items board</b> &mdash; columns are <b>Backlog</b> (nothing has run yet) followed "
+        "by the lifecycle phases; the Tasks view is Backlog, Implementation, Review. Each card has "
+        "a status pill: Not started, Running, <b>Waiting for you</b> (only when you may decide the "
+        "gate or answer the question &mdash; otherwise a grey &ldquo;Waiting for review / for an "
+        "answer&rdquo;), Done, Failed. Test creating each type and opening a card.",
         "<b>Work Item detail</b> &mdash; the view changes by type: <b>Epic</b>, <b>Task / Test "
         "case</b>, and <b>Defect</b> each render differently. Check the phases list and the "
         "<b>trigger</b> action.",
@@ -674,14 +679,19 @@ def section_6():
     h2("6.7 Seeing everything (observability)")
     bullets([
         "<b>Workspace Dashboard</b> &mdash; the &ldquo;needs me&rdquo; rollup: gates awaiting you, "
-        "clarifications, your runs, project health. Check it updates as you work.",
+        "clarifications, your runs, project health. It is <b>personal</b>: it counts only gates you "
+        "may decide and questions you may answer (&ldquo;N waiting on you&rdquo;), each row names "
+        "its work item by number and title, and a run row says how long it has been going. "
+        "&ldquo;Published this week&rdquo; counts by publish date. Check it updates as you work.",
         "<b>Artifacts</b> &mdash; browse everything the phases produced; open one to preview the "
         "rendered content and its version.",
         "<b>Publish to system of record</b> &mdash; from an artifact, export it to a connected "
         "tool (e.g. Confluence). This is <b>user-triggered</b> and only works after the gate is "
         "approved and the integration is connected.",
         "<b>Traceability</b> &mdash; the links between requirements, artifacts, work items, and "
-        "tests. Check the links are correct and clickable.",
+        "tests. Check the links are correct and clickable, and try the filters: Phase, Type, and "
+        "Highlight work item (the rest of the map dims; onboarding documents are under "
+        "&ldquo;Not tied to a work item&rdquo;).",
         "<b>Run transcripts</b>, <b>API Contracts &amp; Drift</b>, and <b>Run recovery</b> (take "
         "over a run whose companion went offline mid-phase).",
     ])

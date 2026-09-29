@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type {
   ButtonHTMLAttributes,
   CSSProperties,
@@ -10,6 +10,7 @@ import type {
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
+import { createPortal } from "react-dom";
 import { Link as RouterLink } from "react-router-dom";
 
 import { failureOf } from "../../api";
@@ -39,11 +40,19 @@ export function useDismissable(
   onClose: () => void,
   root: RefObject<HTMLElement | null>,
   firstItem?: RefObject<HTMLElement | null>,
+  // The popup itself, when it is drawn in the floating layer rather than inside `root` (Bugs
+  // S.No 166). A popup moved to the top of the page is no longer inside its trigger's element, so
+  // "was the click inside `root`?" would answer NO for a click on the popup's own items — and the
+  // menu would close under the pointer that was choosing from it. Callers that keep their popup
+  // inside `root` pass nothing and behave exactly as before.
+  popup?: RefObject<HTMLElement | null>,
 ) {
   useEffect(() => {
     if (!open) return;
     const onDown = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) onClose();
+      const target = event.target as Node;
+      if (root.current?.contains(target) || popup?.current?.contains(target)) return;
+      onClose();
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -54,11 +63,168 @@ export function useDismissable(
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, onClose, root]);
+  }, [open, onClose, root, popup]);
 
   useEffect(() => {
     if (open) firstItem?.current?.focus();
   }, [open, firstItem]);
+}
+
+/** Draws its children at the top of the page, outside every panel that could clip them.
+ *
+ * **Why popups float (Bugs S.No 166).** A panel hides whatever crosses its edge
+ * (`.panel { overflow: hidden }`, which is what keeps its rounded corners clean). A dropdown drawn
+ * inside one was cut off where it crossed that edge — and because a long list grows its own
+ * scrollbar, it was the SHORT lists that broke: six items, too few to scroll, enough to cross the
+ * edge. The same held for the row menu on the Work Items list. Moving every popup here removes
+ * the whole class rather than the two instances somebody noticed.
+ *
+ * Pair it with `useFloatingPosition` (a popup up here no longer knows where its trigger is) and
+ * give the popup the `popover-layer` class.
+ */
+export function FloatingLayer({ children }: { children: ReactNode }) {
+  return createPortal(children, document.body);
+}
+
+/** Puts a floating popup beside its trigger, and keeps it there while the page moves.
+ *
+ * Below the trigger by default; **above it when it does not fit below and there is more room
+ * above** — the team's choice (flip upwards, rather than shrink into a small scrolling box). It
+ * scrolls only when it fits neither way. `preferAbove` reverses the preference, for a tooltip.
+ *
+ * Re-measured on every render, on any scroll — capture phase, so a scrolling panel counts as well
+ * as the window — and on resize: a popup placed once is stranded mid-screen the moment anything
+ * under it moves.
+ *
+ * Writes straight to the popup's style instead of going through React state. Measuring in a
+ * layout effect and then setting state re-renders, which measures again.
+ */
+export function useFloatingPosition(
+  open: boolean,
+  anchor: RefObject<HTMLElement | null>,
+  floating: RefObject<HTMLElement | null>,
+  { align = "start", matchWidth = false, preferAbove = false, gap = 4, overlay = false }: {
+    /** Which edge of the trigger the popup lines up with: menus hang from the right. */
+    align?: "start" | "end" | "center";
+    /** Same width as the trigger — a dropdown list under its field. */
+    matchWidth?: boolean;
+    preferAbove?: boolean;
+    gap?: number;
+    /**
+     * Draw the popup OVER the trigger rather than beside it, growing rightwards and downwards
+     * from the trigger's own corner and never narrower than it.
+     *
+     * This is how a cut-off row shows the rest of its text: the row appears to open out where it
+     * already is, so the eye does not have to travel and the list underneath does not reflow.
+     * `align`, `gap` and `preferAbove` do not apply — the trigger's top-left IS the position,
+     * clamped so the popup stays on screen.
+     */
+    overlay?: boolean;
+  } = {},
+) {
+  const place = useCallback(() => {
+    const trigger = anchor.current;
+    const popup = floating.current;
+    if (!trigger || !popup) return;
+    const box = trigger.getBoundingClientRect();
+    const margin = 8;
+    if (overlay) {
+      popup.style.minWidth = `${box.width}px`;
+      const width = popup.offsetWidth;
+      const height = popup.offsetHeight;
+      const room = (space: number, size: number) => Math.max(margin, space - size - margin);
+      popup.style.top =
+        `${Math.min(Math.max(box.top, margin), room(window.innerHeight, height))}px`;
+      popup.style.left =
+        `${Math.min(Math.max(box.left, margin), room(window.innerWidth, width))}px`;
+      return;
+    }
+    if (matchWidth) popup.style.width = `${box.width}px`;
+    popup.style.maxHeight = "";               // measure at its natural (CSS-capped) height
+    const height = popup.offsetHeight;
+    const width = popup.offsetWidth;
+    const below = window.innerHeight - box.bottom - gap - margin;
+    const above = box.top - gap - margin;
+    const up = preferAbove
+      ? height <= above || above >= below
+      : height > below && above > below;
+    const room = Math.max(up ? above : below, 0);
+    if (height > room) popup.style.maxHeight = `${room}px`;
+    const shown = Math.min(height, room);
+    popup.style.top = `${up ? box.top - gap - shown : box.bottom + gap}px`;
+    const wanted =
+      align === "end" ? box.right - width
+        : align === "center" ? box.left + box.width / 2 - width / 2
+          : box.left;
+    const furthest = Math.max(margin, window.innerWidth - width - margin);
+    popup.style.left = `${Math.min(Math.max(wanted, margin), furthest)}px`;
+    popup.dataset.side = up ? "above" : "below";
+  }, [anchor, floating, align, matchWidth, preferAbove, gap, overlay]);
+
+  useLayoutEffect(() => {
+    if (open) place();
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, place]);
+}
+
+/** Tab from inside a floating menu.
+ *
+ * A menu drawn in the floating layer sits at the END of the page, so the browser's Tab from inside
+ * it would carry focus off the page instead of to whatever follows the trigger. Handing focus back
+ * to the trigger first — and letting the browser's own Tab carry on from there — lands it exactly
+ * where it went when the menu was drawn inline. */
+export function closeOnTab(close: () => void, trigger: RefObject<HTMLElement | null>) {
+  return (event: React.KeyboardEvent) => {
+    if (event.key !== "Tab") return;
+    trigger.current?.focus();
+    close();
+  };
+}
+
+/** True when an element is showing less text than it holds — i.e. the CSS cut it off. */
+export function isCut(el: HTMLElement | null | undefined): boolean {
+  return !!el && el.scrollWidth > el.clientWidth + 1;
+}
+
+/** Shows a cut-off label in full, drawn over the thing that cut it.
+ *
+ * A dropdown row is one line as wide as its field, so a long label is cut with an ellipsis and
+ * the rest is simply unreachable — no hover, no wrap. That is fine for the platform's own short
+ * choices and wrong for work items, whose titles agents write from findings: they are long, and
+ * the words that tell two of them apart are at the END ("ExpenseResponse missing created_at" vs
+ * "ExpenseResponse missing currency"). Picking the wrong one starts a phase run on the wrong work
+ * item.
+ *
+ * It opens only when the label is ACTUALLY cut, so short labels behave exactly as before, and it
+ * follows the arrow keys as well as the pointer — a keyboard user cannot hover. `aria-hidden`
+ * because nothing here is new to a screen reader: the full text is already the row's accessible
+ * name, only visually clipped, so announcing it again would just repeat it.
+ */
+function TruncationPeek({ text, element }: { text: string; element: HTMLElement | null }) {
+  // A plain box holding the current anchor, written during render: `useFloatingPosition` reads it
+  // in a layout effect, after this render has committed.
+  const anchor = useRef<HTMLElement | null>(null);
+  anchor.current = element;
+  const peek = useRef<HTMLDivElement>(null);
+  const open = Boolean(element && text);
+  useFloatingPosition(open, anchor, peek, { overlay: true });
+  if (!open) return null;
+  return (
+    <FloatingLayer>
+      <div ref={peek} className="popover-layer peek" aria-hidden="true">
+        {text}
+      </div>
+    </FloatingLayer>
+  );
 }
 
 export type RowMenuItem =
@@ -75,14 +241,21 @@ export type RowMenuItem =
 export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
   const first = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
   const close = useCallback(() => setOpen(false), []);
-  useDismissable(open, close, root, first);
+  useDismissable(open, close, root, first, pop);
+  // Floating, not inline (S.No 166): this menu lives in the last cell of a table inside a panel,
+  // and the panel clipped it — the same defect as the work-item picker, unnoticed only because
+  // this menu holds two short items.
+  useFloatingPosition(open, trigger, pop, { align: "end" });
 
   if (items.length === 0) return null;
   return (
     <div className="row-menu" ref={root}>
       <button
+        ref={trigger}
         type="button"
         className="row-menu__trigger"
         aria-label={label}
@@ -96,7 +269,14 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
         <span aria-hidden="true">...</span>
       </button>
       {open && (
-        <div className="row-menu__pop" role="menu" aria-label={label}>
+        <FloatingLayer>
+        <div
+          ref={pop}
+          className="popover-layer row-menu__pop"
+          role="menu"
+          aria-label={label}
+          onKeyDown={closeOnTab(close, trigger)}
+        >
           {items.map((item, index) => {
             const ref = index === 0 ? first : undefined;
             const className = cx("row-menu__item", item.danger && "row-menu__item--danger");
@@ -125,6 +305,7 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
             );
           })}
         </div>
+        </FloatingLayer>
       )}
     </div>
   );
@@ -225,9 +406,13 @@ export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...props} className={cx("select", props.className)} />;
 }
 
-export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea {...props} className={cx("textarea", props.className)} />;
-}
+/** Forwards its ref, so a screen that refuses a save can put the cursor in the field it is
+ *  asking about (the project profile's description). */
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
+  function Textarea(props, ref) {
+    return <textarea {...props} ref={ref} className={cx("textarea", props.className)} />;
+  },
+);
 
 export type ComboboxOption = { value: string; label: string };
 
@@ -260,7 +445,22 @@ export function Combobox({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const selected = options.find((o) => o.value === value) ?? null;
+  // The row (or the closed field) whose full text is being shown, and that text.
+  const [peekEl, setPeekEl] = useState<HTMLElement | null>(null);
+  const [peekText, setPeekText] = useState("");
+  const rowEls = useRef(new Map<number, HTMLLIElement>());
+  const hidePeek = () => setPeekEl(null);
+  const peekAt = (el: HTMLElement | null | undefined, text: string) => {
+    if (el && isCut(el)) {
+      setPeekEl(el);
+      setPeekText(text);
+    } else {
+      setPeekEl(null);
+    }
+  };
 
   // While closed the box shows the current selection; typing filters the list.
   const text = open ? query : selected?.label ?? "";
@@ -268,19 +468,22 @@ export function Combobox({
     ? options.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase()))
     : options;
 
-  useEffect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, [open]);
+  // The shared hook, not a private copy of it (S.No 166). This component had its own outside-click
+  // effect — "was the click inside me?" — which is exactly the check that inverts once the list is
+  // drawn in the floating layer. One behaviour for every popup, fixed in one place.
+  const close = useCallback(() => {
+    setOpen(false);
+    setQuery("");
+    setPeekEl(null);
+  }, []);
+  useDismissable(open, close, rootRef, undefined, listRef);
+  useFloatingPosition(open, inputRef, listRef, { matchWidth: true });
 
   const pick = (option: ComboboxOption) => {
     onChange(option.value);
     setOpen(false);
     setQuery("");
+    setPeekEl(null);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -292,7 +495,11 @@ export function Combobox({
         return;
       }
       const step = e.key === "ArrowDown" ? 1 : -1;
-      setActive((i) => (matches.length ? (i + step + matches.length) % matches.length : 0));
+      const next = matches.length ? (active + step + matches.length) % matches.length : 0;
+      setActive(next);
+      // The highlight is the keyboard's pointer, so the full title follows it the same way it
+      // follows the mouse. The row is already on the page, so it can be measured now.
+      peekAt(rowEls.current.get(next), matches[next]?.label ?? "");
     } else if (e.key === "Enter") {
       if (open && matches[active]) {
         e.preventDefault();
@@ -301,12 +508,14 @@ export function Combobox({
     } else if (e.key === "Escape") {
       setOpen(false);
       setQuery("");
+      setPeekEl(null);
     }
   };
 
   return (
     <div className="combobox" ref={rootRef}>
       <input
+        ref={inputRef}
         id={id}
         className="input combobox__input"
         role="combobox"
@@ -321,40 +530,244 @@ export function Combobox({
           setQuery(e.target.value);
           setActive(0);
           setOpen(true);
+          setPeekEl(null);        // the rows under it have just changed
         }}
         onFocus={() => {
           setOpen(true);
           setQuery("");
+          setPeekEl(null);
         }}
+        // A pick leaves focus in the field, so opening on focus alone meant a second click on the
+        // field did nothing — you had to click away and back (found live, 2026-09-21). A click
+        // anywhere on the field opens it.
+        onClick={() => {
+          if (!open) {
+            setOpen(true);
+            setQuery("");
+            setPeekEl(null);
+          }
+        }}
+        // Closed and showing a chosen title too long for the field: hovering the field shows it
+        // in full, the same way a row does.
+        onMouseEnter={(e) => {
+          if (!open && selected) peekAt(e.currentTarget, selected.label);
+        }}
+        onMouseLeave={hidePeek}
         onKeyDown={onKeyDown}
       />
       {open && (
-        <ul className="combobox__list" role="listbox" id={id ? `${id}-listbox` : undefined}>
-          {matches.length === 0 ? (
-            <li className="combobox__empty">{emptyText}</li>
-          ) : (
-            matches.map((o, i) => (
+        <FloatingLayer>
+          <ul
+            ref={listRef}
+            className="popover-layer combobox__list"
+            role="listbox"
+            id={id ? `${id}-listbox` : undefined}
+            onMouseLeave={hidePeek}
+          >
+            {matches.length === 0 ? (
+              <li className="combobox__empty">{emptyText}</li>
+            ) : (
+              matches.map((o, i) => (
+                <li
+                  key={o.value}
+                  role="option"
+                  aria-selected={o.value === value}
+                  ref={(el) => {
+                    if (el) rowEls.current.set(i, el);
+                    else rowEls.current.delete(i);
+                  }}
+                  className={cx(
+                    "combobox__option",
+                    i === active && "combobox__option--active",
+                    o.value === value && "combobox__option--selected",
+                  )}
+                  onMouseEnter={(e) => {
+                    setActive(i);
+                    peekAt(e.currentTarget, o.label);
+                  }}
+                  // mousedown (not click): the input's blur would close the list first.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pick(o);
+                  }}
+                >
+                  {o.label}
+                </li>
+              ))
+            )}
+          </ul>
+        </FloatingLayer>
+      )}
+      {/* Outside the list, because the closed field can be cut off too. */}
+      <TruncationPeek text={peekText} element={peekEl} />
+    </div>
+  );
+}
+
+/** A dropdown the platform draws itself, for choices too long for the browser's own (Bugs
+ * S.No 184).
+ *
+ * The browser's `<select>` is drawn by the operating system, outside the page: nothing in the app
+ * can keep it inside its card or make an option wrap. Agents routinely write options that are
+ * whole sentences, so on the clarification screen they ran on one unbroken line off the card.
+ * This list is as wide as its field and wraps.
+ *
+ * Reach for it only where the options can be long and are written by an agent. Where they are
+ * short and the platform's own, keep `Select` — the browser's control is the better control.
+ *
+ * Everything a native select gives for free is rebuilt on purpose, because this is an
+ * accessibility product: a real button, so Tab reaches it and Enter or Space opens it; ↑ ↓ Home End
+ * move; Enter or Space picks; Escape closes and changes nothing. It follows the select-only
+ * combobox pattern — `role="combobox"` on the button, the highlighted option named by
+ * `aria-activedescendant` — so a screen reader announces a list of choices and the one under the
+ * highlight while focus stays on the control.
+ */
+export function ChoiceSelect({
+  options,
+  value,
+  onChange,
+  placeholder = "Choose one…",
+  invalid,
+  disabled,
+  id,
+}: {
+  options: ComboboxOption[];
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  invalid?: boolean;
+  disabled?: boolean;
+  id?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const autoId = useId();
+  const listId = `${id ?? autoId}-listbox`;
+  const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  // Set when a key picked an option, so the click some browsers still send for that same key press
+  // cannot reopen the list it just closed. Cleared straight after the key is released.
+  const keyPicked = useRef(false);
+  const selectedIndex = options.findIndex((o) => o.value === value);
+  const selected = selectedIndex >= 0 ? options[selectedIndex] : null;
+  const close = useCallback(() => setOpen(false), []);
+  useDismissable(open, close, rootRef, undefined, listRef);
+  useFloatingPosition(open, buttonRef, listRef, { matchWidth: true });
+
+  // Keep the highlighted option in view as the arrow keys walk a list longer than the popup.
+  useEffect(() => {
+    if (open) document.getElementById(`${listId}-${active}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [open, active, listId]);
+
+  const openList = () => {
+    setActive(selectedIndex >= 0 ? selectedIndex : 0);
+    setOpen(true);
+  };
+  const pick = (index: number) => {
+    const option = options[index];
+    if (option) onChange(option.value);
+    setOpen(false);
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!open) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        openList();
+      }
+      // Enter and Space are left to the button's own activation, which arrives as a click.
+      return;
+    }
+    const last = options.length - 1;
+    switch (event.key) {
+      case "ArrowDown":
+        event.preventDefault();
+        setActive((i) => Math.min(i + 1, last));
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        setActive((i) => Math.max(i - 1, 0));
+        break;
+      case "Home":
+        event.preventDefault();
+        setActive(0);
+        break;
+      case "End":
+        event.preventDefault();
+        setActive(last);
+        break;
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        keyPicked.current = true;
+        pick(active);
+        break;
+      case "Escape":
+        event.preventDefault();
+        close();
+        break;
+      case "Tab":
+        close();
+        break;
+    }
+  };
+
+  return (
+    <div className="choice-select" ref={rootRef}>
+      <button
+        ref={buttonRef}
+        id={id}
+        type="button"
+        className={cx("select", "choice-select__button", !selected && "choice-select__button--empty")}
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        aria-activedescendant={open && options.length > 0 ? `${listId}-${active}` : undefined}
+        aria-invalid={invalid || undefined}
+        disabled={disabled}
+        onClick={() => {
+          if (keyPicked.current) return;
+          if (open) close();
+          else openList();
+        }}
+        onKeyDown={onKeyDown}
+        onKeyUp={() => {
+          window.setTimeout(() => {
+            keyPicked.current = false;
+          }, 0);
+        }}
+      >
+        {selected ? selected.label : placeholder}
+      </button>
+      {open && (
+        <FloatingLayer>
+          <ul ref={listRef} id={listId} role="listbox" className="popover-layer choice-select__list">
+            {options.map((o, i) => (
               <li
                 key={o.value}
+                id={`${listId}-${i}`}
                 role="option"
                 aria-selected={o.value === value}
                 className={cx(
-                  "combobox__option",
-                  i === active && "combobox__option--active",
-                  o.value === value && "combobox__option--selected",
+                  "choice-select__option",
+                  i === active && "choice-select__option--active",
+                  o.value === value && "choice-select__option--selected",
                 )}
                 onMouseEnter={() => setActive(i)}
-                // mousedown (not click): the input's blur would close the list first.
+                // mousedown, not click, so focus never leaves the button — it is what a screen
+                // reader is reading the choice from.
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  pick(o);
+                  pick(i);
                 }}
               >
                 {o.label}
               </li>
-            ))
-          )}
-        </ul>
+            ))}
+          </ul>
+        </FloatingLayer>
       )}
     </div>
   );
@@ -906,19 +1319,34 @@ export function Tooltip({ children, label = "More information", trigger, placeme
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const bubbleRef = useRef<HTMLSpanElement>(null);
+  const close = useCallback(() => setOpen(false), []);
   // Only while open: a description that is always present is announced on every visit to the
   // trigger, which is how one helpful sentence turns into noise on a screen full of them.
-  useEscapeToClose(open ? () => setOpen(false) : undefined);
+  useEscapeToClose(open ? close : undefined);
+  // A tap elsewhere closes it. The trigger's blur usually did that already, but a tap does not
+  // always move focus (Safari on iOS never focuses a tapped button), and now that the bubble is
+  // drawn in the floating layer (S.No 166) it is outside the wrapper, so the rule is written down.
+  useDismissable(open, close, wrapRef, undefined, bubbleRef);
+  useFloatingPosition(open, triggerRef, bubbleRef, {
+    align: "center", preferAbove: placement === "above", gap: 6,
+  });
 
   return (
     <span
+      ref={wrapRef}
       className="tip"
-      // On the WRAPPER, not the trigger — the bubble is inside it, so moving the pointer onto
+      // On the WRAPPER, not the trigger — the bubble belongs to it, so moving the pointer onto
       // the bubble to read a long sentence does not count as leaving (§1.4.13 "hoverable").
+      // That still holds with the bubble drawn in the floating layer: React delivers enter and
+      // leave through its own component tree, where the bubble is still the wrapper's child.
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
     >
       <button
+        ref={triggerRef}
         type="button"
         className={trigger ? "tip__trigger tip__trigger--bare" : "tip__trigger"}
         aria-label={trigger ? undefined : label}
@@ -933,13 +1361,20 @@ export function Tooltip({ children, label = "More information", trigger, placeme
         {trigger ?? <span aria-hidden="true">i</span>}
       </button>
       {open && (
-        <span
-          role="tooltip"
-          id={id}
-          className={cx("tip__bubble", placement === "below" && "tip__bubble--below")}
-        >
-          {children}
-        </span>
+        <FloatingLayer>
+          <span
+            ref={bubbleRef}
+            role="tooltip"
+            id={id}
+            className={cx(
+              "popover-layer",
+              "tip__bubble",
+              placement === "below" && "tip__bubble--below",
+            )}
+          >
+            {children}
+          </span>
+        </FloatingLayer>
       )}
     </span>
   );
@@ -987,7 +1422,6 @@ const CAP_GLYPH: Record<string, string> = {
   designsource: "De",
   codehost: "Co",
   testmgmt: "Te",
-  codeintel: "In",
 };
 
 export function CapCard({
@@ -1369,13 +1803,18 @@ export function ErrorState({
  * again, and a "Try again" that quietly re-sends an invitation is its own bug. The control
  * that failed is still on screen — that is the retry.
  */
-export function WriteError({
-  title = "That didn't work",
-  detail,
-}: {
-  title?: ReactNode;
-  detail?: unknown;
-}) {
+/** The sentence a failed write should show, for the places a whole banner does not fit.
+ *
+ * Screen Words group 5 asked for ONE rule for every error banner. `WriteError` had that rule in
+ * its body, so the handful of screens that show a failure as a line of red text under a compact
+ * form — the clarification answer, Create work item, Disconnect machine — could not share it and
+ * printed `error.message` instead. Which means those were exactly the places still showing the
+ * browser's `Failed to fetch` and `500 Internal Server Error`.
+ *
+ * `fallback` replaces only the last case (a 4xx that gave no reason), where a screen usually has
+ * a better sentence than the generic one because it knows what was being attempted.
+ */
+export function writeErrorSentence(detail?: unknown, fallback?: string): string {
   // `detail` is whatever the mutation threw, so it is `unknown` on purpose. An ApiError's
   // message is already humanized by `humanizeError` in api.ts — DRF's nested validation shape
   // has been walked down to the leaf sentences a person can actually act on.
@@ -1393,17 +1832,32 @@ export function WriteError({
          "")
       : "") ||
     "";
-  const message =
-    failure === "offline"
-      ? "Your browser couldn't connect, so nothing was saved. Try again."
-      : failure === "server"
-        ? "Something went wrong on our side, so nothing was saved. Nothing you did caused it."
-        : failure === "denied"
-          ? said || "You don't have permission to do that."
-          : said || "That wasn't accepted, and no reason was given. Nothing was changed.";
+  if (failure === "offline") {
+    return "Your browser couldn't connect, so nothing was saved. Try again.";
+  }
+  if (failure === "server") {
+    return "Something went wrong on our side, so nothing was saved. Nothing you did caused it.";
+  }
+  if (failure === "denied") {
+    return said || "You don't have permission to do that.";
+  }
+  return (
+    said || fallback || "That wasn't accepted, and no reason was given. Nothing was changed."
+  );
+}
+
+export function WriteError({
+  title = "That didn't work",
+  detail,
+  fallback,
+}: {
+  title?: ReactNode;
+  detail?: unknown;
+  fallback?: string;
+}) {
   return (
     <Banner variant="danger" title={title}>
-      <div className="empty__text">{message}</div>
+      <div className="empty__text">{writeErrorSentence(detail, fallback)}</div>
     </Banner>
   );
 }

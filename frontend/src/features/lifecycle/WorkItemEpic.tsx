@@ -16,6 +16,7 @@ import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useClarifications, useDecideApproval, useLifecycle, useRuns, useWorkItem } from "./hooks";
 import { artifactsForWorkItem, clarificationLink, gateLink } from "../../links";
+import { roleLabel } from "../identity/roles";
 
 function typeLabel(type: string): string {
   if (!type) return "Item";
@@ -95,7 +96,7 @@ function WorkItemEpicLive() {
 
       <Panel
         flush
-        title="Lifecycle — Plan tier"
+        title="Lifecycle — Planning"
         actions={<span className="t-sm u-muted">{itemType} · one pass through plan phases</span>}
       >
         {nodes.length === 0 ? <p className="t-sm u-muted">No phases run yet.</p> : <LifecycleRail nodes={nodes} />}
@@ -141,7 +142,9 @@ function WorkItemEpicLive() {
           {pendingGate && (
             <Card attention>
               <CardBody>
-                <span className="gate-panel__role">▲ {gateLabel(pendingGate.gate_type)} · required role: {pendingGate.required_role}</span>
+                {/* Screen Words group 3: "required role: product_owner" -> "decided by a
+                    Product Owner". Same helper as the Gates screen. */}
+                <span className="gate-panel__role">▲ {gateLabel(pendingGate.gate_type)} · decided by a {roleLabel(pendingGate.required_role)}</span>
                 <h3 className="t-h3">Awaiting your decision</h3>
                 <div className="gate-panel__actions">
                   <Button
@@ -275,7 +278,7 @@ function WorkItemEpicGallery({ view }: { view: EpicView }) {
 
       <Panel
         flush
-        title="Lifecycle — Plan tier"
+        title="Lifecycle — Planning"
         actions={<span className="t-sm u-muted">Epic · one pass through plan phases</span>}
       >
         <LifecycleRail nodes={nodes} />

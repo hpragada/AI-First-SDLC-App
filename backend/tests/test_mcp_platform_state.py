@@ -366,6 +366,108 @@ def test_per_item_titles_get_independent_versions(world):
     assert login_v2["version"] == 2    # same title → genuine new version
 
 
+# ── S.No 183: identity is the stable id on the pointer, not the agent's title text ───────────
+#
+# Versioning keyed on (phase, type, title) where the title is free text the agent wrote. A
+# retried phase that re-worded a title by one character forked a second artifact at v1 beside
+# the first, instead of superseding it — while a stable id sat on the very same row, already
+# read by the security defect loop, saying plainly it was the same finding.
+def _finding(world, *, fid, title, content_hash="h"):
+    t, project, run = world["t"], world["project"], world["run"]
+    return tools.register_artifact(
+        t.id, project.id, run.id, "security", "security_finding", "internal", content_hash,
+        title=title, external_ref={"finding_id": fid, "severity": "critical"},
+    )
+
+
+def test_a_retry_whose_title_drifted_makes_a_new_version_not_a_duplicate(world):
+    first = _finding(world, fid="SEC-001", title="SQL injection in login")
+    retry = _finding(world, fid="SEC-001", title="SQL injection in the login form")
+
+    assert first["version"] == 1
+    assert retry["version"] == 2, "same finding, re-worded title — a version, not a duplicate"
+    assert Artifact.objects.filter(type="security_finding").count() == 2   # v1 and v2 of ONE
+
+
+def test_two_different_findings_in_one_run_each_start_at_v1(world):
+    a = _finding(world, fid="SEC-001", title="SQL injection in login")
+    b = _finding(world, fid="SEC-002", title="Missing rate limit on login")
+
+    assert a["version"] == 1 and b["version"] == 1
+
+
+def test_a_type_with_no_identity_key_still_versions_by_title(world):
+    """Nothing that works today changes: a phase document has no stable id on its pointer and
+    keeps versioning exactly as before."""
+    t, project, run = world["t"], world["project"], world["run"]
+    first = tools.register_artifact(t.id, project.id, run.id, "03_prd", "prd", "internal", "h1",
+                                    title="PRD — Checkout")
+    second = tools.register_artifact(t.id, project.id, run.id, "03_prd", "prd", "internal", "h2",
+                                     title="PRD — Checkout")
+    other = tools.register_artifact(t.id, project.id, run.id, "03_prd", "prd", "internal", "h3",
+                                    title="PRD — Login")
+
+    assert first["version"] == 1 and second["version"] == 2 and other["version"] == 1
+
+
+def test_test_cases_version_on_their_tc_id(world):
+    t, project, run = world["t"], world["project"], world["run"]
+    first = tools.register_artifact(
+        t.id, project.id, run.id, "testing", "test_case", "internal", "h1",
+        title="TC-014 — Sign in with a valid password",
+        external_ref={"tc_id": "TC-014"})
+    retry = tools.register_artifact(
+        t.id, project.id, run.id, "testing", "test_case", "internal", "h2",
+        title="TC-014 — Signing in with a valid password",
+        external_ref={"tc_id": "TC-014"})
+
+    assert first["version"] == 1 and retry["version"] == 2
+
+
+def test_a_caller_can_declare_its_own_identity_for_any_type(world):
+    t, project, run = world["t"], world["project"], world["run"]
+    first = tools.register_artifact(t.id, project.id, run.id, "04_architecture", "adr",
+                                    "internal", "h1", title="ADR-003 — Use Postgres",
+                                    external_ref={"identity": "ADR-003"})
+    retry = tools.register_artifact(t.id, project.id, run.id, "04_architecture", "adr",
+                                    "internal", "h2", title="ADR-003 — Postgres it is",
+                                    external_ref={"identity": "ADR-003"})
+
+    assert first["version"] == 1 and retry["version"] == 2
+
+
+def test_code_pointers_are_deliberately_left_on_title_versioning(world):
+    """The build registers several `code` pointers per run on purpose (the remediation cycles)
+    and distinguishes them by PR ref, not by version. That path is not disturbed."""
+    t, project, run = world["t"], world["project"], world["run"]
+    a = tools.register_artifact(t.id, project.id, run.id, "implementation", "code", "git", "h1",
+                                title="Code — Add login",
+                                external_ref={"repo": "acme/api", "number": 7, "id": "x"})
+    b = tools.register_artifact(t.id, project.id, run.id, "implementation", "code", "git", "h2",
+                                title="Code — Add login",
+                                external_ref={"branch": "feature/ST-1"})
+
+    assert a["version"] == 1 and b["version"] == 2   # title-scoped, exactly as before
+
+
+def test_supersedes_reads_the_identity_off_its_target_and_carries_it_forward(world):
+    """Naming the target explicitly must version it, whatever pointer the new registration
+    happens to carry — and the new row keeps the identity so v3 does not start over."""
+    t, project, run = world["t"], world["project"], world["run"]
+    first = _finding(world, fid="SEC-001", title="SQL injection in login")
+
+    second = tools.register_artifact(
+        t.id, project.id, run.id, "security", "security_finding", "internal", "h2",
+        external_ref={"severity": "critical"}, supersedes=first["id"])
+    third = tools.register_artifact(
+        t.id, project.id, run.id, "security", "security_finding", "internal", "h3",
+        external_ref={"finding_id": "SEC-001", "severity": "critical"})
+
+    assert second["version"] == 2
+    assert second["external_ref"]["finding_id"] == "SEC-001"
+    assert third["version"] == 3
+
+
 def test_update_artifact(world):
     t, project, run = world["t"], world["project"], world["run"]
     a = tools.register_artifact(
@@ -737,6 +839,28 @@ def test_get_context_replays_answered_clarifications(world):
     answered = ctx["answered_clarifications"]
     assert len(answered) == 1
     assert answered[0]["answers"] == {"scope": "auth only"}
+
+
+def test_answered_clarifications_come_newest_first(world):
+    """Truncation T13: the section is cut from the tail, so oldest-first threw away the latest
+    human decision. Newest first means an overflow loses old context instead."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.clarifications.models import Clarification
+
+    t, project, wi, run = world["t"], world["project"], world["wi"], world["run"]
+    now = timezone.now()
+    for qid, answered_at in (("old", now - timedelta(hours=4)), ("new", now)):
+        Clarification.objects.create(
+            tenant=t, run=run, work_item=wi, phase="prd",
+            questions=[{"id": qid, "text": f"{qid}?"}], answers={qid: "yes"},
+            status=Clarification.Status.ANSWERED, answered_at=answered_at,
+        )
+
+    ctx = tools.get_context(t.id, project.id, phase="prd", work_item_id=str(wi.id))
+    assert [c["questions"][0]["id"] for c in ctx["answered_clarifications"]] == ["new", "old"]
 
 
 def test_detect_drift_is_stub(world):

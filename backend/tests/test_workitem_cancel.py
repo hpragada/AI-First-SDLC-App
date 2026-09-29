@@ -157,8 +157,14 @@ def test_the_allowlist_refuses_everything_else(client, project, lead, from_state
     resp = _post(client, project, item, to_state=to_state, reason="because")
 
     assert resp.status_code == 400, resp.content
-    # The refusal says what IS possible from here, so a person is not left guessing.
-    assert "From here you can move it to" in str(resp.data)
+    # The refusal says what IS possible from here, so a person is not left guessing. Screen Words
+    # group 5 reworded it and now names the states as the board's own column labels rather than
+    # the stored keys ("in_progress"), so the check is on the two shapes it can take: somewhere to
+    # go, or an explicit nowhere. Either answers the question; leaving it unsaid would not.
+    said = str(resp.data)
+    assert ("From here it can go to:" in said) or ("can't be moved anywhere from here" in said)
+    # And it names the state in words a reader recognises, never the stored key.
+    assert "_" not in said.replace("to_state", ""), said
     item.refresh_from_db()
     assert item.state == from_state
 

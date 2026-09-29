@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { Badge, Banner, Breadcrumb, Button, Console, Panel, Spinner } from "../../components/ui";
+import { Badge, Banner, Breadcrumb, Button, Console, Disclosure, Panel, Spinner, WriteError } from "../../components/ui";
+import { engineLabel } from "../../labels";
 import { isTerminalState, workerStalled, type RunEvent } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
 import { phaseLabel } from "./phases";
@@ -13,7 +14,7 @@ import {
   useTriggerPhase,
   useWorkItem,
 } from "./hooks";
-import { clarificationLink, recoveryLink, runLink } from "../../links";
+import { clarificationLink, recoveryLink, runLink, transcriptLink } from "../../links";
 
 // S-19 view states: dispatched · running · needs-answer · awaiting-gate · completed ·
 // failed · parked.
@@ -139,6 +140,23 @@ function RunConsoleLive() {
   const lastError = [...(events.data ?? [])].reverse().find((e) => e.kind === "err")?.message;
   const failureReason =
     (typeof outputsError === "string" && outputsError) || lastError || undefined;
+  // Run-console wording (2026-09-21, option A): the sentence above is for the reader; the raw
+  // text behind it (the engine's output, the HTTP call) is `error_detail`, shown only under a
+  // closed "Technical details". `kept` is what the platform says a paused run keeps — a build
+  // keeps its build, branch and pull request; other runs fall back to the general line.
+  const outputsRecord =
+    run.data.outputs && typeof run.data.outputs === "object"
+      ? (run.data.outputs as Record<string, unknown>)
+      : {};
+  const errorDetail =
+    typeof outputsRecord.error_detail === "string" ? outputsRecord.error_detail : "";
+  const kept =
+    typeof outputsRecord.kept === "string" ? outputsRecord.kept : "the work already finished is kept";
+  const technicalDetails = errorDetail ? (
+    <Disclosure summary="Technical details">
+      <pre className="t-mono u-wrap-pre">{errorDetail}</pre>
+    </Disclosure>
+  ) : null;
   // A run parked at an ERROR is resumable from the step that failed (Bugs S.No 157) — its
   // workflow is still alive and waiting. That's what distinguishes it from a companion-offline
   // park (S.No 89), which is only recoverable via reconnect/takeover.
@@ -187,7 +205,9 @@ function RunConsoleLive() {
               Run ID <strong>{id.slice(0, 8)}</strong>
             </span>
             <span className="meta-item">
-              Engine <strong>{run.data.engine} · {run.data.model}</strong>
+              {/* Screen Words group 4, Option A: kept, but as the product and model name —
+                  `claude · claude-opus-5` told a client nothing. */}
+              Engine <strong>{engineLabel(run.data.engine, run.data.model)}</strong>
             </span>
           </div>
         </div>
@@ -199,7 +219,19 @@ function RunConsoleLive() {
         // the h1 above already names that, and swapping one duplicate for another is no fix.
         // What this panel actually holds is the task's progress.
         title="Progress"
-        actions={<Badge variant={BADGE_VARIANT[view]}>{BADGE_LABEL[view]}</Badge>}
+        actions={
+          <span className="u-row">
+            {/* Screen Words group 7 (Option A): the transcript screen was built but nothing
+                linked to it. It lists completed and approved runs, so the link appears on
+                exactly those — a running or failed run has no transcript page to open. */}
+            {(run.data.status === "completed" || run.data.status === "approved") && (
+              <Link to={transcriptLink(run.data.id)} className="t-sm">
+                Full transcript →
+              </Link>
+            )}
+            <Badge variant={BADGE_VARIANT[view]}>{BADGE_LABEL[view]}</Badge>
+          </span>
+        }
       >
         {/* "It will start as soon as your companion claims it" described our machinery competing
             for work. What the reader needs is that it begins on its own. */}
@@ -237,6 +269,7 @@ function RunConsoleLive() {
                 : // "The engine exited before reporting. No artifact was registered." — three of
                   // our words in one sentence, for the case where we have no reason to give.
                   "This task stopped before it finished. Nothing was saved from it — it can be run again."}
+            {run.data.status !== "rejected" && technicalDetails}
           </Banner>
         )}
         {view === "failed" && typeof retryRunId === "string" && (
@@ -251,10 +284,15 @@ function RunConsoleLive() {
         )}
         {view === "parked" && isResumable && (
           <Banner variant="warning" title="Paused on an error — you can carry on from here">
-            {failureReason ? `Reason: ${failureReason}` : "This run hit an error and paused."}
-            {" "}Nothing you've done is lost — the work already finished is kept. Fix the cause if
-            you need to, then <strong>Resume</strong> to continue from the step that failed
-            instead of starting the phase over. Or take over to end this run.
+            {/* Two paragraphs: the reason used to run straight into "Nothing you've done is
+                lost" ("…-> 401 Nothing you've done…"). */}
+            <p>{failureReason || "This run hit an error and paused."}</p>
+            <p>
+              Nothing you&apos;ve done is lost — {kept}. <strong>Resume</strong> continues from
+              the step that stopped instead of starting the phase over, or take over to end this
+              run.
+            </p>
+            {technicalDetails}
           </Banner>
         )}
 
@@ -322,9 +360,7 @@ function RunConsoleLive() {
         {view === "parked" && isResumable && (
           <>
             {resume.isError && (
-              <Banner variant="danger" title="Couldn't resume">
-                {resume.error instanceof Error ? resume.error.message : "Unknown error"}
-              </Banner>
+              <WriteError title="Couldn't resume" detail={resume.error} />
             )}
             <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
               <Button

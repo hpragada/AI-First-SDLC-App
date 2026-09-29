@@ -295,7 +295,7 @@ same defect with the same values is what collapses three reports into one.
 
 ---
 
-### TC-043 · The profile will not save without a description, and says nothing about it
+### TC-043 · The profile will not save without a description, and says why
 
 | Field | Value |
 |---|---|
@@ -310,39 +310,44 @@ same defect with the same values is what collapses three reports into one.
 - Logged in as P1 Owner-Admin, on `/profile` for `Payment Gateway v2`.
 
 **Steps**
-1. Note the current version in the save-state indicator (e.g. `✓ Saved · v2`).
-2. Select all the text in the Description field and delete it.
-3. Confirm the indicator reads `● Unsaved changes` and **Save** is enabled.
-4. Click **Save**. Watch the indicator and the Description field closely.
-5. Click **Save** twice more.
-6. Reload the page.
+1. Note the current version in the save-state indicator (e.g. `✓ Saved · v2`), and note the
+   `Description` label.
+2. Type `Node 20` at the end of the `Tech stack` field.
+3. Select all the text in the Description field and delete it.
+4. Confirm the indicator reads `● Unsaved changes` and **Save** is enabled.
+5. Click something outside the form so the cursor is not in Description, then click **Save**. Watch
+   the indicator, the Description field and where the cursor goes.
+6. Type `Payments service` into Description.
+7. Delete the Description text again, then reload the page.
 
 **Expected**
-- The save does not go through: at step 4 the indicator stays on `● Unsaved changes`. It never
-  shows `⟳ Saving…` and never advances to `✓ Saved · v{n+1}`.
-- **Nothing is shown to the user.** No error appears against the Description field, no banner, no
-  toast. The **Save** button stays enabled and clicking it repeatedly (step 5) changes nothing.
-- After the reload the previously saved description is back in the field and the version number is
-  the same one you noted in step 1 — the stored profile was never touched.
+- The `Description` label is followed by a required marker `*`; no other field on the form has one.
+- At step 5 the save does not go through: the indicator stays on `● Unsaved changes`. It never shows
+  `⟳ Saving…` and never advances to `✓ Saved · v{n+1}`.
+- At step 5 the Description field is marked in error with the message
+  `A description is required — agents rely on it for every phase.` and the cursor is placed in the
+  Description field.
+- Every other field stays on screen with what you typed — `Tech stack` still ends with `Node 20`.
+- At step 6 the error message clears as soon as Description has text.
+- After the reload in step 7 the previously saved description is back in the field and the version
+  number is the same one you noted in step 1 — the stored profile was never touched.
 
 **Pass / Fail**
-- PASS if the empty description is refused, the stored profile and its version are untouched after
-  the reload, and no partial/blank profile version is created.
-- FAIL if a profile with an empty description **is** saved, or the version increments, or the app
-  errors.
+- PASS if the empty description is refused with that exact message, the cursor moves to Description,
+  the other fields keep their values, and the stored profile and its version are untouched after the
+  reload.
+- FAIL if a profile with an empty description **is** saved, if the version increments, if Save stops
+  with no message (the old silent behaviour), if the other fields disappear or lose their text, or if
+  the app errors.
 
 **Test data**
-- Description: *(empty)*
+- Description: *(empty)* · Tech stack addition: `Node 20`
 
 **Notes**
-- **The silence is the current behaviour, and it is a separate, already-identified defect.** The
-  copy `A description is required — agents rely on it for every phase.` exists but renders only in
-  the design gallery at `/dev/components`; on the live `/profile` screen **Save** is a silent no-op
-  when the description is blank. Confirm it and note it in the Actual-result column, but raise it
-  **once** as a **Medium** defect ("required-field error not surfaced on the live profile screen")
-  and do not re-raise it from TC-041 or TC-042.
-- This case passes or fails on whether the *data* is protected, not on whether the user is told.
-  A blank description saved to the profile would be High — every agent reads it.
+- The server enforces the same rule in the same words, so a blank description cannot be saved by any
+  route. From the browser you will only ever see the on-screen message above.
+- A description of only spaces counts as empty.
+- Step 7's reload discards your unsaved `Tech stack` edit — that is expected.
 
 ---
 
@@ -537,7 +542,8 @@ same defect with the same values is what collapses three reports into one.
 - No duplicate row is created.
 - The add form collapses to a single field showing the error
   `acme/payments-api is already registered on this project.`
-- The repositories table and the topology chip are hidden while that error is displayed.
+- The repositories table and the `Topology:` chip stay visible below the error, still listing
+  `acme/payments-api` once.
 
 **Pass / Fail**
 - PASS if the duplicate is refused with that exact copy.
@@ -547,9 +553,8 @@ same defect with the same values is what collapses three reports into one.
 - `acme/payments-api` (already registered)
 
 **Notes**
-- Navigating away and back to `/repositories` clears the collapsed error state and restores the
-  table. Hiding the table behind the error is aggressive but is the current design — note it as a
-  Low usability observation at most.
+- The collapsed error form has no **Cancel** button. Navigating away and back to `/repositories`
+  clears it. Note that as a Low usability observation at most.
 
 ---
 
@@ -619,33 +624,29 @@ same defect with the same values is what collapses three reports into one.
 
 **Expected**
 - With one repository the chip reads `Topology: single`.
-- At step 3 the second row **does** appear in the table, but the add form is still open and the chip
-  **still reads `Topology: single`** — it does not update until the page is reloaded. That is the
-  current behaviour; see the Notes.
-- At step 4 both rows are listed and the chip has changed to `Topology: multi`.
+- At step 3, straight after **Add**: the add form has closed, both rows are in the table, and the
+  chip reads `Topology: split` — no reload needed.
+- Each row now offers **Set default** except the row carrying the `default` badge.
+- At step 4 the table and the chip are unchanged: two rows, `Topology: split`.
 
 **Pass / Fail**
-- PASS if the chip reads `Topology: single` at one repo and has changed to `Topology: multi` after
-  the reload in step 4.
-- FAIL if the chip still reads `Topology: single` **after the reload** with two repositories
-  registered, or if the second row is missing from the table.
+- PASS if the form closes on a successful add and the chip reads `Topology: split` with two
+  repositories, both before and after the reload.
+- FAIL if the form stays open after a successful add, if the chip needs a reload to change, if it
+  reads anything other than `Topology: split` at two repositories (e.g. `Topology: multi`), or if the
+  second row is missing.
 
 **Test data**
 - Second repo: `acme/payments-web` · role `frontend` · base branch `main`
 
 **Notes**
-- **Judge the chip after the reload, not before.** The add form is never dismissed after a
-  successful add, and while it is open the screen forces the topology chip to `single` regardless of
-  how many repos exist. So the step-3 reading is meaningless — do not fail the case on it. Note the
-  stale chip as a **Low** defect ("topology chip does not refresh until reload; add form stays open
-  after a successful add") once, against this case.
-- **Expect a wording mismatch too.** The server's topology for two repos is `split` (0–1 single ·
-  2 split · 3+ multi), but the chip is computed in the browser purely from the row count and renders
-  `Topology: multi` at two repos. Add that to the same defect row rather than raising a second one.
+- The chip shows the platform's own topology, which is set by repository count: 0–1 `single` ·
+  2 `split` · 3 or more `multi`. A third repository would read `Topology: multi`.
+- The add form also has a **Cancel** button that closes it without adding anything.
 
 ---
 
-### TC-051 · The Set default button is unwired
+### TC-051 · Set default moves the default marker to the chosen repository
 
 | Field | Value |
 |---|---|
@@ -661,37 +662,37 @@ same defect with the same values is what collapses three reports into one.
 - Logged in as P1 Owner-Admin on `/repositories`.
 
 **Steps**
-1. Note which row's `Default base` cell carries the ` · default` suffix.
+1. Note which row's `Default base` cell carries the green `default` badge, and that this row has
+   only **Remove** in its actions.
 2. Click **Set default** on the *other* row.
 3. Read the table.
 4. Reload the page and read it again.
+5. Click **Set default** on the original row to put the default back.
 
 **Expected**
-- **Set default** should move the ` · default` suffix to the row you clicked, and that change should
-  survive the reload.
-- Actual behaviour today: clicking it does nothing at all — no confirmation, no error, no change in
-  which row is marked default — and after the reload the row from step 1 is still the default.
+- After step 2, without a reload, the `default` badge has moved to the row you clicked; that row's
+  **Set default** button is gone and the other row now shows **Set default**.
+- Exactly one row carries the `default` badge at any time.
+- No banner or dialog appears on success — the badge moving is the confirmation.
+- After the reload the row you chose in step 2 is still the default.
+- Step 5 moves the badge back the same way.
 
 **Pass / Fail**
-- **Expect this case to fail today.**
-- PASS only if **Set default** actually changes which repository is the project's default and the
-  change persists across the reload.
-- FAIL if the button does nothing — which is what the current build does.
+- PASS if **Set default** changes which repository is the default, the marker moves at once, and the
+  change survives the reload.
+- FAIL if the button does nothing, if two rows show `default`, if the change is lost on reload, or if
+  a raw error is shown.
 
 **Test data**
 - *(none)*
 
 **Notes**
-- **This is a real, raisable defect, not a "known inert" one.** The plan's §10 known-inert list and
-  the previous version of this case both said the backend action does not exist yet. That is wrong:
-  the `set-default` endpoint **is** implemented and permission-gated (tech lead / admin) on the
-  server. The only thing missing is the frontend call — the button's click handler is an empty
-  stub. Filing this as "known inert, do not raise" buries a shipped-but-unreachable feature.
-- Raise it once, **Medium** severity, against this case: "Set default on Repositories is not wired
-  to its existing backend endpoint — the default base repository cannot be changed from the UI."
-- **Set default** only appears once there is more than one repository — with a single repo the row
-  shows only **Remove**.
-- Treat the plan §10 entry for `Set default` as superseded by this case.
+- **Set default** appears only when two or more repositories exist — with a single repo the row shows
+  only **Remove**.
+- The plan §10 "known inert" entry for `Set default` is superseded: the button is wired.
+- If the change is refused (for example a user without the tech lead or admin role), a red banner
+  titled `Couldn't set the default repository` appears above the table with the server's reason. That
+  path is not exercised here.
 
 ---
 
@@ -774,10 +775,10 @@ same defect with the same values is what collapses three reports into one.
 - `acme/payments-jobs` · role `backend` · base branch `main`
 
 **Notes**
-- The engineer's rejected add is expected to be **silent** — the add form only renders an error for
-  a duplicate (409), so a permission refusal (403) shows nothing at all. The permission boundary
-  itself is what passes; log the missing error message once as a **Medium** UX defect against this
-  case.
+- The engineer's rejected add is **not** silent: a red banner titled
+  `Couldn't add that repository` appears inside the add form, carrying the server's reason in plain
+  words. Record the wording you saw. Raise a defect if the refusal is silent, or if the banner shows
+  a raw status code or an internal role key.
 - Removing a repository and editing a preview URL are gated the same way — spot-check **Remove** as
   the engineer and record it in the same row.
 - Clean up afterwards: as the tech lead or admin, remove `acme/payments-jobs`.

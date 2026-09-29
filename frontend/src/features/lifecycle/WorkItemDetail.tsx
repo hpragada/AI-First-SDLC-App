@@ -26,5 +26,8 @@ export function WorkItemDetail() {
   // A test case reuses the task detail layout (P3-09b) — same build-tier shape.
   if (workItem.data?.type === "task" || workItem.data?.type === "test_case") return <WorkItemTask />;
   if (workItem.data?.type === "defect") return <WorkItemDefect />;
+  // Epics, features AND stories. A story is a planning item (Screen Words group 9, Option A,
+  // 2026-09-21): Task Breakdown fans it out into tasks, and the tasks carry the repository and
+  // merge gate — so it belongs on the planning screen with its children, not by accident.
   return <WorkItemEpic />;
 }

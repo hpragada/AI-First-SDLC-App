@@ -2,7 +2,7 @@
 
 > **What this document is.** The single source of truth for building the enterprise SDLC platform. It captures (a) every problem/concern/question raised and its resolved solution, (b) the target architecture, (c) a phase-by-phase build plan naming every component, and (d) the open decisions to confirm before coding. Any session can resume from this file with full context.
 >
-> **Status:** Decisions LOCKED (see Part E). Ready to build Phase 0.
+> **Status (2026-09-17):** Decisions LOCKED (see Part E). **Phases 0 through 4.7 are complete; 4.8 is in progress.** This line said "Ready to build Phase 0" until today. The architecture below is still the governing design — what changed is that most of it is now built, so where a section describes a future intention, check `BUILD_PLAN.md` before believing it is still ahead of us.
 > **Stack baseline:** Django + React + Postgres. Engine-agnostic across Claude (Agent SDK, **default**), Codex (`codex exec`/Agents SDK), Copilot (CLI/coding agent). Integration via MCP. Durable workflow via **Temporal**. Tenant isolation via **Postgres RLS (shared DB)**.
 > **Delivery mode:** **Local-first** — Phases 0–4 run in a local `docker-compose` stack; cloud runner fleet + sandbox hardening are a Cloud-Migration workstream in Phase 5. Remote MCP connectors (Atlassian/Figma/GitHub) are reachable from local during testing.
 
@@ -119,6 +119,28 @@ Transform the existing local/Git-coupled SDLC command suite (17 agents + rules +
   - **Static files** (Word/PDF/Excel at onboarding): extract → structure → adopt as internal SoR, provenance to originals, review gate. Upgrade path = re-point `sor` later, no agent change.
 - **Gate policy (LOCKED):** **every** artifact type is `gate-then-publish` — all artifacts are reviewed, gated, and only then published. No `auto-publish` in v1.
 
+### B3.1 Export policy — exports are user-triggered and phase-scoped *(team flow decision, 2026-07-07; LOCKED)*
+
+Gate approval publishes artifacts **internal-only** (S3 snapshot + `published` status). **It never
+pushes to an external tool.** The user exports manually via `POST /artifacts/{id}/publish/` (screen
+S-34), governed by a **phase-scoped export policy**: defaults in
+`backend/integrations/export_policy.py`, per-project overrides in `ProjectProfile.export_policy`,
+editable on S-10.
+
+| Phase | Export target |
+|---|---|
+| Ideation · Requirements · PRD · Architecture · Security · CI-CD | **docstore** (Confluence today; SharePoint/Drive later) |
+| Task Breakdown | **tasktracker** (backlog reconciliation into Jira) |
+| Testing / Test Automation `test_case` artifacts | **testmgmt** (Xray today; TestRail/Zephyr later) |
+| UX Design | **internal**, until the Figma write seam ships — this narrows the earlier "Figma write" decision to that one deferred seam. Figma **read** is unaffected |
+| Everything else | internal |
+
+A **docstore** export transfers the system of record. **tasktracker** and **testmgmt** exports are
+*projections*: the artifact keeps `sor=internal` and the export is recorded under
+`external_ref.export`.
+
+*Moved here on 2026-09-17 from the continuation brief's §3, which is now a historical record.*
+
 ## B4. Context model (CLAUDE.md replacement)
 **Project Profile (DB record, human-maintained)** → **Manifest Composer** assembles per-run context `{profile core + relevant registry pointers + recent ledger events + retrieved knowledge}` → rendered to **AGENTS.md** (+ thin CLAUDE.md for Claude-specifics) inside the runner → agent reads it → discarded after run. Always current (generated, not maintained); scoped (per phase/repo); governed (versioned). Freeform `important_context` always flows in verbatim.
 
@@ -133,13 +155,22 @@ Capability abstraction (DocStore/TaskTracker/DesignSource/TestMgmt/CodeHost/Code
 
 | Capability | Default connector | Read | Write |
 |---|---|---|---|
-| DocStore | Atlassian Rovo MCP → Confluence | ✅ | ✅ |
-| TaskTracker | Atlassian Rovo MCP → Jira | ✅ | ✅ |
-| DesignSource | Figma remote MCP | ✅ | ⚠️ beta, Full seat |
-| TestMgmt | Xray REST/GraphQL (MCP wrapper) | ✅ | ✅ |
-| CodeHost | GitHub MCP | ✅ | ✅ |
-| CodeIntel | Repowise MCP | ✅ | indexes |
+| DocStore | Atlassian **REST** → Confluence | ✅ | ✅ |
+| TaskTracker | Atlassian **REST** → Jira | ✅ | ✅ |
+| DesignSource | Figma **REST** | ✅ | ⚠️ beta, Full seat |
+| TestMgmt | Xray REST/GraphQL | ✅ | ✅ |
+| CodeHost | GitHub | ✅ | ✅ |
+| CodeIntel | **Built-in analyzer** (`BuiltinCodeIntel`) | ✅ | indexes |
 | Platform-State | Custom MCP | ✅ | ✅ |
+
+> **This table was corrected on 2026-09-17; it described intentions, not what shipped.** Two
+> differences matter. **(1) Atlassian and Figma shipped as direct REST clients, not MCP** —
+> `backend/integrations/atlassian/rest.py` and `figma/rest.py`. The *capability* abstraction held
+> exactly as designed (`docstore.*` / `tasktracker.* `/ `designsource.*`), which is the point of
+> principle 9; only the transport underneath differs. **(2) The CodeIntel default is the built-in
+> analyzer, not Repowise** — `backend/integrations/codeintel/builtin.py`, which reaches the same
+> algorithmic target from the standard library and git. Repowise remains the *optional* connector
+> (D1), not the default. **Platform-State is genuinely MCP** and is the one that had to be.
 
 ## B7. Security & governance
 Prompt-injection defense (untrusted tool output, per-phase allowlists, platform-enforced egress, human approval on sensitive writes); secrets vault + token broker; tenant isolation (RLS/DB-per-tenant); sandboxed runners (gVisor/Firecracker, no prod net); immutable audit + compliance evidence; data-residency & ZDR/Bedrock/Vertex model routing; GDPR erasure across registry **and** embeddings.

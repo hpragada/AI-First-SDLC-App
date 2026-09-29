@@ -8,6 +8,8 @@ Think of it as planning a renovation from the *original* blueprint after the hou
 
 **Status:** R1–R12 are agreed team decisions (2026‑08‑12). **R13–R17 were added on 2026‑08‑27, R18 on 2026‑08‑28** and are a different kind of correction: R1–R12 are places the reports described *the platform* wrongly, while R13–R18 are places **we** read the reports wrongly, or where the reports contradict themselves. R13 is the one to read first — it is the root cause of two criteria being reported as machine-checked while nothing checked them, and of the guard that now makes that impossible. Where a correction changed the build, the affected tasks are named.
 
+**R19–R22 (2026‑08‑28 to 2026‑08‑31)** are a third kind again: none of them is a claim in a report at all. They are defects in **our own checks and our own answer key**, found while building the accuracy evidence, and they are kept here because each one changes what an earlier audit result is evidence of. **R23–R30 were added on 2026‑09‑16**, and are a fourth kind: places the reports are out of date about **the outside world** — the standard's own numbering, a vendor statistic, a European standard and a US compliance date — plus two places where they describe platform work that did not exist when they were written and does now. *(This line previously stopped at R18 while R19–R22 were already in the file; corrected on 2026‑09‑16 in the same pass.)*
+
 ---
 
 ## R1 — "The testing agent already runs axe-core WCAG scans" — **FALSE**
@@ -604,6 +606,218 @@ stages it happens to know about and stays green about the rest.
 **What it changes for a client.** Nothing directly — this is an internal measurement guard. What
 it changes for us is that a capture-side coverage gap can no longer sit behind a green harness,
 which is how this one survived for a week.
+
+---
+
+## R23 — "~16 of ~50 success criteria are automatable" — **the denominator is the wrong standard**
+
+**Found 2026‑09‑16.** *Claimed in:* Report 1 p2 and p6; Deep Research p12.
+
+**What is true.** "~50" is WCAG **2.1** Level A + AA. The platform conforms to **2.2**, and 2.2 A + AA
+is **55 criteria — 31 Level A and 24 Level AA**. That is not an estimate: it is the platform's own
+dataset, `backend/apps/a11y/data/wcag22.json:4` (levels A and AA) and
+`backend/apps/a11y/data/wcag22.json:12` (`"criteria": 55`), and the level split is derived from the
+55 entries in the same file.
+
+**Addendum A already corrected this** — it is written against 55 throughout, and every guard in the
+build fails loudly if the registry is not exactly 55 (R7, R8). The other two reports were never
+updated, so the same build is described with two different denominators depending on which PDF a
+reader opens.
+
+**Why it matters more than a rounding.** A ratio quoted against 50 makes automated coverage look
+better than it is, and the criteria 2.2 added are ones **no scanner decides** — they are judgement
+or geometry. So the correct denominator moves in the direction that makes the number worse, which
+is exactly why it must be the one used. Use **55** in any coverage statement, and take the coverage
+figure itself from [`WCAG_COVERAGE_REFERENCE.md`](WCAG_COVERAGE_REFERENCE.md) rather than from a
+report.
+
+---
+
+## R24 — Deque's "57% of issues are found automatically" — **2021 data, and it counted a criterion that no longer exists**
+
+**Found 2026‑09‑16.** *Claimed in:* the reports quote the figure as a current property of automated
+testing. Source: https://www.deque.com/automated-accessibility-coverage-report/
+
+**What is true.** The figure is from Deque's 2021 coverage report, and **4.1.1 Parsing is among the
+issue categories it counts**. 4.1.1 is obsolete and **removed in WCAG 2.2**
+(https://www.w3.org/WAI/WCAG22/Understanding/parsing.html) — the working group's own reasoning is
+that browsers recover from the markup errors it described, so the failures it produced were not user
+impact. Duplicate ids and unclosed elements are a large, cheap, entirely machine-detectable
+category, and taking it out removes findings from the **automated** side of the ratio and nothing
+from the human side.
+
+**So the honest statement is that the true figure against WCAG 2.2 is lower, and nobody has
+published what it is.** We do not know by how much, and estimating it ourselves would be inventing a
+number to replace a stale one.
+
+**What to do with it.** Quote it only as *"Deque measured 57% in 2021, against WCAG 2.1 and
+including a criterion 2.2 has since removed — the figure against 2.2 is lower"*, or do not quote it.
+It is not a floor, it is not a target, and it is not the basis of any decision in this build: what
+the platform actually detects is measured, not cited (R13, R15, R18).
+
+---
+
+## R25 — "67% of accessibility issues originate in design" — **it was a 67% reduction, not an origin**
+
+**Found 2026‑09‑16.** Widely quoted in the industry and reproduced in the reports as a fact about
+where defects come from.
+
+**What is true.** The number traces to Deque's own post on auditing design systems
+(https://www.deque.com/blog/auditing-design-systems-for-accessibility/), and the analysis at
+https://audreefletcher.co.uk/blog/67-of-accessibility-issues-originate-in-design shows what it
+actually measured: a **67% reduction in automatically detected defects** after a team changed its
+design-system practice. That is a statement about **what improved**, not about **where problems
+start** — and it is measured on the automatically detectable slice only, which R24 has just finished
+saying is the smaller and easier half. The analysis puts the adjusted figure at roughly **38%**.
+
+**The two claims are not even the same shape.** "67% of issues originate in design" is a census of
+causes. "Fixing design removed 67% of what a scanner could see" is a before-and-after on one team,
+one product, one class of defect. The first cannot be derived from the second.
+
+**Decision: we do not use this number in client-facing material** — not the 67%, and not the 38%
+either, because the corrected figure inherits the same single-team, scanner-only basis. The argument
+for shifting accessibility left does not need it and is not weakened without it: R1 through R22
+above are our own evidence that a defect is cheaper to prevent than to find, and they are evidence
+about this platform rather than somebody else's.
+
+---
+
+## R26 — EN 301 549 has moved to WCAG 2.2, and the legal reference has not
+
+**Found 2026‑09‑16.** *Claimed in:* the reports state that EN 301 549 maps to WCAG 2.1 AA.
+
+**What is true, and both halves must be said together.** **EN 301 549 v4.1.1 was published in
+September 2026 and adopts WCAG 2.2.** It is **not yet cited in the EU Official Journal**, and until
+it is, **v3.2.1 — WCAG 2.1 AA — remains the legal reference** for the presumption of conformity.
+Source: https://accessible-eu-centre.ec.europa.eu/content-corner/news/european-accessibility-standard-en-301-549-has-been-updated-2026-09-07_en
+
+| | |
+|---|---|
+| What a client is legally measured against today | EN 301 549 **v3.2.1** → WCAG 2.1 AA |
+| What the standard body has already published | EN 301 549 **v4.1.1** → WCAG 2.2 |
+| What the platform checks against | **WCAG 2.2 AA** (R23) |
+
+**This is the comfortable direction to be wrong in, and it should still be stated rather than
+enjoyed.** Checking against 2.2 satisfies a 2.1 obligation, because 2.2 keeps every 2.1 criterion
+except 4.1.1 (R24) and adds to it. So a client who passes our audit passes the current legal
+reference too, and is ready for the citation when it lands. What we must **not** say is that the
+reports were simply wrong: they were correct when written, and "EN 301 549 means 2.1" will be
+correct until the Journal citation, which has no announced date.
+
+---
+
+## R27 — The US ADA Title II dates in the Deep Research report are inconsistent, and all of them are superseded
+
+**Found 2026‑09‑16.** *Claimed in:* Deep Research — one client profile still refers to a 2026
+deadline while other passages give different dates.
+
+**What is true.** The April 2026 interim final rule **extended** the compliance dates. The current
+dates are **26 April 2027** for public entities with a population of 50,000 or more, and **26 April
+2028** for smaller entities and special district governments. Source:
+https://www.federalregister.gov/documents/2026/04/20/2026-07663/extension-of-compliance-dates-for-nondiscrimination-on-the-basis-of-disability-accessibility-of-web
+
+**Why an internal contradiction is worse here than a stale date.** A single wrong date is corrected
+once. A document that carries two makes every reader's answer depend on which page they opened, and
+this is the class of claim a client plans budget against. The dates above are the ones to quote, and
+they should be re-checked against the Federal Register rather than against this file before they go
+into anything a client reads — a date that moved once can move again.
+
+**Note also what the extension does not change.** The rule's technical standard is **WCAG 2.1 AA**,
+same as R26's, and the same reasoning applies: checking against 2.2 satisfies it.
+
+---
+
+## R28 — "Already built" and "on the roadmap" were both wrong, and the truthful answer is now "built, in August"
+
+**Found 2026‑09‑16.** *Conflict between:* the Feasibility report — the accessibility gate is *"a
+locked, built feature (Phase 3)"* and the eval harness *"EXISTS"* — and the Journeys report, which
+puts both *"on the roadmap"*.
+
+**Both reports were written before the work existed**, so the disagreement is not between a right
+source and a wrong one; it is between two guesses. R3 and R6 above already record what was true at
+the time the corrections were written: there was a reviewer-ticked checklist on the **design** gate
+and nothing on the test gate, and there was no eval harness and no pipeline to run one in.
+
+**What has changed since, and this is the part neither R3 nor R6 can say.** The derived accessibility
+condition on the **testing** gate was built in **August 2026** and is
+`backend/apps/gates/a11ygate.py:77` (`a11y_condition`), marked platform-evaluated at
+`backend/apps/gates/a11ygate.py:93` (`"derived": True`) so that, in `testgate.py`'s words, a reviewer
+can never tick past it. Its history confirms the date and shows it has been extended four times
+since: `git log --oneline -- backend/apps/gates/a11ygate.py` → `b2a1636` (2026‑08‑17, the gate
+itself), `cc6fec4` (2026‑08‑17, inherited debt), `5162514` and `1c5798f` (2026‑08‑18), `41b9068`
+(2026‑09‑07).
+
+**So the Feasibility report's sentence is accidentally true today and still must not be cited.** It
+was not true when written, it names the wrong phase, and a claim that happens to become true later
+is not evidence of anything. **R6's half has not changed**: the harness runs locally via `make`, by
+decision D4, and there is still no CI pipeline in this repository.
+
+**The general point, and it is the only one worth carrying forward.** A research report cannot state
+what a codebase contains — not because these authors were careless, but because the codebase moves
+and the PDF does not. Every "ALREADY EXISTS" in all six reports should be read as a *hypothesis to
+check*, and the place that answers it is the repository, with a file and a line.
+
+---
+
+## R29 — "Agent 09 runs axe at WCAG 2.1 AA" — **09 targets 2.2, and no agent in the repo targets 2.1 any more**
+
+**Found 2026‑09‑16.** *Claimed in:* the Feasibility Assessment.
+
+**Two separate errors in one sentence, and R1 only corrected the first.** R1 above establishes that
+agent 09 does not *run* anything — its axe snippet is prose, and the running is 09b's (QA‑11a). The
+**version** half went uncorrected until now: `agents/09_testing/agent.md:13` states the agent tests
+*"against WCAG 2.2 AA"*, its evidence base cites WCAG 2.2 AA at `agents/09_testing/agent.md:36`, and
+its own traceability example carries `WCAG 2.2 AA` at `agents/09_testing/agent.md:186`.
+
+**Wider than agent 09, as of this commit.** The five agents that still named 2.1 have been uplifted
+to 2.2:
+
+| Agent | Where it names the standard now |
+|---|---|
+| `05_ux_design` | `agents/05_ux_design/agent.md:10`, `:15`, `:29`, `:448`, `:506` |
+| `08_code_review` | `agents/08_code_review/agent.md:34` |
+| `03_prd` | `agents/03_prd/agent.md:250` |
+| `02_requirements` | `agents/02_requirements/agent.md:265` |
+| `00e_document_vision` | `agents/00e_document_vision/agent.md:27` |
+
+A grep for `WCAG 2.1` across `agents/` now returns two hits and **neither is a version**: they are
+`agents/09d_a11y_journey/agent.md:140` and `:153`, which name **criteria** 2.1.1 Keyboard and 2.1.2
+No Keyboard Trap. So no agent in the repository targets WCAG 2.1.
+
+**Why this needed doing rather than noting.** R3 already caught `gates/wcag.py` about to be left at
+2.1 while everything around it moved, and made the point that a version reference nobody owns is a
+version reference that goes stale. The agents are the same case: 05 writes the accessibility spec a
+whole project is built against, and a spec written to 2.1 would have quietly under-specified every
+criterion 2.2 added — the same criteria R23 says are the ones no scanner can recover for you.
+
+---
+
+## R30 — "Near-deterministic via temperature 0" — **temperature 0 does not promise that**
+
+**Found 2026‑09‑16.** *Claimed in:* Report 1 and Addendum B, as the mechanism by which repeated runs
+give repeatable findings.
+
+**What is true.** Temperature 0 makes sampling greedy. It does not make a model's output identical
+across runs: floating-point non-associativity in batched inference, model and serving-stack
+versions, and context differences all move the result, and none of them is a setting a caller
+controls. Treating it as a determinism guarantee promises a client something no vendor offers — and
+it is the wrong promise anyway, because our judgement runs go through `ExecutionDriver` on the
+subscription (R4), not through an API where such a parameter is even ours to set.
+
+**The platform's own framing is the honest one, and it is already built.** Non-determinism here is
+**managed, not eliminated**, and every piece of the management is a thing in the repository rather
+than a claim: the deterministic engine decides what it can decide and the judge is asked only what a
+rule cannot answer (R13, R14); a judgement below the confidence threshold is routed to a person and
+never dropped (R11, D7); a run that captures elements and returns no verdict **blocks the gate**
+rather than reading as clean (`backend/apps/gates/a11ygate.py`); a finding that went in and did not
+come back fails the run loudly (R4's write-completeness check); and the checkers are measured against
+a golden set rather than asserted (R20, R21, R22).
+
+**What a client should be told**, and the difference matters when an auditor asks: not *"the same
+page always produces the same findings"*, but *"the same page always produces findings decided by
+the same rules, with anything uncertain shown to a person, and nothing discarded."* The first is a
+claim we cannot keep. The second is stronger, it is what the build actually does, and it is the one
+that survives being checked.
 
 ---
 

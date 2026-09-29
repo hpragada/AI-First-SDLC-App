@@ -3,7 +3,7 @@ import { Link, Navigate, Outlet, Route, Routes, useLocation, useParams } from "r
 import { useAuth } from "./auth/AuthContext";
 import { AppShell } from "./components/AppShell";
 import { DevComponents } from "./components/dev/DevComponents";
-import { EmptyState, Panel, Skeleton } from "./components/ui";
+import { Panel, Skeleton } from "./components/ui";
 import {
   AcceptInvite,
   ConnectMachine,
@@ -140,22 +140,6 @@ function RequireBrownfield() {
   return <Outlet />;
 }
 
-function AppPlaceholder({ title }: { title: string }) {
-  return (
-    <main className="canvas-pad">
-      <div className="page-head">
-        <div className="page-head__titles">
-          <h1 className="t-h1">{title}</h1>
-          <p className="page-head__sub">Foundation route mounted. Feature screens land in T2-T5.</p>
-        </div>
-      </div>
-      <Panel title="Ready for screen implementation">
-        <EmptyState title="No screen built yet" text="This route is auth-gated and rendered inside the Phase 4.8 app shell." />
-      </Panel>
-    </main>
-  );
-}
-
 export function AppRoutes() {
   return (
     <Routes>
@@ -230,7 +214,13 @@ export function AppRoutes() {
             <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
             <Route path="/admin/users" element={<UsersInvites />} />
             <Route path="/admin/roles" element={<RolesMatrix />} />
-            <Route path="/admin/*" element={<AppPlaceholder title="Workspace Admin" />} />
+            {/* Bugs S.No 225. An admin address the app does not know used to render a developer's
+                placeholder — "Foundation route mounted. Feature screens land in T2-T5", "rendered
+                inside the Phase 4.8 app shell" — one developer's note to another, shown to the
+                client's own administrator with no way back. It now goes to the admin landing
+                screen (the team's option A), the way an unknown address anywhere else goes to the
+                dashboard; the placeholder screen is deleted, and this was its only use. */}
+            <Route path="/admin/*" element={<Navigate to="/admin/users" replace />} />
             {/* Test reporting is a project resource but admin-only (mirrors the backend
                 IsTenantAdmin on /ci-tokens/); a non-admin deep-link gets the admin panel. */}
             <Route path="/test-reporting" element={<TestReporting />} />

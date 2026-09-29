@@ -69,6 +69,16 @@
 
 .btn:disabled, .btn[aria-disabled="true"] { cursor: not-allowed; }
 
+/* A control that reads as a link inside a sentence — it moves the reader within THIS page
+   (the roles warning pointing at the coverage box below it), so it is a button, not an anchor:
+   nothing is being navigated to. Inherits the sentence's size and line-height so the line it
+   sits in does not shift. */
+.btn-link {
+  padding: 0; border: 0; background: none; font: inherit; color: var(--info);
+  text-decoration: underline; cursor: pointer;
+}
+.btn-link:hover { color: var(--brand-navy-700); }
+
 /* ============================================================================
    3. Form fields
    ========================================================================== */
@@ -87,6 +97,12 @@
 .input::placeholder, .textarea::placeholder { color: var(--text-faint); }
 .input:focus, .select:focus, .textarea:focus { outline: none; border-color: var(--brand-orange); box-shadow: var(--focus-ring); }
 .textarea { resize: vertical; min-height: 88px; }
+/* A filter dropdown sizes itself to the choice it is showing.
+   `.select` is `width: 100%`, so every filter row had to cap each box with a fixed `max-width`
+   picked by eye — and the box then cut the chosen value with no ellipsis and no way to read it
+   ("Intelligent Context Extra…"). `width: auto` + `max-width: 100%` lets the box be as wide as
+   its text and no wider, and the rows that hold them already wrap on a narrow window. */
+.select--fit { width: auto; max-width: 100%; }
 .select { appearance: none; background-image:
   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%236B7385' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px;
@@ -100,7 +116,6 @@
   cursor: text;
 }
 .combobox__list {
-  position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0;
   max-height: 260px; overflow-y: auto; margin: 0; padding: var(--space-1); list-style: none;
   background: var(--bg-surface); border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); box-shadow: var(--shadow-md, 0 8px 24px rgb(0 0 0 / 12%));
@@ -113,6 +128,53 @@
 .combobox__option--active { background: var(--bg-subtle, rgb(0 0 0 / 5%)); }
 .combobox__option--selected { font-weight: 600; }
 .combobox__empty { padding: 8px 10px; font-size: var(--fs-sm); color: var(--text-muted); }
+
+/* Floating layer (Bugs S.No 166) — every popup that must never be clipped by the panel it was
+   opened from: dropdown lists, the row and account menus, tooltips. Drawn at the top of the page
+   (`FloatingLayer`) and placed by `useFloatingPosition`, which writes top/left — and width or
+   max-height when it needs to. A panel's `overflow: hidden` used to cut these off. */
+.popover-layer { position: fixed; top: 0; left: 0; z-index: var(--z-popover); }
+
+/* The cut-off label, opened out over the row that cut it (the work-item picker enhancement).
+   `max-content` so it is exactly as wide as its words, capped so a sentence-long title wraps
+   instead of running off the window — the cap is in `vw` as well as `px` because a narrow window
+   is the case that needs it. The orange edge and the deeper shadow say "this is the same row,
+   showing more", rather than a new menu. */
+.peek {
+  width: max-content; max-width: min(560px, 80vw);
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--bg-surface); border: 1px solid var(--brand-orange-300);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-strong);
+  white-space: normal; overflow-wrap: anywhere;
+  /* The pointer passes through to the row underneath. Drawn over that row, the peek used to take
+     the pointer itself: the list saw a mouse-leave, closed it, the row saw the mouse again, opened
+     it — a flicker on every movement, and a click on it picked nothing (2026-09-21). It is only
+     ever read, never clicked, so nothing is lost. */
+  pointer-events: none;
+}
+
+/* ChoiceSelect (Bugs S.No 184) — the clarification answer control. Borrows the .select frame and
+   chevron so it sits exactly like the fields around it; unlike the browser's own dropdown, its
+   text wraps, so a sentence-long option stays inside the card. */
+.choice-select { width: 100%; }
+.choice-select__button {
+  display: block; text-align: left; cursor: pointer;
+  white-space: normal; overflow-wrap: anywhere;
+}
+.choice-select__button--empty { color: var(--text-faint); }
+.choice-select__list {
+  max-height: 320px; overflow-y: auto; margin: 0; padding: var(--space-1); list-style: none;
+  background: var(--bg-surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-md, 0 8px 24px rgb(0 0 0 / 12%));
+}
+.choice-select__option {
+  padding: 8px 10px; border-radius: var(--radius-sm); cursor: pointer;
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-strong);
+  white-space: normal; overflow-wrap: anywhere;
+}
+.choice-select__option--active { background: var(--bg-subtle); }
+.choice-select__option--selected { font-weight: 600; }
 
 .field__help { font-size: var(--fs-xs); color: var(--text-muted); margin-top: var(--space-2); }
 .field__tip { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 50%; cursor: help; vertical-align: middle; }
@@ -152,7 +214,10 @@
 .badge--waiting     { --_bg: var(--info-bg);            --_fg: var(--info); }
 .badge--running     { --_bg: var(--info-bg);            --_fg: var(--info); }
 .badge--needs-answer{ --_bg: var(--accent-purple-bg);   --_fg: var(--accent-purple); }
-.badge--gate        { --_bg: var(--warning-bg);         --_fg: var(--warning); }
+/* Amber INK for the text, as the approved mockups draw it (S.No 218 "Waiting for approval", S.No
+   117 "Waiting for you"). `--warning` is a fill colour: as text on `--warning-bg` it measures
+   2.19:1 and fails WCAG AA — see the note on `--warning-ink` in design-system.css. */
+.badge--gate        { --_bg: var(--warning-bg);         --_fg: var(--warning-ink); }
 .badge--done        { --_bg: var(--success-bg);         --_fg: var(--success); }
 .badge--failed      { --_bg: var(--danger-bg);          --_fg: var(--danger); }
 .badge--parked      { --_fg: var(--danger);
@@ -215,7 +280,6 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 /* Account menu (topbar avatar → sign out) */
 .account-menu { position: relative; display: inline-flex; }
 .account-menu__pop {
-  position: absolute; top: calc(100% + var(--space-2)); right: 0; z-index: 30;
   min-width: 220px; background: var(--bg-surface); border: 1px solid var(--border);
   border-radius: var(--radius-md); box-shadow: var(--shadow-lg, var(--shadow-sm));
   padding: var(--space-2); overflow: hidden;
@@ -244,7 +308,6 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 }
 .row-menu__trigger:hover { background: var(--bg-subtle); color: var(--text-body); }
 .row-menu__pop {
-  position: absolute; top: calc(100% + 4px); right: 0; z-index: 30;
   min-width: 160px; background: var(--bg-surface); border: 1px solid var(--border);
   border-radius: var(--radius-md); box-shadow: var(--shadow-lg, var(--shadow-sm));
   padding: var(--space-2); overflow: hidden;
@@ -388,6 +451,10 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 
 .bell { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--radius-md); background: transparent; border: 0; color: var(--text-body); }
 .bell:hover { background: var(--bg-subtle); }
+/* The dashboard's Needs-me queue, where the bell lands (N2). A grid so the panel inside still
+   stretches to its row as it did when it was the grid item; a little room above it, so the
+   scroll that brings it into view does not leave its heading flush against the top edge. */
+.needs-me { display: grid; scroll-margin-top: var(--space-4); }
 .bell__badge { position: absolute; top: 3px; right: 3px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--radius-pill); background: var(--brand-orange); color: #fff; font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 
 .app-canvas { flex: 1 1 auto; overflow-y: auto; }
@@ -476,6 +543,20 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
    ========================================================================== */
 .board { display: flex; gap: var(--space-4); overflow-x: auto; padding-bottom: var(--space-3); align-items: flex-start; }
 .board__col { flex: 0 0 248px; background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius-md); }
+
+/* Board screen: the board fills what is left of the viewport and scrolls INSIDE itself, so its
+   horizontal scrollbar is always on screen. Before this the columns grew without limit — a
+   122-card Backlog made the board thousands of pixels tall, and its scrollbar sat at the bottom
+   of all that, reachable only by scrolling the whole page down past every card.
+   `min-height: 0` on both the page and the board is what lets a flex child shrink below its
+   content; without it the board keeps its full content height and the cap does nothing. */
+.canvas-pad--board { display: flex; flex-direction: column; min-height: 0; height: calc(100vh - var(--topbar-h)); }
+.canvas-pad--board .board { flex: 1 1 auto; min-height: 0; overflow-y: hidden; }
+/* Columns stay content-sized (an empty column is not a tall empty box) but never outgrow the
+   board; the cards scroll within, and the column header stays put while they do. */
+.canvas-pad--board .board__col { max-height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.canvas-pad--board .board__col-head { flex: none; }
+.canvas-pad--board .board__list { overflow-y: auto; min-height: 0; }
 .board__col-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
 .board__col-head svg { width: 16px; height: 16px; color: var(--text-muted); }
 .board__col-title { font-size: var(--fs-sm); font-weight: 700; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -574,7 +655,12 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .sor-chip--figma .sor-chip__glyph { background: #7C5CD6; }
 .sor-chip--github .sor-chip__glyph { background: #1B2440; }
 .sor-chip--xray .sor-chip__glyph { background: #1FA971; }
+/* Screen Words group 4. Every artifact used to wear the Confluence glyph whatever system it
+   lived in; `internal` now has its own. The platform is not an external system, so it also
+   drops the deep-link arrow below — there is nowhere to go. */
+.sor-chip--platform .sor-chip__glyph { background: var(--brand-navy-500); }
 .sor-chip::after { content: "\2197"; color: var(--text-faint); font-weight: 700; } /* external deep-link */
+.sor-chip--platform::after { content: none; }
 
 /* ============================================================================
    15. Run console (dark)
@@ -846,7 +932,6 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .cap-card__logo--cap-designsource { background: #7C5CD6; }
 .cap-card__logo--cap-codehost { background: #1B2440; }
 .cap-card__logo--cap-testmgmt { background: #1FA971; }
-.cap-card__logo--cap-codeintel { background: #B45309; }
 [class*="cap-card__logo--cap-"] { font-size: var(--fs-body); letter-spacing: -0.02em; }
 
 /* save-state indicator (profile editor) */
@@ -975,8 +1060,6 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
   text-decoration: underline dotted; text-underline-offset: 2px;
 }
 .tip__bubble {
-  position: absolute; z-index: 40; bottom: calc(100% + 6px); left: 50%;
-  transform: translateX(-50%);
   /* Wide enough for a sentence, capped so it never runs off a narrow screen. `max-width` in
      `vw` as well as `px` because this can open near either edge of a phone. */
   width: max-content; max-width: min(320px, 78vw);
@@ -989,9 +1072,9 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
   font-size: var(--fs-sm); line-height: var(--lh-sm); font-weight: 400;
   text-align: left; white-space: normal;
 }
-/* A tooltip that opens above its trigger is off-screen when the trigger is at the top of the
-   viewport. Anything inside the first rows of a page opts into opening downwards instead. */
-.tip__bubble--below { bottom: auto; top: calc(100% + 6px); }
+/* `tip__bubble--below` records a preference for opening downwards, for a trigger in the first
+   rows of a page. The side itself is now chosen by `useFloatingPosition` (S.No 166), which also
+   flips a bubble that has no room on its preferred side — so the class positions nothing. */
 
 /* ---------------------------------------------------------------------------
    Captured-page screenshot (S-36 accessibility review, QA-23)

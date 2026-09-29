@@ -197,7 +197,8 @@ function Signing({
     <div className="card--attention gate-panel">
       <div className="card__body">
         <span className="gate-panel__role">
-          ▲ Conformance statement · required role: {data.required_role}
+          {/* Screen Words group 8: this printed the stored key ("qa_lead"). */}
+          ▲ Conformance statement · required role: {roleLabel(data.required_role)}
         </span>
         <h3 className="t-h3">Sign this statement</h3>
         <Check checked={readIt} onChange={(e) => setReadIt(e.target.checked)}>
@@ -373,7 +374,7 @@ function ExportPanel({ data, projectId }: { data: A11yConformance; projectId: st
   }
   return (
     <Panel title="Export">
-      <Banner variant="success" title={`Signed by ${data.signed_name} · ${data.signed_role}`}>
+      <Banner variant="success" title={`Signed by ${data.signed_name} · ${roleLabel(data.signed_role)}`}>
         The statement is locked to the wording that was signed. Editing it again clears the
         signature.
       </Banner>

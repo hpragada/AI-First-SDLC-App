@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 
 import { api } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Banner, Breadcrumb, Button, Dropzone, Panel, Spinner } from "../../components/ui";
+import { Badge, Banner, Breadcrumb, Button, Dropzone, Panel, Spinner, writeErrorSentence } from "../../components/ui";
+import { documentStatusLabel } from "../../labels";
 import type { AdoptVisionStatus, SourceDocument, SourceDocVision } from "../../types";
 import {
   useAdoptSourceDocument,
@@ -155,9 +156,14 @@ export function badgeFor(doc: SourceDocument): { label: string; variant: string 
   if (doc.status === "extracted") {
     if (doc.fidelity === "images_only") return { label: "Needs AI read", variant: "waiting" };
     if (doc.fidelity === "empty") return { label: "No text found", variant: "waiting" };
-    return { label: "Extracted", variant: "info-hue" };
+    // Screen Words group 4: "Extracted" is what the platform did, not what the reader can now
+    // do. Same words as the onboarding hub, which is where most people meet this row.
+    return { label: documentStatusLabel("extracted"), variant: "info-hue" };
   }
-  return { label: doc.status, variant: "info-hue" };
+  // The fallback printed the stored word, which is why `uploaded` — the one status this list
+  // forgot — reached the screen raw. Through the shared map now, so a status added later is
+  // humanized rather than shown as a key.
+  return { label: documentStatusLabel(doc.status), variant: "info-hue" };
 }
 
 type PreviewState = { url: string; kind: "pdf" | "image" | "other" } | null;
@@ -242,7 +248,11 @@ function SourceDocRow({
       const kind = doc.mime.includes("pdf") ? "pdf" : doc.mime.startsWith("image/") ? "image" : "other";
       setPreview({ url, kind });
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Couldn't load the original");
+      // Screen Words group 5. This is the site the sweep named: it printed
+      // `Failed to load /source-documents/7f3c…/original/` — an API path and an internal id — to
+      // someone who clicked "view my upload". `fetchBlobUrl` now throws a sentence, and this
+      // shares the same offline/server handling as every other failed request.
+      setErr(writeErrorSentence(e, "That file couldn't be opened."));
     } finally {
       setLoading(false);
     }
@@ -432,7 +442,7 @@ function SourceDocumentsLive() {
       )}
       {upload.isError && (
         <Banner variant="danger" title="Upload failed">
-          {upload.error instanceof Error ? upload.error.message : "Unknown error"}
+          {writeErrorSentence(upload.error, "The upload wasn't accepted.")}
         </Banner>
       )}
 
@@ -449,7 +459,7 @@ function SourceDocumentsLive() {
           ))}
           {adopt.isError && (
             <Banner variant="danger" title="Couldn't adopt this document">
-              {adopt.error instanceof Error ? adopt.error.message : "Unknown error"}
+              {writeErrorSentence(adopt.error, "That document wasn't adopted.")}
             </Banner>
           )}
         </div>

@@ -418,14 +418,21 @@ actually proves it:** after clicking, check a `codeintel_mcp` process exists and
 - **⚠️ Honest limit:** this run contained no anomaly needing a human, so the **`ask_human` branch was
   never exercised**. S4-24 is verified for the self-verify path, **untested for the ask path**.
 
-### S4-25 · 🔲 A completed run never records when it ended
+### S4-25 · ✅ A completed run never records when it ended — **CLOSED as S5-26**
 - **Symptom:** run `9d1b4d32` is `completed` with `ended_at = None`. Same for `98ab9a8c`,
   `bf0f27c0` and every completed `00e` vision run.
 - **Contrast:** *failed* runs do set `ended_at` (e.g. `2745c2e0`, `7c46b43c`), so the column works —
   it is the success path that skips it.
 - **Impact:** run duration is uncomputable from the data, so no screen can show "took 10 minutes"
   and no regression in run time can be measured. Low severity, trivial to miss, easy to fix.
-- Found while assembling the run report; **not fixed** — logged for the team.
+- Found while assembling the run report; not fixed at the time — logged for the team.
+- **FIXED.** Re-found and closed in the Step-5 second pass as **S5-26**: `publish_artifacts` now
+  stamps `ended_at` on the success path. Verified in the code on 2026-09-17 —
+  `backend/orchestration/activities.py:423`, with the same stamp on the other completion paths at
+  `:259` and `:286`. The last terminal path without it, **rejection**, was closed separately as
+  **G-1**. Durations are recordable on every path.
+- *The 🔲 on this heading survived until 2026-09-17 because the fix was recorded under S5-26's
+  number, and only the summary tables were updated.*
 
 ---
 
@@ -467,11 +474,15 @@ actually proves it:** after clicking, check a `codeintel_mcp` process exists and
 | S4-25 | A completed run never records `ended_at` | ✅ FIXED (tests green) — closed in the Step-5 second pass as S5-26; `publish_artifacts` now stamps it on success, so durations are finally recordable |
 
 **Legend.** ✅ *verified live* = proven by a completed run against the real repo. ✅ *(tests green)*
-= fixed with guards, not yet exercised live. As of run **`9d1b4d32`** (2026-08-03) every Step-4
-finding except S4-8, S4-10, S4-11 and S4-25 is fixed, and all of those four are either a decision
-or observability — none blocks the journey. **S4-25 was subsequently closed** in the Step-5 second
-pass (as S5-26), and **S4-10 was verified fixed on 2026-09-03** by work already merged (see its
-entry above; the residue moved to Bugs.xlsx S.No 35) — leaving **S4-8 and S4-11**.
+= fixed with guards, not yet exercised live.
+
+**Current position (re-verified 2026-09-17): every Step-4 finding is fixed except S4-8 (companion
+logging) and S4-11 (a team decision).** Neither blocks the journey.
+
+*How it got here, since the history is scattered across three passes:* as of run **`9d1b4d32`**
+(2026-08-03) four were open — S4-8, S4-10, S4-11 and S4-25. **S4-25 was closed** in the Step-5
+second pass as **S5-26**, and **S4-10 was verified fixed on 2026-09-03** by work already merged (see
+its entry above; the residue moved to Bugs.xlsx S.No 35).
 
 ---
 

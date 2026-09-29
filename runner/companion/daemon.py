@@ -559,6 +559,11 @@ class CompanionDaemon:
                                      "draft is empty")
             self._report(report_path, report)
         except Exception as exc:  # noqa: BLE001 — report the failure so the run never hangs
+            # Say so locally too. This path used to print NOTHING: the operator watching the
+            # companion saw an ordinary-looking run end, and the only record of the cause was
+            # the rotating engine log nobody thinks to open.
+            print(f"[companion] {phase} run {run_id} failed: {exc}",
+                  file=sys.stderr, flush=True)
             self._report(report_path, {"status": "failed", "message": str(exc)})
             return
         finally:

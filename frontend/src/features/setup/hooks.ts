@@ -100,12 +100,24 @@ export function useTestCredentials() {
 }
 
 // ── Repositories (S-13) ───────────────────────────────────────────────────
-export function useRepositories(projectId: string | undefined) {
-  return useQuery({
+// One request, one cache entry, two views of it. The endpoint answers with the list AND the
+// project's topology; the topology used to be thrown away here and recomputed on screen from the
+// count, with a rule that disagreed with the platform's (S.No 212 — S.No 104's problem, moved).
+function repositoriesQuery(projectId: string | undefined) {
+  return {
     queryKey: ["repositories", projectId],
-    queryFn: () => api.listRepositories(projectId as string),
+    queryFn: () => api.getRepositories(projectId as string),
     enabled: Boolean(projectId),
-  });
+  };
+}
+
+export function useRepositories(projectId: string | undefined) {
+  return useQuery({ ...repositoriesQuery(projectId), select: (data) => data.repositories });
+}
+
+/** The project's repository topology as the platform computed it — never worked out on screen. */
+export function useRepositoryTopology(projectId: string | undefined) {
+  return useQuery({ ...repositoriesQuery(projectId), select: (data) => data.repo_topology });
 }
 
 export function useCreateRepository(projectId: string | undefined) {
@@ -130,6 +142,17 @@ export function useUpdateRepository(projectId: string | undefined) {
   return useMutation({
     mutationFn: ({ repoId, body }: { repoId: string; body: { preview_url?: string } }) =>
       api.updateRepository(projectId as string, repoId, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["repositories", projectId] }),
+  });
+}
+
+// "Set default" (S.No 212). The button's handler was a stub that threw the repository away, beside
+// a note saying the backend could not do this yet — the endpoint had existed, permission-checked,
+// all along. The list refreshes, so the "default" marker moving IS the confirmation (option A).
+export function useSetDefaultRepository(projectId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (repoId: string) => api.setDefaultRepository(projectId as string, repoId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["repositories", projectId] }),
   });
 }

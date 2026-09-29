@@ -14,10 +14,12 @@ sit after the populated-graph cases.
 
 Neither screen has a role gate — run everything as **P1 Owner-Admin** unless noted.
 
-**Read this before you start.** Approving a phase gate publishes the phase's artifacts in the same
-transaction, so an artifact is only ever `draft` or `published` — there is no `approved` and no
-`pending_gate` state anywhere in the product. The traceability legend's amber `Pending gate` entry
-therefore has no node that can take its colour (TC-158).
+**Read this before you start.** The map colours each node by its artifact's status, using the same
+words as the Artifacts screen. An artifact reads `Draft` while its run works, `Waiting for approval`
+(amber) once its gate opens, `Published` once the gate is approved, and `Superseded` if the gate was
+rejected. Approving a phase gate publishes in the same transaction, so `Approved` is rarely seen on
+the plan path. Since commits 4ac75f9 and b40c557 the legend lists five statuses and the map has
+phase, type and work-item filters (TC-158, TC-163).
 
 **ID note.** The plan reserves TC-157 – TC-166 for this suite and that range is fully used. Cases
 added by the pack audit continue at **TC-251**, which collides with nothing.
@@ -53,8 +55,10 @@ added by the pack audit continue at **TC-251**, which collides with nothing.
 - One node box is drawn per artifact in the registry — the node count equals the row count on
   `/artifacts` for the same project.
 - Each node's first line is the human artifact name, truncated to 22 characters with a trailing `…`
-  if longer. Its second line reads `{Phase} · {status}`, where `{Phase}` is the humanized phase name
-  and `{status}` is the **raw** lower-case token (`draft` or `published`).
+  if longer. Its second line reads `{Phase} · {Status}`, where `{Phase}` is the humanized phase name
+  and `{Status}` is the status in words (`Draft`, `Waiting for approval`, `Published`,
+  `Superseded`), also cut to 22 characters with a trailing `…`. Hovering a node shows the full
+  `{name} — {Phase} · {Status}` line.
 - Record how many connecting lines are drawn, including zero. This is an observation, not an
   assertion — see Notes.
 
@@ -84,13 +88,12 @@ added by the pack audit continue at **TC-251**, which collides with nothing.
   that no agent had to choose to record. If the graph is empty *after a test import has happened*,
   that is a stronger signal than an empty graph after two planning phases — note which case
   produced the data when you record the edge count.
-- The raw `draft` / `published` token on the node's second line is deliberate in this pass — it is
-  inconsistent with the humanized badge on `/artifacts`, which is tracked separately. Do not raise
-  it.
+- The status on the node's second line is in words since commit 4ac75f9. A lower-case token such as
+  `draft` or `staged` on a node is now a defect.
 
 ---
 
-### TC-158 · The legend's third entry is unreachable — only Published and Draft colour any node
+### TC-158 · The five-entry legend matches the node colours, and an artifact at an open gate is amber
 
 | Field | Value |
 |---|---|
@@ -102,44 +105,45 @@ added by the pack audit continue at **TC-251**, which collides with nothing.
 | Automation | No |
 
 **Preconditions**
-- TC-157 passed, and the project has artifacts in **both** reachable statuses: one from a gate that
+- TC-157 passed, and the project has artifacts in at least these two statuses: one from a gate that
   has been approved (reads `Published` on `/artifacts`) and one from a phase whose gate is still
-  open (reads `Draft`).
+  open (reads `Waiting for approval`).
+- Optional: an artifact from a rejected run (reads `Superseded`).
 
 **Steps**
-1. Go to `/artifacts` and note the name and status badge of one `Published` artifact and one
-   `Draft` artifact.
+1. Go to `/artifacts` and note the name and status badge of one `Published` artifact, one
+   `Waiting for approval` artifact, and a `Superseded` one if you have it.
 2. Go to `/traceability`.
 3. Read the legend on the right of the row above the graph, left to right.
 4. Find the node for the `Published` artifact from step 1 and compare its dot with the legend's
    `Published` swatch.
-5. Find the node for the `Draft` artifact and compare its dot with the `Draft` swatch.
-6. Scan **every** node in the graph and record whether any dot matches the middle
-   (`Pending gate`) swatch.
+5. Find the node for the `Waiting for approval` artifact and compare its dot with that swatch.
+6. If you noted a `Superseded` artifact, compare its node with the `Superseded` swatch.
 
 **Expected**
-- The legend shows exactly three entries, in order: `Published`, `Pending gate`, `Draft`, each with
-  a coloured dot. No fourth entry, and no raw status token in the legend.
-- The `Published` artifact's node dot matches the `Published` swatch (green).
-- The `Draft` artifact's node dot matches the `Draft` swatch (blue).
-- **No node anywhere in the graph carries the `Pending gate` colour (amber).** The legend's middle
-  entry describes a state the product cannot produce.
+- The legend shows exactly five entries, in order: `Published`, `Approved`,
+  `Waiting for approval`, `Draft`, `Superseded`, each with a coloured dot. No raw status token appears
+  in the legend.
+- The `Published` artifact's node dot and outline match the `Published` swatch (green).
+- The `Waiting for approval` artifact's node matches the `Waiting for approval` swatch (amber).
+  Its second line, `{Phase} · Waiting for approval`, is cut at 22 characters, so where the `…` falls
+  depends on the phase name. Hovering the node shows the full line ending `· Waiting for approval`.
+- A `Superseded` artifact's node matches the grey `Superseded` swatch.
+- Each node's colour agrees with the badge the same artifact shows on `/artifacts`.
 
 **Pass / Fail**
-- PASS if the legend renders those three labels, the `Published` and `Draft` swatches each
-  demonstrably match at least one node, and no node is amber.
-- FAIL if a legend label is missing or renamed, or if every node is the same colour despite
-  `/artifacts` showing both statuses.
-- FAIL if a node **does** render amber — that would mean an artifact status the backend does not
-  define has appeared.
+- PASS if the legend renders the five labels in that order, and every node you checked matches the
+  swatch for the status `/artifacts` shows for it.
+- FAIL if a legend label is missing, renamed or out of order, if an artifact at an open gate draws
+  blue (`Draft`) instead of amber, or if a node's colour disagrees with its `/artifacts` badge.
 
 **Notes**
-- The amber `Pending gate` legend entry is **dead code**: the artifact status vocabulary is
-  `draft / staged / approved / published` and there is no `pending_gate` value to colour a node
-  with. Approving a gate publishes in the same transaction, so an artifact goes straight from blue
-  to green. This legend entry is already tracked as a product defect — **do not raise it**. This
-  case exists to confirm it stays unreachable and to stop a tester hunting for an amber node that
-  cannot exist.
+- **Changed in commit 4ac75f9.** The legend used to read `Published` / `Pending gate` / `Draft`, and
+  its amber entry could never match a node. It now comes from the same status list the Artifacts
+  screen uses, and opening a gate marks the run's drafts as waiting, so amber nodes are expected.
+- `Approved` is in the legend because it is a real status, but approving a phase gate publishes in
+  the same transaction, so on the plan path you will rarely see an `Approved` node. Its absence is
+  not a defect.
 - The screen has no zoom, so on a large graph use the browser's own zoom to compare swatch colours.
 
 ---
@@ -246,7 +250,10 @@ added by the pack audit continue at **TC-251**, which collides with nothing.
 **Expected**
 - An empty state titled `No lineage yet` with the text
   `Once phases produce artifacts and tasks, their relationships render here as a graph.`
-- The heading `Traceability` and the three-entry legend are still rendered above it.
+- The heading `Traceability` and the five-entry legend are still rendered above it.
+- The `Filter by phase`, `Filter by type` and `Highlight work item` selects are present but offer only
+  their defaults (`Phase: All`, `Type: All`, `Highlight: none`), because there are no nodes to take
+  options from.
 - No empty SVG canvas or zero-node graph frame is drawn.
 
 **Pass / Fail**
@@ -294,42 +301,69 @@ added by the pack audit continue at **TC-251**, which collides with nothing.
 
 ---
 
-### TC-163 · The live traceability screen has no phase/type/highlight filters and no zoom buttons
+### TC-163 · Phase and type filters narrow the map, and a work-item highlight dims everything else
 
 | Field | Value |
 |---|---|
 | Suite | TS-11 Traceability & Transcripts |
-| Type | UX |
+| Type | Functional |
 | Priority | Medium |
 | Screen | `/traceability` |
 | Persona | P1 Owner-Admin |
 | Automation | No |
 
 **Preconditions**
-- TC-157 passed — the graph is populated, so any filter controls would have something to act on.
+- TC-157 passed — the graph is populated with artifacts from at least two phases, of at least two
+  types, produced for at least two different work items.
 
 **Steps**
-1. Go to `/traceability`.
-2. Inspect the whole row above the graph, left to right.
-3. Inspect the top-right corner of the graph canvas.
-4. Scroll the page to the bottom to confirm no controls sit below the graph.
+1. Go to `/traceability` and count the nodes.
+2. Read the row above the graph, left to right, and open each of the three selects in turn, reading
+   every option.
+3. In `Filter by phase`, choose one phase. Read the text beside the selects and count the nodes.
+4. Set it back to `Phase: All`, then choose one type in `Filter by type`, and count the nodes again.
+5. Set type back to `Type: All`. In `Highlight work item`, choose one work item.
+6. Compare the nodes that belong to that work item with the rest.
+7. With the highlight still on, choose a phase and a type that no node has together, so nothing
+   matches. Read the panel.
+8. Set phase and type back to `All` and the highlight back to `Highlight: none`.
+9. Check the top-right corner of the graph canvas.
 
 **Expected**
-- The row above the graph contains **only** the legend (`Published` / `Pending gate` / `Draft`),
-  pushed to the right. There are **no** `Phase: All`, `Type: All` or `Highlight` selects.
-- There are **no** `−`, `+` or `Fit` zoom buttons anywhere on the canvas.
-- The graph is therefore unfiltered and unzoomable — everything the project has is drawn at once.
+- Step 2: three selects sit on the left of the row, in this order, with these defaults:
+  `Phase: All` (labelled `Filter by phase` for screen readers), `Type: All` (`Filter by type`) and
+  `Highlight: none` (`Highlight work item`). The five-entry legend sits at the right.
+- The phase and type options are only the values present on the map, in human wording — never a
+  phase or type that no node has.
+- The work-item options name each work item as `{key} {title}` (for example `WI-12 Stripe Webhook
+  Integration`) and are sorted alphabetically. `Not tied to a work item` is offered at the end
+  **only** if the map has a node that belongs to no work item.
+- Step 3: only nodes of that phase remain, and the text `{shown} of {total} shown` appears beside the
+  selects, where `{total}` is the step 1 count.
+- Step 4: only nodes of that type remain, and the count text updates.
+- Step 6: every node is still drawn, but nodes that do **not** belong to the chosen work item are
+  faded; that work item's nodes stay at full strength. Faded nodes can still be clicked. The count
+  text does **not** appear for a highlight on its own.
+- Step 7: the graph is replaced by an empty state titled `Nothing matches these filters` with the
+  text `Clear the phase or type filter to see the whole map.` — **not** `No lineage yet`.
+- Step 8 restores the full map with no count text.
+- Step 9: there are **no** `−`, `+` or `Fit` zoom buttons on the live canvas.
 
 **Pass / Fail**
-- PASS if the live screen shows the legend only, with no filter selects and no zoom buttons.
-- FAIL if any of those controls are present but inert — an inert control is worse than an absent
-  one. Raise that as **Low**.
+- PASS if both filters narrow the map to matching nodes with a correct count, the highlight fades
+  (not hides) the other nodes, and the no-match state reads `Nothing matches these filters`.
+- FAIL if any select is inert, offers an option that matches no node, hides nodes when highlighting,
+  or if a filtered-to-nothing map says `No lineage yet`.
+- FAIL — **High** — if any select offers the demo work item `WI-492`, which exists in no project.
 
 **Notes**
-- Those controls exist in the internal design gallery at `/dev/components` (screen S-30) and in the
-  wireframes, but were never wired on the live route. Their **absence is the correct current
-  behaviour**; do not raise a defect for the missing feature. If the graph grows large enough to be
-  unreadable without zoom, that is worth a **Low** usability observation, not a functional defect.
+- **Rewritten for commit b40c557.** This case used to assert that the live screen had **no** filters.
+  The filters now exist; the gallery's unwired dropdowns (one offering an invented `WI-492`) were
+  deleted.
+- `Not tied to a work item` gathers documents that no run produced — in a greenfield project you
+  will normally not see this option. Its absence on a greenfield map is correct.
+- The map still has no zoom. If the graph is too large to read without it, that is a **Low** usability
+  observation, not a functional defect.
 
 ---
 
@@ -471,7 +505,7 @@ added by the pack audit continue at **TC-251**, which collides with nothing.
 
 ---
 
-### TC-251 · A failed lineage request renders `No lineage yet`, not an error
+### TC-251 · A failed lineage request shows an error panel with `Try again`, not `No lineage yet`
 
 | Field | Value |
 |---|---|
@@ -497,33 +531,34 @@ added by the pack audit continue at **TC-251**, which collides with nothing.
 3. **Without reloading**, switch the top-bar project select to the second project. This forces a
    fresh lineage request the browser has never made.
 4. Wait about 15 seconds — the app retries a failed request a few times before giving up — then
-   read the whole screen. Note the heading, the legend, and the exact title and text of whatever
-   replaces the graph.
-5. Record, in one sentence, whether anything on the screen tells you the request failed.
-6. **Cleanup — mandatory.** Restart the backend, wait for it to come up, and switch back to
-   `Payment Gateway v2`. Confirm the graph from step 1 returns.
+   read the whole screen. Note the heading, the filter selects, the legend, and the title and text
+   of whatever replaces the graph.
+5. **Cleanup — mandatory.** Restart the backend, wait for it to come up, click **Try again**, then
+   switch back to `Payment Gateway v2`. Confirm the graph from step 1 returns.
 
 **Expected**
-- The screen shows **no** error banner, no retry control, and no text mentioning a failure, a
-  network problem or a status code.
-- It renders the ordinary chrome — the `Traceability` heading, its sub-heading, and the
-  three-entry legend — and in place of the graph an empty state titled `No lineage yet` with the
-  text `Once phases produce artifacts and tasks, their relationships render here as a graph.`
-- Step 5's honest answer is **nothing**: this is the identical screen TC-161 asserts for a genuinely
-  empty project.
-- Step 6 restores the graph.
+- The `Traceability` heading, its sub-heading, the three filter selects (showing only `Phase: All`,
+  `Type: All`, `Highlight: none`) and the five-entry legend still render.
+- In place of the graph, a danger banner titled `Can't reach the SDLC app right now` reads
+  `Your browser couldn't connect.`, followed by a **Try again** button and the line
+  `This screen is empty because it didn't load — not because there is nothing here.`
+- `No lineage yet` does **not** appear, and no status code or raw error text is visible.
+- Step 5: after **Try again** with the backend up, the second project's map (or its
+  `No lineage yet` state) renders, and switching back restores the graph from step 1.
 
 **Pass / Fail**
-- PASS if the failed request renders `No lineage yet` with no failure signal of any kind. That is
-  the current behaviour and recording it is the point of this case.
-- FAIL if the app blanks, crashes, shows a raw error body, or redirects to `/login`.
+- PASS if the failed request shows the `Can't reach the SDLC app right now` panel with a working
+  **Try again**, and never `No lineage yet`.
+- FAIL if the failure renders as `No lineage yet`, if there is no **Try again**, or if the app
+  blanks, crashes, shows a raw error body, or redirects to `/login`.
 
 **Notes**
-- **Do not raise a new defect from this case.** "A failed request renders as an empty or zero
-  state" is already tracked as a product defect across the dashboard, artifacts, traceability,
-  repositories and the admin user list. This case records a reproducible observation of it, and
-  puts on record that **TC-161 passes on a broken backend** — it cannot distinguish "this project
-  has no lineage" from "the lineage request failed".
+- **Rewritten for commit 6d85ec9.** This case used to record that a failed request showed
+  `No lineage yet`, so TC-161 passed on a broken backend. The screen now checks for a failure first
+  (`TraceabilityView.tsx:167-177`), so an empty map and a failed request look different.
+- Stopping the backend is a lost connection, which gives the copy above. A server fault would
+  instead read `Something went wrong on our side` /
+  `The app couldn't load this. Nothing you did caused it.` Record the title you saw.
 
 ---
 
@@ -567,7 +602,10 @@ added by the pack audit continue at **TC-251**, which collides with nothing.
 - FAIL if the app blanks, crashes, shows a raw error body, or redirects to `/login`.
 
 **Notes**
-- Same tracked product defect as TC-251 — **do not raise it again**. The value of this case is that
+- This is the "failed request looks empty" defect that commit 6d85ec9 fixed on the dashboard,
+  artifacts and traceability screens (TC-261, TC-241, TC-251) but **not** here: the transcripts list
+  has no failure branch (`RunTranscriptScreen.tsx:106-116`). It is tracked — **do not raise it
+  again**. The value of this case is that
   it puts on record that the `/transcripts` empty state is also indistinguishable from a failure,
   so a tester who sees it must confirm the backend is up before concluding "Tester C has run
   nothing".

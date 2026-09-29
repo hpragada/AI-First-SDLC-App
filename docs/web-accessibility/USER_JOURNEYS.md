@@ -82,18 +82,29 @@ and the rulebook is loaded. **Not done:** a screen to change any of it.
 
 ---
 
-## J2 — Design a screen accessibly and clear the design gate ⬜
+## J2 — Design a screen accessibly and clear the design gate 🟡
 
-*Greenfield · `OP-01`, `OP-02`, `OP-03` — none built*
+*Greenfield · `OP-01`, `OP-02`, `OP-03`*
+
+**Corrected 16 September 2026.** This journey was recorded as ⬜ *none of it exists*, with the
+gate policy's `design_checks` block described as its only trace. That was wrong: the design gate
+has carried a WCAG 2.2 checklist since QA-11.
 
 The intention stands and is worth keeping: accessibility problems caught while a screen is still
-a wireframe are the cheapest ones there are. The design agent would write the screen's
-accessibility spec at WCAG 2.2, AI checks would read the wireframes for design-level problems —
-an image whose intended alt text says nothing, a status carried by colour alone, a tap target too
-small — and the design gate would hold on serious ones.
+a wireframe are the cheapest ones there are.
 
-**None of it exists.** The gate policy has a `design_checks` block reserved for it and validated,
-and that block is the only trace of J2 in the platform today.
+**What exists.** `apps/gates/wcag.py` builds a **22-question WCAG 2.2 checklist** onto the
+`ux_design` phase's `Approval` — the questions a person can settle by looking at the design, with
+each one's number, title and level read from the loaded standard rather than typed here. Every
+question is required, so a question the reviewer has not marked satisfied blocks approval. A
+project can switch on **5 further criteria** (2.2.1, 2.3.1, 2.5.4, 3.2.4, 3.3.4) through the
+`design_checks` block on the Project Profile, with no code change. Nothing is silently left out:
+each of the 55 Level A/AA criteria is either asked here or recorded with the reason it is not,
+and a test proves there is no third category. The design agent targets WCAG 2.2.
+
+**What does not exist.** There is no automated design-time check. Nothing reads a wireframe and
+reports an image whose intended alt text says nothing, a status carried by colour alone, or a tap
+target too small — every question on the checklist is answered by a person.
 
 ---
 
@@ -105,8 +116,9 @@ The intention: the "meaning" defects — a `<div>` behaving as a button, a field
 label disagrees with what a screen reader announces — caught at code review rather than at
 testing, with serious ones opening a fix item that blocks the merge.
 
-**None of it exists.** Accessibility enters the greenfield lifecycle at **Test Automation** and
-nowhere earlier (J4). A merge gate carrying the accessibility rule is an open product decision
+**None of it exists.** Nothing accessibility-related runs at code review. The earlier touchpoint
+is the design gate's reviewed checklist (J2); the first **automated** evidence is at **Test
+Automation** (J4). A merge gate carrying the accessibility rule is an open product decision
 that neither this build nor the test gate before it chose to make.
 
 ---
@@ -118,8 +130,8 @@ that neither this build nor the test gate before it chose to make.
 **What it delivers:** the implemented screens checked by the rule scanner and the AI checks
 together, in one report, with real problems becoming tracked defects on their own.
 
-1. **The Test Automation phase (`09b`) is where accessibility enters.** There is no accessibility
-   phase and there should not be — the evidence is a by-product of the suite that was going to
+1. **The Test Automation phase (`09b`) is where automated accessibility evidence enters.** There
+   is no accessibility phase and there should not be — the evidence is a by-product of the suite that was going to
    run anyway. There is no accessibility button on the phase picker.
 2. **The capture happens on the developer's machine**, in the same window in which the
    application is up and the worktree still exists — the only place with a browser and the only
@@ -137,8 +149,9 @@ together, in one report, with real problems becoming tracked defects on their ow
    > ⚠️ **And this half is code an agent generates**, from that contract, rather than a script we
    > ship. The contract is right and enforced on ingest; whether every generated suite honours it
    > is the single most valuable thing to check on the first live greenfield run.
-3. **The platform judges what came back.** Four AI checks — `alt`, `semantics`, `color`, `label`
-   — covering five criteria between them, run as an agent on a **hidden carrier work item** so
+3. **The platform judges what came back.** Six AI checks — `alt`, `semantics`, `structure`,
+   `color`, `label`, `graphics` — covering six criteria between them (1.1.1, 1.3.1, 1.4.1,
+   1.4.11, 2.5.3, 4.1.2), run as an agent on a **hidden carrier work item** so
    the plumbing never appears on anyone's board (gap G4, closed). Up to 200 element judgments per
    run; the excess is deferred, never dropped.
 4. **Confident findings become defects; unsure ones go to a person.** One ticket per problem, not
@@ -375,8 +388,15 @@ The number to quote is **27 of 55**, not 33 and not 55.
 | Checker | Criteria it can speak to today | The registry classifies |
 |---|---|---|
 | Rule scanner (axe) | **14** | 14 as rule-owned |
-| AI checks — four of them, built | **5** (1.1.1, 1.3.1, 1.4.1, 2.5.3, 4.1.2) | 11 as AI-owned; the other six are Phase 2 |
+| AI checks — six of them, built | **6** (1.1.1, 1.3.1, 1.4.1, 1.4.11, 2.5.3, 4.1.2) | 11 as AI-owned; the other six are Phase 2 |
 | Keyboard journey | **8** (2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 3.2.1, 3.2.2, 4.1.3) | 8 |
+
+**The total is still 27**, because 1.4.11 sits in two rows: it is a criterion in two halves, the
+rule scanner measures the control edges and the `graphics` checker judges the icons, and one
+criterion counted once either way. What changed is that the judged half is now built — the six
+checkers are `alt`, `semantics`, `structure`, `color`, `label` and `graphics`, `structure` and
+`semantics` sharing 1.3.1. The registry file still records 1.4.11 as rule-owned; routing gives it
+to the AI. See `WCAG_COVERAGE_REFERENCE.md` §1.
 
 **28 criteria have no automated evidence today**: five AI-owned ones whose checker is not built,
 and **23 that only a person can ever assess** — nothing can tell you whether a video's captions
@@ -390,7 +410,7 @@ change either list has to restate them rather than leave a stale figure in a pro
 
 | We say | Journeys | Can we do it today |
 |---|---|---|
-| Start a new project and keep it accessible | J1 → J2 → J3 → J4 → J8 → J9 | **Partly.** J4, J8 and J9 are built; J2 and J3 are not, so accessibility enters at Test Automation rather than at design |
+| Start a new project and keep it accessible | J1 → J2 → J3 → J4 → J8 → J9 | **Partly.** J4, J8 and J9 are built; J2 is a reviewed checklist at the design gate with no automated design check behind it, and J3 is not built, so automated accessibility evidence starts at Test Automation |
 | Onboard an existing app and test it for WCAG | J1 → J5 | **Yes**, with the pages registered by a person rather than discovered by onboarding |
 | Onboard an existing app and remediate it | J5 → J6 → J9 | **Yes as a loop**, no as a campaign |
 | Onboard an existing app and keep building it accessibly | J5 → J7 | **No.** J7 needs J3 |

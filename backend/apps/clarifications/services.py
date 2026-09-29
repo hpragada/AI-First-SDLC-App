@@ -186,19 +186,38 @@ def answer_clarification(
             id=clarification_id, tenant_id=tenant_id
         )
         if clar.status != Clarification.Status.PENDING:
-            raise ClarificationError(f"clarification already {clar.status}")
+            # Screen Words group 5. Two people opening the same question is ordinary, not an
+            # error to report in stored words: "clarification already answered" told the second
+            # person nothing about what to do, and "clarification already cancelled" read as a
+            # fault. The answered history is where the answer now lives, so point there.
+            if clar.status == Clarification.Status.CANCELLED:
+                raise ClarificationError(
+                    "This question was withdrawn — the phase no longer needs it."
+                )
+            raise ClarificationError(
+                "Someone already answered this question. You can see their answer in the "
+                "answered history."
+            )
 
         is_member = Membership.objects.filter(
             tenant_id=tenant_id, user_id=user_id, project_id=clar.work_item.project_id
         ).exists()
         if not is_member:
+            # Screen Words group 5: the internal user id said nothing to the person reading it.
             raise ClarificationRoleError(
-                f"user {user_id} is not a member of this project"
+                "You're not a member of this project, so you can't answer its questions. "
+                "Ask an admin to add you."
             )
 
         missing = _missing_required(clar.questions, answers)
         if missing:
-            raise ClarificationError(f"missing required answer(s): {missing}")
+            # Screen Words group 5. This printed a Python list of question IDS —
+            # "missing required answer(s): ['q1', 'q3']" — which named nothing on screen. The
+            # count is the part a person can act on; the form marks which ones.
+            raise ClarificationError(
+                f"{len(missing)} required question{'' if len(missing) == 1 else 's'} "
+                f"{'has' if len(missing) == 1 else 'have'} no answer yet."
+            )
 
         # Backfill untouched Tier-2/3 items from their suggestion (after the required check,
         # so a blank Tier-1 still fails rather than being silently defaulted).

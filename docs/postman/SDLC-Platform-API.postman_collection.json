@@ -369,7 +369,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"description\": \"Rebuild the checkout flow for speed and accessibility.\",\n  \"domain\": \"e-commerce\",\n  \"tech_stack\": [\"python\", \"django\", \"react\"],\n  \"coding_standards\": \"PEP8 + ruff; TS strict.\",\n  \"nfrs\": [\"p95 < 200ms\", \"WCAG 2.2 AA\"],\n  \"constraints\": [\"no PII in logs\"],\n  \"glossary\": {\"SoR\": \"System of Record\"},\n  \"important_context\": \"Payment provider migration in flight.\"\n}", "options": { "raw": { "language": "json" } } },
             "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/profile/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "profile", ""] },
-            "description": "`PUT /api/projects/{id}/profile/` — create (**201**) or update (**200**) the 1:1 profile; each edit bumps `version`. Partial payloads are accepted (only supplied fields change). `project`/`version`/`id` are read-only."
+            "description": "`PUT /api/projects/{id}/profile/` — create (**201**) or update (**200**) the 1:1 profile; each edit bumps `version`. Partial payloads are accepted (only supplied fields change). `project`/`version`/`id` are read-only. A request that sends `description` must send non-blank text: a blank or whitespace-only description is refused with **400** `{\"description\": [\"A description is required — agents rely on it for every phase.\"]}`. A partial payload that omits `description` is not affected."
           },
           "response": []
         },
@@ -379,7 +379,7 @@
             "method": "GET",
             "header": [],
             "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/traceability/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "traceability", ""] },
-            "description": "`GET /api/projects/{id}/traceability/` — lineage graph: `{nodes, edges}`. Nodes are artifacts (with SoR pointer/url for deep-linking); edges are TraceEdges (`{from, to, rel}`)."
+            "description": "`GET /api/projects/{id}/traceability/` — lineage graph: `{nodes, edges}`. Nodes are artifacts (with SoR pointer/url for deep-linking); edges are TraceEdges (`{from, to, rel}`). Each node: `id, kind, phase, type, title, status, sor, external_ref, url, work_item, work_item_key, work_item_title`. The three `work_item*` fields name the work item whose run produced the artifact; they are `null`/`\"\"` for documents adopted during onboarding (no run)."
           },
           "response": []
         },
@@ -499,7 +499,7 @@
             "method": "GET",
             "header": [],
             "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/dashboard/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "dashboard", ""] },
-            "description": "`GET /api/projects/{id}/dashboard/` — `needs_me` (pending gates, clarifications, my runs) + `health` counters + `recent_publishes`, scoped to this project and the current user."
+            "description": "`GET /api/projects/{id}/dashboard/` — `needs_me` (pending gates, clarifications, my runs) + `health` counters + `recent_publishes`, scoped to this project and the current user. **Personalised:** `needs_me.gates` lists only gates the signed-in user may decide (admins see all); `needs_me.clarifications` lists pending questions only if the user is a member of the project; `needs_me.my_runs` are the user's own running / awaiting-gate runs. Lists are trimmed (20 / 20 / 10; gates and questions oldest first), but `needs_me.counts` (`gates, clarifications, my_runs`) are **uncapped** true totals. Gate, question and run rows each carry `work_item, work_item_key, work_item_title`; run rows also carry `started_s` (seconds since the run was created). `health.published_week` and `recent_publishes` go by `published_at` (when it was published), not the draft date. With no signed-in user every `needs_me` list is empty."
           },
           "response": []
         },
@@ -563,7 +563,7 @@
     },
     {
       "name": "Work Items",
-      "description": "The unit of work (per-WorkItem DAG). Create/list/retrieve/update, plus phase trigger, human takeover, and the lifecycle rail. List responses are enriched with card fields (`artifact_count`, `owner`, `needs`).",
+      "description": "The unit of work (per-WorkItem DAG). Create/list/retrieve/update, plus phase trigger, human takeover, and the lifecycle rail. List responses are enriched with card fields (`artifact_count`, `owner`, `needs`). (Also `current_phase`, `run_status`; see List Work Items.)",
       "item": [
         {
           "name": "List Work Items",
@@ -581,7 +581,7 @@
                 { "key": "parent", "value": "", "disabled": true }
               ]
             },
-            "description": "`GET /api/work-items/` — tenant-scoped list with card fields. Optional filters (Params tab): `project`, `state`, `type` (epic/story/task/defect), `parent`."
+            "description": "`GET /api/work-items/` — tenant-scoped list with card fields. Optional filters (Params tab): `project`, `state`, `type` (epic/story/task/defect), `parent`. Card fields on each row: `artifact_count, owner, needs, current_phase, run_status`. `needs` is `null` or `{clarification: true, label, yours}` / `{gate: true, label, yours}` — `yours` is true only when the signed-in user may answer that question (project member) or decide that gate (same rule as the decide endpoint). `current_phase` / `run_status` come from the item's latest run (`\"\"` when nothing has run)."
           },
           "response": []
         },
@@ -1098,7 +1098,7 @@
     },
     {
       "name": "Integrations (admin)",
-      "description": "Tenant-admin CRUD over per-capability connections. One connection per (tenant, capability). Secrets are **write-only** — accepted on create/update, never serialized back (responses expose `configured` only). **Requires a tenant-admin session.**",
+      "description": "Tenant-admin CRUD over per-capability connections. One connection per (tenant, capability). Secrets are **write-only** — accepted on create/update, never serialized back (responses expose `configured` only). **Requires a tenant-admin session.** Credential-free built-ins (`a11yai`, and `codeintel` since 2026-09-11) are provisioned automatically for every workspace and have no card on the Integrations screen.",
       "item": [
         {
           "name": "List Integrations",

@@ -34,7 +34,10 @@ class AtlassianDocStore:
             data = self._rest.request("GET", "/wiki/api/v2/spaces", query={"keys": space_key})
             results = (data or {}).get("results", [])
             if not results:
-                raise CapabilityError(f"Confluence space not found: {space_key!r}")
+                raise CapabilityError(
+                    f"There's no Confluence space called {space_key}. Check the space key "
+                    "in the connection settings."
+                )
             self._space_ids[space_key] = str(results[0]["id"])
         return self._space_ids[space_key]
 

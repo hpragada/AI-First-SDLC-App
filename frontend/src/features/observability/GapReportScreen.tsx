@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Assess, Banner, Breadcrumb, Button, Card, CardBody, Panel, Spinner, Table } from "../../components/ui";
+import { Assess, Breadcrumb, Button, Card, CardBody, Panel, Spinner, Table, WriteError } from "../../components/ui";
 import type { GapReport } from "../../types";
 import { useGapReport, useRunGapReport } from "./hooks";
 
@@ -93,9 +93,7 @@ function GapReportLive() {
       </div>
 
       {runGap.isError && (
-        <Banner variant="danger" title="Couldn't run the gap report">
-          {runGap.error instanceof Error ? runGap.error.message : "Unknown error"}
-        </Banner>
+        <WriteError title="Couldn't run the gap report" detail={runGap.error} />
       )}
 
       {!data || data.phases.length === 0 ? (
@@ -251,7 +249,7 @@ const RESUME_COPY: Record<GapReportView, { phase: string; body: string; cta: str
   },
   mature: {
     phase: "Task Breakdown",
-    body: "Plan tier is well-covered — fan out into task work items.",
+    body: "Planning is well covered — fan out into task work items.",
     cta: "Resume at Task Breakdown",
   },
 };

@@ -16,9 +16,10 @@ import {
   RowMenu,
   Select,
   Table,
+  writeErrorSentence,
 } from "../../components/ui";
 import type { BadgeVariant } from "../../components/ui";
-import { isTerminalState } from "../../types";
+import { isTerminalState, PLANNING_PHASES } from "../../types";
 import type { WorkItemCard, WorkItemState } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
 import { roleLabel } from "../identity/roles";
@@ -29,14 +30,28 @@ import { humanizeLabel, lifecyclePhaseColumns, phaseLabel, statusLabel } from ".
 // S-14 view states: board (default) · list · filtered (tasks only) · empty.
 export type BoardView = "board" | "list" | "filtered" | "empty";
 
+// Bugs S.No 117. An item nothing has run on yet has no phase, and the board dropped it into
+// whichever column happened to be FIRST — Ideation on the default board, Implementation once
+// filtered to Tasks — so brand-new work looked as if it were already under way, and the same item
+// changed column when the filter changed. It has a column of its own now.
+const BACKLOG_KEY = "backlog";
+const BACKLOG = { key: BACKLOG_KEY, label: "Backlog" };
+
 // Bugs.xlsx row 27.1: columns are the full lifecycle in SDLC order (from the catalog), not a
 // hardcoded four. The board scrolls horizontally, so the extra columns need no layout change.
-const PHASE_COLUMNS = lifecyclePhaseColumns();
+const PHASE_COLUMNS = [BACKLOG, ...lifecyclePhaseColumns()];
 
+// Keyed by the agent key, like every column above, so `barePhase` matches them. They were keyed
+// `implementation` and `review`, and a code-review run reduces to `code_review` — which matched
+// neither, so every task in review sat in Implementation. Found on the same line as S.No 117.
 const BUILD_COLUMNS = [
-  { key: "implementation", label: "Implementation" },
-  { key: "review", label: "Review" },
+  BACKLOG,
+  { key: "07_implementation", label: "Implementation" },
+  { key: "08_code_review", label: "Review" },
 ];
+
+// Where each phase sits in the lifecycle, so a column added for a phase lands in order.
+const PHASE_ORDER = new Map(PLANNING_PHASES.map((p, index) => [barePhase(p.key), index]));
 
 // Bugs S.No 140. This was a chain of ifs ending in `return <Badge variant="queued">Draft</Badge>`,
 // so FOUR of the six states rendered as "Draft" — an item in review, an item blocked, an item
@@ -69,6 +84,53 @@ function statusBadge(card: WorkItemCard) {
   return <Badge variant={badge.variant}>{badge.label}</Badge>;
 }
 
+// Bugs S.No 117 — what the phase a card sits in is DOING, in words, on the card: the team's
+// option B, a status pill (the badge the rest of the app already uses). Read off the same run the
+// card's column comes from, so the column and the pill can never describe different runs.
+//
+// Four markers, not three: a phase can FINISH and still be waiting for a person to approve it, and
+// calling that "Done" is the same kind of untruth as the bug being fixed.
+function phasePill(card: WorkItemCard) {
+  // Cancelled outranks everything, for the reason `statusBadge` gives.
+  if (card.state === "cancelled") return <Badge variant="cancelled">Cancelled</Badge>;
+  if (!card.current_phase) return <Badge variant="queued">Not started</Badge>;
+  // "Waiting for you" only when it really is yours (`needs.yours`, decided by the same rule as
+  // the Approve and Answer buttons). It used to say that to everyone, so a Designer read it on a
+  // build gate only a Tech Lead can decide — while their dashboard, which does ask, said nothing
+  // was waiting. Work that is someone else's still shows as waiting, in the quiet grey: the fact
+  // is true, the claim about WHO was not.
+  if (card.needs?.clarification) {
+    return card.needs.yours
+      ? <Badge variant="needs-answer">Waiting for you</Badge>
+      : <Badge variant="neutral">Waiting for an answer</Badge>;
+  }
+  if (card.needs?.gate) {
+    return card.needs.yours
+      ? <Badge variant="gate">Waiting for you</Badge>
+      : <Badge variant="neutral">Waiting for review</Badge>;
+  }
+  switch (card.run_status) {
+    case "pending":
+    case "running":
+      return <Badge variant="running">Running</Badge>;
+    case "awaiting_gate":
+      // The run says it is at a gate but no pending approval reached this card, so there is
+      // nobody to name: state the fact and claim nothing about whose it is.
+      return <Badge variant="neutral">Waiting for approval</Badge>;
+    case "approved":
+    case "completed":
+      return <Badge variant="done">Done</Badge>;
+    // The same reading Phases & Runs gives a rejected run.
+    case "failed":
+    case "rejected":
+      return <Badge variant="failed">Failed</Badge>;
+    default:
+      // An API too old to send the run's status, or a status with no marker of its own (a run
+      // parked waiting for its machine): the work item's own badge, rather than a guess.
+      return statusBadge(card);
+  }
+}
+
 // Human-readable work-item type ("story" → "Story"). One place so the board card and list agree.
 function typeLabel(type: string | undefined): string {
   if (!type) return "Item";
@@ -81,7 +143,7 @@ function WiCard({ card }: { card: WorkItemCard }) {
     <Link to={`/work-items/${card.id}`} className="wi-card">
       <div className="wi-card__top">
         <span className="wi-card__id">{card.key || card.id}</span>
-        {statusBadge(card)}
+        {phasePill(card)}
       </div>
       <div className="wi-card__title">{card.title || card.key || card.id}</div>
       <div className="wi-card__meta">
@@ -169,7 +231,7 @@ function CreateWorkItemDrawer({
         </Field>
         {createWorkItem.isError && (
           <p className="t-sm" style={{ color: "var(--danger)" }}>
-            {createWorkItem.error instanceof Error ? createWorkItem.error.message : "Couldn't create this work item."}
+            {writeErrorSentence(createWorkItem.error, "Couldn't create this work item.")}
           </p>
         )}
       </form>
@@ -265,23 +327,45 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
           ? "empty"
           : "board");
 
-  const columns = view === "filtered" ? BUILD_COLUMNS : PHASE_COLUMNS;
-  const byPhase = useMemo(() => {
-    const map = new Map<string, WorkItemCard[]>();
-    for (const col of columns) map.set(col.key, []);
+  const baseColumns = view === "filtered" ? BUILD_COLUMNS : PHASE_COLUMNS;
+  // A phase this view has no column for — a task in a later build phase on the Tasks view, say —
+  // gets a column of its own, in lifecycle order, named after the phase. Falling back to some
+  // other column would misstate where the item is, which is exactly what this bug looked like.
+  const columns = useMemo(() => {
+    const have = new Set(baseColumns.map((c) => barePhase(c.key)));
+    const extra = new Map<string, { key: string; label: string }>();
     for (const item of list) {
-      // Column = the item's CURRENT lifecycle phase (Bugs.xlsx row 50: the feature
-      // stream was wrongly used as the phase). No phase run yet → first column.
       const bare = barePhase(item.current_phase);
-      const key = columns.find((c) => barePhase(c.key) === bare)?.key ?? columns[0]?.key;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(item);
+      if (bare && !have.has(bare) && !extra.has(bare)) {
+        extra.set(bare, { key: item.current_phase as string, label: phaseLabel(item.current_phase) });
+      }
+    }
+    if (extra.size === 0) return baseColumns;
+    const order = (key: string) =>
+      key === BACKLOG_KEY ? -1 : PHASE_ORDER.get(barePhase(key)) ?? Number.MAX_SAFE_INTEGER;
+    return [...baseColumns, ...extra.values()].sort((a, b) => order(a.key) - order(b.key));
+  }, [baseColumns, list]);
+  const byPhase = useMemo(() => {
+    const map = new Map<string, WorkItemCard[]>(columns.map((col) => [col.key, []]));
+    for (const item of list) {
+      // Column = the item's CURRENT lifecycle phase (Bugs.xlsx row 50: the feature stream was
+      // wrongly used as the phase). Nothing has run on it yet → Backlog (S.No 117).
+      const bare = barePhase(item.current_phase);
+      const key = bare
+        ? columns.find((c) => c.key !== BACKLOG_KEY && barePhase(c.key) === bare)?.key
+        : BACKLOG_KEY;
+      map.get(key ?? BACKLOG_KEY)?.push(item);
     }
     return map;
   }, [list, columns]);
 
+  // Only the BOARD gets the fixed-height treatment: it is the view whose columns grow without
+  // limit (a 122-card Backlog made the page thousands of pixels tall and put the board's own
+  // horizontal scrollbar below the fold). The list and empty views scroll the page as before.
+  const boardShown = view !== "empty" && view !== "list";
+
   return (
-    <div className="canvas-pad">
+    <div className={boardShown ? "canvas-pad canvas-pad--board" : "canvas-pad"}>
       <div className="page-head">
         <div className="page-head__titles">
           <h1 className="t-h1">Work Items</h1>
@@ -306,9 +390,10 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          {/* Sized to the longest phase name rather than capped by eye: "Intelligent Context
+              Extraction" used to be cut in the closed box with no way to read it. */}
           <select
-            className="select"
-            style={{ maxWidth: "150px" }}
+            className="select select--fit"
             aria-label="Filter by phase"
             value={phaseFilter}
             onChange={(e) => setPhaseFilter(e.target.value)}
@@ -333,8 +418,7 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
             ))}
           </span>
           <select
-            className="select"
-            style={{ maxWidth: "160px" }}
+            className="select select--fit"
             aria-label="Filter by role"
             value={roleFilter}
             onChange={(e) => setRoleFilter(e.target.value)}
@@ -347,8 +431,7 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
             ))}
           </select>
           <select
-            className="select"
-            style={{ maxWidth: "150px" }}
+            className="select select--fit"
             aria-label="Filter by status"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}

@@ -292,5 +292,5 @@ def journey_for(tenant_id, project_id, test_ref: str, *, object_store=None) -> A
             return journey
     available = ", ".join(j.test_ref or j.title for j in found["journeys"]) or "none"
     raise JourneyError(
-        f"no walkable journey {test_ref!r} in this project — available: {available}"
+        f"No journey {test_ref} can be walked in this project. The ones that can: {available}."
     )

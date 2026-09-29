@@ -22,6 +22,9 @@ wrapper invents.
 from __future__ import annotations
 
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 _DOC_CONTENT_TYPE = "text/html"
 _ISSUE_CONTENT_TYPE = "text/plain"
@@ -507,13 +510,21 @@ def _read_jira(tenant_id, artifact, get_capability) -> tuple[str, str, str | Non
 
 
 def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
-                          get_capability=None, raw=False) -> dict | None:
+                          get_capability=None, raw=False, allow_empty=False) -> dict | None:
     """The S-29 preview payload for one artifact, or `None` when it doesn't exist / has
     no body to show at all (internal with no `s3_key` ever stored).
 
     `raw=True` skips the presentation layer and returns the stored body exactly as it is —
     what the "View raw" control on the preview screen asks for. The rendered payload sets
     `rendered: True` so the UI knows whether to offer that control at all.
+
+    `allow_empty=True` answers an internal artifact with no readable body with the normal
+    payload and an empty `body`, instead of `None` (Bugs S.No 218). The preview endpoint asks for
+    this: "there is no such document" and "the document exists but its body can't be read" are
+    different facts, and folding both into one 404 is why the screen showed a message offering
+    three explanations at once while the accurate one — "Preview unavailable" — was unreachable.
+    Every other caller keeps the old contract, so a publish still sees `None` and never pushes an
+    empty page.
     """
     from apps.registry.models import Artifact
     from apps.tenancy.context import tenant_context
@@ -542,8 +553,18 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
                                states[0])
                 body, content_type = default["body"], default["content_type"]
             if not body:
-                return None
-            if not raw:
+                if not allow_empty:
+                    return None
+                # A platform-internal artifact with nothing readable behind it is a defect on
+                # our side — registered without a body, or pointing at a stored object that is
+                # gone — not something the person looking at it can act on. So the detail goes
+                # here, where a developer will find it, and the screen says it in plain words.
+                logger.warning(
+                    "Artifact %s (tenant %s) is internal but has no readable body "
+                    "(s3_key=%r).", artifact.id, tenant_id, artifact.s3_key,
+                )
+                body, content_type = "", ""
+            elif not raw:
                 # Preview ONLY — see the note above `_render_sbom`. Publish and the agent-facing
                 # read both go through their own functions and still get the raw body.
                 body, content_type, rendered, render_summary = _present(
@@ -563,7 +584,26 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
         export_target = export_target_for(
             getattr(artifact.project, "profile", None), artifact.phase)
 
+        # Screen Words group 2: the publish screen's "Open its gate" used to point at the whole
+        # Gates list, which is no help on a project with thirty open gates. The gate a document
+        # is waiting at is the PENDING approval on the run that produced it. None when there is
+        # no such gate (a draft still being written), and the screen then offers no link rather
+        # than a dead one.
+        gate_approval_id = None
+        if artifact.run_id:
+            from apps.gates.models import Approval
+
+            pending = (
+                Approval.objects
+                .filter(tenant_id=tenant_id, run_id=artifact.run_id, decision="pending")
+                .order_by("-created_at")
+                .values_list("id", flat=True)
+                .first()
+            )
+            gate_approval_id = str(pending) if pending else None
+
         return {
+            "gate_approval_id": gate_approval_id,
             "body": body, "content_type": content_type, "status": artifact.status,
             "version": artifact.version,
             "title": artifact.title,  # human name (S.No 120); blank → UI humanizes type

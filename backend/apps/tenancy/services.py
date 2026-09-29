@@ -463,7 +463,9 @@ def require_project_write_role(*, tenant_id, project_id, user_id, what: str) -> 
     either break the ordinary journey or leave the profile open to anyone with a login.
 
     Raises DRF's `PermissionDenied` (403) so callers need no try/except; `what` completes the
-    sentence "You need … to <what>."
+    sentence "Only a tech lead or an admin on this project can <what>." The screen shows that
+    sentence to the person verbatim, so it names the roles in words — it used to say `tech_lead`,
+    which is the platform's key for the role, not the client's name for it.
     """
     from rest_framework.exceptions import PermissionDenied
 
@@ -476,4 +478,4 @@ def require_project_write_role(*, tenant_id, project_id, user_id, what: str) -> 
         id=user_id, tenant_id=tenant_id, is_tenant_admin=True
     ).exists():
         return
-    raise PermissionDenied(f"You need the tech_lead or admin role on this project to {what}.")
+    raise PermissionDenied(f"Only a tech lead or an admin on this project can {what}.")

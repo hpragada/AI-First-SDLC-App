@@ -262,7 +262,7 @@ Each business rule must reference the authority that defines it: legal requireme
 - Compliance frameworks: GDPR, HIPAA, SOC 2 Type II, PCI-DSS — specify which apply and what they mandate
 
 #### 6.4 Usability (Interaction Capability per ISO 25010:2023)
-- Accessibility standard: WCAG 2.1 Level AA (minimum for public-facing products); AAA if regulated
+- Accessibility standard: WCAG 2.2 Level AA (minimum for public-facing products); AAA if regulated
 - Browser/device support matrix: list explicitly (e.g., Chrome 120+, Safari 17+, iOS 16+, Android 12+)
 - Localization/i18n: languages supported, RTL support if applicable
 - Time to first value: target for a new user to complete their core job (e.g., "< 10 minutes from sign-up to first completed task")

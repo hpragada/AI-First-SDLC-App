@@ -85,6 +85,11 @@ export interface WorkItem {
     url?: string;
     // The Task Breakdown agent's draft repo suggestion — the reviewer confirms/overrides it.
     repo_assignment?: RepoAssignment;
+    // `test_case` items: the pointer to the artifact that holds the case itself. The steps,
+    // preconditions and test data live THERE, not on the work item — materialize_test_cases
+    // copies the title and this pointer and nothing else.
+    test_case_artifact_id?: string;
+    tc_id?: string;
   } | null;
 }
 
@@ -270,6 +275,13 @@ export interface TraceNode {
   sor: string;
   external_ref: Record<string, unknown> | null;
   url: string | null; // deep-link to the live SoR (Confluence page / Jira issue)
+  // Which work item this document came out of, so the map can follow one item's chain (P3).
+  // Null/blank for documents adopted during brownfield onboarding: they were never produced by
+  // a run, so they belong to no work item — the Highlight filter offers them as a group of
+  // their own rather than leaving them unreachable.
+  work_item?: string | null;
+  work_item_key?: string;
+  work_item_title?: string;
 }
 
 export interface TraceGraphEdge {
@@ -455,14 +467,19 @@ export interface CreateProjectRequest {
   repo_topology: "single" | "multi";
 }
 
-// Integrations grid + connect drawer (S-11/S-12, 4.7-T6).
+// Integrations grid + connect drawer (S-11/S-12, 4.7-T6). The capabilities a person connects.
+// Code intelligence is not one of them (N1): it needs no connection, so it is provisioned
+// automatically like accessibility checking, and neither appears here.
 export type Capability =
   | "docstore"
   | "tasktracker"
   | "designsource"
   | "codehost"
-  | "testmgmt"
-  | "codeintel";
+  | "testmgmt";
+
+// A project's repository topology as the platform computes it from the repository count:
+// 0–1 single, 2 split, 3+ multi (`apps/projects/repos.py`). Never recomputed on screen (S.No 212).
+export type RepoTopology = "single" | "split" | "multi";
 
 export interface Integration {
   id: string;
@@ -554,10 +571,19 @@ export interface WorkItemCard extends WorkItem {
   artifact_count?: number;
   owner?: string;
   parent?: string | null;
-  needs?: { clarification?: boolean; gate?: boolean; label?: string };
+  // `yours` answers "may the person looking act on this?" — the gate's required role (or admin)
+  // for a gate, project membership for a question, decided by the same rules as the Approve and
+  // Answer buttons. Without it the board called every pending gate "Waiting for you", including
+  // gates the viewer is refused on. Absent from an API too old to send it, which reads as
+  // "not known to be yours" and keeps the neutral wording.
+  needs?: { clarification?: boolean; gate?: boolean; label?: string; yours?: boolean };
   // The item's current lifecycle phase (latest run's agent key, e.g. "03_prd");
   // empty when no phase has run yet. Bugs.xlsx rows 49/50.
   current_phase?: string;
+  // That same run's status ("running", "awaiting_gate", "completed", "failed", …), so the board
+  // can say what the phase is doing (Bugs S.No 117). Empty when nothing has run; absent from an
+  // API too old to send it.
+  run_status?: string;
 }
 
 export type LifecycleNodeState =
@@ -868,6 +894,10 @@ export interface ArtifactPreview {
   phase?: string;
   artifact_type?: string;
   export_target?: string | null;
+  // The PENDING gate on the run that produced this document, so "Open its gate" goes to that
+  // gate instead of the whole list (Screen Words group 2). Null when there is no open gate —
+  // the screen then shows no link rather than one that goes nowhere.
+  gate_approval_id?: string | null;
   // Multi-state artifacts (per-screen wireframes) carry one self-contained HTML document per
   // UI state; the preview renders them behind a state switcher. Empty for single-body ones.
   states?: ArtifactState[];
@@ -962,6 +992,11 @@ export interface DashboardGateItem {
   gate: string;
   work_item: string;
   role: string;
+  // The work item's NUMBER and TITLE, so a queue row can name it the way the rest of the product
+  // does instead of printing eight characters of an internal id (P2). Optional: a response from
+  // an older API has neither, and the row falls back to its title-less shape.
+  work_item_key?: string;
+  work_item_title?: string;
 }
 
 export interface DashboardClarificationItem {
@@ -969,6 +1004,8 @@ export interface DashboardClarificationItem {
   work_item: string;
   question: string;
   waiting_s: number;
+  work_item_key?: string;
+  work_item_title?: string;
 }
 
 export interface DashboardRunItem {
@@ -976,13 +1013,22 @@ export interface DashboardRunItem {
   phase: string;
   work_item: string;
   status: string;
+  work_item_key?: string;
+  work_item_title?: string;
+  // How long the run has been going, so the row says that rather than reprinting an id.
+  started_s?: number;
 }
 
 export interface DashboardRollup {
   needs_me: {
+    // Filtered to the person reading them (Bugs S.No 222), and trimmed — gates and questions to
+    // 20, runs to 10.
     gates: DashboardGateItem[];
     clarifications: DashboardClarificationItem[];
     my_runs: DashboardRunItem[];
+    // The true totals behind those lists, for the tiles and the bell. Optional so a response from
+    // an older API still renders, from the list lengths.
+    counts?: { gates: number; clarifications: number; my_runs: number };
   };
   health: {
     work_items: number;

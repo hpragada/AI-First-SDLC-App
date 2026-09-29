@@ -78,6 +78,21 @@ class ReviewContractError(RuntimeError):
     the merge gate is never opened on an unreviewed downgrade (Bugs S.No 114)."""
 
 
+class ReviewUnavailableError(RuntimeError):
+    """The companion reported the review as FAILED — the engine died before posting a verdict,
+    so there is no review at all (not a review with nothing to say).
+
+    Separate from `ReviewContractError` on purpose. That one means "a review happened and its
+    verdict would not parse"; this one means "no review happened". Both fail closed, but only
+    this one is worth parking for a human to Resume once the engine is available again, and
+    conflating them would change the S.No 114 path's retry behaviour.
+
+    A review that merely TIMED OUT is deliberately NOT this: no report is posted at all, the
+    body stays absent, and `poll_review_body` keeps returning None → zero findings with the
+    human merge gate still standing (Bugs S.No 110). Only an explicit `failed` status lands
+    here."""
+
+
 def _normalize_severity(value) -> str | None:
     return _SEVERITY_ALIASES.get(str(value or "").strip().lower())
 
@@ -435,6 +450,12 @@ def dispatch_review_task(inp, *, manifest: str, agent_body: str, model: str = ""
                               "enrollment_id": getattr(inp, "enrollment_id", None)}
         outputs = dict(run.outputs or {})
         outputs.pop("review_body", None)
+        # Clear the PRIOR cycle's outcome with it. These are read to decide whether a review
+        # ran at all, so leaving a stale `failed` behind would make every later cycle — the
+        # re-review after remediation, and the Resume after a parked engine failure — raise on
+        # a review that actually succeeded, parking the run in a loop it could never leave.
+        outputs.pop("review_status", None)
+        outputs.pop("review_error", None)
         run.inputs, run.outputs = inputs, outputs
         run.save(update_fields=["inputs", "outputs", "updated_at"])
         tools.log_event(inp.tenant_id, "orchestrator", "review.dispatched", "run", inp.run_id, {})
@@ -444,6 +465,20 @@ def _read_review_body(inp) -> str | None:
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
         return (run.outputs or {}).get("review_body")
+
+
+def _read_review_failure(inp) -> str | None:
+    """The recorded cause when the companion reported the review as FAILED, else None.
+
+    Returns a non-empty reason even when the companion sent no message, so a caller can always
+    distinguish "reported failed" from "reported nothing" — an empty string would read as the
+    latter."""
+    with tenant_context(inp.tenant_id):
+        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+        outputs = run.outputs or {}
+    if outputs.get("review_status") != "failed":
+        return None
+    return (outputs.get("review_error") or "").strip() or "the companion reported no reason"
 
 
 def poll_review_body(inp, *, sleep, poll_interval: float, timeout: float) -> str | None:
@@ -470,14 +505,32 @@ def poll_review_body(inp, *, sleep, poll_interval: float, timeout: float) -> str
         waited += poll_interval
 
 
-def record_review_report(*, tenant_id, run_id, body, status="ok") -> dict:
-    """The companion posts its 08 verdict here; the provider's poll picks it up + parses it."""
+def record_review_report(*, tenant_id, run_id, body, status="ok", message="") -> dict:
+    """The companion posts its 08 verdict here; the provider's poll picks it up + parses it.
+
+    `message` is the companion's diagnostic for a report that is NOT ok — the engine's exit
+    reason, the stderr tail, whatever `_run_engine_phase` caught. It used to be dropped on the
+    floor here, which is why a failed review left the platform with a `failed` status, an empty
+    body, and no recorded cause anywhere (the only surviving copy was the companion's local
+    engine log). It is scrubbed of NUL bytes for the same reason the dispatch payload is —
+    Postgres refuses them in a json column and the write would park the run instead."""
     with tenant_context(tenant_id):
         run = Run.objects.get(id=run_id, tenant_id=tenant_id)
-        run.outputs = {**(run.outputs or {}), "review_body": body or "", "review_status": status}
+        error = scrub_nul(message or "")
+        run.outputs = {**(run.outputs or {}), "review_body": body or "",
+                       "review_status": status, "review_error": error}
         run.save(update_fields=["outputs", "updated_at"])
-        tools.log_event(tenant_id, "companion", "review.reported", "run", str(run_id),
-                        {"status": status})
+        payload = {"status": status}
+        if status == "failed":
+            # The run console prints this event as a line; it used to print the engine's raw
+            # output ("Command failed with exit code 1 …"). The line gets the cause in words,
+            # the raw text is kept under `technical` for the ledger (run-console fix 2026-09-21).
+            from .build_activities import describe_build_failure
+
+            payload["reason"] = describe_build_failure(error, subject="review",
+                                                       parked=True).cause
+            payload["technical"] = error[:500]
+        tools.log_event(tenant_id, "companion", "review.reported", "run", str(run_id), payload)
     return {"run_id": str(run_id), "recorded": True}
 
 
@@ -514,6 +567,14 @@ class CompanionReviewProvider:
                           timeout=timeout)
         if body is None:
             return []  # review timed out → no findings; human merge gate still applies (S.No 110)
+        # A FAILED report is not a verdict. The companion posts `{"status": "failed"}` with no
+        # body when the engine dies mid-review, and `body or ""` stored that as an empty string —
+        # which is not None, so the poll accepted it, `parse_and_guard("")` found nothing to
+        # block on, and the merge gate opened over an artifact reading "No findings were raised
+        # in this review cycle." A review that never ran must never read as a clean one.
+        failure = _read_review_failure(inp)
+        if failure is not None:
+            raise ReviewUnavailableError(f"code review did not complete: {failure}")
         return parse_and_guard(
             body, tenant_id=inp.tenant_id, run_id=inp.run_id,
             acceptance_criteria=extract_acceptance_criteria(

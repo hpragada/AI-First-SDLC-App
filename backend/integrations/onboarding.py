@@ -367,7 +367,7 @@ def adopt_source_document(*, tenant_id, source_document_id, user_id, target_type
 
     if target_type is not None and target_type not in ADOPTABLE_ARTIFACT_TYPES:
         raise OnboardingError(
-            f"invalid target_type '{target_type}'; expected one of {ADOPTABLE_ARTIFACT_TYPES}"
+            "That isn't a document type the platform can adopt. Choose one from the list."
         )
 
     with tenant_context(tenant_id):
@@ -384,7 +384,13 @@ def adopt_source_document(*, tenant_id, source_document_id, user_id, target_type
                 target_type=target_type,
             )
         if src.status != SourceDocument.Status.EXTRACTED:
-            raise OnboardingError(f"not ready for adoption (status={src.status})")
+            # Screen Words group 5. "(status=extracting)" put the stored state in brackets.
+            if src.status == "adopted":
+                raise OnboardingError("This document has already been adopted.")
+            raise OnboardingError(
+                "This document isn't ready to adopt yet — it is still being read, or "
+                "reading it failed. Wait for it to finish, or upload it again."
+            )
         # Adoption is a review gate: the product_owner decides — OR an admin who can approve
         # any gate (project-admin = Membership(role="admin"), or tenant-admin =
         # User.is_tenant_admin), mirroring decide_gate's role check (P4.7-T4).
@@ -397,8 +403,14 @@ def adopt_source_document(*, tenant_id, source_document_id, user_id, target_type
                 id=user_id, tenant_id=tenant_id, is_tenant_admin=True
             ).exists()
         if not has_role:
+            # Screen Words group 3: named role, no internal user id. The check above accepts a
+            # project admin and a workspace admin as well, so the sentence says so — it used to
+            # name only `product_owner` and so was wrong about who could help.
+            from apps.labels import role_label
+
             raise OnboardingRoleError(
-                f"user {user_id} lacks role 'product_owner' for this project"
+                f"Only the {role_label('product_owner')} on this project, or an admin, "
+                "can adopt documents."
             )
 
     # Documents uploaded before artifacts moved to adopt-time already have their draft artifact:

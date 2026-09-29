@@ -1,13 +1,13 @@
 ﻿import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Banner, EmptyState, ErrorState, Panel, Table } from "../../components/ui";
+import { sorChipClass, sorGlyph, sorLabel } from "../../labels";
 import { isPhaseReport } from "../../types";
 import { phaseLabel, artifactLabel } from "../lifecycle/phases";
-import { artifactStatusBadge, statusLabel } from "./artifactStatus";
+import { artifactStatusBadge, artifactStatusLabel } from "./artifactStatus";
 import { useArtifacts } from "./hooks";
-import { useParamState } from "../../urlState";
 
 // S-28 view states: populated · internal-only (no external link) · empty.
 export type ArtifactsView = "populated" | "internal-only" | "empty";
@@ -21,10 +21,17 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
   // not the whole registry. The scope is sent to the server rather than filtered in the browser
   // — the registry is paged and unbounded, so filtering client-side would search only what
   // happened to be loaded while appearing to search everything.
-  const [runScope] = useParamState("run");
-  const [phaseScope] = useParamState("phase");
-  const [typeScope] = useParamState("type");
-  const [workItemScope] = useParamState("work_item");
+  //
+  // Read straight from the address, every render. "Show the whole registry" is a link to plain
+  // `/artifacts`, and it did nothing (QA, 11 Sep): the scope came through `useParamState`, which is
+  // built for a list's SELECTION and deliberately keeps its last value when the parameter leaves
+  // the URL — so the address lost the scope and the screen kept it. A scope is not a selection:
+  // nobody picks one on this screen, it only ever arrives in a link, so the URL is its only source.
+  const [params] = useSearchParams();
+  const runScope = params.get("run") ?? "";
+  const phaseScope = params.get("phase") ?? "";
+  const typeScope = params.get("type") ?? "";
+  const workItemScope = params.get("work_item") ?? "";
   const scoped = Boolean(runScope || phaseScope || typeScope || workItemScope);
 
   const artifacts = useArtifacts({
@@ -149,9 +156,10 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            {/* Each filter is as wide as the choice it shows (see `.select--fit`): the fixed
+                widths here cut "Waiting for approval" and the longer phase names. */}
             <select
-              className="select"
-              style={{ maxWidth: "170px" }}
+              className="select select--fit"
               aria-label="Filter by phase"
               value={phase}
               onChange={(e) => setPhase(e.target.value)}
@@ -164,8 +172,7 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
               ))}
             </select>
             <select
-              className="select"
-              style={{ maxWidth: "170px" }}
+              className="select select--fit"
               aria-label="Filter by type"
               value={type}
               onChange={(e) => setType(e.target.value)}
@@ -178,16 +185,17 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
               ))}
             </select>
             <select
-              className="select"
-              style={{ maxWidth: "160px" }}
+              className="select select--fit"
               aria-label="Filter by status"
               value={status}
               onChange={(e) => setStatus(e.target.value)}
             >
               <option value="">Status: All</option>
+              {/* The same words as the badges in the list (S.No 218) — the filter used to offer
+                  "Staged" for the rows the list calls "Waiting for approval". */}
               {statusOptions.map((s) => (
                 <option key={s} value={s}>
-                  {statusLabel(s)}
+                  {artifactStatusLabel(s)}
                 </option>
               ))}
             </select>
@@ -217,8 +225,10 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
                         <Badge variant="info-hue" key="s">
                           Draft
                         </Badge>,
+                        // The gallery shows what the live list shows (S.No 218): it had a wording of
+                        // its own that no real row ever carried.
                         <span className="t-xs u-muted" key="sor">
-                          Platform only — not published
+                          Platform only
                         </span>,
                         <Link to="/artifacts/internal-1" className="btn btn--ghost btn--sm" key="a">
                           Preview
@@ -246,10 +256,13 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
                       ) : (
                         artifactStatusBadge(artifact.status)
                       ),
+                      // Screen Words group 4. Every row wore the Confluence "C" and printed the
+                      // stored key, so a file in GitHub and a page in Confluence were drawn
+                      // identically and neither was named in words a client uses.
                       artifact.sor ? (
-                        <span className="sor-chip sor-chip--confluence" key="sor">
-                          <span className="sor-chip__glyph">C</span>
-                          {artifact.sor}
+                        <span className={sorChipClass(artifact.sor)} key="sor">
+                          <span className="sor-chip__glyph">{sorGlyph(artifact.sor)}</span>
+                          {sorLabel(artifact.sor)}
                         </span>
                       ) : (
                         <span className="t-xs u-muted" key="sor">
