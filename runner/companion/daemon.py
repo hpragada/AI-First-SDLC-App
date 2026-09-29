@@ -331,11 +331,18 @@ class CompanionDaemon:
         """
         # `backend/` on the path BEFORE anything downstream reaches for it. `run_baseline_audit`
         # imports `apps.a11y.capture.MAX_SCREENS` lazily — one definition of the batch bound
-        # rather than a second copy here — and on this path nothing had put it there. The three
-        # existing callers are the two `__main__` subcommands and the engine driver factory, and
+        # rather than a second copy here — and on this path nothing had put it there. The other
+        # three callers are the two `__main__` subcommands and the engine driver factory, and
         # a companion that only ever runs audits reaches none of them: it died on the import with
         # `No module named 'apps'`. Invisible until now, because `serve` could not claim an audit
         # at all until the audit it is handed started life as `pending`.
+        #
+        # This call is the FOURTH, and it counts: the Connect Machine redesign deletes
+        # `ensure_backend_importable()` entirely, and the spec undercounted the call sites as three
+        # because this comment said "the three existing callers" while itself sitting above a
+        # fourth one. A leftover bootstrap still works on any machine that has a platform checkout,
+        # so it fails only on a clean machine — the exact machine the redesign is for. See
+        # docs/CONNECT_MACHINE_REDESIGN_SPEC.md §2.1 for the full inventory.
         ensure_backend_importable()
 
         from runner.companion.a11yaudit import run_baseline_audit

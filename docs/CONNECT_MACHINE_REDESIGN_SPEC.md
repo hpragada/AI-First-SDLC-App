@@ -1,6 +1,11 @@
 # CONNECT MACHINE REDESIGN SPEC — from nine manual steps to two clicks and one sign-in
 
-**Status:** Specified, not built. Parked by team decision (2026-09-04) for implementation later.
+**Status:** **Committed work — no longer a proposal.** The client issued a requirement to upgrade the
+connect-machine process on **2026-09-29**, which supersedes the earlier "specified, not built, parked
+by team decision (2026-09-04)" status this line carried.
+**Accuracy:** corrected against the code on **2026-09-29** (§13 records what changed and what was
+re-verified). Two items in that pass need a team decision and are **still open** — the tenant-isolation
+shape of the pairing record, and the audit of enrollments that already exist. Both are flagged in place.
 **Owns:** Bugs.xlsx **S.No 35** (Connect machine — enhancement) and **S.No 138** (two developers
 share one enrollment), which the team folded into it.
 **Unblocks:** the anonymous `POST /api/runners/` deliberately left open during the P1 batch — see
@@ -68,6 +73,23 @@ So "the user has to be in the backend repository in the CLI" is not a documentat
 UX oversight. **It is a structural property of how the companion is built**, and no amount of
 installer polish removes it. Layer 1 exists to remove it.
 
+> **The exact inventory Layer 1 has to delete — verified 2026-09-29. Work from this list, not from
+> memory.** There are **two** bootstraps and **four** call sites, not one and three:
+>
+> | | Where |
+> |---|---|
+> | Bootstrap 1 | `runner/companion/daemon.py:223-231` — `ensure_backend_importable()` |
+> | Bootstrap 2 | `runner/companion/codeintel_mcp.py:28-33` — `_ensure_backend_importable()`, a second copy that runs in a **separate process**, so deleting only the first leaves the companion still needing a platform checkout |
+> | Call site 1 | `daemon.py:236` — the engine driver factory |
+> | Call site 2 | `daemon.py:339` — the accessibility-audit path |
+> | Call site 3 | `runner/companion/__main__.py:86` — the `run` subcommand |
+> | Call site 4 | `runner/companion/__main__.py:109` — the `audit` subcommand |
+>
+> **Why the exact count is load-bearing.** A leftover bootstrap still *works* on any machine that
+> has a platform checkout — which is every machine we develop and test on. So the tests pass, the
+> demo passes, and the layer fails only on a clean machine: precisely the machine the client will
+> try it on. A miscount here is not a typo, it is how this layer ships silently broken.
+
 ### 2.2 The coupling is shallow and bounded — extraction is feasible
 
 The companion imports exactly **four** things from the platform backend, and that is the whole list:
@@ -77,13 +99,18 @@ The companion imports exactly **four** things from the platform backend, and tha
 | `drivers.claude_driver.ClaudeDriver` | Running the engine | `daemon.py:236-239`, `__main__.py:87` |
 | `apps.a11y.capture` (`parse_capture`, `summarize`, `MAX_SCREENS`, `CaptureError`) | Parsing accessibility captures | `a11ycapture.py:55,72`, `a11yaudit.py:132,213` |
 | `apps.quality.junit` (`parse_junit`, `summarize`) | Parsing JUnit results | `testresults.py:53,67` |
-| `integrations.codeintel.builtin.BuiltinCodeIntel` | The built-in code analyzer | `codeintel_mcp.py:38`, `daemon.py:693` |
+| `integrations.codeintel.builtin.BuiltinCodeIntel` | The built-in code analyzer | `codeintel_mcp.py:38`, `daemon.py:698` |
 
 > **Correction (2026-09-07).** This was recorded as **three** imports when the spec was first
 > written. `integrations.codeintel.builtin` arrived with brownfield code intelligence and is the
-> fourth — it also has its own `sys.path` bootstrap in `codeintel_mcp.py:29-33`, a second copy of
+> fourth — it also has its own `sys.path` bootstrap in `codeintel_mcp.py:28-33`, a second copy of
 > the one in §2.1, so layer 1 has two of them to delete rather than one. The conclusion below is
 > unchanged; the count was not.
+
+> **Re-verified 2026-09-29.** Swept the whole companion for imports of platform code again. It is
+> still **exactly these four** and nothing else, so §2.2's conclusion — that extraction is bounded
+> work rather than a rewrite — stands unchanged. Only the call-site line numbers moved (see the
+> table above and §2.1's inventory).
 
 **All four are Django-free at runtime** — verified by reading their import blocks. Two caveats an
 implementer needs, neither of which changes the answer:
@@ -156,7 +183,7 @@ alone and is worth shipping alone.**
   the companion import. They are Django-free at runtime today; a test must assert they stay that
   way, or this layer silently un-does itself. Settle `claude_driver`'s two type-only model
   references first (§2.2) — it is the only part of the move that needs a decision.
-- Delete **both** `sys.path` bootstraps (`daemon.py:223-231` and `codeintel_mcp.py:29-33`) rather
+- Delete **both** `sys.path` bootstraps (`daemon.py:223-231` and `codeintel_mcp.py:28-33`) rather
   than leaving either as a fallback. A fallback that still works is a path that still gets used,
   and the whole point of this layer is that a platform checkout stops being a prerequisite.
 - Add `pyproject.toml` with a console entry point, so the invocation stops being
@@ -164,8 +191,10 @@ alone and is worth shipping alone.**
 - Give the companion **its own dependency list** — approximately `claude-agent-sdk`, `mcp`,
   `anyio`, `pydantic`. **Not** Django, psycopg, Temporal, boto3, PyMuPDF or the PDF/Office
   toolchain. A developer laptop should not acquire a database driver to run a build.
-- Delete `ensure_backend_importable()` and its three call sites.
-
+- Delete `ensure_backend_importable()` and **all four** of its call sites — `daemon.py:236`,
+  `daemon.py:339`, `__main__.py:86` and `__main__.py:109`. *(Corrected 2026-09-29: this line said
+  **three**. The fourth, `daemon.py:339`, arrived with the accessibility-audit path. See §2.1 for
+  the full inventory and for why an undercount here ships the layer silently broken.)*
 **Kills steps 2 and 3.** **Closes the structural cause of S.No 35's original complaint.**
 
 ### Layer 2 — A real installer
@@ -223,7 +252,7 @@ necessity (§2.3).
 - Register as a background service (Windows) or login item / launch agent (macOS/Linux).
 - Auto-update, so a companion never falls behind the platform it talks to.
 - Status, last-seen and **Disconnect** live in the platform UI. `RunnerEnrollment.last_seen`
-  (`backend/apps/runs/models.py:71`) already backs the status display.
+  (`backend/apps/runs/models.py:70`) already backs the status display.
 
 ---
 
@@ -239,7 +268,7 @@ necessity (§2.3).
 | 4 | **`POST /api/runners/` accepts an anonymous caller** | Layer 3: pairing is authenticated by the browser session, so the anonymous path can be **removed** |
 
 Finding 4 is the one with a debt attached. It was **deliberately left open** in the P1 batch —
-`RunnerEnrollmentView.get_permissions` (`backend/api/runner_views.py:220-240`) carries a long
+`RunnerEnrollmentView.get_permissions` (`backend/api/runner_views.py:227-249`) carries a long
 comment explaining that gating it would break the documented CLI onboarding, which sends only an
 `X-Tenant-ID` header and has no session to present. **This spec is what allows that comment to be
 deleted.** Until then, the hole stays open by design.
@@ -263,7 +292,7 @@ What is **not** negotiable is the security model in §7.
 
 ### Model
 
-`RunnerEnrollment` (`backend/apps/runs/models.py:49-75`) already carries `project`, `developer`,
+`RunnerEnrollment` (`backend/apps/runs/models.py:49-71`) already carries `project`, `developer`,
 `label`, `enroll_token_hash`, `repos`, `status` (`active`/`revoked`) and `last_seen`. It stores a
 **hash, never the secret** — that seam is correct and stays.
 
@@ -273,10 +302,27 @@ Additions:
 - **a pairing request record** — code hash, requested machine label, created-at, expiry,
   single-use marker, and the resulting enrollment once approved
 
+**This is two migrations, and the spec previously left that implicit. Naming them (added 2026-09-29):**
+
+| # | Migration | Discipline it must follow |
+|---|---|---|
+| 1 | Add `expires_at` to `runs_runnerenrollment` — a table that **already holds live rows** | ADR 0003, below. Nullable, or a database-level default. Non-negotiable. |
+| 2 | Create the pairing-request table | Non-negotiable #6: `tenant_id` + an RLS policy in its **first** migration. Mirror `backend/apps/runs/migrations/0004_runnerenrollment_rls.py`. **But see the open question below — this table cannot be tenant-stamped at creation the way every other table is, and that shape is not yet decided.** |
+
 > **Migration discipline (ADR 0003):** any additive column on a table that already has rows must
 > be **nullable** or carry a **database-level default**. Branches share one Postgres, and a branch
 > that does not know a `NOT NULL` column with no default cannot insert. This bit the team once
-> already on `projects/0012`.
+> already on `projects/0012`. Migration 1 above is exactly that case.
+
+> **OPEN — needs a team decision before migration 2 is written (raised 2026-09-29).**
+> `POST /api/runners/pair/request` is called by a freshly installed companion that has **no
+> credential and knows no workspace**, so there is no `tenant_id` to stamp on the row at the moment
+> it is created. The row only acquires one when a signed-in human clicks Approve. This is the single
+> place in this plan where non-negotiable #6 does not apply cleanly, and it must be **designed
+> deliberately, not discovered mid-implementation** — the failure mode is someone under time
+> pressure quietly skipping the policy, which is a breach. The question to answer: how is an
+> unapproved pairing row protected before it has an owner, and how does it become tenant-scoped at
+> approval? **Do not start migration 2 until this is answered.**
 
 ### Endpoints
 
@@ -360,10 +406,32 @@ that cannot be compressed by working harder.
 
 - **Machines already enrolled must not be stranded mid-sprint.** Existing tokens keep working until
   their developer re-pairs; the platform shows a prompt to re-pair rather than cutting them off.
+- **We do not currently know who owns the machines already enrolled, and this spec did not ask.**
+  *(Gap found 2026-09-29.)* Pairing issues a credential **to a person**. But `RunnerEnrollment.developer`
+  is **nullable** (`backend/apps/runs/models.py:63`), so live rows may name **nobody**, and S.No 138
+  records one row (`32db7f5f`) shared by **two** people. You cannot migrate a machine to "its
+  developer" when the record does not have one. A run attributed to the wrong person is bad; a
+  developer whose companion silently stops claiming work mid-sprint is worse.
+  **Pre-work, before the pairing model is designed:** a read-only count, per workspace, of active
+  enrollments, how many have no developer, and how many are shared. No schema change, no design
+  decision, no risk. **Team go-ahead pending — this is not yet done.**
+- **Retire the multi-enrollment selection logic** at `backend/orchestration/trigger.py:106-131`,
+  which picks between a developer's several active enrollments (online first, then ever-seen, then
+  newest). *(Added 2026-09-29 — the spec did not know this existed.)* It was written for Bugs
+  S.No 84 and exists **only because duplicates are normal today**: every Connect Machine visit mints
+  another row. Pairing makes one machine mean one credential, which removes the condition it was
+  written for, and leaving it in place means paying for a workaround to a problem we just fixed —
+  it can also pick a stale row when there is now only ever one right one. **Retire it in this same
+  removal slice, never earlier:** old tokens are still in the field until `POST /api/runners/` is
+  gone, and pulling it ahead of that breaks dispatch for every machine still on one.
 - **`POST /api/runners/` is removed only after** the pairing path is live and the documented
   onboarding has been rewritten. Removing it earlier reproduces exactly the breakage that caused it
   to be held open in the first place.
 - **`runner/README.md` becomes wrong the day this ships.** Rewriting it is part of the work, not a
+  follow-up.
+- **`docs/qa/suites/TS-05-companion.md` is in the same position — and is already wrong today**, ahead
+  of anything this spec ships. *(Added 2026-09-29.)* Re-baselined in the same pass as this correction;
+  it will need rewriting again when pairing lands, and that rewrite is part of the work, not a
   follow-up.
 
 ---
@@ -392,8 +460,59 @@ Recorded rather than guessed. Each changes the cost.
 - **Server-side execution of the engine.** It would eliminate setup entirely and change the cost
   model from a subscription to metered API usage (§2.3). A separate decision, not this spec.
 - **Multi-project enrollment from one credential.** The current model binds one enrollment to one
-  project (`models.py:60-62`), and the Connect Machine screen's multi-select is decorative — see
-  Bugs.xlsx **S.No 223**, fixed separately by making it single and controlled. If multi-project
-  machines are wanted, decide it here before Layer 3 fixes the shape.
-- **S.No 198** (the placeholder token rendered on failure) is a straightforward bug in today's
-  screen and is fixed in the current P2 batch. It is not deferred to this spec.
+  project (`models.py:60-62`). If multi-project machines are wanted, decide it here before Layer 3
+  fixes the shape. *(Updated 2026-09-29: this said the screen's multi-select "is decorative — see
+  Bugs.xlsx **S.No 223**, fixed separately". **That fix has shipped**, in commit `76b6475`. The
+  control is now a real single-choice project picker, wired to state and defaulting to the project
+  the rest of the app is on — `frontend/src/features/identity/ConnectMachine.tsx:293-305`. Nothing
+  is pending here; only the multi-project question remains open.)*
+- **S.No 198** (the placeholder token rendered on failure) **is fixed** — commit `76b6475`. There is
+  no fallback token left: a token on that screen is now a token the server issued
+  (`ConnectMachine.tsx:99`). It was never deferred to this spec. *(Updated 2026-09-29: this read "is
+  fixed in the current P2 batch", i.e. in flight. It has landed — do not wait for it and do not
+  re-fix it.)*
+
+---
+
+## 13. Accuracy pass — 2026-09-29
+
+This spec was written weeks before the client requirement arrived and the code moved underneath it.
+Every claim was re-checked against the code on this date. **This section exists so the next reader
+knows which parts were verified rather than merely left alone** — an uncorrected document is
+indistinguishable from an unchecked one, and the first thing a reader does with a document they
+stop trusting is re-derive all of it from scratch.
+
+### Corrected
+
+| # | What was wrong | Where it is fixed |
+|---|---|---|
+| 1 | **"three call sites"** — there are four; `daemon.py:339` was missing. The same undercount also sat in a code comment at that very line, so the spec and the code agreed with each other and were both wrong. | §2.1 inventory, §4 Layer 1, and the comment in `daemon.py:339` |
+| 2 | **`trigger.py`'s multi-enrollment selection logic was unknown to this spec.** It is a workaround that exists *because* duplicate enrollments are normal, so pairing makes it redundant — and possibly harmful. | §10 |
+| 3 | Line references had drifted: `daemon.py:693`→`698`, `runner_views.py:220-240`→`227-249`, `models.py:71`→`70`, `models.py:49-75`→`49-71`, `codeintel_mcp.py:29-33`→`28-33` | throughout |
+| 4 | **Status header** still read "specified, not built, parked". The client requirement makes it committed work. | header |
+| 5 | **§12 listed two shipped fixes as pending** (S.No 198, S.No 223 — both landed in `76b6475`) | §12 |
+| 6 | **The migration work was implicit.** It is two migrations, and one of them lands an additive column on a table with live rows across a shared Postgres — the ADR 0003 case. | §6 |
+| 7 | **§10 named `runner/README.md` but not the QA suite**, which is already wrong today, before this spec ships anything. | §10 |
+| 8 | **Nothing asked who owns the machines already enrolled** — and `developer` is nullable, so some may name nobody. | §10 |
+
+### Re-verified as still correct — do not re-check these
+
+- **The four borrowed modules are still exactly four.** Swept the whole companion again. §2.2's
+  central conclusion — extraction is bounded work, not a rewrite — **stands**. This is the finding
+  the affordability of the entire plan rests on.
+- **The type-only dependency is real and still there** (`claude_driver.py:101-103`). §2.2 is right
+  that it is the one thing to settle *before* starting.
+- **Both `sys.path` bootstraps still exist**, in two separate processes, as described.
+- **The anonymous enrollment endpoint is still open, deliberately**, with its explaining comment
+  intact at `runner_views.py:227-249` and a second at `:269-271`. Finding 4 is unchanged.
+- **`revoke_runner` still revokes exactly one row** (`backend/apps/runs/enrollment.py:67-78`), so a
+  developer who pressed Generate three times keeps two working tokens after Disconnect. Finding 1
+  is unchanged.
+- **The data model is as §6 describes**, including the nullable `developer` at `models.py:63`.
+
+### Still open — needs a team decision, not an edit
+
+1. **The tenant-isolation shape of the pairing record** (§6). It is the one place non-negotiable #6
+   does not apply cleanly, and migration 2 must not be written until it is answered.
+2. **The read-only audit of existing enrollments** (§10). Safe, decision-free, and the pairing
+   migration cannot be designed honestly without its findings. Awaiting go-ahead.

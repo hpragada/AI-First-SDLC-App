@@ -5,9 +5,25 @@ companion status pills that the app shell shows on every screen. **Owner: Tester
 **P1 Owner-Admin** in workspace `QA Charlie`. This is the first suite of the cycle: nothing in
 TS-07 to TS-15 can run until TC-072 passes.
 
-> **Run these in order.** The screen is a state machine — not-started → token-generated → connected
-> → offline — and each case leaves the machine in the state the next one needs. TC-078 disconnects
-> the machine, so run it last and re-enrol afterwards before starting TS-07.
+> **Run these in order.** The screen is a state machine — no-project → not-started → token-generated
+> → connected → offline — and each case leaves the machine in the state the next one needs. TC-078
+> disconnects the machine, so run it last and re-enrol afterwards before starting TS-07.
+
+> **Re-baselined 2026-09-29 — read this before running the suite.** Three defects this suite was
+> written to confirm **have been fixed** (commit `76b6475`), so the cases that told you to expect
+> them would now have you log failures against correct behaviour:
+>
+> - **The fake token `rnr_3f9a…b2` is gone.** There is no placeholder anywhere on the screen. A
+>   token you see is a token the server issued. **TC-077 is inverted** — it now asserts the failure
+>   is surfaced properly; seeing `rnr_3f9a…b2` is a regression, not the expected result.
+> - **The `Project` control works.** It is a single-choice picker, wired up, defaulting to the
+>   project the rest of the app is on. It was a decorative multi-select. **TC-069 and TC-581 are
+>   rewritten** — TC-581 now proves the picker binds the enrollment, instead of proving it is inert.
+> - **A workspace with no project now has its own screen** rather than silently sending a broken
+>   request. **TC-583 is new** and covers it.
+>
+> Everything else in the suite is unchanged. The Connect Machine redesign (Bugs S.No 35) will
+> require this suite to be re-baselined again when pairing ships.
 
 You will need a terminal with Python 3.12, `git` on PATH, and Claude Code already signed in
 (`claude`). Keep the companion in its own terminal window for the whole cycle.
@@ -32,13 +48,16 @@ You will need a terminal with Python 3.12, `git` on PATH, and Claude Code alread
 **Steps**
 1. Click **Connect Machine** in the sidebar's setup section (or go to `http://localhost:5173/connect`).
 2. Read the heading and the two step cards.
-3. Look at the `Projects` control in Step A.
+3. Look at the `Project` control in Step A.
 4. Look at the commands shown in Step B and the help line underneath them.
 
 **Expected**
 - The h1 reads `Connect your machine`.
-- Step A is titled `In the app — generate an enrollment token` and contains a `Projects`
-  multi-select listing your projects, plus a button labelled **Generate enrollment token**.
+- Step A is titled `In the app — generate an enrollment token` and contains a **single-choice**
+  `Project` dropdown listing your projects, plus a button labelled **Generate enrollment token**.
+- The dropdown has a project already selected when the page loads — the one the rest of the app is
+  currently on — not a blank first entry.
+- Each project appears **once**, even if you hold more than one role on it.
 - Step B is titled `In your terminal — sign in & start the companion` and is visibly greyed out.
 - Step B's commands are placeholders — `claude` and
   `python -m runner.companion serve --api-url … --tenant … --token …` — with the literal ellipses.
@@ -47,15 +66,19 @@ You will need a terminal with Python 3.12, `git` on PATH, and Claude Code alread
 **Pass / Fail**
 - PASS if both steps render as described and Step B is clearly the inactive one.
 - FAIL if Step B looks active, if the placeholder command already contains a real token or tenant
-  id, or if the help line is missing.
+  id, if the help line is missing, if the `Project` control allows more than one selection, or if a
+  project is listed twice.
 
 **Test data**
 - None.
 
 **Notes**
-- The `Projects` multi-select is **inert** — the token is always issued for your first project
-  membership, whatever you highlight. TC-581 covers that specifically; the underlying defect is
-  tracked separately, so do not raise it here or there a second time.
+- **Changed 2026-09-29.** This case used to expect a `Projects` **multi-select** and described it as
+  **inert** — the token was always issued for your first project membership whatever you chose. Both
+  are fixed (commit `76b6475`): it is a real single-choice picker and it binds the enrollment.
+  TC-581 now proves that binding rather than confirming the control is decorative.
+- If you hold two roles on one project you have two membership records for it. The picker lists
+  **projects**, so it must still show that project once.
 
 ---
 
@@ -92,7 +115,7 @@ You will need a terminal with Python 3.12, `git` on PATH, and Claude Code alread
 
 **Pass / Fail**
 - PASS if a real one-time token is issued, the warning is shown, and the token disappears on reload.
-- FAIL if the token shown is `rnr_3f9a…b2` (that is the bug in TC-077 — log it there), if no warning
+- FAIL if the token shown is `rnr_3f9a…b2` (a regression of the defect TC-077 now guards), if no warning
   is shown, or if the token survives a reload.
 
 **Test data**
@@ -188,8 +211,10 @@ You will need a terminal with Python 3.12, `git` on PATH, and Claude Code alread
 - None.
 
 **Notes**
-- If the companion rejects the token, check first whether you were handed the fake value from
-  TC-077 before raising anything else.
+- If the companion rejects the token, check first that you pasted the whole token from TC-070 and
+  that the `--tenant` value matches your workspace. *(Until 2026-09-29 this note said to check
+  whether you had been handed a fake placeholder token — that defect is fixed, so a rejected token
+  now means a real mismatch worth raising.)*
 - This is the cycle's entry criterion. If it fails, TS-07 to TS-15 are all Blocked against the
   defect you raise here.
 
@@ -306,28 +331,36 @@ You will need a terminal with Python 3.12, `git` on PATH, and Claude Code alread
 2. Read the status line at the top of the card.
 3. Read the explanatory copy and the command block below it.
 4. Read the `--token` value inside that command block.
-5. Read the button in the card's footer.
+5. Read the help line underneath the command block.
+6. Read the button in the card's footer.
 
 **Expected**
 - The status line reads `Offline — {machine} · last seen {…}` with a relative time such as `3m ago`.
 - The copy explains the companion is not reachable and tells you to restart it in your terminal.
 - A command block shows a `python -m runner.companion serve …` line.
+- **The `--token` value reads the literal `<your-token>`** — a visible blank for you to fill in, not
+  a real-looking token and **not** `rnr_3f9a…b2`.
+- Underneath, a help line explains that you should use the token you saved when you connected, that
+  it is shown only once and the platform keeps no copy, and that generating a new one stops the old
+  one working.
 - A single button labelled **Generate new token** is shown. There is no **Disconnect machine**
   button in this state.
 
 **Pass / Fail**
-- PASS if the offline status, the restart command and the **Generate new token** button all render.
-- FAIL if the screen still claims the machine is connected, or if the last-seen time does not move
-  as time passes.
+- PASS if the offline status, the restart command, the `<your-token>` placeholder, the help line and
+  the **Generate new token** button all render.
+- FAIL if the screen still claims the machine is connected, if the last-seen time does not move as
+  time passes, if the literal `rnr_3f9a…b2` appears anywhere (that is a regression — raise it), or
+  if a real-looking token is shown without the help line explaining where to get one.
 
 **Test data**
 - None.
 
 **Notes**
-- **Known trap:** the `--token` value in this offline restart command is the literal placeholder
-  `rnr_3f9a…b2` until you press **Generate new token** — copying it as-is will not authenticate. It
-  is the same fake constant as TC-077. Verify it, reference TC-077's defect, and do not raise a
-  second one.
+- **Changed 2026-09-29.** This case used to carry a "known trap": the `--token` value was the fake
+  constant `rnr_3f9a…b2` and testers were told not to raise it. **That is fixed** (commit `76b6475`).
+  A returning user has no token in the page's memory — it is shown once and never stored — so the
+  screen now says so honestly instead of printing a command that cannot work.
 
 ---
 
@@ -352,16 +385,16 @@ You will need a terminal with Python 3.12, `git` on PATH, and Claude Code alread
 4. Watch `/connect` for up to 30 seconds.
 
 **Expected**
-- After clicking, the `--token` value in the command block changes from `rnr_3f9a…b2` to a real
-  token.
+- After clicking, the `--token` value in the command block changes from the `<your-token>`
+  placeholder to a real token, and the help line about the one-time token disappears.
 - Running the command starts the companion without an auth error.
 - `/connect` flips back to `Connected — {machine} · last seen just now` on its own, and both pills
   return to `Companion: Ready`.
 
 **Pass / Fail**
 - PASS if the new token authenticates and the screen returns to the connected state.
-- FAIL if the token in the command block does not change, or if the companion is rejected with the
-  newly generated token.
+- FAIL if the token in the command block does not change, if the companion is rejected with the
+  newly generated token, or if the literal `rnr_3f9a…b2` appears (a regression — raise it).
 
 **Test data**
 - None.
@@ -374,7 +407,7 @@ You will need a terminal with Python 3.12, `git` on PATH, and Claude Code alread
 
 ---
 
-### TC-077 · A failed token request silently shows a fake token and a success screen
+### TC-077 · A failed token request says so, and shows no token
 
 | Field | Value |
 |---|---|
@@ -394,44 +427,47 @@ You will need a terminal with Python 3.12, `git` on PATH, and Claude Code alread
    state.
 2. Stop the backend: `docker compose --profile app stop backend`.
 3. On `/connect`, click **Generate new token**.
-4. Read the `--token` value in the command block character by character.
-5. Restart the backend: `docker compose --profile app start backend`. Reload `/connect` and wait
+4. Read the whole card: the `--token` value in the command block, and anything that appears above or
+   below the button.
+5. Confirm the screen has **not** advanced to a `✓ Token generated` card.
+6. Restart the backend: `docker compose --profile app start backend`. Reload `/connect` and wait
    until the page renders (up to 60 seconds while the container comes up).
-6. **Recover the companion before you leave this case** — the fake token from step 3 will never
-   authenticate. On `/connect`, still in the offline state, click **Generate new token** again, and
-   confirm the `--token` value in the command block is now a real token and **not** `rnr_3f9a…b2`.
-7. Copy that command, add `--worktrees ~/sdlc --repo-path ~/repos/<your-test-repo>`, run it, and
+7. **Recover the companion before you leave this case.** On `/connect`, still in the offline state,
+   click **Generate new token** again and confirm the `--token` value is now a real token.
+8. Copy that command, add `--worktrees ~/sdlc --repo-path ~/repos/<your-test-repo>`, run it, and
    wait up to 60 seconds for `/connect` to flip to `Connected — {machine} · last seen just now`
    and both pills to read `Companion: Ready`. TC-078 starts from that state.
 
-**Expected — what the app *should* do**
-- The failure is surfaced: an error message telling you the token could not be generated, and no
-  token shown.
-
-**Actual — the known defect**
-- No error is shown. The screen behaves as if the request succeeded and the `--token` value becomes
-  the literal string `rnr_3f9a…b2`.
-- If you were in the not-started state instead, the same failure advances the screen to the
-  `✓ Token generated` card showing `rnr_3f9a…b2` as though it were a real credential.
+**Expected**
+- An error is shown, titled `Could not generate a token`, with a readable sentence explaining the
+  failure. It names no error codes, no URLs and no status numbers.
+- **No token appears anywhere.** The `--token` value is still the `<your-token>` placeholder.
+- The screen stays in the offline state. It does **not** advance to the `✓ Token generated` card.
+- Repeating this from the not-started state behaves the same way: the error appears above the
+  button and Step B stays greyed out.
 
 **Pass / Fail**
-- PASS if the app surfaces the failure and shows no token.
-- FAIL if the literal `rnr_3f9a…b2` appears, or the screen advances to a success state, after a
-  failed request.
-- Steps 5–7 are recovery, not assertions: if the companion will not come back online within
+- PASS if the failure is surfaced in words and no token is shown.
+- FAIL if no error appears, if the screen advances to a success state after a failed request, or if
+  any token-shaped value appears — **especially the literal `rnr_3f9a…b2`, which is the old defect
+  returning.**
+- Steps 6–8 are recovery, not assertions: if the companion will not come back online within
   4 minutes of running the command, mark this case **Blocked** on the environment rather than
   logging a second defect, and do not start TC-078.
 
 **Test data**
-- The fake token to look for: `rnr_3f9a…b2` (note the single-character ellipsis `…`).
+- The old fake token, which must **not** appear: `rnr_3f9a…b2` (note the single-character
+  ellipsis `…`).
 
 **Notes**
-- **Known defect** — the create-runner error path substitutes a hardcoded placeholder token and lets
-  the UI continue as if enrollment worked. It is already described in the test plan's §2 "Known
-  trap". Log it once against this TC and reference it from TC-075 rather than raising a second
-  defect there.
-- Severity is Critical: a tester or a customer following the screen ends up with a companion that
-  cannot authenticate and no indication why.
+- **This case was inverted on 2026-09-29.** It used to document a Critical known defect: the
+  create-runner error path substituted a hardcoded placeholder token and let the screen continue as
+  if enrollment had worked, so a tester or a customer ended up with a companion that could not
+  authenticate and no indication why. **It is fixed** (commit `76b6475`) — there is no fallback token
+  in the code at all, and the failure is surfaced instead. The case now guards the fix rather than
+  recording the bug.
+- Severity stays Critical, because what it now protects is the same thing: a person must never be
+  handed a credential that cannot work.
 
 ---
 
@@ -495,13 +531,13 @@ You will need a terminal with Python 3.12, `git` on PATH, and Claude Code alread
 
 ---
 
-### TC-581 · The `Projects` multi-select on the enrollment screen has no effect on the token issued
+### TC-581 · The `Project` picker decides which project the machine is enrolled for
 
 | Field | Value |
 |---|---|
 | Suite | TS-05 Companion Machine |
-| Type | UX |
-| Priority | Medium |
+| Type | Functional |
+| Priority | High |
 | Screen | `/connect` |
 | Persona | P1 Owner-Admin |
 | Automation | No |
@@ -509,40 +545,49 @@ You will need a terminal with Python 3.12, `git` on PATH, and Claude Code alread
 **Preconditions**
 - Logged in as P1 in workspace `QA Charlie`.
 - **Two** projects exist and P1 is a member of both. If only `Payment Gateway v2` exists, create a
-  second one from `/projects/new` — Name `Refunds Service`, Track `Greenfield` — before starting,
-  and note which of the two the `Projects` list shows **first**.
+  second one from `/projects/new` — Name `Refunds Service`, Track `Greenfield` — before starting.
 - No companion is currently enrolled, or you are willing to generate one more token (generating is
   harmless and this case does not start a companion).
 
 **Steps**
-1. Go to `/connect`. If the screen is in the connected or offline layout, that layout has no
-   `Projects` control — read the Notes and mark the case Blocked rather than disconnecting.
-2. In Step A, read the `Projects` multi-select and note the order the projects are listed in.
-3. Highlight **only the second** project in the list — leave the first one unselected.
-4. Click **Generate enrollment token**.
-5. Read the whole `Token generated` card and the whole Step B command block, top to bottom.
+1. Open your browser's developer tools, go to the **Network** tab, and leave it recording. You will
+   need it in step 6 — see the Notes for why.
+2. Go to `/connect`. If the screen is in the connected or offline layout, that layout has no
+   `Project` control — read the Notes and mark the case Blocked rather than disconnecting.
+3. In Step A, read which project the `Project` dropdown has **already selected** when the page loads.
+4. Change it to the **other** project.
+5. Click **Generate enrollment token**.
+6. In the Network tab, find the request the button sent and read the `project_id` it carried, then
+   read the `project_id` in the response.
 
 **Expected**
-- The `Projects` control accepts your selection and visibly highlights the second project.
+- The dropdown loads with the project the rest of the app is currently on already chosen — not blank,
+  and not simply the first in the list.
+- It accepts a single choice. There is no way to select two projects at once.
 - The token is issued and the screen advances to the `✓ Token generated` card.
-- **Nothing anywhere on the resulting screen names the project you selected.** The `Token generated`
-  card shows only the token; the `serve` command carries `--api-url`, `--tenant` and `--token` and
-  no project argument; no confirmation line states which project the machine was bound to.
+- **The request carries the `project_id` of the project you chose in step 4, and the response returns
+  the same one.** Choosing the other project changed what was sent.
 
 **Pass / Fail**
-- PASS if the selection is accepted but no part of the resulting screen or command reflects it —
-  i.e. the control is confirmed inert.
-- FAIL — meaning the behaviour has changed and there is nothing to confirm — if the generated
-  command, the token card, or any confirmation copy names the project you chose.
+- PASS if the picker defaults sensibly, accepts one choice, and the enrollment is created for the
+  project you actually selected.
+- FAIL if the request carries a different project from the one you chose, if the dropdown loads
+  blank, if it allows multiple selection, or if changing it has no effect on what is sent.
 
 **Test data**
 - Second project: `Refunds Service`, Track `Greenfield`.
 
 **Notes**
-- **Known defect, tracked separately — do not raise it again.** The enrollment is always created
-  against your *first* project membership; the multi-select's value is never read. The screen gives
-  a tester no way to see which project a machine was actually bound to, which is why this case can
-  only prove the control is decorative rather than prove the wrong binding directly.
+- **Rewritten 2026-09-29, and its meaning is now the opposite.** This case used to exist to *confirm
+  a defect*: the control was a decorative multi-select whose value was never read, and the enrollment
+  was always created against your first project membership whatever you chose. It was written so
+  that it **failed if the picker worked**. The picker was fixed in commit `76b6475`, so the case now
+  proves the binding instead. If you are working from an older printed copy of this suite, discard it.
+- **Why step 6 needs developer tools.** The screen still does not *say* which project the machine was
+  bound to — the `Token generated` card shows only the token, and the `serve` command carries no
+  project argument. So the network request is the only place a tester can see the binding. That is a
+  genuine gap in the screen rather than a defect in the fix; it is recorded against the Connect
+  Machine redesign (Bugs S.No 35), so **do not raise it separately**.
 - Generating a token here does not disturb a running companion — an existing companion keeps working
   on its own token. The extra enrollment row is harmless, though it is one of the rows that makes
   TC-078 land on the offline layout.
@@ -604,3 +649,54 @@ You will need a terminal with Python 3.12, `git` on PATH, and Claude Code alread
   user's own enrollments and there is no other disconnect control. Do not attempt to construct it;
   it is covered by the same tracked entry.
 - Do not start a companion with P10's token. Generating it is the whole test.
+
+---
+
+### TC-583 · A workspace with no project explains itself instead of failing
+
+| Field | Value |
+|---|---|
+| Suite | TS-05 Companion Machine |
+| Type | Negative |
+| Priority | Medium |
+| Screen | `/connect` |
+| Persona | P1 Owner-Admin |
+| Automation | Yes |
+
+**Preconditions**
+- A **brand-new workspace** with **no project at all**, and no companion ever enrolled. Sign up a
+  fresh workspace for this — do **not** delete `QA Charlie`'s projects to create the condition.
+- Logged in as that workspace's owner.
+
+**Steps**
+1. Go to `/connect`.
+2. Read the whole card.
+3. Look for a `Project` dropdown and a **Generate enrollment token** button.
+4. Click the button that *is* offered.
+
+**Expected**
+- The page heading is still `Connect your machine`.
+- A message titled `Create a project first` explains that a machine runs phases for one project and
+  this workspace does not have one yet.
+- **There is no `Project` dropdown and no Generate button** — there is nothing to enrol against, so
+  nothing invites you to try.
+- The only action offered is **Create a project**, and it takes you to the new-project screen.
+- Nothing is sent to the server, and no error appears.
+
+**Pass / Fail**
+- PASS if the screen explains the situation in plain words and offers the one action that helps.
+- FAIL if the Step A / Step B layout renders with an empty project dropdown, if a Generate button is
+  offered, or if pressing anything produces a server error.
+
+**Test data**
+- None.
+
+**Notes**
+- **New case, added 2026-09-29.** This state exists in the product but the suite never covered it.
+  Before commit `76b6475` the screen rendered Step A with an empty dropdown, sent an enrollment
+  request with no project, and the server rejected it — which the screen then displayed as a
+  **success**, complete with a fake token. Both halves of that are fixed; this case guards the first
+  half, and TC-077 guards the second.
+- This is the first state in the suite's state machine (no-project → not-started → token-generated →
+  connected → offline), but it needs its own empty workspace, so it is placed last to avoid
+  disturbing the ordered run above.
