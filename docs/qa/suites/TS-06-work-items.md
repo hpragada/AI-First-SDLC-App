@@ -9,12 +9,16 @@ Tester C's data and say so.
 > **Run these in order.** TC-079 needs a project with **no** work items, so it must run before
 > TC-080 creates the first one. TC-081 onwards all reuse the epic created in TC-080.
 
-> **New on 2026-09-30 — TC-920 to TC-923**, at the end of the file. They cover the work-item
-> editing, description-on-create, type legend and reopen work (Bugs S.No 76, 283, 284, 285). They
-> form their own chain — TC-920 creates the item the other three reuse — so run them in order too.
-> **TC-080 changed with them**: the create drawer now has three fields, not two, and the type
-> definitions are a four-row legend rather than a paragraph. That is the shipped behaviour; do not
-> log it as a regression.
+> **New on 2026-09-30 — TC-920 to TC-924**, at the end of the file. They cover the work-item
+> editing, description-on-create, type definitions, reopen, and the raw-id/clipped-button fixes
+> (Bugs S.No 76, 283–289). TC-920 to TC-923 form a chain — TC-920 creates the item the others
+> reuse — so run those in order; TC-924 stands alone.
+>
+> **TC-080 changed with them**: the create drawer now has three fields, not two, and the four type
+> definitions live behind an **ⓘ** beside the `TYPE` label instead of sitting under the select.
+> That is the shipped behaviour; do not log it as a regression. The definitions moved twice in one
+> day — first out of a run-on paragraph into four rows, then behind the ⓘ — so if you are working
+> from an older copy of this suite, use this one.
 
 **Cross-suite dependencies:** only **TC-096** needs a work item that has actually moved through
 phases, which only exists once **Tester C has completed TS-07** in `QA Charlie`. Hold TC-096 until C
@@ -87,7 +91,8 @@ that does, it runs last, and it needs no companion — see the case for what to 
 **Steps**
 1. Click **+ New Work Item**.
 2. Read the drawer's title and its three fields.
-3. Open the `Type` select and read its options, then read the legend beneath it.
+3. Open the `Type` select and read its options. Note the **ⓘ** beside the `TYPE` label, and that
+   nothing is explaining the types until you use it.
 4. Enter Title `Stripe Webhook Integration`, leave Type as `Epic`.
 5. Click **Create**.
 
@@ -96,9 +101,9 @@ that does, it runs last, and it needs no companion — see the case for what to 
   `e.g. Stripe Webhook Integration`, a `Type` select, and a `Description` field.
 - The `Type` select offers exactly four options: `Epic`, `Story`, `Task`, `Defect` — with `Epic`
   preselected.
-- Beneath the select, a legend lists all four types as **separate rows**, one short sentence each,
-  with the `Epic` row highlighted. *(Changed 2026-09-30 — it used to be one run-on paragraph, and
-  `Description` did not exist. TC-920 and TC-921 test the new behaviour in full.)*
+- Beside the `TYPE` label there is a small round **ⓘ**. The four type definitions are **not** on
+  screen until it is used. *(Changed 2026-09-30 — they used to be one run-on paragraph under the
+  select, and `Description` did not exist. TC-920 and TC-921 test the new behaviour in full.)*
 - `Description` is **not** marked required and is left empty here.
 - The footer has **Cancel** and **Create**; **Create** shows `Creating…` while the request is in
   flight.
@@ -1168,7 +1173,7 @@ that does, it runs last, and it needs no companion — see the case for what to 
 
 ---
 
-### TC-921 · The work item type legend is readable, and follows the selection
+### TC-921 · The type definitions open from the ⓘ, and are readable
 
 | Field | Value |
 |---|---|
@@ -1184,31 +1189,49 @@ that does, it runs last, and it needs no companion — see the case for what to 
 
 **Steps**
 1. Click **+ New Work Item**.
-2. Read the block beneath the `Type` select without changing anything.
-3. Change `Type` to `Story`, then `Task`, then `Defect`, reading the block after each change.
-4. Hover the `Type` select and wait two seconds.
-5. Click **Cancel**.
+2. Look at the area under the `Type` select **without touching anything**.
+3. Hover the **ⓘ** beside the `TYPE` label.
+4. Move the pointer off it, change `Type` to `Defect`, then hover the **ⓘ** again.
+5. Move the pointer **from the ⓘ onto the bubble itself** and leave it there for a few seconds.
+6. Click **Cancel** to close the drawer. Reopen it, then **without using the mouse at all**: click
+   into `Title`, press **Tab** once, and look at the screen.
+7. Press **Escape** once. Look at the drawer and at anything you typed.
+8. Press **Escape** a second time.
 
 **Expected**
-- The block is a **legend of four rows** — `Epic`, `Story`, `Task`, `Defect` in that order — each
-  with its type name at the left and **one** short sentence beside it. It is not a paragraph.
-- Exactly **one** row is highlighted at a time, and it is always the row matching the select. `Epic`
-  is highlighted when the drawer opens.
-- Each row carries only its **own** definition — the `Epic` row does not mention bug fixes.
-- Hovering the select shows **no** tooltip repeating all four definitions.
+- At step 2 there is **no** block of definitions on screen — only the ⓘ.
+- Hovering it opens a dark bubble listing all four types as **separate rows** — `Epic`, `Story`,
+  `Task`, `Defect` in that order — each with its name at the left and **one** short sentence
+  beside it. Not a paragraph.
+- Exactly **one** row is marked with an orange bar, and it is always the row matching the select:
+  `Epic` on opening, `Defect` after step 4.
+- **Every row is equally readable.** None of them, including the marked one, is dimmer or harder to
+  read than the rest.
+- At step 5 the bubble **stays open** while the pointer is on it, and does not time out.
+- At step 6 one **Tab** from `Title` lands on the ⓘ and the bubble opens on focus alone.
+- At step 7 **only the bubble closes.** The drawer stays open and anything typed is still there.
+- At step 8 the drawer closes.
 
 **Pass / Fail**
-- PASS if all four definitions are readable as separate rows and the highlight tracks the select.
-- FAIL if the definitions run together as one block of text, if more than one row is highlighted, if
-  the highlight does not move, or if the old all-in-one tooltip still appears on hover.
+- PASS if the definitions are out of the way until asked for, readable as four rows when opened,
+  reachable by keyboard, and one Escape dismisses only the bubble.
+- FAIL if the definitions are on screen before the ⓘ is used; if they run together as prose; if
+  the marked row is harder to read than the others; if the bubble cannot be opened or closed from
+  the keyboard; if it vanishes when the pointer moves onto it; or — **most importantly** — if one
+  Escape closes the drawer as well and loses what was typed.
 
 **Notes**
-- Reported by QA on 2026-09-30 as "plain text all mixed which is not readable" (Bugs S.No 284). The
-  **wording is unchanged and is not under test** — only its layout. Do not raise wording defects
-  here; rows 21(iii) and 36 settled the words.
-- The legend is deliberately hidden from screen readers: the select already announces its options,
-  so a reader would otherwise hear every definition twice. Its absence from the accessibility tree
-  is **not** a defect.
+- QA reported the original as "plain text all mixed which is not readable" (Bugs S.No 284); the
+  team then asked for it behind a tooltip, so a person creating their fiftieth work item is not
+  re-taught the four types every time. The **wording is unchanged and is not under test** — only
+  where it lives and how it reads. Rows 21(iii) and 36 settled the words.
+- Steps 5–8 are not padding. A hover-only tooltip is unusable by keyboard and absent on touch, and
+  this platform sells finding exactly that defect on other people's sites — so the ⓘ has to work
+  on hover, focus and tap, stay put while the pointer is on it, and close on Escape (WCAG 2.2
+  §1.4.13). Step 7 in particular guards Bugs S.No 289, where one Escape shut the drawer too and
+  threw away what had been typed.
+- The bubble is deliberately not announced twice to a screen reader: the select already reads its
+  options. Hearing each definition once, as the ⓘ's description, is correct.
 
 ---
 
@@ -1313,3 +1336,56 @@ that does, it runs last, and it needs no companion — see the case for what to 
   it — the defect is live again, so the gate is blocked on its own account and a reviewer must not
   be left an untickable second block. Check the gate checklist before and after. If no such defect
   exists in `QA Bravo`, mark this paragraph Not Applicable rather than Failed.
+
+---
+
+### TC-924 · No work item screen shows a raw id, and no button is cut off
+
+| Field | Value |
+|---|---|
+| Suite | TS-06 Work Items |
+| Type | UX |
+| Priority | High |
+| Screen | `/work-items`, `/work-items/:id` |
+| Persona | P1 Owner-Admin |
+| Automation | Partly |
+
+**Preconditions**
+- A project with at least one **task or defect that has a parent** (any item created by Task
+  Breakdown will do). Borrow Tester C's project if `QA Bravo` has none.
+
+**Steps**
+1. On `/work-items`, look at the cards for items that have a parent — read the small `↖` chip.
+2. Open a **task**. Read the line above the title, and the row beneath it.
+3. Open a **defect** and read the same two places.
+4. On the task, read the buttons at the top right: **Edit**, **Trigger phase**, **Cancel task…**
+5. Narrow the browser window until the title and the buttons no longer fit side by side.
+6. Widen it again.
+
+**Expected**
+- Every `↖` chip names a work item — `↖ WI-260` — and **never** a string of letters and numbers
+  like `65db8214-f26c-4246-b63e-81297b5f50df`.
+- The line above the title reads `Work Items › WI-266`. It is **never** the long id that appears in
+  the browser's address bar.
+- Where the item has a parent, the parent is also named `WI-260`, in both the breadcrumb and the
+  `Parent` link in the row under the title.
+- The three buttons are **fully readable**, with none cut off at the right edge.
+- When narrowed, the buttons **move onto their own line** below the title, still whole. They never
+  shrink, overlap, or get clipped.
+- Widening puts them back beside the title.
+
+**Pass / Fail**
+- PASS if no 36-character id appears anywhere on these screens and no button is ever clipped.
+- FAIL on **any** raw id on screen, on a parent chip or link you cannot read as a work item, or on
+  a button cut off at any window width.
+
+**Notes**
+- Bugs S.No 288 and 286. The team found these as confusion between the breadcrumb and the
+  **Edit WI-266** dialog title: the dialog named the item and the page did not, so the number
+  looked like it came from nowhere. The dialog was right; the breadcrumb was the defect.
+- Standing rule: **no ids on a client's screen.** If an item genuinely has no key yet, the correct
+  behaviour is to show words, or nothing — never the id as a fallback. A chip that cannot name its
+  parent is not drawn at all, and that is deliberate, not a missing chip.
+- Step 5 matters more than it looks. The button row is shared by **every** page in the product, so
+  a clipped button here was a clipped button everywhere a title happened to be long enough. Worth
+  a quick look at other detail screens while you are in there.

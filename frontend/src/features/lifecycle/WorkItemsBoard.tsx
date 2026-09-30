@@ -16,6 +16,7 @@ import {
   RowMenu,
   Select,
   Table,
+  Tooltip,
   cx,
   writeErrorSentence,
 } from "../../components/ui";
@@ -152,7 +153,11 @@ function WiCard({ card }: { card: WorkItemCard }) {
         <Chip variant={card.type === "task" ? undefined : "navy"}>
           {typeLabel(card.type)}
         </Chip>
-        {card.parent && <Chip>↖ {card.parent}</Chip>}
+        {/* `parent_key` ("WI-260"), never `parent` — that is the raw UUID, and this chip printed
+            all 36 characters of it on the busiest screen in the product. The chip's whole job is
+            to say which item this belongs to, which a UUID does not do, so without a key there
+            is nothing worth drawing. */}
+        {card.parent_key && <Chip>↖ {card.parent_key}</Chip>}
       </div>
       <div className="wi-card__foot">
         <span>{card.artifact_count ?? 0} artifacts</span>
@@ -210,6 +215,13 @@ function CreateWorkItemDrawer({
   //
   // Four labelled rows, with the selected one marked (team decision, option A). The duplicate
   // `title=` tooltip is gone — a hover repeating all four definitions was noise on top of noise.
+  //
+  // 2026-09-30, second pass: the rows now live behind the ⓘ beside the Type label rather than
+  // sitting in the drawer permanently. The team's reasoning is that somebody creating their
+  // fiftieth work item does not need four definitions re-explained every time, and they are
+  // right — reference material that cannot be dismissed is just furniture the reader learns to
+  // look past. `Tooltip` is the accessible one (focus and tap as well as hover, Escape to close,
+  // `aria-describedby`), so this is not the hover-only tooltip its docstring refuses.
   const TYPE_HELP: Record<string, string> = {
     epic: "A large feature or initiative that goes through all the planning phases, from "
       + "Ideation to Task Breakdown.",
@@ -244,23 +256,35 @@ function CreateWorkItemDrawer({
             aria-required="true"
           />
         </Field>
-        <Field label="Type">
+        {/* Not `<Field>`, deliberately: `Field` renders a `<label>` around its children, and the
+            ⓘ is a real `<button>`. A button inside a label is invalid markup — the label forwards
+            the click to its control, so one press fires twice and the tooltip opens and shuts. The
+            select carries its own `aria-label`, so nothing is lost by laying the row out here. */}
+        <div className="field">
+          <span className="field__label" id="wi-type-label">
+            Type
+            {/* `below`: this sits near the top of the drawer, where an upward bubble is
+                off-screen. */}
+            <Tooltip label="What the work item types mean" placement="below">
+              <dl className="wi-type-legend wi-type-legend--tip">
+                {TYPE_ORDER.map((t) => (
+                  <div
+                    key={t}
+                    className={cx("wi-type-legend__row", t === type && "is-selected")}
+                  >
+                    <dt className="wi-type-legend__term">{typeLabel(t)}</dt>
+                    <dd className="wi-type-legend__desc">{TYPE_HELP[t]}</dd>
+                  </div>
+                ))}
+              </dl>
+            </Tooltip>
+          </span>
           <Select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type">
             {TYPE_ORDER.map((t) => (
               <option key={t} value={t}>{typeLabel(t)}</option>
             ))}
           </Select>
-        </Field>
-        {/* Presentational: the <select> above is what a screen reader announces, and hearing
-            every definition twice would be worse than not hearing them at all. */}
-        <dl className="wi-type-legend" aria-hidden="true">
-          {TYPE_ORDER.map((t) => (
-            <div key={t} className={cx("wi-type-legend__row", t === type && "is-selected")}>
-              <dt className="wi-type-legend__term">{typeLabel(t)}</dt>
-              <dd className="wi-type-legend__desc">{TYPE_HELP[t]}</dd>
-            </div>
-          ))}
-        </dl>
+        </div>
 
         <Field label="Description" help="Optional — you can add this later.">
           <textarea

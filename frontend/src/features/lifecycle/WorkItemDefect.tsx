@@ -60,11 +60,14 @@ function WorkItemDefectLive() {
 
   return (
     <div className="canvas-pad">
+      {/* See the note on the same breadcrumb in WorkItemTask.tsx — both crumbs were UUIDs. */}
       <Breadcrumb
         items={[
           { label: "Work Items", href: "/work-items" },
-          ...(workItem.data.parent ? [{ label: workItem.data.parent.slice(0, 8), href: `/work-items/${workItem.data.parent}` }] : []),
-          id,
+          ...(workItem.data.parent && workItem.data.parent_key
+            ? [{ label: workItem.data.parent_key, href: `/work-items/${workItem.data.parent}` }]
+            : []),
+          workItem.data.key || "This work item",
         ]}
       />
       <div className="page-head">
@@ -74,9 +77,9 @@ function WorkItemDefectLive() {
             <span className="meta-item">
               <span className="chip badge--orange">Defect</span>
             </span>
-            {workItem.data.parent && (
+            {workItem.data.parent && workItem.data.parent_key && (
               <span className="meta-item">
-                Parent <Link to={`/work-items/${workItem.data.parent}`}>↖ {workItem.data.parent.slice(0, 8)}</Link>
+                Parent <Link to={`/work-items/${workItem.data.parent}`}>↖ {workItem.data.parent_key}</Link>
               </span>
             )}
           </div>

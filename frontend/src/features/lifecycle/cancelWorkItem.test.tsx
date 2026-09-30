@@ -273,3 +273,82 @@ describe("the cancel dialog", () => {
     expect(screen.queryByText(/releases that gate/)).toBeNull();
   });
 });
+
+// ── the words on the cancel dialog (2026-09-30) ─────────────────────
+//
+// The second sentence used to read "It is not the same as marking it done, and reports count the
+// two separately." The team could not make sense of it, and it was wrong twice: it asked the
+// reader to know what our reports do, and it predated Reopen — so it never answered the question
+// somebody about to cancel is actually holding, which is whether this is permanent.
+describe("what the cancel dialog says", () => {
+  it("says it is not finishing, and that it can be undone", async () => {
+    stub({});
+    renderWithProviders(
+      <CancelWorkItem workItem={{ id: "wi-1", key: "WI-1", title: "X", type: "task" }}
+                      onClose={() => {}} />,
+    );
+
+    const said = document.body.textContent ?? "";
+    expect(said).toContain("not going to happen");
+    expect(said).toContain("not the same as finishing it");
+    expect(said).toContain("you can reopen it later");
+    // The sentence the team could not read is gone, and stays gone.
+    expect(said).not.toContain("reports count the two separately");
+  });
+});
+
+// ── no raw UUID on a work item screen (2026-09-30) ──────────────────
+//
+// `WorkItemSerializer.key` exists with the comment "so the UI never has to show the UUID", and
+// these two screens showed it anyway — the route id in the breadcrumb, and the parent's first
+// eight characters beside it, presented as a link.
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+describe("work item screens never print an id", () => {
+  it("names a task by its key, not the id in the address bar", async () => {
+    stub({ "/lifecycle": { nodes: [], loops: [], children: [] },
+           "/work-items/": card({ key: "WI-266", title: "People Desk Security Check" }) });
+    renderAt(<WorkItemTask />);
+
+    await waitFor(() => expect(screen.getByText("People Desk Security Check")).toBeDefined());
+    const crumbs = document.querySelector(".breadcrumb") as HTMLElement;
+    expect(crumbs.textContent).toContain("WI-266");
+    expect(crumbs.textContent).not.toMatch(UUID_RE);
+  });
+
+  it("names a task's parent by its key", async () => {
+    stub({ "/lifecycle": { nodes: [], loops: [], children: [] },
+           "/work-items/": card({ key: "WI-266", title: "Child task",
+                                  parent: "65db8214-f26c-4246-b63e-81297b5f50df",
+                                  parent_key: "WI-260" }) });
+    renderAt(<WorkItemTask />);
+
+    await waitFor(() => expect(screen.getByText("Child task")).toBeDefined());
+    expect(document.body.textContent).toContain("WI-260");
+    expect(document.body.textContent).not.toContain("65db8214");
+  });
+
+  it("says nothing about a parent it cannot name", async () => {
+    // An older API sending `parent` with no `parent_key`. "↖ 65db8214" is not a name.
+    stub({ "/lifecycle": { nodes: [], loops: [], children: [] },
+           "/work-items/": card({ key: "WI-266", title: "Child task",
+                                  parent: "65db8214-f26c-4246-b63e-81297b5f50df" }) });
+    renderAt(<WorkItemTask />);
+
+    await waitFor(() => expect(screen.getByText("Child task")).toBeDefined());
+    expect(document.body.textContent).not.toContain("65db8214");
+  });
+
+  it("names a defect by its key too", async () => {
+    stub({ "/lifecycle": { nodes: [], loops: [], children: [] },
+           "/work-items/": card({ key: "WI-301", title: "Signature check rejects valid events",
+                                  type: "defect" }) });
+    renderAt(<WorkItemDefect />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Signature check rejects valid events")).toBeDefined());
+    const crumbs = document.querySelector(".breadcrumb") as HTMLElement;
+    expect(crumbs.textContent).toContain("WI-301");
+    expect(crumbs.textContent).not.toMatch(UUID_RE);
+  });
+});

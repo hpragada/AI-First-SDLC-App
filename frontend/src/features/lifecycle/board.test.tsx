@@ -288,12 +288,33 @@ describe("creating a work item", () => {
     expect(writes[0].body).toMatchObject({ title: "Quick fix", description: "" });
   });
 
+  // 2026-09-30: the legend moved behind an ⓘ beside the Type label. Somebody creating their
+  // fiftieth work item does not need four definitions re-explained every time. The contract is
+  // otherwise unchanged and is still tested in full — four rows, each carrying its own
+  // definition, and the highlight following the select — only now it has to be opened first.
+  const legendTip = () => screen.getByRole("button", { name: /what the work item types mean/i });
+
+  it("keeps the definitions out of the way until they are asked for", async () => {
+    stubWrites([]);
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await user.click(await screen.findByRole("button", { name: /New Work Item/ }));
+
+    // Nothing on screen until the ⓘ is used — that is the whole point of the change.
+    expect(document.querySelectorAll(".wi-type-legend__row").length).toBe(0);
+    expect(legendTip()).toBeDefined();
+  });
+
   it("shows all four type definitions as separate, readable rows", async () => {
     stubWrites([]);
     const user = userEvent.setup();
     renderWithProviders(<WorkItemsBoard />);
 
     await user.click(await screen.findByRole("button", { name: /New Work Item/ }));
+    // `hover`, not `click`: a click fires focus (which opens it) and then the trigger's own
+    // toggle (which closes it again). Hover and focus are how this is actually reached.
+    await user.hover(legendTip());
 
     const rows = document.querySelectorAll(".wi-type-legend__row");
     expect(rows.length).toBe(4);
@@ -305,20 +326,113 @@ describe("creating a work item", () => {
     expect(epic).not.toContain("bug fix");
   });
 
+  it("opens the definitions from the keyboard, and closes them with Escape", async () => {
+    // The reason this is a `Tooltip` and not a `title=` attribute or a hover-only bubble. A
+    // product that sells finding this defect on other people's sites does not get to ship one.
+    stubWrites([]);
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await user.click(await screen.findByRole("button", { name: /New Work Item/ }));
+    legendTip().focus();
+
+    await waitFor(() => expect(document.querySelectorAll(".wi-type-legend__row").length).toBe(4));
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(document.querySelectorAll(".wi-type-legend__row").length).toBe(0));
+  });
+
   it("marks the row for the type currently chosen", async () => {
     stubWrites([]);
     const user = userEvent.setup();
     renderWithProviders(<WorkItemsBoard />);
 
     await user.click(await screen.findByRole("button", { name: /New Work Item/ }));
+    await user.hover(legendTip());
     // The drawer opens on Epic.
     expect(document.querySelector(".wi-type-legend__row.is-selected")
       ?.querySelector(".wi-type-legend__term")?.textContent).toBe("Epic");
 
+    await user.unhover(legendTip());
     await user.selectOptions(screen.getByLabelText("Type"), "defect");
+    await user.hover(legendTip());
 
     expect(document.querySelectorAll(".wi-type-legend__row.is-selected").length).toBe(1);
     expect(document.querySelector(".wi-type-legend__row.is-selected")
       ?.querySelector(".wi-type-legend__term")?.textContent).toBe("Defect");
+  });
+});
+
+// -- no raw UUID reaches a card (2026-09-30) -------------------------
+//
+// `WorkItemSerializer.key` carries the comment "so the UI never has to show the UUID". The chip
+// naming a card's parent printed all 36 characters of `parent`, because the parent had no key of
+// its own to print. It does now.
+describe("the parent chip on a card", () => {
+  it("names the parent by its key", async () => {
+    stub([card({ id: "c1", key: "WI-9", title: "Child item",
+                 parent: "65db8214-f26c-4246-b63e-81297b5f50df", parent_key: "WI-2" })]);
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Child item")).toBeDefined());
+    const cardEl = screen.getByText("Child item").closest(".wi-card") as HTMLElement;
+
+    expect(cardEl.textContent).toContain("WI-2");
+    expect(cardEl.textContent).not.toContain("65db8214");
+  });
+
+  it("draws no chip at all when there is no key to draw", async () => {
+    // An older API sending `parent` without `parent_key`. A chip reading "↖ 65db8214" tells the
+    // reader nothing, so nothing is the better answer.
+    stub([card({ id: "c1", key: "WI-9", title: "Child item",
+                 parent: "65db8214-f26c-4246-b63e-81297b5f50df" })]);
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Child item")).toBeDefined());
+    const cardEl = screen.getByText("Child item").closest(".wi-card") as HTMLElement;
+
+    expect(cardEl.textContent).not.toContain("65db8214");
+    expect(cardEl.textContent).not.toContain("↖");
+  });
+});
+
+// ── one Escape dismisses one layer (2026-09-30) ─────────────────────
+//
+// Every overlay listens for Escape on `window`, so they all fired at once: opening the type
+// tooltip inside the drawer and pressing Escape shut the tooltip AND the drawer, throwing away
+// whatever had been typed. The tooltip is the app's first overlay-inside-an-overlay, which is why
+// this surfaced now; the fix is in `useEscapeToClose` and covers every future pair.
+describe("Escape inside the create drawer", () => {
+  it("closes the tooltip and leaves the drawer, and what was typed, alone", async () => {
+    stub([]);
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await user.click(await screen.findByRole("button", { name: /New Work Item/ }));
+    await user.type(screen.getByLabelText(/Title/), "Half-written title");
+    screen.getByRole("button", { name: /what the work item types mean/i }).focus();
+    await waitFor(() => expect(document.querySelectorAll(".wi-type-legend__row").length).toBe(4));
+
+    await user.keyboard("{Escape}");
+
+    // The tooltip went...
+    await waitFor(() => expect(document.querySelectorAll(".wi-type-legend__row").length).toBe(0));
+    // ...and the drawer, with the typing still in it, did not.
+    expect(screen.getByDisplayValue("Half-written title")).toBeDefined();
+  });
+
+  it("still closes the drawer itself on the next Escape", async () => {
+    // The fix must not make the drawer un-closable — one press per layer, from the top down.
+    stub([]);
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await user.click(await screen.findByRole("button", { name: /New Work Item/ }));
+    expect(screen.getByLabelText(/Title/)).toBeDefined();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByLabelText(/Title/)).toBeNull());
   });
 });

@@ -15,15 +15,63 @@ import { Link as RouterLink } from "react-router-dom";
 
 import { failureOf } from "../../api";
 
+// Which overlays are open, innermost last. Every `useEscapeToClose` listens on `window`, so
+// without this they ALL fired on one Escape: opening the type tooltip inside the New work item
+// drawer and pressing Escape shut the tooltip *and* the drawer, throwing away whatever the person
+// had typed. One press dismisses one layer — the top one — which is what a reader expects and
+// what WCAG 2.2 §1.4.13 means by a tooltip being "dismissible": the tooltip goes, not the page
+// behind it. Found in the live pass, 2026-09-30.
+const escapeStack: number[] = [];
+let nextEscapeId = 1;
+
 // Close an overlay on the Esc key. No-op when there's no handler (e.g. inline gallery swatches).
 function useEscapeToClose(onClose?: () => void) {
+  const idRef = useRef(0);
+  if (idRef.current === 0) idRef.current = nextEscapeId++;
+  const active = Boolean(onClose);
+
+  // Registration is keyed on `active` ALONE, deliberately. Keying it on `onClose` would re-push
+  // this overlay to the top of the stack every time its parent re-rendered with a fresh arrow
+  // function — so a drawer would silently steal the top slot from the tooltip open inside it.
+  useEffect(() => {
+    if (!active) return;
+    const id = idRef.current;
+    escapeStack.push(id);
+    return () => {
+      const at = escapeStack.indexOf(id);
+      if (at !== -1) escapeStack.splice(at, 1);
+    };
+  }, [active]);
+
   useEffect(() => {
     if (!onClose) return;
     const handle = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      // Who is on top is decided ONCE per keypress, by whichever of these listeners sees the
+      // event first, and every later one reads that answer rather than the live stack. Belt and
+      // braces alongside the capture phase below: between them, no amount of closing and
+      // unmounting part-way through a single keypress can change the answer half-way.
+      const claim = event as KeyboardEvent & { __escapeClaimedBy?: number };
+      if (claim.__escapeClaimedBy === undefined) {
+        claim.__escapeClaimedBy = escapeStack[escapeStack.length - 1] ?? -1;
+      }
+      if (claim.__escapeClaimedBy !== idRef.current) return;
+      onClose();
     };
-    window.addEventListener("keydown", handle);
-    return () => window.removeEventListener("keydown", handle);
+    // CAPTURE phase, and that is the half of this that actually does the work.
+    //
+    // `useDismissable` binds its own Escape handler to `document`, in the bubble phase. React
+    // flushes the close it triggers synchronously, so by the time any bubble-phase `window`
+    // listener runs, the inner overlay has already been taken off the stack AND its own listener
+    // unbound — leaving the outer one as the only handler still standing, reading a stack that no
+    // longer mentions the layer that was above it, and closing on a keypress that was not for it.
+    // Capture runs before all of that, while the stack still describes what is on screen.
+    //
+    // Worth knowing if this is ever revisited: jsdom flushes differently, so the bubble-phase
+    // version passed its unit test and still shut the drawer in a real browser. The test below it
+    // is honest only because the behaviour was also checked in one.
+    window.addEventListener("keydown", handle, true);
+    return () => window.removeEventListener("keydown", handle, true);
   }, [onClose]);
 }
 

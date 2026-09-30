@@ -71,9 +71,17 @@ export function CancelWorkItem({
         </>
       }
     >
+      {/* The second sentence used to read "It is not the same as marking it done, and reports
+          count the two separately." The team found readers could not make sense of it, and they
+          were right twice over: it asked somebody to know what our reports do, and by the time
+          they had worked that out it still had not answered the question they were actually
+          holding — is this permanent? It is not, since 2026-09-30, and the old copy predates
+          Reopen, so it was also quietly out of date. Two short facts instead: not finishing, not
+          forever. */}
       <p className="t-body">
-        Cancelling records that this work is <strong>not going to happen</strong>. It is not the
-        same as marking it done, and reports count the two separately.
+        Cancelling records that this work is <strong>not going to happen</strong> — which is not
+        the same as finishing it. The item stays on the board marked Cancelled, nothing is
+        deleted, and you can reopen it later.
       </p>
       {isDefect && (
         // Said BEFORE the decision, not after. A defect is what holds a gate shut, so this is

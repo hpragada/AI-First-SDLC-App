@@ -1850,7 +1850,11 @@ class WorkItemViewSet(
     viewsets.GenericViewSet,
 ):
     serializer_class = WorkItemSerializer
-    queryset = WorkItem.objects.all().order_by("-created_at")
+    # `select_related("parent")` is load-bearing, not tidiness: `WorkItemSerializer.parent_key`
+    # reads the parent's key, and this endpoint returns a whole project's backlog in one response
+    # (there is no pagination on the board). Without it that is one extra query per card — a few
+    # hundred on a real board — which is how a one-line serializer field becomes an outage.
+    queryset = WorkItem.objects.select_related("parent").order_by("-created_at")
 
     def get_permissions(self):
         # Bugs S.No 214. This viewset had NO get_permissions at all, so every one of its writes

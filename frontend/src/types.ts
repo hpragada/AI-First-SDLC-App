@@ -74,6 +74,10 @@ export interface WorkItem {
   title?: string;
   description?: string;
   parent?: string | null;
+  // The parent's human key ("WI-260"). `parent` is a UUID and must never be drawn — anything
+  // naming the parent on screen reads this instead. Null when there is no parent, and absent
+  // from an API too old to send it, which reads the same way: nothing to show.
+  parent_key?: string | null;
   assignee?: string | null;
   takeover_flag?: boolean;
   // Multi-repo (Hybrid Option C): the repository this work item targets (null = default repo).
@@ -571,6 +575,7 @@ export interface WorkItemCard extends WorkItem {
   artifact_count?: number;
   owner?: string;
   parent?: string | null;
+  parent_key?: string | null;
   // `yours` answers "may the person looking act on this?" — the gate's required role (or admin)
   // for a gate, project membership for a question, decided by the same rules as the Approve and
   // Answer buttons. Without it the board called every pending gate "Waiting for you", including

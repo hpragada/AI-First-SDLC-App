@@ -291,3 +291,71 @@ def test_card_fields_are_tenant_isolated(client, db):
     resp = client.get("/api/work-items/", {"project": str(p1.id)}, HTTP_X_TENANT_ID=str(t1.id))
     assert resp.status_code == 200
     assert {r["id"] for r in resp.data} == {str(wi1.id)}
+
+
+# -- parent_key: the UI must never have to draw a UUID (2026-09-30) -------------
+#
+# `key` has always been on this serializer, with the comment "so the UI never has to show the
+# UUID". The PARENT had no such field, so every screen naming the parent had only `parent` - a
+# UUID - and drew it: the board card's chip printed all 36 characters, and the task and defect
+# breadcrumbs printed the first eight and called it a link.
+def test_parent_key_is_the_parents_human_key(client, tenant, project, dev, epic):
+    task = WorkItem.objects.create(
+        tenant=tenant, project=project, type="task", title="Sub-task", parent=epic
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    resp = _list(client, tenant, project)
+
+    assert resp.status_code == 200
+    row = next(r for r in resp.data if r["id"] == str(task.id))
+    assert row["parent_key"] == epic.key
+    assert row["parent_key"].startswith("WI-")
+    # The raw parent id is still served - screens navigate by it - but it is not what they draw.
+    # `str()` because this is the pre-render payload, where a UUID field is still a UUID object.
+    assert str(row["parent"]) == str(epic.id)
+
+
+def test_parent_key_is_null_without_a_parent(client, tenant, project, dev, epic):
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    resp = _list(client, tenant, project)
+
+    row = next(r for r in resp.data if r["id"] == str(epic.id))
+    assert row["parent_key"] is None
+
+
+def test_parent_key_is_served_on_retrieve_too(client, tenant, project, dev, epic):
+    """The breadcrumb that showed a UUID is on the DETAIL screen, so the field has to reach it -
+    the detail path builds its payload separately from the list one."""
+    task = WorkItem.objects.create(
+        tenant=tenant, project=project, type="task", title="Sub-task", parent=epic
+    )
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    resp = client.get(f"/api/work-items/{task.id}/", HTTP_X_TENANT_ID=str(tenant.id))
+
+    assert resp.status_code == 200
+    assert resp.data["parent_key"] == epic.key
+
+
+def test_parent_key_costs_no_query_per_card(client, tenant, project, dev, epic,
+                                            django_assert_max_num_queries):
+    """The reason `WorkItemViewSet` selects the parent, pinned so it cannot be quietly dropped.
+
+    Reading `obj.parent.key` per row is one extra query per card, and this endpoint returns a
+    whole project's backlog in a single response - there is no pagination on the board. Ten
+    children here; the ceiling is set well below "a query each" so the test fails loudly if the
+    select_related goes but does not break on an unrelated extra query elsewhere."""
+    for i in range(10):
+        WorkItem.objects.create(
+            tenant=tenant, project=project, type="task", title=f"Task {i}", parent=epic
+        )
+    _login(client, "dev@acme.com", "dev-pass!")
+
+    with django_assert_max_num_queries(15):
+        resp = _list(client, tenant, project)
+
+    assert resp.status_code == 200
+    assert len(resp.data) == 11
+    assert all(r["parent_key"] == epic.key for r in resp.data if r["id"] != str(epic.id))

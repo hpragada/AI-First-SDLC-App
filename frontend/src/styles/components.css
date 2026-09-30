@@ -18,8 +18,16 @@
    1. Layout helpers & state-block scaffolding (gallery presentation)
    ========================================================================== */
 .canvas-pad { padding: var(--space-6); max-width: var(--content-max); margin: 0 auto; }
-.page-head { display: flex; align-items: flex-start; gap: var(--space-4); margin-bottom: var(--space-5); }
+/* `flex-wrap` and the `flex: none` below fix a clipped action row (2026-09-30). The titles block
+   is `flex: 1 1 auto`, and the actions span carried no `flex` at all — so it took the default
+   `flex-shrink: 1` and a long work item title squeezed it until "Cancel task…" was cut off the
+   edge. The row now keeps its natural width and drops to its own line when there is no room,
+   which is the behaviour every page head wants; fixing it here fixes all of them at once rather
+   than one screen at a time. */
+.page-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-4); margin-bottom: var(--space-5); }
 .page-head__titles { flex: 1 1 auto; }
+/* Scoped with `>` so the generic `.u-row-tight` utility is unchanged everywhere else. */
+.page-head > .u-row-tight { flex: none; }
 .page-head__sub { color: var(--text-muted); font-size: var(--fs-sm); margin-top: var(--space-1); }
 
 /* Each rendered state is wrapped so the gallery can label it */
@@ -40,6 +48,9 @@
    ========================================================================== */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  /* A label never wraps or breaks mid-word when its row is tight — half a word on a button is
+     worse than a button that pushes its row to wrap (2026-09-30, with the `.page-head` fix). */
+  white-space: nowrap;
   padding: 10px 16px; border-radius: var(--radius-md);
   font-size: var(--fs-body); font-weight: 600; line-height: 1;
   border: 1px solid transparent; background: transparent; color: var(--text-strong);
@@ -595,6 +606,28 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .wi-type-legend__term { font-size: var(--fs-xs); font-weight: 600; color: var(--text-strong); }
 .wi-type-legend__desc { font-size: var(--fs-xs); color: var(--text-muted); margin: 0; }
 .wi-type-legend__row.is-selected .wi-type-legend__desc { color: var(--text-body); }
+
+/* The same legend inside a tooltip bubble, which is dark (2026-09-30 — the team moved it behind
+   an ⓘ so it is there when wanted and out of the way when not).
+   EVERY row keeps the bubble's full-contrast foreground. Dimming the three unselected rows is
+   the obvious way to draw the eye and the classic way to fail a contrast check on a dark ground,
+   which is not something this product gets to ship. The selection is marked by the orange bar
+   alone, which carries no information the text does not also carry. */
+.wi-type-legend--tip { gap: 0; margin: 0; }
+.wi-type-legend--tip .wi-type-legend__row { padding: var(--space-2) 0 var(--space-2) var(--space-2); }
+.wi-type-legend--tip .wi-type-legend__row.is-selected {
+  background: transparent;
+  border-left-color: var(--brand-orange-300);
+}
+/* Both selectors are needed, and the second is the one that matters: the light-ground rule
+   `.wi-type-legend__row.is-selected .wi-type-legend__desc` carries three classes, so a two-class
+   override loses to it and the SELECTED row alone kept its dark `--text-body` — navy text on a
+   navy bubble, which is the one row the eye is being sent to. Caught in the live pass. */
+.wi-type-legend--tip .wi-type-legend__term,
+.wi-type-legend--tip .wi-type-legend__desc,
+.wi-type-legend--tip .wi-type-legend__row.is-selected .wi-type-legend__desc {
+  color: var(--text-on-navy);
+}
 
 /* ============================================================================
    12. Gate panel + criteria checklist

@@ -388,16 +388,30 @@ class ProjectProfileSerializer(serializers.ModelSerializer):
 class WorkItemSerializer(serializers.ModelSerializer):
     # Human key ("WI-42") + its raw number, so the UI never has to show the UUID.
     key = serializers.ReadOnlyField()
+    # ...and the same for the PARENT, which had no key of its own, so every screen that wanted to
+    # name the parent had only `parent` — a UUID — and printed it: the board card's "↖" chip, and
+    # the task and defect breadcrumbs, which showed the first eight characters and called it a
+    # link. `key` promised above that the UI never has to show a UUID; this is the half of that
+    # promise that was missing. Null when the item has no parent.
+    parent_key = serializers.SerializerMethodField()
+
+    def get_parent_key(self, obj) -> str | None:
+        # `parent_id` rather than `parent`, so an item WITHOUT a parent costs no query at all.
+        # With one, the view's `select_related("parent")` has already fetched it — see
+        # `WorkItemViewSet.get_queryset`. Without that select_related this is one query per card,
+        # and the board lists a whole project in a single response.
+        return (obj.parent.key or None) if obj.parent_id else None
 
     class Meta:
         model = WorkItem
         fields = [
             "id", "key", "number", "project", "repo", "feature_stream", "title", "description",
-            "type", "state", "parent", "depends_on", "assignee", "takeover_flag",
+            "type", "state", "parent", "parent_key", "depends_on", "assignee", "takeover_flag",
             "external_ref", "created_at",
         ]
         # external_ref is set by reconciliation (proposed→accepted), not by clients.
-        read_only_fields = ["id", "key", "number", "project", "state", "external_ref", "created_at"]
+        read_only_fields = ["id", "key", "number", "project", "state", "external_ref",
+                            "created_at", "parent_key"]
 
 
 class WorkItemPatchSerializer(serializers.ModelSerializer):

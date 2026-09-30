@@ -125,11 +125,18 @@ function WorkItemTaskLive() {
 
   return (
     <div className="canvas-pad">
+      {/* Both crumbs used to be UUIDs — the parent's first eight characters, and the route id in
+          full. `WorkItemSerializer.key` exists with the comment "so the UI never has to show the
+          UUID"; this screen showed it anyway, on the line above the title. The parent crumb is
+          dropped entirely rather than shown unnamed: a crumb reading "↖ 65db8214" tells a reader
+          nothing and costs them a click to find out. */}
       <Breadcrumb
         items={[
           { label: "Work Items", href: "/work-items" },
-          ...(workItem.data.parent ? [{ label: workItem.data.parent.slice(0, 8), href: `/work-items/${workItem.data.parent}` }] : []),
-          id,
+          ...(workItem.data.parent && workItem.data.parent_key
+            ? [{ label: workItem.data.parent_key, href: `/work-items/${workItem.data.parent}` }]
+            : []),
+          workItem.data.key || "This work item",
         ]}
       />
       <div className="page-head">
@@ -139,9 +146,9 @@ function WorkItemTaskLive() {
             <span className="meta-item">
               <span className="chip">Task</span>
             </span>
-            {workItem.data.parent && (
+            {workItem.data.parent && workItem.data.parent_key && (
               <span className="meta-item">
-                Parent <Link to={`/work-items/${workItem.data.parent}`}>↖ {workItem.data.parent.slice(0, 8)}</Link>
+                Parent <Link to={`/work-items/${workItem.data.parent}`}>↖ {workItem.data.parent_key}</Link>
               </span>
             )}
             {workItem.data.owner && (

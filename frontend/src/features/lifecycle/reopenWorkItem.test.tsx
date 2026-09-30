@@ -12,8 +12,7 @@
 // BEFORE the decision, the same way the cancel dialog does — reopening re-blocks somebody else's
 // review, and that person is not in the room.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Route, Routes } from "react-router-dom";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { renderWithProviders } from "../../test/utils";

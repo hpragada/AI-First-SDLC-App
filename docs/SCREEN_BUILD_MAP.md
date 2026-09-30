@@ -73,6 +73,12 @@ Legend — endpoints: `4.7-Tn` = Phase 4.7 task; `B` = Phase 4.8 bucket-B; `(exi
   "N cancelled hidden" chip) and in a cancelled item's own header. Reopening a **defect** withdraws
   the acknowledgement its cancellation put on the pending gate — the release and its disclosure ship
   together in both directions.
+- **Never draw `parent` (S-14/15/16/17)** — added 2026-09-30 (Bugs S.No 288). `parent` is a UUID.
+  `WorkItemSerializer` now serves **`parent_key`** ("WI-260") alongside the item's own `key`, and
+  that is what any screen naming a parent renders — the board card's `↖` chip, the breadcrumb, the
+  `Parent` link. Where there is no key, draw **nothing**: a chip reading `↖ 65db8214` names nothing
+  and costs the reader a click to find out. `WorkItemViewSet` must keep its `select_related("parent")`
+  or `parent_key` becomes one query per card on an unpaginated board; a test holds the query ceiling.
 - **Type-adaptive rail (S-15/16/17):** the `lifecycle/` endpoint returns `tier` — render the plan rail
   for epics **and stories**, the build rail (only) for tasks, the remediation rail for defects. Never
   show plan phases on a task (the §6.0 rule in the journeys spec). **A `story` is a planning item** —
