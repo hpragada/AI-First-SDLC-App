@@ -2066,22 +2066,30 @@ class WorkItemViewSet(
 
     @action(detail=True, methods=["post"])
     def transition(self, request, pk=None):
-        """Move a work item by hand — Bugs S.No 140: close what cannot be built.
+        """Move a work item by hand — Bugs S.No 140: close what cannot be built, and (2026-09-30)
+        reopen it if that was a mistake.
 
         The rules (which moves are legal, and that cancelling needs a reason) live in
         `apps.workitems.cancel` so the endpoint and any future caller cannot disagree about
         them. This does the two things that are the view's own: check who is asking, and
         attribute the decision to them.
 
-        `tech_lead` or `admin`, per the team's decision. Cancelling is not an everyday edit:
-        it takes work off the board, and — when the item is a blocking defect — it releases
-        the gate that defect was holding shut.
+        `tech_lead` or `admin`, per the team's decision, for both directions. Neither is an
+        everyday edit: cancelling takes work off the board and — when the item is a blocking
+        defect — releases the gate that defect was holding shut, and reopening puts both back.
         """
         work_item = self.get_object()
+        # Named for the move being attempted, not for cancelling. The refusal sentence quotes
+        # this, so a reviewer refused on a REOPEN was being told they may not "close or cancel"
+        # something — a true sentence about a thing they were not doing, which reads as the
+        # platform having misunderstood the click.
+        requested = str(request.data.get("to_state") or "")
         require_project_write_role(
             tenant_id=self.tenant_id, project_id=str(work_item.project_id),
             user_id=getattr(current_user(request), "id", None),
-            what="close or cancel a work item",
+            what=("reopen a cancelled work item"
+                  if requested == WorkItem.State.PROPOSED
+                  else "close or cancel a work item"),
         )
         ser = WorkItemTransitionSerializer(data=request.data)
         ser.is_valid(raise_exception=True)

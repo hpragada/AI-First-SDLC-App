@@ -25,9 +25,9 @@ Legend — endpoints: `4.7-Tn` = Phase 4.7 task; `B` = Phase 4.8 bucket-B; `(exi
 | **S-12** Connect capability | J9 | empty · filled · testing · success · fail | Drawer, Field, Banner, Badge | `POST/PATCH /integrations/`, `test-connection/` (4.7-T6) | T3 |
 | **S-13** Repositories | J10 | multi · add-form · single · duplicate · empty | Table, Chip, Field, Button | `…/repositories/` CRUD (4.7-T7) | T3 |
 | **S-14** Work Items board | J11 | board · list · tasks-filtered · empty | Board, WiCard, Chip, Segmented, Needs | `GET /work-items/` +`type`/`parent`/`phase` filters +card deltas (B), `GET /phases/` (B) | T4 |
-| **S-15** Work Item — Epic | J11 | gate-pending · running+needs-answer · all-complete | Rail(plan), Panel, ArtifactRow, Console, GatePanel | `work-items/{id}/lifecycle/` (B), `PATCH /work-items/{id}/` edit (B), artifacts/runs (exists) | T4 |
-| **S-16** Work Item — Task | J16 | loop+test-failed · impl-running · merge-gate · done | Rail(build,loop,branch), ArtifactRow(PR), Console, GatePanel | `…/lifecycle/` (B), `PATCH /work-items/{id}/` edit (B) | T4 |
-| **S-17** Work Item — Defect | J16 | open · fixing · closed | Rail(remediation), Banner, Console, Kv | `…/lifecycle/` (B) | T4 |
+| **S-15** Work Item — Epic | J11 | gate-pending · running+needs-answer · all-complete | Rail(plan), Panel, ArtifactRow, Console, GatePanel | `work-items/{id}/lifecycle/` (B), `PATCH /work-items/{id}/` edit (B) — **built 2026-09-30**, artifacts/runs (exists) | T4 |
+| **S-16** Work Item — Task | J16 | loop+test-failed · impl-running · merge-gate · done | Rail(build,loop,branch), ArtifactRow(PR), Console, GatePanel | `…/lifecycle/` (B), `PATCH /work-items/{id}/` edit (B) — **built 2026-09-30** | T4 |
+| **S-17** Work Item — Defect | J16 | open · fixing · closed | Rail(remediation), Banner, Console, Kv | `…/lifecycle/` (B), `PATCH /work-items/{id}/` edit (B) — **built 2026-09-30** | T4 |
 | **S-18** Phases & Runs | J12 | online-triggerable · offline-blocked · no-runs | PhasePicker, Table, Banner, ConnStatus | `GET /runs/`, `GET /phases/` (B), trigger (4.7-T5), `GET /runners/` (4.7-T11) | T4 |
 | **S-19** Run console | J12 | dispatched · running · needs-answer · awaiting-gate · completed · failed · parked | Console, Badge, Banner, MetaRow | `GET /runs/{id}/` (exists) | T4 |
 | **S-20** Clarifications | J13 | one(confirm) · multi · required-error · already-answered · cancelled · empty | ClarificationCard, Field, Check, Badge | `GET /clarifications/`, `answer/` (exists; actor 4.7-T5) | T4 |
@@ -58,6 +58,21 @@ Legend — endpoints: `4.7-Tn` = Phase 4.7 task; `B` = Phase 4.8 bucket-B; `(exi
 - **Never show the engine, prompt version or scanner version on S-37** (D-A11Y-96). They are recorded on the signature's ledger entry and are not the client's business — `test_the_versions_never_reach_the_screen` greps the API payload for them, so this is enforced rather than remembered.
 - **S-35 was missing from this map** until 2026-08-18 — the file existed with no row. Added above.
 
+- **Editing a work item (S-15/16/17) is one component, and it is frontend-only** — built 2026-09-30
+  (Bugs S.No 76). `EditWorkItem.tsx` opens from an **Edit** button in the page header of all three
+  screens, and calls the `PATCH /work-items/{id}/` that had been live and tested since Phase 4.8 with
+  no screen calling it. **Title and description only.** Type is writable on the serializer but is
+  deliberately not offered: changing a Story to an Epic mid-lifecycle changes which phases apply and
+  which rail is drawn, which is a lifecycle decision rather than a correction. If that is ever wanted,
+  it is its own decision with its own consequences — do not slip it into this form.
+- **A cancelled work item can be reopened (S-14/15/16/17)** — built 2026-09-30 (Bugs S.No 285).
+  There is **no delete** and there should not be one: work items are referenced by runs, gates,
+  artifacts, trace edges and ledger events. Cancel is the closure, and it is now reversible —
+  `cancelled → proposed` only, so the item returns to Backlog as a draft rather than to a phase whose
+  run is long gone. Reopen is offered in the board's cancelled list (behind the existing
+  "N cancelled hidden" chip) and in a cancelled item's own header. Reopening a **defect** withdraws
+  the acknowledgement its cancellation put on the pending gate — the release and its disclosure ship
+  together in both directions.
 - **Type-adaptive rail (S-15/16/17):** the `lifecycle/` endpoint returns `tier` — render the plan rail
   for epics **and stories**, the build rail (only) for tasks, the remediation rail for defects. Never
   show plan phases on a task (the §6.0 rule in the journeys spec). **A `story` is a planning item** —

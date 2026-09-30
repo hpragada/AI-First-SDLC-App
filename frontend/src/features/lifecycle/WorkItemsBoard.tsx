@@ -16,12 +16,14 @@ import {
   RowMenu,
   Select,
   Table,
+  cx,
   writeErrorSentence,
 } from "../../components/ui";
 import type { BadgeVariant } from "../../components/ui";
 import { isTerminalState, PLANNING_PHASES } from "../../types";
 import type { WorkItemCard, WorkItemState } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
+import { ReopenWorkItem } from "./ReopenWorkItem";
 import { roleLabel } from "../identity/roles";
 import { useCreateWorkItem, usePhaseCatalog, useWorkItems } from "./hooks";
 import { workItemLink } from "../../links";
@@ -172,6 +174,11 @@ function CreateWorkItemDrawer({
   const createWorkItem = useCreateWorkItem(projectId);
   const [title, setTitle] = useState("");
   const [type, setType] = useState("epic");
+  // QA created an item on a demo project, left the description empty, and then had no way back
+  // in: the drawer had no field, and no screen could edit one afterwards. The API has accepted
+  // `description` on create all along — only the input was missing. (`EditWorkItem` closes the
+  // other half, so an item created without one is no longer stuck that way.)
+  const [description, setDescription] = useState("");
 
   const titleValid = title.trim().length > 0;
 
@@ -179,7 +186,11 @@ function CreateWorkItemDrawer({
     event.preventDefault();
     if (!titleValid) return;
     try {
-      const created = await createWorkItem.mutateAsync({ type, title: title.trim() });
+      const created = await createWorkItem.mutateAsync({
+        type,
+        title: title.trim(),
+        description: description.trim(),
+      });
       onClose();
       navigate(`/work-items/${created.id}`);
     } catch {
@@ -189,12 +200,24 @@ function CreateWorkItemDrawer({
 
   // What each work-item type means, in plain language — no internal "tier" jargon
   // (Bugs.xlsx rows 21 iii + 36).
-  const TYPE_HELP =
-    "Epic — a large feature or initiative that goes through all the planning phases, "
-    + "from Ideation to Task Breakdown. "
-    + "Story — a smaller, user-facing piece of an epic, planned the same way. "
-    + "Task — a concrete development job that gets implemented, code-reviewed and tested. "
-    + "Defect — a bug fix that follows the shorter fix-and-verify flow.";
+  //
+  // The WORDS here are unchanged; only their presentation is. They used to be concatenated into
+  // one string and rendered both as help text and as the select's hover tooltip, so a person
+  // choosing a type read four definitions in a single unbroken paragraph that did not change
+  // when they changed the selection. QA called it "plain text all mixed which is not readable",
+  // and they were right: the user's actual problem is COMPARING epic against story before
+  // picking, which a wall of prose makes hardest of all.
+  //
+  // Four labelled rows, with the selected one marked (team decision, option A). The duplicate
+  // `title=` tooltip is gone — a hover repeating all four definitions was noise on top of noise.
+  const TYPE_HELP: Record<string, string> = {
+    epic: "A large feature or initiative that goes through all the planning phases, from "
+      + "Ideation to Task Breakdown.",
+    story: "A smaller, user-facing piece of an epic, planned the same way.",
+    task: "A concrete development job that gets implemented, code-reviewed and tested.",
+    defect: "A bug fix that follows the shorter fix-and-verify flow.",
+  };
+  const TYPE_ORDER = ["epic", "story", "task", "defect"] as const;
 
   return (
     <Drawer
@@ -221,13 +244,32 @@ function CreateWorkItemDrawer({
             aria-required="true"
           />
         </Field>
-        <Field label="Type" help={TYPE_HELP}>
-          <Select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type" title={TYPE_HELP}>
-            <option value="epic">Epic</option>
-            <option value="story">Story</option>
-            <option value="task">Task</option>
-            <option value="defect">Defect</option>
+        <Field label="Type">
+          <Select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type">
+            {TYPE_ORDER.map((t) => (
+              <option key={t} value={t}>{typeLabel(t)}</option>
+            ))}
           </Select>
+        </Field>
+        {/* Presentational: the <select> above is what a screen reader announces, and hearing
+            every definition twice would be worse than not hearing them at all. */}
+        <dl className="wi-type-legend" aria-hidden="true">
+          {TYPE_ORDER.map((t) => (
+            <div key={t} className={cx("wi-type-legend__row", t === type && "is-selected")}>
+              <dt className="wi-type-legend__term">{typeLabel(t)}</dt>
+              <dd className="wi-type-legend__desc">{TYPE_HELP[t]}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <Field label="Description" help="Optional — you can add this later.">
+          <textarea
+            className="textarea"
+            rows={4}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What needs to happen, and why."
+          />
         </Field>
         {createWorkItem.isError && (
           <p className="t-sm" style={{ color: "var(--danger)" }}>
@@ -258,6 +300,7 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [cancelling, setCancelling] = useState<WorkItemCard | null>(null);
+  const [reopening, setReopening] = useState<WorkItemCard | null>(null);
   const catalog = usePhaseCatalog();
 
   const items = useWorkItems(projectId, level === "all" ? {} : { type: level });
@@ -520,9 +563,15 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
                 label={`Actions for ${item.key || item.id}`}
                 items={[
                   { label: "Open", href: workItemLink(item.id) },
-                  ...(isTerminalState(item.state)
-                    ? []
-                    : [{ label: "Cancel…", onSelect: () => setCancelling(item), danger: true }]),
+                  // Three cases, not two. A cancelled item is terminal but not finished, and
+                  // cancelling is the platform's only closure — there is no delete — so this
+                  // menu is the only place a mis-click can be undone. It is also the natural
+                  // one: the "N cancelled hidden" chip above filters to exactly these rows.
+                  ...(item.state === "cancelled"
+                    ? [{ label: "Reopen…", onSelect: () => setReopening(item) }]
+                    : isTerminalState(item.state)
+                      ? []
+                      : [{ label: "Cancel…", onSelect: () => setCancelling(item), danger: true }]),
                 ]}
               />,
             ])}
@@ -556,6 +605,10 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
 
       {cancelling && (
         <CancelWorkItem workItem={cancelling} onClose={() => setCancelling(null)} />
+      )}
+
+      {reopening && (
+        <ReopenWorkItem workItem={reopening} onClose={() => setReopening(null)} />
       )}
     </div>
   );

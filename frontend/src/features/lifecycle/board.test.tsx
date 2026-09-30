@@ -225,3 +225,100 @@ describe("what each card says (option B, a status pill)", () => {
     expect(pillOn("Older API")).toBe("In progress");
   });
 });
+
+// ── the New work item drawer ────────────────────────────────────────
+//
+// Two gaps the QA team found on a demo project, in the same small panel.
+//
+// A work item could be created with no description, and then no screen could add one: the drawer
+// had no field, and there was no edit surface anywhere (S.No 76). The API had accepted
+// `description` on create all along — only the input was missing.
+//
+// And the four type definitions were concatenated into one string, rendered as help text AND as
+// the select's hover tooltip, unchanged by what you picked. QA read it as "plain text all mixed
+// which is not readable", and the real cost is that the choice being made is a COMPARISON between
+// four things, which a wall of prose makes hardest of all.
+describe("creating a work item", () => {
+  function stubWrites(writes: Array<{ url: string; body: unknown }>) {
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(url);
+      const ok = (body: unknown) =>
+        ({ ok: true, status: 200, statusText: "ok",
+           text: async () => JSON.stringify(body) }) as Response;
+      if ((init?.method ?? "GET").toUpperCase() !== "GET") {
+        writes.push({ url: u, body: JSON.parse(String(init?.body ?? "{}")) });
+        return ok({ id: "new-1" });
+      }
+      if (u.includes("/auth/me")) return ok(me);
+      return ok([]);
+    }));
+  }
+
+  it("sends the description typed into the drawer", async () => {
+    const writes: Array<{ url: string; body: unknown }> = [];
+    stubWrites(writes);
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await user.click(await screen.findByRole("button", { name: /New Work Item/ }));
+    await user.type(screen.getByLabelText(/Title/), "Stripe webhooks");
+    await user.type(screen.getByLabelText(/Description/), "Verify the signing secret.");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(writes.length).toBe(1));
+    expect(writes[0].body).toMatchObject({
+      title: "Stripe webhooks",
+      description: "Verify the signing secret.",
+    });
+  });
+
+  it("leaves the description optional", async () => {
+    // A quick task should not be blocked by a prose field — and since it can now be edited
+    // afterwards, an item created without one is no longer stuck that way.
+    const writes: Array<{ url: string; body: unknown }> = [];
+    stubWrites(writes);
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await user.click(await screen.findByRole("button", { name: /New Work Item/ }));
+    await user.type(screen.getByLabelText(/Title/), "Quick fix");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(writes.length).toBe(1));
+    expect(writes[0].body).toMatchObject({ title: "Quick fix", description: "" });
+  });
+
+  it("shows all four type definitions as separate, readable rows", async () => {
+    stubWrites([]);
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await user.click(await screen.findByRole("button", { name: /New Work Item/ }));
+
+    const rows = document.querySelectorAll(".wi-type-legend__row");
+    expect(rows.length).toBe(4);
+    expect([...rows].map((r) => r.querySelector(".wi-type-legend__term")?.textContent))
+      .toEqual(["Epic", "Story", "Task", "Defect"]);
+    // Each row carries its own definition, not all four.
+    const epic = rows[0].querySelector(".wi-type-legend__desc")?.textContent ?? "";
+    expect(epic).toContain("large feature or initiative");
+    expect(epic).not.toContain("bug fix");
+  });
+
+  it("marks the row for the type currently chosen", async () => {
+    stubWrites([]);
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await user.click(await screen.findByRole("button", { name: /New Work Item/ }));
+    // The drawer opens on Epic.
+    expect(document.querySelector(".wi-type-legend__row.is-selected")
+      ?.querySelector(".wi-type-legend__term")?.textContent).toBe("Epic");
+
+    await user.selectOptions(screen.getByLabelText("Type"), "defect");
+
+    expect(document.querySelectorAll(".wi-type-legend__row.is-selected").length).toBe(1);
+    expect(document.querySelector(".wi-type-legend__row.is-selected")
+      ?.querySelector(".wi-type-legend__term")?.textContent).toBe("Defect");
+  });
+});

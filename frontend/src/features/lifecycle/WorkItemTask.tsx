@@ -15,6 +15,8 @@ import {
   Spinner,
 } from "../../components/ui";
 import { CancelWorkItem } from "./CancelWorkItem";
+import { EditWorkItem } from "./EditWorkItem";
+import { ReopenWorkItem } from "./ReopenWorkItem";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
@@ -70,6 +72,8 @@ function WorkItemTaskLive() {
   // in progress → blocked; already run → restart & replace this phase's artifacts.
   const [confirm, setConfirm] = useState<{ kind: "rerun" | "active"; runId?: string } | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
 
   const handleImplTrigger = () => {
     const prior = runs.data?.[0];
@@ -148,12 +152,25 @@ function WorkItemTaskLive() {
           </div>
         </div>
         <span className="u-row-tight">
+          {/* Cancelling is the platform's only closure, so it has to be undoable — this is the
+              one control a cancelled task offers, in the slot the live ones use for Edit. */}
+          {cancelled && (
+            <Button variant="secondary" onClick={() => setReopenOpen(true)}>
+              Reopen…
+            </Button>
+          )}
           {/* Nothing to trigger on a cancelled task, and nothing left to cancel either — the
               buttons disappear together, so the page stops offering work nobody will do.
               A DONE task keeps its trigger: re-running a phase on finished work is a real
               thing people do, and that is not what this fix is about. */}
           {!cancelled && (
             <>
+              {/* S.No 76 / SCREEN_BUILD_MAP S-16. A task the platform wrote in Task Breakdown
+                  often arrives with a terse title and no description, and until now nobody
+                  could fix one — including the person who has to build it. */}
+              <Button variant="secondary" onClick={() => setEditOpen(true)}>
+                Edit
+              </Button>
               <Button variant="primary" disabled={trigger.isPending} onClick={handleImplTrigger}>
                 {trigger.isPending ? <Spinner /> : "Trigger phase"}
               </Button>
@@ -340,6 +357,14 @@ function WorkItemTaskLive() {
 
       {cancelOpen && (
         <CancelWorkItem workItem={workItem.data} onClose={() => setCancelOpen(false)} />
+      )}
+
+      {editOpen && (
+        <EditWorkItem workItem={workItem.data} onClose={() => setEditOpen(false)} />
+      )}
+
+      {reopenOpen && (
+        <ReopenWorkItem workItem={workItem.data} onClose={() => setReopenOpen(false)} />
       )}
 
       {/* No "Answered questions" panel here (team decision, 25 August). It was a full search

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import {
@@ -12,6 +13,8 @@ import {
   Spinner,
 } from "../../components/ui";
 import { isInternalStream } from "../../types";
+import { EditWorkItem } from "./EditWorkItem";
+import { ReopenWorkItem } from "./ReopenWorkItem";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useClarifications, useDecideApproval, useLifecycle, useRuns, useWorkItem } from "./hooks";
@@ -41,6 +44,10 @@ function WorkItemEpicLive() {
   const clarifications = useClarifications({ work_item: id, status: "pending" });
   const runs = useRuns({ work_item: id });
   const decideApproval = useDecideApproval();
+  // Declared above the early returns below — these are hooks, and a hook behind a conditional
+  // return is a hook that stops being called once the data arrives.
+  const [editOpen, setEditOpen] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
 
   if (workItem.isLoading || lifecycle.isLoading) {
     return (
@@ -88,6 +95,18 @@ function WorkItemEpicLive() {
           </div>
         </div>
         <span className="u-row-tight">
+          {/* S.No 76 / SCREEN_BUILD_MAP S-15. The gallery has drawn an Edit button in this slot
+              since the screen was designed; only the live one was never wired up. An epic is
+              where a description matters most — it is what every planning phase reads first. */}
+          {workItem.data.state === "cancelled" ? (
+            <Button variant="secondary" onClick={() => setReopenOpen(true)}>
+              Reopen…
+            </Button>
+          ) : (
+            <Button variant="secondary" onClick={() => setEditOpen(true)}>
+              Edit
+            </Button>
+          )}
           <Link to={`/work-items/${id}/test-cases`} className="btn btn--secondary">
             Test cases
           </Link>
@@ -215,6 +234,14 @@ function WorkItemEpicLive() {
           defect, the accessibility backlog) there never are any, so it could only ever be an
           empty card. Nothing became unreachable: the same history, with the same search plus a
           work-item filter, is the History tab of Clarifications. */}
+
+      {editOpen && (
+        <EditWorkItem workItem={workItem.data} onClose={() => setEditOpen(false)} />
+      )}
+
+      {reopenOpen && (
+        <ReopenWorkItem workItem={workItem.data} onClose={() => setReopenOpen(false)} />
+      )}
     </div>
   );
 }

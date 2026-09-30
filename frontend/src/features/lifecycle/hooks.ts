@@ -89,6 +89,11 @@ export function usePatchWorkItem(workItemId: string | undefined) {
     mutationFn: (patch: { title?: string; description?: string; type?: string; repo?: string | null }) =>
       api.patchWorkItem(tenantId, workItemId as string, patch),
     onSuccess: () => {
+      // `work-item` (singular) is the detail page's own query, and it was missing. That did not
+      // matter while the only caller was the repo dropdown — a repo is not drawn in the page
+      // heading — but an edited TITLE is, so saving one left the old title on screen until a
+      // reload. The board refreshed and the page the user was looking at did not.
+      qc.invalidateQueries({ queryKey: ["work-item", workItemId] });
       qc.invalidateQueries({ queryKey: ["work-items"] });
       qc.invalidateQueries({ queryKey: ["lifecycle", workItemId] });
     },

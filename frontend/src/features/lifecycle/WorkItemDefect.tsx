@@ -8,6 +8,8 @@ import { phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
 import { isTerminalState } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
+import { EditWorkItem } from "./EditWorkItem";
+import { ReopenWorkItem } from "./ReopenWorkItem";
 
 // S-17 view states: open (default) · fixing · closed.
 export type DefectView = "open" | "fixing" | "closed";
@@ -25,6 +27,8 @@ function WorkItemDefectLive() {
   const runs = useRuns({ work_item: id });
   const trigger = useTriggerPhase(id);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
 
   if (workItem.isLoading || lifecycle.isLoading) {
     return (
@@ -77,8 +81,24 @@ function WorkItemDefectLive() {
             )}
           </div>
         </div>
+        {/* A cancelled defect is closed, so the block above offers it nothing — but "won't fix"
+            is exactly the decision people reverse, and cancelling is the only closure there is,
+            so it has to be undoable from the page where it was decided. */}
+        {cancelled && (
+          <span className="u-row-tight">
+            <Button variant="secondary" onClick={() => setReopenOpen(true)}>
+              Reopen…
+            </Button>
+          </span>
+        )}
         {!closed && (
           <span className="u-row-tight">
+            {/* S.No 76. A defect the platform raised from a test or accessibility run often has
+                no description a person wrote — and this is the page where somebody adds the
+                detail that makes it fixable. */}
+            <Button variant="secondary" onClick={() => setEditOpen(true)}>
+              Edit
+            </Button>
             <Button variant="primary" disabled={trigger.isPending} onClick={() => trigger.mutate("07_implementation")}>
               {trigger.isPending ? <Spinner /> : "Trigger Fix"}
             </Button>
@@ -170,6 +190,14 @@ function WorkItemDefectLive() {
 
       {cancelOpen && (
         <CancelWorkItem workItem={workItem.data} onClose={() => setCancelOpen(false)} />
+      )}
+
+      {editOpen && (
+        <EditWorkItem workItem={workItem.data} onClose={() => setEditOpen(false)} />
+      )}
+
+      {reopenOpen && (
+        <ReopenWorkItem workItem={workItem.data} onClose={() => setReopenOpen(false)} />
       )}
     </div>
   );

@@ -7,7 +7,9 @@ decision. The two things a team could do instead were both wrong. Marking it `do
 into every delivery report that counts done items. Leaving it open for ever is how a board
 stops being read at all.
 
-So `cancelled` is a terminal state alongside `done`, and this module is the only way in.
+So `cancelled` is a state alongside `done`, and this module is the only way in — or back out:
+cancelling is the platform's only way to close work that will not happen (there is no delete), so
+it has to be undoable, and `cancelled -> proposed` returns a mis-cancelled item to the board.
 
 Three rules shape it, and each exists because of a specific way this could go wrong:
 
@@ -50,10 +52,21 @@ ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     WorkItem.State.IN_PROGRESS: frozenset({WorkItem.State.CANCELLED, WorkItem.State.DONE}),
     WorkItem.State.IN_REVIEW: frozenset({WorkItem.State.CANCELLED, WorkItem.State.DONE}),
     WorkItem.State.BLOCKED: frozenset({WorkItem.State.CANCELLED, WorkItem.State.DONE}),
-    # Terminal. Reopening finished or abandoned work is a separate decision with separate
-    # consequences (it would restart gates and reporting), and it is not this endpoint's.
+    # `done` stays terminal. Reopening finished work restarts delivery reporting on something a
+    # person has already attested is delivered, which is a different decision from the one below.
     WorkItem.State.DONE: frozenset(),
-    WorkItem.State.CANCELLED: frozenset(),
+    # Cancelled work can be picked back up (2026-09-30). This was terminal too, on the reasoning
+    # that reopening is "a separate decision with separate consequences" — which was true, and
+    # those consequences are now HANDLED rather than avoided: the item returns to `proposed`, and
+    # a reopened defect's gate disclosure is withdrawn (`_withdraw_gate_disclosure`). It was
+    # terminal because Cancel is the platform's only closure — there is no delete — so a
+    # mis-click was permanent.
+    #
+    # `proposed` and nothing else. A cancelled item's run is long finished, so there is no
+    # `in_progress` or `in_review` to return to: those states would name a phase with no live run
+    # behind it. Back on the board as a draft is the one thing that is honestly true of work
+    # somebody has just decided to pick up again.
+    WorkItem.State.CANCELLED: frozenset({WorkItem.State.PROPOSED}),
 }
 
 #: Condition key prefix for the "I have read what was cancelled" checklist item. One condition
@@ -117,6 +130,45 @@ def _disclose_to_pending_gates(item: WorkItem, *, tenant_id, reason, actor_id) -
     return marked
 
 
+def _withdraw_gate_disclosure(item: WorkItem, *, tenant_id) -> list[str]:
+    """Take the "I have read what was cancelled" item back off, when a defect is reopened.
+
+    The exact mirror of `_disclose_to_pending_gates`, and it exists for the same reason that one
+    does. Cancelling a blocking defect RELEASES the gate it was holding shut and leaves the
+    reviewer a required checklist item reading "Reviewed the cancelled defect WI-9 — ...".
+    Reopening the defect makes that sentence false twice over: the defect is not cancelled, and
+    the gate is blocked again on its own account, because the gates decide what still blocks by
+    reading `WorkItem.TERMINAL_STATES`. Left in place the condition would be a SECOND, stale
+    block — one no reviewer could honestly tick, on a gate that is already correctly shut.
+
+    The release and its disclosure shipped together because neither is correct alone; the same
+    holds in reverse, so the reopen and this withdrawal ship together too.
+
+    Scoped to PENDING approvals on the parent, like its mirror: a decided gate is history and is
+    not rewritten after the fact. Best-effort by design — a reopen must not fail because a gate
+    could not be tidied. Returns the approvals it changed so the caller can say what moved.
+    """
+    if item.type != WorkItem.Type.DEFECT or item.parent_id is None:
+        return []
+    from apps.gates.models import Approval
+
+    key = f"{ACK_CONDITION_PREFIX}:{item.id}"
+    cleared: list[str] = []
+    approvals = Approval.objects.filter(
+        tenant_id=tenant_id, work_item_id=item.parent_id,
+        decision=Approval.Decision.PENDING,
+    )
+    for approval in approvals:
+        conditions = list(approval.conditions or [])
+        kept = [c for c in conditions if c.get("key") != key]
+        if len(kept) == len(conditions):
+            continue                      # this gate never carried the disclosure
+        approval.conditions = kept
+        approval.save(update_fields=["conditions", "updated_at"])
+        cleared.append(str(approval.id))
+    return cleared
+
+
 def transition(*, tenant_id, work_item_id, to_state, reason="", actor_id=None) -> dict:
     """Apply a human transition. Raises `ValidationError` (400) on anything not allowed.
 
@@ -162,6 +214,10 @@ def transition(*, tenant_id, work_item_id, to_state, reason="", actor_id=None) -
         if to_state == WorkItem.State.CANCELLED:
             gates = _disclose_to_pending_gates(
                 item, tenant_id=tenant_id, reason=reason, actor_id=actor_id)
+        elif from_state == WorkItem.State.CANCELLED:
+            # The only move out of `cancelled` is to `proposed` (see ALLOWED_TRANSITIONS), so
+            # this is a reopen and nothing else can reach here.
+            gates = _withdraw_gate_disclosure(item, tenant_id=tenant_id)
 
         from mcp_platform_state import tools
 

@@ -9,6 +9,13 @@ Tester C's data and say so.
 > **Run these in order.** TC-079 needs a project with **no** work items, so it must run before
 > TC-080 creates the first one. TC-081 onwards all reuse the epic created in TC-080.
 
+> **New on 2026-09-30 — TC-920 to TC-923**, at the end of the file. They cover the work-item
+> editing, description-on-create, type legend and reopen work (Bugs S.No 76, 283, 284, 285). They
+> form their own chain — TC-920 creates the item the other three reuse — so run them in order too.
+> **TC-080 changed with them**: the create drawer now has three fields, not two, and the type
+> definitions are a four-row legend rather than a paragraph. That is the shipped behaviour; do not
+> log it as a regression.
+
 **Cross-suite dependencies:** only **TC-096** needs a work item that has actually moved through
 phases, which only exists once **Tester C has completed TS-07** in `QA Charlie`. Hold TC-096 until C
 confirms; mark it Blocked, not Failed, if C is behind. TC-086 and TC-089 used to carry the same
@@ -79,16 +86,20 @@ that does, it runs last, and it needs no companion — see the case for what to 
 
 **Steps**
 1. Click **+ New Work Item**.
-2. Read the drawer's title and its two fields.
-3. Open the `Type` select and read its options.
+2. Read the drawer's title and its three fields.
+3. Open the `Type` select and read its options, then read the legend beneath it.
 4. Enter Title `Stripe Webhook Integration`, leave Type as `Epic`.
 5. Click **Create**.
 
 **Expected**
 - A drawer titled `New work item` opens with a `Title` field marked required (`*`) and placeholder
-  `e.g. Stripe Webhook Integration`, and a `Type` select.
+  `e.g. Stripe Webhook Integration`, a `Type` select, and a `Description` field.
 - The `Type` select offers exactly four options: `Epic`, `Story`, `Task`, `Defect` — with `Epic`
   preselected.
+- Beneath the select, a legend lists all four types as **separate rows**, one short sentence each,
+  with the `Epic` row highlighted. *(Changed 2026-09-30 — it used to be one run-on paragraph, and
+  `Description` did not exist. TC-920 and TC-921 test the new behaviour in full.)*
+- `Description` is **not** marked required and is left empty here.
 - The footer has **Cancel** and **Create**; **Create** shows `Creating…` while the request is in
   flight.
 - On success the drawer closes and the browser navigates to the new item's detail screen, whose h1
@@ -1110,3 +1121,195 @@ that does, it runs last, and it needs no companion — see the case for what to 
   write it up twice; note in the tracker that create and patch share one defect.
 - Delete nothing afterwards — the product has no delete control, so `Engineer-created item` stays on
   the board. Take it into account if you re-run TC-085 or TC-090.
+
+---
+
+### TC-920 · A work item can be created with a description
+
+| Field | Value |
+|---|---|
+| Suite | TS-06 Work Items |
+| Type | Functional |
+| Priority | High |
+| Screen | `/work-items` |
+| Persona | P1 Owner-Admin |
+| Automation | No |
+
+**Preconditions**
+- You are on `/work-items` in `Payment Gateway v2`, signed in as P1.
+
+**Steps**
+1. Click **+ New Work Item**.
+2. Enter Title `Spend export to CSV` and set Type to `Story`.
+3. Type into `Description`: `Finance need the board as a spreadsheet each month.`
+4. Click **Create**.
+5. On the detail screen, read the **Description & context** panel.
+
+**Expected**
+- The drawer has a `Description` field, below the type legend, with placeholder
+  `What needs to happen, and why.` and the helper line `Optional — you can add this later.`
+- **Create** succeeds and you land on the new item's detail screen.
+- The **Description & context** panel shows the sentence you typed — **not** `No description yet.`
+
+**Pass / Fail**
+- PASS if the description typed at creation is stored and rendered on the item.
+- FAIL if the drawer has no `Description` field, or if the panel still reads `No description yet.`
+  after creating with one.
+
+**Test data**
+- Title: `Spend export to CSV` · Type: `Story` · Description: `Finance need the board as a
+  spreadsheet each month.`
+
+**Notes**
+- This closes the gap QA reported on 2026-09-30 (Bugs S.No 283): an item could be created with no
+  description and then nothing anywhere could add one. Both halves shipped together — TC-922 is the
+  other half.
+- Keep this item. TC-922 and TC-923 reuse it.
+
+---
+
+### TC-921 · The work item type legend is readable, and follows the selection
+
+| Field | Value |
+|---|---|
+| Suite | TS-06 Work Items |
+| Type | UX |
+| Priority | Medium |
+| Screen | `/work-items` |
+| Persona | P1 Owner-Admin |
+| Automation | Partly |
+
+**Preconditions**
+- You are on `/work-items`.
+
+**Steps**
+1. Click **+ New Work Item**.
+2. Read the block beneath the `Type` select without changing anything.
+3. Change `Type` to `Story`, then `Task`, then `Defect`, reading the block after each change.
+4. Hover the `Type` select and wait two seconds.
+5. Click **Cancel**.
+
+**Expected**
+- The block is a **legend of four rows** — `Epic`, `Story`, `Task`, `Defect` in that order — each
+  with its type name at the left and **one** short sentence beside it. It is not a paragraph.
+- Exactly **one** row is highlighted at a time, and it is always the row matching the select. `Epic`
+  is highlighted when the drawer opens.
+- Each row carries only its **own** definition — the `Epic` row does not mention bug fixes.
+- Hovering the select shows **no** tooltip repeating all four definitions.
+
+**Pass / Fail**
+- PASS if all four definitions are readable as separate rows and the highlight tracks the select.
+- FAIL if the definitions run together as one block of text, if more than one row is highlighted, if
+  the highlight does not move, or if the old all-in-one tooltip still appears on hover.
+
+**Notes**
+- Reported by QA on 2026-09-30 as "plain text all mixed which is not readable" (Bugs S.No 284). The
+  **wording is unchanged and is not under test** — only its layout. Do not raise wording defects
+  here; rows 21(iii) and 36 settled the words.
+- The legend is deliberately hidden from screen readers: the select already announces its options,
+  so a reader would otherwise hear every definition twice. Its absence from the accessibility tree
+  is **not** a defect.
+
+---
+
+### TC-922 · A work item's title and description can be edited
+
+| Field | Value |
+|---|---|
+| Suite | TS-06 Work Items |
+| Type | Functional |
+| Priority | Critical |
+| Screen | `/work-items/:id` |
+| Persona | P1 Owner-Admin |
+| Automation | Partly |
+
+**Preconditions**
+- TC-920 passed. Open `Spend export to CSV` from the board.
+
+**Steps**
+1. Click **Edit** in the page header.
+2. Read the dialog without changing anything, and look at **Save changes**.
+3. Change the title to `Monthly spend export to CSV`.
+4. Click **Save changes**, and watch the page heading **without reloading**.
+5. Open **Edit** again, clear the title completely, and look at **Save changes**.
+6. Click **Discard**.
+7. Repeat steps 1–4 on an item the **platform** created (any task under an epic that has been
+   through Task Breakdown — borrow Tester C's project if `QA Bravo` has none).
+
+**Expected**
+- An **Edit** button is in the header of the epic, task **and** defect screens.
+- The dialog is titled `Edit WI-n` and opens **prefilled** with the item's current title and
+  description.
+- **Save changes** is **disabled** until something actually changes, and disabled again if an
+  edited value is returned to what it was.
+- After saving, the page heading updates to the new title **immediately**, with no reload.
+- With the title cleared, **Save changes** is disabled.
+- **Discard** closes the dialog and changes nothing.
+- A platform-created item edits exactly the same way.
+
+**Pass / Fail**
+- PASS if both fields save, the heading refreshes without a reload, and Save is correctly disabled
+  in all three cases (unchanged, reverted, empty title).
+- FAIL if there is no Edit button, if the dialog opens empty, if a saved title only appears after a
+  reload, or if an empty title can be saved.
+
+**Notes**
+- Bugs S.No 76. The backend for this shipped in Phase 4.8 and sat unused for months — the endpoint
+  is not new, the screen is.
+- **`Type` is deliberately not editable.** Its absence from the dialog is not a defect: changing a
+  Story to an Epic mid-lifecycle changes which phases apply and which rail is drawn.
+- Step 4 is the point of the case. An earlier build saved correctly but left the **old** title on
+  screen until a reload; that is exactly what this step catches.
+
+---
+
+### TC-923 · A cancelled work item can be found and reopened
+
+| Field | Value |
+|---|---|
+| Suite | TS-06 Work Items |
+| Type | Functional |
+| Priority | High |
+| Screen | `/work-items` |
+| Persona | P1 Owner-Admin |
+| Automation | Partly |
+
+**Preconditions**
+- TC-922 passed. You are on `/work-items` and `Monthly spend export to CSV` is on the board.
+
+**Steps**
+1. Switch to **List**, open the row menu (`…`) for `Monthly spend export to CSV`, and read it.
+2. Choose **Cancel…**, pick a reason, and confirm with **Cancel this item**.
+3. Find the `N cancelled hidden` control above the board and click it.
+4. Open the row menu for the cancelled item and read it.
+5. Choose **Reopen…** and read the dialog in full.
+6. Click **Yes, reopen**.
+7. Clear the status filter and look at the **Backlog** column.
+
+**Expected**
+- A live item's row menu offers **Open** and **Cancel…**, and **no** Reopen.
+- Cancelling shows a confirmation dialog that **requires a reason** before it will proceed.
+- After cancelling, the board says `1 cancelled hidden`; clicking it lists the cancelled item.
+- The cancelled item's row menu offers **Open** and **Reopen…**, and **no** Cancel.
+- The reopen dialog is titled `Reopen <title>?`, says the item goes back to the Backlog **as a
+  draft** and that it **does not resume the phase** it was on, offers an **optional** reason, and
+  has **No, leave it** / **Yes, reopen**.
+- After reopening, the item is in **Backlog** with status `Not started`, and is no longer counted as
+  hidden.
+
+**Pass / Fail**
+- PASS if the item can be cancelled, found again, reopened, and lands back in Backlog as a draft.
+- FAIL if Reopen is missing, if a reason is demanded to reopen, if the item returns to the phase it
+  was cancelled from, or if it cannot be found after cancelling.
+
+**Notes**
+- Bugs S.No 285. There is **no delete**, deliberately — work items are referenced by runs, gates,
+  artifacts and ledger events. Cancel is the closure and this is its undo. **Do not raise "no delete
+  control" as a defect**; it is a recorded decision.
+- **Cancel is unchanged** and already confirmed before this work. Its dialog is not under test here
+  beyond the fact that it still appears.
+- **Defect variant, if a cancelled defect on a pending gate is available:** cancelling a defect adds
+  a `Reviewed the cancelled defect …` item to its story's gate checklist. Reopening must **remove**
+  it — the defect is live again, so the gate is blocked on its own account and a reviewer must not
+  be left an untickable second block. Check the gate checklist before and after. If no such defect
+  exists in `QA Bravo`, mark this paragraph Not Applicable rather than Failed.

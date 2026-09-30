@@ -141,11 +141,16 @@ def test_marking_done_needs_no_reason(client, project, lead):
 
 
 @pytest.mark.parametrize("from_state,to_state", [
-    # Nothing leaves a terminal state through this endpoint. Reopening finished or abandoned
-    # work restarts gates and reporting; that is a separate decision, not this one.
+    # A cancelled item can be reopened (group 4) but only to `proposed`. Its run is long over,
+    # so `in_progress` and `in_review` would name a phase with no live run behind it, and
+    # `done` would let abandoned work be reported as delivered without anyone doing it.
     (WorkItem.State.CANCELLED, WorkItem.State.IN_PROGRESS),
+    (WorkItem.State.CANCELLED, WorkItem.State.IN_REVIEW),
     (WorkItem.State.CANCELLED, WorkItem.State.DONE),
+    # `done` stays fully terminal. Reopening it restarts delivery reporting on work somebody
+    # has already attested is delivered — a different decision, and still not this one.
     (WorkItem.State.DONE, WorkItem.State.IN_PROGRESS),
+    (WorkItem.State.DONE, WorkItem.State.PROPOSED),
     # An item nobody has started is not something anybody can attest is finished — that is
     # what `cancelled` is for.
     (WorkItem.State.PROPOSED, WorkItem.State.DONE),
@@ -353,6 +358,138 @@ def test_cancelling_an_ordinary_task_touches_no_gate(project, lead):
 
     out = human_transition(tenant_id=str(project.tenant_id), work_item_id=str(task.id),
                            to_state=WorkItem.State.CANCELLED, reason="r", actor_id=str(lead.id))
+
+    assert out["gates_notified"] == []
+    approval.refresh_from_db()
+    assert approval.conditions == []
+
+
+# -- 4. a cancelled item can be picked back up (2026-09-30) ----------
+#
+# Cancel is the platform's only closure - there is no delete - so a mis-click was permanent, and
+# the team asked for it to be undoable. What makes that safe is the mirror of what made the
+# cancellation safe: cancelling a blocking defect RELEASED its gate and disclosed that to the
+# reviewer, so reopening must put the block back and withdraw the disclosure. Group 3 tests the
+# first half of that pair; this tests the second.
+def test_a_cancelled_item_can_be_reopened(client, project, lead):
+    item = _item(project, WorkItem.State.CANCELLED)
+    _login(client, "lead@acme.test", "lead-pass!")
+
+    resp = _post(client, project, item, to_state="proposed", reason="Cancelled by mistake")
+
+    assert resp.status_code == 200, resp.content
+    item.refresh_from_db()
+    # Back on the board as a draft, in the Backlog column - not into the phase it left, which
+    # has no live run behind it any more.
+    assert item.state == WorkItem.State.PROPOSED
+    event = Event.objects.get(tenant_id=project.tenant_id, action="workitem.transitioned",
+                              target_id=str(item.id))
+    assert event.payload["from_state"] == "cancelled"
+    assert event.payload["to_state"] == "proposed"
+    assert event.payload["reason"] == "Cancelled by mistake"
+    assert event.actor == str(lead.id)
+
+
+def test_reopening_needs_no_reason(client, project, lead):
+    """Only cancelling requires one: the reason is the record of a decision that work will not
+    happen. Bringing it back needs no defence."""
+    item = _item(project, WorkItem.State.CANCELLED)
+    _login(client, "lead@acme.test", "lead-pass!")
+
+    assert _post(client, project, item, to_state="proposed").status_code == 200
+    item.refresh_from_db()
+    assert item.state == WorkItem.State.PROPOSED
+
+
+def test_an_engineer_cannot_reopen(client, project, engineer):
+    """Same bar as cancelling, per the team's decision - reopening a defect puts a gate's block
+    back, which is as consequential as releasing it was."""
+    item = _item(project, WorkItem.State.CANCELLED)
+    _login(client, "eng@acme.test", "eng-pass!")
+
+    resp = _post(client, project, item, to_state="proposed", reason="please")
+
+    assert resp.status_code == 403
+    item.refresh_from_db()
+    assert item.state == WorkItem.State.CANCELLED
+
+
+def test_the_refusal_names_the_move_that_was_attempted(client, project, engineer):
+    """The refusal quotes `what=` from the view, which said "close or cancel a work item" for
+    every call - so someone refused on a REOPEN was told they may not close something, a true
+    sentence about a thing they were not doing. It reads as the platform misunderstanding the
+    click, and that is the class of wording this platform does not ship."""
+    item = _item(project, WorkItem.State.CANCELLED)
+    _login(client, "eng@acme.test", "eng-pass!")
+
+    said = str(_post(client, project, item, to_state="proposed", reason="x").data)
+
+    assert "reopen" in said.lower(), said
+    # The old wording, specifically — "cancelled" on its own is fine here and is in fact the
+    # right word, because the item being reopened IS cancelled.
+    assert "close or cancel" not in said.lower(), said
+
+
+def test_reopening_a_defect_withdraws_the_gate_disclosure(project, lead):
+    """The load-bearing half. Cancelling the defect released the gate and left the reviewer a
+    required "Reviewed the cancelled defect ..." item. Once the defect is live again that
+    sentence is false, and the gate is shut again on the defect's own account (the gates read
+    `TERMINAL_STATES`) - so leaving the condition would be a second, stale block that no
+    reviewer could honestly tick."""
+    story = _item(project, WorkItem.State.IN_PROGRESS, WorkItem.Type.STORY)
+    approval = _pending_gate(project, story)
+    defect = WorkItem.objects.create(
+        tenant=project.tenant, project=project, type=WorkItem.Type.DEFECT, parent=story,
+        title="D", state=WorkItem.State.IN_PROGRESS, external_ref={"test_ref": "t1"},
+    )
+    human_transition(tenant_id=str(project.tenant_id), work_item_id=str(defect.id),
+                     to_state=WorkItem.State.CANCELLED, reason="Will not fix",
+                     actor_id=str(lead.id))
+    approval.refresh_from_db()
+    assert any(str(c["key"]).startswith(ACK_CONDITION_PREFIX) for c in approval.conditions)
+
+    out = human_transition(tenant_id=str(project.tenant_id), work_item_id=str(defect.id),
+                           to_state=WorkItem.State.PROPOSED, actor_id=str(lead.id))
+
+    assert out["gates_notified"] == [str(approval.id)]
+    approval.refresh_from_db()
+    assert not any(str(c["key"]).startswith(ACK_CONDITION_PREFIX)
+                   for c in approval.conditions), approval.conditions
+
+
+def test_reopening_leaves_a_decided_gate_alone(project, lead):
+    """Its checklist is the record of what that approver actually saw - the same reason the
+    disclosure skips a decided gate on the way in."""
+    story = _item(project, WorkItem.State.IN_PROGRESS, WorkItem.Type.STORY)
+    approval = _pending_gate(project, story)
+    defect = WorkItem.objects.create(
+        tenant=project.tenant, project=project, type=WorkItem.Type.DEFECT, parent=story,
+        title="D", state=WorkItem.State.IN_PROGRESS, external_ref={"test_ref": "t1"},
+    )
+    human_transition(tenant_id=str(project.tenant_id), work_item_id=str(defect.id),
+                     to_state=WorkItem.State.CANCELLED, reason="Will not fix",
+                     actor_id=str(lead.id))
+    approval.refresh_from_db()
+    before = list(approval.conditions)
+    approval.decision = Approval.Decision.APPROVED
+    approval.save(update_fields=["decision"])
+
+    out = human_transition(tenant_id=str(project.tenant_id), work_item_id=str(defect.id),
+                           to_state=WorkItem.State.PROPOSED, actor_id=str(lead.id))
+
+    assert out["gates_notified"] == []
+    approval.refresh_from_db()
+    assert approval.conditions == before
+
+
+def test_reopening_an_ordinary_task_touches_no_gate(project, lead):
+    """Only a defect ever held a gate shut, so only a defect has a disclosure to withdraw."""
+    story = _item(project, WorkItem.State.IN_PROGRESS, WorkItem.Type.STORY)
+    approval = _pending_gate(project, story)
+    task = _item(project, WorkItem.State.CANCELLED, WorkItem.Type.TASK, parent=story)
+
+    out = human_transition(tenant_id=str(project.tenant_id), work_item_id=str(task.id),
+                           to_state=WorkItem.State.PROPOSED, actor_id=str(lead.id))
 
     assert out["gates_notified"] == []
     approval.refresh_from_db()

@@ -573,6 +573,29 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .wi-card__foot { display: flex; align-items: center; gap: var(--space-3); color: var(--text-muted); font-size: var(--fs-xs); }
 .wi-card__foot .u-spacer { flex: 1 1 auto; }
 
+/* Work-item type legend, in the New work item drawer.
+   The four definitions used to be one concatenated paragraph rendered under the select (and
+   repeated as its hover tooltip), which QA read as "plain text all mixed which is not readable".
+   The choice being made is a COMPARISON between four things, so they get four labelled rows and
+   the selected one is marked. Grid rather than flex so every definition starts at the same left
+   edge however long its type name is. */
+.wi-type-legend { display: grid; gap: 2px; margin: var(--space-2) 0 var(--space-4); }
+.wi-type-legend__row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid transparent;
+}
+.wi-type-legend__row.is-selected {
+  background: var(--bg-subtle);
+  border-left-color: var(--brand-orange);
+}
+.wi-type-legend__term { font-size: var(--fs-xs); font-weight: 600; color: var(--text-strong); }
+.wi-type-legend__desc { font-size: var(--fs-xs); color: var(--text-muted); margin: 0; }
+.wi-type-legend__row.is-selected .wi-type-legend__desc { color: var(--text-body); }
+
 /* ============================================================================
    12. Gate panel + criteria checklist
    ========================================================================== */
