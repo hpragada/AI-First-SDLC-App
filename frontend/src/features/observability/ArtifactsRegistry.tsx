@@ -7,6 +7,7 @@ import { sorChipClass, sorGlyph, sorLabel } from "../../labels";
 import { isPhaseReport } from "../../types";
 import { phaseLabel, artifactLabel } from "../lifecycle/phases";
 import { artifactStatusBadge, artifactStatusLabel } from "./artifactStatus";
+import { DownloadArtifactButton } from "./DownloadArtifact";
 import { useArtifacts } from "./hooks";
 
 // S-28 view states: populated · internal-only (no external link) · empty.
@@ -284,6 +285,18 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
                           <span className="t-xs u-muted" title="This row is a pointer with no body and no link to open.">
                             Nothing to preview
                           </span>
+                        )}
+                        {/* A copy of the document, as it is stored. Offered on DRAFTS too, unlike
+                            Export below — reading a draft offline before its gate is exactly when
+                            somebody wants one. `downloadable` is stricter than `previewable`: a
+                            preview may be a link or a summary we synthesised, which a file may not
+                            be. Undefined (older API response) hides it rather than offering a
+                            button that would 404. */}
+                        {artifact.downloadable && (
+                          <DownloadArtifactButton
+                            artifactId={artifact.id}
+                            fallbackName={artifactLabel(artifact.title, artifact.type)}
+                          />
                         )}
                         {(artifact.status === "approved" || artifact.status === "published") &&
                           // Mirrors the backend export eligibility: the gate must have passed AND

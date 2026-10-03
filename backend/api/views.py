@@ -19,6 +19,7 @@ from rest_framework.exceptions import NotFound, ParseError, PermissionDenied, Va
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from api.files import artifact_filename, attachment_response, inline_response
 from apps.clarifications.models import Clarification
 from apps.clarifications.services import (
     ClarificationError,
@@ -85,7 +86,7 @@ from integrations.onboarding import (
     read_gap_report,
     register_atlassian,
 )
-from integrations.preview import read_artifact_preview
+from integrations.preview import artifact_is_downloadable, read_artifact_preview
 from integrations.types import CapabilityUnavailable
 from orchestration.takeover import (
     PauseError,
@@ -983,8 +984,6 @@ class ProjectViewSet(
         the endpoint that makes the console possible at all. The key is validated against this
         project's own prefix before it is fetched, never trusted because it came out of a row.
         """
-        from django.http import HttpResponse
-
         from apps.a11y.review import ReviewError, screenshot
 
         project = self.get_object()
@@ -995,9 +994,7 @@ class ProjectViewSet(
             )
         except ReviewError as exc:
             raise NotFound(str(exc)) from exc
-        resp = HttpResponse(data, content_type=mime)
-        resp["Content-Disposition"] = 'inline; filename="a11y-capture.png"'
-        return resp
+        return inline_response(data, filename="a11y-capture.png", content_type=mime)
 
     @action(detail=True, methods=["get", "put"], url_path="a11y-conformance")
     def a11y_conformance(self, request, pk=None):
@@ -1609,8 +1606,6 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     def original(self, request, pk=None):
         """A3: stream the original uploaded file so the user sees exactly what they uploaded
         (the browser renders a PDF/image inline). Read-through from S3, never stored back."""
-        from django.http import HttpResponse
-
         from storage import s3_from_settings
 
         src = self.get_object()
@@ -1623,17 +1618,16 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             data = s3_from_settings().get(src.s3_key)
         except Exception as exc:  # noqa: BLE001 — missing object → 404, not 500
             raise NotFound("That file isn't stored any more, so it can't be shown.") from exc
-        resp = HttpResponse(data, content_type=src.mime or "application/octet-stream")
-        resp["Content-Disposition"] = f'inline; filename="{src.filename}"'
-        return resp
+        # The filename is whatever the uploader called the file, so it goes through the sanitiser
+        # rather than into an f-string — see api/files.py.
+        return inline_response(data, filename=src.filename,
+                               content_type=src.mime or "application/octet-stream")
 
     @action(detail=True, methods=["get"], url_path="page")
     def page(self, request, pk=None):
         """A3: stream one captured page render / embedded image (external_ref.page_images),
         selected by its `name`. Validates the name against the artifact so no arbitrary key can
         be read."""
-        from django.http import HttpResponse
-
         from storage import s3_from_settings
 
         src = self.get_object()
@@ -1650,9 +1644,8 @@ class SourceDocumentViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             data = s3_from_settings().get(match["s3_key"])
         except Exception as exc:  # noqa: BLE001
             raise NotFound("That page image isn't stored any more, so it can't be shown.") from exc
-        resp = HttpResponse(data, content_type=match.get("mime") or "image/png")
-        resp["Content-Disposition"] = f'inline; filename="{name}"'
-        return resp
+        return inline_response(data, filename=name,
+                               content_type=match.get("mime") or "image/png")
 
     @action(detail=True, methods=["post"])
     def adopt(self, request, pk=None):
@@ -2526,7 +2519,9 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
     def get_permissions(self):
         # Preview (P4.7-T10) reads a body read-through — any authenticated member.
         # List/retrieve keep the existing pointer-only default.
-        if self.action == "preview":
+        # `download` serves a document body as a file, for the same reason `preview` is gated —
+        # and the same reason SourceDocumentViewSet gates its raw-bytes actions above.
+        if self.action in {"preview", "download"}:
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
@@ -2613,6 +2608,48 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         if result is None:
             raise NotFound("This document has nothing to preview yet.")
         return Response(result, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["get"])
+    def download(self, request, pk=None):
+        """Hand this artifact's body over as a file, named after the document.
+
+        **This is not Export.** Export (`publish`, below) pushes the document INTO Confluence or
+        Jira — a gated write to a system of record. This reads a body and streams it: it writes
+        nothing, records no export, touches no gate and changes no status. A test asserts exactly
+        that, because the two controls sit a few pixels apart on the registry and the whole reason
+        this endpoint exists is that people were clicking Export to get a copy.
+
+        `raw=True` is load-bearing. The preview layer renders some machine-readable artifacts into
+        something readable — an SBOM becomes a table — and a file called `SBOM-v1.json` must
+        contain the SBOM, not a picture of it.
+        """
+        artifact = self.get_object()
+        if not artifact_is_downloadable(artifact):
+            # The button is hidden for these, so this is a deep link or a stale page. Name the
+            # place the real copy lives rather than refusing flatly.
+            raise NotFound(
+                "This row points at a document kept somewhere else, so there is no file here to "
+                "download. Open it with Preview to follow the link to it."
+            )
+        result = read_artifact_preview(
+            tenant_id=self.tenant_id, artifact_id=str(artifact.id), raw=True, allow_empty=True)
+        body = (result or {}).get("body") or ""
+        if not body:
+            # Never save an empty file. `_s3_body` degrades a missing or unreadable object to an
+            # empty string by design (it is best-effort for the preview screen, which can say
+            # "Preview unavailable"), and a download has no way to say that — it would just write
+            # a 0-byte file named after the document, which reads as "the document is empty".
+            raise NotFound(
+                "That document has no content stored yet, so there is nothing to download."
+            )
+        content_type = (result or {}).get("content_type") or "text/markdown"
+        return attachment_response(
+            body.encode("utf-8"),
+            filename=artifact_filename(artifact, content_type=content_type),
+            # The charset matters: without it a browser guesses, and a document with an em dash in
+            # it is where that guess shows up.
+            content_type=f"{content_type}; charset=utf-8",
+        )
 
     @action(detail=True, methods=["post"])
     def publish(self, request, pk=None):

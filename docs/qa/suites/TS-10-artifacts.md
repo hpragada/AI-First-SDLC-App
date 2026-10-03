@@ -1043,3 +1043,205 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
   screen kept showing the one run's artifacts, so the button looked dead.
 - If a scoped view matches nothing, the empty state `Nothing matched this filter` carries its own
   **Show the whole registry** button. It must behave the same way — check it if you reach that state.
+
+---
+
+### TC-246 · A document can be downloaded, and the saved file IS the document
+
+| Field | Value |
+|---|---|
+| Suite | TS-10 Artifacts & Publish |
+| Type | Functional |
+| Priority | High |
+| Screen | `/artifacts`, `/artifacts/:id` |
+| Persona | P1 Owner-Admin |
+| Automation | Partly |
+
+**Preconditions**
+- At least one artifact the platform itself produced — a PRD, an architecture decision, a test
+  plan. Any row whose System of Record column reads **Platform**.
+
+**Steps**
+1. On `/artifacts`, find that row and read its buttons.
+2. Press **Download**.
+3. Find the saved file on your machine. Note its name.
+4. **Open it.** Read it against what Preview shows for the same row.
+5. Open the same artifact's Preview screen and press **Download** there too.
+
+**Expected**
+- The row offers **Preview**, **Download** and (if its gate has passed) **Export**.
+- A file is saved without any further question.
+- It is named after the **document and its version** — `PRD-Spend-Export-v2.md` — with a sensible
+  extension. It is **never** named after an id: no 36-character string of letters and numbers.
+- Opening it shows the **whole document**, the same text Preview shows. Not empty, not truncated,
+  not cut off at the end.
+- The Preview screen's Download, beside **View raw**, saves the same file.
+
+**Pass / Fail**
+- PASS if the saved file opens and is the complete document, under a name you could recognise a
+  week later.
+- FAIL on an empty or truncated file, a file named after an id, a file with no extension or the
+  wrong one, or a download that silently does nothing.
+
+**Notes**
+- Bugs S.No 295. Step 4 is the case, not step 2 — a download that *appears* to work and saves an
+  empty file is the failure this was most at risk of, because the body reader degrades a missing
+  or unreadable document to "no body" by design. Always open the file.
+
+---
+
+### TC-247 · Download is not Export
+
+| Field | Value |
+|---|---|
+| Suite | TS-10 Artifacts & Publish |
+| Type | Functional |
+| Priority | **Critical** |
+| Screen | `/artifacts` |
+| Persona | P1 Owner-Admin |
+| Automation | Partly |
+
+**Preconditions**
+- An artifact whose gate has been approved, so that **both** buttons are on the row.
+- A Confluence or Jira connector bound, so Export would really do something.
+
+**Steps**
+1. Note the artifact's status, and open its system of record in another tab.
+2. Press **Download**.
+3. Reload the registry and read the row's status again.
+4. Check the system of record. Check the artifact's version.
+
+**Expected**
+- Downloading saves a file and **nothing else happens**: the status is unchanged, the version is
+  unchanged, and **nothing new appears in Confluence or Jira**.
+- **Export** is still a separate button that opens the publish screen.
+
+**Pass / Fail**
+- PASS if a download changes nothing anywhere.
+- FAIL if downloading changes the artifact's status or version, if anything is written to a system
+  of record, or if Download and Export do the same thing.
+
+**Notes**
+- Bugs S.No 296, and this is why the whole feature exists: before it, **Export was the only control
+  that looked like "get me a copy"** — and Export publishes the document into a system of record.
+  A user after a copy was one click from writing a draft into Confluence.
+- Priority Critical because a false PASS here is a client-visible write to their own tooling, which
+  is the one thing non-negotiable #5 exists to prevent.
+
+---
+
+### TC-248 · Rows whose document lives elsewhere offer no Download
+
+| Field | Value |
+|---|---|
+| Suite | TS-10 Artifacts & Publish |
+| Type | Negative |
+| Priority | Medium |
+| Screen | `/artifacts`, `/artifacts/:id` |
+| Persona | P1 Owner-Admin |
+| Automation | Yes |
+
+**Preconditions**
+- Rows with different System of Record values. A **Figma** or **Git** row is ideal; TS-03's setup
+  leaves both.
+
+**Steps**
+1. On `/artifacts`, read the buttons on a **Platform** row and on a **Figma** / **Git** / **Jira**
+   row.
+2. Open the Preview for the non-Platform row.
+3. Open `/api/artifacts/<that row's id>/download/` directly in the address bar.
+
+**Expected**
+- The non-Platform row offers **Preview** (and perhaps Export) but **no Download**. The button is
+  **absent**, not greyed out.
+- Its Preview screen offers **Open source** instead, and no Download.
+- At step 3 the answer is a refusal in plain words, saying the document is kept somewhere else and
+  to open it with Preview. Not a stack trace, not an empty file.
+
+**Pass / Fail**
+- PASS if Download appears only where the platform actually holds the document.
+- FAIL if a Figma, Git or Jira row offers Download — and especially if pressing it saves a file.
+
+**Notes**
+- Bugs S.No 295. For a Jira row the "body" is two lines the platform synthesises (the summary and
+  the status). Saved as `Login-flow.txt` that looks like the document and is not, which is worse
+  than offering nothing — hence absent rather than disabled.
+- Step 3 matters because the button being hidden is not a control: somebody may deep-link, or hold
+  a page open while the row changes.
+
+---
+
+### TC-249 · A document with an awkward name still downloads safely
+
+| Field | Value |
+|---|---|
+| Suite | TS-10 Artifacts & Publish |
+| Type | Edge |
+| Priority | Medium |
+| Screen | `/artifacts` |
+| Persona | P1 Owner-Admin |
+| Automation | Yes |
+
+**Preconditions**
+- An artifact whose title contains punctuation an agent might reasonably write — an em dash,
+  accented letters, quotes, or a slash. `ADR-003 — Événement Sourcing "final"` exercises all four.
+  Ask a developer to register one if the project has none.
+
+**Steps**
+1. Download it.
+2. Read the saved filename.
+3. Open the file.
+
+**Expected**
+- The file saves. It is **not** called `document` or an id, and the name is still recognisable as
+  the document — accents either preserved or sensibly transliterated (`Evenement`, not `vnement`).
+- No quotes, slashes or backslashes appear in the name.
+- The file opens and contains the document.
+
+**Pass / Fail**
+- PASS if the file saves with a readable, recognisable name and correct contents.
+- FAIL if the download fails, if the browser saves something with a broken or empty name, or if the
+  name contains a path separator.
+
+**Notes**
+- Bugs S.No 297. An artifact's title is free text written by a **phase agent**, and it ends up
+  inside an HTTP header — a line-oriented format with quoting rules. This case exists because the
+  input is not under a human's control at the moment it is used.
+
+---
+
+### TC-250 · Every row with a body says so
+
+| Field | Value |
+|---|---|
+| Suite | TS-10 Artifacts & Publish |
+| Type | UX |
+| Priority | Medium |
+| Screen | `/artifacts` |
+| Persona | P1 Owner-Admin |
+| Automation | Yes |
+
+**Preconditions**
+- A project with a mix of artifacts, including at least one registered as a **draft before anything
+  was staged** (a run interrupted mid-phase leaves these).
+
+**Steps**
+1. Read down the ACTIONS column for every row.
+2. For each row reading **Nothing to preview**, open `/artifacts/<its id>` directly.
+
+**Expected**
+- A row reading **Nothing to preview** really has nothing: opening it directly shows no document
+  either.
+- Any row that **does** show a document when opened directly must have offered Preview on the list.
+
+**Pass / Fail**
+- PASS if the list and the screen agree for every row.
+- FAIL on any row labelled "Nothing to preview" that previews perfectly when opened directly.
+
+**Notes**
+- Bugs S.No 298: that mismatch was real. A draft registered with its body inline rather than staged
+  to storage previewed fine and was listed as having nothing. Both answers now come from one shared
+  rule.
+- One **known and deliberate** exception: an artifact with no body of its own that can only be
+  previewed through the run that produced it may still say "Nothing to preview". Checking that
+  would cost a database query per row on a registry that is not paginated. Do not raise it.

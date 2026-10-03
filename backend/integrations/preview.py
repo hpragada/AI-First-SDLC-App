@@ -82,6 +82,29 @@ _FORMAT_CONTENT_TYPE = {
 }
 
 
+#: The inverse of the map above: what to CALL a file holding each content type. Defined here, next
+#: to its counterpart, because the pair has to move together — a format declared above and missing
+#: here would download as `.txt` and stop opening in the right application.
+#:
+#: `text/markdown` is not in the map above as a key, but it is the overwhelmingly common answer, so
+#: it is the default rather than `.txt`.
+_CONTENT_TYPE_EXTENSION = {
+    "text/markdown": "md",
+    "text/html": "html",
+    "text/plain": "txt",
+    "application/json": "json",
+    "application/yaml": "yaml",
+    "application/xml": "xml",
+    "text/csv": "csv",
+}
+
+
+def extension_for_content_type(content_type: str) -> str:
+    """`application/json` -> `json`. Tolerates a charset suffix and unknown types."""
+    base = (content_type or "").split(";")[0].strip().lower()
+    return _CONTENT_TYPE_EXTENSION.get(base, "md")
+
+
 def _detect_content_type(body: str) -> str:
     """What this body ACTUALLY is, for a body nobody declared a format for.
 
@@ -391,6 +414,50 @@ def _states(artifact) -> list[dict]:
 _READ_THROUGH_SORS = ("confluence", "jira")
 
 
+def _internal_body_in_reach(artifact) -> bool:
+    """Whether an internal row holds a body we can reach WITHOUT another query.
+
+    Mirrors the first three steps of `_read_internal`'s cascade — a staged S3 body, a wireframe's
+    per-state bodies, an inline draft body, or structured `external_ref` content an agent put there.
+    All four are on the row itself, so this stays free for a list endpoint.
+
+    It deliberately stops short of the cascade's last two steps, which fall back to the artifact's
+    RUN (`outputs.artifact_s3_key`, `outputs.report.body`). Reaching those costs a join per row, and
+    this is called once per row on an unpaginated registry — the same trap `parent_key` fell into on
+    the work-item board. A row that can only preview through its run is rare, is a pointer row by
+    nature, and is better off under-promising than costing a few hundred queries.
+    """
+    ref = artifact.external_ref or {}
+    if artifact.s3_key:
+        return True
+    if any(isinstance(st, dict) and st.get("s3_key") for st in _states(artifact)):
+        return True
+    if ref.get("body"):
+        return True
+    return bool(render_structured_ref(ref))
+
+
+def artifact_is_downloadable(artifact) -> bool:
+    """Whether this row can be handed over as a FILE.
+
+    Stricter than `artifact_has_preview`, and the difference is the point. Preview is allowed to
+    show a link or a two-line summary, because the screen can frame it — a file cannot. A file named
+    `Login-flow.txt` holding the two lines we synthesise for a Jira issue (`summary` + `Status: x`)
+    looks like the document and is not; the same for Figma, Xray and Git rows, whose authoritative
+    copy lives somewhere we are only pointing at. Those keep their "Open source" link, which is the
+    honest answer to "give me a copy".
+
+    So: our own bodies, and Confluence pages (the connector fetches the real page). Nothing else.
+
+    Pointer-level, no S3 read, for the same reason as `artifact_has_preview` — the registry calls it
+    once per row. It can therefore say yes to a row whose S3 object has since gone missing; the
+    download endpoint re-checks at read time and refuses rather than saving an empty file.
+    """
+    if artifact.sor == "internal":
+        return _internal_body_in_reach(artifact)
+    return artifact.sor == "confluence"
+
+
 def artifact_has_preview(artifact) -> bool:
     """Whether `read_artifact_preview` can show this artifact anything at all.
 
@@ -405,9 +472,13 @@ def artifact_has_preview(artifact) -> bool:
     one query. It mirrors the branches of `read_artifact_preview` below; change them together.
     """
     if artifact.sor == "internal":
-        # A wireframe can carry its bodies per state instead of on the row itself.
-        return bool(artifact.s3_key) or any(
-            isinstance(st, dict) and st.get("s3_key") for st in _states(artifact))
+        # Shared with `artifact_is_downloadable` so the two cannot drift. This used to test only
+        # `s3_key` and the per-state keys, which under-reported: `_read_internal` also serves an
+        # INLINE `external_ref.body` (a draft registered before anything was staged to S3) and
+        # generically-rendered structured `external_ref` content (a sub-artifact such as an
+        # assumptions register). Both preview perfectly well, and both were told "Nothing to
+        # preview". The function's own docstring says it mirrors the reader's branches; it did not.
+        return _internal_body_in_reach(artifact)
     if artifact.sor in _READ_THROUGH_SORS:
         return True
     return bool((artifact.external_ref or {}).get("url"))
@@ -628,4 +699,9 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
             # which is how a screen full of clarification QUESTIONS still read as
             # "Requirements — SPENDLog · draft" after the 2026-07-30 gate fix.
             "source": (artifact.external_ref or {}).get("source") or "",
+            # Whether this row can also be handed over as a FILE. Carried on the payload rather
+            # than worked out on the screen, for the same reason `previewable` is on the list
+            # payload: the rule has subtleties, and a second implementation in TypeScript would
+            # drift from this one. Stricter than previewable — see `artifact_is_downloadable`.
+            "downloadable": artifact_is_downloadable(artifact),
         }

@@ -156,6 +156,9 @@ export interface Artifact {
   // re-derive it from `s3_key`/`sor` here (a wireframe previews from `external_ref.states`
   // with no `s3_key` of its own). Optional so an older API response degrades to "offer it".
   previewable?: boolean;
+  /** Whether this row can be handed over as a FILE. Stricter than `previewable`:
+   *  a preview may be a link or a synthesised summary, which a file may not be. */
+  downloadable?: boolean;
   // Pointer + provenance. `source: "phase_report"` marks the platform's own copy of the
   // engine's closing message — see `isPhaseReport`.
   external_ref?: {
@@ -923,6 +926,9 @@ export interface ArtifactPreview {
     taken?: string;
     spec_version?: string;
   } | null;
+  /** Whether this document can also be handed over as a file. Computed server-side beside
+   *  `previewable`; stricter, because a preview may be a link or a synthesised summary. */
+  downloadable?: boolean;
 }
 
 // `external_ref.source` on an artifact the platform filed from the engine's final message.

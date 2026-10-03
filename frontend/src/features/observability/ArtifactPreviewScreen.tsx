@@ -6,6 +6,7 @@ import { Badge, Banner, Card, CardBody, Breadcrumb, DocPreview, ErrorState, Mark
 import { isPhaseReport, type ArtifactState } from "../../types";
 import { artifactLabel } from "../lifecycle/phases";
 import { artifactStatusBadge, artifactStatusLabel } from "./artifactStatus";
+import { DownloadArtifactButton } from "./DownloadArtifact";
 import { useArtifactPreview } from "./hooks";
 
 // Per-screen wireframes carry one self-contained HTML document per UI state (default,
@@ -180,6 +181,15 @@ function ArtifactPreviewLive() {
                 >
                   {showRaw ? "View report" : "View raw"}
                 </button>
+              )}
+              {/* Beside "View raw", because they answer the same question — let me see the actual
+                  file. The download is always the STORED body: an SBOM renders to a readable table
+                  on this screen, and a file called SBOM-v1.json must contain the SBOM. */}
+              {data.downloadable && (
+                <DownloadArtifactButton
+                  artifactId={id as string}
+                  fallbackName={data.title || data.artifact_type}
+                />
               )}
               {data.sor_link && (
                 <>

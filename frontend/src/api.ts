@@ -223,6 +223,84 @@ async function fetchBlobUrl(path: string): Promise<string> {
   return URL.createObjectURL(await res.blob());
 }
 
+/** Fetch something meant to be SAVED, keeping the name the server gave it.
+ *
+ * A sibling of `fetchBlobUrl` above rather than a change to it, for three reasons that all matter
+ * here and none of which matter to its existing callers: this one sends `X-Tenant-ID` (an artifact
+ * is tenant-scoped; the viewers above resolve tenancy from the row's own id), it needs the filename
+ * out of `Content-Disposition`, and its failure sentences have to say "downloaded" rather than
+ * "shown" — a reader who clicked Download and is told the file "can't be shown" will look for the
+ * wrong problem.
+ */
+async function fetchAttachment(
+  path: string,
+  tenantId: string,
+  fallbackName: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const headers: Record<string, string> = {};
+  if (tenantId) headers["X-Tenant-ID"] = tenantId;
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, { method: "GET", credentials: "include", headers });
+  } catch (e) {
+    throw new ApiError(0, e instanceof Error ? e.message : "no answer", undefined, "offline");
+  }
+  if (!res.ok) {
+    // The server's own sentence when it has one — it knows WHICH of the two 404s this is ("kept
+    // somewhere else" vs "no content stored yet"), and both are things the reader can act on.
+    let said = "";
+    try {
+      said = String((JSON.parse(await res.text()) as { detail?: string }).detail ?? "");
+    } catch {
+      said = "";
+    }
+    throw new ApiError(
+      res.status,
+      said ||
+        (res.status === 401 || res.status === 403
+          ? "You don't have access to that document."
+          : "That document couldn't be downloaded. Try again in a moment."),
+    );
+  }
+  return { blob: await res.blob(), filename: filenameFromDisposition(res, fallbackName) };
+}
+
+/** The name the server asked us to save the file under.
+ *
+ * Prefers RFC 5987's `filename*=UTF-8''…`, which carries the real name; falls back to the quoted
+ * ASCII `filename=` that sits beside it for older clients. Both are written by `api/files.py`.
+ */
+function filenameFromDisposition(res: Response, fallback: string): string {
+  const header = res.headers.get("Content-Disposition") || "";
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim());
+    } catch {
+      /* a malformed encoding falls through to the plain one */
+    }
+  }
+  const plain = /filename="([^"]+)"/i.exec(header);
+  return plain ? plain[1] : fallback;
+}
+
+/** Hand a fetched blob to the browser as a save.
+ *
+ * The object URL is revoked afterwards. Nothing else in this app revokes one today, which was
+ * survivable while the only blob was a single document viewer; a registry where every row can be
+ * downloaded is where leaking one per click starts to add up.
+ */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 async function req<T>(method: string, path: string, opts: ReqOpts = {}): Promise<T> {
   const headers: Record<string, string> = {};
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
@@ -759,6 +837,11 @@ export const api = {
   // Phase 4.8 T5 — artifact preview read-through (4.7 T10, DECISION-5).
   getArtifactPreview: (artifactId: string, raw = false) =>
     req<ArtifactPreview>("GET", `/artifacts/${artifactId}/preview/${raw ? "?raw=1" : ""}`),
+
+  // Hand the artifact's stored body over as a file. NOT `publishArtifact` below — that pushes the
+  // document into a system of record. This reads and streams; it writes nothing.
+  downloadArtifact: (tenantId: string, artifactId: string, fallbackName = "document") =>
+    fetchAttachment(`/artifacts/${artifactId}/download/`, tenantId, fallbackName),
 
   // Phase 4.8 T5 — run transcript (new, DECISION-7). Read-only persisted conversation.
   getRunTranscript: (tenantId: string, runId: string) =>

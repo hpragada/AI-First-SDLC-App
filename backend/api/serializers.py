@@ -511,12 +511,23 @@ class ArtifactSerializer(serializers.ModelSerializer):
 
         return artifact_has_preview(obj)
 
+    # Whether this row can be handed over as a FILE. Stricter than `previewable` and computed in
+    # the same place for the same reason: a preview may legitimately be a link or a synthesised
+    # summary, which a file may not - see `artifact_is_downloadable`.
+    downloadable = serializers.SerializerMethodField()
+
+    def get_downloadable(self, obj) -> bool:
+        from integrations.preview import artifact_is_downloadable
+
+        return artifact_is_downloadable(obj)
+
     class Meta:
         model = Artifact
         # Pointer + provenance only; never the body (#1/#3).
         fields = [
             "id", "project", "repo", "run", "phase", "type", "title", "status", "sor",
             "external_ref", "s3_key", "content_hash", "version", "created_at", "previewable",
+            "downloadable",
             # When it was published, as distinct from when it was drafted (Bugs S.No 224). Null
             # until it is published, which is what "not published" means.
             "published_at",

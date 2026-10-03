@@ -38,8 +38,8 @@ Legend — endpoints: `4.7-Tn` = Phase 4.7 task; `B` = Phase 4.8 bucket-B; `(exi
 | **S-25** Source documents | J17 | empty · uploading · extracted · adopt-gate · adopted | Dropzone, ArtifactRow, DocPreview, Banner | upload + `adopt/` (exists), hub (4.7-T8) | T5 |
 | **S-26** Gap report | J17 | partial · empty · mature | Table, Assess, CardAttention, Button | `GET …/gap-report/` (4.7-T8) | T5 |
 | **S-27** Contracts & drift | J18 | healthy · drift-pending · wrong-role · decided | Table, Tabs, GatePanel, Banner | `api-contracts/`, `drift/`, `drift/{id}/decide/` (4.7-T9) | T5 |
-| **S-28** Artifacts registry | J19 | populated · internal-only · empty | Table, Badge, SorChip, Button, Field | `GET /artifacts/` (exists) | T5 |
-| **S-29** Artifact preview | J19 | markdown · diagram · external · body-unavailable | DocPreview/Prose, DiagramFrame, VersionRow, Banner, SorChip | `artifacts/{id}/preview/` (4.7-T10) | T5 |
+| **S-28** Artifacts registry | J19 | populated · internal-only · empty | Table, Badge, SorChip, Button, Field | `GET /artifacts/`, `GET /artifacts/{id}/download/` | T5 |
+| **S-29** Artifact preview | J19 | markdown · diagram · external · body-unavailable | DocPreview/Prose, DiagramFrame, VersionRow, Banner, SorChip | `artifacts/{id}/preview/` (4.7-T10), `artifacts/{id}/download/` | T5 |
 | **S-30** Traceability | J20 | small · highlighted · large-cluster · empty | GraphCanvas, GraphLegend, Select | `…/traceability/` (exists). *2026-09-12 (`b40c557`): live Phase / Type filters + Highlight work item (dims the rest; "Not tied to a work item" group); nodes carry `work_item`/`work_item_key`/`work_item_title`* | T5 |
 | **S-31** Dashboard | J22 | busy · calm · new-project | Tile, Todo, ConnStatus, Vstep, Kv, Panel | `…/dashboard/` (B) | T5 |
 | **S-32** Offline takeover | J21 | parked · reconnecting · resumed | Card, Banner, ConnStatus, Console, Kv | `GET /runners/` (4.7-T11), `take-over/` (exists) | T5 |
@@ -113,3 +113,30 @@ already stopped.
 **Any screen that starts a phase asks first** (S-18, S-15/16/17, S-13, S-19's retry, S-32), through
 the shared `ConfirmDialog` in `components/ui`. There is no longer a trigger that fires on one click,
 and a new one must not be added.
+
+
+### S-28 / S-29: Download is not Export, and `downloadable` is not `previewable` (2026-10-03)
+
+**Export writes; Download does not.** Export opens the publish screen, which pushes the document
+into Confluence or Jira — a gated write to a system of record. Download reads a body and streams it:
+no status change, no export record, no gate. They sit a few pixels apart on the row and must stay
+visibly different (a link to `/publish` versus a button). Before Download existed, Export was the
+only control that looked like "get me a copy", which is what this closed.
+
+Their eligibility rules are deliberately different too:
+
+| | Shown when |
+|---|---|
+| `previewable` | there is anything to show — a body, **or** a link to follow |
+| `downloadable` | the platform actually **holds** the document (its own artifacts, and Confluence pages) |
+| Export | the gate has passed (`approved` / `published`) **and** `previewable` |
+
+So a Figma row previews and exports but does not download; a draft downloads but does not export.
+Both flags are computed **server-side** in `integrations/preview.py`, beside the reader whose
+branches they mirror, and are carried on the list payload and the preview payload. Do not
+re-implement either rule in TypeScript — that is what `previewable` was added to prevent.
+
+**Filenames go through `api/files.py`.** Every file this product serves is named after text an agent
+or a user wrote, and that name goes into an HTTP header. Use `attachment_response` / `inline_response`
+rather than building `Content-Disposition` by hand; they sanitise the name and write both the ASCII
+and the UTF-8 form (RFC 6266).
