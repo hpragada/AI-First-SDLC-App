@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Banner, Breadcrumb, Button, Card, CardBody, EmptyState, ErrorState, Kv, Panel, Spinner, WriteError } from "../../components/ui";
+import { Banner, Breadcrumb, Button, Card, CardBody, ConfirmDialog, EmptyState, ErrorState, Kv, Panel, Spinner, WriteError } from "../../components/ui";
 import { useRun, useRuns, useTriggerPhase, useWorkItem } from "../lifecycle/hooks";
 import { phaseLabel } from "../lifecycle/phases";
 import { useTakeOverRun } from "./hooks";
@@ -39,6 +40,9 @@ function OfflineTakeoverLive() {
   const workItem = useWorkItem(parkedRun?.work_item);
   const takeOver = useTakeOverRun();
   const retry = useTriggerPhase(parkedRun?.work_item);
+  // "Reconnect & re-run" starts a whole new phase run — and it fired on one click, on a recovery
+  // screen somebody reaches when something has already gone wrong.
+  const [asking, setAsking] = useState(false);
 
   // Guard the loading state on BOTH branches. Before, only the list branch had one — so a
   // deep link flashed "No parked runs" while its fetch was still in flight, which is the same
@@ -144,7 +148,7 @@ function OfflineTakeoverLive() {
             <WriteError title="That didn't work" detail={takeOver.error} />
           )}
           <div className="gate-panel__actions">
-            <Button variant="primary" onClick={handleResume} disabled={takeOver.isPending || retry.isPending}>
+            <Button variant="primary" onClick={() => setAsking(true)} disabled={takeOver.isPending || retry.isPending}>
               {takeOver.isPending || retry.isPending ? <Spinner /> : "Reconnect & re-run"}
             </Button>
             <Button variant="secondary" onClick={handleTakeover} disabled={takeOver.isPending}>
@@ -156,6 +160,28 @@ function OfflineTakeoverLive() {
           </div>
         </CardBody>
       </Card>
+
+      {asking && (
+        <ConfirmDialog
+          title="Reconnect and run this phase again?"
+          confirmLabel="Reconnect & re-run"
+          cancelLabel="Not now"
+          busy={takeOver.isPending || retry.isPending}
+          error={takeOver.isError ? takeOver.error : undefined}
+          errorFallback="The phase could not be started."
+          onClose={() => setAsking(false)}
+          onConfirm={() => {
+            setAsking(false);
+            handleResume();
+          }}
+        >
+          <p className="u-body">
+            This hands the task back to your machine and starts{" "}
+            {phaseLabel(parkedRun.agent_phase ?? parkedRun.agent_key)} again from the beginning.
+            Your earlier answers are kept.
+          </p>
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

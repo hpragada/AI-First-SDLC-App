@@ -40,11 +40,20 @@ class NoCompanionError(TriggerError):
 # open would spawn a second concurrent run against the same branch/PR (Bugs S.No 77). STALLED is
 # intentionally excluded: it is parked for human takeover (S.No 89) and a re-trigger is a valid
 # restart there.
+#
+# PAUSED **is** included, and the difference is the whole reason it is a separate status. A parked
+# run is one nobody chose — the machine went away, and starting again is the obvious recourse. A
+# paused run is one somebody stopped on purpose and intends to resume: its workflow is alive and
+# waiting, and its companion dispatch is held back from the claim queue. Allowing a re-trigger over
+# it would hand the same work item a second run — two agents, one branch — and the user who pressed
+# Pause would be the last person to expect it. They get the refusal below instead, which tells them
+# the run is theirs to resume.
 _ACTIVE_RUN_STATUSES = (
     Run.Status.PENDING,
     Run.Status.RUNNING,
     Run.Status.AWAITING_GATE,
     Run.Status.APPROVED,
+    Run.Status.PAUSED,
 )
 
 
@@ -66,6 +75,15 @@ def _guard_no_active_run(tenant_id: str, work_item_id: str) -> None:
         # said "wait for it to finish" about a run that was waiting on the reader, not working.
         from apps.labels import run_status_label
 
+        # A PAUSED run gets its own sentence. The two below are both wrong for it: nobody needs to
+        # "wait for it to finish" for a run that is not running, and the reader is not being told
+        # about somebody else's problem — they paused it themselves, probably minutes ago. Say the
+        # one thing they need, which is that the run is still theirs and resuming keeps the work.
+        if active.status == Run.Status.PAUSED:
+            raise ActiveRunError(
+                "You paused this work item's run. Open it and resume it to carry on from where it "
+                "stopped — starting a new one would throw away what it has already done."
+            )
         waiting_at_gate = active.status == "awaiting_gate"
         next_step = (
             "Decide that gate, or take the run over, before starting another."

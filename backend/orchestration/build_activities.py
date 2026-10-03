@@ -967,21 +967,22 @@ def park_build_core(inp: BuildInput, reason: str, resume_from: str) -> dict:
     return {"status": "parked", "reason": reason, "resume_from": resume_from}
 
 
+def pause_build_core(inp: BuildInput, paused_by: str, resume_from: str) -> dict:
+    """Activity seam over `activities.pause_run_state`, with the build's `kept` sentence.
+
+    `kept` is written here and not on the plan path because a paused build is exactly the case where
+    the reader wants telling that the build, the branch and the pull request all survive — the same
+    sentence a parked build already shows, and more true of a deliberate pause than of a failure."""
+    from .activities import pause_run_state
+
+    return pause_run_state(inp.tenant_id, inp.run_id, paused_by, resume_from, kept=BUILD_KEPT)
+
+
 def resume_build_core(inp: BuildInput) -> dict:
-    """Bugs S.No 157: a human resumed a parked build — un-park it (back to RUNNING) and clear the
-    park markers so the console stops showing a stale failure. Idempotent."""
-    with tenant_context(inp.tenant_id):
-        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
-        outputs = {**(run.outputs or {})}
-        resume_from = outputs.get("resume_from", "")
-        for key in ("error", "error_detail", "kept", "resume_from", "resumable"):
-            outputs.pop(key, None)
-        run.status = Run.Status.RUNNING
-        run.outputs = outputs
-        run.save(update_fields=["status", "outputs", "updated_at"])
-        tools.log_event(inp.tenant_id, "orchestrator", "build.resumed", "run", inp.run_id,
-                        {"resume_from": resume_from})
-    return {"status": "resumed", "resume_from": resume_from}
+    """Activity seam over `activities.resume_run_state`, also clearing the build's `kept`."""
+    from .activities import resume_run_state
+
+    return resume_run_state(inp.tenant_id, inp.run_id, extra_keys=("kept",))
 
 
 def reject_build_core(inp: BuildInput, comment: str) -> dict:
@@ -1540,6 +1541,11 @@ def park_build_activity(inp: BuildInput, reason: str, resume_from: str) -> dict:
     return _boundary(park_build_core, inp, reason, resume_from)
 
 
+@activity.defn(name="pause_build")
+def pause_build_activity(inp: BuildInput, paused_by: str, resume_from: str) -> dict:
+    return _boundary(pause_build_core, inp, paused_by, resume_from)
+
+
 @activity.defn(name="resume_build")
 def resume_build_activity(inp: BuildInput) -> dict:
     return _boundary(resume_build_core, inp)
@@ -1566,6 +1572,7 @@ BUILD_ACTIVITIES = [
     reopen_merge_gate_activity,
     publish_build_artifacts_activity,
     park_build_activity,
+    pause_build_activity,
     resume_build_activity,
 ]
 

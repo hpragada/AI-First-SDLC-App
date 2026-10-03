@@ -20,8 +20,12 @@ Capture the run id, the last console line and its timestamp in the notes so the 
 post-mortemed. The default max wait for a plan-phase run is **45 minutes** from trigger.
 
 **One run per WORK ITEM, not per phase.** The backend admits a trigger only if the work item has
-*no* live run at all (`pending` / `running` / `awaiting_gate` / `approved`) — the phase you pick is
-irrelevant to that check. The `/runs` screen, in contrast, only warns you about the *same* phase.
+*no* live run at all (`pending` / `running` / `awaiting_gate` / `approved` / **`paused`**) — the
+phase you pick is irrelevant to that check. `paused` joined that list on 2026-10-03 with the Pause
+button (TC-706): a run somebody stopped on purpose still holds the work item, and the refusal you
+get is a different sentence from the others — see TC-708. A **parked** run (`stalled`) is still
+*not* on the list, and re-triggering over one is still valid; that difference is deliberate and
+TC-708 pins both halves. The `/runs` screen, in contrast, only warns you about the *same* phase.
 So while any run on the epic is live you cannot start **any** other phase on it; the second trigger
 comes back as a red `Trigger failed` banner (TC-701). Practical consequence: **all runs on the
 shared epic must be prepared sequentially** — never in parallel to save time.
@@ -940,3 +944,228 @@ shared epic must be prepared sequentially** — never in parallel to save time.
 - `/recovery` always targets the **first** stalled-or-failed run in the project, so on a project
   with several parked runs you may not be acting on the one you expected. Confirm the run id in the
   card before clicking. That mis-targeting is tracked separately.
+
+---
+
+### TC-706 · A run can be paused on purpose, and the dialog is honest about timing
+
+| Field | Value |
+|---|---|
+| Suite | TS-07 Phases & Runs |
+| Type | Functional |
+| Priority | High |
+| Screen | `/runs/:id` |
+| Persona | P1 Owner-Admin |
+| Automation | Partly |
+
+**Preconditions**
+- A run you started that is **Queued** or **Running**. TC-100's Ideation run, caught early, is ideal.
+- Your companion is connected.
+
+**Steps**
+1. Open the run console while the run still says **Queued** (before the companion picks it up).
+2. Read the buttons beside the status chip.
+3. Press **Pause run** and read the dialog **without confirming**. Note which wording you get.
+4. Press **Keep running**.
+5. Wait until the run says **Running**, then press **Pause run** again and read the dialog.
+6. Confirm with **Pause run**.
+
+**Expected**
+- **Pause run** sits beside the status chip in both states.
+- At step 3, while the run is Queued, the dialog says your companion **hasn't started this yet**,
+  and that pausing stops it before any work begins.
+- At step 5, while it is Running, the dialog says the companion **will finish the step it's on**,
+  that this may take a few minutes to come to a stop, and that you can close the companion on your
+  machine if you need it stopped right now. These are **two different messages** and you must get
+  the matching one.
+- At step 4 nothing happens — the run carries on.
+- After step 6 the dialog closes, the chip reads **Paused by you**, and the banner names who paused
+  it and when.
+
+**Pass / Fail**
+- PASS if both wordings appear in the right state and the run pauses on confirmation.
+- FAIL if the dialog is missing; if a Queued run is told the step "may take a few minutes to come to
+  a stop"; if a Running run is told nothing has started; or if **Keep running** pauses anything.
+
+**Notes**
+- Bugs S.No 290. The two messages are the point, not decoration. The platform has **no channel to
+  your companion** — it pulls work from us — so an agent already working genuinely cannot be
+  interrupted, and a single sentence implying an instant stop would be a promise the product breaks
+  in front of a client.
+- **Pause is not offered on a run waiting at its gate**, and that is correct: it is already stopped
+  and costs nothing.
+
+---
+
+### TC-707 · A paused run is not handed to the companion, and resumes cleanly
+
+| Field | Value |
+|---|---|
+| Suite | TS-07 Phases & Runs |
+| Type | Functional |
+| Priority | High |
+| Screen | `/runs/:id` |
+| Persona | P1 Owner-Admin |
+| Automation | Partly |
+
+**Preconditions**
+- TC-706 passed and the run is **Paused by you**. Your companion is connected and running.
+
+**Steps**
+1. Leave the run paused for **two minutes** with the companion connected. Watch the companion
+   window, or its log.
+2. Read the run console. Note the buttons offered.
+3. Press **Resume run** and read the dialog.
+4. Confirm with **Resume run**.
+5. Watch the run console and the companion for the next two minutes.
+
+**Expected**
+- At step 1 the companion **never picks the run up**. It keeps polling and stays idle; no phase
+  starts; nothing new appears in the run log.
+- At step 2 the buttons are **Resume run** and **Discard this run**. The words *Take over* appear
+  **nowhere**.
+- At step 3 the dialog names the phase and says your companion needs to be running.
+- After step 4 the chip returns to **Running** or **Queued**, and within about five seconds the
+  companion **claims the run and carries on**.
+- The work already done is still there — the run does not start from the beginning.
+
+**Pass / Fail**
+- PASS if a paused run is never claimed, and a resumed one is claimed again within ~5 seconds and
+  continues rather than restarting.
+- FAIL if the companion starts work on a paused run (**the most serious failure in this suite** —
+  it means Pause is a button that changes a label and nothing else); if Resume leaves the run
+  unclaimable; or if resuming restarts the phase from step 1.
+
+**Notes**
+- Bugs S.No 290. Holding the work out of the companion's reach is the **only** control the platform
+  has over a machine it does not own, which is why step 1 is worth the two minutes.
+
+---
+
+### TC-708 · A paused run blocks starting that phase again; a parked one does not
+
+| Field | Value |
+|---|---|
+| Suite | TS-07 Phases & Runs |
+| Type | Negative |
+| Priority | High |
+| Screen | `/runs`, `/runs/:id` |
+| Persona | P1 Owner-Admin |
+| Automation | Yes |
+
+**Preconditions**
+- A run on a work item that is **Paused by you** (TC-706).
+- Separately, a work item with a **parked** run — the one TC-702 left behind.
+
+**Steps**
+1. With the run paused, go to `/runs`, pick the **same work item**, and trigger **any** phase.
+2. Read the refusal.
+3. Go back to the paused run and press **Discard this run**. Read the dialog, then confirm.
+4. Trigger that phase again.
+5. Now repeat step 1 against the work item with the **parked** run from TC-702.
+
+**Expected**
+- At step 2 the trigger is refused, and the message says **you paused this work item's run** and
+  tells you to open it and resume it. It does **not** say "wait for it to finish".
+- At step 3 the dialog warns the run can't be resumed afterwards and you'd start the phase from the
+  beginning. The second button reads **Keep it paused**.
+- At step 4, after discarding, the phase starts normally.
+- At step 5 the **parked** run does **not** block the trigger — it starts.
+
+**Pass / Fail**
+- PASS if a paused run refuses a second run with its own wording, a discard frees the work item, and
+  a parked run still allows a re-trigger.
+- FAIL if a **second run starts while one is paused** (two agents on one branch), if the refusal
+  tells the reader to wait for a run that is not running, or if a parked run has stopped being
+  re-triggerable.
+
+**Notes**
+- Bugs S.No 291. Step 5 is not padding: `stalled` is deliberately excluded from this guard so that a
+  run parked by an error or an offline machine can be started again (S.No 89 / S.No 157). The two
+  behaviours live in one tuple and the second is easy to lose while changing the first.
+
+---
+
+### TC-709 · Nothing starts a phase without asking first
+
+| Field | Value |
+|---|---|
+| Suite | TS-07 Phases & Runs |
+| Type | UX |
+| Priority | Medium |
+| Screen | `/runs`, `/work-items/:id`, `/runs/:id`, `/recovery` |
+| Persona | P1 Owner-Admin |
+| Automation | Partly |
+
+**Preconditions**
+- A project with a task, a defect, and a test case that has no script yet.
+- For the last step, a failed run (TS-14 leaves one) — or skip that step and note it.
+
+**Steps**
+1. On `/runs`, trigger a phase that has **never run** on this work item. Read what appears, then
+   decline.
+2. Trigger a phase that **has** run before. Read the dialog.
+3. On a **task**, press **Trigger phase**. Decline.
+4. On a **defect**, press **Trigger Fix**. Decline.
+5. On a test case with no script, press **Generate script**. Decline.
+6. On a **failed** run's console, press **Retry run**. Decline.
+
+**Expected**
+- **Every one** of steps 1–6 opens a confirmation first. None of them starts anything.
+- Each dialog names what will run and says it runs on **your companion**.
+- At step 2 the dialog **also** warns that running the phase again replaces what it produced last
+  time — and the confirm button reads **Re-run phase** rather than **Start phase**.
+- Declining any of them starts nothing: no new run appears on `/runs`.
+
+**Pass / Fail**
+- PASS if all six ask first and all six start nothing when declined.
+- FAIL if **any** of them starts a run on a single click. Note which — a site that does not ask is a
+  separate defect from a site that asks badly.
+
+**Notes**
+- Bugs S.No 293. Four of these six asked nothing at all before 2026-10-03, and the two that did only
+  asked when the phase had run before — so a first-ever trigger never asked, anywhere.
+- The "**a run is already in progress**" message is deliberately **not** one of these: it is a
+  refusal, not a question, and it correctly has no confirm button. Do not log it as a missing
+  confirmation.
+
+---
+
+### TC-710 · Paused and Stopped are told apart on screen
+
+| Field | Value |
+|---|---|
+| Suite | TS-07 Phases & Runs |
+| Type | UX |
+| Priority | Medium |
+| Screen | `/runs`, `/runs/:id` |
+| Persona | P1 Owner-Admin |
+| Automation | Yes |
+
+**Preconditions**
+- One **paused** run (TC-706) and one **parked** run (TC-702), ideally both visible in the runs
+  table.
+
+**Steps**
+1. Look at both rows in the runs table.
+2. Open each run console and read the chip and the banner.
+3. On the paused run, read the run log lines.
+
+**Expected**
+- The paused run reads **Paused by you**; the parked one reads **Stopped — your machine stopped
+  reporting**. Never the same word for both.
+- The paused run's banner says it is paused and what is kept. It shows **no error and no reason**,
+  because nothing went wrong.
+- The parked run's banner still **does** give a reason.
+- No log line on the paused run contains code, a stack trace, a class name, or anything resembling
+  `tonic::transport::Error`.
+
+**Pass / Fail**
+- PASS if the two states are distinguishable at a glance and the paused one shows no error.
+- FAIL if both read "Paused"; if a paused run displays an error or failure reason; or if **any**
+  technical text appears on screen.
+
+**Notes**
+- Bugs S.No 294 (the two labels) and S.No 292 (the technical text, which did reach the screen once
+  during development and is now covered by a test). Standing rule: no machine words on a client's
+  screen.

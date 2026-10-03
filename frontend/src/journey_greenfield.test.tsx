@@ -360,7 +360,7 @@ describe("GF-A-7 PhasesAndRuns — all 16 phases", () => {
 });
 
 
-// ── A-7: Run Console (RunConsoleView: "dispatched"|"running"|"needs-answer"|"awaiting-gate"|"completed"|"failed"|"parked") ──
+// ── A-7: Run Console (RunConsoleView: "dispatched"|"running"|"needs-answer"|"awaiting-gate"|"completed"|"failed"|"parked"|"paused") ──
 
 describe("GF-A-7 RunConsole states", () => {
   it("dispatched state shows dispatched/queued status", () => {

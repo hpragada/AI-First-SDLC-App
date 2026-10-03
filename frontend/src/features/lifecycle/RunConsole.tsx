@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { Badge, Banner, Breadcrumb, Button, Console, Disclosure, Panel, Spinner, WriteError } from "../../components/ui";
+import { Badge, Banner, Breadcrumb, Button, ConfirmDialog, Console, Disclosure, Panel, Spinner, WriteError } from "../../components/ui";
 import { engineLabel } from "../../labels";
 import { isTerminalState, workerStalled, type RunEvent } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
 import { phaseLabel } from "./phases";
 import {
   useClarifications,
+  usePauseRun,
   useResumeRun,
   useRun,
   useRunEvents,
@@ -17,7 +18,12 @@ import {
 import { clarificationLink, recoveryLink, runLink, transcriptLink } from "../../links";
 
 // S-19 view states: dispatched · running · needs-answer · awaiting-gate · completed ·
-// failed · parked.
+// failed · parked · paused.
+//
+// `parked` and `paused` are deliberately separate views of what is nearly the same machinery. A
+// parked run stopped because something went wrong and the reader has to be told what; a paused run
+// stopped because they chose to, and telling them a reason would be inventing a fault. Same waiting
+// colour, different words, and a different second button.
 export type RunConsoleView =
   | "dispatched"
   | "running"
@@ -25,7 +31,8 @@ export type RunConsoleView =
   | "awaiting-gate"
   | "completed"
   | "failed"
-  | "parked";
+  | "parked"
+  | "paused";
 
 const BADGE_VARIANT: Record<RunConsoleView, "waiting" | "running" | "needs-answer" | "gate" | "done" | "failed" | "parked"> = {
   dispatched: "waiting",
@@ -35,6 +42,7 @@ const BADGE_VARIANT: Record<RunConsoleView, "waiting" | "running" | "needs-answe
   completed: "done",
   failed: "failed",
   parked: "parked",
+  paused: "parked",
 };
 
 const BADGE_LABEL: Record<RunConsoleView, string> = {
@@ -49,6 +57,9 @@ const BADGE_LABEL: Record<RunConsoleView, string> = {
   // screens already settled this: they show "Stopped", with a test that fails if the words "take
   // over" or "workflow" ever reach a user. This screen simply never got the memo.
   parked: "Stopped",
+  // Not "Stopped": that is the word for a machine going quiet, and this reader stopped the run
+  // themselves. Mirrors the `paused` run-status label in labels.ts.
+  paused: "Paused by you",
 };
 
 export function RunConsole({ forceView }: { forceView?: RunConsoleView }) {
@@ -78,6 +89,10 @@ function RunConsoleLive() {
   const retry = useTriggerPhase(run.data?.work_item);
   const [cancelOpen, setCancelOpen] = useState(false);
   const resume = useResumeRun(id);
+  const pause = usePauseRun(id);
+  // One state for which question is open. Three dialogs, never two at once — and a
+  // `null` that means "nothing asked", so no dialog can be left mounted and invisible.
+  const [asking, setAsking] = useState<"pause" | "resume" | "discard" | "retry" | null>(null);
   // Bugs S.No 161 follow-up: when a build exhausts remediation it is marked FAILED and the
   // platform auto-starts a FRESH run for the same work item, storing that run's id on this
   // run's outputs.retry_run_id. Nothing surfaced it — the console showed "Failed / auto-retrying"
@@ -127,7 +142,9 @@ function RunConsoleLive() {
             ? "completed"
             : run.data.status === "stalled"
               ? "parked"
-              : "failed";
+              : run.data.status === "paused"
+                ? "paused"
+                : "failed";
 
   const lines = (events.data ?? []).map(eventLine);
   // Surface a concrete failure reason (Bugs.xlsx row 21 v.1) — the last error event, or an
@@ -168,6 +185,18 @@ function RunConsoleLive() {
   // Bugs S.No 246 — nobody is serving the code version this run is pinned to. Read through one
   // shared narrowing helper so no second screen invents its own shape for the same field.
   const stalled = workerStalled(run.data.outputs);
+
+  // Who paused it, and whether the companion had already started — the two facts the paused banner
+  // and the pause dialog need. `was_claimed` is recorded at the moment of the pause, so it stays
+  // true afterwards rather than being re-guessed from a status that has since moved on.
+  const pausedInfo =
+    outputsRecord.paused && typeof outputsRecord.paused === "object"
+      ? (outputsRecord.paused as { by?: string; at?: string; was_claimed?: boolean })
+      : undefined;
+  // Offered only while the run is genuinely going. A run waiting at a gate is already stopped and
+  // costs nothing, so pausing it would be offering to stop something that is not running; the
+  // backend refuses those for the same reason.
+  const canPause = run.data.status === "pending" || run.data.status === "running";
 
   const handleRetry = () => {
     // Re-trigger by the AgentSpec *key* (e.g. "04_architecture"), never the run's
@@ -228,6 +257,14 @@ function RunConsoleLive() {
               <Link to={transcriptLink(run.data.id)} className="t-sm">
                 Full transcript →
               </Link>
+            )}
+            {/* Pause sits with the status chip rather than at the foot of the panel, because it is
+                offered WHILE the run is going and the log below keeps growing underneath it — a
+                button at the bottom of a live log walks away from the pointer. */}
+            {canPause && (
+              <Button variant="secondary" size="sm" onClick={() => setAsking("pause")}>
+                Pause run
+              </Button>
             )}
             <Badge variant={BADGE_VARIANT[view]}>{BADGE_LABEL[view]}</Badge>
           </span>
@@ -295,6 +332,24 @@ function RunConsoleLive() {
             {technicalDetails}
           </Banner>
         )}
+        {view === "paused" && (
+          <Banner variant="warning" title="Paused — pick it up whenever you're ready">
+            <p>
+              {pausedInfo?.by ? `Paused by ${pausedInfo.by}` : "You paused this run"}
+              {pausedInfo?.at ? ` at ${new Date(pausedInfo.at).toLocaleTimeString()}` : ""}.{" "}
+              Nothing you&apos;ve done is lost — {kept}.
+            </p>
+            {/* Only said when it is true. Telling somebody their companion "may still be finishing
+                the current step" when it had not started is noise that costs the sentence its
+                credibility the next time it matters. */}
+            {pausedInfo?.was_claimed && (
+              <p>
+                Your companion may still be finishing the step it was on when you paused — nothing
+                new will be started, and the result is kept when it arrives.
+              </p>
+            )}
+          </Banner>
+        )}
 
         {/* Bugs S.No 246, rewritten 8 September for the person who actually reads it.
             Rendered ONLY while the reconciler says nobody is serving this run's code version,
@@ -341,7 +396,7 @@ function RunConsoleLive() {
                 Go to the retry run →
               </Button>
             ) : (
-              <Button variant="primary" onClick={handleRetry} disabled={retry.isPending}>
+              <Button variant="primary" onClick={() => setAsking("retry")} disabled={retry.isPending}>
                 {retry.isPending ? <Spinner /> : "Retry run"}
               </Button>
             )}
@@ -380,10 +435,122 @@ function RunConsoleLive() {
             </div>
           </>
         )}
+        {view === "paused" && (
+          <>
+            {resume.isError && <WriteError title="Couldn't resume" detail={resume.error} />}
+            <div className="gate-panel__actions" style={{ marginTop: "var(--space-3)" }}>
+              <Button variant="primary" onClick={() => setAsking("resume")} disabled={resume.isPending}>
+                {resume.isPending ? <Spinner /> : "Resume run"}
+              </Button>
+              {/* The SAME action as "Take over instead" above — one endpoint, one signal — under
+                  the only words that are true here. "Take over" is about rescuing something broken,
+                  and nothing is broken: this person stopped the run on purpose. It has to be offered
+                  at all because a paused run blocks re-triggering that phase, so without a way out
+                  somebody who changed their mind would be stuck until their companion was back. */}
+              <Button variant="secondary" onClick={() => setAsking("discard")}>
+                Discard this run
+              </Button>
+            </div>
+          </>
+        )}
       </Panel>
 
       {cancelOpen && workItem.data && (
         <CancelWorkItem workItem={workItem.data} onClose={() => setCancelOpen(false)} />
+      )}
+
+      {asking === "pause" && (
+        <ConfirmDialog
+          title="Pause this run?"
+          confirmLabel="Pause run"
+          cancelLabel="Keep running"
+          busy={pause.isPending}
+          error={pause.isError ? pause.error : undefined}
+          errorFallback="The run could not be paused."
+          onClose={() => setAsking(null)}
+          onConfirm={() => pause.mutate(undefined, { onSuccess: () => setAsking(null) })}
+        >
+          {/* Two different truths, and the screen knows which one applies, so it says that one
+              rather than a vague sentence covering both. A Pause that implied an instant stop would
+              be a promise we break in front of the client: there is NO channel from the platform to
+              a companion, so an agent already working cannot be interrupted at all. */}
+          {run.data.status === "pending" ? (
+            <>
+              <p>
+                Your companion hasn&apos;t started this yet, so pausing stops it before any work
+                begins.
+              </p>
+              <p>Nothing is lost. Resume whenever you&apos;re ready and it starts from here.</p>
+            </>
+          ) : (
+            <>
+              <p>
+                Your companion is working on this now. It will finish the step it&apos;s on, then
+                stop and wait for you — so this may take a few minutes to come to a stop.
+              </p>
+              <p>Everything done so far is kept. Resume picks up from where it stopped.</p>
+              <p>
+                If you need it to stop right now, close the companion on your machine.
+              </p>
+            </>
+          )}
+        </ConfirmDialog>
+      )}
+
+      {asking === "resume" && (
+        <ConfirmDialog
+          title="Resume this run?"
+          confirmLabel="Resume run"
+          cancelLabel="Not yet"
+          busy={resume.isPending}
+          error={resume.isError ? resume.error : undefined}
+          errorFallback="The run could not be resumed."
+          onClose={() => setAsking(null)}
+          onConfirm={() => resume.mutate(undefined, { onSuccess: () => setAsking(null) })}
+        >
+          <p>
+            This continues {phaseLabel(run.data.agent_phase ?? run.data.agent_key)} from where it
+            stopped. Your companion needs to be running.
+          </p>
+        </ConfirmDialog>
+      )}
+
+      {asking === "retry" && (
+        <ConfirmDialog
+          title="Run this phase again?"
+          confirmLabel="Retry run"
+          cancelLabel="Not now"
+          busy={retry.isPending}
+          error={retry.isError ? retry.error : undefined}
+          errorFallback="The phase could not be started."
+          onClose={() => setAsking(null)}
+          onConfirm={handleRetry}
+        >
+          <p>
+            This starts {phaseLabel(run.data.agent_phase ?? run.data.agent_key)} again from the
+            beginning, on your companion. It replaces what the failed run produced; the run you are
+            looking at stays in the history.
+          </p>
+        </ConfirmDialog>
+      )}
+
+      {asking === "discard" && (
+        <ConfirmDialog
+          title="Discard this paused run?"
+          confirmLabel="Discard run"
+          cancelLabel="Keep it paused"
+          danger
+          onClose={() => setAsking(null)}
+          onConfirm={() => {
+            setAsking(null);
+            navigate(recoveryLink(id as string));
+          }}
+        >
+          <p>
+            This ends the run. What it produced so far is kept, but the run itself can&apos;t be
+            resumed afterwards — you&apos;d start the phase again from the beginning.
+          </p>
+        </ConfirmDialog>
       )}
     </div>
   );

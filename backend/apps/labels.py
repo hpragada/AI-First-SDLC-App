@@ -81,7 +81,13 @@ _RUN_STATUS_LABELS = {
     "completed": "Completed",
     "rejected": "Changes requested",
     "failed": "Failed",
-    "stalled": "Paused — your machine stopped reporting",
+    # These two are kept deliberately unalike. `stalled` used to read "Paused — your machine
+    # stopped reporting", which was a fair description until a run could genuinely be PAUSED by a
+    # person, at which point two different states both said "Paused" and the one word no longer
+    # told the reader whether anything was wrong. `stalled` is something that happened TO them;
+    # `paused` is something they did.
+    "stalled": "Stopped — your machine stopped reporting",
+    "paused": "Paused by you",
 }
 
 

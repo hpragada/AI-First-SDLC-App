@@ -38,6 +38,8 @@ class BuildWorkflow:
         self._resume: bool = False
         self._abandoned: bool = False
         self._parked: bool = False
+        self._pause_requested: bool = False
+        self._paused_by: str = ""
 
     @workflow.signal(name="build_reported")
     def build_reported(self, report: BuildReport) -> None:
@@ -52,12 +54,26 @@ class BuildWorkflow:
         # A human resumed a build parked by an error (Bugs S.No 157) — retry the failed step
         # instead of rebuilding from scratch.
         self._resume = True
+        # A resume cancels a pause that has not taken effect yet. Without this, a pause requested
+        # while the agent was working — when this workflow is blocked waiting for the report and the
+        # flag merely sits — would still be acted on at the next checkpoint, pausing a run the
+        # person had already resumed.
+        self._pause_requested = False
 
     @workflow.signal(name="abandon_run")
     def abandon_run(self) -> None:
         # A human gave up on a parked build (Bugs S.No 157) — end it terminally, exactly as the
         # old fail-and-return path did.
         self._abandoned = True
+
+    @workflow.signal(name="pause_run")
+    def pause_run(self, paused_by: str) -> None:
+        # A human pressed Pause. Sets a flag only — see AgentRunWorkflow.pause_run. A build has
+        # more real checkpoints than a plan phase (the pull request, the review, the remediation
+        # cycles and the merge gate are all still ahead of the build itself), so a pause here
+        # saves genuinely expensive work rather than only holding back the gate.
+        self._pause_requested = True
+        self._paused_by = paused_by
 
     @workflow.query(name="status")
     def status(self) -> str:
@@ -96,6 +112,37 @@ class BuildWorkflow:
         )
         return True
 
+    async def _maybe_pause(self, inp: BuildInput, resume_from: str) -> bool:
+        """At a checkpoint: if a pause was asked for, record it and wait for the human. Returns
+        False if they discarded the run instead, True otherwise — including when no pause was
+        requested, which is the common case and costs one attribute read.
+
+        See `AgentRunWorkflow._maybe_pause`: same shape, and the same no-timeout wait `_park` uses.
+        Only the activity differs, so the run reads as PAUSED rather than as a failure somebody has
+        to explain. Nothing in the unpaused path changes."""
+        if not self._pause_requested:
+            return True
+        self._pause_requested = False
+        await workflow.execute_activity(
+            "pause_build", args=[inp, self._paused_by, resume_from],
+            start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+        )
+        self._parked = True
+        await workflow.wait_condition(lambda: self._resume or self._abandoned)
+        self._parked = False
+        if self._abandoned:
+            await workflow.execute_activity(
+                "mark_build_failed", args=[inp, "build discarded while paused"],
+                start_to_close_timeout=timedelta(minutes=1), retry_policy=_COMPENSATE,
+            )
+            return False
+        self._resume = False
+        await workflow.execute_activity(
+            "resume_build", inp,
+            start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+        )
+        return True
+
     async def _teardown_preview(self, inp: BuildInput) -> None:
         """Best-effort: mark the run's preview env torn down at a terminal state (P3-09bR-5).
         Idempotent + a no-op when no preview was recorded (07/11). Never lets preview cleanup fail
@@ -117,6 +164,13 @@ class BuildWorkflow:
         # rebuilt everything (S.No 146 second pass; the recourse S.No 157 gave every OTHER
         # recoverable failure). Bounded by the human: each pass waits on Resume or Take over.
         while True:
+            # Checkpoint — never re-dispatch a build the human has just stopped. A pause pressed
+            # before the companion claims the work is held by the endpoint, which marks the dispatch
+            # paused synchronously; this workflow is blocked in the wait below while a build runs,
+            # so a checkpoint could not get there in time and the companion polls every 5 seconds.
+            if not await self._maybe_pause(inp, "dispatch_build"):
+                await self._teardown_preview(inp)
+                return {"status": "discarded", "run_id": inp.run_id}
             await workflow.execute_activity(
                 "dispatch_build", inp,
                 start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
@@ -176,6 +230,12 @@ class BuildWorkflow:
         # cheap because every step is idempotent — open_build_pr is register-don't-recreate,
         # open_merge_gate is get_or_create, and run_code_review re-dispatches correctly. Crucially
         # `dispatch_build` sits OUTSIDE this loop, so the expensive build itself is never redone.
+        # Checkpoint. The build itself is done and kept; the pull request, the code review, the
+        # remediation cycles and the merge gate are all still ahead. This is the pause that saves
+        # the most, and the reason a build pause is worth more than a plan-phase one.
+        if not await self._maybe_pause(inp, "open_build_pr"):
+            await self._teardown_preview(inp)
+            return {"status": "discarded", "run_id": inp.run_id}
         while True:
             try:
                 # D4: the worktree ran the suite — import its results BEFORE the PR, so a failing
@@ -246,6 +306,12 @@ class BuildWorkflow:
                         continue
                     if review["open_blocking"] == 0:
                         break
+                    # Checkpoint between remediation cycles. Every cycle dispatches another agent
+                    # run to the companion, so this is a boundary where a pause stops real work
+                    # from being started rather than merely withholding a result.
+                    if not await self._maybe_pause(inp, "run_code_review"):
+                        await self._teardown_preview(inp)
+                        return {"status": "discarded", "run_id": inp.run_id}
                     cycle += 1
                     if cycle > inp.max_remediation_cycles:
                         # Bugs S.No 161: remediation exhaustion used to be the ONE recoverable

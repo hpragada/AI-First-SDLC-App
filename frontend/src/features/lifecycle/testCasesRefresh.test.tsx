@@ -9,7 +9,7 @@
  * refreshed nothing, and a script finishing on the developer's machine never reached the table.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes } from "react-router-dom";
 
@@ -93,6 +93,10 @@ describe("script generation", () => {
     renderScreen();
 
     await user.click(await screen.findByRole("button", { name: "Generate script" }));
+    // Generating a script is a phase run on the user's own machine, so it asks first now. Confirm
+    // inside the dialog — the table's button carries the same words.
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Generate script" }));
 
     expect(await screen.findByText("Generating…")).toBeDefined();
   });

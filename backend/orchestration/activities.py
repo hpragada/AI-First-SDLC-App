@@ -1107,21 +1107,101 @@ def park_run_core(inp: AgentRunInput, reason: str, resume_from: str) -> dict:
     return {"status": "parked", "reason": reason, "resume_from": resume_from}
 
 
-def resume_run_state_core(inp: AgentRunInput) -> dict:
-    """Bugs S.No 157: a human resumed a parked phase run — un-park it and clear the park markers
-    so the console stops showing a stale failure. Idempotent."""
-    with tenant_context(inp.tenant_id):
-        run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
+def pause_run_state(tenant_id: str, run_id: str, paused_by: str, resume_from: str,
+                    kept: str = "") -> dict:
+    """Record that a human stopped this run on purpose and means to come back to it. The park twin
+    of `park_run_core`, with three deliberate differences.
+
+    1. **Status PAUSED, not STALLED.** See the comment on `Run.Status.PAUSED`: STALLED is excluded
+       from the re-trigger guard, so recording a pause as STALLED would have let the same phase be
+       started again and put two runs on one work item and one branch.
+    2. **No `error`.** Nothing went wrong, so nothing is written to the field the console reads
+       for a failure reason — a paused run that printed an error would be telling the reader that
+       their own decision was a fault.
+    3. **The dispatch is held back.** `inputs.dispatch.status` becomes "paused", and the claim
+       endpoint only offers `pending` or `claimed` work (`api/runner_views.py`), so a companion is
+       never handed this run while it is paused. That is the only control we have over a
+       pull-only companion, and it is what makes a pause pressed before the work is claimed
+       complete.
+
+    What this does NOT do is interrupt an agent already working: there is no channel to the
+    companion, and a terminated run once kept writing for 49 minutes. The workflow picks the pause
+    up at its next checkpoint; the dialog says so.
+
+    Keyed on ids rather than on a workflow input dataclass because **the API calls this too**: the
+    endpoint has to hold the dispatch back synchronously, while the workflow is still blocked
+    waiting for a report. One definition of what "paused" means on a run, so the two cannot drift.
+
+    Idempotent. `kept` is the build path's sentence about what survives.
+    """
+    from django.utils import timezone
+
+    with tenant_context(tenant_id):
+        run = Run.objects.get(id=run_id, tenant_id=tenant_id)
+        inputs = {**(run.inputs or {})}
+        dispatch = dict(inputs.get("dispatch") or {})
+        was_claimed = dispatch.get("status") == "claimed"
+        if dispatch:
+            # Remember what it was so Resume restores exactly that rather than a guess.
+            dispatch["paused_from"] = dispatch.get("status")
+            dispatch["status"] = "paused"
+            inputs["dispatch"] = dispatch
+        outputs = {**(run.outputs or {}),
+                   "paused": {"by": paused_by, "at": timezone.now().isoformat(),
+                              "was_claimed": was_claimed},
+                   "resume_from": resume_from, "resumable": True}
+        if kept:
+            outputs["kept"] = kept
+        run.status = Run.Status.PAUSED
+        run.inputs = inputs
+        run.outputs = outputs
+        run.save(update_fields=["status", "inputs", "outputs", "updated_at"])
+        tools.log_event(tenant_id, "orchestrator", "run.paused", "run", run_id,
+                        {"paused_by": paused_by, "resume_from": resume_from,
+                         "was_claimed": was_claimed, "resumable": True})
+    return {"status": "paused", "resume_from": resume_from, "was_claimed": was_claimed}
+
+
+def resume_run_state(tenant_id: str, run_id: str, extra_keys: tuple = ()) -> dict:
+    """Un-park or un-pause a run: clear the markers, release a held-back dispatch, back to RUNNING.
+
+    Shared by the error-park resume (Bugs S.No 157) and the deliberate pause, because the workflow
+    waits on the same `resume_run` signal either way and the console offers one Resume. A resume
+    that cleared only half the markers would leave a run that looks running and is never handed to
+    anybody. Idempotent. Keyed on ids for the same reason as `pause_run_state`."""
+    with tenant_context(tenant_id):
+        run = Run.objects.get(id=run_id, tenant_id=tenant_id)
         outputs = {**(run.outputs or {})}
         resume_from = outputs.get("resume_from", "")
-        for key in ("error", "error_detail", "resume_from", "resumable"):
+        for key in ("error", "error_detail", "resume_from", "resumable", "paused") + tuple(
+                extra_keys):
             outputs.pop(key, None)
+        inputs = {**(run.inputs or {})}
+        dispatch = dict(inputs.get("dispatch") or {})
+        if dispatch.get("status") == "paused":
+            # Put the dispatch back in the claim queue the pause held it out of, and drop the stale
+            # claim stamp so the lease-reclaim branch does not mistake this for a dead companion.
+            dispatch["status"] = "pending"
+            dispatch.pop("paused_from", None)
+            dispatch.pop("claimed_at", None)
+            inputs["dispatch"] = dispatch
         run.status = Run.Status.RUNNING
+        run.inputs = inputs
         run.outputs = outputs
-        run.save(update_fields=["status", "outputs", "updated_at"])
-        tools.log_event(inp.tenant_id, "orchestrator", "run.resumed", "run", inp.run_id,
+        run.save(update_fields=["status", "inputs", "outputs", "updated_at"])
+        tools.log_event(tenant_id, "orchestrator", "run.resumed", "run", run_id,
                         {"resume_from": resume_from})
     return {"status": "resumed", "resume_from": resume_from}
+
+
+def pause_run_core(inp: AgentRunInput, paused_by: str, resume_from: str) -> dict:
+    """Activity seam over `pause_run_state` (which the API also calls)."""
+    return pause_run_state(inp.tenant_id, inp.run_id, paused_by, resume_from)
+
+
+def resume_run_state_core(inp: AgentRunInput) -> dict:
+    """Activity seam over `resume_run_state` (which the API also calls)."""
+    return resume_run_state(inp.tenant_id, inp.run_id)
 
 
 def _vision_source_document(inp: AgentRunInput):
@@ -1318,6 +1398,11 @@ def park_run_activity(inp: AgentRunInput, reason: str, resume_from: str) -> dict
     return _boundary(park_run_core, inp, reason, resume_from)
 
 
+@activity.defn(name="pause_run")
+def pause_run_activity(inp: AgentRunInput, paused_by: str, resume_from: str) -> dict:
+    return _boundary(pause_run_core, inp, paused_by, resume_from)
+
+
 @activity.defn(name="resume_run_state")
 def resume_run_state_activity(inp: AgentRunInput) -> dict:
     return _boundary(resume_run_state_core, inp)
@@ -1337,5 +1422,6 @@ ALL_ACTIVITIES = [
     mark_phase_takeover_activity,
     fail_run_activity,
     park_run_activity,
+    pause_run_activity,
     resume_run_state_activity,
 ]

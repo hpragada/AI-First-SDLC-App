@@ -787,6 +787,15 @@ export const api = {
     body: { release?: boolean; actor?: string; reason?: string } = {},
   ) => req<{ work_item_id: string; takeover: boolean }>("POST", `/runs/${runId}/take-over/`, { tenantId, body }),
 
+  // Stop a run on purpose, to come back to it later. `was_claimed` says whether the companion had
+  // already started, which is the difference between "this stopped dead" and "this stops at the next
+  // step" — the screen has to tell the truth about which, because nothing can interrupt an agent
+  // already running on somebody's machine.
+  pauseRun: (tenantId: string, runId: string) =>
+    req<{ run_id: string; paused: boolean; was_claimed: boolean; already?: boolean }>(
+      "POST", `/runs/${runId}/pause/`, { tenantId },
+    ),
+
   // Resume a run parked at an error, from the step that failed (Bugs S.No 157) — the
   // counterpart to take-over: continue the run instead of ending it.
   resumeRun: (tenantId: string, runId: string) =>

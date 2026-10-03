@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { Badge, Banner, Breadcrumb, Button, Card, CardBody, Kv, LifecycleRail, Markdown, Panel, Spinner } from "../../components/ui";
+import { Badge, Banner, Breadcrumb, Button, Card, CardBody, ConfirmDialog, Kv, LifecycleRail, Markdown, Panel, Spinner } from "../../components/ui";
 import { runStatusLabel, runStatusTone } from "../../labels";
 import { railNodeView } from "./railView";
 import { phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
@@ -26,6 +26,8 @@ function WorkItemDefectLive() {
   const lifecycle = useLifecycle(id);
   const runs = useRuns({ work_item: id });
   const trigger = useTriggerPhase(id);
+  // Fixing a defect dispatches a build to the user's machine. It fired on one click.
+  const [fixOpen, setFixOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
@@ -102,7 +104,7 @@ function WorkItemDefectLive() {
             <Button variant="secondary" onClick={() => setEditOpen(true)}>
               Edit
             </Button>
-            <Button variant="primary" disabled={trigger.isPending} onClick={() => trigger.mutate("07_implementation")}>
+            <Button variant="primary" disabled={trigger.isPending} onClick={() => setFixOpen(true)}>
               {trigger.isPending ? <Spinner /> : "Trigger Fix"}
             </Button>
             {/* Bugs S.No 140. The defect page is where "we are not going to fix this" is most
@@ -191,6 +193,27 @@ function WorkItemDefectLive() {
         </Card>
       </div>
 
+      {fixOpen && (
+        <ConfirmDialog
+          title="Start the fix?"
+          confirmLabel="Start fix"
+          cancelLabel="Not now"
+          busy={trigger.isPending}
+          error={trigger.isError ? trigger.error : undefined}
+          errorFallback="The fix could not be started."
+          onClose={() => setFixOpen(false)}
+          onConfirm={() =>
+            trigger.mutate("07_implementation", { onSuccess: () => setFixOpen(false) })
+          }
+        >
+          <p className="u-body">
+            This works on {workItem.data?.key || "this defect"} on your companion — it writes the fix
+            on a branch and opens a pull request for review. It may take several minutes, and
+            you&apos;ll be asked to review before anything is merged.
+          </p>
+          <p className="u-body">You can pause it at any time.</p>
+        </ConfirmDialog>
+      )}
       {cancelOpen && (
         <CancelWorkItem workItem={workItem.data} onClose={() => setCancelOpen(false)} />
       )}

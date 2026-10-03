@@ -88,9 +88,11 @@ from integrations.onboarding import (
 from integrations.preview import read_artifact_preview
 from integrations.types import CapabilityUnavailable
 from orchestration.takeover import (
+    PauseError,
     ResumeError,
     TakeoverError,
     abandon_stalled_run,
+    pause_run,
     release_takeover,
     request_takeover,
     resume_stalled_run,
@@ -2328,7 +2330,7 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         # class name both writes ran under `AllowAny`. Each one reaches into a run somebody else
         # started: takeover ends it terminally, resume re-dispatches work on their branch. Role is
         # checked inside the action, where the run's project is in hand.
-        if self.action in {"take_over", "resume"}:
+        if self.action in {"take_over", "resume", "pause"}:
             return [IsAuthenticatedMember()]
         return super().get_permissions()
 
@@ -2438,6 +2440,35 @@ class RunViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
                 )
             abandon_stalled_run(tenant_id=self.tenant_id, run_id=str(run.id))
         except TakeoverError as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(out)
+
+    @action(detail=True, methods=["post"], url_path="pause")
+    def pause(self, request, pk=None):
+        """Stop a run on purpose, to come back to it later — the emergency case ("I have to shut
+        this laptop now"), as opposed to the crash case `resume` was built for.
+
+        Resumed through the same `resume` action below: the workflow waits on one signal whether it
+        parked at an error or was paused deliberately, which is why there is no second resume here.
+
+        `was_claimed` in the response is what lets the screen tell the truth about timing. A run the
+        companion has not picked up yet stops dead; one it is working on stops at the next
+        checkpoint, because nothing can interrupt an agent already running on somebody's machine."""
+        run = self.get_object()
+        # Membership, matching `resume` deliberately. A pause that were harder to undo than to
+        # create would let somebody leave a run in a state they cannot get it out of.
+        require_project_member(
+            tenant_id=self.tenant_id, project_id=str(run.work_item.project_id),
+            user_id=getattr(current_user(request), "id", None),
+            what="pause a run",
+        )
+        user = current_user(request)
+        try:
+            out = pause_run(
+                tenant_id=self.tenant_id, run_id=str(run.id),
+                paused_by=getattr(user, "name", "") or getattr(user, "email", "") or "a teammate",
+            )
+        except PauseError as exc:
             raise ValidationError(str(exc)) from exc
         return Response(out)
 

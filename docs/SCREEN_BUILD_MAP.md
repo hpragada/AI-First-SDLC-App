@@ -29,7 +29,7 @@ Legend — endpoints: `4.7-Tn` = Phase 4.7 task; `B` = Phase 4.8 bucket-B; `(exi
 | **S-16** Work Item — Task | J16 | loop+test-failed · impl-running · merge-gate · done | Rail(build,loop,branch), ArtifactRow(PR), Console, GatePanel | `…/lifecycle/` (B), `PATCH /work-items/{id}/` edit (B) — **built 2026-09-30** | T4 |
 | **S-17** Work Item — Defect | J16 | open · fixing · closed | Rail(remediation), Banner, Console, Kv | `…/lifecycle/` (B), `PATCH /work-items/{id}/` edit (B) — **built 2026-09-30** | T4 |
 | **S-18** Phases & Runs | J12 | online-triggerable · offline-blocked · no-runs | PhasePicker, Table, Banner, ConnStatus | `GET /runs/`, `GET /phases/` (B), trigger (4.7-T5), `GET /runners/` (4.7-T11) | T4 |
-| **S-19** Run console | J12 | dispatched · running · needs-answer · awaiting-gate · completed · failed · parked | Console, Badge, Banner, MetaRow | `GET /runs/{id}/` (exists) | T4 |
+| **S-19** Run console | J12 | dispatched · running · needs-answer · awaiting-gate · completed · failed · parked · **paused** | Console, Badge, Banner, MetaRow, ConfirmDialog | `GET /runs/{id}/`, `POST /runs/{id}/pause/`, `POST /runs/{id}/resume/` | T4 |
 | **S-20** Clarifications | J13 | one(confirm) · multi · required-error · already-answered · cancelled · empty | ClarificationCard, Field, Check, Badge | `GET /clarifications/`, `answer/` (exists; actor 4.7-T5) | T4 |
 | **S-21** Gates | J14 | can-decide · cannot-decide · decided-history · empty | Table, GatePanel, Banner, Tabs | `GET /approvals/`, `decide/` (exists; actor 4.7-T5) | T4 |
 | **S-22** Criteria gate | J15 | none · partial · all-ticked · rejected | GatePanel, CriteriaList, CriteriaItem | `approvals/{id}/criteria/` + decide (B) | T4 |
@@ -92,3 +92,24 @@ Legend — endpoints: `4.7-Tn` = Phase 4.7 task; `B` = Phase 4.8 bucket-B; `(exi
   hand-entered `user_id`.
 - Component names map 1:1 to `components.css` classes — see `docs/PHASE_4.8_BUILD_SPEC.md` §2 and the
   live catalog `docs/design/screens/S-00-component-library.html`.
+
+
+### S-19: `paused` is not `parked`, and the difference is load-bearing (2026-10-03)
+
+Two states that look alike on a status chip and must never share wording:
+
+- **`parked`** (`Run.status == "stalled"`) — something went **wrong**. The reader is told what. It
+  is deliberately **excluded** from the re-trigger guard, so starting the phase again is valid.
+- **`paused`** (`Run.status == "paused"`) — somebody **chose** to stop. No error is shown, because
+  showing one would call their own decision a fault. It **is** in the re-trigger guard, so the phase
+  cannot be started again while it is paused; the way out is Resume or Discard.
+
+The second button is the **same action** under two labels: `Take over` when parked, `Discard this
+run` when paused. Do not add a third endpoint for it.
+
+**Pause is offered only while a run is `pending` or `running`.** Never at a gate — that run is
+already stopped.
+
+**Any screen that starts a phase asks first** (S-18, S-15/16/17, S-13, S-19's retry, S-32), through
+the shared `ConfirmDialog` in `components/ui`. There is no longer a trigger that fires on one click,
+and a new one must not be added.

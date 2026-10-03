@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
-import { Badge, Banner, Button, Combobox, EmptyState, Field, Modal, Panel, Select, Spinner, Table, WriteError } from "../../components/ui";
+import { Badge, Banner, Button, Combobox, ConfirmDialog, EmptyState, Field, Modal, Panel, Select, Spinner, Table, WriteError } from "../../components/ui";
 import { engineLabel, runStatusLabel, runStatusTone } from "../../labels";
 import { useRunners } from "../identity/hooks";
 import { roleLabel } from "../identity/roles";
@@ -78,7 +78,9 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
   // When a phase already has a run, confirm before re-triggering (Case 1: completed → restart &
   // replace this phase's artifacts; Case 2: in progress → blocked). Applies to EVERY phase, not
   // just Task Breakdown — any re-run regenerates that phase's artifacts.
-  const [confirm, setConfirm] = useState<{ phase: PhaseCatalogEntry; kind: "rerun" | "active"; run?: Run } | null>(null);
+  // "first" is the case that used to fire with no question at all. It is a confirmation like
+  // "rerun"; "active" is a refusal, which is why it keeps a plain Modal with no confirm button.
+  const [confirm, setConfirm] = useState<{ phase: PhaseCatalogEntry; kind: "first" | "rerun" | "active"; run?: Run } | null>(null);
 
   const handleTrigger = (phase: PhaseCatalogEntry) => {
     if (!activeWorkItemId) return;
@@ -88,14 +90,18 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
     } else if (prior) {
       setConfirm({ phase, kind: "rerun", run: prior });
     } else {
-      trigger.mutate(phase.agent_key);
+      // Was `trigger.mutate(...)` — a phase run started on a single click, dispatching work to the
+      // user's own machine for several minutes, with nothing asked.
+      setConfirm({ phase, kind: "first" });
     }
   };
 
   const confirmTrigger = () => {
     if (!confirm) return;
-    trigger.mutate(confirm.phase.agent_key);
-    setConfirm(null);
+    // Closes on SUCCESS only. Closing straight away threw away the refusal the server sends when a
+    // phase cannot start (an active run, a missing companion), so the click looked as though it had
+    // worked and nothing happened.
+    trigger.mutate(confirm.phase.agent_key, { onSuccess: () => setConfirm(null) });
   };
 
   const activeWorkItem = workItems.data?.find((wi) => wi.id === activeWorkItemId);
@@ -269,45 +275,59 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
         )}
       </Panel>
 
-      {confirm && (
-        <Modal
+      {confirm && confirm.kind !== "active" && (
+        <ConfirmDialog
           title={
             confirm.kind === "rerun"
               ? `Re-run ${phaseLabel(confirm.phase.key)}?`
-              : `${phaseLabel(confirm.phase.key)} is already running`
+              : `Start ${phaseLabel(confirm.phase.key)}?`
           }
+          confirmLabel={confirm.kind === "rerun" ? "Re-run phase" : "Start phase"}
+          cancelLabel="Not now"
+          busy={trigger.isPending}
+          error={trigger.isError ? trigger.error : undefined}
+          errorFallback="The phase could not be started."
+          onClose={() => setConfirm(null)}
+          onConfirm={confirmTrigger}
+        >
+          <p className="u-body">
+            This runs {phaseLabel(confirm.phase.key)} for <strong>{workItemLabel}</strong> on your
+            companion. It may take several minutes, and you&apos;ll be asked to review the result
+            before anything is published.
+          </p>
+          {/* The warning that was already here, kept as an addition rather than a replacement — it
+              is the one thing somebody re-running a phase has to know. */}
+          {confirm.kind === "rerun" && (
+            <Banner variant="warning">
+              This phase has already run. Running it again starts over and{" "}
+              <strong>replaces this phase&apos;s artifacts</strong> — it does not create
+              duplicates. The previous run stays in the history.
+            </Banner>
+          )}
+          {confirm.kind === "first" && <p className="u-body">You can pause it at any time.</p>}
+        </ConfirmDialog>
+      )}
+
+      {confirm && confirm.kind === "active" && (
+        <Modal
+          title={`${phaseLabel(confirm.phase.key)} is already running`}
           onClose={() => setConfirm(null)}
           footer={
-            confirm.kind === "rerun" ? (
-              <>
-                <Button variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
-                <Button variant="primary" onClick={confirmTrigger}>Re-run phase</Button>
-              </>
-            ) : (
-              <>
-                <Button variant="ghost" onClick={() => setConfirm(null)}>Close</Button>
-                {confirm.run && (
-                  <Link className="btn btn--primary" to={`/runs/${confirm.run.id}`}>
-                    Open current run
-                  </Link>
-                )}
-              </>
-            )
+            <>
+              <Button variant="ghost" onClick={() => setConfirm(null)}>Close</Button>
+              {confirm.run && (
+                <Link className="btn btn--primary" to={`/runs/${confirm.run.id}`}>
+                  Open current run
+                </Link>
+              )}
+            </>
           }
         >
-          {confirm.kind === "rerun" ? (
-            <p className="u-body">
-              This phase has already run. Running it again starts over from scratch and{" "}
-              <strong>replaces this phase's artifacts</strong> — it does not create duplicates.
-              The previous run stays in the history. Continue?
-            </p>
-          ) : (
-            <p className="u-body">
-              This work item already has a run <strong>in progress</strong> for this phase. You
-              can't start a new one until it finishes — wait for it, or open the run to take it
-              over.
-            </p>
-          )}
+          <p className="u-body">
+            This work item already has a run <strong>in progress</strong> for this phase. You
+            can&apos;t start a new one until it finishes — wait for it, or open the run to take it
+            over.
+          </p>
         </Modal>
       )}
     </div>

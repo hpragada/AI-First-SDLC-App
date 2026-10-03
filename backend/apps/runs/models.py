@@ -19,6 +19,14 @@ class Run(TenantScopedModel):
         # return and report; that report reconciles the run through the normal gate path.
         # Only an explicit human takeover (or a reported failure) makes it terminal.
         STALLED = "stalled", "Stalled"
+        # A HUMAN stopped this run on purpose and means to come back to it. Deliberately NOT
+        # reusing STALLED, which already carries two meanings (an error park, and a
+        # companion-offline park) separated only by `outputs.resumable`. A third would have been
+        # a bug rather than a shortcut: STALLED is excluded from the active-run guard in
+        # orchestration/trigger.py precisely because re-triggering over a parked run is valid —
+        # so a pause recorded as STALLED would have let the same phase be triggered again and put
+        # TWO runs on one work item and one branch. PAUSED is in that guard; see the note there.
+        PAUSED = "paused", "Paused"
 
     work_item = models.ForeignKey(
         "workitems.WorkItem", on_delete=models.CASCADE, related_name="runs"

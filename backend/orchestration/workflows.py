@@ -29,6 +29,8 @@ class AgentRunWorkflow:
         self._abandoned: bool = False
         self._resume: bool = False
         self._parked: bool = False
+        self._pause_requested: bool = False
+        self._paused_by: str = ""
 
     @workflow.signal(name="gate_decision")
     def gate_decision(self, decision: GateDecision) -> None:
@@ -50,6 +52,20 @@ class AgentRunWorkflow:
         # A human resumed a run parked by an error (Bugs S.No 157) — retry the failed step
         # instead of re-running the whole phase.
         self._resume = True
+        # A resume cancels a pause that has not taken effect yet. Without this, a pause requested
+        # while the agent was working — when this workflow is blocked waiting for the report and the
+        # flag merely sits — would still be acted on at the next checkpoint, pausing a run the
+        # person had already resumed.
+        self._pause_requested = False
+
+    @workflow.signal(name="pause_run")
+    def pause_run(self, paused_by: str) -> None:
+        # A human pressed Pause. Only a FLAG is set: a workflow cannot interrupt itself, and it
+        # certainly cannot interrupt the agent on somebody's laptop (the companion is pull-only —
+        # there is no channel to it). The flag is read at `_maybe_pause` checkpoints, which are the
+        # moments this workflow is actually in control.
+        self._pause_requested = True
+        self._paused_by = paused_by
 
     @workflow.query(name="status")
     def status(self) -> str:
@@ -58,6 +74,37 @@ class AgentRunWorkflow:
         if self._decision is not None:
             return "decided"
         return "awaiting_gate" if self._report is not None else "running"
+
+    async def _maybe_pause(self, inp: AgentRunInput, resume_from: str) -> bool:
+        """At a checkpoint: if a pause was asked for, record it and wait for the human. Returns
+        False if they abandoned the run (the caller ends it), True otherwise — including when no
+        pause was requested, which is the overwhelmingly common case and costs one attribute read.
+
+        The wait is `_park`'s wait verbatim: no timeout, resume or abandon. What differs is the
+        activity, so the run is recorded as PAUSED rather than failed-and-parked. Nothing in the
+        unpaused path changes."""
+        if not self._pause_requested:
+            return True
+        self._pause_requested = False
+        await workflow.execute_activity(
+            "pause_run", args=[inp, self._paused_by, resume_from],
+            start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+        )
+        self._parked = True
+        await workflow.wait_condition(lambda: self._resume or self._abandoned)
+        self._parked = False
+        if self._abandoned:
+            await workflow.execute_activity(
+                "fail_run", args=[inp, "run discarded while paused"],
+                start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+            )
+            return False
+        self._resume = False
+        await workflow.execute_activity(
+            "resume_run_state", inp,
+            start_to_close_timeout=timedelta(minutes=1), retry_policy=_RETRY,
+        )
+        return True
 
     async def _park(self, inp: AgentRunInput, reason: str, resume_from: str) -> bool:
         """Park the run on an error and wait for a human (Bugs S.No 157). Returns True to RESUME
@@ -106,6 +153,14 @@ class AgentRunWorkflow:
             # registered. Park instead; on Resume this loop re-dispatches the phase. Bounded by
             # the human: every pass waits on Resume or Take over, exactly like the gate.
             while True:
+                # Checkpoint. Catches a pause that arrived while this loop was going round after an
+                # engine exit — do not re-dispatch work to the companion that the human has just
+                # stopped. The pause pressed BEFORE a claim is not handled here but in the endpoint,
+                # which marks the dispatch paused synchronously: this workflow is blocked in the
+                # wait below while the companion is working, so a checkpoint could not have got
+                # there in time, and the companion polls every five seconds.
+                if not await self._maybe_pause(inp, "dispatch_phase"):
+                    return {"status": "discarded", "run_id": inp.run_id}
                 await workflow.execute_activity(
                     "dispatch_phase", args=[inp, manifest],
                     start_to_close_timeout=timedelta(minutes=5), retry_policy=_RETRY,
@@ -173,6 +228,12 @@ class AgentRunWorkflow:
         # which reads exactly that field, showed a failed run with NO reason at all. Now the run
         # parks with the real reason (always recorded) and a human can Resume to re-check once the
         # missing artifact is registered, instead of re-running the entire phase (Bugs S.No 157).
+        # Checkpoint. The phase's work is registered and the next thing that happens is a human
+        # being asked to review it. For a plan phase this is where a pause pressed mid-run actually
+        # lands: the agent could not be interrupted, but the gate is not opened and nobody is
+        # summoned to review until the person who paused comes back.
+        if not await self._maybe_pause(inp, "verify_writes"):
+            return {"status": "discarded", "run_id": inp.run_id}
         while True:
             try:
                 await workflow.execute_activity(

@@ -193,6 +193,24 @@ export function useTransitionWorkItem(workItemId: string | undefined) {
   });
 }
 
+// Stop a run on purpose, so it can be picked up later. Resumed through `useResumeRun` below — the
+// workflow waits on one signal whether it parked at an error or was paused deliberately, which is
+// why there is no second resume hook.
+export function usePauseRun(runId: string | undefined) {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.pauseRun(tenantId, runId as string),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["run", runId] });
+      // Same three keys as resume, and for the same reason: the console reads the run, its event
+      // list and the runs table, and refreshing one without the others leaves two of them stale.
+      qc.invalidateQueries({ queryKey: ["events", "run", runId] });
+      qc.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+}
+
 // Resume a run parked at an error (Bugs S.No 157): the workflow is still alive and waiting, so
 // this picks up at the failed step — the build/phase already done is kept, not re-run.
 export function useResumeRun(runId: string | undefined) {

@@ -1255,6 +1255,74 @@ export function Modal({
   );
 }
 
+/**
+ * Ask before doing something, in one shape everywhere.
+ *
+ * Four screens had each hand-rolled this out of `Modal` plus a two-button footer plus the
+ * `WriteError` / `Spinner` pair, and two of them only asked SOME of the time — a first-ever phase
+ * trigger fired with no question at all. Asking inconsistently is worse than not asking: it teaches
+ * people that the absence of a dialog means the action is small.
+ *
+ * Deliberately thin. It owns the shape of the question (title, body, two buttons, the pending
+ * spinner and where an error appears) and nothing about the decision itself, so a caller that needs
+ * a reason field, a warning banner or a list of consequences just passes them as children.
+ *
+ * `danger` is for the irreversible ones. It does not add a second confirmation — a dialog that
+ * takes two clicks to agree with gets clicked twice without being read.
+ */
+export function ConfirmDialog({
+  title,
+  children,
+  confirmLabel,
+  cancelLabel = "Cancel",
+  onConfirm,
+  onClose,
+  busy,
+  error,
+  errorFallback,
+  danger,
+  confirmDisabled,
+}: {
+  title: ReactNode;
+  children?: ReactNode;
+  confirmLabel: string;
+  cancelLabel?: string;
+  onConfirm: () => void;
+  onClose: () => void;
+  busy?: boolean;
+  error?: unknown;
+  errorFallback?: string;
+  danger?: boolean;
+  confirmDisabled?: boolean;
+}) {
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>{cancelLabel}</Button>
+          <Button
+            variant={danger ? "danger" : "primary"}
+            disabled={busy || confirmDisabled}
+            onClick={onConfirm}
+          >
+            {busy ? <Spinner /> : confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <div className="u-stack">
+        {children}
+        {/* Below the body, above the buttons: the reader has already been told what the action is,
+            and an error belongs next to the button that produced it rather than at the top where it
+            displaces the question. */}
+        {error ? <WriteError detail={error} fallback={errorFallback} /> : null}
+      </div>
+    </Modal>
+  );
+}
+
 export function Drawer({
   title,
   children,

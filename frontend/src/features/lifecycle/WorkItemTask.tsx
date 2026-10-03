@@ -3,10 +3,12 @@ import { Link, useParams } from "react-router-dom";
 
 import {
   Badge,
+  Banner,
   Breadcrumb,
   Button,
   Card,
   CardBody,
+  ConfirmDialog,
   Kv,
   LifecycleRail,
   Markdown,
@@ -70,7 +72,9 @@ function WorkItemTaskLive() {
   const trigger = useTriggerPhase(id);
   // Confirm before re-triggering implementation when a run already exists (Bugs S.No 77):
   // in progress → blocked; already run → restart & replace this phase's artifacts.
-  const [confirm, setConfirm] = useState<{ kind: "rerun" | "active"; runId?: string } | null>(null);
+  // "first" is the case that used to start a build on one click with nothing asked. "active" is a
+  // refusal, not a confirmation, which is why it keeps a plain Modal.
+  const [confirm, setConfirm] = useState<{ kind: "first" | "rerun" | "active"; runId?: string } | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
@@ -83,7 +87,7 @@ function WorkItemTaskLive() {
     } else if (prior) {
       setConfirm({ kind: "rerun", runId: prior.id });
     } else {
-      trigger.mutate("07_implementation");
+      setConfirm({ kind: "first" });
     }
   };
 
@@ -317,48 +321,52 @@ function WorkItemTaskLive() {
         </div>
       </div>
 
-      {confirm && (
-        <Modal
-          title={confirm.kind === "rerun" ? "Re-run implementation?" : "A run is already in progress"}
+      {confirm && confirm.kind !== "active" && (
+        <ConfirmDialog
+          title={confirm.kind === "rerun" ? "Re-run implementation?" : "Start implementation?"}
+          confirmLabel={confirm.kind === "rerun" ? "Re-run phase" : "Start phase"}
+          cancelLabel="Not now"
+          busy={trigger.isPending}
+          error={trigger.isError ? trigger.error : undefined}
+          errorFallback="The phase could not be started."
           onClose={() => setConfirm(null)}
-          footer={
-            confirm.kind === "rerun" ? (
-              <>
-                <Button variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    trigger.mutate("07_implementation");
-                    setConfirm(null);
-                  }}
-                >
-                  Re-run phase
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button variant="ghost" onClick={() => setConfirm(null)}>Close</Button>
-                {confirm.runId && (
-                  <Link className="btn btn--primary" to={`/runs/${confirm.runId}`}>
-                    Open current run
-                  </Link>
-                )}
-              </>
-            )
+          onConfirm={() =>
+            trigger.mutate("07_implementation", { onSuccess: () => setConfirm(null) })
           }
         >
-          {confirm.kind === "rerun" ? (
-            <p className="u-body">
-              This task has already run. Running it again starts over and{" "}
-              <strong>replaces this phase's artifacts</strong> — it does not create duplicates.
-              The previous run stays in the history. Continue?
-            </p>
-          ) : (
-            <p className="u-body">
-              This work item already has a run <strong>in progress</strong>. Wait for it to
-              finish, or open the run to take it over, before starting a new one.
-            </p>
+          <p className="u-body">
+            This builds {workItem.data?.key || "this task"} on your companion — it writes code on a
+            branch and opens a pull request for review. It may take several minutes.
+          </p>
+          {confirm.kind === "rerun" && (
+            <Banner variant="warning">
+              Implementation has already run for this task. Running it again starts over and
+              replaces what the last run produced. The previous run stays in the history.
+            </Banner>
           )}
+          {confirm.kind === "first" && <p className="u-body">You can pause it at any time.</p>}
+        </ConfirmDialog>
+      )}
+
+      {confirm && confirm.kind === "active" && (
+        <Modal
+          title="A run is already in progress"
+          onClose={() => setConfirm(null)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setConfirm(null)}>Close</Button>
+              {confirm.runId && (
+                <Link className="btn btn--primary" to={`/runs/${confirm.runId}`}>
+                  Open current run
+                </Link>
+              )}
+            </>
+          }
+        >
+          <p className="u-body">
+            This task already has a run <strong>in progress</strong>. You can&apos;t start a new one
+            until it finishes — wait for it, or open the run to take it over.
+          </p>
         </Modal>
       )}
 

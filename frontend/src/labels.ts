@@ -48,7 +48,16 @@ const RUN_STATUS: Record<string, { label: string; tone: BadgeVariant }> = {
   failed: { label: "Failed", tone: "failed" },
   // Parked for human takeover, NOT terminal: a companion that only slept can still return and
   // report (Bugs S.No 89). So neither "failed" nor "done" — the design system's `parked`.
-  stalled: { label: "Paused — your machine stopped reporting", tone: "parked" },
+  //
+  // This said "Paused — your machine stopped reporting" until a run could really be PAUSED by a
+  // person. Two states both reading "Paused" left the word unable to tell the reader whether
+  // anything had gone wrong, so this one became "Stopped". Keep the two distinct; mirrored in
+  // backend apps/labels.py.
+  stalled: { label: "Stopped — your machine stopped reporting", tone: "parked" },
+  // A human stopped this run on purpose and means to resume it. Same `parked` tone — it is the
+  // design system's colour for "alive, waiting on a person" — but the words are about a choice
+  // somebody made, not a failure.
+  paused: { label: "Paused by you", tone: "parked" },
   // `done` and `gate` are the short forms the component gallery's sample rows use. They are
   // not values the backend sends, but the gallery is what the team reviews, so they must read
   // the same way there as a real run does.

@@ -10,6 +10,7 @@ import {
   Button,
   Card,
   CardBody,
+  ConfirmDialog,
   EmptyState,
   Field,
   Input,
@@ -65,6 +66,8 @@ const STATUS_BADGE: Record<AutomationStatus, { variant: "neutral" | "running" | 
 function GenerateCell({ tc, storyId }: { tc: TestCase; storyId: string | undefined }) {
   const trigger = useTriggerPhase(tc.id);
   const qc = useQueryClient();
+  // Generating a script is a phase run on the user's machine, and it fired on one click.
+  const [asking, setAsking] = useState(false);
   if (tc.automation_status === "generating") {
     return <Link to={`/work-items/${tc.id}`} className="btn btn--ghost btn--sm">View run</Link>;
   }
@@ -84,16 +87,36 @@ function GenerateCell({ tc, storyId }: { tc: TestCase; storyId: string | undefin
         variant="ghost"
         size="sm"
         disabled={trigger.isPending}
-        // Starting generation changes this row's automation status, and nothing refreshed the
-        // table, so the button came back as if nothing had happened (S.No 215, same class).
-        onClick={() =>
-          trigger.mutate(TEST_AUTOMATION_KEY, {
-            onSuccess: () => qc.invalidateQueries({ queryKey: ["test-cases", storyId] }),
-          })
-        }
+        onClick={() => setAsking(true)}
       >
         {trigger.isPending ? "Starting…" : "Generate script"}
       </Button>
+      {asking && (
+        <ConfirmDialog
+          title="Generate the test script?"
+          confirmLabel="Generate script"
+          cancelLabel="Not now"
+          busy={trigger.isPending}
+          error={trigger.isError ? trigger.error : undefined}
+          errorFallback="The script could not be started."
+          onClose={() => setAsking(false)}
+          onConfirm={() =>
+            trigger.mutate(TEST_AUTOMATION_KEY, {
+              onSuccess: () => {
+                // Starting generation changes this row's automation status, and nothing refreshed
+                // the table, so the button came back as if nothing had happened (S.No 215).
+                qc.invalidateQueries({ queryKey: ["test-cases", storyId] });
+                setAsking(false);
+              },
+            })
+          }
+        >
+          <p className="u-body">
+            This writes an automated script for this test case on your companion. It may take
+            several minutes, and you&apos;ll be asked to review the result.
+          </p>
+        </ConfirmDialog>
+      )}
       {/* Bugs S.No 219: this read `isPending` and never `isError`, so a run that could not be
           started — no machine connected, no permission, the phase already running — just
           flipped the button back to "Generate script" as if nothing had been asked. The most

@@ -570,6 +570,18 @@ class EventSerializer(serializers.ModelSerializer):
             label = "Build paused"
         elif obj.action == "run.parked":
             label = "Run paused"
+        elif obj.action == "run.paused":
+            label = "Run paused"
+        elif obj.action == "run.pause_signal_failed":
+            # What this means FOR THE READER, not what failed for us. The run is paused and their
+            # machine will not be handed new work — that part worked. What did not is our
+            # ability to tell the running step to stop at its next checkpoint, which for them shows
+            # up as the current step possibly finishing. The transport error itself is in
+            # `error_detail`, which this never prints.
+            label = ("Paused — your machine won't be given new work, but the step already "
+                     "running may still finish")
+        elif obj.action == "run.resume_signal_failed":
+            label = "Resumed — your machine can pick this up again"
         elif obj.action == "review.reported" and payload.get("status") == "failed":
             label = "Code review stopped"
         # `reason` covers build.failed/build.takeover (Bugs S.No 139 — the classified failure
