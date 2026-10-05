@@ -61,6 +61,20 @@ class TransientBackendError(DaemonError):
     connection failure and keeps polling with backoff."""
 
 
+class RunnerRejectedError(DaemonError):
+    """The app no longer accepts this machine's connection token (HTTP 401).
+
+    The ordinary cause is deliberate: somebody pressed Disconnect on Connect Machine, which
+    revokes the enrollment. That is a normal ending, not a failure — but it used to arrive as
+    `DaemonError: claim work -> 401: {'detail': 'invalid or missing Runner token'}` escaping the
+    serve loop and printing a Python traceback, which names an HTTP verb, a status code and a
+    server field and never says the one useful thing: reconnect the machine.
+
+    Kept apart from a plain `DaemonError` so the CLI can end on a readable sentence. The daemon
+    still STOPS — retrying a revoked token forever would be worse, and reconnecting issues a new
+    token this process could never pick up, so waiting would look alive while being useless."""
+
+
 class EngineAuthError(DaemonError):
     """Subscription-only auth could not be guaranteed (fail-closed). Subclasses DaemonError so
     existing callers/tests still catch it, but the serve loop re-raises it rather than treating
@@ -281,6 +295,8 @@ class CompanionDaemon:
             return None
         if status >= 500:
             raise TransientBackendError(f"claim work -> {status}: {data}")
+        if status == 401:
+            raise RunnerRejectedError("this machine is no longer connected")
         if status >= 400:
             raise DaemonError(f"claim work -> {status}: {data}")   # 4xx = a real rejection
         return data
@@ -294,6 +310,8 @@ class CompanionDaemon:
             return None
         if status >= 500:
             raise TransientBackendError(f"claim code-intel -> {status}: {data}")
+        if status == 401:
+            raise RunnerRejectedError("this machine is no longer connected")
         if status >= 400:
             raise DaemonError(f"claim code-intel -> {status}: {data}")
         # Only a real job payload (carries job_id) is work; treat anything else as idle so a
@@ -315,6 +333,8 @@ class CompanionDaemon:
             return None
         if status >= 500:
             raise TransientBackendError(f"claim a11y audit -> {status}: {data}")
+        if status == 401:
+            raise RunnerRejectedError("this machine is no longer connected")
         if status >= 400:
             raise DaemonError(f"claim a11y audit -> {status}: {data}")
         if not isinstance(data, dict) or "audit_id" not in data:
@@ -471,6 +491,8 @@ class CompanionDaemon:
                 self._sleep(delay)
                 delay = min(delay * 2, self._RETRY_MAX_DELAY)
                 continue
+            if status == 401:
+                raise RunnerRejectedError("this machine is no longer connected")
             if status >= 400:
                 raise DaemonError(f"report {path} -> {status}: {data}")
             return
@@ -843,6 +865,12 @@ class CompanionDaemon:
                     processed += 1
                 except EngineAuthError:
                     raise   # fail-closed: an auth problem must always halt the daemon
+                except RunnerRejectedError:
+                    # Disconnected mid-task. "Keep serving" is right for a task that failed on
+                    # its own, but here every later claim and report would fail the same way, so
+                    # continuing would print the same rejection forever instead of stopping once
+                    # and saying how to reconnect.
+                    raise
                 except DaemonError as exc:
                     # A failed run/report for ONE task must not take down the whole companion
                     # — otherwise the user sees it drop offline and every later phase stalls.

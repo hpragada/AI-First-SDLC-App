@@ -781,3 +781,55 @@ sleeps is one nobody reads by the week it matters.
 - Bugs S.No 311. The message names the phase, never the run's identifier — the standing rule.
 - It also only looks for stuck work while your machine is actually missing, so it adds no background
   checking to ordinary use (the concern behind S.No 12).
+
+---
+
+### TC-221 · Disconnecting a machine ends the companion with a sentence, not a crash
+
+**Why this case exists.** Reported live on 2026-10-05, during the first pass over the companion
+status fixes. The tester pressed **Disconnect** on Connect Machine — the app behaved perfectly —
+and the companion's own terminal died with a Python stack trace ending
+`DaemonError: claim work -> 401: {'detail': 'invalid or missing Runner token'}`. Two things were
+wrong at once: a deliberate, requested outcome was presented as a crash, and the message named an
+HTTP status code and a server field while never saying the one useful thing — reconnect it. The
+standing "no machine words in front of a person" rule had been applied to every screen in the app
+and never to the terminal, which is the only screen a developer has while the companion runs.
+
+**Setup**
+- A project with a companion connected and running in a terminal you can see.
+- **Nothing needs to be running.** This case costs no engine usage — do not trigger a phase for it.
+
+**Steps**
+1. Watch the companion terminal. Confirm it is idle and polling.
+2. In the app, open **Connect Machine** and press **Disconnect**.
+3. Watch the terminal for up to a minute (it reacts on its next poll).
+4. Read the app's status badge in the top bar and at the foot of the sidebar.
+5. In the same terminal, check the exit code — `echo $LASTEXITCODE` on PowerShell, `echo $?` on a
+   Unix shell.
+
+**Expected**
+- The companion stops, printing exactly three lines and **no stack trace**:
+  - "This machine was disconnected in the SDLC app, so it can no longer pick up work."
+  - "To run phases on this machine again, open Connect Machine in the app and connect it."
+  - "Stopping."
+- The app shows **Companion: not connected**, with the reconnect link naming the project.
+- The exit code is **2** — it did not keep running, and a wrapper script can tell without reading
+  the words.
+
+**Pass / Fail**
+- PASS if the ending is those sentences, there is no traceback anywhere in the output, and the exit
+  code is 2.
+- **FAIL on any traceback**, and FAIL if the ending names a status code, an HTTP verb, a token or a
+  server field.
+- FAIL if the companion keeps polling instead of stopping.
+
+**Notes**
+- Bugs S.No 312.
+- **Stopping is correct, not a shortcoming.** Reconnecting issues a *new* token, which this process
+  could never pick up — a companion that sat waiting would look alive while being permanently
+  useless, which is the same kind of lie S.No 306–311 were about.
+- The message cannot name the project: the companion is started with a workspace and a token only,
+  and never learns the project's name. Naming it would need a new field from the server. Left out
+  rather than guessed.
+- An **unexpected** failure still ends on one plain line that keeps its detail — there the detail is
+  the useful part, because nobody asked for it. Only the disconnect case is given fixed wording.

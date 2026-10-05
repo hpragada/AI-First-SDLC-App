@@ -135,7 +135,15 @@ def _parse_repo_map(pairs) -> dict:
 
 
 def _serve(args) -> int:
-    from .daemon import CompanionDaemon
+    # Imported here, not at module level, like CompanionDaemon already was: importing daemon
+    # pulls the engine stack in, and `enroll` must keep working on a machine where that cannot
+    # yet be imported.
+    from .daemon import (
+        CompanionDaemon,
+        DaemonError,
+        EngineAuthError,
+        RunnerRejectedError,
+    )
 
     # `--headed` is shorthand for exporting SDLC_COMPANION_HEADED=1 for this process, so it is
     # inherited by the children that matter: the Playwright MCP (drops --headless) and the agent's
@@ -163,7 +171,32 @@ def _serve(args) -> int:
         repo_path=args.repo_path, repo_paths=repo_paths, worktrees_root=args.worktrees,
         poll_interval=args.poll_interval, heartbeat_interval=args.heartbeat_interval,
     )
-    daemon.serve()
+    # A companion that stops must say WHY in a sentence, not with a Python traceback. Three
+    # endings are possible and a stack trace was the only one anybody saw:
+    #   * disconnected in the app   — normal; you asked for it. Say how to connect it back.
+    #   * engine auth refused       — already written as prose; it was just buried in a trace.
+    #   * anything else             — unexpected, so the detail IS the useful part; keep it,
+    #                                 but on one line that reads as an ending.
+    # Exit 2 throughout: this process did not keep running, and a wrapper script must be able
+    # to tell that without parsing the words.
+    try:
+        daemon.serve()
+    except RunnerRejectedError:
+        print("[companion] This machine was disconnected in the SDLC app, so it can no "
+              "longer pick up work.", file=sys.stderr, flush=True)
+        print("[companion] To run phases on this machine again, open Connect Machine in the "
+              "app and connect it.", file=sys.stderr, flush=True)
+        print("[companion] Stopping.", file=sys.stderr, flush=True)
+        return 2
+    except EngineAuthError as exc:
+        print(f"[companion] Phases cannot start on this machine: {exc}",
+              file=sys.stderr, flush=True)
+        print("[companion] Stopping.", file=sys.stderr, flush=True)
+        return 2
+    except DaemonError as exc:
+        print(f"[companion] Stopping — the companion hit a problem it could not recover "
+              f"from: {exc}", file=sys.stderr, flush=True)
+        return 2
     return 0
 
 
